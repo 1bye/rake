@@ -20,6 +20,12 @@ jobs:
       - run: cargo build -p rake-cli --locked
       - run: python3 scripts/test-dev-bridge.py
       - run: python3 scripts/test-supervisor.py
+      - run: python3 scripts/test-inspector.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/test-inspector.mjs
+      - run: node scripts/test-inspector-ui.mjs
       - run: cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --locked
       - run: cargo check -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked
       - run: cargo clippy -p rake -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings

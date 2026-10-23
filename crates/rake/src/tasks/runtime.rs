@@ -8,6 +8,7 @@ use event_listener::Event;
 use futures::future::{Either, LocalBoxFuture, select};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
+use tracing::Instrument;
 
 use crate::diagnostics::Collector;
 use crate::http::CancellationToken;
@@ -314,6 +315,18 @@ impl Core {
             accepted,
         };
 
+        let span = tracing::info_span!("work.run", runtime_id = %self.runtime, task_id = %id,
+            run_id = %run_id, generation_id = %generation, owner = ?record.snapshot.owner,
+            tab_id = tracing::field::Empty, entry_id = tracing::field::Empty);
+
+        if let Some(tab) = record.snapshot.origin.tab_id {
+            span.record("tab_id", tab.to_string());
+        }
+
+        if let Some(entry) = record.snapshot.origin.entry_id {
+            span.record("entry_id", entry.to_string());
+        }
+
         let job = async move {
             if let Some(core) = run.core.upgrade() {
                 core.set_running(&run);
@@ -335,6 +348,7 @@ impl Core {
                 core.finish(&run, result);
             }
         }
+        .instrument(span)
         .boxed_local();
 
         let obsolete = state.jobs.insert(id, job);

@@ -56,7 +56,7 @@ class SupervisorTests(unittest.TestCase):
             subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=root, check=True, capture_output=True)
             with tempfile.TemporaryFile(mode="w+") as events, tempfile.TemporaryFile(mode="w+") as errors:
                 process = subprocess.Popen([str(CLI), "dev", "--manifest-path", str(root / "Cargo.toml"),
-                    "--target", "desktop", "--json", "--restart-without-state"], stdout=events, stderr=errors)
+                    "--target", "desktop", "--json", "--no-open", "--restart-without-state"], stdout=events, stderr=errors)
                 session = None
                 try:
                     def find_session():

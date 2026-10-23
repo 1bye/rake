@@ -20,6 +20,8 @@ import tomllib
 import uuid
 import webbrowser
 
+from inspector import ProcessOutput
+
 MAX_BYTES = 1024 * 1024
 EXCLUDED = {".git", "target", "dist", "node_modules", ".rake", "__pycache__", ".DS_Store"}
 
@@ -40,6 +42,7 @@ class Processes:
         self.lock = threading.Lock()
         self.children = set()
         self.stopping = False
+        self.output_sink = None
 
     def start(self, command, **kwargs):
         with self.lock:
@@ -112,6 +115,8 @@ def run_output(processes, command, *, cwd=None, env=None, artifact=None):
                 elif not isinstance(message, dict):
                     print(line, file=sys.stderr, end="", flush=True)
                     tail.append(line[-4000:])
+                if processes.output_sink and (not isinstance(message, dict) or message.get("reason") == "compiler-message"):
+                    processes.output_sink(line, process.pid, "build")
                 tail = tail[-8:]
         code = process.wait()
         if code:
@@ -267,6 +272,10 @@ class Supervisor:
                            ("native_code_replacement" if project.args.native_reloader else "native_restart")}
         self.app = None
         self.server = None
+        self.output = ProcessOutput()
+        self.readers = []
+        self.output_revision = -1
+        processes.output_sink = self.output.append
         self.checkpoint = session / "checkpoint.json"
         self.record("starting")
 
@@ -282,14 +291,16 @@ class Supervisor:
         env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control)}
         self.server = self.processes.start([sys.executable, str(Path(__file__).with_name("serve-web.py")),
             "--control", "--port", str(self.project.args.port), "--directory", str(waiting),
-            "--development-state", str(self.status_path), "--build-root", str(self.builds)],
+            "--development-state", str(self.status_path), "--build-root", str(self.builds),
+            "--process-output", str(self.session / "output.json"),
+            *(["--inspector-only"] if self.project.args.target == "desktop" else [])],
             env=env, stdout=subprocess.PIPE, text=True)
         # Server writes its private launch URL after binding, before serving requests.
         line = self.server.stdout.readline()
         if not line.startswith("Serving "):
             raise RuntimeError("development server could not start")
         url = line.split(" at ", 1)[1].strip()
-        print(json.dumps({"event": "web_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
+        print(json.dumps({"event": "web_listening" if self.project.args.target == "web" else "inspector_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
               f"{line.strip()}\nSession: {self.session}", flush=True)
         self.server.stdout.close()
         if not self.project.args.no_open:
@@ -311,7 +322,18 @@ class Supervisor:
         env = {**os.environ, "RAKE_DEV_CONTROL": "1", "RAKE_CONTROL_DIR": str(self.control)}
         if self.checkpoint.exists():
             env["RAKE_RELOAD_CHECKPOINT"] = str(self.checkpoint)
-        self.app = self.processes.start([str(artifact)], cwd=self.project.root, env=env, stdout=sys.stderr)
+        self.app = self.processes.start([str(artifact)], cwd=self.project.root, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+        self.readers = [reader for reader in self.readers if reader.is_alive()]
+        for label, pipe in [("stdout", self.app.stdout), ("stderr", self.app.stderr)]:
+            def collect(pipe=pipe, label=label, pid=self.app.pid):
+                with pipe:
+                    while chunk := pipe.readline(2048):
+                        self.output.append(chunk, pid, label)
+                        print(chunk, file=sys.stderr, end="", flush=True)
+            reader = threading.Thread(target=collect, daemon=True)
+            reader.start()
+            self.readers.append(reader)
         self.record("running", runtime_pid=self.app.pid, app_running=True, mechanism="native_restart", error=None)
 
     def publish(self, number, artifact):
@@ -377,10 +399,9 @@ class Supervisor:
         self.record("watching", published=number, error=None)
 
     def run(self):
-        if self.project.args.target == "web":
-            self.start_server()
-        else:
+        if self.project.args.target == "desktop":
             print(json.dumps({"event": "session", "session": str(self.session), "mechanism": self.status["mechanism"]}) if self.project.args.json else f"Session: {self.session}; reload mechanism: {self.status['mechanism']}", flush=True)
+        self.start_server()
         results = queue.Queue(maxsize=1)
         worker = None
         fingerprint = None
@@ -392,6 +413,10 @@ class Supervisor:
         while True:
             if self.server and self.server.poll() is not None:
                 raise RuntimeError("development Web server exited")
+            output = self.output.snapshot()
+            if output["revision"] != self.output_revision:
+                private_json(self.session / "output.json", output)
+                self.output_revision = output["revision"]
             current = self.project.fingerprint()
             if current != fingerprint:
                 fingerprint, changed_at = current, time.monotonic()
@@ -481,7 +506,7 @@ class Parser(argparse.ArgumentParser):
 
 def main():
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=["dev", "build", "doctor"])
+    parser.add_argument("command", choices=["dev", "build", "doctor", "inspect"])
     parser.add_argument("--target", choices=["desktop", "web"], default="desktop")
     parser.add_argument("--manifest-path", type=Path, default=Path("Cargo.toml"))
     parser.add_argument("--package", "-p")
@@ -492,7 +517,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--native-reloader", type=Path, help="External native backend; owns ABI/code retirement and exits zero only after successful replacement")
     parser.add_argument("--restart-without-state", action="store_true", help="Explicitly allow restarting apps without a control endpoint")
-    parser.add_argument("--port", type=int, default=8081)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--instance", help="Initial inspector runtime UUID or application ID")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("status", nargs="?", choices=["status"])
@@ -506,6 +532,7 @@ def main():
         return 0
     if args.command == "doctor":
         return doctor(args)
+    args.port = args.port if args.port is not None else (8081 if args.target == "web" and args.command == "dev" else 0)
     if not 0 <= args.port <= 65535:
         parser.error("port must be 0–65535")
     if args.native_reloader and args.target != "desktop":
@@ -514,6 +541,39 @@ def main():
         args.native_reloader = args.native_reloader.resolve(strict=True)
     if args.output:
         args.output = args.output.resolve()
+    if args.command == "inspect":
+        env = dict(os.environ)
+        if args.session:
+            env["RAKE_CONTROL_DIR"] = str(args.session.resolve() / "control")
+        command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", str(args.port)]
+        if args.session:
+            command += ["--development-state", str(args.session.resolve() / "status.json"),
+                        "--build-root", str(args.session.resolve() / "builds"),
+                        "--process-output", str(args.session.resolve() / "output.json")]
+        processes = Processes()
+        process = processes.start(command, env=env, stdout=subprocess.PIPE, text=True)
+        def interrupt_inspector(*_args):
+            raise KeyboardInterrupt()
+        signal.signal(signal.SIGTERM, interrupt_inspector)
+        try:
+            line = process.stdout.readline()
+            if not line.startswith("Serving "):
+                raise RuntimeError("inspector server could not start")
+            url = line.split(" at ", 1)[1].strip()
+            if args.instance:
+                from urllib.parse import quote
+                url = url.replace("#__rake_control=", "?instance=" + quote(args.instance, safe="") + "#__rake_control=")
+            print(json.dumps({"event": "inspector_listening", "url": url}) if args.json else url, flush=True)
+            if not args.no_open:
+                webbrowser.open(url)
+            process.wait()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            processes.close()
+            process.stdout.close()
+        return 0
+
     processes = Processes()
     supervisor = None
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
@@ -555,6 +615,9 @@ def main():
     finally:
         processes.close()
         if supervisor:
+            for reader in supervisor.readers:
+                reader.join(timeout=2)
+            private_json(supervisor.session / "output.json", supervisor.output.snapshot())
             supervisor.record("stopped", app_running=False)
             # Keep status/checkpoints for inspection and recovery, remove stale advertisements.
             for path in supervisor.control.glob("*"):

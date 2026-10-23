@@ -8,8 +8,10 @@ import secrets
 import re
 import threading
 import urllib.parse
+import urllib.error
 
 from dev_bridge import BridgeError, DevBridge, MAX_BYTES
+from inspector import Inspector
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,13 +23,18 @@ parser.add_argument("--control", action="store_true", help="Enable authenticated
 parser.add_argument("--directory", type=Path, help="Serve another built application directory")
 parser.add_argument("--development-state", type=Path, help="Private supervisor status, enabled only with control")
 parser.add_argument("--build-root", type=Path, help="Immutable published Web build directories")
+parser.add_argument("--inspector-only", action="store_true", help="Serve native runtime inspection without application assets")
+parser.add_argument("--process-output", type=Path, help="Private supervisor output snapshot")
 args = parser.parse_args()
 if bool(args.development_state) != bool(args.build_root) or (args.development_state and not args.control):
     parser.error("development state/build root require each other and --control")
+if args.inspector_only and not args.control:
+    parser.error("--inspector-only requires --control")
 bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
+inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only) if bridge else None
 directory = args.directory or Path(__file__).resolve().parents[1] / "dist" / args.example
 
-if not (directory / "index.html").is_file():
+if not args.inspector_only and not (directory / "index.html").is_file():
     build_args = "routing --hash" if args.example == "routing-hash" else args.example
     raise SystemExit(f"Build the example first: python3 scripts/build-web.py --example {build_args}")
 
@@ -77,7 +84,7 @@ BOOTSTRAP_JS = rb"""(() => {
           document.body.append(status);
         }
         const failure = runtime && state.runtimes[runtime] && state.runtimes[runtime].error;
-        if (status) status.textContent = 'Rake: ' + state.phase + (failure || state.error ? '\n' + (failure || state.error) : '');
+        if (status) { status.replaceChildren(document.createTextNode('Rake: ' + state.phase + (failure || state.error ? '\n' + (failure || state.error) : ''))); const link = document.createElement('a'); link.href = '/__rake/inspector#__rake_control=' + token; link.textContent = ' | Devtools'; link.style.color = '#b6e8cb'; link.target = '_blank'; link.rel = 'noopener'; status.append(link); }
       } catch (_) { /* The running application remains usable while disconnected. */ }
     }
     // Recursive scheduling bounds concurrent requests if the server is slow.
@@ -141,7 +148,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                 raise BridgeError(400, "expected JSON object")
             if not self.path.startswith("/__rake/"):
                 raise BridgeError(404, "unknown development endpoint")
-            result = bridge.handle(self.path.removeprefix("/__rake/"), body)
+            action = self.path.removeprefix("/__rake/")
+            result = inspector.handle(action, body) if action.startswith("inspect") else bridge.handle(action, body)
             encoded = json.dumps(result).encode()
             if len(encoded) > MAX_BYTES:
                 raise BridgeError(413, "development response too large")
@@ -153,12 +161,31 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.wfile.write(encoded)
         except (ValueError, TypeError) as error:
             self.send_error(400, str(error))
+        except (OSError, urllib.error.URLError) as error:
+            self.send_error(502, str(error))
         except BridgeError as error:
             self.send_error(error.status, str(error))
 
     def send_head(self):
         if bridge and not self._valid_host():
             self.send_error(403, "invalid development host")
+            return None
+        route = self.path.split("?", 1)[0]
+        if bridge and route in {"/__rake/inspector", "/__rake/inspector.js", "/__rake/inspector-model.js", "/__rake/inspector.css"}:
+            filename = {"/__rake/inspector": "inspector.html", "/__rake/inspector.js": "inspector.js",
+                        "/__rake/inspector-model.js": "inspector-model.js", "/__rake/inspector.css": "inspector.css"}[route]
+            encoded = Path(__file__).with_name(filename).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8" if filename.endswith(".html") else
+                             "text/css; charset=utf-8" if filename.endswith(".css") else "text/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            return io.BytesIO(encoded)
+        if args.inspector_only:
+            self.send_error(404, "native inspector serves no application assets")
             return None
         if bridge and self.path.split("?", 1)[0] == "/__rake/bootstrap.js":
             self.send_response(200)
@@ -225,7 +252,7 @@ if bridge:
     bridge.url = f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
-    launch_url += f"/#__rake_control={bridge.token}"
+    launch_url += f"{'/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
 print(f"Serving {args.example} at {launch_url}", flush=True)
 
 try:

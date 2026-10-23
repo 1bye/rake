@@ -457,14 +457,88 @@ impl Render for Screen {
     }
 }
 
+#[rake::data]
+struct Echo {
+    message: String,
+}
+
+impl ApplicationCommand for Echo {
+    type Output = String;
+
+    fn descriptor() -> CommandDescriptor {
+        CommandDescriptor {
+            id: "demo.echo".into(),
+            arguments: rake::serde_json::json!({"type":"object","required":["message"],"properties":{"message":{"type":"string","default":"Hello from the inspector"}}}),
+            result: rake::serde_json::json!({"type":"string"}),
+            capability: ExecutionCapability::Headless,
+        }
+    }
+}
+
+#[rake::data]
+struct Fetch {
+    url: String,
+}
+
+impl ApplicationCommand for Fetch {
+    type Output = rake::serde_json::Value;
+
+    fn descriptor() -> CommandDescriptor {
+        CommandDescriptor {
+            id: "demo.fetch".into(),
+            arguments: rake::serde_json::json!({"type":"object","required":["url"],"properties":{"url":{"type":"string","format":"uri"}}}),
+            result: rake::serde_json::json!({"type":"object"}),
+            capability: ExecutionCapability::Headless,
+        }
+    }
+}
+
 #[rake::app]
 fn app() -> App<Destination> {
-    App::new("com.example.rake.routing")
+    let app = App::new("com.example.rake.routing")
         .control(rake::control::ControlConfig::FromEnvironment)
         .routes(AppRoutes::default())
         .web(WebConfig::new().routing(if cfg!(feature = "hash-routing") {
             WebRouting::Hash
         } else {
             WebRouting::Path
-        }))
+        }));
+
+    let http = app.services().expect("example HTTP services").http();
+    let commands = Commands::new();
+
+    commands
+        .register::<Echo, _, _>(|command, _| async move {
+            rake::info!(message = %command.message, "Inspector echo");
+
+            Ok(command.message)
+        })
+        .expect("echo registration");
+    commands
+        .register::<Fetch, _, _>(move |command, context| {
+            let http = http.clone();
+
+            async move {
+                let response = http
+                    .get(&command.url)
+                    .cancellation(context.cancellation)
+                    .send()
+                    .await
+                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+
+                let status = response.status();
+
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+
+                rake::info!(status, bytes = bytes.len(), "Inspector request completed");
+
+                Ok(rake::serde_json::json!({"status":status,"bytes":bytes.len()}))
+            }
+        })
+        .expect("fetch registration");
+
+    app.commands(commands)
 }

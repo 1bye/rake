@@ -98,6 +98,10 @@ fn restores_independent_tabs_histories_selection_modes_and_only_replaces_browser
     pool.run_until(replacement.restore_workspace(&checkpoint, "test"))
         .unwrap();
     assert_ne!(replacement.runtime_id(), old.runtime_id());
+    assert_eq!(
+        replacement.reload_status().restored_from,
+        Some(old.runtime_id())
+    );
     assert_eq!(replacement.snapshot().selected, Some(a.tab_id));
     assert_eq!(replacement.snapshot().tabs[0].mode, TabMode::Live);
     assert_eq!(replacement.snapshot().tabs[0].cursor, 0);

@@ -1,7 +1,7 @@
 # Rake
 
 Rake is an application framework for native GPUI and browser WebAssembly. This
-repository implements the **portable foundation, routing, managed work, runtime control and development supervision** of the
+repository implements the **portable foundation, routing, managed work, runtime control, development supervision and graphical devtools** of the
 [API design](docs/api-design.md). It is an unpublished prototype.
 
 The foundation includes:
@@ -25,6 +25,9 @@ The foundation includes:
   client, private Unix IPC and an authenticated browser development bridge.
 - Native/Web build and dev commands, debounced build watching, coordinated reload,
   versioned workspace restoration and an external native reloader boundary.
+- A supervisor-owned browser inspector for native and Web runtimes: workspace,
+  routes, tasks, operations, guard decisions, console, HTTP requests and span trees.
+  Every action uses the same runtime dispatcher as the CLI.
 
 See the [routing example](examples/routing/src/lib.rs) and
 [routing contract](docs/routing.md). Both examples depend only on `rake`, and their
@@ -33,6 +36,7 @@ shared factories build for native and browser targets. The
 See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 [runtime control](docs/runtime-control.md) for CLI setup, shared handlers and bounds.
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
+See [graphical devtools](docs/devtools.md) for launch commands, panels and capture limits.
 
 ## Run
 
@@ -102,6 +106,10 @@ cargo check -p rake --no-default-features --locked
 cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --locked
 cargo build -p rake-cli --locked
 python3 scripts/test-dev-bridge.py
+python3 scripts/test-supervisor.py
+python3 scripts/test-inspector.py
+node scripts/test-inspector.mjs
+node scripts/test-inspector-ui.mjs
 cargo check -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 cargo clippy -p rake -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
 cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
@@ -138,7 +146,7 @@ the library's whitespace suggestions and then reruns the check.
 
 ## Current boundary
 
-Distribution packaging, graphical devtools panels and generated application command
+Distribution packaging, element inspection and generated application command
 derives remain subsequent stages. Native code replacement awaits the external hot
 reloader; native dev currently uses an explicitly reported checkpointed restart. Runtime control
 is opt-in, native IPC currently requires Unix, and state watches coalesce with

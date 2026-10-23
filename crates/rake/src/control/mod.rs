@@ -318,7 +318,14 @@ impl<R: Route> RuntimeClient<R> {
                 let mut snapshot = self.router.diagnostics();
 
                 snapshot.records.retain(|record| {
-                    record.sequence > after && kind.as_ref().is_none_or(|kind| record.kind == *kind)
+                    record.sequence > after
+                        && kind.as_ref().is_none_or(|kind| {
+                            if kind == "span" {
+                                record.kind == "span_open" || record.kind == "span_close"
+                            } else {
+                                record.kind == *kind
+                            }
+                        })
                 });
 
                 Ok(Reply::Diagnostics(snapshot))

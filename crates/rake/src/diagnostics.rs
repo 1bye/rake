@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::field::{Field, Visit};
-use tracing::span::{Attributes, Id};
+use tracing::span::{Attributes, Id, Record as SpanRecord};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, SubscriberExt};
-use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::registry::{LookupSpan, SpanRef};
 use tracing_subscriber::{Layer, Registry};
 use web_time::Instant;
 
@@ -30,6 +30,15 @@ pub struct Record {
     pub kind: String,
     /// Enclosing span names from root to leaf.
     pub spans: Vec<String>,
+    /// Collector-local span identity; absent when no instrumented span is active.
+    #[serde(default)]
+    pub span_id: Option<u64>,
+    /// Parent identity, independent of potentially identical span names.
+    #[serde(default)]
+    pub parent_span_id: Option<u64>,
+    /// Elapsed wall time on span close, not CPU usage.
+    #[serde(default)]
+    pub duration_us: Option<u64>,
     /// Structured fields; debug/display fields necessarily contain formatted text.
     pub fields: BTreeMap<String, Value>,
 }
@@ -56,6 +65,7 @@ struct Inner {
     dropped: AtomicU64,
     output_dropped: AtomicU64,
     started: Instant,
+    next_span: AtomicU64,
 }
 
 /// A cheap shared handle to bounded records. Producers never wait for its lock.
@@ -80,6 +90,7 @@ impl Collector {
             dropped: AtomicU64::new(0),
             output_dropped: AtomicU64::new(0),
             started: Instant::now(),
+            next_span: AtomicU64::new(1),
         }))
     }
 
@@ -111,6 +122,42 @@ impl Collector {
         spans: Vec<String>,
         fields: BTreeMap<String, Value>,
     ) {
+        self.record_context(self.context(), level, target, kind, spans, fields, None);
+    }
+
+    pub(crate) fn context(&self) -> CapturedContext {
+        self.span_context(&tracing::Span::current())
+    }
+
+    pub(crate) fn span_context(&self, span: &tracing::Span) -> CapturedContext {
+        span.with_subscriber(|(id, dispatch)| {
+            dispatch
+                .downcast_ref::<Registry>()
+                .and_then(|registry| registry.span(id))
+                .map(|span| capture(span, self))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_context(
+        &self,
+        mut context: CapturedContext,
+        level: &str,
+        target: &str,
+        kind: &str,
+        spans: Vec<String>,
+        fields: BTreeMap<String, Value>,
+        duration_us: Option<u64>,
+    ) {
+        context.fields.extend(fields);
+        let spans = if spans.is_empty() {
+            context.spans
+        } else {
+            spans
+        };
+
         let Ok(mut buffer) = self.0.buffer.try_lock() else {
             self.0.dropped.fetch_add(1, Ordering::Relaxed);
 
@@ -138,7 +185,10 @@ impl Collector {
             target: target.into(),
             kind: kind.into(),
             spans,
-            fields,
+            fields: context.fields,
+            span_id: context.span_id,
+            parent_span_id: context.parent_span_id,
+            duration_us,
         });
     }
 }
@@ -176,52 +226,170 @@ impl Visit for Fields {
 /// A composable tracing layer backed by a [`Collector`].
 pub struct CollectorLayer(Collector);
 
+/// Owned causal metadata captured before asynchronous work changes context.
+#[derive(Clone, Default)]
+pub(crate) struct CapturedContext {
+    spans: Vec<String>,
+    fields: BTreeMap<String, Value>,
+    span_id: Option<u64>,
+    parent_span_id: Option<u64>,
+}
+
+struct SpanData {
+    id: u64,
+    parent: Option<u64>,
+    started: Instant,
+    fields: BTreeMap<String, Value>,
+}
+
+#[derive(Default)]
+struct SpanContexts(Vec<(std::sync::Weak<Inner>, SpanData)>);
+
+impl SpanContexts {
+    fn get(&self, collector: &Collector) -> Option<&SpanData> {
+        let key = Arc::downgrade(&collector.0);
+
+        self.0
+            .iter()
+            .find(|(owner, _)| owner.ptr_eq(&key))
+            .map(|(_, data)| data)
+    }
+
+    fn get_mut(&mut self, collector: &Collector) -> Option<&mut SpanData> {
+        let key = Arc::downgrade(&collector.0);
+
+        self.0
+            .iter_mut()
+            .find(|(owner, _)| owner.ptr_eq(&key))
+            .map(|(_, data)| data)
+    }
+}
+
+fn capture<S: for<'lookup> LookupSpan<'lookup>>(
+    span: SpanRef<'_, S>,
+    collector: &Collector,
+) -> CapturedContext {
+    let mut context = CapturedContext::default();
+
+    for span in span.scope().from_root() {
+        context.spans.push(span.name().into());
+        let extensions = span.extensions();
+
+        if let Some(data) = extensions
+            .get::<SpanContexts>()
+            .and_then(|contexts| contexts.get(collector))
+        {
+            context.fields.extend(data.fields.clone());
+            context.span_id = Some(data.id);
+            context.parent_span_id = data.parent;
+        }
+    }
+
+    context
+}
+
 impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLayer {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, cx: Context<'_, S>) {
+        let Some(span) = cx.span(id) else {
+            return;
+        };
+
+        let parent = span.parent().and_then(|parent| {
+            parent
+                .extensions()
+                .get::<SpanContexts>()
+                .and_then(|contexts| contexts.get(&self.0))
+                .map(|data| data.id)
+        });
+
         let mut fields = Fields::default();
 
         attrs.record(&mut fields);
-        let spans = cx.span_scope(id).map_or_else(Vec::new, |scope| {
-            scope.from_root().map(|span| span.name().into()).collect()
-        });
+        let data = SpanData {
+            id: self.0.0.next_span.fetch_add(1, Ordering::Relaxed),
+            parent,
+            started: Instant::now(),
+            fields: fields.0,
+        };
 
-        self.0.record(
+        let mut extensions = span.extensions_mut();
+
+        if extensions.get_mut::<SpanContexts>().is_none() {
+            extensions.insert(SpanContexts::default());
+        }
+
+        extensions
+            .get_mut::<SpanContexts>()
+            .expect("inserted span contexts")
+            .0
+            .push((Arc::downgrade(&self.0.0), data));
+        drop(extensions);
+        self.0.record_context(
+            capture(span, &self.0),
             attrs.metadata().level().as_str(),
             attrs.metadata().target(),
             "span_open",
-            spans,
-            fields.0,
+            Vec::new(),
+            BTreeMap::new(),
+            None,
         );
+    }
+
+    fn on_record(&self, id: &Id, values: &SpanRecord<'_>, cx: Context<'_, S>) {
+        if let Some(span) = cx.span(id) {
+            let mut fields = Fields::default();
+
+            values.record(&mut fields);
+
+            if let Some(data) = span
+                .extensions_mut()
+                .get_mut::<SpanContexts>()
+                .and_then(|contexts| contexts.get_mut(&self.0))
+            {
+                data.fields.extend(fields.0);
+            }
+        }
     }
 
     fn on_event(&self, event: &Event<'_>, cx: Context<'_, S>) {
         let mut fields = Fields::default();
 
         event.record(&mut fields);
-        let spans = cx.event_scope(event).map_or_else(Vec::new, |scope| {
-            scope.from_root().map(|span| span.name().into()).collect()
-        });
+        let context = cx
+            .event_span(event)
+            .map(|span| capture(span, &self.0))
+            .unwrap_or_default();
 
-        self.0.record(
+        self.0.record_context(
+            context,
             event.metadata().level().as_str(),
             event.metadata().target(),
             "event",
-            spans,
+            Vec::new(),
             fields.0,
+            None,
         );
     }
 
     fn on_close(&self, id: Id, cx: Context<'_, S>) {
         if let Some(span) = cx.span(&id) {
-            self.0.record(
-                span.metadata().level().as_str(),
-                span.metadata().target(),
+            let duration = span
+                .extensions()
+                .get::<SpanContexts>()
+                .and_then(|contexts| contexts.get(&self.0))
+                .map(|data| data.started.elapsed().as_micros().min(u64::MAX as u128) as u64);
+
+            let metadata = span.metadata();
+            let context = capture(span, &self.0);
+
+            self.0.record_context(
+                context,
+                metadata.level().as_str(),
+                metadata.target(),
                 "span_close",
-                span.scope()
-                    .from_root()
-                    .map(|span| span.name().into())
-                    .collect(),
+                Vec::new(),
                 BTreeMap::new(),
+                duration,
             );
         }
     }

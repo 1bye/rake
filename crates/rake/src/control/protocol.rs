@@ -201,7 +201,7 @@ pub enum Query {
     Diagnostics {
         /// Exclusive collector sequence.
         after: u64,
-        /// Optional record kind such as `request` or `span_close`.
+        /// Optional record kind such as `request`; `span` includes opens and closes.
         kind: Option<String>,
     },
 }

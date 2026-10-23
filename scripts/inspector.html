@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Rake Devtools</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/__rake/inspector.css">
+  <script type="module" src="/__rake/inspector.js"></script>
+</head>
+<body>
+  <header><div class="brand">rake <span>devtools</span></div><label>Runtime <select id="runtime" aria-label="Runtime instance"><option value="">Waiting for an application</option></select></label><span id="connection" role="status">Connecting…</span><button id="pause">Pause updates</button></header>
+  <div class="shell"><nav aria-label="Inspector panels" id="panels"></nav><main>
+    <div class="page-heading"><div><span class="eyebrow">APPLICATION RUNTIME</span><h1 id="title">Workspace</h1></div><div id="summary"></div></div>
+    <div id="notice" role="status"></div><div id="error" role="alert" hidden></div>
+    <div class="tools"><label class="search">Filter <input id="search" type="search" placeholder="Search this panel" autocomplete="off"></label><span id="context"></span><button id="clear-context" hidden>Clear context</button></div>
+    <div id="content"></div><footer id="loss"></footer>
+  </main></div>
+</body>
+</html>

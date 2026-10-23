@@ -93,9 +93,10 @@ The initial surface includes open/reveal, exact-tab navigate/replace/select/clos
 Back/Forward, policy changes, task cancellation, operation cancellation, decision
 responses and registered application commands. Queries expose runtime capabilities,
 application state, routes, tabs/histories, tasks/owners, operations/results, pending
-decisions and bounded diagnostics. Logs, request records and span-close exports
-read the same collector; these are initial diagnostic records, not a graphical
-inspector, complete request archive or full trace-tree export.
+decisions and bounded diagnostics. Logs, request records and span open/close exports
+read the same collector as the [graphical inspector](devtools.md). Span IDs,
+parent IDs, inherited causal fields and elapsed wall time support bounded trace
+trees; missing observations remain explicit.
 
 A submission returns an operation ID before commit. The terminal waits until a
 terminal state or a pending decision by default. `--no-wait` returns immediately.
@@ -215,9 +216,9 @@ fail transport framing; this initial implementation has no pagination. A browser
 may throttle or freeze polling when hidden; reconnect/retry preserves the same
 RuntimeId while that application instance survives.
 
-The project supervisor, build/package commands, element inspector, reload adapters,
-generated command derive and richer diagnostics are later work. The present CLI
-reports unsupported commands instead of pretending those capabilities exist.
+The [development supervisor](development.md), build commands, reload boundary and
+graphical inspector use this control surface. Distribution packaging, element
+inspection and the generated command derive remain later work.
 
 ## Verification
 

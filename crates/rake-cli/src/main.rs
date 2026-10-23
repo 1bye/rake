@@ -12,7 +12,7 @@ fn main() {
     #[cfg(unix)]
     let result = if arguments
         .first()
-        .is_some_and(|command| matches!(command.as_str(), "dev" | "build" | "doctor"))
+        .is_some_and(|command| matches!(command.as_str(), "dev" | "build" | "doctor" | "inspect"))
     {
         project::run(arguments)
     } else {

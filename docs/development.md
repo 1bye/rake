@@ -8,6 +8,7 @@ Python 3.11+ and the selected Rust/platform toolchain must be on PATH.
 target/debug/rake doctor
 target/debug/rake dev --target desktop --package rake-routing
 target/debug/rake dev --target web --package rake-routing --port 8081
+target/debug/rake inspect --session /tmp/rake-dev-EXAMPLE
 target/debug/rake build --target desktop --package rake-routing --release
 target/debug/rake build --target web --package rake-routing --release
 ```
@@ -39,6 +40,14 @@ target/debug/rake dev status --session /tmp/rake-dev-EXAMPLE --json
 RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake instances --json
 RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake ctl reload status --json
 ```
+
+Native dev opens the [graphical inspector](devtools.md) on a separate loopback
+origin; Web dev opens the application with a Devtools link. Both print a private
+launch URL. `--no-open` keeps the servers running without opening a browser.
+The inspector stays available when an app crashes or restarts. `rake inspect`
+also connects to already-running opt-in runtimes, using `RAKE_CONTROL_DIR` or
+`--session`; it starts no application or build watcher. Use `--instance UUID`
+to select an initial runtime when several are advertised.
 
 `--json` emits supervisor events as JSON lines; compiler/application diagnostics go
 to stderr. `status.json` remains readable when the app is stopped or crashed. Ctrl-C

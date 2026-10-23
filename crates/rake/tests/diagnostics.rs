@@ -98,3 +98,75 @@ fn async_instrumentation_does_not_enter_a_span_across_suspension() {
 
     assert!(outside.spans.is_empty());
 }
+
+#[test]
+fn repeated_span_names_have_distinct_ids_parentage_fields_updates_and_elapsed_times() {
+    let collector = Collector::new(50);
+    let subscriber = tracing_subscriber::registry().with(collector.layer());
+
+    tracing::subscriber::with_default(subscriber, || {
+        let root = tracing::info_span!("root", operation_id = "op-9");
+        let _root = root.enter();
+
+        let first =
+            tracing::info_span!("same", task_id = "task-1", progress = tracing::field::Empty);
+
+        first.record("progress", 3u64);
+        first.in_scope(|| rake::info!("first"));
+        let second = tracing::info_span!("same", task_id = "task-2");
+
+        second.in_scope(|| rake::info!("second"));
+    });
+    let snapshot = collector.snapshot();
+
+    let opens: Vec<_> = snapshot
+        .records
+        .iter()
+        .filter(|record| record.kind == "span_open")
+        .collect();
+
+    assert_ne!(opens[1].span_id, opens[2].span_id);
+    assert_eq!(opens[1].parent_span_id, opens[0].span_id);
+    assert_eq!(opens[2].parent_span_id, opens[0].span_id);
+    let event = snapshot
+        .records
+        .iter()
+        .find(|record| {
+            record
+                .fields
+                .get("message")
+                .and_then(|value| value.as_str())
+                == Some("first")
+        })
+        .unwrap();
+
+    assert_eq!(event.fields["operation_id"], "op-9");
+    assert_eq!(event.fields["task_id"], "task-1");
+    assert_eq!(event.fields["progress"], 3);
+    assert_eq!(event.span_id, opens[1].span_id);
+    assert!(
+        snapshot
+            .records
+            .iter()
+            .filter(|record| record.kind == "span_close")
+            .all(|record| record.duration_us.is_some())
+    );
+}
+
+#[test]
+fn independent_collectors_can_share_a_subscriber_without_span_extension_collisions() {
+    let a = Collector::new(10);
+    let b = Collector::new(10);
+
+    let subscriber = tracing_subscriber::registry()
+        .with(a.layer())
+        .with(b.layer());
+
+    tracing::subscriber::with_default(subscriber, || {
+        let span = tracing::info_span!("shared");
+
+        span.in_scope(|| rake::info!("shared event"));
+    });
+    assert_eq!(a.snapshot().records.len(), 3);
+    assert_eq!(b.snapshot().records.len(), 3);
+}

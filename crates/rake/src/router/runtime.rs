@@ -366,6 +366,7 @@ impl<R: Route> Router<R> {
         Self(Rc::new(Core {
             tasks,
             reload: RefCell::new(crate::reload::ReloadStatus {
+                restored_from: None,
                 generation: super::GenerationId(1),
                 phase: crate::reload::ReloadPhase::Idle,
                 request: None,

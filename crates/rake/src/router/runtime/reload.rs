@@ -93,7 +93,10 @@ impl<R: Route> Router<R> {
         }
 
         drop(state);
+        let restored_from = self.0.reload.borrow().restored_from;
+
         *self.0.reload.borrow_mut() = ReloadStatus {
+            restored_from,
             generation: self.0.tasks.generation(),
             phase: ReloadPhase::Quiescing,
             request: Some(request),
@@ -231,6 +234,7 @@ impl<R: Route> Router<R> {
         };
 
         *self.0.reload.borrow_mut() = ReloadStatus {
+            restored_from: status.restored_from,
             generation,
             phase: if applied {
                 ReloadPhase::Restored
@@ -446,6 +450,7 @@ impl<R: Route> Router<R> {
         state.sequence = sequence;
         drop(state);
         *self.0.reload.borrow_mut() = ReloadStatus {
+            restored_from: Some(checkpoint.source_runtime),
             generation,
             phase: ReloadPhase::Restored,
             request: None,

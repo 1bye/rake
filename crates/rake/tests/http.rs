@@ -273,3 +273,62 @@ fn network_rejection_and_truncated_bodies_have_distinct_errors() {
 
     assert!(matches!(broken, Err(Error::Body(_))));
 }
+
+#[test]
+fn request_body_abandonment_keeps_original_task_context_and_redacted_metadata() {
+    use tracing::Instrument;
+    use tracing_subscriber::prelude::*;
+
+    let (base, server) =
+        server("HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody");
+
+    let collector = Collector::new(50);
+    let http = HttpClient::with_collector(HttpConfig::new(), collector.clone()).unwrap();
+
+    let subscriber = tracing_subscriber::registry().with(collector.layer().with_filter(
+        tracing_subscriber::filter::filter_fn(|metadata| metadata.name() != "http.request"),
+    ));
+
+    tracing::subscriber::with_default(subscriber, || {
+        let original = tracing::info_span!(
+            "original",
+            task_id = "task-1",
+            tab_id = "tab-7",
+            generation_id = "gen-1"
+        );
+
+        let response = block_on(
+            http.get(&format!("{base}documents?credential=secret#private"))
+                .send()
+                .instrument(original),
+        )
+        .unwrap();
+
+        let unrelated = tracing::info_span!("unrelated", task_id = "task-2", tab_id = "tab-8");
+
+        unrelated.in_scope(|| drop(response));
+    });
+    server.join().unwrap();
+    let snapshot = collector.snapshot();
+
+    let request = snapshot
+        .records
+        .iter()
+        .find(|record| record.kind == "request" && record.fields["phase"] == "abandoned")
+        .unwrap();
+
+    assert_eq!(request.fields["task_id"], "task-1");
+    assert_eq!(request.fields["tab_id"], "tab-7");
+    assert_eq!(request.fields["method"], "GET");
+    assert_eq!(request.fields["status"], 200);
+    assert_eq!(request.fields["received_bytes"], 0);
+    assert!(request.span_id.is_some());
+    assert!(
+        !request.fields["url"]
+            .as_str()
+            .unwrap()
+            .contains("credential")
+    );
+    assert!(!request.fields["url"].as_str().unwrap().contains("private"));
+    assert!(request.fields["duration_us"].is_u64());
+}

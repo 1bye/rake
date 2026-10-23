@@ -153,6 +153,10 @@ pub enum ReloadPhase {
 /// Owned status available through native and browser control adapters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReloadStatus {
+    /// Previous host whose workspace was restored; lets observers follow a replacement
+    /// without guessing between independent instances of the same application.
+    #[serde(default)]
+    pub restored_from: Option<RuntimeId>,
     /// Current code generation; increases on compatible replacement.
     pub generation: GenerationId,
     /// Current boundary phase.

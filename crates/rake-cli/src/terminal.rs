@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-const HELP: &str = "rake instances [--json]
+const HELP: &str = "rake inspect [--session PATH] [--instance UUID|application-id] [--no-open]
+rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   info | schema | snapshot | events [--follow]
   reload status | reload checkpoint APPLICATION_ID
@@ -32,7 +33,7 @@ Mutations: [--no-wait] [--request-key KEY]. Retry the same payload and key after
 Raw messages use the shared {\"type\":\"query\"|\"command\",\"value\":{\"type\":...}} schema.
 Development: RAKE_DEV_CONTROL=1 <native-app>; Web: scripts/serve-web.py --control.
 Build/watch: rake dev|build --target desktop|web --package PACKAGE.
-Prerequisites: rake doctor. The graphical inspector is not implemented yet.";
+Prerequisites: rake doctor. Graphical devtools: rake inspect, or the Devtools link in a Web dev session.";
 
 fn flag(args: &mut Vec<String>, name: &str) -> bool {
     if let Some(index) = args.iter().position(|arg| arg == name) {
@@ -189,7 +190,7 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
 
             let kind = match topic.as_str() {
                 "requests" => Some("request".into()),
-                "traces" => Some("span_close".into()),
+                "traces" => Some("span".into()),
                 _ => None,
             };
 

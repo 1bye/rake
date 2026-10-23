@@ -322,6 +322,13 @@ impl Request {
 
         let mut lifecycle = Lifecycle::new(self.client.0.collector.clone());
 
+        let span = tracing::info_span!("http.request", request_id = lifecycle.id);
+
+        // A filtered request span must not erase its parent's captured causal context.
+        if !span.is_disabled() {
+            lifecycle.context = lifecycle.collector.span_context(&span);
+        }
+
         lifecycle.event(
             "started",
             [
@@ -333,8 +340,6 @@ impl Request {
             token: self.cancellation,
             deadline,
         };
-
-        let span = tracing::info_span!("http.request", request_id = lifecycle.id);
 
         let result = scope
             .run(compatible(async {
@@ -561,6 +566,10 @@ struct Lifecycle {
     id: u64,
     collector: Collector,
     finished: bool,
+    context: crate::diagnostics::CapturedContext,
+    started: Instant,
+    bytes: u64,
+    metadata: BTreeMap<String, Value>,
 }
 
 impl Lifecycle {
@@ -569,22 +578,49 @@ impl Lifecycle {
 
         Self {
             id: NEXT_REQUEST.fetch_add(1, Ordering::Relaxed),
+            context: collector.context(),
             collector,
             finished: false,
+            started: Instant::now(),
+            bytes: 0,
+            metadata: BTreeMap::new(),
         }
     }
 
-    fn event<const N: usize>(&self, phase: &str, fields: [(&str, Value); N]) {
+    fn event<const N: usize>(&mut self, phase: &str, fields: [(&str, Value); N]) {
         let mut fields: BTreeMap<String, Value> = fields
             .into_iter()
             .map(|(key, value)| (key.into(), value))
             .collect();
 
+        for key in ["method", "url", "status"] {
+            if let Some(value) = fields.get(key) {
+                self.metadata.insert(key.into(), value.clone());
+            }
+        }
+
+        if let Some(bytes) = fields.get("bytes").and_then(Value::as_u64) {
+            self.bytes = self.bytes.saturating_add(bytes);
+        }
+
+        fields.extend(self.metadata.clone());
+        fields.insert("received_bytes".into(), self.bytes.into());
+        fields.insert(
+            "duration_us".into(),
+            (self.started.elapsed().as_micros().min(u64::MAX as u128) as u64).into(),
+        );
         fields.insert("request_id".into(), self.id.into());
         fields.insert("phase".into(), phase.into());
 
-        self.collector
-            .record("INFO", "rake::http", "request", Vec::new(), fields);
+        self.collector.record_context(
+            self.context.clone(),
+            "INFO",
+            "rake::http",
+            "request",
+            Vec::new(),
+            fields,
+            None,
+        );
     }
 
     fn finish(&mut self, phase: &str) {
