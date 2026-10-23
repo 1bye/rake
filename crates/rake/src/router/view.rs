@@ -1,5 +1,7 @@
 //! GPUI mounting and presentation; retained entries own independent view entities.
 
+use crate::inspection::InspectElement as _;
+
 use std::rc::Rc;
 
 use gpui::prelude::*;
@@ -226,7 +228,8 @@ impl<R: Route> RenderOnce for TabBar<R> {
                             .child(label)
                             .on_click(move |_, _, _| {
                                 drop(select.tab(id).select());
-                            }),
+                            })
+                            .inspect(format!("rake.tab.select.{id}")),
                     )
                     .child(
                         div()
@@ -237,9 +240,12 @@ impl<R: Route> RenderOnce for TabBar<R> {
                             .child("×")
                             .on_click(move |_, _, _| {
                                 drop(close.tab(id).close());
-                            }),
+                            })
+                            .inspect(format!("rake.tab.close.{id}")),
                     )
+                    .inspect(format!("rake.tab.{id}"))
             }))
+            .inspect("rake.tab-strip")
     }
 }
 
@@ -263,7 +269,22 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
             .resource()
             .and_then(|resource| resource.downcast_ref::<AnyView>().cloned());
 
-        div().size_full().children(view)
+        let snapshot = self.router.snapshot();
+
+        let outlet = div()
+            .size_full()
+            .children(view)
+            .inspect("rake.route-outlet");
+
+        if let Some(tab) = snapshot
+            .tabs
+            .iter()
+            .find(|tab| Some(tab.id) == snapshot.selected)
+        {
+            outlet.owner(tab.id, tab.entries[tab.cursor].id)
+        } else {
+            outlet
+        }
     }
 }
 
@@ -309,6 +330,10 @@ impl<R: Route> Workspace<R> {
         let router = Router::with_views(config, services, views, window, cx);
 
         router.client().set_commands(commands);
+
+        if control.inspection_enabled() {
+            router.client().inspection().attach();
+        }
 
         for guard in guards {
             router
@@ -405,7 +430,9 @@ impl<R: Route> Render for Workspace<R> {
                 .bg(rgb(0x18232b))
                 .text_color(rgb(0xf0f4e8))
                 .p_4()
-                .child("Preparing development reload…");
+                .child("Preparing development reload…")
+                .inspect("rake.reload")
+                .root(self.router.client().inspection(), snapshot.revision);
         }
 
         if snapshot.reload.phase == crate::reload::ReloadPhase::RestoreFailed {
@@ -435,8 +462,11 @@ impl<R: Route> Render for Workspace<R> {
                             if let Some(initial) = restart.clone() {
                                 drop(router.navigator().restore_destination(initial));
                             }
-                        }),
-                );
+                        })
+                        .inspect("rake.restart-workspace"),
+                )
+                .inspect("rake.restore-failed")
+                .root(self.router.client().inspection(), snapshot.revision);
         }
 
         let mut decision_area = div().flex().flex_col().gap_2();
@@ -445,6 +475,7 @@ impl<R: Route> Render for Workspace<R> {
             let choices = decision.choices.into_iter().map(|choice| {
                 let navigator = navigator.clone();
                 let id = decision.id;
+                let semantic_id = format!("rake.decision.{id}.{}", choice.id);
 
                 div()
                     .id(format!("{id}-{}", choice.id))
@@ -457,6 +488,7 @@ impl<R: Route> Render for Workspace<R> {
                     .on_click(move |_, _, _| {
                         let _ = navigator.respond(id, &choice.id);
                     })
+                    .inspect(semantic_id)
             });
 
             decision_area = decision_area.child(
@@ -466,7 +498,8 @@ impl<R: Route> Render for Workspace<R> {
                     .p_3()
                     .bg(rgb(0x59462c))
                     .child(decision.message)
-                    .children(choices),
+                    .children(choices)
+                    .inspect(format!("rake.decision.{}", decision.id)),
             );
         }
 
@@ -485,15 +518,21 @@ impl<R: Route> Render for Workspace<R> {
             .flex_col()
             .bg(rgb(0x18232b))
             .text_color(rgb(0xf0f4e8))
-            .child(TabBar::new(self.router.clone()))
-            .child(decision_area)
+            .child(
+                crate::inspection::inspect(TabBar::new(self.router.clone()))
+                    .semantic_id("rake.tabs"),
+            )
+            .child(decision_area.inspect("rake.decisions"))
             .children(failure)
             .children(snapshot.history_error)
             .child(
                 div()
                     .flex_1()
                     .overflow_hidden()
-                    .child(RouteOutlet::new(self.router.clone())),
+                    .child(RouteOutlet::new(self.router.clone()))
+                    .inspect("rake.content"),
             )
+            .inspect("rake.workspace")
+            .root(self.router.client().inspection(), snapshot.revision)
     }
 }

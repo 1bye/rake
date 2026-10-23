@@ -34,6 +34,7 @@ restoration; operation IDs and retry keys never cross runtimes.
 | Console | Structured tracing severity/fields/context, bounded build and native stdout/stderr, registered typed commands with argument/result schemas and JSON input. |
 | Requests | Method, redacted URL, status, elapsed time, bytes consumed and observed lifecycle events; distinguish headers, completion, cancellation/failure and abandonment. |
 | Traces | Collector-local span identities and parent links, inherited fields, elapsed wall-time timeline and related tasks/requests/logs. Missing ancestry or closes remain explicit. |
+| Elements | Presented inspection boundaries, real layout, authored base styles, source sites, semantic IDs and exact capture lookup; stale selections remain frozen. See [coverage](element-inspection.md). |
 | Reload | Supervisor build/reload/error status and the runtime lifecycle boundary, generation and restoration origin. |
 
 Search, context filters, paging and JSON diagnostic export operate on retained
@@ -86,7 +87,7 @@ and forwards no arbitrary filesystem or process commands. Web application origin
 can inspect Web runtimes only; they cannot proxy native IPC. Production builds
 contain no inspector connection metadata.
 
-The element/GPU inspector, CPU profiler and native code loader are outside this
+A pixel/GPU debugger, CPU profiler and native code loader are outside this
 stage. Native IPC currently requires Unix. Native replacement continues to use
 the external reloader boundary or the explicitly reported checkpointed process
 restart described in [development](development.md).

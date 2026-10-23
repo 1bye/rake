@@ -43,6 +43,7 @@ struct SavedRequest {
 }
 
 pub(crate) struct ClientState {
+    pub(crate) inspection: crate::inspection::Store,
     commands: RefCell<Commands>,
     capacity: usize,
     requests: RefCell<BTreeMap<String, SavedRequest>>,
@@ -51,6 +52,7 @@ pub(crate) struct ClientState {
 impl ClientState {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
+            inspection: crate::inspection::Store::default(),
             commands: RefCell::new(Commands::new()),
             capacity,
             requests: RefCell::new(BTreeMap::new()),
@@ -83,6 +85,7 @@ impl<R: Route> RuntimeClient<R> {
         let (completed_operations, pending_operations) = self.router.operation_limits();
 
         RuntimeInfo {
+            element_inspection: self.state.inspection.status(),
             protocol: PROTOCOL_VERSION,
             runtime_id: self.router.runtime_id(),
             platform: if cfg!(target_family = "wasm") {
@@ -266,8 +269,15 @@ impl<R: Route> RuntimeClient<R> {
         Ok(Reply::Submitted { operation_id: id })
     }
 
+    #[cfg(feature = "gpui")]
+    pub(crate) fn inspection(&self) -> crate::inspection::Store {
+        self.state.inspection.clone()
+    }
+
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
+            Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
+            Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),
             Query::Checkpoint { application_id } => Ok(Reply::Checkpoint(
                 self.router.reload_checkpoint(&application_id)?,
@@ -405,6 +415,29 @@ pub enum ControlConfig {
     Disabled,
     /// Native requires `RAKE_DEV_CONTROL=1`; Web requires injected same-origin metadata.
     FromEnvironment,
+}
+
+#[cfg(feature = "gpui")]
+impl ControlConfig {
+    pub(crate) fn inspection_enabled(self) -> bool {
+        if !matches!(self, Self::FromEnvironment) {
+            return false;
+        }
+
+        #[cfg(unix)]
+        {
+            std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            WebBridgeConfig::from_document().is_ok_and(|config| config.is_some())
+        }
+
+        #[cfg(not(any(unix, target_family = "wasm")))]
+        {
+            false
+        }
+    }
 }
 
 #[cfg(feature = "gpui")]

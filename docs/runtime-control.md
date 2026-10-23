@@ -91,7 +91,9 @@ the friendly CLI accepts their printed `tab-N`, `entry-N`, `op-N` forms.
 
 The initial surface includes open/reveal, exact-tab navigate/replace/select/close,
 Back/Forward, policy changes, task cancellation, operation cancellation, decision
-responses and registered application commands. Queries expose runtime capabilities,
+responses and registered application commands. `inspect tree` and
+`inspect element ELEMENT_ID` expose the [element inspection](element-inspection.md)
+snapshots, coverage and exact capture lookups. Queries expose runtime capabilities,
 application state, routes, tabs/histories, tasks/owners, operations/results, pending
 decisions and bounded diagnostics. Logs, request records and span open/close exports
 read the same collector as the [graphical inspector](devtools.md). Span IDs,
@@ -218,8 +220,8 @@ RuntimeId while that application instance survives.
 
 The [development supervisor](development.md), [build/packaging commands](packaging.md), reload boundary and
 graphical inspector use this control surface. Project packaging runs without a live
-runtime and enables no development transport in its Web output. Element
-inspection and the generated command derive remain later work.
+runtime and enables no development transport in its Web output. The generated
+application command derive remains later work.
 
 ## Verification
 

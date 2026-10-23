@@ -1,12 +1,13 @@
 import {InspectorState, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
 
 const $ = id => document.getElementById(id);
-const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Reload'];
+const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Elements', 'Reload'];
 const model = new InspectorState();
 let panel = 'Workspace', instances = [], routes = [], commands = [], info = null, development = null;
 let filter = {}, search = '', page = 0, paused = false, polling = false, mutating = false, connected = false;
 let receipt = null, operation = null, selectedOperation = null, output = {records: [], dropped: 0}, level = 'ALL', source = 'Structured', taskOwner = 'All';
 const expanded = new Set(), drafts = new Map();
+let elements = null, selectedElement = null, elementDetail = null, elementError = null;
 let rendered = null;
 let awaitingSuccessor = null;
 const parameters = new URLSearchParams(location.search);
@@ -101,6 +102,7 @@ function switchPanel(name) {
 function choose(runtime) {
   awaitingSuccessor = null;
   model.reset(runtime); info = null; routes = []; commands = []; connected = false;
+  elements = null; selectedElement = null; elementDetail = null; elementError = null;
   selectedOperation = null; operation = null; filter = {}; drafts.clear(); expanded.clear(); page = 0;
   $('runtime').value = runtime || ''; showError(null);
   message(runtime ? 'Connecting to a fresh runtime. Previous runtime IDs and observations have been cleared.' : 'Start an app with rake dev, or select an available runtime.');
@@ -203,6 +205,11 @@ async function refresh() {
             selectedOperation = null;
           }
         }
+      }
+      if (panel === 'Elements' && info?.queries?.includes('inspect_tree')) {
+        const tree = await query('inspect_tree', {}, runtime);
+        if (runtime !== model.runtime) return;
+        elements = tree.value;
       }
       connected = true; showError(null);
     }
@@ -379,6 +386,43 @@ function tracePanel() {
       node.duration == null ? 'No duration observed' : `${(node.duration / 1000).toFixed(3)} ms`, row(badge(!node.opened || node.missingParent ? 'Partial ancestry' : node.closed ? 'Closed' : 'No close observed'),
         related(node.fields, 'Tasks'), related(node.fields, 'Requests'), related(node.fields, 'Console'), details('Span fields', node, `span:${node.id}`))]))));
 }
+async function inspectElement(id) {
+  const runtime = model.runtime;
+  selectedElement = id; elementDetail = null; elementError = null;
+  try {
+    const detail = await query('inspect_element', {id}, runtime);
+    if (runtime === model.runtime && selectedElement === id) elementDetail = detail.value;
+  } catch (error) {
+    if (runtime === model.runtime && selectedElement === id) elementError = error.message;
+  }
+  render(true);
+}
+function elementsPanel() {
+  if (!info?.queries?.includes('inspect_tree')) return empty('This runtime does not expose element inspection.');
+  if (!elements) return empty('Waiting for the inspected tree.');
+  const depths = new Map();
+  for (const element of elements.elements) depths.set(element.id, element.parent ? (depths.get(element.parent) ?? 0) + 1 : 0);
+  const selected = elementDetail;
+  const replaced = selectedElement && !elements.elements.some(element => element.id === selectedElement);
+  const layout = selected?.layout;
+  const source = selected?.source;
+  const detail = selected ? card(selected.id,
+    el('p', `${selected.kind} · semantic ID: ${selected.semantic_id ?? 'Not supplied'}`, 'mono'),
+    el('p', selected.parent ? `Inspected parent: ${selected.parent}` : 'Root inspection boundary'),
+    el('p', layout ? `Layout in window logical pixels: x ${layout.x}, y ${layout.y}, width ${layout.width}, height ${layout.height}. Before clipping.` : 'Layout unavailable.'),
+    el('p', source ? `${source.file}:${source.line}:${source.column}` : 'Source location unavailable.', 'mono'),
+    el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
+    selected.styles ? append(el('div'), el('h3', 'Authored base style refinements'), el('pre', JSON.stringify(selected.styles, null, 2))) : empty('Style refinements unavailable for this boundary.'),
+    row(related(selected, 'Tasks'), related(selected, 'Requests'))) : null;
+  return append(el('div'), el('p', elements.coverage, 'hint'),
+    row(badge(elements.status), el('span', `Capture ${elements.capture} · render revision ${elements.router_revision} · current router revision ${model.snapshot?.revision ?? 'unknown'} · ${elements.elements.length} boundaries · ${elements.omitted} omitted`)),
+    replaced ? el('p', 'The selected capture has been replaced. Details are frozen; select a current row to inspect again.', 'warning') : null,
+    elementError ? el('p', elementError, 'warning') : null,
+    paged(elements.elements, items => table(['View tree / boundary', 'Identity', 'Owner', 'Inspect'], items.map(element => [
+      `${'↳ '.repeat(Math.min(depths.get(element.id), 16))}${element.semantic_id ?? element.kind}`,
+      element.id, element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`,
+      button('Inspect ' + element.id, () => inspectElement(element.id), !connected)]))), detail);
+}
 function reloadPanel() {
   return append(el('div'), card('Supervisor', el('pre', text(development, 12000))),
     model.snapshot ? card('Runtime reload boundary', el('pre', text(model.snapshot.reload, 12000))) : null,
@@ -412,11 +456,11 @@ function render(force = false) {
   $('loss').textContent = `Diagnostics: ${model.diagnosticsRecords.length} retained · ${model.dropped} collector drops · ${model.outputDropped} runtime output drops · ${model.evicted} inspector evictions · ${model.diagnosticGaps} missing diagnostic sequences · ${model.gaps} state resyncs. Process buffer drops: ${output.dropped}.`;
   if (!force && document.activeElement?.closest('form')) return;
   const signature = JSON.stringify([panel, model.runtime, model.cursor, model.after, connected, mutating,
-    receipt, operation, development, output.records.at(-1)?.sequence, output.dropped]);
+    receipt, operation, development, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
   if (!force && signature === rendered) return;
   rendered = signature;
   const content = ({Workspace: workspace, Routes: routing, Tasks: tasksPanel, Operations: operationsPanel, Decisions: decisionsPanel,
-    Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Reload: reloadPanel})[panel]();
+    Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Elements: elementsPanel, Reload: reloadPanel})[panel]();
   $('content').replaceChildren(...[receiptPanel(), ['Console', 'Requests', 'Traces'].includes(panel) ? button('Export diagnostic records', exportRecords, !model.runtime) : null, content].filter(Boolean));
 }
 for (const [index, name] of panels.entries()) {

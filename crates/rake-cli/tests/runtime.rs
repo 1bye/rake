@@ -64,9 +64,22 @@ fn terminal_submissions_survive_disconnect_retry_and_query_the_shared_runtime() 
     let (sender, receiver) = oneshot::channel();
 
     let thread = std::thread::spawn(move || {
+        let tree = cli(&owned_directory, &["ctl", "inspect", "tree", "--json"]);
+
+        assert_eq!(tree["type"], "elements");
+        assert_eq!(tree["value"]["status"], "unavailable");
+        assert_eq!(tree["value"]["elements"], serde_json::json!([]));
+        let unavailable = Command::new(env!("CARGO_BIN_EXE_rake"))
+            .env("RAKE_CONTROL_DIR", &owned_directory)
+            .args(["ctl", "inspect", "element", "element-1-0", "--json"])
+            .output()
+            .unwrap();
+
+        assert!(!unavailable.status.success());
+        assert!(String::from_utf8_lossy(&unavailable.stderr).contains("unavailable"));
         let invalid = Command::new(env!("CARGO_BIN_EXE_rake"))
             .env("RAKE_CONTROL_DIR", &owned_directory)
-            .args(["ctl", "inspect", "tree", "--json"])
+            .args(["ctl", "inspect", "unknown", "--json"])
             .output()
             .unwrap();
 

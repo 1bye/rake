@@ -8,6 +8,7 @@ extern crate self as rake;
 pub mod control;
 pub mod diagnostics;
 pub mod http;
+pub mod inspection;
 pub mod reload;
 pub mod router;
 pub mod tasks;
@@ -43,6 +44,8 @@ pub mod prelude {
         WebConfig, WebRouting,
     };
 
+    #[cfg(feature = "gpui")]
+    pub use crate::inspection::InspectElement;
     #[cfg(feature = "gpui")]
     pub use crate::router::{PageContext, RouteOutlet, RouteViews, TabBar};
     #[cfg(feature = "gpui")]

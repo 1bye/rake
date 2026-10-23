@@ -218,7 +218,8 @@ impl Render for Screen {
                             .child("Foreground")
                             .on_click(cx.listener(|this, _, _, _| {
                                 drop(this.page.tab().set_mode(TabMode::Foreground));
-                            })),
+                            }))
+                            .inspect("routing.foreground"),
                     )
                     .child(
                         div()
@@ -230,7 +231,8 @@ impl Render for Screen {
                             .child("Live")
                             .on_click(cx.listener(|this, _, _, _| {
                                 drop(this.page.tab().set_mode(TabMode::Live));
-                            })),
+                            }))
+                            .inspect("routing.live"),
                     )
                     .child(
                         div()
@@ -256,7 +258,8 @@ impl Render for Screen {
                                 }
 
                                 cx.notify();
-                            })),
+                            }))
+                            .inspect("routing.download"),
                     )
                     .child(
                         div()
@@ -270,7 +273,8 @@ impl Render for Screen {
                                 if let Some(task) = &this.download {
                                     let _ = task.cancel();
                                 }
-                            })),
+                            }))
+                            .inspect("routing.cancel-download"),
                     )
                     .child(
                         div()
@@ -296,7 +300,8 @@ impl Render for Screen {
                                 }
 
                                 cx.notify();
-                            })),
+                            }))
+                            .inspect("routing.export"),
                     ),
             )
             .children(self.task_error.clone())
@@ -318,7 +323,8 @@ impl Render for Screen {
                                 let _ = this.page.entry().set_dirty(true);
 
                                 cx.notify();
-                            })),
+                            }))
+                            .inspect("routing.edit"),
                     )
                     .child(
                         div()
@@ -331,7 +337,8 @@ impl Render for Screen {
                             .child("Save")
                             .on_click(cx.listener(|this, _, _, _| {
                                 let _ = this.page.entry().set_dirty(false);
-                            })),
+                            }))
+                            .inspect("routing.save"),
                     )
                     .child(
                         div()
@@ -349,7 +356,8 @@ impl Render for Screen {
                                         OpenTarget::NewTab,
                                     ),
                                 );
-                            }),
+                            })
+                            .inspect("routing.open-a"),
                     )
                     .child(
                         div()
@@ -367,7 +375,8 @@ impl Render for Screen {
                                         OpenTarget::NewTab,
                                     ),
                                 );
-                            }),
+                            })
+                            .inspect("routing.open-b"),
                     ),
             )
             .child(
@@ -385,7 +394,8 @@ impl Render for Screen {
                             .child("Home in this tab")
                             .on_click(move |_, _, _| {
                                 drop(home.open(Destination::Home, OpenTarget::CurrentTab));
-                            }),
+                            })
+                            .inspect("routing.home"),
                     )
                     .child(
                         div()
@@ -404,7 +414,8 @@ impl Render for Screen {
                                             .activation(Activation::PreserveSelection),
                                     ),
                                 );
-                            }),
+                            })
+                            .inspect("routing.hidden"),
                     )
                     .child(
                         div()
@@ -420,7 +431,8 @@ impl Render for Screen {
                                     Destination::Document("A".into()),
                                     RevealScope::Window,
                                 ));
-                            }),
+                            })
+                            .inspect("routing.reveal"),
                     ),
             )
             .child(
@@ -438,7 +450,8 @@ impl Render for Screen {
                             .child("Back in this tab")
                             .on_click(move |_, _, _| {
                                 drop(back.back());
-                            }),
+                            })
+                            .inspect("routing.back"),
                     )
                     .child(
                         div()
@@ -451,9 +464,11 @@ impl Render for Screen {
                             .child("Forward in this tab")
                             .on_click(move |_, _, _| {
                                 drop(forward.forward());
-                            }),
+                            })
+                            .inspect("routing.forward"),
                     ),
             )
+            .inspect("routing.screen")
     }
 }
 

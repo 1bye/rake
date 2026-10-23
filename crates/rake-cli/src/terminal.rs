@@ -13,6 +13,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const HELP: &str = "rake inspect [--session PATH] [--instance UUID|application-id] [--no-open]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
+  inspect tree | inspect element ELEMENT_ID
   info | schema | snapshot | events [--follow]
   reload status | reload checkpoint APPLICATION_ID
   reload prepare ID [--mechanism native_restart|web_page_reload|native_code_replacement]
@@ -142,6 +143,10 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                 id: args.remove(0),
                 applied: action == "apply",
             })
+        }
+        ("inspect", "tree") => Message::Query(Query::InspectTree {}),
+        ("inspect", "element") if args.len() == 1 => {
+            Message::Query(Query::InspectElement { id: args.remove(0) })
         }
         ("info", "") => Message::Query(Query::Info {}),
         ("schema", "") => Message::Query(Query::Schema {}),
@@ -602,7 +607,13 @@ mod tests {
             )
             .is_err()
         );
-        assert!(parse_message(["inspect", "tree"].map(String::from).to_vec()).is_err());
+        assert!(matches!(
+            parse_message(["inspect", "tree"].map(String::from).to_vec())
+                .unwrap()
+                .0,
+            Message::Query(Query::InspectTree {})
+        ));
+        assert!(parse_message(["inspect", "element"].map(String::from).to_vec()).is_err());
     }
 
     #[test]
@@ -659,6 +670,10 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::InspectTree {},
+            Query::InspectElement {
+                id: "element-1-0".into(),
+            },
             Query::Reload {},
             Query::Checkpoint {
                 application_id: "test".into(),

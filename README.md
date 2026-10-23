@@ -1,7 +1,7 @@
 # Rake
 
 Rake is an application framework for native GPUI and browser WebAssembly. This
-repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools and application packaging** of the
+repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools, application packaging and element inspection** of the
 [API design](docs/api-design.md). It is an unpublished prototype.
 
 The foundation includes:
@@ -28,6 +28,8 @@ The foundation includes:
 - A supervisor-owned browser inspector for native and Web runtimes: workspace,
   routes, tasks, operations, guard decisions, console, HTTP requests and span trees.
   Every action uses the same runtime dispatcher as the CLI.
+- Bounded element inspection: presented boundary tree, real layout, authored styles,
+  source sites and semantic IDs through shared queries and the Elements panel.
 - Native application/resource bundles, macOS signing and dylib relocation, Web
   deployment archives with path/hash prefixes, manifests and archive checksums.
 
@@ -39,6 +41,7 @@ See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 [runtime control](docs/runtime-control.md) for CLI setup, shared handlers and bounds.
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
 See [graphical devtools](docs/devtools.md) for launch commands, panels and capture limits.
+See [element inspection](docs/element-inspection.md) for instrumentation and coverage.
 See [packaging and distribution](docs/packaging.md) for bundle metadata, assets and deployment.
 
 ## Run
@@ -150,7 +153,7 @@ the library's whitespace suggestions and then reruns the check.
 
 ## Current boundary
 
-Installers, notarization, element inspection and generated application command
+Installers, notarization and generated application command
 derives remain subsequent stages. Native code replacement awaits the external hot
 reloader; native dev currently uses an explicitly reported checkpointed restart. Runtime control
 is opt-in, native IPC currently requires Unix, and state watches coalesce with

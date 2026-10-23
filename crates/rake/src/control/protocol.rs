@@ -155,10 +155,17 @@ impl Command {
     }
 }
 
-/// All supported diagnostic queries. Unsupported inspector capabilities are absent.
+/// Shared diagnostic queries; inspection replies report actual host availability.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Latest bounded presented tree, with explicit availability and coverage.
+    InspectTree {},
+    /// Exact boundary in the latest completed capture; IDs never select by semantics.
+    InspectElement {
+        /// Opaque ID returned by InspectTree.
+        id: String,
+    },
     /// Reload boundary status, including quiescence and compatibility failures.
     Reload {},
     /// Capture logical state after readiness.
@@ -210,6 +217,8 @@ impl Query {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
     pub fn names() -> &'static [&'static str] {
         &[
+            "inspect_tree",
+            "inspect_element",
             "reload",
             "checkpoint",
             "info",
@@ -231,6 +240,9 @@ impl Query {
 /// Actual host capability advertisement; browser instances never advertise native IPC.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeInfo {
+    /// Mounted inspection coverage availability; headless runtimes report Unavailable.
+    #[serde(default)]
+    pub element_inspection: crate::inspection::Status,
     /// Protocol version.
     pub protocol: u32,
     /// This live application lifetime.
@@ -302,6 +314,10 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    /// Latest completed bounded element tree.
+    Elements(crate::inspection::Snapshot),
+    /// Exact element metadata from that capture.
+    Element(crate::inspection::Element),
     /// Observable reload phase.
     Reload(crate::reload::ReloadStatus),
     /// Owned development workspace.
@@ -335,6 +351,9 @@ pub enum Reply {
 /// Structured protocol errors; transport failures are reported separately as I/O errors.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum ControlError {
+    /// Inspection availability or exact capture lookup failure.
+    #[error(transparent)]
+    Inspection(#[from] crate::inspection::InspectionError),
     /// Development preparation or compatibility failure.
     #[error(transparent)]
     Reload(#[from] crate::reload::ReloadError),

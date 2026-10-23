@@ -32,6 +32,7 @@ globalThis.setTimeout = (callback, delay) => { const timer = {callback, delay}; 
 globalThis.clearTimeout = timer => { timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 const information = {runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab'],
+  queries: ['inspect_tree', 'inspect_element'],
   commands: ['open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
 const fields = {task_id: 'task-5', tab_id: 'tab-7', entry_id: 'entry-8', operation_id: 'op-9', request_id: 10};
 const diagnostics = [
@@ -49,6 +50,10 @@ const snapshot = {runtime_id: runtime, window_id: 1, revision: 2, selected: 7,
   work: {host_visibility: 'Visible', tasks: [{id: 5, key: 'refresh', kind: 'Activity', owner: {Entry: 8},
     origin: {runtime_id: runtime, tab_id: 7, entry_id: 8}, run_id: 11, generation_id: 1, eligible: true, state: 'Running'}]},
   operations: [[9, 'AwaitingDecision']], decisions: [{id: 12, operation_id: 9, entry_id: 8, message: 'Save changed entry?', choices: [{id: 'save', label: 'Save'}, {id: 'discard', label: 'Discard'}]}]};
+let elementCapture = {status: 'captured', capture: '1', router_revision: 2, omitted: 3, coverage: 'Inspection boundaries; opaque GPUI children unavailable.', elements: [
+  {id: 'element-1-0', parent: null, semantic_id: '<script>screen</script>', kind: 'gpui::Div', tab_id: 7, entry_id: 8,
+    layout: {x: 10, y: 20, width: 300, height: 50}, source: {file: 'src/example.rs', line: 12, column: 3}, styles: {display: 'Flex'}, metadata_truncated: false}]};
+let staleElement = false;
 const envelopes = [];
 let advertised = [{application_id: 'test', info: information, transport: 'local'}];
 let loseReply = false;
@@ -69,12 +74,13 @@ globalThis.fetch = async (url, options) => {
       result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
     } else {
       const query = envelope.message.value;
-      const replies = {info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
+      const replies = {inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
         commands: [{id: 'test.echo', capability: 'Headless', arguments: {properties: {message: {type: 'string'}}}, result: {type: 'string'}}],
         events: {cursor: {runtime_id: runtime, epoch: 1, revision: 2}, kind: 'snapshot', snapshot},
         diagnostics: {records: diagnostics.filter(record => record.sequence > query.after), dropped: 0, output_dropped: 0},
         operation: {operation_id: 9, state: 'AwaitingDecision', result: null}};
       result = {Ok: {type: 'data', value: replies[query.type]}};
+      if (query.type === 'inspect_element' && staleElement) result = {Err: {Inspection: 'NotRetained'}};
       if (query.type === 'operation' && expireOperation) result = {Err: {OperationExpired: query.operation}};
     }
   }
@@ -127,6 +133,24 @@ await panel('Requests'); assert.match(ids.content.textContent, /abandoned/);
 assert.match(ids.content.textContent, /localhost\/resource/);
 await panel('Traces'); assert.match(ids.content.textContent, /Closed/);
 assert.ok(all(ids.content).some(node => node.tagName === 'svg'));
+await panel('Elements'); assert.match(ids.content.textContent, /3 omitted/);
+assert.match(ids.content.textContent, /<script>screen<\/script>/);
+assert.ok(!all(ids.content).some(node => node.tagName === 'script'));
+await find('button', 'Inspect element-1-0').click(); await settle();
+assert.match(ids.content.textContent, /src\/example.rs:12:3/);
+assert.match(ids.content.textContent, /width 300/);
+assert.match(ids.content.textContent, /Flex/);
+elementCapture = {...elementCapture, capture: '2', elements: [{...elementCapture.elements[0], id: 'element-2-0', styles: null, source: null, layout: null}]};
+await panel('Elements'); assert.match(ids.content.textContent, /Details are frozen/);
+staleElement = true;
+await find('button', 'Inspect element-2-0').click(); await settle();
+assert.match(ids.content.textContent, /NotRetained/);
+staleElement = false;
+await find('button', 'Inspect element-2-0').click(); await settle();
+assert.match(ids.content.textContent, /Style refinements unavailable/);
+assert.match(ids.content.textContent, /Source location unavailable/);
+elementCapture = {...elementCapture, status: 'unavailable', elements: []};
+await panel('Elements'); assert.match(ids.content.textContent, /unavailable/);
 await panel('Reload'); assert.match(ids.content.textContent, /watching/);
 const successor = '3da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 advertised = [{application_id: 'test', info: {...information, runtime_id: successor}}];
