@@ -1,0 +1,33 @@
+name: Rake
+on: [push, pull_request]
+
+jobs:
+  native-and-web:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo check -p rake --no-default-features --locked
+      - run: cargo clippy -p rake --no-default-features --locked -- -D warnings
+      - run: cargo build -p rake-cli --locked
+      - run: python3 scripts/test-dev-bridge.py
+      - run: python3 scripts/test-supervisor.py
+      - run: cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --locked
+      - run: cargo check -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked
+      - run: cargo clippy -p rake -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
+      - run: cargo build -p rake-foundation -p rake-routing --lib --target wasm32-unknown-unknown --locked
+      - run: cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
+      - run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
+      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.2.0 --locked
+      - run: python3 scripts/check-spacing.py

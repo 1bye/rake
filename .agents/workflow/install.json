@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "profiles": [
+    "rust-library",
+    "rust-cli",
+    "rust-async",
+    "rust-native-wasm",
+    "rust-workspace"
+  ],
+  "extraSkills": [],
+  "configs": true,
+  "oxlint": true,
+  "biome": true,
+  "files": {
+    ".agents/workflow/rust/AGENTS.md": "a017fd460b82c29c8fd04789e0b98c231464bf106302258ab549423248b31c7a",
+    ".agents/workflow/rust/architecture.md": "407cfcd3ac753062bf9ee4f77dd53665b0ff7fd913b43a491863a0ad3754fd5a",
+    ".agents/workflow/rust/testing.md": "4883c813daf165a00d120d3625fa6615f0f9ef04ac3cf9f164f8c19291a1bfab",
+    ".agents/workflow/rust/rustdoc.md": "ce04ba5aeba5a46801b91e5b9f0f96fdb0476bf612591ecca59260805683435f",
+    ".agents/workflow/rust/stacks.md": "12732e54bb48253f8c186d8e04a83ac13526408792a2e6579319bb8d43f31b8c",
+    ".agents/workflow/rust/configs/README.md": "abff2b5f4fec851e3dac5e95219d5ba4c5a559308038bf1826fccfc306ffb789",
+    ".agents/workflow/rust/configs/rustfmt.toml": "e5be2dab4f861e5f4762a4e2e9789c4d87ae297f7a4dec3b1ff9982db634154a",
+    ".agents/workflow/rust/configs/cargo-lints.toml": "08601ce1b6a6ab6c4b62cb1f9db69ba81d564a2ec89706fa63e8901fbbc9ee9f",
+    ".agents/skills/rust-development/SKILL.md": "f390e1229d941802c02b5f6b578a71c41af8a599375fa35dddf894f8dee5da18",
+    ".agents/skills/rust-development/references/ownership.md": "13db649207c70e8df928edafeb36286c926f515cc202a189648ece858cfa1d66",
+    ".agents/skills/rust-development/references/refactoring.md": "26648e1ec59a98f20269121be3b5377cd6b4e15cd2da42a91a0494d81b87d53f",
+    "rustfmt.toml": "e5be2dab4f861e5f4762a4e2e9789c4d87ae297f7a4dec3b1ff9982db634154a"
+  },
+  "agentsBlockHash": "f87f598fa1f903c75316e357b1a82fe8db2380ddff264a71afb42a32b77d51ee"
+}

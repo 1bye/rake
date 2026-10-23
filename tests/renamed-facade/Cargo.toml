@@ -1,0 +1,16 @@
+[package]
+name = "renamed-facade"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+framework = { package = "rake", path = "../../crates/rake" }

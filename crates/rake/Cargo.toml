@@ -1,0 +1,52 @@
+[package]
+name = "rake"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Portable application foundation for GPUI native and browser applications"
+
+[lints]
+workspace = true
+
+[features]
+default = ["gpui"]
+gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
+
+[dependencies]
+rake-macros = { path = "../rake-macros" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+tracing-subscriber = { version = "0.3", features = ["registry"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "stream"] }
+url = "2.5"
+percent-encoding = "2"
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+event-listener = "5.4"
+web-time = "1"
+gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false, optional = true }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", features = ["font-kit", "wayland", "x11"], optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+anyhow = "1"
+libc = "0.2"
+async-compat = "0.2.5"
+async-io = "2.6"
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+gloo-timers = { version = "0.3", features = ["futures"] }
+web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "EventTarget", "Document", "Element", "Storage"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
+[dev-dependencies]
+futures.workspace = true

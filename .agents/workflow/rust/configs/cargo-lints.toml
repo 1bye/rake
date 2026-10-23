@@ -1,0 +1,10 @@
+# Reference fragment: merge into a package's Cargo.toml, not clippy.toml.
+# For a workspace, use workspace.lints tables and opt in from each member.
+[lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"

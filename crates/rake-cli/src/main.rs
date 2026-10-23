@@ -1,0 +1,38 @@
+//! Terminal adapter for the shared development control protocol.
+
+#[cfg(unix)]
+mod project;
+#[cfg(unix)]
+mod terminal;
+
+fn main() {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    let json = arguments.iter().any(|argument| argument == "--json");
+
+    #[cfg(unix)]
+    let result = if arguments
+        .first()
+        .is_some_and(|command| matches!(command.as_str(), "dev" | "build" | "doctor"))
+    {
+        project::run(arguments)
+    } else {
+        terminal::run(arguments)
+    };
+
+    #[cfg(not(unix))]
+    let result: Result<(), Box<dyn std::error::Error>> =
+        Err("native local transport currently requires Unix".into());
+
+    if let Err(error) = result {
+        if json {
+            eprintln!(
+                "{}",
+                serde_json::json!({"error": {"message": error.to_string()}})
+            );
+        } else {
+            eprintln!("rake: {error}");
+        }
+
+        std::process::exit(1);
+    }
+}

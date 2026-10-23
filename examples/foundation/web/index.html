@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rake foundation</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #18232b; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #error { color: #f0f4e8; font: 16px system-ui; padding: 24px; white-space: pre-wrap; }
+</style>
+<div id="error" role="alert" hidden></div>
+<script type="module">
+  import init from './pkg/rake_foundation.js';
+  try { await init(); }
+  catch (error) {
+    const display = document.querySelector('#error');
+    display.hidden = false;
+    display.textContent = `Rake could not start: ${error}`;
+    console.error(error);
+  }
+</script>
+</html>

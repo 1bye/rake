@@ -1,0 +1,23 @@
+[package]
+name = "rake-routing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "rake-routing"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rake.workspace = true
+
+[features]
+hash-routing = []
