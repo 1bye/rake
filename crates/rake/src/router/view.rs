@@ -317,7 +317,7 @@ impl<R: Route> Workspace<R> {
         }
 
         #[cfg(target_family = "wasm")]
-        let browser = super::web::browser::BrowserHistory::attach(&router, web.routing)
+        let browser = super::web::browser::BrowserHistory::attach(&router, web)
             .map_err(|error| MountError(error.to_string()))?;
 
         #[cfg(not(target_family = "wasm"))]

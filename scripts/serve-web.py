@@ -6,6 +6,7 @@ import io
 import json
 import secrets
 import re
+import signal
 import threading
 import urllib.parse
 import urllib.error
@@ -255,10 +256,22 @@ if bridge:
     launch_url += f"{'/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
 print(f"Serving {args.example} at {launch_url}", flush=True)
 
+stopping = False
+
+
+def stop(*_args):
+    global stopping
+    # Do not raise while HTTPServer is starting a handler or holding an internal lock.
+    stopping = True
+
+
+signal.signal(signal.SIGINT, stop)
+signal.signal(signal.SIGTERM, stop)
+server.timeout = .25
+
 try:
-    server.serve_forever()
-except KeyboardInterrupt:
-    pass
+    while not stopping:
+        server.handle_request()
 finally:
     server.server_close()
     if bridge:

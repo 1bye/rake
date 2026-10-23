@@ -10,10 +10,12 @@ fn main() {
     let json = arguments.iter().any(|argument| argument == "--json");
 
     #[cfg(unix)]
-    let result = if arguments
-        .first()
-        .is_some_and(|command| matches!(command.as_str(), "dev" | "build" | "doctor" | "inspect"))
-    {
+    let result = if arguments.first().is_some_and(|command| {
+        matches!(
+            command.as_str(),
+            "dev" | "build" | "bundle" | "doctor" | "inspect"
+        )
+    }) {
         project::run(arguments)
     } else {
         terminal::run(arguments)

@@ -21,3 +21,8 @@ rake.workspace = true
 
 [features]
 hash-routing = []
+
+[package.metadata.rake.bundle]
+name = "Rake Routing"
+identifier = "com.example.rake.routing"
+assets = "assets"

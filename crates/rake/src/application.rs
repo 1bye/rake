@@ -207,6 +207,11 @@ impl<R: Route> App<R> {
             return Err(AppError::ControlRequiresRouter);
         }
 
+        #[cfg(target_family = "wasm")]
+        {
+            self.web = crate::router::web::browser::configuration(self.web)?;
+        }
+
         let checkpoint = crate::reload::host::load(self.control);
 
         let root: Root = if let Some(routes) = self.routes.take() {
@@ -227,7 +232,7 @@ impl<R: Route> App<R> {
 
             #[cfg(target_family = "wasm")]
             let initial = {
-                let destination = crate::router::web::browser::location::<R>(self.web.routing);
+                let destination = crate::router::web::browser::location::<R>(&self.web);
 
                 if checkpoint.is_some() {
                     destination.ok()

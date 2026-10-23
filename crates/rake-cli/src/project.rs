@@ -10,6 +10,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         for (name, source) in [
+            ("bundle.py", include_str!("../../../scripts/bundle.py")),
             (
                 "inspector.py",
                 include_str!("../../../scripts/inspector.py"),

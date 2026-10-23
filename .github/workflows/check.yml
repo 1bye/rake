@@ -18,6 +18,16 @@ jobs:
       - run: cargo check -p rake --no-default-features --locked
       - run: cargo clippy -p rake --no-default-features --locked -- -D warnings
       - run: cargo build -p rake-cli --locked
+      - name: Install matching Wasm bindings tool
+        run: |
+          python3 - <<'PY'
+          import subprocess, tomllib
+          from pathlib import Path
+          lock = tomllib.loads(Path("Cargo.lock").read_text())
+          version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
+          subprocess.run(["cargo", "install", "wasm-bindgen-cli", "--version", version, "--locked"], check=True)
+          PY
+      - run: python3 scripts/test-bundle.py
       - run: python3 scripts/test-dev-bridge.py
       - run: python3 scripts/test-supervisor.py
       - run: python3 scripts/test-inspector.py
@@ -26,7 +36,7 @@ jobs:
           node-version: 22
       - run: node scripts/test-inspector.mjs
       - run: node scripts/test-inspector-ui.mjs
-      - run: cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --locked
+      - run: cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --test web_deployment --locked
       - run: cargo check -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked
       - run: cargo clippy -p rake -p rake-foundation -p rake-routing -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
       - run: cargo build -p rake-foundation -p rake-routing --lib --target wasm32-unknown-unknown --locked

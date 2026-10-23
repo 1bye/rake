@@ -33,6 +33,9 @@ Mutations: [--no-wait] [--request-key KEY]. Retry the same payload and key after
 Raw messages use the shared {\"type\":\"query\"|\"command\",\"value\":{\"type\":...}} schema.
 Development: RAKE_DEV_CONTROL=1 <native-app>; Web: scripts/serve-web.py --control.
 Build/watch: rake dev|build --target desktop|web --package PACKAGE.
+Package: rake bundle --target desktop|web --package PACKAGE [--debug] [--json].
+Web deployment: --base-path /notes/ --routing path|hash.
+macOS signing: --sign-identity IDENTITY [--entitlements FILE]; default ad-hoc.
 Prerequisites: rake doctor. Graphical devtools: rake inspect, or the Devtools link in a Web dev session.";
 
 fn flag(args: &mut Vec<String>, name: &str) -> bool {

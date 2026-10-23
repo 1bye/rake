@@ -46,10 +46,15 @@ class BrokerHTTP(unittest.TestCase):
         self.info = {"protocol": 1, "runtime_id": self.runtime, "platform": "web", "commands": [], "queries": ["info"], "supported_targets": ["CurrentTab", "NewTab"], "idempotency_capacity": 1024, "completed_operations": 256, "pending_operations": 1024}
 
     def tearDown(self):
-        self.process.send_signal(signal.SIGINT)
-        self.process.wait(timeout=10)
-        self.process.stdout.close()
-        self.temporary.cleanup()
+        try:
+            self.process.send_signal(signal.SIGINT)
+            self.process.wait(timeout=10)
+        finally:
+            if self.process.poll() is None:
+                self.process.kill()
+                self.process.wait(timeout=5)
+            self.process.stdout.close()
+            self.temporary.cleanup()
 
     def post(self, path, body, token=None, origin=None):
         headers = {"Content-Type": "application/json", "X-Rake-Token": self.config["token"] if token is None else token}

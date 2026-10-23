@@ -21,6 +21,7 @@ import uuid
 import webbrowser
 
 from inspector import ProcessOutput
+from bundle import BundleConfig, base_path, copy_tree, distribution
 
 MAX_BYTES = 1024 * 1024
 EXCLUDED = {".git", "target", "dist", "node_modules", ".rake", "__pycache__", ".DS_Store"}
@@ -142,6 +143,7 @@ class Project:
         self.root = Path(metadata["workspace_root"])
         self.directory = Path(self.package["manifest_path"]).parent
         self.args = args
+        self.bundle = BundleConfig(self.package, self.directory)
         self.watch_roots = sorted({self.root, *(Path(item["manifest_path"]).parent for item in metadata["packages"] if item["source"] is None)})
         targets = [target for target in self.package["targets"] if
                    ("bin" in target["kind"] if args.target == "desktop" else "cdylib" in target["crate_types"])]
@@ -151,6 +153,8 @@ class Project:
             raise ValueError("select one binary with --bin, or a single cdylib for Web")
         self.target = targets[0]
         self.web_dir = (args.web_dir or self.directory / "web").resolve()
+        if args.web_dir and not self.web_dir.is_dir():
+            raise ValueError("--web-dir must name an existing directory")
         if args.target == "web" and self.web_dir.exists() and self.web_dir not in self.watch_roots:
             self.watch_roots.append(self.web_dir)
         self.bindgen = None
@@ -202,23 +206,18 @@ class Project:
             raise RuntimeError("cargo did not report an application artifact")
         if self.args.target == "desktop":
             source = Path(artifacts[-1]["executable"])
-            if sys.platform == "darwin":
-                contents = output / f"{self.package['name']}.app" / "Contents"
-                binary = contents / "MacOS" / self.target["name"]
-                binary.parent.mkdir(parents=True)
-                import plistlib
-                with (contents / "Info.plist").open("wb") as file:
-                    plistlib.dump({"CFBundleExecutable": binary.name, "CFBundleIdentifier": "dev.rake.application",
-                                  "CFBundleName": self.package["name"], "CFBundlePackageType": "APPL"}, file)
-            else:
-                binary = output / self.target["name"]
-            shutil.copy2(source, binary)
-            return binary
+            self.native_source = source
+            from bundle import native
+            return native(self, source, output)
         source = next((Path(name) for artifact in reversed(artifacts) for name in artifact["filenames"] if name.endswith(".wasm")), None)
         if source is None:
             raise RuntimeError("cargo did not report a Wasm artifact")
         if self.web_dir.is_dir():
-            shutil.copytree(self.web_dir, output, dirs_exist_ok=True)
+            copy_tree(self.web_dir, output)
+        if self.bundle.assets:
+            copy_tree(self.bundle.assets, output / "assets")
+        if (output / "pkg").exists():
+            raise ValueError("web/pkg is reserved for generated Wasm bindings")
         run_output(processes, [self.bindgen, "--target", "web", "--out-dir", str(output / "pkg"), str(source)])
         if not (output / "index.html").is_file():
             (output / "index.html").write_text("<!doctype html><html><head><meta charset='utf-8'><title>Rake</title>"
@@ -506,13 +505,15 @@ class Parser(argparse.ArgumentParser):
 
 def main():
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=["dev", "build", "doctor", "inspect"])
+    parser.add_argument("command", choices=["dev", "build", "bundle", "doctor", "inspect"])
     parser.add_argument("--target", choices=["desktop", "web"], default="desktop")
     parser.add_argument("--manifest-path", type=Path, default=Path("Cargo.toml"))
     parser.add_argument("--package", "-p")
     parser.add_argument("--bin")
     parser.add_argument("--features")
-    parser.add_argument("--release", action="store_true")
+    profile = parser.add_mutually_exclusive_group()
+    profile.add_argument("--release", dest="release", action="store_true", default=None)
+    profile.add_argument("--debug", dest="release", action="store_false", help="Use a development profile, including for bundles")
     parser.add_argument("--web-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--native-reloader", type=Path, help="External native backend; owns ABI/code retirement and exits zero only after successful replacement")
@@ -523,7 +524,20 @@ def main():
     parser.add_argument("--json", action="store_true")
     parser.add_argument("status", nargs="?", choices=["status"])
     parser.add_argument("--session", type=Path)
+    parser.add_argument("--base-path", type=base_path, help="Web bundle deployment prefix, such as /notes/")
+    parser.add_argument("--routing", choices=["path", "hash"], help="Web bundle routing mode")
+    parser.add_argument("--sign-identity", help="macOS bundle signing identity; default '-' uses ad-hoc signing")
+    parser.add_argument("--entitlements", type=Path, help="macOS signing entitlements plist")
     args = parser.parse_args()
+    args.release = args.release if args.release is not None else args.command == "bundle"
+    if (args.base_path is not None or args.routing) and (args.command != "bundle" or args.target != "web"):
+        parser.error("--base-path/--routing require bundle --target web")
+    if (args.sign_identity is not None or args.entitlements) and (args.command != "bundle" or args.target != "desktop" or sys.platform != "darwin"):
+        parser.error("--sign-identity/--entitlements require a macOS desktop bundle")
+    if args.sign_identity == "":
+        parser.error("--sign-identity cannot be empty; use '-' for ad-hoc signing")
+    if args.entitlements:
+        args.entitlements = args.entitlements.resolve(strict=True)
     if args.status:
         if args.command != "dev" or not args.session:
             parser.error("use rake dev status --session PATH")
@@ -540,6 +554,8 @@ def main():
     if args.native_reloader:
         args.native_reloader = args.native_reloader.resolve(strict=True)
     if args.output:
+        if args.output.is_symlink():
+            parser.error("output cannot be a symlink")
         args.output = args.output.resolve()
     if args.command == "inspect":
         env = dict(os.environ)
@@ -580,10 +596,14 @@ def main():
     try:
         project = Project(args, processes)
 
-        if args.command == "build":
-            output = args.output or project.root / "dist" / project.package["name"] / args.target
-            marker = {"package": project.package["name"], "target": args.target}
-            if output.exists() and (not (output / ".rake-build.json").is_file() or json.loads((output / ".rake-build.json").read_text()) != marker):
+        if args.command in {"build", "bundle"}:
+            bundling = args.command == "bundle"
+            output = args.output or project.root / "dist" / project.package["name"] / (args.target + ("-bundle" if bundling else ""))
+            marker = {"package": project.package["name"], "target": args.target, **({"command": "bundle"} if bundling else {})}
+            inputs = [path for path in [project.bundle.assets, project.web_dir if args.target == "web" else None] if path]
+            if any(output == source or output.is_relative_to(source) or source.is_relative_to(output) for source in inputs):
+                raise ValueError("output must not contain or overlap an asset/Web input directory")
+            if output.exists() and (not (output / ".rake-build.json").is_file() or (output / ".rake-build.json").is_symlink() or json.loads((output / ".rake-build.json").read_text()) != marker):
                 raise ValueError(f"output contains files not owned by this build: {output}; choose --output")
             output.parent.mkdir(parents=True, exist_ok=True)
             staging = Path(tempfile.mkdtemp(prefix=".rake-build-", dir=output.parent))
@@ -591,7 +611,11 @@ def main():
             try:
                 # Project.build owns creation of its destination.
                 staging.rmdir()
-                staged_artifact = project.build(processes, staging)
+                if bundling:
+                    staging.mkdir(mode=0o755)
+                    staged_artifact = distribution(project, staging, processes, lambda command: run_output(processes, command, cwd=project.root))
+                else:
+                    staged_artifact = project.build(processes, staging)
                 private_json(staging / ".rake-build.json", marker)
                 artifact = output / staged_artifact.relative_to(staging)
                 if output.exists():
@@ -605,7 +629,14 @@ def main():
                 shutil.rmtree(backup, ignore_errors=True)
             finally:
                 shutil.rmtree(staging, ignore_errors=True)
-            print(json.dumps({"artifact": str(artifact)}) if args.json else f"Built {artifact}")
+            if bundling:
+                manifest = json.loads(artifact.read_text())
+                result = {"artifact": str(output / manifest["artifact"]), "archive": str(output / manifest["archive"]["path"]),
+                    "manifest": str(artifact), "sha256": manifest["archive"]["sha256"], "profile": manifest["profile"], "signing": manifest["signing"]}
+                status = f"Deployment: {manifest['deployment']['base_path']} ({manifest['deployment']['routing']})" if manifest["deployment"] else f"Signing: {result['signing']}; notarized: false"
+                print(json.dumps(result) if args.json else f"Bundled {result['artifact']}\nArchive: {result['archive']}\nManifest: {artifact}\n{status}")
+            else:
+                print(json.dumps({"artifact": str(artifact)}) if args.json else f"Built {artifact}")
         else:
             session = Path(tempfile.mkdtemp(prefix="rake-dev-", dir="/tmp"))
             supervisor = Supervisor(project, session, processes)

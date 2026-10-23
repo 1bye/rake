@@ -216,8 +216,9 @@ fail transport framing; this initial implementation has no pagination. A browser
 may throttle or freeze polling when hidden; reconnect/retry preserves the same
 RuntimeId while that application instance survives.
 
-The [development supervisor](development.md), build commands, reload boundary and
-graphical inspector use this control surface. Distribution packaging, element
+The [development supervisor](development.md), [build/packaging commands](packaging.md), reload boundary and
+graphical inspector use this control surface. Project packaging runs without a live
+runtime and enables no development transport in its Web output. Element
 inspection and the generated command derive remain later work.
 
 ## Verification

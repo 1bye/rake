@@ -1,7 +1,7 @@
 # Rake
 
 Rake is an application framework for native GPUI and browser WebAssembly. This
-repository implements the **portable foundation, routing, managed work, runtime control, development supervision and graphical devtools** of the
+repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools and application packaging** of the
 [API design](docs/api-design.md). It is an unpublished prototype.
 
 The foundation includes:
@@ -28,6 +28,8 @@ The foundation includes:
 - A supervisor-owned browser inspector for native and Web runtimes: workspace,
   routes, tasks, operations, guard decisions, console, HTTP requests and span trees.
   Every action uses the same runtime dispatcher as the CLI.
+- Native application/resource bundles, macOS signing and dylib relocation, Web
+  deployment archives with path/hash prefixes, manifests and archive checksums.
 
 See the [routing example](examples/routing/src/lib.rs) and
 [routing contract](docs/routing.md). Both examples depend only on `rake`, and their
@@ -37,6 +39,7 @@ See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 [runtime control](docs/runtime-control.md) for CLI setup, shared handlers and bounds.
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
 See [graphical devtools](docs/devtools.md) for launch commands, panels and capture limits.
+See [packaging and distribution](docs/packaging.md) for bundle metadata, assets and deployment.
 
 ## Run
 
@@ -107,6 +110,7 @@ cargo test -p rake --no-default-features --test managed_work --test routing --te
 cargo build -p rake-cli --locked
 python3 scripts/test-dev-bridge.py
 python3 scripts/test-supervisor.py
+python3 scripts/test-bundle.py
 python3 scripts/test-inspector.py
 node scripts/test-inspector.mjs
 node scripts/test-inspector-ui.mjs
@@ -146,7 +150,7 @@ the library's whitespace suggestions and then reruns the check.
 
 ## Current boundary
 
-Distribution packaging, element inspection and generated application command
+Installers, notarization, element inspection and generated application command
 derives remain subsequent stages. Native code replacement awaits the external hot
 reloader; native dev currently uses an explicitly reported checkpointed restart. Runtime control
 is opt-in, native IPC currently requires Unix, and state watches coalesce with

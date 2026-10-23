@@ -11,6 +11,8 @@ target/debug/rake dev --target web --package rake-routing --port 8081
 target/debug/rake inspect --session /tmp/rake-dev-EXAMPLE
 target/debug/rake build --target desktop --package rake-routing --release
 target/debug/rake build --target web --package rake-routing --release
+target/debug/rake bundle --target desktop --package rake-routing
+target/debug/rake bundle --target web --package rake-routing --base-path /notes/
 ```
 
 Use `--manifest-path` outside the workspace root, `--bin` when there are multiple
@@ -20,8 +22,9 @@ binaries, `--features` for Cargo features, and `--web-dir` for an HTML/assets tr
 Without an HTML entry point the builder generates a minimal loader. Build commands
 write `dist/PACKAGE/TARGET`, or `--output PATH`; subsequent builds atomically replace
 only outputs marked as belonging to this package and target. Failed builds preserve
-the previous output. This is development/build tooling, not signing, distribution
-packaging or a production Web server.
+the previous output. `bundle` adds signed native/resource bundles or static Web
+deployment archives through this same build pipeline; see [packaging](packaging.md).
+The development server is not a production Web server.
 
 `dev` hashes local workspace/path-dependency source and asset contents, ignoring
 `.git`, `target`, `dist`, `.rake`, `node_modules` and symlinked trees. Changes debounce

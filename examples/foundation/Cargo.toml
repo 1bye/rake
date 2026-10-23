@@ -18,3 +18,7 @@ workspace = true
 
 [dependencies]
 rake.workspace = true
+
+[package.metadata.rake.bundle]
+name = "Rake Foundation"
+identifier = "com.example.rake.foundation"
