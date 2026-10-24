@@ -18,6 +18,7 @@ gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-ha
 rake-macros = { path = "../rake-macros" }
 serde.workspace = true
 serde_json.workspace = true
+schemars = "1.2.3"
 tracing.workspace = true
 futures.workspace = true
 thiserror.workspace = true

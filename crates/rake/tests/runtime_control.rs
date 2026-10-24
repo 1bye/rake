@@ -292,40 +292,18 @@ fn atomic_watch_sees_changes_before_await_and_reports_revision_and_epoch_gaps() 
     router.shutdown();
 }
 
-#[rake::data]
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "counter.add", output = u64, capability = Headless)]
 #[serde(deny_unknown_fields)]
 struct Add {
     value: u64,
 }
 
-impl ApplicationCommand for Add {
-    type Output = u64;
-
-    fn descriptor() -> CommandDescriptor {
-        CommandDescriptor {
-            id: "counter.add".into(),
-            arguments: json!({"type":"object", "properties":{"value":{"type":"integer"}}, "required":["value"], "additionalProperties":false}),
-            result: json!({"type":"integer"}),
-            capability: ExecutionCapability::Headless,
-        }
-    }
-}
-
-#[rake::data]
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "window.only")]
 struct WindowOnly;
-
-impl ApplicationCommand for WindowOnly {
-    type Output = ();
-
-    fn descriptor() -> CommandDescriptor {
-        CommandDescriptor {
-            id: "window.only".into(),
-            arguments: json!({"type":"null"}),
-            result: json!({"type":"null"}),
-            capability: ExecutionCapability::RequiresWindow,
-        }
-    }
-}
 
 #[test]
 fn typed_commands_are_local_eager_observed_and_retry_safe_with_explicit_capabilities() {

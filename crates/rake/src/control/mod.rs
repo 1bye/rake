@@ -189,7 +189,7 @@ impl<R: Route> RuntimeClient<R> {
             runtime_id: self.info().runtime_id,
             key: Some(key),
             message: Message::Command(Command::Run {
-                id: C::descriptor().id,
+                id: C::id(),
                 arguments: serde_json::to_value(command)
                     .map_err(|error| CommandError::Arguments(error.to_string()))?,
             }),

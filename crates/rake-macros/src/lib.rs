@@ -7,12 +7,23 @@ use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 
+mod command;
 mod route;
 
 /// Derives a closed destination codec from explicit `route(id, path)` attributes.
 #[proc_macro_derive(Route, attributes(route))]
 pub fn route(input: TokenStream) -> TokenStream {
     route::derive(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
+
+/// Derives application command metadata from `#[command(id, output, capability)]`.
+/// Pair with `#[rake::data(schema)]` for argument codecs and JSON schemas.
+/// Output defaults to `()`, capability to `RequiresWindow`.
+#[proc_macro_derive(Command, attributes(command))]
+pub fn command(input: TokenStream) -> TokenStream {
+    command::derive(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(|error| error.to_compile_error())
         .into()
 }
@@ -30,12 +41,18 @@ fn facade() -> syn::Result<Tokens> {
 }
 
 /// Derives Serde serialization and deserialization through the resolved facade.
+/// `#[rake::data(schema)]` also derives JSON Schema, respecting Serde annotations.
 #[proc_macro_attribute]
 pub fn data(args: TokenStream, input: TokenStream) -> TokenStream {
-    if !args.is_empty() {
-        return syn::Error::new(proc_macro2::Span::call_site(), "data takes no arguments")
-            .to_compile_error()
-            .into();
+    let schema = args.to_string() == "schema";
+
+    if !args.is_empty() && !schema {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "data accepts only the optional schema flag",
+        )
+        .to_compile_error()
+        .into();
     }
 
     let item = parse_macro_input!(input as DeriveInput);
@@ -47,7 +64,17 @@ pub fn data(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let serde_path = format!("{}::serde", rake.to_string().replace(' ', ""));
 
+    let schema_path = format!("{}::schemars", rake.to_string().replace(' ', ""));
+
+    let schema = schema.then(|| {
+        quote! {
+            #[derive(#rake::schemars::JsonSchema)]
+            #[schemars(crate = #schema_path)]
+        }
+    });
+
     quote! {
+        #schema
         #[derive(#rake::serde::Serialize, #rake::serde::Deserialize)]
         #[serde(crate = #serde_path)]
         #item

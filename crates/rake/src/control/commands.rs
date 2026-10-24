@@ -19,7 +19,9 @@ pub enum ExecutionCapability {
     RequiresWindow,
 }
 
-/// Application-supplied argument/result schemas and execution requirement.
+/// Argument/result JSON Schemas and execution requirement.
+/// Derived commands generate schemas from their data types; manual implementations
+/// remain available for custom codecs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandDescriptor {
     /// Stable external command key, independent of Rust type name.
@@ -32,11 +34,84 @@ pub struct CommandDescriptor {
     pub capability: ExecutionCapability,
 }
 
+impl CommandDescriptor {
+    /// Generates Draft 2020-12 schemas for accepted arguments and serialized results.
+    /// The two contracts deliberately differ for `skip_serializing`, defaults, etc.
+    pub fn for_type<C>(id: &str, capability: ExecutionCapability) -> Self
+    where
+        C: ApplicationCommand + schemars::JsonSchema,
+        C::Output: schemars::JsonSchema,
+    {
+        let arguments = schemars::generate::SchemaSettings::draft2020_12()
+            .for_deserialize()
+            .into_generator()
+            .into_root_schema_for::<C>();
+
+        let result = schemars::generate::SchemaSettings::draft2020_12()
+            .for_serialize()
+            .into_generator()
+            .into_root_schema_for::<C::Output>();
+
+        Self {
+            id: id.into(),
+            arguments: arguments.to_value(),
+            result: result.to_value(),
+            capability,
+        }
+    }
+}
+
 /// Typed arguments for an explicitly registered application operation.
-/// Implementations supply honest schemas, including domain-specific constraints.
+/// Derive with `#[rake::data(schema)]` and `#[derive(rake::Command)]`, or supply
+/// manual metadata for custom codecs. Schema annotations describe contracts;
+/// Serde decoding and handler validation remain authoritative.
+///
+/// ```
+/// use rake::control::{ApplicationCommand, ExecutionCapability};
+/// #[rake::data(schema)]
+/// #[derive(rake::Command)]
+/// #[command(id = "document.title", output = String, capability = Headless)]
+/// #[serde(deny_unknown_fields)]
+/// struct Title { document: String }
+/// assert_eq!(Title::id(), "document.title");
+/// assert_eq!(Title::descriptor().result["type"], "string");
+/// assert_eq!(Title::descriptor().capability, ExecutionCapability::Headless);
+/// ```
+///
+/// Duplicate metadata is rejected by the derive:
+///
+/// ```compile_fail
+/// #[rake::data(schema)]
+/// #[derive(rake::Command)]
+/// #[command(id = "one", id = "two")]
+/// struct Ambiguous;
+/// ```
+///
+/// Commands have a closed schema and stable identity, rather than generic variants:
+///
+/// ```compile_fail
+/// #[rake::data(schema)]
+/// #[derive(rake::Command)]
+/// #[command(id = "generic")]
+/// struct Generic<T> { argument: T }
+/// ```
+///
+/// The schema flag is required unless JSON Schema is implemented separately:
+///
+/// ```compile_fail
+/// #[rake::data]
+/// #[derive(rake::Command)]
+/// #[command(id = "missing.schema")]
+/// struct MissingSchema { value: String }
+/// ```
 pub trait ApplicationCommand: Serialize + DeserializeOwned + 'static {
     /// Serializable committed result.
     type Output: Serialize + DeserializeOwned + 'static;
+
+    /// Stable command key. Derives return it without rebuilding JSON Schemas.
+    fn id() -> String {
+        Self::descriptor().id
+    }
 
     /// Stable command metadata and schemas.
     fn descriptor() -> CommandDescriptor;

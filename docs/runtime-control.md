@@ -138,59 +138,89 @@ runtime envelopes. Retry keys do not span a process restart or full page reload.
 
 ## Explicit typed application commands
 
-Registration currently uses `ApplicationCommand` with explicit schemas. The
-proposed `Command` derive is not implemented. The registry limits registration to
-256 stable command keys and rejects duplicates. It deserializes typed arguments
-before admission and invokes handlers only when the operation driver polls them.
-A `RequiresWindow` command fails before invoking its handler when run headlessly.
-`Headless` describes the handler's requirements; it does not itself launch a
-headless application process.
+`#[derive(rake::Command)]` implements `ApplicationCommand` from explicit
+`#[command(id = "stable.key", output = ResultType, capability = Headless)]`
+metadata. Pair it with `#[rake::data(schema)]` to generate Serde codecs and JSON
+Schema through the facade. Existing `#[rake::data]` types keep their original
+Serde-only behavior. Result/domain types can also use `data(schema)`, including
+nested structs, enums, newtypes and generic containers. Neither Serde nor Schemars
+needs to be a direct application dependency, including when `rake` is renamed.
 
 ```rust
-use rake::control::*;
-use rake::router::{NoRoute, Router, RouterConfig};
-use rake::serde_json::json;
+use rake::prelude::*;
+use rake::control::{ApplicationCommand, Reply};
+use rake::router::NoRoute;
 
-#[rake::data]
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "document.describe", output = Description, capability = Headless)]
 #[serde(deny_unknown_fields)]
 struct Describe { document: String }
 
-impl ApplicationCommand for Describe {
-    type Output = String;
-    fn descriptor() -> CommandDescriptor {
-        CommandDescriptor {
-            id: "document.describe".into(),
-            arguments: json!({"type":"object", "properties":{"document":{"type":"string"}},
-                "required":["document"], "additionalProperties":false}),
-            result: json!({"type":"string"}),
-            capability: ExecutionCapability::Headless,
-        }
-    }
-}
+#[rake::data(schema)]
+struct Description { title: String }
 
-let commands = Commands::new();
-commands.register::<Describe, _, _>(|arguments, context| async move {
-    // context.app.tasks() provides application-owned work; context.cancellation
-    // exposes this operation's signal. Services/models can be captured explicitly.
-    Ok(format!("Document {}", arguments.document))
-}).unwrap();
-
-// GUI factories install this with App::commands(commands). PageContext::dispatch
-// and Navigator::dispatch use the same registry without retaining the page.
 let router = Router::<NoRoute>::new(RouterConfig::default());
-router.client().commands().register::<Describe, _, _>(|args, _| async move {
-    Ok(args.document)
+router.client().commands().register::<Describe, _, _>(|arguments, context| async move {
+    // Capture services/models explicitly. context.app.tasks() is application-owned;
+    // context.cancellation is the operation's cooperative cancellation signal.
+    Ok(Description { title: format!("Document {}", arguments.document) })
 }).unwrap();
-let reply = router.client().dispatch(Describe { document: "A".into() }, "request-1".into()).unwrap();
+let reply = router.navigator().dispatch(Describe { document: "A".into() }, "request-1".into()).unwrap();
 assert!(matches!(reply, Reply::Submitted { .. }));
-// The host must drive router.run(); observation does not execute the command.
+// The host drives router.run(); observing a handle does not execute the command.
 ```
 
-The terminal equivalent is `rake ctl commands run document.describe --args
-'{"document":"A"}'`. Application handlers do not hold a router scheduling lane,
-so a handler can await a normal navigation operation without deadlocking itself.
-They own their model transaction rules. A committed command means its handler
-returned successfully; it does not assert presentation or data readiness.
+A GUI factory can use `App::commands(registry)` or fallible
+`App::command::<Describe, _, _>(handler)` before startup. The latter returns
+`Result<App<_>, CommandError>` so duplicate keys never silently replace handlers.
+Application commands currently require the routed runner (`App::routes`). A
+headless `Router<NoRoute>` can drive the same registry without mounting views.
+The registry accepts at most 256 commands; registration freezes each descriptor.
+The derive requires a concrete struct and a 1–128 byte ID without whitespace;
+unknown/duplicate command options fail compilation. Named, tuple, newtype and unit
+structs are supported. `output` defaults to `()`; `capability` defaults to
+`RequiresWindow`, so headless execution needs an explicit declaration.
+
+Generated descriptors contain self-contained Draft 2020-12 schemas with local
+`$defs`/`$ref` references. Arguments describe **deserialization**; results describe
+**serialization**. Serde renames, defaults, optional fields and skipped fields
+therefore follow the direction actually used at that boundary. Result types must
+implement Serde serialization/deserialization and JSON Schema. For custom codecs,
+use Schemars annotations through `data(schema)` / `rake::schemars`, or implement
+`ApplicationCommand` manually with honest schemas. Custom schema constraints are
+descriptive, not an extra runtime validator. Validate domain rules in the handler
+or a validating Deserialize implementation. Argument codecs must round-trip for
+typed GUI dispatch; asymmetric/custom Serde conversions remain the author's
+responsibility. Unknown fields follow Serde policy; add `deny_unknown_fields`
+when they should fail instead of being ignored.
+
+`commands list` returns the registered argument/result schemas and capability.
+The Console panel uses those same schemas for editable JSON templates, including
+local references and tuple/unit inputs; templates are not schema validators.
+The terminal equivalent of the GUI call is:
+
+```sh
+rake ctl commands list --json
+rake ctl commands run document.describe --args '{"document":"A"}' --request-key request-1 --json
+```
+
+`PageContext::dispatch`, `Navigator::dispatch`, `RuntimeClient::dispatch` and the
+CLI all lower to the same `Command::Run` request, retry key and operation registry.
+The derive supplies the command ID without rebuilding schemas on each dispatch.
+Typed arguments decode before admission, and handlers start only when the driver
+polls them. `RequiresWindow` fails before handler invocation when no window is
+mounted; `Headless` describes requirements and does not itself launch a headless
+process. The Web bridge grants no extra native capabilities.
+
+Operation IDs, queued/running/terminal status, cancellation, failure, result
+retention and retry rules are identical for GUI and CLI calls. Results are retained
+as JSON in `OperationRecord.result`; decode with the declared output type where
+its Serde contract permits. Application handlers do not hold a router scheduling
+lane, so a handler can await navigation without deadlocking itself. Handlers own
+model transaction rules. A committed command means successful handler return;
+it does not assert presentation or data readiness, nor roll back external side
+effects when cancellation wins. No view or borrowed GPUI context crosses await.
 
 ## Watches and transport bounds
 
@@ -220,13 +250,13 @@ RuntimeId while that application instance survives.
 
 The [development supervisor](development.md), [build/packaging commands](packaging.md), reload boundary and
 graphical inspector use this control surface. Project packaging runs without a live
-runtime and enables no development transport in its Web output. The generated
-application command derive remains later work.
+runtime and enables no development transport in its Web output. Application commands
+use the same registry, including generated metadata.
 
 ## Verification
 
 ```sh
-cargo test -p rake --no-default-features --test runtime_control
+cargo test -p rake --no-default-features --test runtime_control --test application_commands
 cargo test -p rake-cli
 cargo build -p rake-cli
 python3 scripts/test-dev-bridge.py

@@ -20,8 +20,9 @@ mod application;
 pub use application::{App, AppError, Services};
 #[cfg(feature = "gpui")]
 pub use gpui;
-pub use rake_macros::{Route, app, data, instrument};
+pub use rake_macros::{Command, Route, app, data, instrument};
 pub use router::Route;
+pub use schemars;
 pub use serde;
 pub use serde_json;
 pub use tracing::{debug, error, info, trace, warn};
@@ -50,7 +51,7 @@ pub mod prelude {
     pub use crate::router::{PageContext, RouteOutlet, RouteViews, TabBar};
     #[cfg(feature = "gpui")]
     pub use crate::{App, Services};
-    pub use rake_macros::Route;
+    pub use rake_macros::{Command, Route};
 }
 
 #[doc(hidden)]

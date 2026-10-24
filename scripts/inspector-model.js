@@ -136,3 +136,30 @@ export function traces(records) {
   for (const item of nodes.values()) visit(item, 0);
   return ordered;
 }
+
+// Editable JSON templates, not a schema validator. References stay local; recursion is bounded.
+export function commandArguments(schema, root = schema, depth = 0) {
+  if (!schema || typeof schema !== 'object' || depth > 8) return null;
+  if (Object.hasOwn(schema, 'default')) return structuredClone(schema.default);
+  if (Object.hasOwn(schema, 'const')) return structuredClone(schema.const);
+  if (schema.enum?.length) return structuredClone(schema.enum[0]);
+  if (schema.$ref?.startsWith('#/')) {
+    const target = schema.$ref.slice(2).split('/').reduce((value, key) => {
+      key = key.replaceAll('~1', '/').replaceAll('~0', '~');
+      return value && Object.hasOwn(value, key) ? value[key] : null;
+    }, root);
+    return commandArguments(target, root, depth + 1);
+  }
+  const variants = schema.anyOf || schema.oneOf;
+  if (variants) return commandArguments(variants.find(value => value.type === 'null') || variants[0], root, depth + 1);
+  const type = Array.isArray(schema.type) ? (schema.type.includes('null') ? 'null' : schema.type[0]) : schema.type;
+  if (type === 'object' || schema.properties) return Object.fromEntries(Object.entries(schema.properties || {})
+    .filter(([key, value]) => schema.required?.includes(key) || Object.hasOwn(value, 'default'))
+    .map(([key, value]) => [key, commandArguments(value, root, depth + 1)]));
+  if (type === 'array') return schema.prefixItems ? schema.prefixItems.map(value => commandArguments(value, root, depth + 1)) :
+    Array.from({length: Math.min(schema.minItems || 0, 32)}, () => commandArguments(schema.items, root, depth + 1));
+  if (type === 'string') return '';
+  if (type === 'boolean') return false;
+  if (type === 'integer' || type === 'number') return schema.minimum ?? Math.min(0, schema.maximum ?? 0);
+  return null;
+}

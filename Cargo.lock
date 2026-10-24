@@ -4446,6 +4446,7 @@ dependencies = [
  "rake-macros",
  "raw-window-handle",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

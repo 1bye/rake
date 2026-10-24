@@ -75,7 +75,9 @@ globalThis.fetch = async (url, options) => {
     } else {
       const query = envelope.message.value;
       const replies = {inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
-        commands: [{id: 'test.echo', capability: 'Headless', arguments: {properties: {message: {type: 'string'}}}, result: {type: 'string'}}],
+        commands: [{id: 'test.echo', capability: 'Headless', arguments: {type: 'object', required: ['message'], properties: {message: {type: 'string'}}}, result: {type: 'string'}},
+          {id: 'test.unit', capability: 'RequiresWindow', arguments: {type: 'null'}, result: {type: 'null'}},
+          {id: 'test.tuple', capability: 'Headless', arguments: {type: 'array', prefixItems: [{type: 'string'}, {type: 'integer', minimum: 0}]}, result: {type: 'array'}}],
         events: {cursor: {runtime_id: runtime, epoch: 1, revision: 2}, kind: 'snapshot', snapshot},
         diagnostics: {records: diagnostics.filter(record => record.sequence > query.after), dropped: 0, output_dropped: 0},
         operation: {operation_id: 9, state: 'AwaitingDecision', result: null}};
@@ -118,6 +120,12 @@ await panel('Decisions'); assert.match(ids.content.textContent, /Save changed en
 await find('button', 'Save').click(); await settle();
 assert.deepEqual(envelopes.at(-1).message.value, {type: 'respond', decision: 12, choice: 'save'});
 await panel('Console'); assert.match(ids.content.textContent, /<script>literal<\/script>/);
+for (const [id, argumentsValue] of [['test.unit', null], ['test.tuple', ['', 0]]]) {
+  const editor = all(ids.content).find(item => item.attributes['aria-label'] === id + ' arguments');
+  assert.deepEqual(JSON.parse(editor.value), argumentsValue);
+  editor.closest('form').listeners.submit({preventDefault() {}}); await settle();
+  assert.deepEqual(envelopes.at(-1).message.value, {type: 'run', id, arguments: argumentsValue});
+}
 const argumentsInput = all(ids.content).find(item => item.tagName === 'textarea');
 argumentsInput.value = '{"message":"hello"}'; argumentsInput.listeners.input();
 const run = find('button', 'Run command');

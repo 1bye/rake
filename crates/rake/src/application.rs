@@ -111,6 +111,20 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Registers one typed command on the application's shared registry.
+    /// Duplicate IDs and registration limits fail before the application starts.
+    pub fn command<C, F, Fut>(self, handler: F) -> Result<Self, crate::control::CommandError>
+    where
+        C: crate::control::ApplicationCommand,
+        F: Fn(C, crate::control::CommandContext) -> Fut + 'static,
+        Fut:
+            std::future::Future<Output = Result<C::Output, crate::control::CommandError>> + 'static,
+    {
+        self.commands.register::<C, F, Fut>(handler)?;
+
+        Ok(self)
+    }
+
     /// Supplies explicit typed application commands shared by GUI and runtime clients.
     pub fn commands(mut self, commands: crate::control::Commands) -> Self {
         self.commands = commands;

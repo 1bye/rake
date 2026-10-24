@@ -21,6 +21,14 @@ enum Destination {
     Home,
 }
 
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "test.echo", output = String, capability = Headless)]
+#[serde(deny_unknown_fields)]
+struct Echo {
+    message: String,
+}
+
 fn cli(directory: &std::path::Path, arguments: &[&str]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .env("RAKE_CONTROL_DIR", directory)
@@ -44,6 +52,25 @@ fn terminal_submissions_survive_disconnect_retry_and_query_the_shared_runtime() 
     let directory = std::path::PathBuf::from("/tmp").join(directory.file_name().unwrap());
     let router = Router::<Destination>::new(RouterConfig::default());
     let client = router.client();
+
+    client
+        .commands()
+        .register::<Echo, _, _>(|args, _| async move { Ok(args.message) })
+        .unwrap();
+    let gui_operation = match router
+        .navigator()
+        .dispatch(
+            Echo {
+                message: "shared".into(),
+            },
+            "gui-echo".into(),
+        )
+        .unwrap()
+    {
+        Reply::Submitted { operation_id } => operation_id,
+        _ => panic!("submitted GUI command"),
+    };
+
     let server = LocalServer::bind(&client, "test.parity", &directory).unwrap();
 
     assert_eq!(
@@ -64,6 +91,36 @@ fn terminal_submissions_survive_disconnect_retry_and_query_the_shared_runtime() 
     let (sender, receiver) = oneshot::channel();
 
     let thread = std::thread::spawn(move || {
+        let commands = cli(&owned_directory, &["ctl", "commands", "list", "--json"]);
+
+        assert_eq!(commands["value"][0]["id"], "test.echo");
+        assert_eq!(
+            commands["value"][0]["arguments"]["properties"]["message"]["type"],
+            "string"
+        );
+        assert_eq!(commands["value"][0]["result"]["type"], "string");
+        let echoed = cli(
+            &owned_directory,
+            &[
+                "ctl",
+                "commands",
+                "run",
+                "test.echo",
+                "--args",
+                r#"{"message":"shared"}"#,
+                "--request-key",
+                "gui-echo",
+                "--json",
+            ],
+        );
+
+        assert_eq!(
+            echoed["reply"]["value"]["operation_id"],
+            serde_json::to_value(gui_operation).unwrap()
+        );
+        assert_eq!(echoed["reply"]["value"]["state"], "Committed");
+        assert_eq!(echoed["reply"]["value"]["result"], "shared");
+
         let tree = cli(&owned_directory, &["ctl", "inspect", "tree", "--json"]);
 
         assert_eq!(tree["type"], "elements");

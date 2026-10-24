@@ -20,9 +20,11 @@ The foundation includes:
   revision-checked decisions, and browser path/hash history adapters.
 - Local tab/application task scopes, fresh entry activity runs, Foreground/Live
   policies, visibility-only activity, checked typed publication and cancellation.
-- Shared runtime commands/queries/events, typed application command registration,
+- Shared runtime commands/queries/events, typed application command derives and registration,
   retained operation results and decisions, retry-safe requests, the `rake` terminal
   client, private Unix IPC and an authenticated browser development bridge.
+  Schema-enabled data types generate accepted argument and serialized result schemas;
+  GUI, devtools and CLI calls share retry-safe command operations.
 - Native/Web build and dev commands, debounced build watching, coordinated reload,
   versioned workspace restoration and an external native reloader boundary.
 - A supervisor-owned browser inspector for native and Web runtimes: workspace,
@@ -153,10 +155,9 @@ the library's whitespace suggestions and then reruns the check.
 
 ## Current boundary
 
-Installers, notarization and generated application command
-derives remain subsequent stages. Native code replacement awaits the external hot
-reloader; native dev currently uses an explicitly reported checkpointed restart. Runtime control
-is opt-in, native IPC currently requires Unix, and state watches coalesce with
+Installers, notarization and durable sessions remain subsequent stages. Native code
+replacement awaits the external hot reloader; native dev currently uses an explicitly
+reported checkpointed restart. Runtime control is opt-in, native IPC currently requires Unix, and state watches coalesce with
 explicit revision gaps. The router currently owns one logical window;
 `NewWindow` reports an unsupported capability. Host visibility is measured in Web
 and on macOS; other native backends report Unknown. Development reload checkpoints

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const code = readFileSync(new URL('./inspector-model.js', import.meta.url), 'utf8');
-const {InspectorState, matches, request, requests, safeJSON, traces} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const {InspectorState, commandArguments, matches, request, requests, safeJSON, traces} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const state = new InspectorState(2, 4096);
 state.reset('old');
 const snapshot = {runtime_id: 'old', tabs: [{id: 7}], operations: [[9, 'Committed']]};
@@ -55,3 +55,12 @@ const bytes = new InspectorState(100, 10); bytes.reset('r');
 bytes.diagnostics({records: [record(1, {large: 'too large'})], dropped: 0, output_dropped: 0}, 'r');
 assert.equal(bytes.diagnosticsRecords.length, 0);
 console.log('Inspector model checks passed');
+
+assert.deepEqual(commandArguments({type: 'object', required: ['id', 'mode'], properties: {
+  id: {$ref: '#/$defs/Id'}, mode: {$ref: '#/$defs/Mode'}, limit: {default: 10}, optional: {type: 'string'}},
+  $defs: {Id: {type: 'integer', minimum: 0}, Mode: {enum: ['summary', 'detail']}}}), {id: 0, mode: 'summary', limit: 10});
+assert.deepEqual(commandArguments({type: 'array', prefixItems: [{type: 'string'}, {type: 'boolean'}]}), ['', false]);
+assert.equal(commandArguments({type: 'null'}), null);
+assert.equal(commandArguments({$ref: '#/$defs/Loop', $defs: {Loop: {$ref: '#/$defs/Loop'}}}), null);
+assert.equal(commandArguments({$ref: 'https://example.invalid/schema'}), null);
+assert.deepEqual(commandArguments({default: {a: false}}), {a: false});

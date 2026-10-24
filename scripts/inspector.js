@@ -1,4 +1,4 @@
-import {InspectorState, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
+import {InspectorState, commandArguments, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
 
 const $ = id => document.getElementById(id);
 const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Elements', 'Reload'];
@@ -348,12 +348,12 @@ function consolePanel() {
 }
 function commandForm(command) {
   const form = el('form');
-  const initial = Object.fromEntries(Object.entries(command.arguments.properties || {}).map(([key, schema]) => [key, schema.default ?? (schema.type === 'string' ? '' : schema.type === 'boolean' ? false : schema.type === 'number' || schema.type === 'integer' ? 0 : null)]));
+  const initial = commandArguments(command.arguments);
   const input = el('textarea'); input.value = drafts.get('command:' + command.id) || JSON.stringify(initial, null, 2);
   input.setAttribute('aria-label', `${command.id} arguments`);
   input.addEventListener('input', () => drafts.set('command:' + command.id, input.value));
   const submit = el('button', 'Run command'); submit.type = 'submit'; submit.disabled = !supported('run');
-  form.append(el('h3', `${command.id} · ${command.capability}`), details('Argument / result schema', command, `command:${command.id}`), label('JSON arguments', input), submit);
+  form.append(el('h3', `${command.id} · ${command.capability}`), details('Argument / result schema', command, `command:${command.id}`), el('p', 'Edit the JSON template to satisfy the advertised argument schema. Runtime decoding and application validation remain authoritative.', 'hint'), label('JSON arguments', input), submit);
   form.addEventListener('submit', event => { event.preventDefault(); try { mutate({type: 'run', id: command.id, arguments: safeJSON(input.value)}).catch(showError); } catch (error) { showError(error); } });
   return form;
 }

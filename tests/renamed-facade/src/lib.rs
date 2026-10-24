@@ -31,6 +31,23 @@ pub async fn document(id: u64) -> Document {
     Document { id }
 }
 
+/// Both schemas and command paths resolve through the renamed facade.
+#[framework::data(schema)]
+#[derive(framework::Command)]
+#[command(id = "document.describe", output = Description, capability = Headless)]
+#[serde(deny_unknown_fields)]
+pub struct Describe {
+    /// Document key accepted by the runtime.
+    pub document: String,
+}
+
+/// A generated result schema needs no direct Serde or Schemars dependency.
+#[framework::data(schema)]
+pub struct Description {
+    /// Echoed document key.
+    pub document: String,
+}
+
 #[framework::app]
 fn app() -> App {
     App::new("com.example.renamed")
@@ -40,6 +57,45 @@ fn app() -> App {
 #[cfg(test)]
 mod tests {
     use super::Document;
+
+    #[test]
+    fn commands_use_the_renamed_data_schema_and_runtime_facades() {
+        use framework::control::ApplicationCommand;
+        let descriptor = super::Describe::descriptor();
+
+        assert_eq!(descriptor.id, "document.describe");
+        assert_eq!(
+            descriptor.arguments["properties"]["document"]["type"],
+            "string"
+        );
+        assert_eq!(
+            descriptor.result["properties"]["document"]["type"],
+            "string"
+        );
+        let router = framework::router::Router::<super::Destination>::new(Default::default());
+
+        router
+            .client()
+            .commands()
+            .register::<super::Describe, _, _>(|args, _| async move {
+                Ok(super::Description {
+                    document: args.document,
+                })
+            })
+            .unwrap();
+        assert!(matches!(
+            router
+                .navigator()
+                .dispatch(
+                    super::Describe {
+                        document: "A".into()
+                    },
+                    "from-gui".into()
+                )
+                .unwrap(),
+            framework::control::Reply::Submitted { .. }
+        ));
+    }
 
     #[test]
     fn data_uses_the_renamed_serde_facade() {

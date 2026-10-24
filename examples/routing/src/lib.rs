@@ -107,6 +107,7 @@ impl RouteViews<Destination> for AppRoutes {
             preview_run: None,
             download: None,
             task_error: None,
+            command_sequence: 0,
             export: self.export.clone(),
         });
 
@@ -164,6 +165,7 @@ struct Screen {
     preview_run: Option<rake::router::RunId>,
     download: Option<TaskHandle>,
     task_error: Option<String>,
+    command_sequence: u64,
     export: Rc<RefCell<Option<TaskHandle>>>,
 }
 
@@ -186,6 +188,38 @@ impl Render for Screen {
             .items_center()
             .gap_4()
             .child(div().text_3xl().child(self.title.clone()))
+            .child(
+                div()
+                    .id("command-echo")
+                    .px_3()
+                    .py_2()
+                    .bg(rgb(0x365849))
+                    .cursor_pointer()
+                    .child("Run shared echo command")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.command_sequence += 1;
+                        this.task_error = this
+                            .page
+                            .entry()
+                            .id()
+                            .map_err(|error| error.to_string())
+                            .and_then(|entry| {
+                                let key = format!("echo-{entry}-{}", this.command_sequence);
+
+                                this.page
+                                    .dispatch(
+                                        Echo {
+                                            message: this.title.clone(),
+                                        },
+                                        key,
+                                    )
+                                    .map_err(|error| error.to_string())
+                            })
+                            .err();
+                        cx.notify();
+                    }))
+                    .inspect("routing.command-echo"),
+            )
             .child(format!("Draft edits: {}", self.edits.get()))
             .child(format!(
                 "Refresh ticks: {} ({:?}) · Visible preview: {} ({:?})",
@@ -472,40 +506,31 @@ impl Render for Screen {
     }
 }
 
-#[rake::data]
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "demo.echo", output = String, capability = Headless)]
+#[serde(deny_unknown_fields)]
 struct Echo {
+    #[serde(default = "default_echo")]
     message: String,
 }
 
-impl ApplicationCommand for Echo {
-    type Output = String;
-
-    fn descriptor() -> CommandDescriptor {
-        CommandDescriptor {
-            id: "demo.echo".into(),
-            arguments: rake::serde_json::json!({"type":"object","required":["message"],"properties":{"message":{"type":"string","default":"Hello from the inspector"}}}),
-            result: rake::serde_json::json!({"type":"string"}),
-            capability: ExecutionCapability::Headless,
-        }
-    }
+fn default_echo() -> String {
+    "Hello from the inspector".into()
 }
 
-#[rake::data]
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "demo.fetch", output = FetchResult, capability = Headless)]
+#[serde(deny_unknown_fields)]
 struct Fetch {
     url: String,
 }
 
-impl ApplicationCommand for Fetch {
-    type Output = rake::serde_json::Value;
-
-    fn descriptor() -> CommandDescriptor {
-        CommandDescriptor {
-            id: "demo.fetch".into(),
-            arguments: rake::serde_json::json!({"type":"object","required":["url"],"properties":{"url":{"type":"string","format":"uri"}}}),
-            result: rake::serde_json::json!({"type":"object"}),
-            capability: ExecutionCapability::Headless,
-        }
-    }
+#[rake::data(schema)]
+struct FetchResult {
+    status: u16,
+    bytes: usize,
 }
 
 #[rake::app]
@@ -550,7 +575,10 @@ fn app() -> App<Destination> {
 
                 rake::info!(status, bytes = bytes.len(), "Inspector request completed");
 
-                Ok(rake::serde_json::json!({"status":status,"bytes":bytes.len()}))
+                Ok(FetchResult {
+                    status,
+                    bytes: bytes.len(),
+                })
             }
         })
         .expect("fetch registration");
