@@ -104,8 +104,9 @@ actual document destruction cannot guarantee asynchronous cleanup.
 
 The macOS adapter reads AppKit window visibility, minimization and occlusion on
 the UI loop every 250 ms. This bounds observation frequency without confusing
-keyboard focus with presentation. Native application quit requests cancellation
-before host teardown. Other native backends currently report `Unknown`; unknown
+keyboard focus with presentation. [Guarded quit](guarded-quit.md) coordinates
+finite jobs and disposal guards before stopping activity factories. Forced native
+termination requests cancellation before host teardown. Other native backends currently report `Unknown`; unknown
 visibility assumes visible, and custom hosts can supply actual observations with
 `Router::set_host_visibility`. Snapshots expose the observed value explicitly.
 
@@ -118,7 +119,8 @@ publication queue bounds. Admission or publication overflow returns an error.
 Expired terminal handles report `TaskError::Expired`. Active factory registrations
 stay retained; rapid eligibility changes coalesce unstarted runs per registration.
 
-Runtime generations currently remain at 1. Hot code replacement, automatic retry,
-worker threads, durable jobs, CLI control and guarded application quit remain later
-stages. Internal tab disposal guards and native host cancellation already work;
-they do not promise a custom async save dialog during OS or browser termination.
+Reload boundaries advance accepted generations; see [development](development.md).
+[Runtime control](runtime-control.md) and [guarded quit](guarded-quit.md) share
+task/operation cancellation and revision-checked decisions. Automatic retry, worker
+threads and durable jobs remain separate capabilities. OS or browser termination
+cannot guarantee a custom asynchronous save dialog.

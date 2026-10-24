@@ -15,6 +15,7 @@ rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   inspect tree | inspect element ELEMENT_ID
   info | schema | snapshot | events [--follow]
+  quit [--jobs wait|cancel] | quit status
   reload status | reload checkpoint APPLICATION_ID
   reload prepare ID [--mechanism native_restart|web_page_reload|native_code_replacement]
   reload apply|abort ID
@@ -30,6 +31,7 @@ rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   decisions list | decisions respond DECISION --choice CHOICE
   logs list|follow | requests list | traces export [--after SEQUENCE]
   request JSON_MESSAGE
+Quit reports submission; inspect decisions and quit status while the host is still running.
 Mutations: [--no-wait] [--request-key KEY]. Retry the same payload and key after an uncertain response.
 Raw messages use the shared {\"type\":\"query\"|\"command\",\"value\":{\"type\":...}} schema.
 Development: RAKE_DEV_CONTROL=1 <native-app>; Web: scripts/serve-web.py --control.
@@ -108,6 +110,11 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
         args.remove(0)
     };
 
+    // Unlike the ordinary two-word topics, bare quit accepts its own options.
+    if topic == "quit" && !action.is_empty() && action != "status" {
+        args.insert(0, action.clone());
+    }
+
     let mut follow = false;
 
     let message = match (topic.as_str(), action.as_str()) {
@@ -119,6 +126,18 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
             }
 
             return Ok((message, false));
+        }
+        ("quit", "status") => Message::Query(Query::Quit {}),
+        ("quit", "" | "--jobs") => {
+            let jobs = match option(&mut args, "--jobs")?.as_deref().unwrap_or("wait") {
+                "wait" => rake::quit::QuitJobs::Wait,
+                "cancel" => rake::quit::QuitJobs::Cancel,
+                _ => return Err("quit jobs must be wait or cancel".into()),
+            };
+
+            Message::Command(Command::Quit {
+                options: rake::quit::QuitOptions { jobs },
+            })
         }
         ("reload", "status") => Message::Query(Query::Reload {}),
         ("reload", "checkpoint") if args.len() == 1 => Message::Query(Query::Checkpoint {
@@ -471,7 +490,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
     let deadline = Instant::now() + timeout;
 
     if let Reply::Submitted { operation_id } = reply {
-        if no_wait {
+        if no_wait || matches!(message, Message::Command(Command::Quit { .. })) {
             return print(&json!({"request_key": key, "reply": reply}), compact);
         }
 
@@ -614,6 +633,35 @@ mod tests {
             Message::Query(Query::InspectTree {})
         ));
         assert!(parse_message(["inspect", "element"].map(String::from).to_vec()).is_err());
+
+        for (arguments, jobs) in [
+            (vec!["quit"], rake::quit::QuitJobs::Wait),
+            (vec!["quit", "--jobs", "wait"], rake::quit::QuitJobs::Wait),
+            (
+                vec!["quit", "--jobs", "cancel"],
+                rake::quit::QuitJobs::Cancel,
+            ),
+        ] {
+            assert!(
+                matches!(parse_message(arguments.into_iter().map(String::from).collect()).unwrap().0,
+                Message::Command(Command::Quit { options }) if options.jobs == jobs)
+            );
+        }
+
+        assert!(matches!(
+            parse_message(vec!["quit".into(), "status".into()])
+                .unwrap()
+                .0,
+            Message::Query(Query::Quit {})
+        ));
+
+        for arguments in [
+            vec!["quit", "--jobs"],
+            vec!["quit", "--jobs", "force"],
+            vec!["quit", "status", "--jobs", "wait"],
+        ] {
+            assert!(parse_message(arguments.into_iter().map(String::from).collect()).is_err());
+        }
     }
 
     #[test]
@@ -627,6 +675,9 @@ mod tests {
         };
 
         let commands = vec![
+            Command::Quit {
+                options: rake::quit::QuitOptions::default(),
+            },
             Command::PrepareReload {
                 request: rake::reload::ReloadRequest {
                     id: "test".into(),
@@ -670,6 +721,7 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Quit {},
             Query::InspectTree {},
             Query::InspectElement {
                 id: "element-1-0".into(),

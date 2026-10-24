@@ -30,6 +30,7 @@ use super::{
     RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowId,
 };
 
+mod quit;
 mod reload;
 
 #[cfg(test)]
@@ -210,8 +211,12 @@ impl<R: Route> State<R> {
 
 struct Core<R: Route> {
     tasks: WorkRuntime,
+    quit: RefCell<crate::quit::QuitStatus>,
+    quit_handle: RefCell<Option<Operation<crate::quit::QuitResult>>>,
     reload: RefCell<crate::reload::ReloadStatus>,
     reload_ui_ready: Cell<bool>,
+    #[cfg(target_family = "wasm")]
+    page_reload: Cell<bool>,
     control: Rc<crate::control::ClientState>,
     #[cfg(feature = "gpui")]
     host: RefCell<Option<crate::tasks::host::HostObserver>>,
@@ -373,6 +378,8 @@ impl<R: Route> Router<R> {
                 error: None,
             }),
             reload_ui_ready: Cell::new(true),
+            #[cfg(target_family = "wasm")]
+            page_reload: Cell::new(false),
             control: Rc::new(crate::control::ClientState::new(config.control_requests)),
             #[cfg(feature = "gpui")]
             host: RefCell::new(None),
@@ -401,6 +408,8 @@ impl<R: Route> Router<R> {
             event: Event::new(),
             work: Event::new(),
             driving: Cell::new(false),
+            quit: RefCell::new(crate::quit::QuitStatus::default()),
+            quit_handle: RefCell::new(None),
             has_window: Cell::new(false),
             shutdown: Cell::new(false),
         }))
@@ -455,10 +464,13 @@ impl<R: Route> Router<R> {
     /// Copies state without exposing retained views or mutable histories.
     pub fn snapshot(&self) -> RouterSnapshot {
         let state = self.0.state.borrow();
+        let work = self.0.tasks.snapshot();
+        let quit = self.0.quit_status(&work);
 
         RouterSnapshot {
+            quit,
             reload: self.reload_status(),
-            work: self.0.tasks.snapshot(),
+            work,
             supported_targets: vec![OpenTarget::CurrentTab, OpenTarget::NewTab],
             runtime_id: self.0.runtime,
             window_id: WindowId(1),
@@ -551,6 +563,11 @@ impl<R: Route> Router<R> {
 
         let admission = if self.0.shutdown.get() {
             Err(OperationError::RuntimeShutdown)
+        } else if matches!(
+            self.0.quit.borrow().phase,
+            crate::quit::QuitPhase::Stopping | crate::quit::QuitPhase::Ready
+        ) {
+            Err(OperationError::Quitting)
         } else if self.0.reload.borrow().request.is_some() {
             Err(OperationError::Reloading)
         } else if self.0.state.borrow().tokens.len() >= self.0.config.pending_operations {
@@ -797,6 +814,26 @@ impl<R: Route> Router<R> {
         self.0.has_window.set(true);
         let core = Rc::downgrade(&self.0);
         let shutdown = core.clone();
+        let unload = core.clone();
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let closing = core.clone();
+
+            window.on_window_should_close(cx, move |_, _| {
+                let Some(core) = closing.upgrade() else {
+                    return true;
+                };
+
+                if core.quit.borrow().phase == crate::quit::QuitPhase::Ready {
+                    return true;
+                }
+
+                drop(Router(core).quit(crate::quit::QuitOptions::default()));
+
+                false
+            });
+        }
 
         *self.0.host.borrow_mut() = Some(crate::tasks::host::HostObserver::attach(
             move |visibility| {
@@ -808,6 +845,29 @@ impl<R: Route> Router<R> {
                 if let Some(core) = shutdown.upgrade() {
                     Router(core).shutdown();
                 }
+            },
+            move || {
+                let Some(core) = unload.upgrade() else {
+                    return false;
+                };
+
+                #[cfg(target_family = "wasm")]
+                if core.page_reload.replace(false) {
+                    return false;
+                }
+
+                let router = Router(core);
+                let snapshot = router.snapshot();
+
+                snapshot.quit.phase != crate::quit::QuitPhase::Ready
+                    && (snapshot.quit.phase.is_pending()
+                        || snapshot
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| &tab.entries)
+                            .any(|entry| entry.dirty)
+                        || !snapshot.quit.pending_tasks.is_empty()
+                        || !snapshot.quit.pending_operations.is_empty())
             },
             window,
             cx,
@@ -851,7 +911,7 @@ impl<R: Route> Navigator<R> {
         command: C,
         key: String,
     ) -> Result<crate::control::Reply, crate::control::ControlError> {
-        Router(self.core()?).client().dispatch(command, key)
+        Router(self.control_core()?).client().dispatch(command, key)
     }
 
     /// Application work with this navigator's original causal tab and entry IDs.
@@ -980,7 +1040,7 @@ impl<R: Route> Navigator<R> {
 
     /// Resolves one currently valid decision. Unknown choices leave the decision pending.
     pub fn respond(&self, id: DecisionId, choice: &str) -> Result<(), DecisionError> {
-        let core = self.core().map_err(|_| DecisionError::Obsolete)?;
+        let core = self.control_core().map_err(|_| DecisionError::Obsolete)?;
         let mut state = core.state.borrow_mut();
         let decision = state.decisions.get(&id).ok_or(DecisionError::Obsolete)?;
 
@@ -1024,6 +1084,16 @@ impl<R: Route> Navigator<R> {
     }
 
     fn core(&self) -> Result<Rc<Core<R>>, OperationError> {
+        let core = self.control_core()?;
+
+        if core.quit.borrow().phase.blocks_navigation() {
+            return Err(OperationError::Quitting);
+        }
+
+        Ok(core)
+    }
+
+    fn control_core(&self) -> Result<Rc<Core<R>>, OperationError> {
         let core = self.core.upgrade().ok_or(OperationError::RuntimeShutdown)?;
 
         if core.shutdown.get() {
@@ -1348,6 +1418,15 @@ impl<R: Route> EntryHandle<R> {
 
     /// Marks a new state revision, even if dirty was already true, and expires old decisions.
     pub fn set_dirty(&self, dirty: bool) -> Result<(), OperationError> {
+        if self.core.upgrade().is_some_and(|core| {
+            matches!(
+                core.quit.borrow().phase,
+                crate::quit::QuitPhase::Stopping | crate::quit::QuitPhase::Ready
+            )
+        }) {
+            return Err(OperationError::Quitting);
+        }
+
         let entry = self.live()?;
         let core = self.core.upgrade().ok_or(OperationError::RuntimeShutdown)?;
 
@@ -1371,13 +1450,15 @@ impl<R: Route> EntryHandle<R> {
         F: Fn(GuardContext<R>) -> Fut + 'static,
         Fut: Future<Output = GuardResult> + 'static,
     {
-        self.live()?
+        let entry = self.live()?;
+
+        self.set_dirty(entry.dirty.get())?;
+        entry
             .guards
             .borrow_mut()
             .push(Rc::new(move |context| Box::pin(guard(context))));
-        let dirty = self.live()?.dirty.get();
 
-        self.set_dirty(dirty)
+        Ok(())
     }
 
     /// Returns this instance's cancellation signal; disposal requests cancellation.
@@ -1398,6 +1479,7 @@ impl<R: Route> EntryHandle<R> {
 }
 
 enum Action<R: Route> {
+    Quit,
     Open(R, OpenOptions, Option<TabId>),
     Navigate(TabId, R, bool),
     Move(TabId, i8),
@@ -1554,6 +1636,7 @@ fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
     };
 
     match action {
+        Action::Quit => Err(OperationError::InvalidOptions.into()),
         Action::Open(destination, options, None) => new(&mut state, destination.clone(), *options),
         Action::Open(destination, _, Some(tab)) | Action::Navigate(tab, destination, false) => {
             let current = state.tab(*tab)?;
@@ -1827,6 +1910,10 @@ async fn evaluate_guard<R: Route>(
 
                     if choice.descriptor.action == ChoiceAction::Cancel {
                         return Err(Stop::Cancelled(CancelReason::Decision));
+                    }
+
+                    if revision != entry.revision.get() {
+                        continue 'revalidate;
                     }
 
                     if let Some(prepare) = choice.prepare {

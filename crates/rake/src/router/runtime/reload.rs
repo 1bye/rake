@@ -53,6 +53,26 @@ impl<R: Route> EntryHandle<R> {
 }
 
 impl<R: Route> Router<R> {
+    // Only the bridge calls this, after saving a checkpoint (or retaining a failed restore).
+    #[cfg(target_family = "wasm")]
+    pub(crate) fn reload_page(&self) -> Result<(), String> {
+        self.0.page_reload.set(true);
+        let result = web_sys::window()
+            .ok_or_else(|| "browser unavailable".to_string())
+            .and_then(|window| {
+                window
+                    .location()
+                    .reload()
+                    .map_err(|error| format!("{error:?}"))
+            });
+
+        if result.is_err() {
+            self.0.page_reload.set(false);
+        }
+
+        result
+    }
+
     /// Current reload state. Ready means managed futures have been dropped and the
     /// host UI has acknowledged detachment; it does not prove native code unload safety.
     pub fn reload_status(&self) -> ReloadStatus {
@@ -84,7 +104,8 @@ impl<R: Route> Router<R> {
 
         let state = self.0.state.borrow();
 
-        if !state.tokens.is_empty()
+        if self.0.quit.borrow().phase.blocks_navigation()
+            || !state.tokens.is_empty()
             || !state.decisions.is_empty()
             || self.0.reload.borrow().request.is_some()
             || self.0.reload.borrow().phase == ReloadPhase::Restoring
@@ -244,6 +265,8 @@ impl<R: Route> Router<R> {
             request: None,
             error: None,
         };
+        #[cfg(target_family = "wasm")]
+        self.0.page_reload.set(false);
         self.0.tasks.resume(generation, 0);
         self.0.notify();
 
@@ -275,6 +298,7 @@ impl<R: Route> Router<R> {
         if !self.0.state.borrow().tabs.is_empty()
             || !self.0.state.borrow().tokens.is_empty()
             || self.0.reload.borrow().phase == ReloadPhase::Restoring
+            || self.0.quit.borrow().phase.blocks_navigation()
             || self.is_shutdown()
         {
             return Err(ReloadError::Busy);

@@ -16,11 +16,17 @@ impl HostObserver {
     pub(crate) fn attach(
         report: impl Fn(HostVisibility) + 'static,
         shutdown: impl Fn() + 'static,
+        warn_before_unload: impl Fn() -> bool + 'static,
         window: &Window,
         cx: &App,
     ) -> Self {
         let report = Rc::new(report);
 
+        #[cfg(not(target_family = "wasm"))]
+        let _ = warn_before_unload;
+
+        // shortcut: GPUI cannot veto OS/Dock termination here; use a cancelable
+        // application-quit hook when GPUI provides one.
         let quit = cx.on_app_quit(move |_| {
             shutdown();
 
@@ -58,7 +64,7 @@ impl HostObserver {
 
             Self {
                 _quit: quit,
-                _browser: BrowserVisibility::attach(report),
+                _browser: BrowserVisibility::attach(report, warn_before_unload),
             }
         }
 
@@ -111,11 +117,15 @@ struct BrowserVisibility {
     document: web_sys::Document,
     window: web_sys::Window,
     listener: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
+    before_unload: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::BeforeUnloadEvent)>,
 }
 
 #[cfg(target_family = "wasm")]
 impl BrowserVisibility {
-    fn attach(report: Rc<dyn Fn(HostVisibility)>) -> Option<Self> {
+    fn attach(
+        report: Rc<dyn Fn(HostVisibility)>,
+        warn: impl Fn() -> bool + 'static,
+    ) -> Option<Self> {
         use wasm_bindgen::JsCast;
         let window = web_sys::window()?;
         let document = window.document()?;
@@ -135,18 +145,34 @@ impl BrowserVisibility {
             });
         });
 
+        let before_unload =
+            wasm_bindgen::closure::Closure::new(move |event: web_sys::BeforeUnloadEvent| {
+                if warn() {
+                    event.prevent_default();
+                    event.set_return_value("");
+                }
+            });
+
         let observer = Self {
             document,
             window,
             listener,
+            before_unload,
         };
 
         let callback = observer.listener.as_ref().unchecked_ref();
 
         if observer
-            .document
-            .add_event_listener_with_callback("visibilitychange", callback)
+            .window
+            .add_event_listener_with_callback(
+                "beforeunload",
+                observer.before_unload.as_ref().unchecked_ref(),
+            )
             .is_err()
+            || observer
+                .document
+                .add_event_listener_with_callback("visibilitychange", callback)
+                .is_err()
             || observer
                 .window
                 .add_event_listener_with_callback("pagehide", callback)
@@ -169,6 +195,11 @@ impl BrowserVisibility {
 impl Drop for BrowserVisibility {
     fn drop(&mut self) {
         use wasm_bindgen::JsCast;
+        let _ = self.window.remove_event_listener_with_callback(
+            "beforeunload",
+            self.before_unload.as_ref().unchecked_ref(),
+        );
+
         let callback = self.listener.as_ref().unchecked_ref();
 
         let _ = self

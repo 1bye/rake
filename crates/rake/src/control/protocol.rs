@@ -47,6 +47,12 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Guard every retained entry, coordinate jobs, then dispose the workspace.
+    Quit {
+        /// Explicit finite-job policy.
+        #[serde(default)]
+        options: crate::quit::QuitOptions,
+    },
     /// Enter a quiescent development boundary.
     PrepareReload {
         /// Stable supervisor boundary identity and actual mechanism.
@@ -137,6 +143,7 @@ impl Command {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
     pub fn names() -> &'static [&'static str] {
         &[
+            "quit",
             "prepare_reload",
             "finish_reload",
             "open",
@@ -159,6 +166,8 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Quit phase and finite work still preventing shutdown.
+    Quit {},
     /// Latest bounded presented tree, with explicit availability and coverage.
     InspectTree {},
     /// Exact boundary in the latest completed capture; IDs never select by semantics.
@@ -217,6 +226,7 @@ impl Query {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
     pub fn names() -> &'static [&'static str] {
         &[
+            "quit",
             "inspect_tree",
             "inspect_element",
             "reload",
@@ -314,6 +324,8 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    /// Guarded application shutdown status.
+    Quit(crate::quit::QuitStatus),
     /// Latest completed bounded element tree.
     Elements(crate::inspection::Snapshot),
     /// Exact element metadata from that capture.

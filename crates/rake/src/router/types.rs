@@ -308,6 +308,9 @@ pub struct MountError(pub String);
 /// Technical operation failures; intentional blocking is an `Outcome` instead.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum OperationError {
+    /// Guarded quit has stopped admission to this operation.
+    #[error("the application is quitting")]
+    Quitting,
     /// Development reload has paused navigation and application commands.
     #[error("runtime is paused for reload")]
     Reloading,
@@ -405,7 +408,7 @@ pub enum DisposeReason {
     TruncateForwardHistory,
     /// Explicit future retention eviction.
     EvictEntry,
-    /// Coordinated future application shutdown.
+    /// Dispose every retained entry during approved application quit.
     QuitApplication,
 }
 
@@ -576,6 +579,9 @@ pub struct TabSnapshot {
 /// An owned authoritative routing snapshot; tracing loss cannot corrupt it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RouterSnapshot {
+    /// Guarded application quit, including running-job coordination.
+    #[serde(default)]
+    pub quit: crate::quit::QuitStatus,
     /// Development boundary and compatibility outcome.
     pub reload: crate::reload::ReloadStatus,
     /// Managed work and observed host visibility, independent of tracing loss.

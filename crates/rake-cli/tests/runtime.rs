@@ -273,3 +273,173 @@ fn insecure_or_symlink_discovery_directories_are_rejected() {
     fs::remove_file(link).unwrap();
     fs::remove_dir(path).unwrap();
 }
+
+fn wait_for_quit(directory: &std::path::Path, phase: &str) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+    loop {
+        let status = cli(directory, &["ctl", "quit", "status", "--json"]);
+
+        if status["value"]["phase"] == phase {
+            return status;
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "quit did not reach {phase}: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn terminal_quit_shares_dirty_decisions_job_policy_and_retained_status() {
+    let directory =
+        std::path::PathBuf::from("/tmp").join(format!("rake-quit-{}", uuid::Uuid::new_v4()));
+
+    let router = Router::<Destination>::new(RouterConfig::default());
+    let client = router.client();
+    let server = LocalServer::bind(&client, "test.quit", &directory).unwrap();
+
+    futures::executor::block_on(async {
+        let work = async {
+            let (routing, transport) = futures::join!(router.run(), server.run(client));
+
+            routing.unwrap();
+            transport.unwrap();
+        };
+
+        let check = async {
+            let rake::router::Outcome::Committed(opened) = router
+                .navigator()
+                .open(Destination::Home, rake::router::OpenTarget::NewTab)
+                .wait()
+                .await
+                .unwrap()
+            else {
+                panic!()
+            };
+
+            router
+                .entry(opened.entry_id)
+                .unwrap()
+                .set_dirty(true)
+                .unwrap();
+            let task = router
+                .app()
+                .tasks()
+                .spawn("export", async {
+                    futures::future::pending::<()>().await;
+
+                    Ok(())
+                })
+                .unwrap();
+
+            let owned_directory = directory.clone();
+            let (sender, receiver) = oneshot::channel();
+
+            let thread = std::thread::spawn(move || {
+                let first = cli(
+                    &owned_directory,
+                    &["ctl", "quit", "--json", "--request-key", "first"],
+                );
+
+                assert_eq!(first["reply"]["type"], "submitted");
+                wait_for_quit(&owned_directory, "guarding");
+
+                let decisions = cli(&owned_directory, &["ctl", "decisions", "list", "--json"]);
+                let decision = format!("decision-{}", decisions["value"][0]["id"]);
+
+                cli(
+                    &owned_directory,
+                    &[
+                        "ctl",
+                        "decisions",
+                        "respond",
+                        &decision,
+                        "--choice",
+                        "cancel",
+                        "--json",
+                    ],
+                );
+                let status = wait_for_quit(&owned_directory, "cancelled");
+
+                assert_eq!(status["type"], "quit");
+                assert_eq!(status["value"]["phase"], "cancelled");
+
+                let second = cli(
+                    &owned_directory,
+                    &[
+                        "ctl",
+                        "quit",
+                        "--jobs",
+                        "cancel",
+                        "--json",
+                        "--request-key",
+                        "second",
+                    ],
+                );
+
+                assert_ne!(
+                    first["reply"]["value"]["operation_id"],
+                    second["reply"]["value"]["operation_id"]
+                );
+                wait_for_quit(&owned_directory, "guarding");
+
+                let decisions = cli(&owned_directory, &["ctl", "decisions", "list", "--json"]);
+                let decision = format!("decision-{}", decisions["value"][0]["id"]);
+
+                cli(
+                    &owned_directory,
+                    &[
+                        "ctl",
+                        "decisions",
+                        "respond",
+                        &decision,
+                        "--choice",
+                        "discard",
+                        "--json",
+                    ],
+                );
+                let status = wait_for_quit(&owned_directory, "ready");
+
+                assert_eq!(status["value"]["phase"], "ready");
+                assert_eq!(status["value"]["options"]["jobs"], "cancel");
+                assert!(
+                    status["value"]["pending_tasks"]
+                        .as_array()
+                        .unwrap()
+                        .is_empty()
+                );
+                let retry = cli(
+                    &owned_directory,
+                    &[
+                        "ctl",
+                        "quit",
+                        "--jobs",
+                        "cancel",
+                        "--json",
+                        "--request-key",
+                        "second",
+                    ],
+                );
+
+                assert_eq!(retry, second);
+                sender.send(()).unwrap();
+            });
+
+            receiver.await.unwrap();
+            thread.join().unwrap();
+            assert_eq!(
+                task.snapshot().unwrap().state,
+                rake::tasks::TaskState::Cancelled
+            );
+            assert!(router.snapshot().tabs.is_empty());
+        };
+
+        select(Box::pin(work), Box::pin(check)).await;
+    });
+    router.shutdown();
+    drop(server);
+    fs::remove_dir(directory).unwrap();
+}

@@ -229,8 +229,18 @@ function workspace() {
   for (const [name, value] of [['Window', `window-${snapshot.window_id}`], ['Tabs', snapshot.tabs.length], ['Host visibility', snapshot.work.host_visibility], ['Generation', snapshot.reload.generation]]) {
     metrics.append(append(el('div', name, 'metric'), el('strong', value)));
   }
-  return append(el('div'), card('Workspace', metrics, el('p', `Runtime ${snapshot.runtime_id} · revision ${snapshot.revision}`, 'mono small'),
-    el('p', 'Selected/current and historical entries are logical router state. Host visibility is measured independently; unavailable measurements stay Unknown.', 'hint')),
+  const quit = snapshot.quit || {phase: 'idle', pending_tasks: [], pending_operations: []};
+  const pendingQuit = ['waiting_for_jobs', 'guarding', 'stopping'].includes(quit.phase);
+  const quitControls = row(badge(`Quit: ${quit.phase}`),
+    el('span', `${quit.pending_tasks.length} finite jobs · ${quit.pending_operations.length} operations`));
+  if (!pendingQuit && quit.phase !== 'ready') {
+    quitControls.append(action('Quit (wait for jobs)', {type: 'quit', options: {jobs: 'wait'}}),
+      action('Quit and cancel jobs', {type: 'quit', options: {jobs: 'cancel'}}));
+  } else if (pendingQuit && quit.phase !== 'stopping') {
+    quitControls.append(action('Cancel quit', {type: 'cancel_operation', operation: quit.operation_id}));
+  }
+  return append(el('div'), card('Workspace', metrics, quitControls, el('p', `Runtime ${snapshot.runtime_id} · revision ${snapshot.revision}`, 'mono small'),
+    el('p', 'Quit guards every retained entry. Save/discard/cancel choices appear in Decisions. Selected/current and historical entries are logical router state. Host visibility is measured independently; unavailable measurements stay Unknown.', 'hint')),
     paged(snapshot.tabs, tabs => append(el('div'), ...tabs.map(tab => {
       const current = tab.entries[tab.cursor];
       const controls = row(badge(snapshot.selected === tab.id ? 'Selected' : 'Hidden tab'), badge(tab.mode),

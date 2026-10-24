@@ -237,6 +237,7 @@ async fn serve_one<R: Route>(stream: Async<UnixStream>, client: RuntimeClient<R>
             }
         }
 
+        let _response = client.begin_response();
         let reply = client.request(serde_json::from_slice(&bytes)?);
         let mut bytes = serde_json::to_vec(&reply)?;
 

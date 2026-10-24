@@ -131,11 +131,7 @@ impl WebBridge {
         let router = client.router();
 
         if router.reload_status().phase == ReloadPhase::RestoreFailed {
-            web_sys::window()
-                .ok_or("browser unavailable")?
-                .location()
-                .reload()
-                .map_err(|error| format!("{error:?}"))?;
+            router.reload_page()?;
             futures::future::pending::<()>().await;
         }
 
@@ -175,11 +171,7 @@ impl WebBridge {
                         .reload_checkpoint(application_id)
                         .map_err(|error| error.to_string())?,
                 )?;
-                web_sys::window()
-                    .ok_or("browser unavailable")?
-                    .location()
-                    .reload()
-                    .map_err(|error| format!("{error:?}"))?;
+                router.reload_page()?;
                 futures::future::pending::<()>().await;
 
                 Ok(())
@@ -226,6 +218,7 @@ impl WebBridge {
                             continue;
                         }
 
+                        let _response = client.begin_response();
                         let result =
                             client.request(delivery.request.ok_or("missing development request")?);
                         let _: serde_json::Value = self.post("reply", &serde_json::json!({"runtime_id": client.info().runtime_id, "ticket": delivery.ticket, "result": result})).await?;

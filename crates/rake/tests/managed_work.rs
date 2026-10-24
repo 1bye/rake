@@ -364,7 +364,8 @@ fn cancellation_dropping_observers_and_failure_observation_are_explicit() {
         })
         .unwrap();
 
-    cancelled.cancel().unwrap();
+    assert!(cancelled.cancel().unwrap());
+    assert!(!cancelled.cancel().unwrap());
     pool.run_until_stalled();
     assert!(done.get());
     assert_eq!(

@@ -91,7 +91,7 @@ the friendly CLI accepts their printed `tab-N`, `entry-N`, `op-N` forms.
 
 The initial surface includes open/reveal, exact-tab navigate/replace/select/close,
 Back/Forward, policy changes, task cancellation, operation cancellation, decision
-responses and registered application commands. `inspect tree` and
+responses, [guarded application quit](guarded-quit.md) and registered application commands. `inspect tree` and
 `inspect element ELEMENT_ID` expose the [element inspection](element-inspection.md)
 snapshots, coverage and exact capture lookups. Queries expose runtime capabilities,
 application state, routes, tabs/histories, tasks/owners, operations/results, pending
@@ -102,6 +102,9 @@ trees; missing observations remain explicit.
 
 A submission returns an operation ID before commit. The terminal waits until a
 terminal state or a pending decision by default. `--no-wait` returns immediately.
+`ctl quit` always returns submission immediately because successful native exit
+can remove the transport before a later operation query. `ctl quit status` reports
+its phase and pending jobs while the runtime remains alive.
 An operation query returns queued/running/awaiting-decision/committed/cancelled/
 blocked/failed and the committed result IDs or application result. Completed
 states and results share `RouterConfig::completed_operations` retention: the most

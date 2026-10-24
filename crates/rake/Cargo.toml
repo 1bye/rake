@@ -43,7 +43,7 @@ reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
 gloo-timers = { version = "0.3", features = ["futures"] }
-web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "EventTarget", "Document", "Element", "Storage"] }
+web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "Storage"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }

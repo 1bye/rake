@@ -9,6 +9,7 @@ pub mod control;
 pub mod diagnostics;
 pub mod http;
 pub mod inspection;
+pub mod quit;
 pub mod reload;
 pub mod router;
 pub mod tasks;
@@ -36,6 +37,7 @@ pub mod prelude {
 
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
+    pub use crate::quit::{QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus};
     pub use crate::reload::{Checkpoint, ReloadError, ReloadState};
     pub use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 

@@ -329,6 +329,7 @@ impl<R: Route> Workspace<R> {
 
         let router = Router::with_views(config, services, views, window, cx);
 
+        router.install_quit_action(cx);
         router.client().set_commands(commands);
 
         if control.inspection_enabled() {
@@ -363,6 +364,9 @@ impl<R: Route> Workspace<R> {
                 let client = router.client();
                 let restore_id = application_id.clone();
 
+                #[cfg(not(target_family = "wasm"))]
+                let closing = client.clone();
+
                 let driver = cx.spawn(async move |view, cx| {
                     let execute = async {
                         if let Some(checkpoint) = checkpoint {
@@ -387,6 +391,14 @@ impl<R: Route> Workspace<R> {
 
                         loop {
                             revision = observed.changed(revision).await;
+
+                            #[cfg(not(target_family = "wasm"))]
+                            if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
+                                closing.responses_idle().await;
+                                let _ = view.update(cx, |_, cx| cx.quit());
+
+                                break;
+                            }
 
                             if view.update(cx, |_, cx| cx.notify()).is_err() {
                                 break;
@@ -416,6 +428,24 @@ impl<R: Route> Render for Workspace<R> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = self.router.snapshot();
         let navigator = self.router.navigator();
+
+        if matches!(
+            snapshot.quit.phase,
+            crate::quit::QuitPhase::Stopping | crate::quit::QuitPhase::Ready
+        ) {
+            return div()
+                .size_full()
+                .bg(rgb(0x18232b))
+                .text_color(rgb(0xf0f4e8))
+                .p_4()
+                .child(if snapshot.quit.phase == crate::quit::QuitPhase::Ready {
+                    "Application closed. You can close this page."
+                } else {
+                    "Stopping managed work…"
+                })
+                .inspect("rake.quit")
+                .root(self.router.client().inspection(), snapshot.revision);
+        }
 
         if snapshot.reload.request.is_some() {
             let router = self.router.clone();
@@ -508,8 +538,86 @@ impl<R: Route> Render for Workspace<R> {
             .last()
             .and_then(|(_, state)| match state {
                 OperationState::Failed(error) => Some(error.to_string()),
-                OperationState::Blocked(reason) => Some(format!("Navigation blocked: {reason:?}")),
+                OperationState::Blocked(reason) => Some(format!("Operation blocked: {reason:?}")),
                 _ => None,
+            });
+
+        let quitting = snapshot.quit.phase.is_pending();
+        let quit_router = self.router.clone();
+        let cancel_router = self.router.clone();
+        let cancel_jobs_router = self.router.clone();
+        let quit_id = snapshot.quit.operation_id;
+
+        let quit_controls = div()
+            .flex()
+            .gap_3()
+            .p_2()
+            .child(
+                div()
+                    .id("quit-application")
+                    .px_3()
+                    .py_2()
+                    .cursor_pointer()
+                    .child(if quitting {
+                        "Cancel remaining jobs"
+                    } else {
+                        "Quit"
+                    })
+                    .on_click(move |_, _, _| {
+                        if quitting {
+                            // The first quit policy is stable; cancel individual jobs explicitly.
+                            let status = quit_router.quit_status();
+
+                            for task in status.pending_tasks {
+                                let _ = quit_router.cancel_task(task);
+                            }
+
+                            for operation in status.pending_operations {
+                                let _ = quit_router.cancel(operation);
+                            }
+                        } else {
+                            drop(quit_router.quit(crate::quit::QuitOptions::default()));
+                        }
+                    })
+                    .inspect("rake.quit.request"),
+            )
+            .when(!quitting, |row| {
+                row.child(
+                    div()
+                        .id("quit-cancel-jobs")
+                        .px_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .child("Quit and cancel jobs")
+                        .on_click(move |_, _, _| {
+                            drop(cancel_jobs_router.quit(crate::quit::QuitOptions {
+                                jobs: crate::quit::QuitJobs::Cancel,
+                            }));
+                        })
+                        .inspect("rake.quit.cancel-jobs"),
+                )
+            })
+            .when(quitting, |row| {
+                row.child(format!(
+                    "Quitting: {:?} · {} jobs · {} operations",
+                    snapshot.quit.phase,
+                    snapshot.quit.pending_tasks.len(),
+                    snapshot.quit.pending_operations.len()
+                ))
+                .child(
+                    div()
+                        .id("cancel-quit")
+                        .px_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .child("Cancel quit")
+                        .on_click(move |_, _, _| {
+                            if let Some(id) = quit_id {
+                                let _ = cancel_router.cancel(id);
+                            }
+                        })
+                        .inspect("rake.quit.cancel"),
+                )
             });
 
         div()
@@ -522,6 +630,7 @@ impl<R: Route> Render for Workspace<R> {
                 crate::inspection::inspect(TabBar::new(self.router.clone()))
                     .semantic_id("rake.tabs"),
             )
+            .child(quit_controls)
             .child(decision_area.inspect("rake.decisions"))
             .children(failure)
             .children(snapshot.history_error)

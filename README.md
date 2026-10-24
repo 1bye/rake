@@ -1,7 +1,7 @@
 # Rake
 
 Rake is an application framework for native GPUI and browser WebAssembly. This
-repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools, application packaging and element inspection** of the
+repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools, application packaging, element inspection, typed application commands and guarded quit** of the
 [API design](docs/api-design.md). It is an unpublished prototype.
 
 The foundation includes:
@@ -25,6 +25,8 @@ The foundation includes:
   client, private Unix IPC and an authenticated browser development bridge.
   Schema-enabled data types generate accepted argument and serialized result schemas;
   GUI, devtools and CLI calls share retry-safe command operations.
+- Guarded application quit across retained histories, save/discard/cancel decisions,
+  explicit running-job policy and shared GUI/CLI/devtools dispatch.
 - Native/Web build and dev commands, debounced build watching, coordinated reload,
   versioned workspace restoration and an external native reloader boundary.
 - A supervisor-owned browser inspector for native and Web runtimes: workspace,
@@ -39,6 +41,7 @@ See the [routing example](examples/routing/src/lib.rs) and
 [routing contract](docs/routing.md). Both examples depend only on `rake`, and their
 shared factories build for native and browser targets. The
 [renamed consumer](tests/renamed-facade/src/lib.rs) checks macro-generated paths.
+See [guarded quit](docs/guarded-quit.md) for shutdown decisions and host limits.
 See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 [runtime control](docs/runtime-control.md) for CLI setup, shared handlers and bounds.
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
@@ -111,7 +114,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo check -p rake --no-default-features --locked
-cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --locked
+cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --test guarded_quit --locked
 cargo build -p rake-cli --locked
 python3 scripts/test-dev-bridge.py
 python3 scripts/test-supervisor.py

@@ -26,7 +26,7 @@ restoration; operation IDs and retry keys never cross runtimes.
 
 | Panel | Inspection and actions |
 | --- | --- |
-| Workspace | Logical window, selection, host visibility, tab policies, destinations, full retained histories/cursors, entry revisions and dirtiness; select, Back, Forward, close and change policy. |
+| Workspace | Logical window, selection, host visibility, tab policies, destinations, full retained histories/cursors, entry revisions and dirtiness; select, Back, Forward, close and change policy; guarded quit with wait/cancel job policies, remaining counts and Cancel quit. |
 | Routes | Forms generated from registered typed destination descriptors; open/reveal or navigate/replace in an exact tab, with independent work policy and activation options. |
 | Tasks | Lifetime owner separately from causal origin; task kind, eligibility, state, RunId and generation; cancel and follow related diagnostics. Explicit application progress is unavailable unless logged. |
 | Operations | Queued/running/awaiting-decision/terminal states, retained results and errors; inspect or cancel through the shared dispatcher. Commit does not imply finished data loading. |
@@ -53,6 +53,10 @@ The host only proxies private native IPC or the authenticated Web broker. It
 does not mutate router state or approve decisions. Browser snapshots come from
 Events, never reconstruction from logs. Revision gaps replace state with a fresh
 authoritative snapshot and increment the visible resynchronization count.
+
+[Guarded quit](guarded-quit.md) uses the Workspace controls and Decisions panel
+through the shared dispatcher. Native exit disconnects its runtime; Web quit
+leaves a closed workspace queryable in the same document.
 
 Every mutation has a stable request key. Submission receipt, operation commit and
 decision acknowledgement remain distinct. An uncertain delivery offers a retry

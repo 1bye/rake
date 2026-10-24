@@ -29,7 +29,7 @@ pub use protocol::*;
 #[cfg(target_family = "wasm")]
 pub use web::{WebBridge, WebBridgeConfig};
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -45,6 +45,8 @@ struct SavedRequest {
 pub(crate) struct ClientState {
     pub(crate) inspection: crate::inspection::Store,
     commands: RefCell<Commands>,
+    responses: Cell<usize>,
+    response_event: event_listener::Event,
     capacity: usize,
     requests: RefCell<BTreeMap<String, SavedRequest>>,
 }
@@ -54,9 +56,23 @@ impl ClientState {
         Self {
             inspection: crate::inspection::Store::default(),
             commands: RefCell::new(Commands::new()),
+            responses: Cell::new(0),
+            response_event: event_listener::Event::new(),
             capacity,
             requests: RefCell::new(BTreeMap::new()),
         }
+    }
+}
+
+// A native host must let accepted transport responses reach the socket before exit.
+#[cfg(any(unix, target_family = "wasm"))]
+pub(crate) struct ResponseGuard(Rc<ClientState>);
+
+#[cfg(any(unix, target_family = "wasm"))]
+impl Drop for ResponseGuard {
+    fn drop(&mut self) {
+        self.0.responses.set(self.0.responses.get() - 1);
+        self.0.response_event.notify(usize::MAX);
     }
 }
 
@@ -78,6 +94,26 @@ impl<R: Route> RuntimeClient<R> {
     #[cfg(target_family = "wasm")]
     pub(crate) fn router(&self) -> &Router<R> {
         &self.router
+    }
+
+    #[cfg(any(unix, target_family = "wasm"))]
+    pub(crate) fn begin_response(&self) -> ResponseGuard {
+        self.state.responses.set(self.state.responses.get() + 1);
+
+        ResponseGuard(self.state.clone())
+    }
+
+    #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
+    pub(crate) async fn responses_idle(&self) {
+        loop {
+            let listener = self.state.response_event.listen();
+
+            if self.state.responses.get() == 0 {
+                return;
+            }
+
+            listener.await;
+        }
     }
 
     /// Describes the actual portable capabilities, version and retention limits.
@@ -200,6 +236,7 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::Quit { options } => self.router.quit(*options).id(),
             Command::PrepareReload { request } => {
                 return Ok(Reply::Reload(self.router.prepare_reload(request.clone())?));
             }
@@ -276,6 +313,7 @@ impl<R: Route> RuntimeClient<R> {
 
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
+            Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),

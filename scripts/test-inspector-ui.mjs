@@ -33,7 +33,7 @@ globalThis.clearTimeout = timer => { timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 const information = {runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab'],
   queries: ['inspect_tree', 'inspect_element'],
-  commands: ['open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
+  commands: ['quit', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
 const fields = {task_id: 'task-5', tab_id: 'tab-7', entry_id: 'entry-8', operation_id: 'op-9', request_id: 10};
 const diagnostics = [
   {sequence: 1, elapsed_us: 5, kind: 'span_open', span_id: 1, parent_span_id: null, spans: ['task'], fields},
@@ -43,6 +43,7 @@ const diagnostics = [
   {sequence: 5, elapsed_us: 40, kind: 'span_close', span_id: 1, parent_span_id: null, duration_us: 35, spans: ['task'], fields},
 ];
 const snapshot = {runtime_id: runtime, window_id: 1, revision: 2, selected: 7,
+  quit: {phase: 'idle', operation_id: null, options: {jobs: 'wait'}, pending_tasks: [], pending_operations: []},
   reload: {generation: 1, phase: 'idle'},
   tabs: [{id: 7, mode: 'Live', cursor: 1, entries: [
     {id: 6, destination: {route: 'home', params: {}}, dirty: false, revision: 1},
@@ -78,7 +79,7 @@ globalThis.fetch = async (url, options) => {
         commands: [{id: 'test.echo', capability: 'Headless', arguments: {type: 'object', required: ['message'], properties: {message: {type: 'string'}}}, result: {type: 'string'}},
           {id: 'test.unit', capability: 'RequiresWindow', arguments: {type: 'null'}, result: {type: 'null'}},
           {id: 'test.tuple', capability: 'Headless', arguments: {type: 'array', prefixItems: [{type: 'string'}, {type: 'integer', minimum: 0}]}, result: {type: 'array'}}],
-        events: {cursor: {runtime_id: runtime, epoch: 1, revision: 2}, kind: 'snapshot', snapshot},
+        events: {cursor: {runtime_id: runtime, epoch: 1, revision: snapshot.revision}, kind: 'snapshot', snapshot},
         diagnostics: {records: diagnostics.filter(record => record.sequence > query.after), dropped: 0, output_dropped: 0},
         operation: {operation_id: 9, state: 'AwaitingDecision', result: null}};
       result = {Ok: {type: 'data', value: replies[query.type]}};
@@ -100,6 +101,24 @@ await timers.find(timer => timer.delay === 750).callback(); await settle();
 assert.match(ids.content.textContent, /Current/);
 assert.match(ids.content.textContent, /Dirty/);
 
+await find('button', 'Quit (wait for jobs)').click(); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'quit', options: {jobs: 'wait'}});
+await find('button', 'Quit and cancel jobs').click(); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'quit', options: {jobs: 'cancel'}});
+snapshot.revision++;
+snapshot.quit = {...snapshot.quit, phase: 'waiting_for_jobs', operation_id: 9, pending_tasks: [5]};
+await panel('Workspace');
+assert.match(ids.content.textContent, /1 finite jobs/);
+await find('button', 'Cancel quit').click(); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'cancel_operation', operation: 9});
+snapshot.revision++;
+snapshot.quit = {...snapshot.quit, phase: 'stopping'};
+await panel('Workspace');
+assert.ok(!all(ids.content).some(item => item.tagName === 'button' && item.textContent === 'Cancel quit'));
+snapshot.revision++;
+snapshot.quit = {...snapshot.quit, phase: 'ready'};
+await panel('Workspace');
+assert.ok(!all(ids.content).some(item => item.tagName === 'button' && item.textContent.startsWith('Quit ')));
 await panel('Routes');
 const input = all(ids.content).find(item => item.attributes['aria-label'] === 'document id');
 input.value = 'B'; input.listeners.input();

@@ -202,7 +202,12 @@ impl Core {
             return false;
         };
 
-        if record.factory.is_none() && record.token.is_none() {
+        if record.factory.is_none()
+            && record
+                .token
+                .as_ref()
+                .is_none_or(CancellationToken::is_cancelled)
+        {
             return false;
         }
 
@@ -601,6 +606,8 @@ impl TaskHandle {
     }
 
     /// Cancels work and unregisters an activity factory, preventing future restarts.
+    /// Returns false if there is no remaining registration/run to cancel, including
+    /// a run whose cancellation was already requested.
     pub fn cancel(&self) -> Result<bool, TaskError> {
         Ok(self
             .core

@@ -128,9 +128,10 @@ and cross-document navigation cannot promise asynchronous save completion.
 
 There is one logical window. `NewWindow` reports `UnsupportedCapability` and the
 snapshot advertises the supported targets. `TabMode` drives Foreground/Live activity;
-see [managed work](managed-work.md). Guarded application quit, durable
-workspace persistence, native OS deep-link registration, CLI/control transports,
-devtools and hot reload remain subsequent stages.
+see [managed work](managed-work.md). [Guarded application quit](guarded-quit.md),
+[runtime control](runtime-control.md), [devtools](devtools.md) and
+[development reload](development.md) use this same routing core. Durable workspace
+persistence and native OS deep-link registration remain separate capabilities.
 
 Routing tests use real destination codecs, local futures, operation scheduling,
 guards and a recorded history sink. A separate resource test uses local stand-ins
