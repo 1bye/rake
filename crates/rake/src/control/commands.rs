@@ -120,6 +120,8 @@ pub trait ApplicationCommand: Serialize + DeserializeOwned + 'static {
 /// Owned handler context. Futures are local and no borrowed UI context crosses await.
 #[derive(Clone)]
 pub struct CommandContext {
+    /// The same application-owned typed service values supplied to routed views.
+    pub services: crate::services::ServiceRegistry,
     /// Application task scope, independent of any currently selected tab.
     pub app: AppHandle,
     /// Cancellation signal for this operation; cancellation cannot undo server effects.

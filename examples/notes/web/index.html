@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#49674e">
+<meta name="description" content="Fieldnotes. A quiet, local-first place for your notes.">
+<title>Fieldnotes</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #fffefa; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #error { color: #252d27; font: 16px system-ui; padding: 32px; white-space: pre-wrap; }
+</style>
+<div id="error" role="alert" hidden></div>
+<script type="module">
+  import init from './pkg/rake_notes.js';
+  try { await init(); }
+  catch (error) {
+    const display = document.querySelector('#error');
+    display.hidden = false;
+    display.textContent = `Fieldnotes could not start: ${error}\nUse a WebGPU-capable browser on localhost or HTTPS. Your stored notes have been preserved.`;
+    console.error(error);
+  }
+</script>
+</html>

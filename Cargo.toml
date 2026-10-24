@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rake", "crates/rake-macros", "crates/rake-cli", "examples/foundation", "examples/routing", "tests/renamed-facade"]
+members = ["crates/rake", "crates/rake-macros", "crates/rake-cli", "examples/foundation", "examples/routing", "examples/notes", "tests/renamed-facade"]
 resolver = "3"
 
 [workspace.package]

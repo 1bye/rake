@@ -49,6 +49,11 @@ See [graphical devtools](docs/devtools.md) for launch commands, panels and captu
 See [element inspection](docs/element-inspection.md) for instrumentation and coverage.
 See [packaging and distribution](docs/packaging.md) for bundle metadata, assets and deployment.
 
+The [Fieldnotes reference app](docs/notes.md) provides a complete notes workspace
+with search, pinned notes, an editor, autosave and crash recovery. Run
+`cargo run -p rake-notes`. Its [typed service composition](docs/services.md) keeps
+GUI edits, CLI commands and lifecycle guards on the same notebook instance.
+
 ## Run
 
 The project pins Rust 1.95.0 and GPUI CE source revision

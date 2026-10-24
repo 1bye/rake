@@ -136,6 +136,7 @@ impl<R: Route> Router<R> {
     ) -> Self {
         let context = window.to_async(cx);
         let collector = services.diagnostics();
+        let registry = services.registry();
 
         let mount: Mount<R> = Rc::new(move |destination, entry, navigator| {
             let mut context = context.clone();
@@ -160,6 +161,7 @@ impl<R: Route> Router<R> {
 
         let router = Router::with_mount(config, collector, mount);
 
+        router.client().set_services(registry);
         router.observe_host(window, cx);
 
         router
@@ -289,6 +291,7 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
 }
 
 pub(crate) struct Workspace<R: Route> {
+    chrome: bool,
     router: Router<R>,
     restart: Option<R>,
     _driver: Task<()>,
@@ -297,6 +300,7 @@ pub(crate) struct Workspace<R: Route> {
 }
 
 pub(crate) struct RoutingRoot<R: Route> {
+    pub(crate) chrome: bool,
     pub(crate) views: Rc<dyn RouteViews<R>>,
     pub(crate) initial: Option<R>,
     pub(crate) checkpoint: Option<Result<crate::reload::WorkspaceCheckpoint, String>>,
@@ -325,6 +329,7 @@ impl<R: Route> Workspace<R> {
             control,
             commands,
             application_id,
+            chrome,
         } = root;
 
         let router = Router::with_views(config, services, views, window, cx);
@@ -413,6 +418,7 @@ impl<R: Route> Workspace<R> {
                 });
 
                 Self {
+                    chrome,
                     router,
                     restart,
                     _driver: driver,
@@ -626,11 +632,13 @@ impl<R: Route> Render for Workspace<R> {
             .flex_col()
             .bg(rgb(0x18232b))
             .text_color(rgb(0xf0f4e8))
-            .child(
-                crate::inspection::inspect(TabBar::new(self.router.clone()))
-                    .semantic_id("rake.tabs"),
-            )
-            .child(quit_controls)
+            .when(self.chrome, |root| {
+                root.child(
+                    crate::inspection::inspect(TabBar::new(self.router.clone()))
+                        .semantic_id("rake.tabs"),
+                )
+                .child(quit_controls)
+            })
             .child(decision_area.inspect("rake.decisions"))
             .children(failure)
             .children(snapshot.history_error)

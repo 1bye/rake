@@ -5,34 +5,16 @@ use std::sync::Arc;
 
 use gpui::{AnyView, AppContext, Context, IntoElement, Render, Window, WindowOptions};
 
-use crate::diagnostics::{Collector, DiagnosticsConfig, DiagnosticsError};
+use crate::diagnostics::{DiagnosticsConfig, DiagnosticsError};
 use crate::http::{HttpClient, HttpConfig};
 use crate::router::runtime::Guard;
+use crate::services::{ServiceError, ServiceRegistry, Services};
 
 use crate::router::{
     GuardContext, GuardResult, NoRoute, Route, RouteViews, RouterConfig, WebConfig,
 };
 
 use std::rc::Rc;
-
-/// Standard application services, cheaply cloned without retaining a view entity.
-#[derive(Clone)]
-pub struct Services {
-    http: HttpClient,
-    collector: Collector,
-}
-
-impl Services {
-    /// Returns the shared configured HTTP transport handle.
-    pub fn http(&self) -> HttpClient {
-        self.http.clone()
-    }
-
-    /// Returns the bounded diagnostic collector.
-    pub fn diagnostics(&self) -> Collector {
-        self.collector.clone()
-    }
-}
 
 type Root = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
 
@@ -48,6 +30,9 @@ thread_local! {
 /// Typed routers drive scoped tasks and entry activity on the host UI loop.
 pub struct App<R: Route = NoRoute> {
     id: String,
+    services: ServiceRegistry,
+    window_options: WindowOptions,
+    workspace_chrome: bool,
     http: HttpConfig,
     diagnostics: DiagnosticsConfig,
     root: Option<Root>,
@@ -65,6 +50,9 @@ impl App<NoRoute> {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            services: ServiceRegistry::new(),
+            window_options: WindowOptions::default(),
+            workspace_chrome: true,
             http: HttpConfig::new(),
             diagnostics: DiagnosticsConfig::new(),
             root: None,
@@ -84,6 +72,9 @@ impl<R: Route> App<R> {
     pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
         App {
             id: self.id,
+            services: self.services,
+            window_options: self.window_options,
+            workspace_chrome: self.workspace_chrome,
             http: self.http,
             diagnostics: self.diagnostics,
             root: self.root,
@@ -95,6 +86,28 @@ impl<R: Route> App<R> {
             control: self.control,
             commands: self.commands,
         }
+    }
+
+    /// Registers a concrete shared local service before startup. Duplicates fail explicitly.
+    pub fn service<T: 'static>(mut self, service: T) -> Result<Self, ServiceError> {
+        self.services = self.services.with(service)?;
+
+        Ok(self)
+    }
+
+    /// Configures the initial GPUI window; browser hosts apply supported options.
+    pub fn window_options(mut self, options: WindowOptions) -> Self {
+        self.window_options = options;
+
+        self
+    }
+
+    /// Shows the default routing tab/quit controls. Disable for an application-owned
+    /// shell; shared guard decisions, errors, lifecycle and quit shortcuts remain active.
+    pub fn workspace_chrome(mut self, visible: bool) -> Self {
+        self.workspace_chrome = visible;
+
+        self
     }
 
     /// Sets the native initial destination. Browser deep links take precedence.
@@ -188,13 +201,11 @@ impl<R: Route> App<R> {
             return Err(AppError::InvalidId);
         }
 
-        Ok(Services {
-            http: HttpClient::with_collector(
-                self.http.clone(),
-                self.diagnostics.collector.clone(),
-            )?,
-            collector: self.diagnostics.collector.clone(),
-        })
+        Ok(Services::new(
+            HttpClient::with_collector(self.http.clone(), self.diagnostics.collector.clone())?,
+            self.diagnostics.collector.clone(),
+            self.services.clone(),
+        ))
     }
 
     /// Installs services and launches the selected GPUI platform.
@@ -261,6 +272,7 @@ impl<R: Route> App<R> {
             let control = self.control;
             let commands = self.commands;
             let application_id = self.id.clone();
+            let chrome = self.workspace_chrome;
 
             Box::new(move |services, window, cx| {
                 let root = crate::router::view::RoutingRoot {
@@ -273,6 +285,7 @@ impl<R: Route> App<R> {
                     control,
                     commands,
                     application_id,
+                    chrome,
                 };
 
                 match crate::router::view::Workspace::mount(services, root, window, cx) {
@@ -308,7 +321,7 @@ impl<R: Route> App<R> {
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
 
-            match cx.open_window(WindowOptions::default(), move |window, cx| {
+            match cx.open_window(self.window_options, move |window, cx| {
                 let view = root(services, window, cx);
 
                 cx.new(|_| RootView(view))

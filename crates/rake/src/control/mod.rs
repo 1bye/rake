@@ -45,6 +45,7 @@ struct SavedRequest {
 pub(crate) struct ClientState {
     pub(crate) inspection: crate::inspection::Store,
     commands: RefCell<Commands>,
+    services: RefCell<crate::services::ServiceRegistry>,
     responses: Cell<usize>,
     response_event: event_listener::Event,
     capacity: usize,
@@ -56,6 +57,7 @@ impl ClientState {
         Self {
             inspection: crate::inspection::Store::default(),
             commands: RefCell::new(Commands::new()),
+            services: RefCell::new(crate::services::ServiceRegistry::new()),
             responses: Cell::new(0),
             response_event: event_listener::Event::new(),
             capacity,
@@ -209,6 +211,16 @@ impl<R: Route> RuntimeClient<R> {
         *self.state.commands.borrow_mut() = commands;
     }
 
+    pub(crate) fn set_services(&self, services: crate::services::ServiceRegistry) {
+        *self.state.services.borrow_mut() = services;
+    }
+
+    /// Application composition shared with routed views. Registrations on a returned
+    /// snapshot do not mutate the running application's service set.
+    pub fn services(&self) -> crate::services::ServiceRegistry {
+        self.state.services.borrow().clone()
+    }
+
     /// Registers application commands before driving the host. Existing handles share this registry.
     pub fn commands(&self) -> Commands {
         self.state.commands.borrow().clone()
@@ -283,6 +295,7 @@ impl<R: Route> RuntimeClient<R> {
                 let commands = self.commands();
 
                 let context = CommandContext {
+                    services: self.services(),
                     app: self.router.app(),
                     cancellation: crate::http::CancellationToken::new(),
                 };

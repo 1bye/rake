@@ -12,13 +12,14 @@ pub mod inspection;
 pub mod quit;
 pub mod reload;
 pub mod router;
+pub mod services;
 pub mod tasks;
 
 #[cfg(feature = "gpui")]
 mod application;
 
 #[cfg(feature = "gpui")]
-pub use application::{App, AppError, Services};
+pub use application::{App, AppError};
 #[cfg(feature = "gpui")]
 pub use gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
@@ -26,6 +27,7 @@ pub use router::Route;
 pub use schemars;
 pub use serde;
 pub use serde_json;
+pub use services::{ServiceError, ServiceRegistry, Services};
 pub use tracing::{debug, error, info, trace, warn};
 
 /// Common application and service imports.
@@ -39,6 +41,7 @@ pub mod prelude {
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
     pub use crate::quit::{QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus};
     pub use crate::reload::{Checkpoint, ReloadError, ReloadState};
+    pub use crate::services::{ServiceError, ServiceRegistry, Services};
     pub use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 
     pub use crate::router::{
@@ -48,11 +51,11 @@ pub mod prelude {
     };
 
     #[cfg(feature = "gpui")]
+    pub use crate::App;
+    #[cfg(feature = "gpui")]
     pub use crate::inspection::InspectElement;
     #[cfg(feature = "gpui")]
     pub use crate::router::{PageContext, RouteOutlet, RouteViews, TabBar};
-    #[cfg(feature = "gpui")]
-    pub use crate::{App, Services};
     pub use rake_macros::{Command, Route};
 }
 

@@ -364,6 +364,15 @@ impl<R: Route> Router<R> {
         )
     }
 
+    /// Creates a headless runtime with a fixed typed application composition.
+    pub fn with_services(config: RouterConfig, services: crate::services::ServiceRegistry) -> Self {
+        let router = Self::new(config);
+
+        router.client().set_services(services);
+
+        router
+    }
+
     pub(crate) fn with_mount(config: RouterConfig, collector: Collector, mount: Mount<R>) -> Self {
         let runtime = RuntimeId(uuid::Uuid::new_v4());
         let tasks = WorkRuntime::new(runtime, config.tasks.clone(), collector.clone());
