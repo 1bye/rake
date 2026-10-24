@@ -467,7 +467,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         })
         .collect();
 
-    let selected: Vec<_> = candidates.into_iter().filter(|instance| matches!(query(instance, Query::Info {}, Duration::from_secs(2)), Ok(Reply::Info(info)) if info.runtime_id == instance.info.runtime_id)).collect();
+    let selected: Vec<_> = candidates.into_iter().filter(|instance| matches!(query(instance, Query::Info {}, timeout), Ok(Reply::Info(info)) if info.runtime_id == instance.info.runtime_id)).collect();
 
     let instance = match selected.as_slice() {
         [] => return Err("no matching development instance; use rake instances --json".into()),

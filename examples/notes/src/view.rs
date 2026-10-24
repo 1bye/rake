@@ -45,6 +45,12 @@ struct Views;
 
 struct ModelChanged;
 
+#[cfg(target_family = "wasm")]
+struct WebFonts;
+
+#[cfg(target_family = "wasm")]
+impl gpui::Global for WebFonts {}
+
 impl RouteViews<Destination> for Views {
     fn mount(
         &self,
@@ -53,6 +59,21 @@ impl RouteViews<Destination> for Views {
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<AnyView, MountError> {
+        #[cfg(target_family = "wasm")]
+        if !cx.has_global::<WebFonts>() {
+            cx.text_system()
+                .add_fonts(vec![
+                    std::borrow::Cow::Borrowed(
+                        include_bytes!("../assets/fonts/NotoSansJP-Regular.otf").as_slice(),
+                    ),
+                    std::borrow::Cow::Borrowed(
+                        include_bytes!("../assets/fonts/NotoColorEmoji.ttf").as_slice(),
+                    ),
+                ])
+                .map_err(|error| MountError(format!("Cannot load document fonts: {error}")))?;
+            cx.set_global(WebFonts);
+        }
+
         window.set_window_title("Fieldnotes");
         let notebook = page
             .services()
@@ -624,7 +645,14 @@ impl Render for NotesView {
             .size_full()
             .min_h_0()
             .flex()
-            .font_family("IBM Plex Sans")
+            .font(gpui::Font {
+                fallbacks: cfg!(target_family = "wasm").then(|| {
+                    // shortcut: Cosmic selects emoji automatically until GPUI's explicit
+                    // family loader stops rejecting fonts without a Latin 'm' glyph.
+                    gpui::FontFallbacks::from_fonts(vec!["Noto Sans JP".into()])
+                }),
+                ..gpui::font("IBM Plex Sans")
+            })
             .text_size(px(13.))
             .text_color(rgb(INK))
             .bg(rgb(0xfffefa))

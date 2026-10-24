@@ -102,6 +102,11 @@ the entire document. Eligibility does not promise uninterrupted execution or a
 durable background service. Page restoration from browser cache rechecks visibility;
 actual document destruction cannot guarantee asynchronous cleanup.
 
+The owned Web router/control driver wakes through the browser's microtask
+executor, avoiding GPUI's chained-timer dispatcher for runtime progress in hidden
+tabs. Dropping the workspace aborts that driver. Application timers still follow
+browser scheduling and suspension policies.
+
 The macOS adapter reads AppKit window visibility, minimization and occlusion on
 the UI loop every 250 ms. This bounds observation frequency without confusing
 keyboard focus with presentation. [Guarded quit](guarded-quit.md) coordinates

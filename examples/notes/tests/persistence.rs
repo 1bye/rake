@@ -133,6 +133,37 @@ fn previous_copy_can_repair_both_broken_current_snapshots() {
 }
 
 #[test]
+fn malformed_higher_revision_checkpoint_does_not_block_repair_from_valid_main() {
+    let directory = Directory::new();
+    let notebook = directory.notebook();
+
+    block_on(notebook.load()).unwrap();
+    block_on(notebook.flush()).unwrap();
+    drop(notebook);
+    let saved = std::fs::read(directory.0.join("library.json")).unwrap();
+    let mut damaged: rake::serde_json::Value = rake::serde_json::from_slice(&saved).unwrap();
+
+    damaged["revision"] = rake::serde_json::json!(1000);
+    damaged["library"]["notes"][0]["id"] = rake::serde_json::json!(0);
+    private_write(
+        &directory.0.join("recovery.json"),
+        rake::serde_json::to_vec(&damaged).unwrap(),
+    );
+    let notebook = directory.notebook();
+
+    block_on(notebook.load()).unwrap();
+    assert!(notebook.notice().is_some());
+    assert_eq!(notebook.library().unwrap().notes[0].id, 1);
+    block_on(notebook.flush()).unwrap();
+    drop(notebook);
+    let notebook = directory.notebook();
+
+    block_on(notebook.load()).unwrap();
+    assert!(!notebook.is_dirty());
+    assert!(notebook.notice().is_none());
+}
+
+#[test]
 fn unknown_formats_and_total_corruption_never_create_a_replacement_library() {
     let directory = Directory::new();
     let notebook = directory.notebook();

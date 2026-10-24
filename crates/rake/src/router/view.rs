@@ -5,7 +5,7 @@ use crate::inspection::InspectElement as _;
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{AnyView, Context, ElementId, IntoElement, Render, RenderOnce, Task, Window, div, rgb};
+use gpui::{AnyView, Context, ElementId, IntoElement, Render, RenderOnce, Window, div, rgb};
 
 use crate::Services;
 use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle};
@@ -290,11 +290,24 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
+type DriverTask = gpui::Task<()>;
+
+#[cfg(target_family = "wasm")]
+struct DriverTask(futures::future::AbortHandle);
+
+#[cfg(target_family = "wasm")]
+impl Drop for DriverTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub(crate) struct Workspace<R: Route> {
     chrome: bool,
     router: Router<R>,
     restart: Option<R>,
-    _driver: Task<()>,
+    _driver: DriverTask,
     #[cfg(target_family = "wasm")]
     _browser: super::web::browser::BrowserHistory,
 }
@@ -372,7 +385,7 @@ impl<R: Route> Workspace<R> {
                 #[cfg(not(target_family = "wasm"))]
                 let closing = client.clone();
 
-                let driver = cx.spawn(async move |view, cx| {
+                let drive = async move |view: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                     let execute = async {
                         if let Some(checkpoint) = checkpoint {
                             match checkpoint {
@@ -415,7 +428,29 @@ impl<R: Route> Workspace<R> {
                     let host = futures::future::select(Box::pin(execute), Box::pin(observe));
 
                     futures::future::select(Box::pin(host), Box::pin(control)).await;
-                });
+                };
+
+                #[cfg(not(target_family = "wasm"))]
+                let driver = cx.spawn(drive);
+
+                #[cfg(target_family = "wasm")]
+                let driver = {
+                    let view = cx.weak_entity();
+                    let mut context = cx.to_async();
+                    let (abort, registration) = futures::future::AbortHandle::new_pair();
+
+                    // GPUI's Web dispatcher uses chained timers, which Chrome can
+                    // throttle in hidden tabs. Runtime I/O must wake via microtasks.
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = futures::future::Abortable::new(
+                            drive(view, &mut context),
+                            registration,
+                        )
+                        .await;
+                    });
+
+                    DriverTask(abort)
+                };
 
                 Self {
                     chrome,

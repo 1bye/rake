@@ -309,6 +309,12 @@ impl Editor {
         let key = event.keystroke.key.as_str();
         let selection = self.buffer.selection();
 
+        // Browser clipboard contents arrive through the DOM paste event; consuming
+        // its keydown would prevent the platform input handler from receiving it.
+        if cfg!(target_family = "wasm") && command && key == "v" {
+            return;
+        }
+
         if command && matches!(key, "a" | "c" | "x" | "v" | "z") {
             match key {
                 "a" => {
@@ -631,8 +637,7 @@ impl IntoElement for Text {
     }
 }
 
-fn shape(text: &str, width: Pixels, window: &mut Window) -> Vec<WrappedLine> {
-    let style = window.text_style();
+fn shape(text: &str, width: Pixels, style: &TextStyle, window: &mut Window) -> Vec<WrappedLine> {
     let size = style.font_size.to_pixels(window.rem_size());
 
     let text: SharedString = if text.is_empty() {
@@ -678,6 +683,10 @@ impl Element for Text {
         cx: &mut App,
     ) -> (LayoutId, ()) {
         let editor = self.editor.clone();
+        // Measured layout runs after the parent's text-style scope has ended.
+        // Capture it now so scroll extent and painted rows use the same metrics.
+        let text_style = window.text_style();
+        let line_height = text_style.line_height_in_pixels(window.rem_size());
         let mut style = Style::default();
 
         style.size.width = relative(1.).into();
@@ -690,11 +699,11 @@ impl Element for Text {
 
             let content = &editor.read(cx).buffer.text;
 
-            let height = shape(content, width, window)
+            let height = shape(content, width, &text_style, window)
                 .iter()
-                .map(|line| line.size(window.line_height()).height)
+                .map(|line| line.size(line_height).height)
                 .fold(px(0.), |a, b| a + b)
-                .max(window.line_height());
+                .max(line_height);
 
             size(width, height + px(12.))
         });
@@ -733,17 +742,13 @@ impl Element for Text {
         let mut quads = Vec::new();
         let mut caret = None;
 
-        let shaped = if text.is_empty() {
-            window.with_text_style(
-                Some(TextStyleRefinement {
-                    color: Some(hsla(0.25, 0.02, 0.6, 1.)),
-                    ..Default::default()
-                }),
-                |window| shape(display, bounds.size.width, window),
-            )
-        } else {
-            shape(display, bounds.size.width, window)
-        };
+        let mut text_style = window.text_style();
+
+        if text.is_empty() {
+            text_style.color = hsla(0.25, 0.02, 0.6, 1.);
+        }
+
+        let shaped = shape(display, bounds.size.width, &text_style, window);
 
         for line in shaped {
             let origin = point(bounds.left(), y);

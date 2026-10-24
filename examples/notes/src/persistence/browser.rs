@@ -1,43 +1,28 @@
 //! Browser writes use Web Locks to serialize compare-and-write across documents.
 
-use super::StorageError;
+use super::{Envelope, StorageError};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(inline_js = r#"
 function storageError(message) { throw new Error(message); }
-function snapshot(raw) {
-  let value; try { value = JSON.parse(raw); } catch { return null; }
-  if (!value || typeof value !== 'object') return null;
-  if (Number.isSafeInteger(value.format) && value.format > 1) storageError('Unsupported library format ' + value.format + '. Your notes were preserved.');
-  const notes = value.format === 0 ? value.notes : value.library?.notes;
-  return Number.isSafeInteger(value.revision) && value.revision > 0 && Array.isArray(notes) ? value : null;
-}
+function snapshots(key) { return ['library', 'recovery', 'previous'].map(s => localStorage.getItem(key + '.' + s)); }
 async function locked(key, mode, work) {
   if (!navigator.locks) storageError('Web Locks are unavailable. Fieldnotes needs a secure browser context to protect your notes.');
   return navigator.locks.request(key, {mode}, work);
 }
 export async function fieldnotes_read(key) {
-  return locked(key, 'shared', () => JSON.stringify(['library', 'recovery', 'previous'].map(s => localStorage.getItem(key + '.' + s))));
+  return locked(key, 'shared', () => JSON.stringify(snapshots(key)));
 }
-export async function fieldnotes_write(key, raw, expected, checkpointOnly) {
+export async function fieldnotes_write(key, raw, observed, checkpointOnly, keepPrevious) {
   return locked(key, 'exclusive', () => {
-    const incoming = JSON.parse(raw);
-    let current = null;
-    for (const suffix of ['library', 'recovery', 'previous']) {
-      if (suffix === 'previous' && current) break;
-      const stored = localStorage.getItem(key + '.' + suffix);
-      if (!stored) continue;
-      const value = snapshot(stored);
-      if (!value) continue;
-      if (!current || value.revision > current.revision) current = value;
-    }
-    const identical = current && current.revision === incoming.revision && JSON.stringify(current.library) === JSON.stringify(incoming.library);
-    if (!identical && (current ? current.revision > incoming.revision || (current.revision !== expected && current.writer !== incoming.writer) : expected !== 0)) storageError('CONFLICT');
+    // Rust validates formats, documents and revisions before this transaction.
+    // Compare every raw snapshot under the lock so that validation cannot race a writer.
+    const current = snapshots(key);
+    if (JSON.stringify(current) !== observed) storageError('CONFLICT');
     // Each setItem is atomic; a quota failure leaves an older complete snapshot intact.
     localStorage.setItem(key + '.recovery', raw);
     if (!checkpointOnly) {
-      const old = localStorage.getItem(key + '.library');
-      if (old && snapshot(old)) localStorage.setItem(key + '.previous', old);
+      if (keepPrevious && current[0] !== null) localStorage.setItem(key + '.previous', current[0]);
       localStorage.setItem(key + '.library', raw);
     }
   });
@@ -48,8 +33,9 @@ extern "C" {
     fn fieldnotes_write(
         key: &str,
         raw: &str,
-        expected: f64,
+        observed: &str,
         checkpoint_only: bool,
+        keep_previous: bool,
     ) -> js_sys::Promise;
 }
 
@@ -78,15 +64,30 @@ pub(super) async fn read(
 
 pub(super) async fn write(
     key: &str,
+    envelope: &Envelope,
     raw: &str,
     expected: u64,
     checkpoint_only: bool,
 ) -> Result<(), StorageError> {
+    let snapshots = read(key).await?;
+    let current = super::current_snapshot(
+        snapshots.0.as_deref(),
+        snapshots.1.as_deref(),
+        snapshots.2.as_deref(),
+    )?;
+    super::check_write(current.as_ref(), envelope, expected)?;
+    let keep_previous = snapshots
+        .0
+        .as_deref()
+        .is_some_and(|raw| super::decode(raw).is_ok());
+    let observed = rake::serde_json::to_string(&snapshots)
+        .map_err(|error| StorageError::Invalid(error.to_string()))?;
     wasm_bindgen_futures::JsFuture::from(fieldnotes_write(
         key,
         raw,
-        expected as f64,
+        &observed,
         checkpoint_only,
+        keep_previous,
     ))
     .await
     .map_err(error)?;

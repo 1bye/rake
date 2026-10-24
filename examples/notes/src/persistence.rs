@@ -226,11 +226,43 @@ fn loaded(
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
-fn check_write(current: Option<&str>, new: &Envelope, expected: u64) -> Result<(), StorageError> {
-    if let Some(raw) = current {
-        let (old, _) = decode(raw)?;
+fn current_snapshot(
+    main: Option<&str>,
+    recovery: Option<&str>,
+    previous: Option<&str>,
+) -> Result<Option<Envelope>, StorageError> {
+    let mut current: Option<Envelope> = None;
 
+    for raw in [main, recovery].into_iter().flatten() {
+        match decode(raw) {
+            Ok((envelope, _)) => {
+                if current
+                    .as_ref()
+                    .is_none_or(|old| envelope.revision >= old.revision)
+                {
+                    current = Some(envelope);
+                }
+            }
+            Err(error @ StorageError::Unsupported(_)) => return Err(error),
+            Err(_) => {}
+        }
+    }
+
+    if current.is_none()
+        && let Some(previous) = previous
+    {
+        current = Some(decode(previous)?.0);
+    }
+
+    Ok(current)
+}
+
+fn check_write(
+    current: Option<&Envelope>,
+    new: &Envelope,
+    expected: u64,
+) -> Result<(), StorageError> {
+    if let Some(old) = current {
         if old.revision == new.revision && old.library == new.library {
             return Ok(());
         }
@@ -344,7 +376,7 @@ impl Repository {
 
         #[cfg(target_family = "wasm")]
         {
-            browser::write(&self.key, &raw, expected, checkpoint_only).await
+            browser::write(&self.key, &envelope, &raw, expected, checkpoint_only).await
         }
     }
 }

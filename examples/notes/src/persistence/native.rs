@@ -147,32 +147,12 @@ impl Files {
         let _lease = self.enter()?;
         let main = self.read("library.json")?;
         let recovery = self.read("recovery.json")?;
-        let mut current = Vec::new();
-
-        for value in [main.as_ref(), recovery.as_ref()].into_iter().flatten() {
-            match decode(value) {
-                Ok((old, _)) => current.push((old.revision, value)),
-                Err(error @ StorageError::Unsupported(_)) => return Err(error),
-                Err(_) => {}
-            }
-        }
-
         let previous = self.read("previous.json")?;
 
-        if current.is_empty()
-            && let Some(value) = previous.as_ref()
-        {
-            let (old, _) = decode(value)?;
+        let current =
+            super::current_snapshot(main.as_deref(), recovery.as_deref(), previous.as_deref())?;
 
-            current.push((old.revision, value));
-        }
-
-        current.sort_by_key(|(revision, _)| *revision);
-        check_write(
-            current.last().map(|(_, raw)| raw.as_str()),
-            &envelope,
-            expected,
-        )?;
+        check_write(current.as_ref(), &envelope, expected)?;
         atomic(&self.directory, "recovery.json", raw.as_bytes())?;
 
         if !checkpoint_only {

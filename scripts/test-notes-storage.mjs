@@ -26,30 +26,32 @@ Object.defineProperty(globalThis, 'navigator', { value: { locks: {
 } }, configurable: true });
 const raw = (revision, writer, title) => JSON.stringify({format: 1, revision, writer, library: {notes: [{id: 1, title}]}});
 const first = raw(1, 'a', 'First');
-await write('test', first, 0, false);
+await write('test', first, await read('test'), false, true);
 assert.deepEqual(JSON.parse(await read('test')), [first, first, null]);
+const observed = await read('test');
 const results = await Promise.allSettled([
-  write('test', raw(2, 'b', 'Second'), 1, false),
-  write('test', raw(2, 'c', 'Concurrent'), 1, false),
+  write('test', raw(2, 'b', 'Second'), observed, false, true),
+  write('test', raw(2, 'c', 'Concurrent'), observed, false, true),
 ]);
 assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
 assert.match(results.find(result => result.status === 'rejected').reason.message, /CONFLICT/);
 assert.equal(JSON.parse(values.get('test.library')).library.notes[0].title, 'Second');
 failKey = 'test.library';
-await assert.rejects(write('test', raw(3, 'b', 'Recover me'), 2, false), /Quota/);
+await assert.rejects(write('test', raw(3, 'b', 'Recover me'), await read('test'), false, true), /Quota/);
 assert.equal(JSON.parse(values.get('test.library')).revision, 2);
 assert.equal(JSON.parse(values.get('test.recovery')).revision, 3);
 failKey = null;
-await write('test', raw(3, 'b', 'Recover me'), 3, false);
+await write('test', raw(3, 'b', 'Recover me'), await read('test'), false, true);
 values.set('test.library', '{broken');
 values.set('test.recovery', 'null');
 const backup = values.get('test.previous');
-await write('test', raw(4, 'd', 'Repaired from previous'), 2, false);
+await write('test', raw(4, 'd', 'Repaired from previous'), await read('test'), false, false);
 assert.equal(values.get('test.previous'), backup);
-values.set('test.recovery', JSON.stringify({format: 99, revision: 5}));
+const beforeExternalChange = await read('test');
+values.set('test.previous', 'A different backup');
 const preserved = values.get('test.library');
-await assert.rejects(write('test', raw(5, 'd', 'Must not write'), 4, false), /Unsupported/);
+await assert.rejects(write('test', raw(5, 'd', 'Must not write'), beforeExternalChange, false, true), /CONFLICT/);
 assert.equal(values.get('test.library'), preserved);
 delete navigator.locks;
 await assert.rejects(read('test'), /Web Locks/);
-console.log('Fieldnotes Web storage: serialization, conflicts, quota recovery, previous fallback and future formats passed');
+console.log('Fieldnotes Web storage: serialization, snapshot conflicts, quota recovery and backup preservation passed');

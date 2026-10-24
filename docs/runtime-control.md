@@ -79,6 +79,11 @@ validates Host/Origin, requires a random session token and keeps the token in th
 authenticated browser session. `rake instances` omits tokens.
 The injected bootstrap supports HTML with either an explicit or implicit head.
 
+`rake ctl --timeout SECONDS` applies to the runtime identity probe as well as
+request exchange and operation observation. Hidden browser tabs can respond more
+slowly than native sockets; selecting an explicit runtime must not impose a
+separate fixed two-second discovery deadline.
+
 ## Commands, queries and outcomes
 
 `target/debug/rake --help` lists the supported terminal mappings. Every protocol

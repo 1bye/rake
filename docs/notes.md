@@ -55,12 +55,20 @@ rejected. The native implementation has been exercised on macOS, not Linux or
 Windows.
 
 Web storage is origin-local `localStorage`, serialized across windows with Web
-Locks and optimistic revisions. Use localhost or HTTPS and a WebGPU-capable
+Locks and optimistic revisions. Native and Web writes use the same full document
+validator. Web compare-and-write also checks every raw snapshot under the lock,
+so validation cannot race another writer. Use localhost or HTTPS and a WebGPU-capable
 browser. A stale writer is blocked rather than silently replacing another
 window's changes; restart that window to load the latest library. Quota/access
 failures stay visible. Clearing site data, private browsing policies or browser
 eviction can remove notes; keep exports/backups of important content. There is
 no account or sync server.
+
+The Web build embeds licensed Noto Sans JP and Noto Color Emoji fallbacks
+(15.3 MB uncompressed font data) because GPUI's canvas renderer cannot use host
+system fonts. Japanese text and composed color emoji are exercised in Chrome;
+the bundled fonts do not cover every Unicode script. Browser artifacts include
+`font-licenses.txt`. Native builds use host fonts.
 
 Libraries are bounded to 1000 documents, 512 KiB per body, 1024 bytes per title
 and 8 MiB serialized. Archive retains content and counts toward these limits.
@@ -97,3 +105,6 @@ Verification: portable persistence tests exercise actual files/leases/workers;
 and graceful quit. `scripts/test-notes-storage.mjs` executes the actual browser
 adapter functions against an in-memory storage/lock host, covering conflicts,
 quota failures and recovery. It does not establish live browser/GPU behavior.
+The separate [real-browser test procedure](notes-browser-testing.md) records
+Chrome input, long-document scrolling, background autosave, stale tabs,
+malformed recovery and an actual renderer crash.
