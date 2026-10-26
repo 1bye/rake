@@ -35,7 +35,7 @@ use std::rc::Rc;
 
 use serde_json::json;
 
-use crate::router::{OperationId, RevealScope, Route, Router};
+use crate::router::{OperationId, Route, Router};
 
 struct SavedRequest {
     command: Command,
@@ -134,10 +134,7 @@ impl<R: Route> RuntimeClient<R> {
             .into(),
             commands: Command::names().iter().map(|name| (*name).into()).collect(),
             queries: Query::names().iter().map(|name| (*name).into()).collect(),
-            supported_targets: vec![
-                crate::router::OpenTarget::CurrentTab,
-                crate::router::OpenTarget::NewTab,
-            ],
+            supported_targets: self.router.supported_targets(),
             completed_operations,
             pending_operations,
             idempotency_capacity: self.state.capacity,
@@ -248,6 +245,7 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::CloseWindow { window } => self.router.close_window(*window).id(),
             Command::Quit { options } => self.router.quit(*options).id(),
             Command::PrepareReload { request } => {
                 return Ok(Reply::Reload(self.router.prepare_reload(request.clone())?));
@@ -256,9 +254,13 @@ impl<R: Route> RuntimeClient<R> {
                 return Ok(Reply::Reload(self.router.finish_reload(id, *applied)?));
             }
             Command::Open {
+                window,
                 destination,
                 options,
-            } => navigator.open_with(R::decode(destination)?, *options).id(),
+            } => navigator
+                .for_window(window.unwrap_or(navigator.window_id()))
+                .open_with(R::decode(destination)?, *options)
+                .id(),
             Command::Navigate {
                 tab,
                 destination,
@@ -273,8 +275,13 @@ impl<R: Route> RuntimeClient<R> {
                     tab.navigate(destination).id()
                 }
             }
-            Command::Reveal { destination } => navigator
-                .reveal(R::decode(destination)?, RevealScope::Application)
+            Command::Reveal {
+                window,
+                scope,
+                destination,
+            } => navigator
+                .for_window(window.unwrap_or(navigator.window_id()))
+                .reveal(R::decode(destination)?, *scope)
                 .id(),
             Command::Select { tab } => navigator.tab(*tab).select().id(),
             Command::Close { tab } => navigator.tab(*tab).close().id(),
@@ -326,6 +333,13 @@ impl<R: Route> RuntimeClient<R> {
 
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
+            Query::Windows {} => Ok(Reply::Data(
+                serde_json::to_value(self.router.snapshot().windows)
+                    .expect("window snapshots serialize"),
+            )),
+            Query::Window { window } => {
+                Ok(Reply::Snapshot(self.router.snapshot_in_window(window)?))
+            }
             Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),

@@ -119,6 +119,7 @@ struct State {
     sequence: u64,
     run_sequence: u64,
     visibility: HostVisibility,
+    windows: BTreeMap<WindowId, HostVisibility>,
     paused: bool,
     generation: GenerationId,
     closed: bool,
@@ -255,7 +256,24 @@ impl Core {
                 return;
             }
 
-            let host = state.visibility;
+            let window = state
+                .records
+                .get(&id)
+                .expect("registered activity")
+                .snapshot
+                .origin
+                .window_id;
+
+            let host = state
+                .windows
+                .get(&window)
+                .copied()
+                .unwrap_or(if window == WindowId(1) {
+                    state.visibility
+                } else {
+                    HostVisibility::Unknown
+                });
+
             let record = state.records.get_mut(&id).expect("registered activity");
             let eligible = scope.eligible(record.snapshot.kind, host);
 
@@ -794,6 +812,7 @@ impl WorkRuntime {
                 sequence: 0,
                 run_sequence: 0,
                 visibility: HostVisibility::Unknown,
+                windows: BTreeMap::new(),
                 paused: false,
                 generation: GenerationId(1),
                 closed: false,
@@ -877,14 +896,23 @@ impl WorkRuntime {
         }
     }
 
-    pub(crate) fn visibility(&self, visibility: HostVisibility) {
+    pub(crate) fn forget_window(&self, window: WindowId) {
+        self.core.state.borrow_mut().windows.remove(&window);
+    }
+
+    pub(crate) fn window_visibility(&self, window: WindowId, visibility: HostVisibility) {
         let mut state = self.core.state.borrow_mut();
 
-        if state.visibility == visibility || state.closed {
+        if state.windows.get(&window) == Some(&visibility) || state.closed {
             return;
         }
 
-        state.visibility = visibility;
+        state.windows.insert(window, visibility);
+
+        if window == WindowId(1) {
+            state.visibility = visibility;
+        }
+
         let scopes: Vec<_> = state
             .records
             .values()

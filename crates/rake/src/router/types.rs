@@ -115,7 +115,7 @@ pub enum OpenTarget {
     CurrentTab,
     /// Always create a new, independent tab and root entry.
     NewTab,
-    /// Requires an additional native window capability; currently unsupported.
+    /// Creates a fresh host window when the runtime advertises that capability.
     NewWindow,
 }
 
@@ -183,12 +183,13 @@ impl OpenOptions {
     }
 }
 
-/// Semantic reuse scope. The initial runtime exposes one window.
-#[derive(Clone, Copy, Debug)]
+/// Semantic reuse scope for current entries across retained windows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RevealScope {
     /// Match within the explicitly bound window.
     Window,
     /// Match any advertised host in this runtime.
+    #[default]
     Application,
 }
 
@@ -329,6 +330,9 @@ pub enum OperationError {
     /// CurrentTab was submitted without a selected or bound tab.
     #[error("no current tab is available")]
     NoCurrentTab,
+    /// A guarded window close has stopped admission in this host.
+    #[error("the requested window is closing")]
+    WindowClosing,
     /// The navigator names a host that is not available.
     #[error("the requested window is unavailable")]
     WindowUnavailable,
@@ -400,6 +404,8 @@ impl<T: Clone> Operation<T> {
 /// Why retained state would be destroyed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DisposeReason {
+    /// Dispose every retained entry in an approved window close.
+    CloseWindow,
     /// Dispose all entries in a closing tab.
     CloseTab,
     /// Replace the current instance with a fresh one.
@@ -424,6 +430,8 @@ pub enum GuardKind {
 /// An owned guard input. No UI context is borrowed across its async work.
 #[derive(Clone)]
 pub struct GuardContext<R: Route> {
+    /// Concrete host of the guarded entry, captured independently of keyboard focus.
+    pub window_id: WindowId,
     /// Submitted operation.
     pub operation_id: OperationId,
     /// Concrete tab, resolved before guarding.
@@ -527,6 +535,10 @@ pub struct DecisionRequest {
 /// A pending decision's owned external representation.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecisionSnapshot {
+    /// Host presenting this decision. Before a new window is created, access
+    /// decisions appear in its originating host (or another surviving host).
+    #[serde(default = "initial_window")]
+    pub window_id: WindowId,
     /// Revision-specific decision ID.
     pub id: DecisionId,
     /// Submitted operation waiting on this decision.
@@ -566,6 +578,9 @@ pub struct EntrySnapshot {
 /// One independent tab and its retained history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabSnapshot {
+    /// Host that owns this tab and its retained history.
+    #[serde(default = "initial_window")]
+    pub window_id: WindowId,
     /// Tab identity.
     pub id: TabId,
     /// Managed current-entry activity policy.
@@ -590,8 +605,11 @@ pub struct RouterSnapshot {
     pub supported_targets: Vec<OpenTarget>,
     /// One running host lifetime.
     pub runtime_id: RuntimeId,
-    /// The initial single UI host.
+    /// Host used by the legacy selected-tab field (initially window-1).
     pub window_id: WindowId,
+    /// Independent host selections and close operations.
+    #[serde(default)]
+    pub windows: Vec<WindowSnapshot>,
     /// Revision for `Router::changed` observation.
     pub revision: u64,
     /// Tabs in creation order.
@@ -606,4 +624,50 @@ pub struct RouterSnapshot {
     pub history_capacity: Option<usize>,
     /// Browser synchronization failure after an otherwise successful router commit.
     pub history_error: Option<String>,
+}
+
+/// One host and its independent selected tab. Tab histories are in the router snapshot.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WindowSnapshot {
+    /// Stable runtime-scoped identity.
+    pub id: WindowId,
+    /// Independently displayed tab, or None for an empty host.
+    pub selected: Option<TabId>,
+    /// Pending guarded close, including while waiting for a decision.
+    pub closing: Option<OperationId>,
+    /// Observed visibility of this host, independently of keyboard focus.
+    pub visibility: crate::tasks::HostVisibility,
+}
+
+/// Committed disposal of one host and all its retained tabs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowClosed {
+    /// The disposed host; other windows and application-owned work remain alive.
+    pub window_id: WindowId,
+}
+
+/// Native/embedding capability for opening and retiring physical windows.
+///
+/// Install before driving the router. `open` creates the host needed by the route
+/// mount adapter; its future must clean up on failure/cancellation. After success,
+/// Rake calls `close` if mounting is cancelled or fails. Hosts must not retain a
+/// strong router in this adapter, which would form an ownership cycle. Browser
+/// runtimes reject this capability and never turn NewWindow into NewTab.
+pub trait WindowHost: 'static {
+    /// Creates an empty host on the UI loop, honoring the requested activation.
+    fn open(
+        &self,
+        id: WindowId,
+        activation: Activation,
+    ) -> LocalBoxFuture<'static, Result<(), MountError>>;
+
+    /// Removes an already approved or provisional host. Must tolerate repeated cleanup.
+    fn close(&self, id: WindowId);
+
+    /// Brings an existing host forward after explicit selection/reveal.
+    fn activate(&self, id: WindowId);
+}
+
+fn initial_window() -> WindowId {
+    WindowId(1)
 }

@@ -2,6 +2,10 @@
 
 use crate::inspection::InspectElement as _;
 
+#[cfg(not(target_family = "wasm"))]
+use futures::FutureExt as _;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui::prelude::*;
@@ -14,8 +18,11 @@ use super::runtime::{Guard, Mount, Resource};
 
 use super::{
     EntryHandle, MountError, Navigator, OperationState, Route, Router, RouterConfig, TabHandle,
-    TabId, WebConfig,
+    TabId, WebConfig, WindowId,
 };
+
+#[cfg(not(target_family = "wasm"))]
+use super::{Activation, WindowHost};
 
 /// Application mapping from compact destinations to ordinary GPUI view instances.
 pub trait RouteViews<R: Route>: 'static {
@@ -93,6 +100,11 @@ impl<R: Route> PageContext<R> {
         self.navigator.tab(self.tab_id)
     }
 
+    /// Concrete host that owns this retained screen.
+    pub fn window_id(&self) -> WindowId {
+        self.navigator.window_id()
+    }
+
     /// Returns a navigator bound to this screen's originating tab.
     pub fn navigator(&self) -> Navigator<R> {
         self.navigator.clone()
@@ -124,27 +136,49 @@ impl<R: Route> Router<R> {
         window: &Window,
         cx: &gpui::App,
     ) -> Self {
-        Self::with_views(config, services, Rc::new(views), window, cx)
+        let contexts = Rc::new(RefCell::new(BTreeMap::new()));
+
+        Self::with_views(
+            config,
+            services,
+            Rc::new(views),
+            WindowId(1),
+            contexts,
+            window,
+            cx,
+        )
     }
 
     fn with_views(
         config: RouterConfig,
         services: Services,
         views: Rc<dyn RouteViews<R>>,
+        initial_window: WindowId,
+        contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
         window: &Window,
         cx: &gpui::App,
     ) -> Self {
-        let context = window.to_async(cx);
+        contexts
+            .borrow_mut()
+            .insert(initial_window, window.to_async(cx));
         let collector = services.diagnostics();
         let registry = services.registry();
+        let mounting_contexts = contexts.clone();
 
         let mount: Mount<R> = Rc::new(move |destination, entry, navigator| {
-            let mut context = context.clone();
+            let context = mounting_contexts
+                .borrow()
+                .get(&navigator.window_id())
+                .cloned();
+
             let views = views.clone();
             let tab_id = entry.tab_id();
             let services = services.clone();
 
             Box::pin(async move {
+                let mut context =
+                    context.ok_or_else(|| MountError("The target window has closed.".into()))?;
+
                 let page = PageContext {
                     navigator,
                     entry,
@@ -161,6 +195,7 @@ impl<R: Route> Router<R> {
 
         let router = Router::with_mount(config, collector, mount);
 
+        router.bind_initial_window(initial_window, contexts);
         router.client().set_services(registry);
         router.observe_host(window, cx);
 
@@ -172,19 +207,31 @@ impl<R: Route> Router<R> {
 #[derive(IntoElement)]
 pub struct TabBar<R: Route> {
     router: Router<R>,
+    window: WindowId,
 }
 
 impl<R: Route> TabBar<R> {
     /// Creates a strip. Its owning view redraws when `Router::changed` resolves.
     pub fn new(router: Router<R>) -> Self {
-        Self { router }
+        let window = router.navigator().window_id();
+
+        Self { router, window }
+    }
+}
+
+impl<R: Route> TabBar<R> {
+    /// Displays only tabs belonging to this concrete host.
+    pub fn in_window(mut self, window: WindowId) -> Self {
+        self.window = window;
+
+        self
     }
 }
 
 impl<R: Route> RenderOnce for TabBar<R> {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
-        let snapshot = self.router.snapshot();
-        let navigator = self.router.navigator();
+        let snapshot = self.router.presented_snapshot(self.window);
+        let navigator = self.router.navigator().for_window(self.window);
 
         div()
             .flex()
@@ -255,12 +302,24 @@ impl<R: Route> RenderOnce for TabBar<R> {
 #[derive(IntoElement)]
 pub struct RouteOutlet<R: Route> {
     router: Router<R>,
+    window: WindowId,
 }
 
 impl<R: Route> RouteOutlet<R> {
     /// Creates a selected-entry outlet. Its owning shell observes router changes.
     pub fn new(router: Router<R>) -> Self {
-        Self { router }
+        let window = router.navigator().window_id();
+
+        Self { router, window }
+    }
+}
+
+impl<R: Route> RouteOutlet<R> {
+    /// Presents this host's independently selected retained view.
+    pub fn in_window(mut self, window: WindowId) -> Self {
+        self.window = window;
+
+        self
     }
 }
 
@@ -268,10 +327,10 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let view = self
             .router
-            .resource()
+            .resource(self.window)
             .and_then(|resource| resource.downcast_ref::<AnyView>().cloned());
 
-        let snapshot = self.router.snapshot();
+        let snapshot = self.router.presented_snapshot(self.window);
 
         let outlet = div()
             .size_full()
@@ -307,7 +366,8 @@ pub(crate) struct Workspace<R: Route> {
     chrome: bool,
     router: Router<R>,
     restart: Option<R>,
-    _driver: DriverTask,
+    _driver: Option<DriverTask>,
+    window: WindowId,
     #[cfg(target_family = "wasm")]
     _browser: super::web::browser::BrowserHistory,
 }
@@ -332,6 +392,9 @@ impl<R: Route> Workspace<R> {
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<AnyView, MountError> {
+        #[cfg(not(target_family = "wasm"))]
+        cx.set_quit_mode(gpui::QuitMode::Explicit);
+
         let RoutingRoot {
             views,
             initial,
@@ -345,7 +408,37 @@ impl<R: Route> Workspace<R> {
             chrome,
         } = root;
 
-        let router = Router::with_views(config, services, views, window, cx);
+        let initial_window = checkpoint
+            .as_ref()
+            .and_then(|saved| saved.as_ref().ok())
+            .and_then(|saved| saved.windows.first())
+            .map_or(WindowId(1), |window| window.id);
+
+        let contexts = Rc::new(RefCell::new(BTreeMap::new()));
+
+        let router = Router::with_views(
+            config,
+            services,
+            views,
+            initial_window,
+            contexts.clone(),
+            window,
+            cx,
+        );
+
+        #[cfg(not(target_family = "wasm"))]
+        let native = Rc::new(NativeWindows {
+            app: cx.to_async(),
+            navigator: router.navigator(),
+            contexts,
+            views: Rc::new(RefCell::new(BTreeMap::new())),
+            chrome,
+        });
+
+        #[cfg(not(target_family = "wasm"))]
+        router
+            .window_host(native.clone())
+            .map_err(|error| MountError(error.to_string()))?;
 
         router.install_quit_action(cx);
         router.client().set_commands(commands);
@@ -385,7 +478,10 @@ impl<R: Route> Workspace<R> {
                 #[cfg(not(target_family = "wasm"))]
                 let closing = client.clone();
 
-                let drive = async move |view: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                #[cfg(not(target_family = "wasm"))]
+                let observed_views = native.views.clone();
+
+                let drive = async move |_view: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                     let execute = async {
                         if let Some(checkpoint) = checkpoint {
                             match checkpoint {
@@ -413,13 +509,19 @@ impl<R: Route> Workspace<R> {
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
                                 closing.responses_idle().await;
-                                let _ = view.update(cx, |_, cx| cx.quit());
+                                cx.update(|cx| cx.quit());
 
                                 break;
                             }
 
-                            if view.update(cx, |_, cx| cx.notify()).is_err() {
+                            #[cfg(target_family = "wasm")]
+                            if _view.update(cx, |_, cx| cx.notify()).is_err() {
                                 break;
+                            }
+
+                            #[cfg(not(target_family = "wasm"))]
+                            for view in observed_views.borrow().values() {
+                                let _ = view.update(cx, |_, cx| cx.notify());
                             }
                         }
                     };
@@ -431,7 +533,20 @@ impl<R: Route> Workspace<R> {
                 };
 
                 #[cfg(not(target_family = "wasm"))]
-                let driver = cx.spawn(drive);
+                let driver = {
+                    native
+                        .views
+                        .borrow_mut()
+                        .insert(initial_window, cx.weak_entity());
+                    let task = cx.spawn(drive);
+
+                    cx.set_global(NativeDriver::<R> {
+                        _task: task,
+                        _windows: native,
+                    });
+
+                    None
+                };
 
                 #[cfg(target_family = "wasm")]
                 let driver = {
@@ -449,7 +564,7 @@ impl<R: Route> Workspace<R> {
                         .await;
                     });
 
-                    DriverTask(abort)
+                    Some(DriverTask(abort))
                 };
 
                 Self {
@@ -457,6 +572,7 @@ impl<R: Route> Workspace<R> {
                     router,
                     restart,
                     _driver: driver,
+                    window: initial_window,
                     #[cfg(target_family = "wasm")]
                     _browser: browser,
                 }
@@ -467,8 +583,8 @@ impl<R: Route> Workspace<R> {
 
 impl<R: Route> Render for Workspace<R> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let snapshot = self.router.snapshot();
-        let navigator = self.router.navigator();
+        let snapshot = self.router.presented_snapshot(self.window);
+        let navigator = self.router.navigator().for_window(self.window);
 
         if matches!(
             snapshot.quit.phase,
@@ -492,7 +608,9 @@ impl<R: Route> Render for Workspace<R> {
             let router = self.router.clone();
 
             if snapshot.reload.phase == crate::reload::ReloadPhase::Quiescing {
-                window.on_next_frame(move |_, _| router.acknowledge_reload_ui());
+                let host = self.window;
+
+                window.on_next_frame(move |_, _| router.acknowledge_reload_ui(host));
                 cx.notify();
             }
 
@@ -669,8 +787,10 @@ impl<R: Route> Render for Workspace<R> {
             .text_color(rgb(0xf0f4e8))
             .when(self.chrome, |root| {
                 root.child(
-                    crate::inspection::inspect(TabBar::new(self.router.clone()))
-                        .semantic_id("rake.tabs"),
+                    crate::inspection::inspect(
+                        TabBar::new(self.router.clone()).in_window(self.window),
+                    )
+                    .semantic_id("rake.tabs"),
                 )
                 .child(quit_controls)
             })
@@ -681,10 +801,94 @@ impl<R: Route> Render for Workspace<R> {
                 div()
                     .flex_1()
                     .overflow_hidden()
-                    .child(RouteOutlet::new(self.router.clone()))
+                    .child(RouteOutlet::new(self.router.clone()).in_window(self.window))
                     .inspect("rake.content"),
             )
             .inspect("rake.workspace")
             .root(self.router.client().inspection(), snapshot.revision)
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+struct NativeDriver<R: Route> {
+    _task: gpui::Task<()>,
+    _windows: Rc<NativeWindows<R>>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl<R: Route> gpui::Global for NativeDriver<R> {}
+
+#[cfg(not(target_family = "wasm"))]
+struct NativeWindows<R: Route> {
+    app: gpui::AsyncApp,
+    navigator: Navigator<R>,
+    contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
+    views: Rc<RefCell<BTreeMap<WindowId, gpui::WeakEntity<Workspace<R>>>>>,
+    chrome: bool,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
+    fn open(
+        &self,
+        id: WindowId,
+        activation: Activation,
+    ) -> futures::future::LocalBoxFuture<'static, Result<(), MountError>> {
+        let host = self.clone();
+
+        async move {
+            let router = host
+                .navigator
+                .router()
+                .ok_or_else(|| MountError("Runtime closed.".into()))?;
+
+            let app = host.app.clone();
+
+            app.update(|cx| {
+                cx.open_window(
+                    gpui::WindowOptions {
+                        focus: activation == Activation::Activate,
+                        ..gpui::WindowOptions::default()
+                    },
+                    move |window, cx| {
+                        router
+                            .attach_window(id, window, cx)
+                            .expect("reserved native window");
+                        let view = cx.new(|_| Workspace {
+                            chrome: host.chrome,
+                            restart: R::from_uri("/").ok(),
+                            router,
+                            _driver: None,
+                            window: id,
+                        });
+
+                        host.views.borrow_mut().insert(id, view.downgrade());
+
+                        view
+                    },
+                )
+                .map(|_| ())
+                .map_err(|error| MountError(error.to_string()))
+            })
+        }
+        .boxed_local()
+    }
+
+    fn close(&self, id: WindowId) {
+        let context = self.contexts.borrow_mut().remove(&id);
+
+        self.views.borrow_mut().remove(&id);
+
+        if let Some(mut context) = context {
+            let _ = context.update(|window, _| window.remove_window());
+        }
+    }
+
+    fn activate(&self, id: WindowId) {
+        let context = self.contexts.borrow().get(&id).cloned();
+
+        if let Some(mut context) = context {
+            let _ = context.update(|window, _| window.activate_window());
+        }
     }
 }

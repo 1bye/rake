@@ -15,6 +15,22 @@ runtimes in the normal private control directory or the selected session. It
 accepts `--instance UUID|APPLICATION_ID`, `--port`, `--no-open` and `--json`.
 Python 3.11+ is required; the CLI bundles the inspector assets and server helpers.
 
+The inspector follows the compact layout of [Chrome DevTools](https://github.com/ChromeDevTools/devtools-frontend):
+horizontal panel tabs, a target toolbar, dense tables and split inspection panes.
+Workspace separates its window/tab/entry tree from properties and retained history.
+Elements pairs its boundary tree with Styles, Layout and Source; Console keeps
+typed application commands beside its output. This is Rake's own frontend using
+the shared runtime API.
+
+Drag a pane divider or focus it and use Left/Right (Home/End reach its limits).
+Panel tabs support Left/Right and Home/End. Pane sizes and scroll positions survive
+updates and panel switching. Narrow windows stack the panes. The theme button
+switches between dark and light, retaining the choice for that browser session.
+Successful control receipts collapse into a bottom drawer; uncertain delivery stays
+expanded with its exact-request retry. The status bar expands to show retention and
+loss details. Styles remain read-only authored GPUI metadata; layout reports actual
+captured bounds, without inventing computed margins or padding.
+
 The browser UI belongs to the development host, so it survives application
 crashes, process restarts and full Web page reloads. Runtime selection is explicit
 when several instances match. A checkpointed successor advertises `restored_from`;
@@ -26,8 +42,8 @@ restoration; operation IDs and retry keys never cross runtimes.
 
 | Panel | Inspection and actions |
 | --- | --- |
-| Workspace | Logical window, selection, host visibility, tab policies, destinations, full retained histories/cursors, entry revisions and dirtiness; select, Back, Forward, close and change policy; guarded quit with wait/cancel job policies, remaining counts and Cancel quit. |
-| Routes | Forms generated from registered typed destination descriptors; open/reveal or navigate/replace in an exact tab, with independent work policy and activation options. |
+| Workspace | Windows with independent selections, visibility and guarded close; tab policies, destinations, full retained histories/cursors, entry revisions and dirtiness; select, Back, Forward, close and change policy; guarded quit with wait/cancel job policies, remaining counts and Cancel quit. |
+| Routes | Forms generated from registered typed destination descriptors; open/reveal with an explicit host and reveal scope, or navigate/replace in an exact tab, with independent work policy and activation options. Native targets advertise NewWindow. |
 | Tasks | Lifetime owner separately from causal origin; task kind, eligibility, state, RunId and generation; cancel and follow related diagnostics. Explicit application progress is unavailable unless logged. |
 | Operations | Queued/running/awaiting-decision/terminal states, retained results and errors; inspect or cancel through the shared dispatcher. Commit does not imply finished data loading. |
 | Decisions | Pending guard messages and advertised choices. Responses use the same revision checks as GUI/CLI responses; obsolete choices cannot approve changed state. |

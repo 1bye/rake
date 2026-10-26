@@ -7,7 +7,11 @@ import {readFileSync} from 'node:fs';
 class Element {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.dataset = {}; this.attributes = {};
-    this.listeners = {}; this.value = ''; this.classList = {add: () => {}};
+    this.listeners = {}; this.value = ''; this.style = {setProperty(name, value) { this[name] = String(value); }};
+    this.classList = {
+      add: (...values) => this.className = [...new Set([...(this.className || '').split(' ').filter(Boolean), ...values])].join(' '),
+      contains: value => (this.className || '').split(' ').includes(value),
+    };
   }
   set textContent(value) { this.children = []; this.content = String(value); }
   get textContent() { return (this.content || '') + this.children.map(child => child.textContent ?? child).join(''); }
@@ -18,6 +22,12 @@ class Element {
   get firstChild() { return this.children[0]; }
   closest(tag) { return this.tagName === tag ? this : this.parent?.closest(tag); }
   click() { return this.listeners.click?.(); }
+  focus() { document.activeElement = this; }
+  querySelectorAll(selector) {
+    assert.ok(['[data-scroll]', '[data-focus]'].includes(selector));
+    const key = selector === '[data-scroll]' ? 'scroll' : 'focus';
+    return this.children.flatMap(child => child instanceof Element ? [...(key in child.dataset ? [child] : []), ...child.querySelectorAll(selector)] : []);
+  }
 }
 const ids = Object.fromEntries([...readFileSync(new URL('./inspector.html', import.meta.url), 'utf8').matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, new Element()]));
 globalThis.Node = Element;
@@ -31,9 +41,9 @@ const timers = [];
 globalThis.setTimeout = (callback, delay) => { const timer = {callback, delay}; timers.push(timer); return timer; };
 globalThis.clearTimeout = timer => { timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
-const information = {runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab'],
+const information = {runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab', 'NewWindow'],
   queries: ['inspect_tree', 'inspect_element'],
-  commands: ['quit', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
+  commands: ['quit', 'close_window', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
 const fields = {task_id: 'task-5', tab_id: 'tab-7', entry_id: 'entry-8', operation_id: 'op-9', request_id: 10};
 const diagnostics = [
   {sequence: 1, elapsed_us: 5, kind: 'span_open', span_id: 1, parent_span_id: null, spans: ['task'], fields},
@@ -91,7 +101,7 @@ globalThis.fetch = async (url, options) => {
 };
 async function settle() { for (let index = 0; index < 40; index++) await Promise.resolve(); }
 function all(node) { return [node, ...node.children.flatMap(child => child instanceof Element ? all(child) : [])]; }
-function find(tag, text) { const node = all(ids.content).find(item => item.tagName === tag && item.textContent.includes(text)); assert.ok(node, `${tag}: ${text}`); return node; }
+function find(tag, text) { const node = all(ids.content).find(item => item.tagName === tag && (item.textContent.includes(text) || item.attributes['aria-label']?.includes(text))); assert.ok(node, `${tag}: ${text}`); return node; }
 async function panel(name) { const button = ids.panels.children.find(item => item.dataset.panel === name); await button.click(); await settle(); assert.equal(ids.title.textContent, name); }
 const model = 'data:text/javascript;base64,' + Buffer.from(readFileSync(new URL('./inspector-model.js', import.meta.url))).toString('base64');
 const code = readFileSync(new URL('./inspector.js', import.meta.url), 'utf8').replace("'/__rake/inspector-model.js'", JSON.stringify(model));
@@ -100,6 +110,30 @@ await settle();
 await timers.find(timer => timer.delay === 750).callback(); await settle();
 assert.match(ids.content.textContent, /Current/);
 assert.match(ids.content.textContent, /Dirty/);
+assert.equal(ids.panels.children.filter(item => item.tabIndex === 0).length, 1);
+assert.equal(ids.panels.children[0].attributes.role, 'tab');
+assert.equal(ids.panels.children[0].attributes['aria-selected'], 'true');
+let prevented = false;
+ids.panels.listeners.keydown({key: 'ArrowRight', preventDefault() { prevented = true; }}); await settle();
+assert.ok(prevented);
+assert.equal(ids.title.textContent, 'Routes');
+assert.equal(document.activeElement.dataset.panel, 'Routes');
+ids.panels.listeners.keydown({key: 'Home', preventDefault() {}}); await settle();
+assert.equal(ids.title.textContent, 'Workspace');
+await ids.theme.click();
+assert.equal(ids.app.dataset.theme, 'light');
+assert.equal(ids.theme.attributes['aria-label'], 'Switch to dark theme');
+assert.equal(storage.get('rake-inspector-theme'), 'light');
+await ids.theme.click();
+assert.equal(ids.app.dataset.theme, 'dark');
+const entryInspector = find('button', 'Inspect entry-8');
+entryInspector.focus(); await entryInspector.click(); await settle();
+assert.equal(document.activeElement.dataset.focus, 'workspace:entry:8');
+const detailPane = all(ids.content).find(item => item.dataset.scroll === 'workspace:detail');
+detailPane.scrollTop = 137; detailPane.listeners.scroll();
+snapshot.revision++;
+await panel('Workspace');
+assert.equal(all(ids.content).find(item => item.dataset.scroll === 'workspace:detail').scrollTop, 137);
 
 await find('button', 'Quit (wait for jobs)').click(); await settle();
 assert.deepEqual(envelopes.at(-1).message.value, {type: 'quit', options: {jobs: 'wait'}});
@@ -124,7 +158,37 @@ const input = all(ids.content).find(item => item.attributes['aria-label'] === 'd
 input.value = 'B'; input.listeners.input();
 const open = find('button', 'Open');
 open.closest('form').listeners.submit({preventDefault() {}, submitter: open}); await settle();
-assert.deepEqual(envelopes.at(-1).message.value, {type: 'open', destination: {route: 'document', params: {id: 'B'}}, options: {target: 'NewTab', mode: null, activation: 'Activate'}});
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'open', window: 1, destination: {route: 'document', params: {id: 'B'}}, options: {target: 'NewTab', mode: null, activation: 'Activate'}});
+
+snapshot.windows = [{id: 1, selected: 7, visibility: 'Visible', closing: null}, {id: 4, selected: 14, visibility: 'Hidden', closing: null}];
+snapshot.tabs[0].window_id = 1;
+snapshot.tabs.push({id: 14, window_id: 4, mode: 'Foreground', cursor: 0, entries: [{id: 15, destination: {route: 'home', params: {}}, dirty: false, revision: 1}]});
+snapshot.revision++;
+await panel('Workspace');
+await find('button', 'Inspect window-4').click(); await settle();
+const secondHost = find('h2', 'window-4').parent;
+await all(secondHost).find(item => item.tagName === 'button' && item.textContent === 'Close window').click(); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'close_window', window: 4});
+snapshot.windows = [snapshot.windows[1]];
+snapshot.revision++;
+await panel('Routes');
+const hostSelector = all(ids.content).find(item => item.tagName === 'label' && item.textContent.includes('Window for Open')).children.find(item => item.tagName === 'select');
+assert.equal(hostSelector.value, '4', 'fall back to a remaining host when the initial window closes');
+hostSelector.value = '4'; hostSelector.listeners.change();
+const scopeSelector = all(ids.content).find(item => item.tagName === 'label' && item.textContent.includes('Reveal scope')).children.find(item => item.tagName === 'select');
+scopeSelector.value = 'Window'; scopeSelector.listeners.change();
+const reveal = find('button', 'Reveal');
+reveal.closest('form').listeners.submit({preventDefault() {}, submitter: reveal}); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'reveal', window: 4, scope: 'Window', destination: {route: 'document', params: {id: 'B'}}});
+snapshot.windows = [];
+snapshot.revision++;
+await panel('Routes');
+const targetSelector = all(ids.content).find(item => item.tagName === 'label' && item.textContent.includes('Open target')).children.find(item => item.tagName === 'select');
+targetSelector.value = 'NewWindow'; targetSelector.listeners.change();
+const reopen = find('button', 'Open');
+reopen.closest('form').listeners.submit({preventDefault() {}, submitter: reopen}); await settle();
+assert.equal(envelopes.at(-1).message.value.window, null);
+assert.equal(envelopes.at(-1).message.value.options.target, 'NewWindow');
 
 await panel('Tasks'); assert.match(ids.content.textContent, /entry-8/);
 await find('button', 'Cancel task').click(); await settle();
@@ -178,6 +242,14 @@ assert.match(ids.content.textContent, /Style refinements unavailable/);
 assert.match(ids.content.textContent, /Source location unavailable/);
 elementCapture = {...elementCapture, status: 'unavailable', elements: []};
 await panel('Elements'); assert.match(ids.content.textContent, /unavailable/);
+snapshot.windows = [{id: 4, selected: 1000, visibility: 'Visible', closing: null}];
+snapshot.tabs = Array.from({length: 120}, (_, index) => ({id: 1000 + index, window_id: 4, mode: 'Foreground', cursor: 0,
+  entries: [{id: 2000 + index, destination: {route: 'document', params: {id: String(index)}}, dirty: false, revision: 1}]}));
+snapshot.revision++;
+await panel('Workspace');
+assert.equal(all(ids.content).filter(item => item.dataset.focus?.startsWith('workspace:')).length, 100, 'bound the rendered workspace tree');
+await find('button', 'Next').click(); await settle();
+assert.ok(find('button', 'Inspect tab-1050'));
 await panel('Reload'); assert.match(ids.content.textContent, /watching/);
 const successor = '3da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 advertised = [{application_id: 'test', info: {...information, runtime_id: successor}}];

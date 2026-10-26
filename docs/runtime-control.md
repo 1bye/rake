@@ -43,8 +43,28 @@ In subsequent examples, `rake` means `target/debug/rake`; installing with
 `cargo install --path crates/rake-cli` also makes that command available on PATH.
 
 Use `--preserve-selection` independently of `--mode`. NewTab always means an
-internal application tab. NewWindow returns the router's unsupported-capability
-error and is absent from the advertised supported targets.
+internal application tab. NewWindow creates a physical native host with its own
+selection and histories. Web and custom hosts without an adapter report an
+unsupported capability and omit it from advertised targets.
+
+```sh
+rake ctl windows list --json
+rake ctl windows get window-4 --json
+rake ctl router open document --param id=A --target new-window --json
+rake ctl router open document --param id=B --target current-tab --window window-4 --json
+rake ctl router reveal document --param id=A --window window-4 --scope window --json
+rake ctl windows close window-4 --json
+```
+
+`Open.window` and `Reveal.window` optionally name a concrete host; omission binds
+the initial host. `Reveal.scope` defaults to Application; Window restricts reuse.
+Exact-tab commands infer their owning window. `CloseWindow` shares GUI close guards,
+operation status and decision responses. `Query::Windows` lists hosts and
+`Query::Window` returns a host-scoped routing snapshot. All windows share one runtime
+and transport. The global snapshot adds per-window selections/visibility/closing
+operations, tab membership and the presenting host of each decision. After the initial host is
+closed, explicitly name a remaining host; app-level NewWindow can reopen a host
+even after all windows have closed.
 
 Unix hosts create an owned mode-0700 directory at `/tmp/rake-UID` (or
 `RAKE_CONTROL_DIR`), a mode-0600 Unix socket and a private discovery JSON file.

@@ -87,6 +87,15 @@ def main():
                 recovery = data / "recovery.json"
                 recovery.rename(data / "held-recovery.json")
                 recovery.mkdir(mode=0o700)
+                # A failed window-close save must leave both physical hosts and their data alive.
+                opened = ctl("router", "open", "notebook", "--target", "new-window")["reply"]["value"]["result"]
+                closing = ctl("windows", "close", f'window-{opened["window_id"]}', "--no-wait")["reply"]["value"]
+                decisions = eventually(lambda: ctl("decisions", "list")["value"])
+                assert decisions[0]["window_id"] == opened["window_id"]
+                ctl("decisions", "respond", f'decision-{decisions[0]["id"]}', "--choice", "cancel")
+                eventually(lambda: ctl("operations", "get", f'op-{closing["operation_id"]}')["value"]["state"] == {"Cancelled": "Decision"})
+                assert len(ctl("windows", "list")["value"]) == 2
+                assert app.poll() is None
                 ctl("quit")
                 decisions = eventually(lambda: ctl("decisions", "list")["value"])
                 decision = decisions[0]
@@ -104,7 +113,7 @@ def main():
                 assert note["body"] == "Last edit saved by guarded quit.\nAnother line."
                 assert note["version"] == edited["version"]
                 assert not list(control.iterdir()), "Graceful quit must clean up its endpoint"
-                print("Fieldnotes native: typed commands, stale edits, SIGKILL recovery, recovery UI, failed-save cancellation and guarded quit passed")
+                print("Fieldnotes native: typed commands, stale edits, SIGKILL recovery, recovery UI, guarded multi-window close cancellation and guarded quit passed")
             except BaseException:
                 log.seek(0)
                 print(log.read(), file=sys.stderr)

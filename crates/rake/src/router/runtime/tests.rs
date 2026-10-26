@@ -23,6 +23,76 @@ enum Destination {
     Broken,
 }
 
+struct WindowHost(Rc<Cell<usize>>);
+
+impl crate::router::WindowHost for WindowHost {
+    fn open(
+        &self,
+        _: crate::router::WindowId,
+        _: crate::router::Activation,
+    ) -> futures::future::LocalBoxFuture<'static, Result<(), MountError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn close(&self, _: crate::router::WindowId) {
+        self.0.set(self.0.get() + 1);
+    }
+
+    fn activate(&self, _: crate::router::WindowId) {}
+}
+
+#[test]
+fn failed_route_mount_closes_the_new_physical_host_without_changing_existing_windows() {
+    let mount: Mount<Destination> = Rc::new(|destination, _, _| {
+        Box::pin(async move {
+            if matches!(destination, Destination::Broken) {
+                Err(MountError("injected route mount failure".into()))
+            } else {
+                Ok(Rc::new(()) as Resource)
+            }
+        })
+    });
+
+    let router = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
+    let closes = Rc::new(Cell::new(0));
+
+    router.window_host(WindowHost(closes.clone())).unwrap();
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+
+    pool.spawner()
+        .spawn_local(async move {
+            driven.run().await.unwrap();
+        })
+        .unwrap();
+    pool.run_until(
+        router
+            .navigator()
+            .open(Destination::Home, OpenTarget::NewTab)
+            .wait(),
+    )
+    .unwrap();
+    let before = router.snapshot();
+
+    assert!(matches!(
+        pool.run_until(
+            router
+                .navigator()
+                .open(Destination::Broken, OpenTarget::NewWindow)
+                .wait()
+        ),
+        Err(OperationError::Mount(_))
+    ));
+    assert_eq!(closes.get(), 1);
+    let after = router.snapshot();
+
+    assert_eq!(before.windows.len(), after.windows.len());
+    assert_eq!(before.selected, after.selected);
+    assert_eq!(before.tabs[0].entries[0].id, after.tabs[0].entries[0].id);
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
 #[test]
 fn history_reuses_local_resources_and_failed_mounts_leave_the_old_view() {
     let mounted = Rc::new(RefCell::new(Vec::new()));

@@ -1,9 +1,9 @@
 # Guarded application quit
 
 Routed applications use one application-wide operation for the Quit button, native
-Quit menu/shortcut, native window close, devtools and CLI. It scans every retained
-entry in every tab, including back and forward histories. Closing an internal tab
-continues to use its existing, narrower disposal operation.
+Quit menu/shortcut, devtools and CLI. It scans every retained entry in every window,
+including back and forward histories. Native window close and internal tab close
+use narrower disposal operations; see [native windows](routing.md#native-windows).
 
 ```rust
 use rake::prelude::*;
@@ -101,10 +101,13 @@ uses the same revision-checked save/discard/cancel responses.
 ## Native and Web boundaries
 
 The default routed runner installs `rake::quit::RequestQuit`, a Quit menu and
-Cmd-Q on macOS / Ctrl-Q on other native targets. Its window-close callback vetoes
-closure and submits the same operation. Only `Ready` lets the runner call GPUI
-quit. Custom `Router::in_window` hosts must observe quit readiness and own their
-final host exit, as they own the driver and shell.
+Cmd-Q on macOS / Ctrl-Q on other native targets. Only `Ready` lets the runner call
+GPUI quit. A native window's close button instead guards that host's retained
+entries with `DisposeReason::CloseWindow`. Closing it cancels entry/tab work while
+application-owned jobs and other windows continue. Closing the last host leaves the
+runtime available for NewWindow or explicit Quit. Custom `Router::in_window` hosts
+without a window adapter retain application-wide quit on close; they observe quit
+readiness and own final host exit, as they own the driver and shell.
 
 The pinned GPUI application shutdown callback cannot veto an OS/Dock termination
 request. Those requests, forced termination and `Router::shutdown()` are immediate

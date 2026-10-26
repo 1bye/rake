@@ -113,7 +113,13 @@ keyboard focus with presentation. [Guarded quit](guarded-quit.md) coordinates
 finite jobs and disposal guards before stopping activity factories. Forced native
 termination requests cancellation before host teardown. Other native backends currently report `Unknown`; unknown
 visibility assumes visible, and custom hosts can supply actual observations with
-`Router::set_host_visibility`. Snapshots expose the observed value explicitly.
+`Router::set_window_visibility(id, visibility)`. The existing
+`set_host_visibility` convenience targets the initial host. Every native window
+tracks visibility and selection independently; hiding or closing one does not
+suspend another window's selected entry. Closing a window cancels its entry/tab
+scopes while application-owned jobs survive, even after the last host closes.
+Task origins retain the actual originating WindowId. Window snapshots expose the
+observed visibility explicitly.
 
 `RouterSnapshot::work` reports owners, causal origins, resource keys, run and task
 identities, accepted generation, eligibility, outcomes and pending publications.

@@ -21,7 +21,8 @@ rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   reload apply|abort ID
   routes list
   router open|reveal ROUTE [--param key=value] [--target new-tab|current-tab|new-window]
-      [--mode foreground|live] [--preserve-selection]
+      [--window WINDOW] [--scope window|application] [--mode foreground|live] [--preserve-selection]
+  windows list|get WINDOW|close WINDOW
   tabs list|select|close|back|forward TAB
   tabs mode TAB foreground|live
   tabs navigate|replace TAB ROUTE [--param key=value]
@@ -223,6 +224,16 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
 
             Message::Query(Query::Diagnostics { after, kind })
         }
+        ("windows", "list") => Message::Query(Query::Windows {}),
+        ("windows", "get" | "close") if args.len() == 1 => {
+            let window = parse_id(&args.remove(0))?;
+
+            if action == "get" {
+                Message::Query(Query::Window { window })
+            } else {
+                Message::Command(Command::CloseWindow { window })
+            }
+        }
         ("router", "open" | "reveal") => {
             if args.is_empty() {
                 return Err("router operation requires a route key".into());
@@ -231,8 +242,23 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
             let route = args.remove(0);
             let destination = address(&route, &mut args)?;
 
+            let window = option(&mut args, "--window")?
+                .map(|value| parse_id(&value))
+                .transpose()?;
+
             if action == "reveal" {
-                Message::Command(Command::Reveal { destination })
+                Message::Command(Command::Reveal {
+                    window,
+                    scope: match option(&mut args, "--scope")?
+                        .as_deref()
+                        .unwrap_or("application")
+                    {
+                        "application" => rake::router::RevealScope::Application,
+                        "window" => rake::router::RevealScope::Window,
+                        _ => return Err("unknown reveal scope".into()),
+                    },
+                    destination,
+                })
             } else {
                 let target = match option(&mut args, "--target")?
                     .as_deref()
@@ -255,6 +281,7 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                 };
 
                 Message::Command(Command::Open {
+                    window,
                     destination,
                     options: OpenOptions {
                         target,
@@ -606,6 +633,7 @@ mod tests {
         .unwrap();
 
         let Message::Command(Command::Open {
+            window: None,
             destination,
             options,
         }) = message
@@ -675,6 +703,9 @@ mod tests {
         };
 
         let commands = vec![
+            Command::CloseWindow {
+                window: "window-1".parse().unwrap(),
+            },
             Command::Quit {
                 options: rake::quit::QuitOptions::default(),
             },
@@ -689,6 +720,7 @@ mod tests {
                 applied: false,
             },
             Command::Open {
+                window: None,
                 destination: destination.clone(),
                 options: OpenOptions::new_tab(),
             },
@@ -697,7 +729,11 @@ mod tests {
                 destination: destination.clone(),
                 replace: false,
             },
-            Command::Reveal { destination },
+            Command::Reveal {
+                window: None,
+                scope: rake::router::RevealScope::Application,
+                destination,
+            },
             Command::Select { tab },
             Command::Close { tab },
             Command::Back { tab },
@@ -721,6 +757,10 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Windows {},
+            Query::Window {
+                window: "window-1".parse().unwrap(),
+            },
             Query::Quit {},
             Query::InspectTree {},
             Query::InspectElement {

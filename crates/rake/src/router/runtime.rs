@@ -27,17 +27,22 @@ use super::{
     EntrySnapshot, GuardContext, GuardKind, GuardResult, HistoryChange, ModeChanged, MountError,
     OpenOptions, OpenTarget, Opened, Operation, OperationError, OperationId, OperationState,
     Outcome, RevealScope, Revealed, Route, RouteDecodeError, RouterConfig, RouterSnapshot,
-    RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowId,
+    RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId,
+    WindowSnapshot,
 };
 
 mod quit;
 mod reload;
+mod windows;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) type Guard<R> = Rc<dyn Fn(GuardContext<R>) -> LocalBoxFuture<'static, GuardResult>>;
 pub(crate) type Resource = Rc<dyn Any>;
+
+#[cfg(feature = "gpui")]
+type WindowContexts = Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>;
 
 pub(crate) type Mount<R> = Rc<
     dyn Fn(
@@ -56,6 +61,7 @@ struct Entry<R: Route> {
     tab_scope: Rc<Scope>,
     id: EntryId,
     tab: TabId,
+    window: WindowId,
     destination: R,
     revision: Cell<u64>,
     dirty: Cell<bool>,
@@ -85,6 +91,7 @@ impl<R: Route> Drop for Entry<R> {
 struct Tab<R: Route> {
     scope: Rc<Scope>,
     id: TabId,
+    window: WindowId,
     entries: Vec<Rc<Entry<R>>>,
     cursor: usize,
     mode: TabMode,
@@ -110,6 +117,7 @@ struct PendingDecision<R: Route> {
 enum Lane {
     Workspace,
     Tab(TabId),
+    Window(WindowId),
 }
 
 struct Job {
@@ -118,9 +126,27 @@ struct Job {
     future: LocalBoxFuture<'static, ()>,
 }
 
-struct State<R: Route> {
-    tabs: Vec<Tab<R>>,
+struct WindowState {
     selected: Option<TabId>,
+    closing: Option<OperationId>,
+    opening: Option<OperationId>,
+    visibility: HostVisibility,
+}
+
+impl Default for WindowState {
+    fn default() -> Self {
+        Self {
+            selected: None,
+            closing: None,
+            opening: None,
+            visibility: HostVisibility::Unknown,
+        }
+    }
+}
+
+struct State<R: Route> {
+    windows: BTreeMap<WindowId, WindowState>,
+    tabs: Vec<Tab<R>>,
     sequence: u64,
     operation_sequence: u64,
     revision: u64,
@@ -176,19 +202,27 @@ impl<R: Route> State<R> {
     fn select(&mut self, id: TabId) {
         let tick = self.next();
 
-        self.selected = Some(id);
+        let window = self.tab(id).expect("selected tab exists").window;
+
+        self.windows
+            .get_mut(&window)
+            .expect("tab host exists")
+            .selected = Some(id);
 
         if let Ok(tab) = self.tab_mut(id) {
             tab.selected_at = tick;
         }
     }
 
-    fn matching(&self, destination: &R) -> Option<Rc<Entry<R>>> {
+    fn matching(&self, destination: &R, window: Option<WindowId>) -> Option<Rc<Entry<R>>> {
         let address = destination.encode();
 
         self.tabs
             .iter()
-            .filter(|tab| tab.current().destination.encode() == address)
+            .filter(|tab| {
+                window.is_none_or(|window| tab.window == window)
+                    && tab.current().destination.encode() == address
+            })
             .max_by_key(|tab| tab.selected_at)
             .map(Tab::current)
     }
@@ -214,17 +248,22 @@ struct Core<R: Route> {
     quit: RefCell<crate::quit::QuitStatus>,
     quit_handle: RefCell<Option<Operation<crate::quit::QuitResult>>>,
     reload: RefCell<crate::reload::ReloadStatus>,
-    reload_ui_ready: Cell<bool>,
+    reload_ui_ready: RefCell<BTreeSet<WindowId>>,
     #[cfg(target_family = "wasm")]
     page_reload: Cell<bool>,
     control: Rc<crate::control::ClientState>,
     #[cfg(feature = "gpui")]
-    host: RefCell<Option<crate::tasks::host::HostObserver>>,
+    host: RefCell<BTreeMap<WindowId, crate::tasks::host::HostObserver>>,
+    #[cfg(feature = "gpui")]
+    view_contexts: RefCell<Option<WindowContexts>>,
     state: RefCell<State<R>>,
     runtime: RuntimeId,
+    initial_window: Cell<WindowId>,
     config: RouterConfig,
     collector: Collector,
     mount: Mount<R>,
+    window_host: RefCell<Option<Rc<dyn WindowHost>>>,
+    window_closes: RefCell<BTreeMap<WindowId, Operation<WindowClosed>>>,
     guards: RefCell<Vec<Guard<R>>>,
     event: Event,
     work: Event,
@@ -310,7 +349,9 @@ impl<R: Route> Core<R> {
         let mut state = self.state.borrow_mut();
 
         let change = state
-            .selected
+            .windows
+            .get(&self.initial_window.get())
+            .and_then(|window| window.selected)
             .and_then(|id| state.tab(id).ok())
             .map(|tab| {
                 let entry = tab.current();
@@ -386,15 +427,17 @@ impl<R: Route> Router<R> {
                 request: None,
                 error: None,
             }),
-            reload_ui_ready: Cell::new(true),
+            reload_ui_ready: RefCell::new(BTreeSet::new()),
             #[cfg(target_family = "wasm")]
             page_reload: Cell::new(false),
             control: Rc::new(crate::control::ClientState::new(config.control_requests)),
             #[cfg(feature = "gpui")]
-            host: RefCell::new(None),
+            host: RefCell::new(BTreeMap::new()),
+            #[cfg(feature = "gpui")]
+            view_contexts: RefCell::new(None),
             state: RefCell::new(State {
+                windows: BTreeMap::from([(WindowId(1), WindowState::default())]),
                 tabs: Vec::new(),
-                selected: None,
                 sequence: 0,
                 operation_sequence: 0,
                 revision: 0,
@@ -410,9 +453,12 @@ impl<R: Route> Router<R> {
                 decisions: BTreeMap::new(),
             }),
             runtime,
+            initial_window: Cell::new(WindowId(1)),
             config,
             collector,
             mount,
+            window_host: RefCell::new(None),
+            window_closes: RefCell::new(BTreeMap::new()),
             guards: RefCell::new(Vec::new()),
             event: Event::new(),
             work: Event::new(),
@@ -440,7 +486,7 @@ impl<R: Route> Router<R> {
     pub fn navigator(&self) -> Navigator<R> {
         Navigator {
             core: Rc::downgrade(&self.0),
-            window: WindowId(1),
+            window: self.0.initial_window.get(),
             tab: None,
             origin_entry: None,
             origin_scope: Weak::new(),
@@ -473,22 +519,41 @@ impl<R: Route> Router<R> {
     /// Copies state without exposing retained views or mutable histories.
     pub fn snapshot(&self) -> RouterSnapshot {
         let state = self.0.state.borrow();
-        let work = self.0.tasks.snapshot();
+        let mut work = self.0.tasks.snapshot();
+
+        work.host_visibility = state
+            .windows
+            .get(&self.0.initial_window.get())
+            .map_or(HostVisibility::Unknown, |window| window.visibility);
         let quit = self.0.quit_status(&work);
 
         RouterSnapshot {
             quit,
             reload: self.reload_status(),
             work,
-            supported_targets: vec![OpenTarget::CurrentTab, OpenTarget::NewTab],
+            supported_targets: self.supported_targets(),
+            windows: state
+                .windows
+                .iter()
+                .map(|(id, window)| WindowSnapshot {
+                    id: *id,
+                    selected: window.selected,
+                    closing: window.closing,
+                    visibility: window.visibility,
+                })
+                .collect(),
             runtime_id: self.0.runtime,
-            window_id: WindowId(1),
+            window_id: self.0.initial_window.get(),
             revision: state.revision + self.0.tasks.revision(),
-            selected: state.selected,
+            selected: state
+                .windows
+                .get(&self.0.initial_window.get())
+                .and_then(|window| window.selected),
             tabs: state
                 .tabs
                 .iter()
                 .map(|tab| TabSnapshot {
+                    window_id: tab.window,
                     id: tab.id,
                     mode: tab.mode,
                     cursor: tab.cursor,
@@ -540,7 +605,7 @@ impl<R: Route> Router<R> {
     }
 
     pub(crate) fn has_window(&self) -> bool {
-        self.0.has_window.get()
+        self.0.has_window.get() && !self.0.state.borrow().windows.is_empty()
     }
 
     pub(crate) fn submit_command(
@@ -719,7 +784,7 @@ impl<R: Route> Router<R> {
         self.0.shutdown.set(true);
         self.0.tasks.shutdown();
         #[cfg(feature = "gpui")]
-        self.0.host.borrow_mut().take();
+        self.0.host.borrow_mut().clear();
 
         for token in self.0.state.borrow().tokens.values() {
             token.cancel();
@@ -809,17 +874,26 @@ impl<R: Route> Router<R> {
 
     /// Application-owned tasks survive internal tab close; their origin is retained.
     pub fn app(&self) -> AppHandle {
-        self.0.tasks.app(self.0.tasks.origin())
+        let mut origin = self.0.tasks.origin();
+
+        origin.window_id = self.0.initial_window.get();
+
+        self.0.tasks.app(origin)
     }
 
     /// Supplies an actual host visibility signal, independently of keyboard focus.
     /// Unknown assumes visible while exposing that visibility is unmeasured.
     pub fn set_host_visibility(&self, visibility: HostVisibility) {
-        self.0.tasks.visibility(visibility);
+        let _ = self.set_window_visibility(self.0.initial_window.get(), visibility);
     }
 
     #[cfg(feature = "gpui")]
     pub(crate) fn observe_host(&self, window: &gpui::Window, cx: &gpui::App) {
+        self.observe_host_in(self.0.initial_window.get(), window, cx);
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn observe_host_in(&self, id: WindowId, window: &gpui::Window, cx: &gpui::App) {
         self.0.has_window.set(true);
         let core = Rc::downgrade(&self.0);
         let shutdown = core.clone();
@@ -838,16 +912,35 @@ impl<R: Route> Router<R> {
                     return true;
                 }
 
-                drop(Router(core).quit(crate::quit::QuitOptions::default()));
+                if core.window_host.borrow().is_none() {
+                    drop(Router(core).quit(crate::quit::QuitOptions::default()));
+
+                    return false;
+                }
+
+                let opening = core
+                    .state
+                    .borrow()
+                    .windows
+                    .get(&id)
+                    .and_then(|window| window.opening);
+
+                if let Some(operation) = opening {
+                    let _ = Router(core).cancel(operation);
+                } else if !core.state.borrow().windows.contains_key(&id) {
+                    return true;
+                } else {
+                    drop(Router(core).close_window(id));
+                }
 
                 false
             });
         }
 
-        *self.0.host.borrow_mut() = Some(crate::tasks::host::HostObserver::attach(
+        let observer = crate::tasks::host::HostObserver::attach(
             move |visibility| {
                 if let Some(core) = core.upgrade() {
-                    core.tasks.visibility(visibility);
+                    let _ = Router(core).set_window_visibility(id, visibility);
                 }
             },
             move || {
@@ -880,13 +973,19 @@ impl<R: Route> Router<R> {
             },
             window,
             cx,
-        ));
+        );
+
+        self.0.host.borrow_mut().insert(id, observer);
     }
 
     #[cfg(feature = "gpui")]
-    pub(crate) fn resource(&self) -> Option<Resource> {
+    pub(crate) fn resource(&self, window: WindowId) -> Option<Resource> {
         let state = self.0.state.borrow();
-        let entry = state.tab(state.selected?).ok()?.current();
+
+        let entry = state
+            .tab(state.windows.get(&window)?.selected?)
+            .ok()?
+            .current();
 
         entry.resource.borrow().clone()
     }
@@ -928,6 +1027,7 @@ impl<R: Route> Navigator<R> {
         if let Some(core) = self.core.upgrade() {
             let mut origin = core.tasks.origin();
 
+            origin.window_id = self.window;
             origin.tab_id = self.tab;
             origin.entry_id = self.origin_entry;
 
@@ -950,11 +1050,23 @@ impl<R: Route> Navigator<R> {
 
     /// Eagerly submits explicit creation options; new tabs never silently deduplicate.
     pub fn open_with(&self, destination: R, options: OpenOptions) -> Operation<Opened> {
-        let action = self.core().and_then(|core| {
+        let owner = if options.target == OpenTarget::NewWindow {
+            self.opening_core()
+        } else {
+            self.core()
+        };
+
+        let action = owner.and_then(|core| {
             let tab = if options.target == OpenTarget::CurrentTab {
                 Some(
                     self.tab
-                        .or(core.state.borrow().selected)
+                        .or_else(|| {
+                            core.state
+                                .borrow()
+                                .windows
+                                .get(&self.window)
+                                .and_then(|window| window.selected)
+                        })
                         .ok_or(OperationError::NoCurrentTab)?,
                 )
             } else {
@@ -965,7 +1077,7 @@ impl<R: Route> Navigator<R> {
                 return Err(OperationError::InvalidOptions);
             }
 
-            if options.target == OpenTarget::NewWindow {
+            if options.target == OpenTarget::NewWindow && core.window_host.borrow().is_none() {
                 return Err(OperationError::UnsupportedCapability(options.target));
             }
 
@@ -978,7 +1090,20 @@ impl<R: Route> Navigator<R> {
     /// Targets an exact tab without semantic reuse.
     pub fn tab(&self, tab_id: TabId) -> TabHandle<R> {
         TabHandle {
-            navigator: self.clone(),
+            navigator: if self.tab == Some(tab_id) {
+                self.clone()
+            } else {
+                self.core
+                    .upgrade()
+                    .and_then(|core| {
+                        core.state
+                            .borrow()
+                            .tab(tab_id)
+                            .ok()
+                            .map(|tab| self.for_window(tab.window))
+                    })
+                    .unwrap_or_else(|| self.clone())
+            },
             id: tab_id,
         }
     }
@@ -995,8 +1120,8 @@ impl<R: Route> Navigator<R> {
     }
 
     /// Reuses the most recently selected matching current entry, or creates one tab.
-    pub fn reveal(&self, destination: R, _scope: RevealScope) -> Operation<Revealed> {
-        self.submit(Ok(Action::Reveal(destination)), |result| Revealed {
+    pub fn reveal(&self, destination: R, scope: RevealScope) -> Operation<Revealed> {
+        self.submit(Ok(Action::Reveal(destination, scope)), |result| Revealed {
             opened: result.opened,
             reused: result.reused,
         })
@@ -1092,8 +1217,39 @@ impl<R: Route> Navigator<R> {
         }
     }
 
+    fn opening_core(&self) -> Result<Rc<Core<R>>, OperationError> {
+        if self.tab.is_some() {
+            return self.core();
+        }
+
+        let core = self.control_core()?;
+
+        if core.quit.borrow().phase.blocks_navigation() {
+            return Err(OperationError::Quitting);
+        }
+
+        Ok(core)
+    }
+
     fn core(&self) -> Result<Rc<Core<R>>, OperationError> {
         let core = self.control_core()?;
+
+        let state = core.state.borrow();
+
+        let window = state
+            .windows
+            .get(&self.window)
+            .ok_or(OperationError::WindowUnavailable)?;
+
+        if window.opening.is_some() {
+            return Err(OperationError::WindowUnavailable);
+        }
+
+        if window.closing.is_some() {
+            return Err(OperationError::WindowClosing);
+        }
+
+        drop(state);
 
         if core.quit.borrow().phase.blocks_navigation() {
             return Err(OperationError::Quitting);
@@ -1113,10 +1269,6 @@ impl<R: Route> Navigator<R> {
             || core.reload.borrow().phase == crate::reload::ReloadPhase::Restoring
         {
             return Err(OperationError::Reloading);
-        }
-
-        if self.window != WindowId(1) {
-            return Err(OperationError::WindowUnavailable);
         }
 
         Ok(core)
@@ -1157,7 +1309,14 @@ impl<R: Route> Navigator<R> {
             return handle;
         };
 
-        let action = self.core().and(action);
+        let owner = if matches!(&action, Ok(Action::Open(_, options, _)) if options.target == OpenTarget::NewWindow)
+        {
+            self.opening_core()
+        } else {
+            self.core()
+        };
+
+        let action = owner.and(action);
 
         let action = match action {
             Ok(action) if core.state.borrow().tokens.len() < core.config.pending_operations => {
@@ -1186,7 +1345,8 @@ impl<R: Route> Navigator<R> {
             }
         };
 
-        let lanes = action.lanes(&core);
+        let window = self.window;
+        let lanes = action.lanes(&core, window);
         let token = CancellationToken::new();
 
         core.state.borrow_mut().tokens.insert(id, token.clone());
@@ -1209,7 +1369,7 @@ impl<R: Route> Navigator<R> {
                 Ok(Outcome::Cancelled(CancelReason::Requested))
             } else {
                 let execution = async {
-                    let execution = execute(&owned, id, &action)
+                    let execution = execute(&owned, id, &action, window)
                         .instrument(tracing::info_span!("router.operation", operation_id = %id));
 
                     if let Action::Restore(_, _, epoch) = &action {
@@ -1292,7 +1452,10 @@ impl<R: Route> TabHandle<R> {
 
         let mut origin = core.tasks.origin();
 
-        origin.tab_id = self.navigator.tab.or(Some(self.id));
+        origin.window_id = state
+            .tab(self.id)
+            .map_or(self.navigator.window, |tab| tab.window);
+        origin.tab_id = Some(self.id);
         origin.entry_id = self.navigator.origin_entry;
 
         scope.handle(origin)
@@ -1364,6 +1527,7 @@ impl<R: Route> EntryHandle<R> {
         let mut origin = core.tasks.origin();
 
         origin.tab_id = Some(entry.tab);
+        origin.window_id = entry.window;
         origin.entry_id = Some(entry.id);
 
         Ok(entry.scope.handle(origin))
@@ -1403,6 +1567,11 @@ impl<R: Route> EntryHandle<R> {
         handler: impl Fn(T) -> Result<(), TaskError> + 'static,
     ) -> Result<(), TaskError> {
         self.tasks()?.on_event(handler)
+    }
+
+    /// Returns the host owning this retained screen, while its lifetime remains valid.
+    pub fn window_id(&self) -> Result<WindowId, OperationError> {
+        Ok(self.live()?.window)
     }
 
     /// Returns the concrete tab owning this retained screen.
@@ -1489,18 +1658,19 @@ impl<R: Route> EntryHandle<R> {
 
 enum Action<R: Route> {
     Quit,
+    CloseWindow,
     Open(R, OpenOptions, Option<TabId>),
     Navigate(TabId, R, bool),
     Move(TabId, i8),
     Select(TabId),
     Close(TabId),
     Mode(TabId, TabMode),
-    Reveal(R),
+    Reveal(R, RevealScope),
     Restore(R, Option<BrowserCheckpoint>, u64),
 }
 
 impl<R: Route> Action<R> {
-    fn lanes(&self, core: &Core<R>) -> Vec<Lane> {
+    fn lanes(&self, core: &Core<R>, window: WindowId) -> Vec<Lane> {
         match self {
             Self::Open(_, _, Some(tab))
             | Self::Navigate(tab, ..)
@@ -1511,7 +1681,11 @@ impl<R: Route> Action<R> {
             Self::Restore(_, Some(checkpoint), _) if checkpoint.runtime_id == core.runtime => {
                 vec![Lane::Workspace, Lane::Tab(checkpoint.tab_id)]
             }
-            _ => vec![Lane::Workspace],
+            Self::Open(_, options, _) if options.target == OpenTarget::NewWindow => {
+                vec![Lane::Workspace]
+            }
+            Self::Reveal(_, RevealScope::Application) => vec![Lane::Workspace],
+            _ => vec![Lane::Window(window)],
         }
     }
 
@@ -1592,6 +1766,7 @@ fn fresh<R: Route>(
     core: &Core<R>,
     state: &mut State<R>,
     tab: TabId,
+    window: WindowId,
     destination: R,
 ) -> Result<Rc<Entry<R>>, Stop> {
     let destination = R::decode(&destination.encode())?;
@@ -1612,6 +1787,7 @@ fn fresh<R: Route>(
             .unwrap_or_else(|_| core.tasks.scope(TaskOwner::Tab(tab))),
         id,
         tab,
+        window,
         destination,
         revision: Cell::new(0),
         dirty: Cell::new(false),
@@ -1625,12 +1801,18 @@ fn fresh<R: Route>(
     }))
 }
 
-fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
+fn plan<R: Route>(core: &Core<R>, action: &Action<R>, window: WindowId) -> Result<Plan<R>, Stop> {
     let mut state = core.state.borrow_mut();
 
     let new = |state: &mut State<R>, destination: R, options: OpenOptions| {
+        let window = if options.target == OpenTarget::NewWindow {
+            WindowId(state.next().max(2))
+        } else {
+            window
+        };
+
         let tab = TabId(state.next());
-        let entry = fresh(core, state, tab, destination)?;
+        let entry = fresh(core, state, tab, window, destination)?;
 
         Ok(Plan {
             entry,
@@ -1645,7 +1827,7 @@ fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
     };
 
     match action {
-        Action::Quit => Err(OperationError::InvalidOptions.into()),
+        Action::Quit | Action::CloseWindow => Err(OperationError::InvalidOptions.into()),
         Action::Open(destination, options, None) => new(&mut state, destination.clone(), *options),
         Action::Open(destination, _, Some(tab)) | Action::Navigate(tab, destination, false) => {
             let current = state.tab(*tab)?;
@@ -1665,7 +1847,8 @@ fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
                 .map(|entry| (entry.clone(), DisposeReason::TruncateForwardHistory))
                 .collect();
 
-            let entry = fresh(core, &mut state, *tab, destination.clone())?;
+            let host = state.tab(*tab)?.window;
+            let entry = fresh(core, &mut state, *tab, host, destination.clone())?;
 
             Ok(Plan {
                 entry,
@@ -1677,7 +1860,8 @@ fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
         }
         Action::Navigate(tab, destination, true) => {
             let outgoing = state.tab(*tab)?.current();
-            let entry = fresh(core, &mut state, *tab, destination.clone())?;
+            let host = state.tab(*tab)?.window;
+            let entry = fresh(core, &mut state, *tab, host, destination.clone())?;
 
             Ok(Plan {
                 entry,
@@ -1730,7 +1914,7 @@ fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
                 reused: true,
             })
         }
-        Action::Reveal(destination) | Action::Restore(destination, _, _) => {
+        Action::Reveal(destination, _) | Action::Restore(destination, _, _) => {
             if let Action::Restore(_, Some(checkpoint), _) = action
                 && checkpoint.runtime_id == core.runtime
                 && let Ok(tab) = state.tab(checkpoint.tab_id)
@@ -1748,7 +1932,13 @@ fn plan<R: Route>(core: &Core<R>, action: &Action<R>) -> Result<Plan<R>, Stop> {
                 });
             }
 
-            if let Some(entry) = state.matching(destination) {
+            if let Some(entry) = state.matching(
+                destination,
+                match action {
+                    Action::Reveal(_, RevealScope::Application) => None,
+                    _ => Some(window),
+                },
+            ) {
                 return Ok(Plan {
                     expected: Some(entry.id),
                     entry,
@@ -1769,9 +1959,10 @@ async fn guard<R: Route>(
     action: &Action<R>,
     entry: &Rc<Entry<R>>,
     kind: GuardKind,
+    origin_window: WindowId,
 ) -> Result<u64, Stop> {
     match select(
-        Box::pin(evaluate_guard(core, id, action, entry, kind)),
+        Box::pin(evaluate_guard(core, id, action, entry, kind, origin_window)),
         Box::pin(entry.cancellation.cancelled()),
     )
     .await
@@ -1787,6 +1978,7 @@ async fn evaluate_guard<R: Route>(
     action: &Action<R>,
     entry: &Rc<Entry<R>>,
     kind: GuardKind,
+    origin_window: WindowId,
 ) -> Result<u64, Stop> {
     'revalidate: loop {
         action.check(core)?;
@@ -1821,6 +2013,7 @@ async fn evaluate_guard<R: Route>(
 
         for callback in guards {
             let context = GuardContext {
+                window_id: entry.window,
                 operation_id: id,
                 tab_id: entry.tab,
                 entry_id: entry.id,
@@ -1864,11 +2057,25 @@ async fn evaluate_guard<R: Route>(
 
                     let (sender, receiver) = oneshot::channel();
 
-                    let decision = {
+                    let (decision, presentation_window) = {
                         let mut state = core.state.borrow_mut();
                         let decision = DecisionId(state.next());
 
+                        let window_id = if state.windows.contains_key(&entry.window) {
+                            entry.window
+                        } else if state.windows.contains_key(&origin_window) {
+                            origin_window
+                        } else {
+                            state
+                                .windows
+                                .keys()
+                                .next()
+                                .copied()
+                                .unwrap_or(origin_window)
+                        };
+
                         let snapshot = DecisionSnapshot {
+                            window_id,
                             id: decision,
                             operation_id: id,
                             entry_id: entry.id,
@@ -1897,11 +2104,17 @@ async fn evaluate_guard<R: Route>(
                             },
                         );
 
-                        decision
+                        (decision, window_id)
                     };
 
                     core.status(id, OperationState::AwaitingDecision(decision));
                     core.event(id, "awaiting_decision");
+                    let host = core.window_host.borrow().clone();
+
+                    if let Some(host) = host {
+                        host.activate(presentation_window);
+                    }
+
                     let choice = receiver
                         .await
                         .map_err(|_| OperationError::RuntimeShutdown)?;
@@ -1948,10 +2161,12 @@ async fn transition<R: Route>(
     core: &Rc<Core<R>>,
     id: OperationId,
     action: &Action<R>,
+    window: WindowId,
 ) -> Result<Commit, Stop> {
     'plan: loop {
         action.check(core)?;
-        let plan = plan(core, action)?;
+        let plan = plan(core, action, window)?;
+        let mut provisional = None;
 
         loop {
             let mut approvals = Vec::new();
@@ -1959,15 +2174,34 @@ async fn transition<R: Route>(
             if !matches!(plan.transition, Transition::Close | Transition::Mode(_)) {
                 approvals.push((
                     plan.entry.clone(),
-                    guard(core, id, action, &plan.entry, GuardKind::Enter).await?,
+                    guard(core, id, action, &plan.entry, GuardKind::Enter, window).await?,
                 ));
             }
 
             for (entry, reason) in &plan.disposed {
                 approvals.push((
                     entry.clone(),
-                    guard(core, id, action, entry, GuardKind::Dispose(*reason)).await?,
+                    guard(core, id, action, entry, GuardKind::Dispose(*reason), window).await?,
                 ));
+            }
+
+            if provisional.is_none()
+                && matches!(action, Action::Open(_, options, _) if options.target == OpenTarget::NewWindow)
+            {
+                provisional = Some(windows::ProvisionalWindow::new(
+                    core.clone(),
+                    plan.entry.window,
+                    id,
+                ));
+            }
+
+            if let Some(provisional) = &mut provisional {
+                provisional
+                    .open(match action {
+                        Action::Open(_, options, _) => options.activation,
+                        _ => Activation::Activate,
+                    })
+                    .await?;
             }
 
             if plan.entry.resource.borrow().is_none()
@@ -1980,7 +2214,7 @@ async fn transition<R: Route>(
 
                 let navigator = Navigator {
                     core: Rc::downgrade(core),
-                    window: WindowId(1),
+                    window: plan.entry.window,
                     tab: Some(plan.entry.tab),
                     origin_entry: Some(plan.entry.id),
                     origin_scope: Rc::downgrade(&plan.entry.tab_scope),
@@ -2015,26 +2249,49 @@ async fn transition<R: Route>(
                 continue 'plan;
             }
 
-            if let Action::Reveal(destination) = action
-                && state.matching(destination).map(|entry| entry.id) != plan.expected
+            if let Action::Reveal(destination, _) = action
+                && state
+                    .matching(
+                        destination,
+                        match action {
+                            Action::Reveal(_, RevealScope::Application) => None,
+                            _ => Some(window),
+                        },
+                    )
+                    .map(|entry| entry.id)
+                    != plan.expected
             {
                 continue 'plan;
             }
 
             if let Action::Restore(destination, _, _) = action
                 && matches!(plan.transition, Transition::New(..) | Transition::Select)
-                && state.matching(destination).map(|entry| entry.id) != plan.expected
+                && state
+                    .matching(
+                        destination,
+                        match action {
+                            Action::Reveal(_, RevealScope::Application) => None,
+                            _ => Some(window),
+                        },
+                    )
+                    .map(|entry| entry.id)
+                    != plan.expected
             {
                 continue 'plan;
             }
 
             drop(state);
             commit(core, id, action, &plan)?;
+
+            if let Some(provisional) = &mut provisional {
+                provisional.committed = true;
+            }
+
             core.event(id, "committed");
 
             return Ok(Commit {
                 opened: Opened {
-                    window_id: WindowId(1),
+                    window_id: plan.entry.window,
                     tab_id: plan.entry.tab,
                     entry_id: plan.entry.id,
                 },
@@ -2052,8 +2309,12 @@ fn commit<R: Route>(
 ) -> Result<(), OperationError> {
     let mut state = core.state.borrow_mut();
 
+    let window = plan.entry.window;
+
     let before = state
-        .selected
+        .windows
+        .get(&window)
+        .and_then(|host| host.selected)
         .and_then(|tab| state.tab(tab).ok().map(|tab| (tab.id, tab.current().id)));
 
     let tab = plan.entry.tab;
@@ -2068,13 +2329,23 @@ fn commit<R: Route>(
             state.tabs.push(Tab {
                 scope: plan.entry.tab_scope.clone(),
                 id: tab,
+                window,
                 entries: vec![plan.entry.clone()],
                 cursor: 0,
                 mode,
                 selected_at: 0,
             });
 
-            if activation == Activation::Activate || state.selected.is_none() {
+            if let Some(host) = state.windows.get_mut(&window) {
+                host.opening = None;
+            }
+
+            if activation == Activation::Activate
+                || state
+                    .windows
+                    .get(&window)
+                    .is_some_and(|host| host.selected.is_none())
+            {
                 state.select(tab);
             }
         }
@@ -2109,12 +2380,21 @@ fn commit<R: Route>(
             state.tabs[index].scope.close();
             state.tabs.remove(index);
 
-            if state.selected == Some(tab) {
-                state.selected = None;
+            if state
+                .windows
+                .get(&window)
+                .is_some_and(|host| host.selected == Some(tab))
+            {
+                let replacement = state
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.window == window)
+                    .max_by_key(|tab| tab.selected_at)
+                    .map(|tab| tab.id);
 
-                if !state.tabs.is_empty() {
-                    let selected = state.tabs[index.min(state.tabs.len() - 1)].id;
+                state.windows.get_mut(&window).expect("tab host").selected = None;
 
+                if let Some(selected) = replacement {
                     state.select(selected);
                 }
             }
@@ -2122,7 +2402,9 @@ fn commit<R: Route>(
     }
 
     let after = state
-        .selected
+        .windows
+        .get(&window)
+        .and_then(|host| host.selected)
         .and_then(|tab| state.tab(tab).ok().map(|tab| (tab.id, tab.current().id)));
 
     let restore = matches!(action, Action::Restore(..));
@@ -2132,7 +2414,7 @@ fn commit<R: Route>(
     }
 
     let opened = Opened {
-        window_id: WindowId(1),
+        window_id: window,
         tab_id: plan.entry.tab,
         entry_id: plan.entry.id,
     };
@@ -2143,7 +2425,7 @@ fn commit<R: Route>(
             tab_id: *tab,
             mode: *mode,
         }),
-        Action::Reveal(_) | Action::Restore(..) => serde_json::to_value(Revealed {
+        Action::Reveal(..) | Action::Restore(..) => serde_json::to_value(Revealed {
             opened,
             reused: plan.reused,
         }),
@@ -2166,7 +2448,11 @@ fn commit<R: Route>(
 
                 entry.scope.update(
                     current,
-                    current && state.selected == Some(tab.id),
+                    current
+                        && state
+                            .windows
+                            .get(&tab.window)
+                            .is_some_and(|host| host.selected == Some(tab.id)),
                     tab.mode == TabMode::Live,
                 );
             }
@@ -2174,7 +2460,15 @@ fn commit<R: Route>(
     }
     core.notify();
 
-    if restore || before != after {
+    if matches!(action, Action::Reveal(..) | Action::Select(_)) {
+        let host = core.window_host.borrow().clone();
+
+        if let Some(host) = host {
+            host.activate(window);
+        }
+    }
+
+    if window == core.initial_window.get() && (restore || before != after) {
         core.emit_history(
             restore || matches!(plan.transition, Transition::Replace | Transition::Close),
         );
@@ -2187,8 +2481,9 @@ async fn execute<R: Route>(
     core: &Rc<Core<R>>,
     id: OperationId,
     action: &Action<R>,
+    window: WindowId,
 ) -> Result<Outcome<Commit>, OperationError> {
-    let result = match transition(core, id, action).await {
+    let result = match transition(core, id, action, window).await {
         Ok(value) => Ok(Outcome::Committed(value)),
         Err(Stop::Blocked(reason)) => Ok(Outcome::Blocked(reason)),
         Err(Stop::Cancelled(reason)) => Ok(Outcome::Cancelled(reason)),

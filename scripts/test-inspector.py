@@ -79,7 +79,7 @@ class InspectorHTTP(unittest.TestCase):
             self.assertEqual(event["event"], "inspector_listening")
             launch = urllib.parse.urlsplit(event["url"])
             with urllib.request.urlopen(f"http://{launch.netloc}/__rake/inspector") as response:
-                self.assertIn(b"Rake Devtools", response.read())
+                self.assertIn(b"Rake DevTools", response.read())
             process.send_signal(signal.SIGTERM)
             self.assertEqual(process.wait(timeout=8), 0)
             deadline = time.monotonic() + 2

@@ -51,6 +51,7 @@ produce errors instead of redirecting to the newly selected tab.
 
 | Command | Behavior |
 | --- | --- |
+| `open(route, NewWindow)` | Creates a native host with a fresh independent tab and root entry. |
 | `open(route, NewTab)` | Always creates a fresh tab and root entry. |
 | `open(route, CurrentTab)` / `tab.navigate(route)` | Pushes a fresh instance, guarding disposal of forward history. |
 | `tab.replace(route)` | Guards and replaces the current instance. |
@@ -100,6 +101,64 @@ An edit expires an old decision, while selecting or editing an unrelated tab doe
 not. Cancellation cannot undo a save or other external effects already performed
 by application callbacks.
 
+## Native windows
+
+`App::routes` installs the native window adapter automatically. Every window has
+its own selected tab and retained histories while sharing one RuntimeId, services,
+command registry, operation scheduler and development-control endpoint.
+
+```rust,no_run
+use rake::prelude::*;
+use rake::router::{OpenTarget, Router, RouterConfig};
+#[derive(Clone, Route)]
+enum Destination { #[route(id = "home", path = "/")] Home }
+let router = Router::<Destination>::new(RouterConfig::default());
+// In a native App::routes host, which supplies the physical-window capability:
+let operation = router.navigator().open(Destination::Home, OpenTarget::NewWindow);
+// The driver runs eagerly; a GUI handler need not wait here.
+```
+
+`PageContext::window_id()` and `EntryHandle::window_id()` identify the originating
+host. `navigator.for_window(id)` binds app-level Open and Reveal; contextual
+CurrentTab resolves that host's selected tab at submission. A page navigator stays
+bound to its original tab and window, even when focus or selection changes.
+`RevealScope::Window` restricts reuse to the bound host; Application searches all
+hosts and activates the matching window. Selecting an exact tab activates its host.
+PreserveSelection avoids activating a newly opened host.
+
+`navigator.close_window()` or `router.close_window(id)` guards every retained
+entry in that host, including hidden tabs and back/forward histories, using
+`DisposeReason::CloseWindow`. Repeated pending requests join one operation. Save,
+Discard and Cancel use the existing decision engine; revisions are checked again
+before atomic disposal. Access decisions for NewWindow appear in the originating
+host before the new physical window is created. Pending decisions activate their
+presenting native host, including while application quit checks another window.
+While a close is pending, new navigation into that window fails with `WindowClosing`;
+other windows continue. Denial or cancellation leaves all of the window's entries
+intact. Commit cancels its entry/tab scopes and closes
+its physical host. Application-owned tasks and other windows survive.
+
+The native close button follows this operation. Closing the last window leaves the
+runtime alive; app-level NewWindow can open another host. Explicit Quit still
+guards every window and coordinates application jobs before process exit.
+
+`RouterSnapshot::windows` exposes per-host selection, visibility and pending close;
+tabs and decisions carry WindowIds. `snapshot_in_window(id)`, `TabBar::in_window(id)`
+and `RouteOutlet::in_window(id)` scope presentation. Default widgets show the initial
+host. After closing it, app-level commands must name a remaining host, except
+NewWindow which can also create a host when none remain.
+
+Custom native shells install `Router::window_host` before driving the runtime.
+Their `WindowHost::open` callback must register the reserved host with
+`Router::attach_window` before returning, and `close` must retire the physical host.
+Capture a weak navigator and temporarily upgrade it with `navigator.router()`
+inside host callbacks, rather than retaining the router in its own adapter.
+The embedding application owns one shared driver, redraw observations and
+explicit quit mode independently of the first view. Without a window adapter,
+`Router::in_window` retains its application-quit close behavior. Additional default
+runner windows currently use GPUI's default window options; OS position/size and
+moving existing tabs between windows are outside this routing API.
+
 ## Browser history
 
 Use `.web(WebConfig::new().routing(WebRouting::Path))`, or `Hash` for fragment URLs.
@@ -126,8 +185,9 @@ and cross-document navigation cannot promise asynchronous save completion.
 
 ## Current limits and evidence
 
-There is one logical window. `NewWindow` reports `UnsupportedCapability` and the
-snapshot advertises the supported targets. `TabMode` drives Foreground/Live activity;
+Web has one logical host. `NewWindow` reports `UnsupportedCapability` there and
+on headless/custom hosts without a window adapter; it never falls back to NewTab.
+Snapshots advertise actual supported targets. `TabMode` drives Foreground/Live activity;
 see [managed work](managed-work.md). [Guarded application quit](guarded-quit.md),
 [runtime control](runtime-control.md), [devtools](devtools.md) and
 [development reload](development.md) use this same routing core. Durable workspace
@@ -136,5 +196,9 @@ persistence and native OS deep-link registration remain separate capabilities.
 Routing tests use real destination codecs, local futures, operation scheduling,
 guards and a recorded history sink. A separate resource test uses local stand-ins
 to prove retention and mount-failure rollback. GPUI mounting and the actual History
-API were additionally exercised in the native and browser examples; those smoke
-checks are manual and currently cover macOS and Helium Chromium only.
+API were additionally exercised in the native and browser examples. The portable
+`windows` suite uses a physical-host double for scheduling, close guards, cancellation,
+visibility and restoration. `python3 scripts/test-windows.py` separately exercises
+real macOS GPUI windows, scoped CLI navigation, closing the original/last host,
+reopening and checkpointed multi-window restart. Other native platforms remain
+unverified.

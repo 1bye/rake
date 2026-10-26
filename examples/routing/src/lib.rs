@@ -172,6 +172,8 @@ struct Screen {
 impl Render for Screen {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let navigator = self.page.navigator();
+        let new_window = navigator.clone();
+        let close_window = navigator.clone();
         let open_a = navigator.clone();
         let open_b = navigator.clone();
         let hidden = navigator.clone();
@@ -188,6 +190,49 @@ impl Render for Screen {
             .items_center()
             .gap_4()
             .child(div().text_3xl().child(self.title.clone()))
+            .child(format!(
+                "{} / {}",
+                self.page.window_id(),
+                self.page
+                    .entry()
+                    .id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default()
+            ))
+            .when(cfg!(not(target_family = "wasm")), |view| {
+                view.child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("new-window")
+                                .p_2()
+                                .bg(rgb(0x29424b))
+                                .cursor_pointer()
+                                .child("Open A in new window")
+                                .on_click(move |_, _, _| {
+                                    drop(new_window.open(
+                                        Destination::Document("A".into()),
+                                        OpenTarget::NewWindow,
+                                    ));
+                                })
+                                .inspect("routing.new-window"),
+                        )
+                        .child(
+                            div()
+                                .id("close-window")
+                                .p_2()
+                                .bg(rgb(0x29424b))
+                                .cursor_pointer()
+                                .child("Close this window")
+                                .on_click(move |_, _, _| {
+                                    drop(close_window.close_window());
+                                })
+                                .inspect("routing.close-window"),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("command-echo")

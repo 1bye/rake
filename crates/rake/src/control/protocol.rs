@@ -2,7 +2,8 @@
 
 use crate::router::{
     DecisionError, DecisionId, OpenOptions, OpenTarget, OperationError, OperationId,
-    OperationState, RouteAddress, RouteDecodeError, RouterSnapshot, RuntimeId, TabId, TabMode,
+    OperationState, RevealScope, RouteAddress, RouteDecodeError, RouterSnapshot, RuntimeId, TabId,
+    TabMode, WindowId,
 };
 
 use crate::tasks::{TaskError, TaskId, TaskOwner};
@@ -47,6 +48,11 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Guard all retained entries and close exactly one native host.
+    CloseWindow {
+        /// Concrete runtime-scoped host.
+        window: WindowId,
+    },
     /// Guard every retained entry, coordinate jobs, then dispose the workspace.
     Quit {
         /// Explicit finite-job policy.
@@ -67,6 +73,9 @@ pub enum Command {
     },
     /// Open a typed destination with explicit activation and policy.
     Open {
+        /// Concrete source host; omission selects the runtime's initial host.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<WindowId>,
         /// Shared route address.
         destination: RouteAddress,
         /// Creation/activation options.
@@ -83,6 +92,12 @@ pub enum Command {
     },
     /// Select an exact matching current destination or create it.
     Reveal {
+        /// Bound host used for lookup/creation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window: Option<WindowId>,
+        /// Application lookup by default, or restrict matches to the bound host.
+        #[serde(default, skip_serializing_if = "application_scope")]
+        scope: RevealScope,
         /// Shared route address.
         destination: RouteAddress,
     },
@@ -143,6 +158,7 @@ impl Command {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
     pub fn names() -> &'static [&'static str] {
         &[
+            "close_window",
             "quit",
             "prepare_reload",
             "finish_reload",
@@ -166,6 +182,13 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// All logical host identities, independent selections, visibility and close status.
+    Windows {},
+    /// Routing snapshot restricted to one concrete host.
+    Window {
+        /// Runtime-scoped host.
+        window: WindowId,
+    },
     /// Quit phase and finite work still preventing shutdown.
     Quit {},
     /// Latest bounded presented tree, with explicit availability and coverage.
@@ -226,6 +249,8 @@ impl Query {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
     pub fn names() -> &'static [&'static str] {
         &[
+            "windows",
+            "window",
             "quit",
             "inspect_tree",
             "inspect_element",
@@ -405,4 +430,8 @@ pub enum ControlError {
     /// Managed-work lookup or cancellation error.
     #[error(transparent)]
     Task(#[from] TaskError),
+}
+
+fn application_scope(scope: &RevealScope) -> bool {
+    *scope == RevealScope::Application
 }

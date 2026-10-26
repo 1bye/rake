@@ -77,12 +77,19 @@ impl<R: Route> Router<R> {
     /// host UI has acknowledged detachment; it does not prove native code unload safety.
     pub fn reload_status(&self) -> ReloadStatus {
         let mut status = self.0.reload.borrow().clone();
-        let hidden = self.0.tasks.snapshot().host_visibility == HostVisibility::Hidden;
 
-        if status.phase == ReloadPhase::Quiescing
-            && self.0.tasks.quiescent()
-            && (self.0.reload_ui_ready.get() || hidden)
-        {
+        let ready = {
+            let state = self.0.state.borrow();
+
+            self.0.reload_ui_ready.borrow().iter().all(|id| {
+                state
+                    .windows
+                    .get(id)
+                    .is_none_or(|window| window.visibility == HostVisibility::Hidden)
+            })
+        };
+
+        if status.phase == ReloadPhase::Quiescing && self.0.tasks.quiescent() && ready {
             status.phase = ReloadPhase::Ready;
         }
 
@@ -123,7 +130,11 @@ impl<R: Route> Router<R> {
             request: Some(request),
             error: None,
         };
-        self.0.reload_ui_ready.set(!self.0.has_window.get());
+        *self.0.reload_ui_ready.borrow_mut() = if self.0.has_window.get() {
+            self.0.state.borrow().windows.keys().copied().collect()
+        } else {
+            BTreeSet::new()
+        };
         self.0.tasks.pause();
         self.0.notify();
 
@@ -131,8 +142,8 @@ impl<R: Route> Router<R> {
     }
 
     #[cfg(feature = "gpui")]
-    pub(crate) fn acknowledge_reload_ui(&self) {
-        if !self.0.reload_ui_ready.replace(true) {
+    pub(crate) fn acknowledge_reload_ui(&self, window: super::WindowId) {
+        if self.0.reload_ui_ready.borrow_mut().remove(&window) {
             self.0.notify();
         }
     }
@@ -158,6 +169,7 @@ impl<R: Route> Router<R> {
             .map(|tab| {
                 (
                     tab.id,
+                    tab.window,
                     tab.mode,
                     tab.cursor,
                     tab.selected_at,
@@ -168,7 +180,7 @@ impl<R: Route> Router<R> {
 
         let mut checkpoint_tabs = Vec::new();
 
-        for (id, mode, cursor, selected_at, entries) in tabs {
+        for (id, window_id, mode, cursor, selected_at, entries) in tabs {
             let mut captured = Vec::new();
 
             for entry in entries {
@@ -189,6 +201,7 @@ impl<R: Route> Router<R> {
             }
 
             checkpoint_tabs.push(TabCheckpoint {
+                window_id,
                 id,
                 mode,
                 cursor,
@@ -204,12 +217,23 @@ impl<R: Route> Router<R> {
         }
 
         let checkpoint = WorkspaceCheckpoint {
-            version: 1,
+            version: 2,
+            windows: state
+                .windows
+                .iter()
+                .map(|(id, window)| crate::reload::WindowCheckpoint {
+                    id: *id,
+                    selected: window.selected,
+                })
+                .collect(),
             application_id: application_id.into(),
             source_runtime: self.runtime_id(),
             generation: self.0.tasks.generation(),
             run_sequence: self.0.tasks.run_sequence(),
-            selected: state.selected,
+            selected: state
+                .windows
+                .get(&self.0.initial_window.get())
+                .and_then(|window| window.selected),
             tabs: checkpoint_tabs,
         };
 
@@ -333,7 +357,7 @@ impl<R: Route> Router<R> {
     ) -> Result<(), ReloadError> {
         check_size(checkpoint)?;
 
-        if checkpoint.version != 1 || checkpoint.application_id != application_id {
+        if !matches!(checkpoint.version, 1 | 2) || checkpoint.application_id != application_id {
             return Err(ReloadError::Incompatible(
                 "workspace version or application identity changed".into(),
             ));
@@ -348,13 +372,39 @@ impl<R: Route> Router<R> {
                 .ok_or_else(|| ReloadError::Incompatible("invalid generation".into()))?,
         );
 
+        let legacy;
+
+        let windows = if checkpoint.version == 1 {
+            legacy = vec![crate::reload::WindowCheckpoint {
+                id: super::WindowId(1),
+                selected: checkpoint.selected,
+            }];
+
+            &legacy
+        } else {
+            &checkpoint.windows
+        };
+
+        let mut window_ids = BTreeSet::new();
+
+        if windows
+            .iter()
+            .any(|window| window.id.0 == 0 || !window_ids.insert(window.id))
+            || (windows.len() != 1 && self.0.window_host.borrow().is_none())
+        {
+            return Err(ReloadError::Incompatible(
+                "invalid or unsupported window identities".into(),
+            ));
+        }
+
         let mut tab_ids = BTreeSet::new();
         let mut entry_ids = BTreeSet::new();
         let mut sequence = 0;
         let mut decoded = Vec::new();
 
         for tab in &checkpoint.tabs {
-            if tab.id.0 == 0
+            if !window_ids.contains(&tab.window_id)
+                || tab.id.0 == 0
                 || !tab_ids.insert(tab.id)
                 || tab.entries.is_empty()
                 || tab.cursor >= tab.entries.len()
@@ -396,14 +446,51 @@ impl<R: Route> Router<R> {
             decoded.push(destinations);
         }
 
-        if checkpoint.selected.is_some_and(|id| !tab_ids.contains(&id))
-            || (checkpoint.selected.is_none() != checkpoint.tabs.is_empty())
+        if windows.iter().any(|window| {
+            let tabs: Vec<_> = checkpoint
+                .tabs
+                .iter()
+                .filter(|tab| tab.window_id == window.id)
+                .collect();
+
+            window.selected.is_none() != tabs.is_empty()
+                || window
+                    .selected
+                    .is_some_and(|id| !tabs.iter().any(|tab| tab.id == id))
+        }) || checkpoint.selected.is_some_and(|id| !tab_ids.contains(&id))
+            || (checkpoint.version == 1
+                && checkpoint.selected.is_none() != checkpoint.tabs.is_empty())
             || sequence > u64::MAX / 2
             || checkpoint.run_sequence > u64::MAX / 2
         {
             return Err(ReloadError::Incompatible(
                 "invalid selection or exhausted identity space".into(),
             ));
+        }
+
+        sequence = sequence.max(windows.iter().map(|window| window.id.0).max().unwrap_or(1));
+
+        if sequence > u64::MAX / 2 {
+            return Err(ReloadError::Incompatible(
+                "exhausted window identity space".into(),
+            ));
+        }
+
+        let mut provisional = Vec::new();
+
+        for window in windows {
+            if window.id != self.0.initial_window.get() {
+                let mut host = super::windows::ProvisionalWindow::new(
+                    self.0.clone(),
+                    window.id,
+                    super::OperationId(0),
+                );
+
+                host.open(super::Activation::PreserveSelection)
+                    .await
+                    .map_err(|_| ReloadError::State("cannot create replacement window".into()))?;
+                provisional.push(host);
+            }
         }
 
         let mut tabs = Vec::new();
@@ -418,6 +505,7 @@ impl<R: Route> Router<R> {
                     tab_scope: scope.clone(),
                     id: saved.id,
                     tab: tab.id,
+                    window: tab.window_id,
                     destination,
                     revision: Cell::new(saved.revision),
                     dirty: Cell::new(saved.dirty),
@@ -435,7 +523,7 @@ impl<R: Route> Router<R> {
                     entry: Rc::downgrade(&entry),
                 };
 
-                let mut navigator = self.navigator();
+                let mut navigator = self.navigator().for_window(tab.window_id);
 
                 navigator.tab = Some(tab.id);
                 navigator.origin_entry = Some(saved.id);
@@ -460,6 +548,7 @@ impl<R: Route> Router<R> {
             tabs.push(Tab {
                 scope,
                 id: tab.id,
+                window: tab.window_id,
                 entries,
                 cursor: tab.cursor,
                 mode: tab.mode,
@@ -469,10 +558,63 @@ impl<R: Route> Router<R> {
 
         let mut state = self.0.state.borrow_mut();
 
+        let retired: Vec<_> = state
+            .windows
+            .keys()
+            .filter(|id| !window_ids.contains(id))
+            .copied()
+            .collect();
+
+        state.windows = windows
+            .iter()
+            .map(|window| {
+                (
+                    window.id,
+                    super::WindowState {
+                        selected: window.selected,
+                        visibility: state
+                            .windows
+                            .get(&window.id)
+                            .map_or(HostVisibility::Unknown, |host| host.visibility),
+                        ..super::WindowState::default()
+                    },
+                )
+            })
+            .collect();
         state.tabs = tabs;
-        state.selected = checkpoint.selected;
+
+        for host in &mut provisional {
+            host.committed = true;
+        }
+
         state.sequence = sequence;
+
+        if !window_ids.contains(&self.0.initial_window.get())
+            && let Some(first) = windows.first()
+        {
+            self.0.initial_window.set(first.id);
+        }
+
         drop(state);
+        let host = self.0.window_host.borrow().clone();
+
+        for window in retired {
+            if let Some(host) = &host {
+                host.close(window);
+            }
+
+            self.0.tasks.forget_window(window);
+
+            #[cfg(feature = "gpui")]
+            {
+                self.0.host.borrow_mut().remove(&window);
+
+                if let Some(contexts) = self.0.view_contexts.borrow().as_ref() {
+                    contexts.borrow_mut().remove(&window);
+                }
+            }
+        }
+
         *self.0.reload.borrow_mut() = ReloadStatus {
             restored_from: Some(checkpoint.source_runtime),
             generation,
@@ -490,7 +632,11 @@ impl<R: Route> Router<R> {
 
                     entry.scope.update(
                         current,
-                        current && state.selected == Some(tab.id),
+                        current
+                            && state
+                                .windows
+                                .get(&tab.window)
+                                .is_some_and(|host| host.selected == Some(tab.id)),
                         tab.mode == TabMode::Live,
                     );
                 }

@@ -8,7 +8,8 @@ let filter = {}, search = '', page = 0, paused = false, polling = false, mutatin
 let receipt = null, operation = null, selectedOperation = null, output = {records: [], dropped: 0}, level = 'ALL', source = 'Structured', taskOwner = 'All';
 const expanded = new Set(), drafts = new Map();
 let elements = null, selectedElement = null, elementDetail = null, elementError = null;
-let rendered = null;
+let rendered = null, workspaceFocus = null, elementTab = 'Styles', resizing = false;
+const paneSizes = new Map(), scrollPositions = new Map();
 let awaitingSuccessor = null;
 const parameters = new URLSearchParams(location.search);
 const secret = location.hash.startsWith('#__rake_control=') ? location.hash.slice('#__rake_control='.length) : null;
@@ -54,10 +55,12 @@ function select(values, value, onChange) {
   return element;
 }
 function showError(error) { $('error').hidden = !error; $('error').textContent = error ? String(error.message || error) : ''; }
-function message(value) { $('notice').textContent = value; }
+function message(value) { $('notice').textContent = value; $('notice').title = value; }
 function supported(command) { return connected && !mutating && info?.commands.includes(command); }
 function action(label, command, className = '') {
-  return button(label, () => mutate(command).catch(showError), !supported(command.type), className);
+  const control = button(label, () => mutate(command).catch(showError), !supported(command.type), className);
+  control.dataset.focus = 'action:' + JSON.stringify(command);
+  return control;
 }
 function related(fields, target) {
   const context = {};
@@ -95,15 +98,72 @@ function paged(items, renderer, size = 100) {
 }
 function switchPanel(name) {
   panel = name; page = 0; selectedOperation = null; operation = null;
-  for (const control of $('panels').children) control.setAttribute('aria-current', control.dataset.panel === name ? 'page' : 'false');
+  for (const control of $('panels').children) {
+    const active = control.dataset.panel === name;
+    control.setAttribute('aria-current', active ? 'page' : 'false');
+    control.setAttribute('aria-selected', String(active));
+    control.tabIndex = active ? 0 : -1;
+  }
   $('title').textContent = name;
+  $('content').setAttribute('aria-labelledby', 'panel-' + name.toLowerCase());
   render(true); refresh();
+}
+function properties(values) {
+  return append(el('dl', null, 'property-list'), ...values.map(([name, value]) =>
+    append(el('div', null, 'property-row'), el('dt', name), el('dd', value == null ? '—' : String(value)))));
+}
+function rememberScroll(element, key) {
+  element.dataset.scroll = key;
+  element.addEventListener('scroll', () => scrollPositions.set(key, element.scrollTop));
+  return element;
+}
+function splitView(master, detail, key) {
+  const root = el('div', null, 'split-view');
+  const left = rememberScroll(append(el('div', null, 'pane-master'), master), key + ':master');
+  const right = rememberScroll(append(el('div', null, 'pane-detail'), detail), key + ':detail');
+  left.style.width = paneSizes.get(key) || (key === 'workspace' ? '25%' : key === 'console' ? '68%' : '60%');
+  const handle = el('div', null, 'split-handle');
+  handle.tabIndex = 0; handle.dataset.focus = 'split:' + key;
+  handle.setAttribute('role', 'separator');
+  handle.setAttribute('aria-label', 'Resize ' + key + ' panes');
+  handle.setAttribute('aria-orientation', 'vertical');
+  handle.setAttribute('aria-valuemin', '0'); handle.setAttribute('aria-valuemax', '100');
+  handle.setAttribute('aria-valuenow', String(parseFloat(left.style.width)));
+  function resize(width) {
+    const available = root.getBoundingClientRect().width;
+    const value = Math.round(Math.max(180, Math.min(width, available - 225)));
+    left.style.width = (value / available * 100).toFixed(1) + '%'; paneSizes.set(key, left.style.width);
+    handle.setAttribute('aria-valuenow', String(Math.round(value / available * 100)));
+  }
+  let drag = null;
+  handle.addEventListener('pointerdown', event => {
+    drag = {x: event.clientX, width: left.getBoundingClientRect().width}; resizing = true;
+    handle.setPointerCapture(event.pointerId); event.preventDefault();
+  });
+  handle.addEventListener('pointermove', event => { if (drag) resize(drag.width + event.clientX - drag.x); });
+  const finish = () => { drag = null; resizing = false; };
+  handle.addEventListener('pointerup', finish); handle.addEventListener('lostpointercapture', finish);
+  handle.addEventListener('pointercancel', finish);
+  handle.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    resize(event.key === 'Home' ? 180 : event.key === 'End' ? root.getBoundingClientRect().width - 225 : left.getBoundingClientRect().width + (event.key === 'ArrowLeft' ? -16 : 16));
+  });
+  return append(root, left, handle, right);
+}
+function treeRow(name, kind, id, depth, active, onInspect, meta = '') {
+  const control = button('', onInspect, false, 'tree-row tree-level-' + depth);
+  control.dataset.focus = 'workspace:' + kind + ':' + id;
+  control.setAttribute('aria-label', 'Inspect ' + kind + '-' + id);
+  control.setAttribute('aria-pressed', String(active));
+  control.append(el('span', kind === 'window' ? '▣' : kind === 'tab' ? '▱' : '◇', 'tree-icon'), el('span', name, 'tree-label'), el('span', meta, 'tree-meta'));
+  return control;
 }
 function choose(runtime) {
   awaitingSuccessor = null;
   model.reset(runtime); info = null; routes = []; commands = []; connected = false;
   elements = null; selectedElement = null; elementDetail = null; elementError = null;
-  selectedOperation = null; operation = null; filter = {}; drafts.clear(); expanded.clear(); page = 0;
+  selectedOperation = null; operation = null; filter = {}; drafts.clear(); expanded.clear(); scrollPositions.clear(); workspaceFocus = null; elementTab = 'Styles'; page = 0;
   $('runtime').value = runtime || ''; showError(null);
   message(runtime ? 'Connecting to a fresh runtime. Previous runtime IDs and observations have been cleared.' : 'Start an app with rake dev, or select an available runtime.');
   render(true);
@@ -211,6 +271,7 @@ async function refresh() {
         if (runtime !== model.runtime) return;
         elements = tree.value;
       }
+      if (!connected) message('Connected to ' + (info?.platform || 'application') + ' runtime.');
       connected = true; showError(null);
     }
   } catch (error) {
@@ -218,6 +279,7 @@ async function refresh() {
   } finally {
     polling = false;
     $('connection').textContent = model.runtime ? `${connected ? 'Connected' : 'Disconnected'} · ${model.runtime.slice(0, 8)}` : 'No runtime';
+    $('connection').dataset.connected = String(connected);
     render();
   }
 }
@@ -225,38 +287,59 @@ async function refresh() {
 function workspace() {
   const snapshot = model.snapshot;
   if (!snapshot) return empty('No workspace snapshot yet. The inspector stays available while the application starts or restarts.');
-  const metrics = el('div', null, 'grid');
-  for (const [name, value] of [['Window', `window-${snapshot.window_id}`], ['Tabs', snapshot.tabs.length], ['Host visibility', snapshot.work.host_visibility], ['Generation', snapshot.reload.generation]]) {
-    metrics.append(append(el('div', name, 'metric'), el('strong', value)));
+  const hosts = snapshot.windows || [{id: snapshot.window_id, selected: snapshot.selected}];
+  const selectedTabs = new Set(hosts.map(host => host.selected));
+  const currentTab = snapshot.tabs.find(tab => selectedTabs.has(tab.id)) || snapshot.tabs[0];
+  const findTab = id => snapshot.tabs.find(tab => tab.id === id);
+  const focusExists = workspaceFocus && (workspaceFocus.kind === 'window' ? hosts.some(host => host.id === workspaceFocus.id) : workspaceFocus.kind === 'tab' ? !!findTab(workspaceFocus.id) : snapshot.tabs.some(tab => tab.entries.some(entry => entry.id === workspaceFocus.id)));
+  if (!focusExists) workspaceFocus = currentTab ? {kind: 'tab', id: currentTab.id} : hosts[0] ? {kind: 'window', id: hosts[0].id} : null;
+  const inspect = (kind, id) => { workspaceFocus = {kind, id}; render(true); };
+  const isFocused = (kind, id) => workspaceFocus?.kind === kind && workspaceFocus.id === id;
+  const treeRows = [];
+  for (const host of hosts) {
+    const tabs = snapshot.tabs.filter(tab => (tab.window_id ?? snapshot.window_id) === host.id);
+    treeRows.push(['window-' + host.id, 'window', host.id, 0, host.visibility || 'Unknown']);
+    for (const tab of tabs) {
+      const current = tab.entries[tab.cursor];
+      treeRows.push([current.destination.route + ' · tab-' + tab.id, 'tab', tab.id, 1, selectedTabs.has(tab.id) ? 'selected' : '']);
+      for (const [index, entry] of tab.entries.entries()) {
+        treeRows.push([entry.destination.route + ' · entry-' + entry.id, 'entry', entry.id, 2, (entry.dirty ? '● ' : '') + (index === tab.cursor ? 'current' : index < tab.cursor ? 'back' : 'forward'), entry]);
+      }
+    }
   }
+  const tree = paged(treeRows, items => append(el('div', null, 'workspace-tree'), ...items.map(([name, kind, id, depth, meta]) => treeRow(name, kind, id, depth, isFocused(kind, id), () => inspect(kind, id), meta))));
+  const master = append(el('div'), el('h2', 'Workspace', 'pane-heading'),
+    append(el('div', null, 'workspace-summary'), el('span', `${hosts.length} windows · ${snapshot.tabs.length} tabs`, 'muted')), hosts.length ? tree : empty('No open windows. Open a destination in Routes to create one.'));
+  const detail = append(el('div'), el('h2', 'Properties', 'pane-heading'));
+  if (workspaceFocus?.kind === 'window') {
+    const host = hosts.find(host => host.id === workspaceFocus.id);
+    detail.append(card('window-' + host.id, properties([
+      ['Window', 'window-' + host.id], ['Visibility', host.visibility || 'Unknown'], ['Selected tab', host.selected == null ? 'None' : 'tab-' + host.selected], ['Close operation', host.closing == null ? 'None' : 'op-' + host.closing],
+    ]), row(...(supported('close_window') && info?.supported_targets?.includes('NewWindow') ? [action('Close window', {type: 'close_window', window: host.id})] : []))));
+  } else if (workspaceFocus?.kind === 'tab') {
+    const tab = findTab(workspaceFocus.id), current = tab.entries[tab.cursor];
+    detail.append(card('tab-' + tab.id + ' / ' + current.destination.route,
+      properties([['Window', 'window-' + (tab.window_id ?? snapshot.window_id)], ['Tab', 'tab-' + tab.id], ['Destination', current.destination.route], ['Parameters', text(current.destination.params)], ['Work policy', tab.mode], ['Presentation', selectedTabs.has(tab.id) ? 'Selected' : 'Hidden tab'], ['History cursor', `${tab.cursor + 1} of ${tab.entries.length}`]]),
+      row(action('Select', {type: 'select', tab: tab.id}), action('Back', {type: 'back', tab: tab.id}), action('Forward', {type: 'forward', tab: tab.id}), action(tab.mode === 'Live' ? 'Use Foreground' : 'Use Live', {type: 'mode', tab: tab.id, mode: tab.mode === 'Live' ? 'Foreground' : 'Live'}), action('Close tab', {type: 'close', tab: tab.id}), related({tab_id: tab.id}, 'Tasks'), related({tab_id: tab.id}, 'Requests'))),
+      el('h2', 'Retained history', 'pane-heading'), table(['Entry', 'Destination', 'Position', 'State'], tab.entries.map((entry, index) => [
+        button('entry-' + entry.id, () => inspect('entry', entry.id)), append(el('div'), el('span', entry.destination.route), el('div', text(entry.destination.params), 'fields')),
+        index === tab.cursor ? 'Current' : index < tab.cursor ? 'Back history' : 'Forward history', `${entry.dirty ? 'Dirty' : 'Clean'} · revision ${entry.revision}`])));
+  } else if (workspaceFocus?.kind === 'entry') {
+    const tab = snapshot.tabs.find(tab => tab.entries.some(entry => entry.id === workspaceFocus.id));
+    const entry = tab.entries.find(entry => entry.id === workspaceFocus.id);
+    detail.append(card('entry-' + entry.id + ' / ' + entry.destination.route, properties([
+      ['Window', 'window-' + (tab.window_id ?? snapshot.window_id)], ['Tab', 'tab-' + tab.id], ['Entry', 'entry-' + entry.id], ['Destination', entry.destination.route], ['Parameters', text(entry.destination.params)], ['State', entry.dirty ? 'Dirty' : 'Clean'], ['Revision', entry.revision], ['Position', tab.entries[tab.cursor].id === entry.id ? 'Current' : 'Retained history'],
+    ]), row(related({entry_id: entry.id}, 'Tasks'), related({entry_id: entry.id}, 'Requests'), related({entry_id: entry.id}, 'Console'))));
+  } else detail.append(empty('No retained entries.'));
   const quit = snapshot.quit || {phase: 'idle', pending_tasks: [], pending_operations: []};
   const pendingQuit = ['waiting_for_jobs', 'guarding', 'stopping'].includes(quit.phase);
-  const quitControls = row(badge(`Quit: ${quit.phase}`),
-    el('span', `${quit.pending_tasks.length} finite jobs · ${quit.pending_operations.length} operations`));
-  if (!pendingQuit && quit.phase !== 'ready') {
-    quitControls.append(action('Quit (wait for jobs)', {type: 'quit', options: {jobs: 'wait'}}),
-      action('Quit and cancel jobs', {type: 'quit', options: {jobs: 'cancel'}}));
-  } else if (pendingQuit && quit.phase !== 'stopping') {
-    quitControls.append(action('Cancel quit', {type: 'cancel_operation', operation: quit.operation_id}));
-  }
-  return append(el('div'), card('Workspace', metrics, quitControls, el('p', `Runtime ${snapshot.runtime_id} · revision ${snapshot.revision}`, 'mono small'),
-    el('p', 'Quit guards every retained entry. Save/discard/cancel choices appear in Decisions. Selected/current and historical entries are logical router state. Host visibility is measured independently; unavailable measurements stay Unknown.', 'hint')),
-    paged(snapshot.tabs, tabs => append(el('div'), ...tabs.map(tab => {
-      const current = tab.entries[tab.cursor];
-      const controls = row(badge(snapshot.selected === tab.id ? 'Selected' : 'Hidden tab'), badge(tab.mode),
-        action('Select', {type: 'select', tab: tab.id}), action('Back', {type: 'back', tab: tab.id}), action('Forward', {type: 'forward', tab: tab.id}),
-        action(tab.mode === 'Live' ? 'Use Foreground' : 'Use Live', {type: 'mode', tab: tab.id, mode: tab.mode === 'Live' ? 'Foreground' : 'Live'}),
-        action('Close tab', {type: 'close', tab: tab.id}), related({tab_id: tab.id}, 'Tasks'), related({tab_id: tab.id}, 'Requests'));
-      const history = table(['Entry', 'Destination', 'Position', 'State'], tab.entries.map((entry, index) => [
-        `entry-${entry.id}`, append(el('div'), el('strong', entry.destination.route), el('div', text(entry.destination.params), 'fields')),
-        index === tab.cursor ? 'Current' : index < tab.cursor ? 'Back history' : 'Forward history', `${entry.dirty ? 'Dirty' : 'Clean'} · revision ${entry.revision}`]));
-      const historyDetails = append(el('details'), el('summary', `${tab.entries.length} retained entries · cursor ${tab.cursor}`), history);
-      historyDetails.open = expanded.has(`tab:${tab.id}`);
-      historyDetails.addEventListener('toggle', () => historyDetails.open ? expanded.add(`tab:${tab.id}`) : expanded.delete(`tab:${tab.id}`));
-      const result = card(`tab-${tab.id} / ${current.destination.route}`, controls, historyDetails);
-      if (snapshot.selected === tab.id) result.classList.add('selected');
-      return result;
-    }))), snapshot.history_error ? el('p', snapshot.history_error, 'danger') : null);
+  const quitControls = row(badge(`Quit: ${quit.phase}`), el('span', `${quit.pending_tasks.length} finite jobs · ${quit.pending_operations.length} operations`));
+  if (!pendingQuit && quit.phase !== 'ready') quitControls.append(action('Quit (wait for jobs)', {type: 'quit', options: {jobs: 'wait'}}), action('Quit and cancel jobs', {type: 'quit', options: {jobs: 'cancel'}}));
+  else if (pendingQuit && quit.phase !== 'stopping') quitControls.append(action('Cancel quit', {type: 'cancel_operation', operation: quit.operation_id}));
+  detail.append(card('Application', properties([['Runtime', snapshot.runtime_id], ['Generation', snapshot.reload.generation], ['Revision', snapshot.revision]]), quitControls,
+    el('p', 'Quit checks every retained entry. Save, discard and cancel choices appear in Decisions.', 'hint')));
+  if (snapshot.history_error) detail.append(el('p', snapshot.history_error, 'danger'));
+  return splitView(master, detail, 'workspace');
 }
 
 function routeForm(route) {
@@ -279,6 +362,12 @@ function routeForm(route) {
   }
   form.append(fields);
   const target = select((info?.supported_targets || []).map(value => [value, value]), draft.target, value => draft.target = value);
+  const hosts = model.snapshot?.windows || [{id: model.snapshot?.window_id ?? 1}];
+  const preferredHost = draft.window ?? model.snapshot?.window_id;
+  const hostId = hosts.some(item => item.id === preferredHost) ? preferredHost : hosts[0]?.id;
+  const host = select(hosts.map(item => [String(item.id), `window-${item.id}`]), hostId == null ? '' : String(hostId), value => draft.window = Number(value));
+  const scope = select([['Application', 'All windows'], ['Window', 'Selected window']], draft.scope || 'Application', value => draft.scope = value);
+  form.append(row(label('Window for Open / Reveal', host), label('Reveal scope', scope)));
   const mode = select([['', 'Default policy'], ['Foreground', 'Foreground'], ['Live', 'Live']], draft.mode, value => draft.mode = value);
   const preserve = el('input'); preserve.type = 'checkbox'; preserve.checked = draft.preserve;
   preserve.addEventListener('change', () => draft.preserve = preserve.checked);
@@ -296,8 +385,8 @@ function routeForm(route) {
     const params = {};
     for (const parameter of route.params) if (parameter.required || draft.enabled[parameter.name]) params[parameter.name] = draft.params[parameter.name] || '';
     const destination = {route: route.id, params}, type = event.submitter.dataset.action;
-    const command = type === 'open' ? {type, destination, options: {target: draft.target, mode: draft.mode || null, activation: draft.preserve ? 'PreserveSelection' : 'Activate'}} :
-      type === 'reveal' ? {type, destination} : {type: 'navigate', destination, tab: Number(tab.value), replace: type === 'replace'};
+    const command = type === 'open' ? {type, destination, window: host.value ? Number(host.value) : null, options: {target: draft.target, mode: draft.mode || null, activation: draft.preserve ? 'PreserveSelection' : 'Activate'}} :
+      type === 'reveal' ? {type, destination, window: host.value ? Number(host.value) : null, scope: scope.value} : {type: 'navigate', destination, tab: Number(tab.value), replace: type === 'replace'};
     mutate(command).catch(showError);
   });
   return card(route.id, form);
@@ -353,8 +442,9 @@ function consolePanel() {
     append(el('div'), el('span', record.text), record.truncated ? el('span', ' (truncated)', 'warning') : null), 'Unassociated process output'] : [
     `${(record.elapsed_us / 1000).toFixed(1)} ms`, `${record.level} / ${record.target}`, append(el('div'), el('span', text(record.fields.message || record.fields, 1000)), details('Structured fields', record, `record:${record.sequence}`)),
     row(related(record.fields, 'Tasks'), related(record.fields, 'Requests'), related(record.fields, 'Traces'))])));
-  return append(el('div'), controls, el('p', 'Runtime tracing and bounded supervisor stdout/stderr have separate elapsed clocks. Process text is never assigned to the selected tab. Legacy log forwarding needs a host tracing bridge; arbitrary browser console output is outside capture.', 'hint'), logs,
-    card('Registered application commands', commands.length ? append(el('div'), ...commands.map(commandForm)) : empty('No application commands registered.')));
+  controls.className = 'console-toolbar';
+  return splitView(append(el('div'), controls, el('p', 'Runtime tracing and bounded supervisor stdout/stderr have separate elapsed clocks. Process text is never assigned to the selected tab. Legacy log forwarding needs a host tracing bridge; arbitrary browser console output is outside capture.', 'hint'), logs),
+    append(el('div'), el('h2', 'Application commands', 'pane-heading'), commands.length ? append(el('div', null, 'card'), ...commands.map(commandForm)) : empty('No application commands registered.')), 'console');
 }
 function commandForm(command) {
   const form = el('form');
@@ -407,6 +497,20 @@ async function inspectElement(id) {
   }
   render(true);
 }
+function styleValue(value, key) {
+  const color = value?.Color?.tag === 'Solid' ? value.Color.solid : null;
+  if (color && ['h', 's', 'l', 'a'].every(component => Number.isFinite(color[component]) && color[component] >= 0 && color[component] <= 1)) {
+    const css = `hsl(${(color.h * 360).toFixed(1)} ${(color.s * 100).toFixed(1)}% ${(color.l * 100).toFixed(1)}% / ${color.a})`;
+    const swatch = el('span', null, 'color-swatch'); swatch.style.backgroundColor = css;
+    return append(el('span', null, 'value'), swatch, document.createTextNode(css + ';'));
+  }
+  if (value && typeof value === 'object') {
+    const fields = Object.entries(value);
+    const summary = fields.slice(0, 3).map(([name, item]) => name + ': ' + (item && typeof item === 'object' ? '…' : String(item))).join(', ');
+    return details('{ ' + summary + (fields.length > 3 ? ', … }' : ' }'), JSON.stringify(value, null, 2), key);
+  }
+  return el('span', text(value) + ';', 'value');
+}
 function elementsPanel() {
   if (!info?.queries?.includes('inspect_tree')) return empty('This runtime does not expose element inspection.');
   if (!elements) return empty('Waiting for the inspected tree.');
@@ -414,25 +518,55 @@ function elementsPanel() {
   for (const element of elements.elements) depths.set(element.id, element.parent ? (depths.get(element.parent) ?? 0) + 1 : 0);
   const selected = elementDetail;
   const replaced = selectedElement && !elements.elements.some(element => element.id === selectedElement);
-  const layout = selected?.layout;
-  const source = selected?.source;
-  const detail = selected ? card(selected.id,
-    el('p', `${selected.kind} · semantic ID: ${selected.semantic_id ?? 'Not supplied'}`, 'mono'),
-    el('p', selected.parent ? `Inspected parent: ${selected.parent}` : 'Root inspection boundary'),
-    el('p', layout ? `Layout in window logical pixels: x ${layout.x}, y ${layout.y}, width ${layout.width}, height ${layout.height}. Before clipping.` : 'Layout unavailable.'),
-    el('p', source ? `${source.file}:${source.line}:${source.column}` : 'Source location unavailable.', 'mono'),
-    el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
-    selected.styles ? append(el('div'), el('h3', 'Authored base style refinements'), el('pre', JSON.stringify(selected.styles, null, 2))) : empty('Style refinements unavailable for this boundary.'),
-    row(related(selected, 'Tasks'), related(selected, 'Requests'))) : null;
-  return append(el('div'), el('p', elements.coverage, 'hint'),
-    row(badge(elements.status), el('span', `Capture ${elements.capture} · render revision ${elements.router_revision} · current router revision ${model.snapshot?.revision ?? 'unknown'} · ${elements.elements.length} boundaries · ${elements.omitted} omitted`)),
-    replaced ? el('p', 'The selected capture has been replaced. Details are frozen; select a current row to inspect again.', 'warning') : null,
-    elementError ? el('p', elementError, 'warning') : null,
-    paged(elements.elements, items => table(['View tree / boundary', 'Identity', 'Owner', 'Inspect'], items.map(element => [
-      `${'↳ '.repeat(Math.min(depths.get(element.id), 16))}${element.semantic_id ?? element.kind}`,
-      element.id, element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`,
-      button('Inspect ' + element.id, () => inspectElement(element.id), !connected)]))), detail);
+  const tree = paged(elements.elements, items => append(el('div', null, 'element-tree'), ...items.map(element => {
+    const control = button('', () => inspectElement(element.id), !connected, 'tree-row');
+    control.dataset.focus = 'element:' + element.id;
+    control.setAttribute('aria-label', 'Inspect ' + element.id);
+    control.setAttribute('aria-pressed', String(selectedElement === element.id));
+    control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
+    control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
+    const kind = element.kind.replace(/\b(?:[a-z_]\w*::)+/g, '');
+    control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
+    if (element.semantic_id != null) control.append(el('span', 'id=', 'syntax-attribute'), el('span', '"' + element.semantic_id + '"', 'syntax-value'));
+    control.append(el('span', '>', 'muted'));
+    return control;
+  })));
+  const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), tree,
+    details('Inspection coverage', elements.coverage, 'inspection-coverage'));
+  const detail = el('div');
+  const tabs = el('div', null, 'inspector-tabs');
+  for (const name of ['Styles', 'Layout', 'Source']) {
+    const control = button(name, () => { elementTab = name; render(true); });
+    control.dataset.focus = 'element-tab:' + name;
+    control.setAttribute('aria-pressed', String(elementTab === name)); tabs.append(control);
+  }
+  detail.append(tabs);
+  if (replaced) detail.append(el('p', 'The selected capture has been replaced. Details are frozen; select a current row to inspect again.', 'hint warning'));
+  if (elementError) detail.append(el('p', elementError, 'hint warning'));
+  if (!selected) detail.append(empty('Select a view to inspect its styles, layout and source.'));
+  else {
+    const layout = selected.layout, source = selected.source;
+    detail.append(append(el('div', null, 'element-identity'), el('span', selected.kind, 'syntax-tag'), el('p', selected.semantic_id ?? 'Semantic ID not supplied', 'syntax-value'),
+      el('p', selected.id, 'muted'), el('p', source ? `${source.file}:${source.line}:${source.column}` : 'Source location unavailable.', 'muted')));
+    if (elementTab === 'Styles') {
+      if (selected.styles) {
+        const styles = append(el('div', null, 'style-block'), el('span', 'Authored base styles {', 'muted'));
+        for (const [property, value] of Object.entries(selected.styles)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
+        styles.append(el('span', '}', 'muted')); detail.append(styles);
+      } else detail.append(empty('Style refinements unavailable for this boundary.'));
+    }
+    if (elementTab !== 'Source') {
+      detail.append(el('h3', 'Layout', 'pane-heading'));
+      if (layout) detail.append(append(el('div', null, 'box-model'), el('span', `x: ${layout.x} · y: ${layout.y}`), el('div', `${layout.width} × ${layout.height}`, 'box-size')),
+        el('p', `Layout in window logical pixels: x ${layout.x}, y ${layout.y}, width ${layout.width}, height ${layout.height}. Before clipping.`, 'hint'));
+      else detail.append(el('p', 'Layout unavailable.', 'hint'));
+    } else detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Workspace shell' : 'entry-' + selected.entry_id]]));
+    detail.append(el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
+      append(el('div', null, 'pane-actions'), related(selected, 'Tasks'), related(selected, 'Requests')));
+  }
+  return splitView(master, detail, 'elements');
 }
+
 function reloadPanel() {
   return append(el('div'), card('Supervisor', el('pre', text(development, 12000))),
     model.snapshot ? card('Runtime reload boundary', el('pre', text(model.snapshot.reload, 12000))) : null,
@@ -441,12 +575,16 @@ function reloadPanel() {
 function receiptPanel() {
   if (!receipt) return null;
   const current = receipt.envelope.runtime_id === model.runtime;
-  return card('Last control request', el('p', `${receipt.envelope.key} · ${receipt.envelope.runtime_id}`, 'mono small'),
+  const body = card('Last control request', el('p', `${receipt.envelope.key} · ${receipt.envelope.runtime_id}`, 'mono small'),
     receipt.pending ? el('p', 'Waiting for submission response…') : receipt.uncertain ? el('p', 'Delivery is uncertain. Disconnecting or timing out does not cancel or approve an operation.', 'warning') :
       el('p', receipt.error || text(receipt.result), receipt.error ? 'danger' : 'small'),
     !current ? el('p', 'This request belongs to a previous runtime. Its key and IDs cannot target the replacement.', 'warning') : null,
     receipt.uncertain ? button('Retry original request', () => mutate(null, receipt.envelope).catch(showError), !current || mutating || !connected) : null,
     details('Exact request envelope', receipt.envelope, 'receipt'));
+  const drawer = append(el('details', null, 'receipt'), el('summary', receipt.pending ? 'Control request · waiting for response' : receipt.uncertain ? 'Control request · delivery uncertain' : receipt.error ? 'Control request · failed' : 'Last control request'), body);
+  drawer.open = !!(receipt.pending || receipt.uncertain || receipt.error || expanded.has('receipt-drawer'));
+  drawer.addEventListener('toggle', () => drawer.open ? expanded.add('receipt-drawer') : expanded.delete('receipt-drawer'));
+  return drawer;
 }
 function exportRecords() {
   const records = diagnosticRecords().filter(record => panel === 'Requests' ? record.kind === 'request' : panel === 'Traces' ? record.kind.startsWith('span_') : true)
@@ -464,23 +602,51 @@ function render(force = false) {
   $('context').textContent = Object.entries(filter).map(([key, value]) => `${key}: ${value}`).join(' / ');
   $('clear-context').hidden = !Object.keys(filter).length;
   $('loss').textContent = `Diagnostics: ${model.diagnosticsRecords.length} retained · ${model.dropped} collector drops · ${model.outputDropped} runtime output drops · ${model.evicted} inspector evictions · ${model.diagnosticGaps} missing diagnostic sequences · ${model.gaps} state resyncs. Process buffer drops: ${output.dropped}.`;
-  if (!force && document.activeElement?.closest('form')) return;
+  $('loss-summary').textContent = `${model.diagnosticsRecords.length} records · ${model.dropped + model.outputDropped + model.evicted + output.dropped} drops`;
+  $('export').hidden = !['Console', 'Requests', 'Traces'].includes(panel);
+  $('export').disabled = !model.runtime;
+  if (resizing || (!force && document.activeElement?.closest('form'))) return;
   const signature = JSON.stringify([panel, model.runtime, model.cursor, model.after, connected, mutating,
     receipt, operation, development, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
   if (!force && signature === rendered) return;
   rendered = signature;
   const content = ({Workspace: workspace, Routes: routing, Tasks: tasksPanel, Operations: operationsPanel, Decisions: decisionsPanel,
     Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Elements: elementsPanel, Reload: reloadPanel})[panel]();
-  $('content').replaceChildren(...[receiptPanel(), ['Console', 'Requests', 'Traces'].includes(panel) ? button('Export diagnostic records', exportRecords, !model.runtime) : null, content].filter(Boolean));
+  content.classList.add('panel-body');
+  if (!content.classList.contains('split-view')) rememberScroll(content, 'panel:' + panel);
+  const focused = document.activeElement?.dataset.focus;
+  $('content').replaceChildren(...[content, receiptPanel()].filter(Boolean));
+  if (focused) [...$('content').querySelectorAll('[data-focus]')].find(control => control.dataset.focus === focused)?.focus({preventScroll: true});
+  for (const scroller of $('content').querySelectorAll('[data-scroll]')) scroller.scrollTop = scrollPositions.get(scroller.dataset.scroll) || 0;
 }
 for (const [index, name] of panels.entries()) {
-  const control = button('', () => switchPanel(name)); control.dataset.panel = name;
-  control.append(el('span', String(index + 1).padStart(2, '0'), 'index'), document.createTextNode(name));
+  const control = button(name, () => switchPanel(name)); control.dataset.panel = name;
+  control.id = 'panel-' + name.toLowerCase(); control.tabIndex = index ? -1 : 0;
+  control.setAttribute('role', 'tab'); control.setAttribute('aria-controls', 'content');
+  control.setAttribute('aria-selected', index ? 'false' : 'true');
   control.setAttribute('aria-current', index ? 'false' : 'page'); $('panels').append(control);
 }
+$('panels').addEventListener('keydown', event => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const index = panels.indexOf(panel);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? panels.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : 1) + panels.length) % panels.length;
+  switchPanel(panels[next]); $('panels').children[next].focus();
+});
+function setTheme(theme) {
+  $('app').dataset.theme = theme;
+  const label = 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme';
+  $('theme').setAttribute('aria-label', label); $('theme').title = label;
+}
+setTheme(sessionStorage.getItem('rake-inspector-theme') === 'light' ? 'light' : 'dark');
+$('theme').addEventListener('click', () => {
+  const theme = $('app').dataset.theme === 'dark' ? 'light' : 'dark';
+  sessionStorage.setItem('rake-inspector-theme', theme); setTheme(theme);
+});
+$('export').addEventListener('click', exportRecords);
 $('runtime').addEventListener('change', () => { choose($('runtime').value || null); refresh(); });
 $('search').addEventListener('input', () => { search = $('search').value; page = 0; render(true); });
 $('clear-context').addEventListener('click', () => { filter = {}; render(true); });
-$('pause').addEventListener('click', () => { paused = !paused; $('pause').textContent = paused ? 'Resume updates' : 'Pause updates'; $('pause').setAttribute('aria-pressed', String(paused)); message(paused ? 'Automatic observation paused. The runtime and its operations continue.' : 'Automatic observation resumed.'); if (!paused) refresh(); });
+$('pause').addEventListener('click', () => { paused = !paused; $('pause').textContent = paused ? 'Resume updates' : 'Pause updates'; $('pause').setAttribute('aria-pressed', String(paused)); $('pause').title = $('pause').textContent; message(paused ? 'Automatic observation paused. The runtime and its operations continue.' : 'Automatic observation resumed.'); if (!paused) refresh(); });
 async function loop() { if (!paused) await refresh(); setTimeout(loop, 750); }
 render(true); loop();

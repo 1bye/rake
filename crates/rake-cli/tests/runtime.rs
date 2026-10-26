@@ -198,6 +198,7 @@ fn terminal_submissions_survive_disconnect_retry_and_query_the_shared_runtime() 
             runtime_id: instance.info.runtime_id,
             key: Some("disconnect".into()),
             message: Message::Command(rake::control::Command::Open {
+                window: None,
                 destination: Destination::Home.encode(),
                 options: rake::router::OpenOptions::new_tab(),
             }),

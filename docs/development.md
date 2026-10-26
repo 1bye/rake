@@ -81,15 +81,21 @@ ctl reload apply BOUNDARY_ID
 Preparation requires settled operations and decisions. It stops navigation,
 application-command and one-shot task admission, rejects old publications, cancels
 managed futures, and detaches the route outlet at a UI frame boundary. `ready` means
-managed futures have been dropped and the host has acknowledged detachment (hidden
-hosts do not wait for a presentation frame). The checkpoint is captured only then.
+managed futures have been dropped and every window has acknowledged detachment
+(hidden hosts do not wait for a presentation frame). The checkpoint is captured only then.
 Abort resumes eligible factories with fresh RunIds. One-shot tasks are cancelled
 and are never automatically replayed. External saves and network effects are not
 rolled back by this boundary.
 
 A checkpoint contains application/envelope versions, source RuntimeId, GenerationId,
-run high-water mark, all logical TabIds/EntryIds, routes, histories/cursors, selection,
-selection ordering, modes, dirty revisions and explicitly registered entry data.
+run high-water mark, all logical WindowIds/TabIds/EntryIds, per-window membership
+and selection, routes, histories/cursors, selection ordering, modes, dirty revisions
+and explicitly registered entry data. Version 2 captures multiple windows; version 1
+single-window checkpoints remain readable. Restoration validates every host and
+selection before mounting, creates physical replacement hosts, and attaches all
+histories atomically. A failed mount retires provisional hosts. Closing the original
+host does not prevent a later compatible restoration of the remaining windows.
+OS window geometry is not part of the checkpoint.
 The 512 KiB limit leaves room in the bounded control transport. Dirty entries without
 a capture provider block reload instead of losing their changes.
 

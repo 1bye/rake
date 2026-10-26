@@ -73,6 +73,7 @@ fn open(client: &RuntimeClient<Destination>, key: &str) -> OperationId {
         client,
         key,
         Command::Open {
+            window: None,
             destination: Destination::Home.encode(),
             options: OpenOptions::new_tab(),
         },
@@ -110,6 +111,7 @@ fn retries_share_eager_operations_and_retained_results_across_clients() {
             &client,
             Some("retry"),
             Message::Command(Command::Open {
+                window: None,
                 destination: Destination::Document(4).encode(),
                 options: OpenOptions::new_tab()
             })

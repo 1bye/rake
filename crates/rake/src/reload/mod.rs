@@ -3,7 +3,7 @@
 //! Checkpoints contain owned data only. Native code replacement is performed by an
 //! external reloader, which must retain old code until all its objects are retired.
 
-use crate::router::{EntryId, GenerationId, RouteAddress, RuntimeId, TabId, TabMode};
+use crate::router::{EntryId, GenerationId, RouteAddress, RuntimeId, TabId, TabMode, WindowId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Maximum development checkpoint size, leaving room in the control envelope.
@@ -76,6 +76,9 @@ pub struct EntryCheckpoint {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TabCheckpoint {
+    /// Owning native/Web host; omitted version-1 checkpoints belong to window-1.
+    #[serde(default = "initial_window")]
+    pub window_id: WindowId,
     /// Logical identity.
     pub id: TabId,
     /// Managed work policy.
@@ -92,7 +95,10 @@ pub struct TabCheckpoint {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceCheckpoint {
-    /// Envelope version; currently 1.
+    /// Per-window selection; empty only in legacy version-1 envelopes.
+    #[serde(default)]
+    pub windows: Vec<WindowCheckpoint>,
+    /// Envelope version; current captures use 2, with version 1 accepted on restore.
     pub version: u32,
     /// Prevents loading another application's development state.
     pub application_id: String,
@@ -195,3 +201,17 @@ pub enum ReloadError {
 
 #[cfg(feature = "gpui")]
 pub(crate) mod host;
+
+/// A host's identity and independently selected retained tab during development reload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowCheckpoint {
+    /// Stable logical host identity.
+    pub id: WindowId,
+    /// Selected tab, or None for an empty host.
+    pub selected: Option<TabId>,
+}
+
+fn initial_window() -> WindowId {
+    WindowId(1)
+}

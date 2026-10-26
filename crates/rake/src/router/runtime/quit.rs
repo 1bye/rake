@@ -262,6 +262,7 @@ async fn transition<R: Route>(
                 &Action::Quit,
                 entry,
                 GuardKind::Dispose(DisposeReason::QuitApplication),
+                entry.window,
             )
             .await?;
 
@@ -307,7 +308,9 @@ async fn transition<R: Route>(
 
         let tabs = std::mem::take(&mut core.state.borrow_mut().tabs);
 
-        core.state.borrow_mut().selected = None;
+        for window in core.state.borrow_mut().windows.values_mut() {
+            window.selected = None;
+        }
 
         for tab in &tabs {
             tab.scope.close();

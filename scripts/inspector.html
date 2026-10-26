@@ -3,18 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Rake Devtools</title>
+  <title>Rake DevTools</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/__rake/inspector.css">
   <script type="module" src="/__rake/inspector.js"></script>
 </head>
-<body>
-  <header><div class="brand">rake <span>devtools</span></div><label>Runtime <select id="runtime" aria-label="Runtime instance"><option value="">Waiting for an application</option></select></label><span id="connection" role="status">Connecting…</span><button id="pause">Pause updates</button></header>
-  <div class="shell"><nav aria-label="Inspector panels" id="panels"></nav><main>
-    <div class="page-heading"><div><span class="eyebrow">APPLICATION RUNTIME</span><h1 id="title">Workspace</h1></div><div id="summary"></div></div>
-    <div id="notice" role="status"></div><div id="error" role="alert" hidden></div>
-    <div class="tools"><label class="search">Filter <input id="search" type="search" placeholder="Search this panel" autocomplete="off"></label><span id="context"></span><button id="clear-context" hidden>Clear context</button></div>
-    <div id="content"></div><footer id="loss"></footer>
-  </main></div>
+<body id="app" data-theme="dark">
+  <header class="tabstrip">
+    <div class="brand" aria-label="Rake DevTools"><span class="brand-mark" aria-hidden="true">r</span><span>Rake</span></div>
+    <nav aria-label="Inspector panels" role="tablist" id="panels"></nav>
+    <button id="theme" class="theme-toggle" title="Switch to light theme" aria-label="Switch to light theme">◐</button>
+  </header>
+  <div class="runtime-toolbar">
+    <button id="pause" aria-pressed="false" title="Pause updates">Pause updates</button>
+    <span class="toolbar-divider" aria-hidden="true"></span>
+    <label class="runtime-picker">Target <select id="runtime" aria-label="Runtime instance"><option value="">Waiting for an application</option></select></label>
+    <span id="connection" role="status" data-connected="false">Connecting…</span>
+  </div>
+  <main>
+    <h1 id="title" class="sr-only">Workspace</h1>
+    <div class="tools">
+      <label class="search"><span aria-hidden="true">⌕</span><input id="search" aria-label="Filter this panel" type="search" placeholder="Filter" autocomplete="off"></label>
+      <span class="toolbar-divider" aria-hidden="true"></span>
+      <span id="context"></span><button id="clear-context" hidden>Clear context</button>
+      <span class="tool-spacer"></span><button id="export" hidden>Export diagnostic records</button>
+    </div>
+    <div id="error" role="alert" hidden></div>
+    <div id="content" role="tabpanel" tabindex="0" aria-labelledby="panel-workspace"></div>
+  </main>
+  <footer class="status-bar">
+    <span id="notice" role="status"></span>
+    <details class="retention"><summary id="loss-summary">Diagnostics</summary><div id="loss"></div></details>
+    <span id="summary"></span>
+  </footer>
 </body>
 </html>

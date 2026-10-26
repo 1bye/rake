@@ -1,7 +1,7 @@
 # Rake
 
 Rake is an application framework for native GPUI and browser WebAssembly. This
-repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools, application packaging, element inspection, typed application commands and guarded quit** of the
+repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools, application packaging, element inspection, typed application commands, guarded quit and native multi-window routing** of the
 [API design](docs/api-design.md). It is an unpublished prototype.
 
 The foundation includes:
@@ -18,6 +18,8 @@ The foundation includes:
 - Typed destinations and URL codecs, independent application tabs, retained per-tab
   histories, eager operation handles, asynchronous access and disposal guards,
   revision-checked decisions, and browser path/hash history adapters.
+- Native windows with independent tabs, selections and histories; window-scoped
+  navigation, guarded window closing and compatible multi-window reload restoration.
 - Local tab/application task scopes, fresh entry activity runs, Foreground/Live
   policies, visibility-only activity, checked typed publication and cancellation.
 - Shared runtime commands/queries/events, typed application command derives and registration,
@@ -166,8 +168,8 @@ the library's whitespace suggestions and then reruns the check.
 Installers, notarization and durable sessions remain subsequent stages. Native code
 replacement awaits the external hot reloader; native dev currently uses an explicitly
 reported checkpointed restart. Runtime control is opt-in, native IPC currently requires Unix, and state watches coalesce with
-explicit revision gaps. The router currently owns one logical window;
-`NewWindow` reports an unsupported capability. Host visibility is measured in Web
+explicit revision gaps. Native routed applications support multiple windows; Web
+keeps one host and reports `NewWindow` as unsupported. Host visibility is measured in Web
 and on macOS; other native backends report Unknown. Development reload checkpoints
 restore compatible workspaces and opt-in entry data; durable sessions are separate.
 `App::root` remains available for applications that do not use routing.
