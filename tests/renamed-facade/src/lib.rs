@@ -5,6 +5,19 @@
 
 use framework::prelude::*;
 
+/// Markup resolves GPUI and style paths through the renamed facade as well.
+pub fn markup() -> impl framework::gpui::IntoElement {
+    framework::view! {
+        <div class="flex flex-col gap-2 font-bold" style={|s| s.p_4()}>
+            <h1>"Renamed facade"</h1>
+            for index in 0..2usize {
+                <p id={("row", index)}>{format!("Row {index}")}</p>
+            }
+            <button onclick={|_, _, _| {}}>"Save"</button>
+        </div>
+    }
+}
+
 /// Generated routing paths also resolve through a renamed facade.
 #[derive(Clone, framework::Route)]
 pub enum Destination {

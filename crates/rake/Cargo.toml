@@ -12,6 +12,7 @@ workspace = true
 
 [features]
 default = ["gpui"]
+experimental-view = ["gpui"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
 
 [dependencies]

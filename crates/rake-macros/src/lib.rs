@@ -9,6 +9,26 @@ use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 
 mod command;
 mod route;
+mod view;
+
+/// Builds a GPUI element tree from experimental HTML-like markup.
+///
+/// Exposed as `rake::view!` with Rake's `experimental-view` feature. Supports
+/// quoted text, `{expression}` children, `if`/`else`, and `for` children.
+/// `class` accepts a checked utility subset; `style={|s| ...}` applies GPUI
+/// builder methods. Events use GPUI callbacks, including `cx.listener(...)`.
+/// Repeated element roots require explicit, stable `id` attributes.
+/// See `docs/experimental-view.md` in the repository for the full contract.
+///
+#[proc_macro]
+pub fn view(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as view::View);
+    let expanded = facade().and_then(|rake| input.expand(&rake));
+
+    expanded
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
 
 /// Derives a closed destination codec from explicit `route(id, path)` attributes.
 #[proc_macro_derive(Route, attributes(route))]

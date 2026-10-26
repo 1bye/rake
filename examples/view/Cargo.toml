@@ -1,0 +1,24 @@
+[package]
+name = "rake-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "rake-view"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rake = { workspace = true, features = ["experimental-view"] }
+
+[package.metadata.rake.bundle]
+name = "Rake View"
+identifier = "com.example.rake.view"

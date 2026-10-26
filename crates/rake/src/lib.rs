@@ -18,10 +18,32 @@ pub mod tasks;
 #[cfg(feature = "gpui")]
 mod application;
 
+#[cfg(feature = "experimental-view")]
+mod view;
+
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError};
 #[cfg(feature = "gpui")]
 pub use gpui;
+#[cfg(feature = "experimental-view")]
+/// Builds GPUI views from experimental HTML-like markup.
+///
+/// ```
+/// let rows = ["One", "Two"];
+/// let _view = rake::view! {
+///     <div class="flex flex-col gap-2 p-4">
+///         <h1>"Example"</h1>
+///         if rows.is_empty() {
+///             <p>"No rows"</p>
+///         } else {
+///             for (index, row) in rows.iter().enumerate() {
+///                 <p id={("row", index)}>{row.to_string()}</p>
+///             }
+///         }
+///     </div>
+/// };
+/// ```
+pub use rake_macros::view;
 pub use rake_macros::{Command, Route, app, data, instrument};
 pub use router::Route;
 pub use schemars;
@@ -61,6 +83,8 @@ pub mod prelude {
 
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "experimental-view")]
+    pub use crate::view::{child as view_child, image as view_image};
     pub use tracing;
     #[cfg(target_family = "wasm")]
     pub use wasm_bindgen;

@@ -49,6 +49,10 @@ See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
 See [graphical devtools](docs/devtools.md) for launch commands, panels and capture limits.
 See [element inspection](docs/element-inspection.md) for instrumentation and coverage.
+The opt-in [`rake::view!` experiment](docs/experimental-view.md) compiles HTML-like
+markup directly into GPUI elements, with utility styles, events, conditions and
+loops. Run `cargo run -p rake-view` for the native example, or build it for Web
+with `python3 scripts/build-web.py --example view`.
 See [packaging and distribution](docs/packaging.md) for bundle metadata, assets and deployment.
 
 The [Fieldnotes reference app](docs/notes.md) provides a complete notes workspace
