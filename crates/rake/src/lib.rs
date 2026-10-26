@@ -43,6 +43,15 @@ pub use gpui;
 ///     </div>
 /// };
 /// ```
+///
+/// Mount stateful views by borrowing an entity retained by their owner:
+///
+/// ```
+/// # use rake::gpui::{Entity, IntoElement, Render};
+/// fn mounted<V: Render>(editor: &Entity<V>) -> impl IntoElement {
+///     rake::view! { <view entity={&editor}/> }
+/// }
+/// ```
 pub use rake_macros::view;
 pub use rake_macros::{Command, Route, app, data, instrument};
 pub use router::Route;
@@ -84,7 +93,7 @@ pub mod prelude {
 #[doc(hidden)]
 pub mod __private {
     #[cfg(feature = "experimental-view")]
-    pub use crate::view::{child as view_child, image as view_image};
+    pub use crate::view::{Children as ViewChildren, entity as view_entity, image as view_image};
     pub use tracing;
     #[cfg(target_family = "wasm")]
     pub use wasm_bindgen;

@@ -13,6 +13,7 @@ workspace = true
 [features]
 default = ["gpui"]
 experimental-view = ["gpui"]
+view-test-support = ["experimental-view", "gpui/test-support"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
 
 [dependencies]
@@ -53,3 +54,7 @@ raw-window-handle = { version = "0.6", optional = true }
 
 [dev-dependencies]
 futures.workspace = true
+
+[[test]]
+name = "view_state"
+required-features = ["view-test-support"]

@@ -113,3 +113,53 @@ fn empty_branches_and_nested_loops_expand_to_valid_rust() {
 
     syn::parse2::<syn::Expr>(expanded).expect("valid Rust expression");
 }
+
+#[test]
+fn retained_views_and_handles_require_borrowed_owned_state() {
+    for source in [
+        "<view entity={&self.editor}/>",
+        "<view entity={&editors[index]}/>",
+        "<div focus={&self.focus} scroll={&self.scroll}><view entity={&self.editor}/></div>",
+        "<div>for row in rows { <view entity={&row.editor}/> }</div>",
+    ] {
+        let expanded = expand(source).expect(source);
+
+        syn::parse2::<syn::Expr>(expanded).expect("one expression");
+    }
+
+    for (source, expected) in [
+        ("<view/>", "requires entity"),
+        (
+            "<view entity={&cx.new(|_| Editor::new())}/>",
+            "construct it once outside render",
+        ),
+        (
+            "<view entity={self.editor.clone()}/>",
+            "must borrow stored state",
+        ),
+        (
+            "<view entity={&self.editor} class=\"p-4\"/>",
+            "accepts only entity",
+        ),
+        (
+            "<view entity={&self.editor}>\"child\"</view>",
+            "cannot have children",
+        ),
+        (
+            "<div focus={&cx.focus_handle()}/>",
+            "construct it once outside render",
+        ),
+        (
+            "<div scroll={&ScrollHandle::new()}/>",
+            "construct it once outside render",
+        ),
+    ] {
+        assert!(
+            expand(source)
+                .expect_err(source)
+                .to_string()
+                .contains(expected),
+            "{source}"
+        );
+    }
+}

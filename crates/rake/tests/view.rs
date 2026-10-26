@@ -133,3 +133,56 @@ fn all_advertised_utilities_resolve_to_the_pinned_gpui_api() {
             px-1 py-1 pt-1 pb-1 pl-1 pr-1 m-1 mx-1 my-1 mt-1 mb-1 ml-1 mr-1 gap-1"/>
     };
 }
+
+#[cfg(debug_assertions)]
+#[test]
+fn duplicate_dynamic_sibling_ids_fail_before_layout() {
+    let duplicate = std::panic::catch_unwind(|| {
+        rake::view! {
+            <div>
+                for key in [7usize, 7] {
+                    <button id={key}>"Repeated"</button>
+                }
+            </div>
+        }
+    });
+
+    assert!(
+        duplicate.is_err(),
+        "duplicate sibling IDs must be diagnosed"
+    );
+}
+
+#[test]
+fn child_identity_scopes_are_local_and_only_rendered_branches_are_checked() {
+    let _tree = rake::view! {
+        <div>
+            <section id="first"><button id="save">"Save"</button></section>
+            <section id="second"><button id="save">"Save"</button></section>
+            if true {
+                <p id="status">"Visible"</p>
+            } else {
+                <p id="status">"Hidden"</p>
+            }
+        </div>
+    };
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn duplicate_ids_in_embedded_gpui_roots_are_also_diagnosed() {
+    let duplicate = std::panic::catch_unwind(|| {
+        rake::view! {
+            <div>
+                <p id="status">"First"</p>
+                {div().id("status")}
+            </div>
+        }
+    });
+
+    let panic = duplicate.err().expect("duplicate embedded root must fail");
+    let message = panic.downcast_ref::<String>().expect("diagnostic");
+
+    assert!(message.contains("duplicate sibling id"));
+    assert!(message.contains("status"));
+}

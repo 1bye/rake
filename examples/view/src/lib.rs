@@ -2,21 +2,48 @@
 
 use rake::App;
 use rake::gpui::prelude::*;
-use rake::gpui::{Context, FocusHandle, Window, div, rgb};
+use rake::gpui::{Context, Entity, FocusHandle, KeyDownEvent, ScrollHandle, Window, div, rgb};
+
+struct HistoryItem {
+    count: usize,
+    clicks: usize,
+    focus: FocusHandle,
+}
+
+impl Render for HistoryItem {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        rake::view! {
+            <li class="px-3 py-1 rounded-md" style={|s| s.bg(rgb(0x18232b))}>
+                <button focus={&self.focus}
+                    aria-label={format!("Count {}, row clicks {}", self.count, self.clicks)}
+                    style={|s| s.focus(|s| s.bg(rgb(0x365849)))}
+                    onclick={cx.listener(|this, _, _, cx| {
+                        this.clicks += 1;
+                        cx.notify();
+                    })}>
+                    {format!("Reached {} · row clicks: {}", self.count, self.clicks)}
+                </button>
+            </li>
+        }
+    }
+}
 
 struct Counter {
     count: usize,
-    history: Vec<usize>,
+    history: Vec<Entity<HistoryItem>>,
     show_history: bool,
+    newest_first: bool,
     focus: FocusHandle,
+    history_scroll: ScrollHandle,
 }
 
 impl Render for Counter {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
             <div class="size-full flex flex-col items-center justify-center p-6"
-                style={|s| s.bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8)).track_focus(&self.focus)}
-                onkeydown={|event, window, cx| {
+                focus={&self.focus}
+                style={|s| s.bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8))}
+                onkeydown={cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     let mut modifiers = event.keystroke.modifiers;
                     modifiers.shift = false;
 
@@ -29,8 +56,11 @@ impl Render for Counter {
 
                         window.prevent_default();
                         cx.stop_propagation();
+                    } else if event.keystroke.key == "r" && !modifiers.modified() {
+                        this.newest_first = !this.newest_first;
+                        cx.notify();
                     }
-                }}>
+                })}>
                 <section class="w-full flex flex-col gap-4 p-6 rounded-xl"
                     style={|s| s.max_w(rake::gpui::px(560.0)).bg(rgb(0x22323d))}>
                     <h1>"HTML-like views. Native GPUI."</h1>
@@ -52,7 +82,13 @@ impl Render for Counter {
                                 .focus(|s| s.bg(rgb(0x46715e)))}
                             onclick={cx.listener(|this, _, _, cx| {
                                 this.count += 1;
-                                this.history.push(this.count);
+                                let count = this.count;
+
+                                this.history.push(cx.new(|cx| HistoryItem {
+                                    count,
+                                    clicks: 0,
+                                    focus: cx.focus_handle().tab_stop(true),
+                                }));
 
                                 if this.history.len() > 5 {
                                     this.history.remove(0);
@@ -84,16 +120,31 @@ impl Render for Counter {
 
                     if self.show_history {
                         <section class="flex flex-col gap-2">
-                            <h2 class="text-lg">"Recent counts"</h2>
+                            <div class="flex flex-row items-center justify-between">
+                                <h2 class="text-lg">"Recent counts"</h2>
+                                <button id="reverse-history" class="text-sm px-3 py-1 rounded-md border"
+                                    style={|s| s.border_color(rgb(0x61717c))}
+                                    onclick={cx.listener(|this, _, _, cx| {
+                                        this.newest_first = !this.newest_first;
+                                        cx.notify();
+                                    })}>
+                                    "Reverse order"
+                                </button>
+                            </div>
+                            <p class="text-xs">"Click a row, then press R: its state and focus follow it."</p>
                             if self.history.is_empty() {
                                 <p class="text-sm">"No entries yet."</p>
                             }
-                            <ul class="flex flex-col gap-1">
-                                for count in self.history.iter().rev() {
-                                    <li id={("count", *count)} class="px-3 py-1 rounded-md"
-                                        style={|s| s.bg(rgb(0x18232b))}>
-                                        {format!("Reached {count}")}
-                                    </li>
+                            <ul class="flex flex-col gap-1" scroll={&self.history_scroll}
+                                style={|s| s.max_h(rake::gpui::px(150.)).overflow_y_scroll()}>
+                                if self.newest_first {
+                                    for item in self.history.iter().rev() {
+                                        <view entity={&item}/>
+                                    }
+                                } else {
+                                    for item in &self.history {
+                                        <view entity={&item}/>
+                                    }
                                 }
                             </ul>
                         </section>
@@ -117,7 +168,9 @@ pub fn application() -> App {
             count: 0,
             history: Vec::new(),
             show_history: true,
+            newest_first: true,
             focus,
+            history_scroll: ScrollHandle::new(),
         })
         .into()
     })

@@ -18,6 +18,19 @@ pub fn markup() -> impl framework::gpui::IntoElement {
     }
 }
 
+/// Retained views and handles resolve through the renamed facade on both targets.
+pub fn retained_markup<V: framework::gpui::Render>(
+    editor: &framework::gpui::Entity<V>,
+    focus: &framework::gpui::FocusHandle,
+    scroll: &framework::gpui::ScrollHandle,
+) -> impl framework::gpui::IntoElement {
+    framework::view! {
+        <div focus={&focus} scroll={&scroll}>
+            <view entity={&editor}/>
+        </div>
+    }
+}
+
 /// Generated routing paths also resolve through a renamed facade.
 #[derive(Clone, framework::Route)]
 pub enum Destination {

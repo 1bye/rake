@@ -1,26 +1,71 @@
 //! Accessible text conversion and image delegation for experimental views.
 
 use std::any::Any;
+#[cfg(debug_assertions)]
+use std::{collections::HashMap, panic::Location};
 
 use gpui::{
     App, Bounds, Element, ElementId, GlobalElementId, Img, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Pixels, SharedString, Stateful,
+    Interactivity, IntoElement, LayoutId, ParentElement, Pixels, SharedString, Stateful,
     StatefulInteractiveElement, StyleRefinement, Styled, StyledImage, Window, accesskit,
 };
 
-/// Converts ordinary string children into identified, accessible GPUI text nodes.
+/// Checks direct child identities within one macro-authored GPUI parent.
 #[doc(hidden)]
-pub fn child(value: impl IntoElement, id: ElementId) -> gpui::AnyElement {
-    let element = value.into_element();
-    let value = &element as &dyn Any;
+#[derive(Default)]
+pub struct Children {
+    #[cfg(debug_assertions)]
+    ids: HashMap<ElementId, &'static Location<'static>>,
+}
 
-    if let Some(text) = value.downcast_ref::<SharedString>() {
-        gpui::Text::new(id, text.clone()).into_any_element()
-    } else if let Some(text) = value.downcast_ref::<&'static str>() {
-        gpui::Text::new(id, SharedString::new_static(text)).into_any_element()
-    } else {
-        element.into_any_element()
+impl Children {
+    /// Appends an element, rejecting duplicate direct child IDs in debug builds.
+    #[track_caller]
+    pub fn push(&mut self, parent: &mut impl ParentElement, value: impl IntoElement) {
+        self.push_element(parent, value.into_element());
     }
+
+    #[track_caller]
+    fn push_element(&mut self, parent: &mut impl ParentElement, element: impl Element) {
+        #[cfg(debug_assertions)]
+        if let Some(id) = Element::id(&element) {
+            let source = Location::caller();
+
+            if let Some(first) = self.ids.insert(id.clone(), source) {
+                panic!(
+                    "rake::view! duplicate sibling id {id:?}: first at {first}, repeated at {source}; use stable, unique data IDs"
+                );
+            }
+        }
+
+        parent.extend([element.into_any()]);
+    }
+
+    /// Appends a child, converting ordinary strings into accessible text nodes.
+    #[track_caller]
+    pub fn push_child(
+        &mut self,
+        parent: &mut impl ParentElement,
+        value: impl IntoElement,
+        id: ElementId,
+    ) {
+        let element = value.into_element();
+        let value = &element as &dyn Any;
+
+        if let Some(text) = value.downcast_ref::<SharedString>() {
+            self.push_element(parent, gpui::Text::new(id, text.clone()));
+        } else if let Some(text) = value.downcast_ref::<&'static str>() {
+            self.push_element(parent, gpui::Text::new(id, SharedString::new_static(text)));
+        } else {
+            self.push_element(parent, element);
+        }
+    }
+}
+
+/// Mounts an entity owned by the caller, preserving its identity and retained data.
+#[doc(hidden)]
+pub fn entity<V: gpui::Render>(view: &gpui::Entity<V>) -> gpui::Entity<V> {
+    view.clone()
 }
 
 /// Constructs a directly rendered image with accessible alternative text.
@@ -151,20 +196,33 @@ impl Element for Image {
 mod tests {
     //! Covers: accessible string conversion and preservation of embedded element identity.
     //! Real: GPUI text and element construction.
-    //! Doubles: none.
+    //! Doubles: a collecting ParentElement.
     //! Requires: no display or GPU.
 
     use super::*;
 
+    #[derive(Default)]
+    struct Collected(Vec<gpui::AnyElement>);
+
+    impl ParentElement for Collected {
+        fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+            self.0.extend(elements);
+        }
+    }
+
     #[test]
     fn strings_become_accessible_text_and_custom_elements_keep_their_identity() {
-        let mut literal = child("Literal", "literal".into());
-        let mut dynamic = child(String::from("Dynamic"), "dynamic".into());
+        let mut children = Children::default();
+        let mut parent = Collected::default();
 
-        for (element, id, value) in [
-            (&mut literal, "literal", "Literal"),
-            (&mut dynamic, "dynamic", "Dynamic"),
-        ] {
+        children.push_child(&mut parent, "Literal", "literal".into());
+        children.push_child(&mut parent, String::from("Dynamic"), "dynamic".into());
+
+        for (element, (id, value)) in parent
+            .0
+            .iter_mut()
+            .zip([("literal", "Literal"), ("dynamic", "Dynamic")])
+        {
             let text = element
                 .downcast_mut::<gpui::Text>()
                 .expect("accessible text");
@@ -178,9 +236,12 @@ mod tests {
             assert_eq!(info.value(), Some(value));
         }
 
-        let mut custom = child(gpui::div().id("custom"), "ignored".into());
+        children.push_child(&mut parent, gpui::div().id("custom"), "ignored".into());
 
-        let custom = custom
+        let custom = parent
+            .0
+            .last_mut()
+            .expect("custom child")
             .downcast_mut::<Stateful<gpui::Div>>()
             .expect("original element");
 

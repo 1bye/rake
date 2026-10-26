@@ -223,7 +223,9 @@ fn parse_expression_block(input: ParseStream<'_>) -> syn::Result<Expr> {
 fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
     for node in nodes {
         match node {
-            Node::Element(element) if element.attribute("id").is_none() => {
+            Node::Element(element)
+                if element.tag != "view" && element.attribute("id").is_none() =>
+            {
                 return Err(syn::Error::new(
                     element.tag.span(),
                     "element roots in a for loop require an explicit stable id",
@@ -277,10 +279,15 @@ impl Element {
     }
 
     fn expand(&self, rake: &TokenStream, next: &mut usize) -> syn::Result<TokenStream> {
+        if self.tag == "view" {
+            return self.expand_entity(rake);
+        }
+
         let index = *next;
 
         *next += 1;
         let node = format_ident!("__rake_view_element_{index}", span = Span::mixed_site());
+        let siblings = format_ident!("__rake_view_children_{index}", span = Span::mixed_site());
         let tag = self.tag.to_string();
         let id = self.attribute("id").map(|attribute| &attribute.value);
 
@@ -374,6 +381,16 @@ impl Element {
                 "aria-label" => quote!(.aria_label(#value)),
                 "aria-description" => quote!(.aria_description(#value)),
                 "tabindex" => quote!(.tab_index(#value)),
+                "focus" => {
+                    require_borrowed_place(value, "focus")?;
+
+                    quote!(.track_focus(#value))
+                }
+                "scroll" => {
+                    require_borrowed_place(value, "scroll")?;
+
+                    quote!(.track_scroll(#value))
+                }
                 "class" => class_methods(value, rake)?,
                 "style" => quote!(.map(#value)),
                 "onclick" => quote!(.on_click(#value)),
@@ -393,7 +410,7 @@ impl Element {
             builder.extend(quote_spanned!(attribute.span=> #method));
         }
 
-        let children = expand_children(&self.children, &node, rake, next)?;
+        let children = expand_children(&self.children, &node, &siblings, rake, next)?;
 
         // Img has no ParentElement implementation, including for an empty child list.
         if self.children.is_empty() {
@@ -402,15 +419,70 @@ impl Element {
 
         Ok(quote!({
             let mut #node = #builder;
+            let mut #siblings = #rake::__private::ViewChildren::default();
             #children
             #node
         }))
     }
+
+    fn expand_entity(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
+        if !self.children.is_empty() {
+            return Err(syn::Error::new(
+                self.tag.span(),
+                "view mounts a retained entity and cannot have children",
+            ));
+        }
+
+        for attribute in &self.attributes {
+            if attribute.name != "entity" {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "view accepts only entity={&stored_entity}; put styles and IDs on a surrounding element",
+                ));
+            }
+        }
+
+        let entity = self.attribute("entity").ok_or_else(|| {
+            syn::Error::new(self.tag.span(), "view requires entity={&stored_entity}")
+        })?;
+
+        require_borrowed_place(&entity.value, "entity")?;
+        let value = &entity.value;
+
+        Ok(quote_spanned!(entity.span=> #rake::__private::view_entity(#value)))
+    }
+}
+
+fn require_borrowed_place(value: &Expr, attribute: &str) -> syn::Result<()> {
+    fn stored_place(value: &Expr) -> bool {
+        match value {
+            Expr::Path(_) => true,
+            Expr::Field(field) => stored_place(&field.base),
+            Expr::Index(index) => stored_place(&index.expr),
+            Expr::Paren(paren) => stored_place(&paren.expr),
+            _ => false,
+        }
+    }
+
+    if let Expr::Reference(reference) = value
+        && reference.mutability.is_none()
+        && stored_place(&reference.expr)
+    {
+        return Ok(());
+    }
+
+    Err(syn::Error::new_spanned(
+        value,
+        format!(
+            "{attribute} must borrow stored state, e.g. {attribute}={{&self.{attribute}}}; construct it once outside render"
+        ),
+    ))
 }
 
 fn expand_children(
     nodes: &[Node],
     parent: &Ident,
+    siblings: &Ident,
     rake: &TokenStream,
     next: &mut usize,
 ) -> syn::Result<TokenStream> {
@@ -419,14 +491,17 @@ fn expand_children(
     for node in nodes {
         output.extend(match node {
             Node::Element(element) => {
+                let source = element.tag.span();
                 let element = element.expand(rake, next)?;
 
-                quote!(#parent = #parent.child(#element);)
+                quote_spanned!(source=> #siblings.push(&mut #parent, #element);)
             }
             Node::Text(_) | Node::Expression(_) => {
-                let value = match node {
-                    Node::Text(text) => quote!(#text),
-                    Node::Expression(expression) => quote!(#expression),
+                let (value, source) = match node {
+                    Node::Text(text) => (quote!(#text), text.span()),
+                    Node::Expression(expression) => {
+                        (quote!(#expression), syn::spanned::Spanned::span(expression))
+                    }
                     _ => unreachable!(),
                 };
 
@@ -434,17 +509,17 @@ fn expand_children(
 
                 *next += 1;
 
-                quote!(#parent.extend([#rake::__private::view_child(
-                    #value, #rake::gpui::ElementId::from(("rake::view:child", #index))
-                )]);)
+                quote_spanned!(source=> #siblings.push_child(
+                    &mut #parent, #value, #rake::gpui::ElementId::from(("rake::view:child", #index))
+                );)
             }
             Node::If {
                 condition,
                 then_nodes,
                 else_nodes,
             } => {
-                let then_nodes = expand_children(then_nodes, parent, rake, next)?;
-                let else_nodes = expand_children(else_nodes, parent, rake, next)?;
+                let then_nodes = expand_children(then_nodes, parent, siblings, rake, next)?;
+                let else_nodes = expand_children(else_nodes, parent, siblings, rake, next)?;
 
                 if else_nodes.is_empty() {
                     quote!(if #condition { #then_nodes })
@@ -457,7 +532,7 @@ fn expand_children(
                 iterator,
                 children,
             } => {
-                let children = expand_children(children, parent, rake, next)?;
+                let children = expand_children(children, parent, siblings, rake, next)?;
 
                 quote!(for #pattern in #iterator { #children })
             }

@@ -18,6 +18,9 @@ mod view;
 /// `class` accepts a checked utility subset; `style={|s| ...}` applies GPUI
 /// builder methods. Events use GPUI callbacks, including `cx.listener(...)`.
 /// Repeated element roots require explicit, stable `id` attributes.
+/// `<view entity={&self.editor}/>` mounts a retained entity by borrowing its handle.
+/// `focus` and `scroll` borrow stored GPUI handles; inline constructors are rejected.
+/// Debug builds diagnose duplicate direct sibling IDs.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///
 #[proc_macro]

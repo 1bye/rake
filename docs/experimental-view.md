@@ -55,6 +55,7 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 | `ul`, `ol`, `li` | Containers with list/list-item accessibility roles; no generated bullets or numbering |
 | `button` | Button role, pointer cursor, and tab stop; GPUI dispatches mouse clicks and focused Enter/Space activation |
 | `img` | GPUI image with required `src` and `alt`; accepts no children |
+| `view` | Mounts a borrowed, caller-owned `Entity<V>` through `entity={&self.editor}`; accepts no other attributes or children |
 
 Heading sizes are 30, 24, 20, 16, 16, and 16 logical pixels. Classes and style
 closures can override them. Containers have no browser margins or user-agent
@@ -65,7 +66,7 @@ inline formatting needs a GPUI text component embedded as an expression.
 
 Attribute values are quoted strings or `{Rust expressions}`. The supported
 attributes are `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`,
-the events below, and `src`/`alt` on images. `alt` maps to the image's accessible
+`focus`, `scroll`, the events below, and `src`/`alt` on images. `alt` maps to the image's accessible
 label; `aria-label` can override it when supplied after `alt`.
 An empty image label (`alt=""`) marks it as decorative and omits its accessibility role.
 
@@ -110,6 +111,13 @@ their own tab stop; other elements can set `tabindex={0}` or configure a focus
 handle in the style closure. The macro installs no application-wide tab keymap;
 use GPUI's focus navigation setup for your application.
 
+`focus={&self.focus}` calls GPUI's `track_focus` with a stored `FocusHandle`.
+`scroll={&self.scroll}` calls `track_scroll` with a stored `ScrollHandle`. Construct
+these handles once in the owning view, not in `render`. Configure tab stops on a
+stored focus handle with `.tab_stop(true)` and configure scrolling with an overflow
+style. Both attributes require shared borrows of stored variables, fields or
+indexed entries; temporary constructors and method-call results are compile errors.
+
 ## Conditions, loops and identity
 
 Write `if`/`else if`/`else` and `for` directly among children. Each branch or loop
@@ -146,19 +154,68 @@ position in the macro. GPUI scopes IDs under their nearest identified ancestor.
 Elements emitted directly by a loop **must** have explicit IDs, including elements
 in conditional branches immediately inside that loop. Prefer stable data keys,
 such as `id={("row", row.id)}`, over positions when rows can reorder. Nested
-children under an explicitly identified row can use generated IDs. The macro
-cannot verify uniqueness or stability of dynamic IDs. Direct text/expression
+children under an explicitly identified row can use generated IDs. Direct text/expression
 children inside loops need an element wrapper with an explicit stable ID.
 Embedded non-string expressions own
 their own identity, including elements they return from nested macro invocations.
 Reusable helper views rendered as siblings must also accept distinct root IDs.
+
+Debug builds check the actual GPUI IDs of direct children added to each
+macro-authored parent, including children from loops, taken conditions and
+embedded GPUI roots. A duplicate panics before layout with the ID and both source
+sites. IDs can repeat under different identified parents, and untaken branches
+are not checked. Detection is local to direct child roots; opaque GPUI descendants
+and parents constructed outside the macro are not enumerated. Release builds
+omit the duplicate-ID map and checks. Stable key values remain the caller's
+responsibility.
+
+## Retained component ownership
+
+Keep stateful GPUI entities in their owning view or keyed data model. Mount them
+with a shared borrow:
+
+```rust
+# use rake::gpui::{Entity, IntoElement, Render};
+# fn retained<V: Render>(editors: &[Entity<V>]) -> impl IntoElement {
+rake::view! {
+    <section>
+        for editor in editors {
+            <view entity={&editor}/>
+        }
+    </section>
+}
+# }
+```
+
+`view` clones the borrowed entity handle, preserving its `EntityId`. It never
+calls an initializer or creates an entity. A direct `view` in a loop uses that
+entity's own stable GPUI ID and needs no separate `id`. Reordering the same
+entities under the same parent retains their identity. Mounting the same entity
+twice under one parent is a duplicate-ID error in debug builds.
+
+The `entity` value must borrow a stored place, such as `&self.editor`,
+`&row.editor`, or `&self.editors[index]`. Expressions like `&cx.new(...)` and
+`self.editor.clone()` are rejected with an ownership diagnostic. Put styles and
+additional identity scopes on a surrounding element; `view` itself accepts only
+`entity`. Existing `{expression}` embedding remains available, and the caller is
+responsible for any allocations or entity construction in arbitrary Rust code.
+
+Owned entity data, including editor contents and selection, stays with that
+entity. Stored focus/scroll handles keep their identity; keyed mounted elements
+reuse GPUI's existing element state. Changing an ID or an identified ancestor,
+moving a component to another parent, or unmounting it can reset implicit element
+state. Unmounting can blur focus; the macro does not focus hidden components or
+restore focus automatically. An entity kept by its owner retains its data even
+while absent from the rendered tree; dropping/replacing the owner's handle ends
+that lifetime normally. There is no global component cache or additional state
+runtime.
 
 ## Current limits
 
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
 markup are compile errors. This version does not implement input controls,
 `disabled` buttons, links/forms, CSS selectors/cascade, HTML whitespace/entity
-parsing, fragments, component-tag syntax, automatic signal tracking, or hot reload
+parsing, fragments, named component-tag syntax, automatic signal tracking, or hot reload
 of markup. Existing GPUI components remain available through `{expression}`.
 Images follow the application's GPUI asset/HTTP configuration.
 
@@ -175,13 +232,17 @@ python3 scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
 cargo test -p rake --features experimental-view --test view --locked
+cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake --features experimental-view --doc --locked
 cargo check -p rake-view -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
 
-The example increments/resets a counter, toggles a conditional history, displays
-a keyed loop of the five most recent values, and embeds an ordinary GPUI element.
+The example increments/resets a counter, toggles a conditional history, and mounts
+the five most recent entries as caller-owned entities. Each row has its own click
+counter and focus handle. Click a row, then press R or use Reverse order: the row's
+data follows its entity, and the R shortcut keeps keyboard focus on that row.
+The list uses a stored scroll handle. The example also embeds an ordinary GPUI element.
 Native and Web use the same render method. Compilation and construction tests do
 not establish GPU rendering, focus navigation or browser execution; those need a
 running example on the selected host.
@@ -189,3 +250,12 @@ running example on the selected host.
 The example was smoke-tested on macOS: click/Space increment, Tab then Enter
 reset, history hide/show, the five-row history limit, and accessible text/control
 labels. Web compilation is checked; browser execution has not been verified.
+The retained-row follow-up was also checked on macOS: a row kept its local click
+count after reversing order and adding a sibling, and Space still activated that
+same row after an R-key reorder.
+
+The opt-in `view-test-support` feature enables GPUI's own deterministic TestPlatform.
+Its frame tests exercise keyed element state, implicit button focus, retained
+entity data/selection, explicit focus and scroll offsets across parent rerenders,
+reordering and insertion. The platform's window/text/GPU backend is a test double;
+these checks do not establish native editor or browser input behavior.
