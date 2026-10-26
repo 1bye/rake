@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-const HELP: &str = "rake inspect [--session PATH] [--instance UUID|application-id] [--no-open]
+const HELP: &str = "rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   inspect tree | inspect element ELEMENT_ID

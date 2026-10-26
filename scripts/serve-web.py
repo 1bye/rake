@@ -18,7 +18,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--example", choices=["foundation", "routing", "routing-hash", "notes", "view"], default="routing")
+parser.add_argument("--example", choices=["foundation", "routing", "routing-hash", "notes", "view", "inspector"], default="routing")
 parser.add_argument("--port", type=int, default=8081)
 parser.add_argument("--control", action="store_true", help="Enable authenticated browser-to-CLI development control")
 parser.add_argument("--directory", type=Path, help="Serve another built application directory")
@@ -26,7 +26,14 @@ parser.add_argument("--development-state", type=Path, help="Private supervisor s
 parser.add_argument("--build-root", type=Path, help="Immutable published Web build directories")
 parser.add_argument("--inspector-only", action="store_true", help="Serve native runtime inspection without application assets")
 parser.add_argument("--process-output", type=Path, help="Private supervisor output snapshot")
+parser.add_argument("--inspector-app", type=Path, help="Serve the built Rake Elements Wasm frontend on the dedicated inspector origin")
 args = parser.parse_args()
+if args.inspector_app:
+    if not args.inspector_only or not args.control:
+        parser.error("--inspector-app requires --inspector-only --control")
+    args.inspector_app = args.inspector_app.resolve(strict=True)
+    if not all((args.inspector_app / name).is_file() for name in ("index.html", "pkg/rake_inspector.js", "pkg/rake_inspector_bg.wasm")):
+        parser.error("--inspector-app must contain a built Rake Inspector")
 if bool(args.development_state) != bool(args.build_root) or (args.development_state and not args.control):
     parser.error("development state/build root require each other and --control")
 if args.inspector_only and not args.control:
@@ -185,6 +192,26 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             return io.BytesIO(encoded)
+        if args.inspector_app and route == "/__rake/elements":
+            self.send_response(302)
+            self.send_header("Location", "/__rake/elements/")
+            self.end_headers()
+            return None
+        if args.inspector_app and route.startswith("/__rake/elements/"):
+            relative = urllib.parse.unquote(route.removeprefix("/__rake/elements/")) or "index.html"
+            asset = (args.inspector_app / relative).resolve()
+            if not asset.is_relative_to(args.inspector_app) or not asset.is_file():
+                self.send_error(404, "inspector asset unavailable")
+                return None
+            encoded = asset.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", self.guess_type(str(asset)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            return io.BytesIO(encoded)
         if args.inspector_only:
             self.send_error(404, "native inspector serves no application assets")
             return None
@@ -253,7 +280,7 @@ if bridge:
     bridge.url = f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
-    launch_url += f"{'/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
+    launch_url += f"{'/__rake/elements/' if args.inspector_app else '/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
 print(f"Serving {args.example} at {launch_url}", flush=True)
 
 stopping = False

@@ -38,6 +38,13 @@ the inspector follows that exact predecessor, clears all old state and diagnosti
 cursors, and uses the replacement's fresh RuntimeId. Logical tab IDs may survive
 restoration; operation IDs and retry keys never cross runtimes.
 
+## Rake application preview
+
+An [Elements-only Inspector built with Rake](rake-inspector.md) is also available
+for native and Web: `rake inspect --elements --target desktop|web`. It uses the
+experimental `view!` macro and the same runtime queries. This preview is built
+from the Rake workspace; the multi-panel frontend described here stays available.
+
 ## Panels
 
 | Panel | Inspection and actions |
@@ -102,7 +109,8 @@ Control remains opt-in and development-only. The loopback server validates
 Host/Origin and requires the private session token. The launch fragment is removed
 and stored in that tab's session storage; public assets contain no credentials.
 Keep private launch URLs and diagnostic exports private. An inspector-only native
-origin serves no application files, validates owner-only discovery/socket paths,
+origin serves only inspector assets (including the optional Rake Elements frontend),
+validates owner-only discovery/socket paths,
 and forwards no arbitrary filesystem or process commands. Web application origins
 can inspect Web runtimes only; they cannot proxy native IPC. Production builds
 contain no inspector connection metadata.

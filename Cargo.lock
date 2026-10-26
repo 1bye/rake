@@ -4568,6 +4568,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-inspector"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "rake",
+ "serde",
+ "serde_json",
+ "url",
+ "web-sys",
+]
+
+[[package]]
 name = "rake-macros"
 version = "0.1.0"
 dependencies = [

@@ -2,6 +2,7 @@
 """Rake project builds and the development supervisor (Python 3.11+, standard library)."""
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -520,6 +521,7 @@ def main():
     parser.add_argument("--restart-without-state", action="store_true", help="Explicitly allow restarting apps without a control endpoint")
     parser.add_argument("--port", type=int)
     parser.add_argument("--instance", help="Initial inspector runtime UUID or application ID")
+    parser.add_argument("--elements", action="store_true", help="Launch the Elements-only Rake Inspector; --target selects desktop or Web")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("status", nargs="?", choices=["status"])
@@ -529,6 +531,8 @@ def main():
     parser.add_argument("--sign-identity", help="macOS bundle signing identity; default '-' uses ad-hoc signing")
     parser.add_argument("--entitlements", type=Path, help="macOS signing entitlements plist")
     args = parser.parse_args()
+    if args.elements and args.command != "inspect":
+        parser.error("--elements applies to inspect")
     args.release = args.release if args.release is not None else args.command == "bundle"
     if (args.base_path is not None or args.routing) and (args.command != "bundle" or args.target != "web"):
         parser.error("--base-path/--routing require bundle --target web")
@@ -560,34 +564,63 @@ def main():
     if args.command == "inspect":
         env = dict(os.environ)
         if args.session:
-            env["RAKE_CONTROL_DIR"] = str(args.session.resolve() / "control")
-        command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", str(args.port)]
-        if args.session:
-            command += ["--development-state", str(args.session.resolve() / "status.json"),
-                        "--build-root", str(args.session.resolve() / "builds"),
-                        "--process-output", str(args.session.resolve() / "output.json")]
+            # Keep the advertised socket spelling: macOS /tmp and /private/tmp
+            # name the same files but endpoint validation compares exact paths.
+            env["RAKE_CONTROL_DIR"] = str(Path(os.path.abspath(args.session)) / "control")
         processes = Processes()
-        process = processes.start(command, env=env, stdout=subprocess.PIPE, text=True)
+        elements_directory = None
+        process = None
         def interrupt_inspector(*_args):
             raise KeyboardInterrupt()
         signal.signal(signal.SIGTERM, interrupt_inspector)
         try:
+            elements_artifact = None
+            if args.elements:
+                elements_directory = tempfile.TemporaryDirectory(prefix="rake-elements-", dir="/tmp")
+                inspector_args = copy.copy(args)
+                inspector_args.package = "rake-inspector"
+                inspector_args.bin = None
+                inspector_args.features = None
+                inspector_args.web_dir = None
+                inspector_args.output = None
+                project = Project(inspector_args, processes)
+                elements_artifact = project.build(processes, Path(elements_directory.name) / "application")
+            command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", str(args.port)]
+            if args.elements and args.target == "web":
+                command += ["--inspector-app", str(elements_artifact)]
+            if args.session:
+                command += ["--development-state", str(args.session.resolve() / "status.json"),
+                            "--build-root", str(args.session.resolve() / "builds"),
+                            "--process-output", str(args.session.resolve() / "output.json")]
+            process = processes.start(command, env=env, stdout=subprocess.PIPE, text=True)
             line = process.stdout.readline()
             if not line.startswith("Serving "):
                 raise RuntimeError("inspector server could not start")
             url = line.split(" at ", 1)[1].strip()
-            if args.instance:
+            if args.instance and (not args.elements or args.target == "web"):
                 from urllib.parse import quote
                 url = url.replace("#__rake_control=", "?instance=" + quote(args.instance, safe="") + "#__rake_control=")
             print(json.dumps({"event": "inspector_listening", "url": url}) if args.json else url, flush=True)
+            viewer = None
             if not args.no_open:
-                webbrowser.open(url)
-            process.wait()
+                if args.elements and args.target == "desktop":
+                    viewer_env = {**env, "RAKE_INSPECTOR_URL": url}
+                    if args.instance:
+                        viewer_env["RAKE_INSPECTOR_INSTANCE"] = args.instance
+                    viewer = processes.start([str(elements_artifact)], env=viewer_env, stdout=sys.stderr)
+                else:
+                    webbrowser.open(url)
+            code = (viewer or process).wait()
+            if code:
+                raise RuntimeError(f"Inspector {'application' if viewer else 'server'} exited {code}")
         except KeyboardInterrupt:
             pass
         finally:
             processes.close()
-            process.stdout.close()
+            if process:
+                process.stdout.close()
+            if elements_directory:
+                elements_directory.cleanup()
         return 0
 
     processes = Processes()

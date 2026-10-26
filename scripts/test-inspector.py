@@ -146,6 +146,43 @@ class InspectorHTTP(unittest.TestCase):
             self.assertEqual(future.result(timeout=5), result)
 
 
+class ElementsHosting(unittest.TestCase):
+    def test_frontend_is_scoped_to_the_dedicated_inspector_origin(self):
+        with tempfile.TemporaryDirectory(prefix="rake-elements-test-", dir="/tmp") as temporary:
+            root = Path(temporary)
+            assets = root / "frontend"
+            (assets / "pkg").mkdir(parents=True)
+            for name, content in {"index.html": b"Rake Elements", "pkg/rake_inspector.js": b"export default 1", "pkg/rake_inspector_bg.wasm": b"\x00asm"}.items():
+                (assets / name).write_bytes(content)
+            (root / "private.txt").write_text("private")
+            command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", "0", "--inspector-app", str(assets)]
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            try:
+                launch = urllib.parse.urlsplit(process.stdout.readline().strip().split()[-1])
+                self.assertEqual(launch.path, "/__rake/elements/")
+                origin = f"http://{launch.netloc}"
+                for name in ["", "pkg/rake_inspector.js", "pkg/rake_inspector_bg.wasm"]:
+                    with urllib.request.urlopen(origin + launch.path + name) as response:
+                        content = response.read()
+                        self.assertNotIn(launch.fragment.encode(), content)
+                        self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+                        self.assertEqual(response.headers["Cache-Control"], "no-store")
+                        if name.endswith("wasm"):
+                            self.assertEqual(response.headers["Content-Type"], "application/wasm")
+                for path in ["/__rake/elements/%2e%2e/private.txt", "/private.txt", "/pkg/rake_inspector.js"]:
+                    with self.assertRaises(urllib.error.HTTPError) as error:
+                        urllib.request.urlopen(origin + path)
+                    self.assertEqual(error.exception.code, 404)
+                    error.exception.close()
+                with urllib.request.urlopen(origin + "/__rake/inspector") as response:
+                    self.assertIn(b"Rake DevTools", response.read())
+            finally:
+                process.terminate(); process.wait(timeout=5); process.stdout.close()
+            rejected = subprocess.run([sys.executable, str(Path(__file__).with_name("serve-web.py")), "--control", "--inspector-app", str(assets)], capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn(b"requires --inspector-only --control", rejected.stderr)
+
+
 class Bounds(unittest.TestCase):
     def test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime(self):
         with tempfile.TemporaryDirectory(prefix="rake-lineage-", dir="/tmp") as temporary:
