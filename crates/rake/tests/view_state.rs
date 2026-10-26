@@ -11,6 +11,9 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::rc::Rc;
 
+#[path = "view_state/keyboard.rs"]
+mod keyboard;
+
 struct Draft {
     text: String,
     selection: Range<usize>,

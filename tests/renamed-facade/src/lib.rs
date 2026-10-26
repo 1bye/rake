@@ -3,7 +3,29 @@
 //! Doubles: none.
 //! Requires: a compiler and the selected target libraries; no GPU execution.
 
+use framework::gpui;
 use framework::prelude::*;
+
+gpui::actions!(
+    renamed_view,
+    [
+        /// Confirms the example action through the renamed facade.
+        Accept,
+    ]
+);
+
+/// Keyboard helpers and namespaced actions resolve through the renamed facade.
+pub fn keyboard_markup(focus: &gpui::FocusHandle, disabled: bool) -> impl gpui::IntoElement {
+    framework::view! {
+        <section focus={&focus} key-context="Renamed" tab-navigation={true}
+            role={gpui::accesskit::Role::Group} on:Accept={|_, _, _| {}}>
+            <button disabled={disabled} tabindex={0} aria-keyshortcuts="Control+Enter"
+                onclick={|_, window, cx| window.dispatch_action(Box::new(Accept), cx)}>
+                "Accept"
+            </button>
+        </section>
+    }
+}
 
 /// Markup resolves GPUI and style paths through the renamed facade as well.
 pub fn markup() -> impl framework::gpui::IntoElement {

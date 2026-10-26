@@ -20,6 +20,10 @@ mod view;
 /// Repeated element roots require explicit, stable `id` attributes.
 /// `<view entity={&self.editor}/>` mounts a retained entity by borrowing its handle.
 /// `focus` and `scroll` borrow stored GPUI handles; inline constructors are rejected.
+/// `on:Action` registers a typed GPUI action handler; `key-context` scopes keymaps.
+/// `tab-navigation={true}` enables unconsumed Tab/Shift+Tab navigation.
+/// Buttons support `disabled`, retained focus, and keyboard activation; style their
+/// focus-visible and disabled appearance with GPUI builders.
 /// Debug builds diagnose duplicate direct sibling IDs.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///

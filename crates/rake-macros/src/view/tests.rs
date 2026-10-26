@@ -163,3 +163,47 @@ fn retained_views_and_handles_require_borrowed_owned_state() {
         );
     }
 }
+
+#[test]
+fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
+    let expanded = expand(
+        r#"
+        <section key-context="Editor" focus={&self.focus} tab-navigation={true}
+            on:Save={cx.listener(Self::save)}
+            on:crate::actions::Cancel={cx.listener(Self::cancel)}>
+            <button disabled={self.busy} tabindex={-1} focus={&self.save_focus}
+                aria-keyshortcuts="Control+S" onclick={|_, _, _| {}}>"Save"</button>
+            <div role={Role::Status}/>
+        </section>
+    "#,
+    )
+    .expect("keyboard syntax");
+
+    syn::parse2::<syn::Expr>(expanded).expect("typed Rust expression");
+
+    for (source, expected) in [
+        (
+            "<div disabled={true}/>",
+            "disabled is supported only on button",
+        ),
+        (
+            "<div on:Save={a} on:Save={b}/>",
+            "duplicate attribute `on:Save`",
+        ),
+        ("<div onclick:Save={a}/>", "typed actions use on:Action"),
+        ("<div on:={a}/>", "expected identifier"),
+        ("<div on:Save-extra={a}/>", "expected `=`"),
+        (
+            "<img src=\"icon.png\" alt=\"Icon\" role={Role::Button}/>",
+            "this attribute requires a container or button",
+        ),
+    ] {
+        assert!(
+            expand(source)
+                .expect_err(source)
+                .to_string()
+                .contains(expected),
+            "{source}"
+        );
+    }
+}

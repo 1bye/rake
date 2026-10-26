@@ -48,7 +48,11 @@ fn builds_gpui_styles_and_evaluates_each_selected_child_once_in_order() {
 #[test]
 fn maps_headings_buttons_lists_and_images_to_accessibility_roles() {
     let heading = rake::view! { <h2 aria-label="Heading"/> };
-    let button = rake::view! { <button onclick={|_, _, _| {}}>"Save"</button> };
+
+    let button = rake::view! {
+        <button aria-expanded={false} onclick={|_, _, _| {}}>"Save"</button>
+    };
+
     let list = rake::view! { <ul/> };
     let item = rake::view! { <li/> };
 
@@ -71,6 +75,7 @@ fn maps_headings_buttons_lists_and_images_to_accessibility_roles() {
     assert_eq!(heading_info.label(), Some("Heading"));
     assert_eq!(button.a11y_role(), Some(accesskit::Role::Button));
     assert_eq!(button_info.label(), Some("Save"));
+    assert_eq!(button_info.is_expanded(), Some(false));
     assert_eq!(list.a11y_role(), Some(accesskit::Role::List));
     assert_eq!(item.a11y_role(), Some(accesskit::Role::ListItem));
     assert_eq!(image.a11y_role(), Some(accesskit::Role::Image));
@@ -185,4 +190,29 @@ fn duplicate_ids_in_embedded_gpui_roots_are_also_diagnosed() {
 
     assert!(message.contains("duplicate sibling id"));
     assert!(message.contains("status"));
+}
+
+#[test]
+fn disabled_buttons_expose_their_state_without_accessibility_activation_actions() {
+    let calls = std::cell::Cell::new(0);
+
+    let button = rake::view! {
+        <button disabled={ { calls.set(calls.get() + 1); true } }
+            aria-label="Save document" aria-description="Unavailable while saving"
+            aria-keyshortcuts="Control+S" onclick={|_, _, _| {}}>
+            "Save"
+        </button>
+    };
+
+    let mut info = accesskit::Node::new(button.a11y_role().expect("button role"));
+
+    button.write_a11y_info(&mut info);
+
+    assert_eq!(calls.get(), 1);
+    assert!(info.is_disabled());
+    assert!(!info.supports_action(accesskit::Action::Click));
+    assert!(!info.supports_action(accesskit::Action::Focus));
+    assert_eq!(info.label(), Some("Save document"));
+    assert_eq!(info.description(), Some("Unavailable while saving"));
+    assert_eq!(info.keyboard_shortcut(), Some("Control+S"));
 }

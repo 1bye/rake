@@ -52,6 +52,35 @@ pub use gpui;
 ///     rake::view! { <view entity={&editor}/> }
 /// }
 /// ```
+///
+/// Typed actions, scoped keymaps, and opt-in Tab navigation use GPUI directly:
+///
+/// ```
+/// use rake::gpui::{self, FocusHandle, IntoElement};
+/// gpui::actions!(editor, [Save]);
+/// fn toolbar(focus: &FocusHandle, busy: bool) -> impl IntoElement {
+///     rake::view! {
+///         <section focus={&focus} key-context="Editor" tab-navigation={true}
+///             on:Save={|_: &Save, _, _| {}}>
+///             <button disabled={busy} aria-keyshortcuts="Control+S"
+///                 onclick={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
+///                 "Save"
+///             </button>
+///         </section>
+///     }
+/// }
+/// ```
+///
+/// Register key bindings once during application setup. Disabled buttons skip Tab
+/// and suppress activation; enclosing action handlers must check availability too.
+/// A focused button retains its focus anchor when disabled so Tab can leave it.
+///
+/// Action attributes require real GPUI action types:
+///
+/// ```compile_fail
+/// struct NotAnAction;
+/// let _ = rake::view! { <div on:NotAnAction={|_, _, _| {}}/> };
+/// ```
 pub use rake_macros::view;
 pub use rake_macros::{Command, Route, app, data, instrument};
 pub use router::Route;
@@ -93,7 +122,12 @@ pub mod prelude {
 #[doc(hidden)]
 pub mod __private {
     #[cfg(feature = "experimental-view")]
-    pub use crate::view::{Children as ViewChildren, entity as view_entity, image as view_image};
+    pub use crate::view::{
+        Children as ViewChildren, button as view_button, entity as view_entity,
+        focus as view_focus, image as view_image, tab_index as view_tab_index,
+        tab_navigation as view_tab_navigation,
+    };
+
     pub use tracing;
     #[cfg(target_family = "wasm")]
     pub use wasm_bindgen;

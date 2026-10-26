@@ -1,5 +1,9 @@
 //! Accessible text conversion and image delegation for experimental views.
 
+mod button;
+
+pub use button::button;
+
 use std::any::Any;
 #[cfg(debug_assertions)]
 use std::{collections::HashMap, panic::Location};
@@ -66,6 +70,49 @@ impl Children {
 #[doc(hidden)]
 pub fn entity<V: gpui::Render>(view: &gpui::Entity<V>) -> gpui::Entity<V> {
     view.clone()
+}
+
+/// Configures the tab order of an element, keeping negative indices out of navigation.
+#[doc(hidden)]
+pub fn tab_index<E: InteractiveElement>(element: E, index: isize) -> E {
+    element.tab_index(index).tab_stop(index >= 0)
+}
+
+/// Tracks a caller-owned handle, applying an explicit tab index to that same handle.
+#[doc(hidden)]
+pub fn focus<E: InteractiveElement>(
+    element: E,
+    focus: &gpui::FocusHandle,
+    index: Option<isize>,
+) -> E {
+    let mut focus = focus.clone();
+
+    if let Some(index) = index {
+        focus = focus.tab_index(index).tab_stop(index >= 0);
+    }
+
+    element.track_focus(&focus)
+}
+
+/// Handles unconsumed Tab/Shift+Tab without installing application-wide key bindings.
+#[doc(hidden)]
+pub fn tab_navigation(event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App) {
+    let mut modifiers = event.keystroke.modifiers;
+
+    modifiers.shift = false;
+
+    if event.keystroke.key != "tab" || modifiers.modified() || window.default_prevented() {
+        return;
+    }
+
+    if event.keystroke.modifiers.shift {
+        window.focus_prev(cx);
+    } else {
+        window.focus_next(cx);
+    }
+
+    window.prevent_default();
+    cx.stop_propagation();
 }
 
 /// Constructs a directly rendered image with accessible alternative text.

@@ -18,6 +18,7 @@ struct Element {
 
 struct Attribute {
     name: String,
+    action: Option<syn::Path>,
     span: Span,
     value: Expr,
 }
@@ -61,8 +62,24 @@ impl Parse for Element {
             let name = input.call(Ident::parse_any)?;
             let span = name.span();
             let mut name = name.to_string();
+            let mut action = None;
 
-            while input.peek(Token![-]) {
+            if input.peek(Token![:]) {
+                if name != "on" {
+                    return Err(syn::Error::new(
+                        span,
+                        "typed actions use on:Action={handler}",
+                    ));
+                }
+
+                input.parse::<Token![:]>()?;
+                let path = input.call(syn::Path::parse_mod_style)?;
+
+                name = format!("on:{}", quote!(#path).to_string().replace(' ', ""));
+                action = Some(path);
+            }
+
+            while action.is_none() && input.peek(Token![-]) {
                 input.parse::<Token![-]>()?;
                 name.push('-');
                 name.push_str(&input.call(Ident::parse_any)?.to_string());
@@ -89,7 +106,12 @@ impl Parse for Element {
                 );
             };
 
-            attributes.push(Attribute { name, span, value });
+            attributes.push(Attribute {
+                name,
+                action,
+                span,
+                value,
+            });
         }
 
         let self_closing = input.peek(Token![/]);
@@ -288,7 +310,28 @@ impl Element {
         *next += 1;
         let node = format_ident!("__rake_view_element_{index}", span = Span::mixed_site());
         let siblings = format_ident!("__rake_view_children_{index}", span = Span::mixed_site());
+        let disabled = format_ident!("__rake_view_disabled_{index}", span = Span::mixed_site());
+        let mapped = format_ident!("__rake_view_builder_{index}", span = Span::mixed_site());
         let tag = self.tag.to_string();
+        let is_button = tag == "button";
+        let mut setup = TokenStream::new();
+
+        if let Some(attribute) = self.attribute("disabled")
+            && !is_button
+        {
+            return Err(syn::Error::new(
+                attribute.span,
+                "disabled is supported only on button",
+            ));
+        }
+
+        if is_button {
+            let value = self.attribute("disabled").map(|attribute| &attribute.value);
+            let value = value.map_or_else(|| quote!(false), |value| quote!(#value));
+
+            setup.extend(quote!(let #disabled: bool = #value;));
+        }
+
         let id = self.attribute("id").map(|attribute| &attribute.value);
 
         let id = id.map_or_else(
@@ -323,7 +366,7 @@ impl Element {
             "li" => quote!(#rake::gpui::div().id(#id).flex().flex_col()
                 .role(#rake::gpui::accesskit::Role::ListItem)),
             "button" => quote!(#rake::gpui::div().id(#id).flex().items_center().justify_center()
-                .role(#rake::gpui::accesskit::Role::Button).tab_index(0).cursor_pointer()),
+                .role(#rake::gpui::accesskit::Role::Button).cursor_pointer()),
             "img" => {
                 let source = self
                     .attribute("src")
@@ -374,18 +417,42 @@ impl Element {
         for attribute in &self.attributes {
             let value = &attribute.value;
 
+            if tag == "img"
+                && matches!(
+                    attribute.name.as_str(),
+                    "role" | "aria-keyshortcuts" | "aria-expanded"
+                )
+            {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "images expose their role and label through alt; this attribute requires a container or button",
+                ));
+            }
+
+            if let Some(action) = &attribute.action {
+                let handler = quote!(.on_action::<#action>(#value));
+
+                let handler = if is_button {
+                    quote!(.when(!#disabled, |#mapped| #mapped #handler))
+                } else {
+                    handler
+                };
+
+                builder.extend(quote_spanned!(attribute.span=> #handler));
+                continue;
+            }
+
             let method = match attribute.name.as_str() {
                 "id" => continue,
+                "disabled" | "focus" | "tabindex" | "tab-navigation" => continue,
                 "src" if tag == "img" => continue,
                 "alt" if tag == "img" => quote!(.aria_label(#value)),
                 "aria-label" => quote!(.aria_label(#value)),
                 "aria-description" => quote!(.aria_description(#value)),
-                "tabindex" => quote!(.tab_index(#value)),
-                "focus" => {
-                    require_borrowed_place(value, "focus")?;
-
-                    quote!(.track_focus(#value))
-                }
+                "aria-keyshortcuts" => quote!(.aria_keyshortcuts(#value)),
+                "aria-expanded" => quote!(.aria_expanded(#value)),
+                "role" => quote!(.role(#value)),
+                "key-context" => quote!(.key_context(#value)),
                 "scroll" => {
                     require_borrowed_place(value, "scroll")?;
 
@@ -407,22 +474,60 @@ impl Element {
                 }
             };
 
+            let method = if is_button && attribute.name.starts_with("on") {
+                quote!(.when(!#disabled, |#mapped| #mapped #method))
+            } else {
+                method
+            };
+
             builder.extend(quote_spanned!(attribute.span=> #method));
+        }
+
+        let focus = self.attribute("focus").map(|attribute| &attribute.value);
+
+        if let Some(focus) = focus {
+            require_borrowed_place(focus, "focus")?;
+        }
+
+        let tabindex = self.attribute("tabindex").map(|attribute| &attribute.value);
+        let tabindex = tabindex.map_or_else(|| quote!(None), |value| quote!(Some(#value)));
+
+        if !is_button {
+            if let Some(focus) = focus {
+                builder = quote!(#rake::__private::view_focus(#builder, #focus, #tabindex));
+            } else if self.attribute("tabindex").is_some() {
+                let value = &self.attribute("tabindex").expect("checked tabindex").value;
+
+                builder = quote!(#rake::__private::view_tab_index(#builder, #value));
+            }
+        }
+
+        if let Some(navigation) = self.attribute("tab-navigation") {
+            let value = &navigation.value;
+
+            builder.extend(quote!(.when(#value, |#mapped| #mapped.on_key_down(#rake::__private::view_tab_navigation))));
+        }
+
+        if is_button {
+            let focus = focus.map_or_else(|| quote!(None), |value| quote!(Some((#value).clone())));
+
+            builder = quote!(#rake::__private::view_button(#builder, #disabled, #focus, #tabindex));
         }
 
         let children = expand_children(&self.children, &node, &siblings, rake, next)?;
 
-        // Img has no ParentElement implementation, including for an empty child list.
-        if self.children.is_empty() {
-            return Ok(quote!({ #builder }));
-        }
+        let output = if self.children.is_empty() {
+            builder
+        } else {
+            quote!({
+                let mut #node = #builder;
+                let mut #siblings = #rake::__private::ViewChildren::default();
+                #children
+                #node
+            })
+        };
 
-        Ok(quote!({
-            let mut #node = #builder;
-            let mut #siblings = #rake::__private::ViewChildren::default();
-            #children
-            #node
-        }))
+        Ok(quote!({ #setup #output }))
     }
 
     fn expand_entity(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
