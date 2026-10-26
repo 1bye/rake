@@ -24,7 +24,10 @@ mod view;
 /// `tab-navigation={true}` enables unconsumed Tab/Shift+Tab navigation.
 /// Buttons support `disabled`, retained focus, and keyboard activation; style their
 /// focus-visible and disabled appearance with GPUI builders.
-/// Debug builds diagnose duplicate direct sibling IDs.
+/// Uppercase component tags (`<ui::Card ...>...</ui::Card>`) construct typed Rust
+/// structs; paired tags collect `children: Vec<gpui::AnyElement>`. Slots are ordinary
+/// properties. Components own their root IDs and render through GPUI's `RenderOnce`.
+/// Debug builds diagnose duplicate direct sibling IDs visible at construction.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///
 #[proc_macro]

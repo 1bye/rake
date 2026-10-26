@@ -81,6 +81,53 @@ pub use gpui;
 /// struct NotAnAction;
 /// let _ = rake::view! { <div on:NotAnAction={|_, _, _| {}}/> };
 /// ```
+///
+/// Uppercase tags construct typed GPUI components. Paired tags supply a children
+/// vector; named slots can be ordinary properties such as `header: AnyElement`.
+///
+/// ```
+/// use rake::gpui::{self, prelude::*};
+/// #[derive(IntoElement)]
+/// struct Stack {
+///     id: gpui::ElementId,
+///     children: Vec<gpui::AnyElement>,
+/// }
+/// impl RenderOnce for Stack {
+///     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
+///         gpui::div().id(self.id).flex().flex_col().children(self.children)
+///     }
+/// }
+/// let _stack = rake::view! {
+///     <Stack id={"stack".into()}>
+///         <h2>"Typed children"</h2>
+///         <p>"Ordinary GPUI elements."</p>
+///     </Stack>
+/// };
+/// ```
+///
+/// Component properties follow Rust field types, visibility, and ownership rules.
+/// No property defaults or implicit conversions are added; component root IDs must
+/// be forwarded to the rendered GPUI root. Retain state in caller-owned entities.
+///
+/// ```compile_fail
+/// struct Badge { label: String }
+/// let _ = rake::view! { <Badge label={42}/> };
+/// ```
+///
+/// ```compile_fail
+/// struct Badge { label: String, highlighted: bool }
+/// let _ = rake::view! { <Badge label={"Label".into()}/> };
+/// ```
+///
+/// ```compile_fail
+/// struct Badge { label: String }
+/// let _ = rake::view! { <Badge label={"Label".into()} unknown={true}/> };
+/// ```
+///
+/// ```compile_fail
+/// struct Badge { label: String }
+/// let _ = rake::view! { <Badge label={"Label".into()}>"No children field"</Badge> };
+/// ```
 pub use rake_macros::view;
 pub use rake_macros::{Command, Route, app, data, instrument};
 pub use router::Route;
@@ -123,9 +170,9 @@ pub mod prelude {
 pub mod __private {
     #[cfg(feature = "experimental-view")]
     pub use crate::view::{
-        Children as ViewChildren, button as view_button, entity as view_entity,
-        focus as view_focus, image as view_image, tab_index as view_tab_index,
-        tab_navigation as view_tab_navigation,
+        Children as ViewChildren, ComponentChildren as ViewComponentChildren,
+        button as view_button, entity as view_entity, focus as view_focus, image as view_image,
+        tab_index as view_tab_index, tab_navigation as view_tab_navigation,
     };
 
     pub use tracing;

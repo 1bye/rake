@@ -33,7 +33,7 @@ impl Render for Counter {
 
 ## Elements and values
 
-Each invocation returns one concrete GPUI element and requires exactly one root
+Each invocation returns one concrete GPUI element or component and requires exactly one root
 tag. Closing tags must match; empty elements can use `<div/>`. Text must be a Rust
 string literal (`"Hello"`) or a Rust expression (`{format!("Hello, {name}")}`).
 Literal text is not interpolated automatically. Rust comments work within markup.
@@ -55,6 +55,7 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 | `ul`, `ol`, `li` | Containers with list/list-item accessibility roles; no generated bullets or numbering |
 | `button` | Button role, pointer cursor, and tab stop; GPUI dispatches mouse clicks and focused Enter/Space activation |
 | `img` | GPUI image with required `src` and `alt`; accepts no children |
+| Uppercase names, such as `Badge` or `ui::Card` | Typed Rust component structs implementing `IntoElement`, normally through `RenderOnce` |
 | `view` | Mounts a borrowed, caller-owned `Entity<V>` through `entity={&self.editor}`; accepts no other attributes or children |
 
 Heading sizes are 30, 24, 20, 16, 16, and 16 logical pixels. Classes and style
@@ -64,7 +65,7 @@ inline formatting needs a GPUI text component embedded as an expression.
 
 ## Attributes, styling and events
 
-Attribute values are quoted strings or `{Rust expressions}`. The supported
+Attribute values are quoted strings or `{Rust expressions}`. The supported built-in
 attributes are `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`,
 `focus`, `scroll`, `key-context`, `tab-navigation`, typed `on:Action` handlers,
 `disabled` on buttons, and `src`/`alt` on images. Containers and buttons also accept
@@ -207,12 +208,13 @@ rake::view! {
 # }
 ```
 
-Untaken branches and empty-loop bodies do not evaluate their children. Each child
-is added directly to its GPUI parent; the macro allocates no intermediate node
-tree or child vector at runtime. Large lists should use an embedded GPUI virtual
+Untaken branches and empty-loop bodies do not evaluate their children. Built-in
+tags add each child directly to their GPUI parent without an intermediate tree or
+child vector. Paired component tags collect their authored children in the
+component's `Vec<AnyElement>`. Large lists should use an embedded GPUI virtual
 list instead of eagerly generating every item.
 
-Each tag gets a GPUI ID, either explicit or derived from its source site and
+Each built-in tag gets a GPUI ID, either explicit or derived from its source site and
 position in the macro. GPUI scopes IDs under their nearest identified ancestor.
 Elements emitted directly by a loop **must** have explicit IDs, including elements
 in conditional branches immediately inside that loop. Prefer stable data keys,
@@ -228,9 +230,101 @@ macro-authored parent, including children from loops, taken conditions and
 embedded GPUI roots. A duplicate panics before layout with the ID and both source
 sites. IDs can repeat under different identified parents, and untaken branches
 are not checked. Detection is local to direct child roots; opaque GPUI descendants
-and parents constructed outside the macro are not enumerated. Release builds
+and parents constructed outside the macro are not enumerated. A `RenderOnce`
+component is also opaque until GPUI renders it: its root ID cannot be checked by
+the surrounding parent's construction-time registry. Its authored child vector
+is checked before being handed to the component. Components must forward unique
+IDs to their own roots; duplicate IDs across deferred component roots remain the
+caller's responsibility. Release builds
 omit the duplicate-ID map and checks. Stable key values remain the caller's
 responsibility.
+
+## Typed components, children and slots
+
+Uppercase tags construct ordinary Rust structs: `<Badge .../>` or
+`<ui::Badge .../>` becomes `Badge { ... }` or `ui::Badge { ... }`. Paths can begin
+with `crate`, `self`, `super`, or `::`; the final name must start with an uppercase
+letter. Components normally implement GPUI's `RenderOnce` and derive
+`gpui::IntoElement`. No additional component macro or runtime is required.
+
+```rust
+use rake::gpui::{self, AnyElement, ElementId, prelude::*};
+
+#[derive(IntoElement)]
+struct Card {
+    id: ElementId,
+    header: AnyElement,
+    footer: Option<AnyElement>,
+    children: Vec<AnyElement>,
+}
+
+impl RenderOnce for Card {
+    fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
+        rake::view! {
+            <section id={self.id} class="flex flex-col gap-4 p-4 rounded-md">
+                {self.header}
+                <div class="flex flex-col gap-2" style={|s| s.children(self.children)}/>
+                if let Some(footer) = self.footer {
+                    {footer}
+                }
+            </section>
+        }
+    }
+}
+
+let _card = rake::view! {
+    <Card id={"profile".into()}
+        header={rake::view! { <h2>"Profile"</h2> }.into_any_element()}
+        footer={Some(rake::view! { <p>"Saved locally"</p> }.into_any_element())}>
+        <p>"Your profile information."</p>
+        <button onclick={|_, _, _| {}}>"Edit"</button>
+    </Card>
+};
+```
+
+Properties map directly to Rust fields. Values have their declared types, with
+ordinary Rust moves, borrows, and visibility checks. Rust rejects missing, unknown,
+or incorrectly typed properties. There is no automatic `.into()`, cloning,
+optional-property default, builder-method lookup, or property spreading. A quoted
+value is an `&'static str`; use `label={"Title".into()}` for `SharedString`.
+GPUI's `RenderOnce` requires `'static` components: own values or explicitly clone
+retained handles instead of storing references to render-time locals.
+Generic component types can be inferred from their fields; explicit generic
+arguments in tag paths are not supported.
+
+Self-closing tags initialize only their listed properties. Paired tags always
+supply `children: Vec<AnyElement>`, including an empty vector for `<Stack></Stack>`.
+This is a convention for arbitrary nested GPUI elements, not a `ParentElement`
+requirement on the component struct. `if`, `for`, string-to-accessible-text
+conversion, and retained `<view>` mounts work within those children. Alternatively,
+pass `children={existing_children}` on a self-closing tag. Combining that property
+with a paired tag is rejected. Authored properties evaluate once in written order,
+followed by the selected children in render order. Component rendering happens
+later through GPUI's usual `RenderOnce` lifecycle.
+
+Named slots are ordinary typed properties, such as the required `header` and
+optional `footer` above. Supply `None` explicitly for an absent optional slot.
+The component chooses where to render each slot and its children. Dedicated
+`<slot>` syntax is not implemented. Callback properties work the same way:
+`on_save={cx.listener(Self::save)}` must match the component field's Rust type.
+Component properties must be Rust field names, using `r#` for keywords as needed.
+Namespaced `on:Action` and hyphenated built-in attributes such as `aria-label` do
+not apply to component tags. Even `class`, `style`, `disabled`, `focus`, and `id`
+are ordinary fields on a component, and the component decides how to use them.
+
+Forward a component's `id: ElementId` property to an identified GPUI root, as
+`Card` does above. Component tags do not insert layout wrappers, generate IDs, or
+create retained state. Direct component roots inside loops require an explicit
+`id` property, using stable data keys. Keep repeated instances' root IDs unique,
+including instances created outside loops. Changing or discarding those roots
+has the same state/focus consequences as ordinary GPUI rendering.
+
+Component structs are reconstructed when their parent renders. Keep persistent
+data and stateful widgets in caller-owned entities and mount them with
+`<view entity={&self.editor}/>` inside component content. The macro constructs the
+component value; it never calls `cx.new` or retains it in a component cache.
+User-authored property expressions and `RenderOnce` implementations remain normal
+Rust code and can allocate if they explicitly choose to.
 
 ## Retained component ownership
 
@@ -279,7 +373,7 @@ Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
 markup are compile errors. This version does not implement input controls,
 links/forms, automatic shortcut labels, focus traps, relationships such as
 `aria-labelledby`, or a complete ARIA attribute vocabulary, CSS selectors/cascade, HTML whitespace/entity
-parsing, fragments, named component-tag syntax, automatic signal tracking, or hot reload
+parsing, fragments, dedicated slot syntax, automatic signal tracking, or hot reload
 of markup. Existing GPUI components remain available through `{expression}`.
 Images follow the application's GPUI asset/HTTP configuration.
 
@@ -295,14 +389,17 @@ python3 scripts/build-web.py --example view
 python3 scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
-cargo test -p rake --features experimental-view --test view --locked
+cargo test -p rake --features experimental-view --test view --test view_components --locked
 cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake --features experimental-view --doc --locked
 cargo check -p rake-view -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
 
-The example routes clicks and shortcuts through typed actions. Command+I on
+The example uses reusable `components::Card` and `components::Badge` components.
+Card accepts typed header/footer slots and collects the counter controls and
+retained history into its body. Badge derives its label and appearance from
+ordinary typed properties. The example routes clicks and shortcuts through typed actions. Command+I on
 macOS targets (Control+I elsewhere) increments, Escape resets, H toggles history,
 R reverses rows, and L locks/unlocks editing. Reset and Reverse are disabled when
 unavailable; locking disables Increment and Reset. Tab/Shift+Tab skip disabled
@@ -314,13 +411,17 @@ same render method.
 
 The updated example was smoke-tested on macOS: Enter and Command+I activation,
 locked mouse/keyboard activation, Tab skipping disabled controls, native disabled
-accessibility state, and row activation after a typed reorder. Web compilation
+accessibility state, and row activation after a typed reorder. The component
+follow-up also verified header/body/footer layout, dynamic Badge properties, and
+retained row activation/focus after reordering inside Card. Web compilation
 is checked; browser input and screen-reader interaction have not been verified.
 
 The opt-in `view-test-support` feature enables GPUI's own deterministic TestPlatform.
 Its frame tests exercise keyed element state, implicit button focus, retained
 entity data/selection, explicit focus and scroll offsets across parent rerenders,
-reordering and insertion. Keyboard frame tests cover typed actions, Tab/Shift+Tab,
+reordering and insertion. Component frame tests check forwarded root IDs, implicit
+focus and keyed state across reorder/insertion, and retained child ownership.
+Keyboard frame tests cover typed actions, Tab/Shift+Tab,
 negative indices, consumed events, disabled mouse/keyboard activation, and
 keyboard-visible styling. The platform's window/text/GPU backend is a test double;
 these checks do not establish native editor or browser input behavior.

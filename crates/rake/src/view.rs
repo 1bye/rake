@@ -22,6 +22,24 @@ pub struct Children {
     ids: HashMap<ElementId, &'static Location<'static>>,
 }
 
+/// Collects a component's nested content using the same conversion as built-in parents.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct ComponentChildren(Vec<gpui::AnyElement>);
+
+impl ComponentChildren {
+    /// Transfers the collected content into the component's typed children property.
+    pub fn into_vec(self) -> Vec<gpui::AnyElement> {
+        self.0
+    }
+}
+
+impl ParentElement for ComponentChildren {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+        self.0.extend(elements);
+    }
+}
+
 impl Children {
     /// Appends an element, rejecting duplicate direct child IDs in debug builds.
     #[track_caller]

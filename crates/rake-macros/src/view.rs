@@ -6,12 +6,14 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
+use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
 pub(super) struct View(Element);
 
 struct Element {
-    tag: Ident,
+    tag: syn::Path,
+    self_closing: bool,
     attributes: Vec<Attribute>,
     children: Vec<Node>,
 }
@@ -54,7 +56,8 @@ impl Parse for View {
 impl Parse for Element {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         input.parse::<Token![<]>()?;
-        let tag = input.call(Ident::parse_any)?;
+        let tag = input.call(syn::Path::parse_mod_style)?;
+        let tag_name = quote!(#tag).to_string().replace(' ', "");
         let mut attributes = Vec::new();
         let mut names = BTreeSet::new();
 
@@ -128,7 +131,7 @@ impl Parse for Element {
                 if input.is_empty() {
                     return Err(syn::Error::new(
                         tag.span(),
-                        format!("missing closing </{tag}>"),
+                        format!("missing closing </{tag_name}>"),
                     ));
                 }
 
@@ -137,12 +140,12 @@ impl Parse for Element {
 
             input.parse::<Token![<]>()?;
             input.parse::<Token![/]>()?;
-            let closing = input.call(Ident::parse_any)?;
+            let closing = input.call(syn::Path::parse_mod_style)?;
 
-            if closing != tag {
+            if quote!(#closing).to_string() != quote!(#tag).to_string() {
                 return Err(syn::Error::new(
                     closing.span(),
-                    format!("expected closing </{tag}>"),
+                    format!("expected closing </{tag_name}>"),
                 ));
             }
 
@@ -151,6 +154,7 @@ impl Parse for Element {
 
         Ok(Self {
             tag,
+            self_closing,
             attributes,
             children,
         })
@@ -246,7 +250,7 @@ fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
     for node in nodes {
         match node {
             Node::Element(element)
-                if element.tag != "view" && element.attribute("id").is_none() =>
+                if !element.tag.is_ident("view") && element.attribute("id").is_none() =>
             {
                 return Err(syn::Error::new(
                     element.tag.span(),
@@ -294,6 +298,13 @@ impl View {
 }
 
 impl Element {
+    fn is_component(&self) -> bool {
+        self.tag
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident.to_string().starts_with(char::is_uppercase))
+    }
+
     fn attribute(&self, name: &str) -> Option<&Attribute> {
         self.attributes
             .iter()
@@ -301,8 +312,12 @@ impl Element {
     }
 
     fn expand(&self, rake: &TokenStream, next: &mut usize) -> syn::Result<TokenStream> {
-        if self.tag == "view" {
+        if self.tag.is_ident("view") {
             return self.expand_entity(rake);
+        }
+
+        if self.is_component() {
+            return self.expand_component(rake, next);
         }
 
         let index = *next;
@@ -312,7 +327,8 @@ impl Element {
         let siblings = format_ident!("__rake_view_children_{index}", span = Span::mixed_site());
         let disabled = format_ident!("__rake_view_disabled_{index}", span = Span::mixed_site());
         let mapped = format_ident!("__rake_view_builder_{index}", span = Span::mixed_site());
-        let tag = self.tag.to_string();
+        let path = &self.tag;
+        let tag = quote!(#path).to_string().replace(' ', "");
         let is_button = tag == "button";
         let mut setup = TokenStream::new();
 
@@ -791,6 +807,8 @@ fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
 
     Ok(methods)
 }
+
+mod component;
 
 #[cfg(test)]
 mod tests;

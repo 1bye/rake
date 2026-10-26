@@ -207,3 +207,35 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
         );
     }
 }
+
+#[test]
+fn component_paths_properties_and_children_expand_to_struct_literals() {
+    for source in [
+        "<Badge id={id} label={label} highlighted={true}/>",
+        "<ui::Card id={id} header={header} footer={None}>\"Body\"</ui::Card>",
+        "<::ui::Card id={id}></::ui::Card>",
+        "<crate::Panel children={children}/>",
+        "<Panel>if visible { <Badge label={label}/> } for id in ids { <Badge id={id}/> }</Panel>",
+    ] {
+        let expanded = expand(source).expect(source);
+
+        syn::parse2::<syn::Expr>(expanded).expect("one component expression");
+    }
+
+    for (source, expected) in [
+        ("<ui::Card></Card>", "expected closing </ui::Card>"),
+        ("<Card>", "missing closing </Card>"),
+        ("<Card children={children}></Card>", "not both"),
+        ("<Badge aria-label=\"Label\"/>", "Rust field names"),
+        ("<Badge on:Save={handler}/>", "Rust field names"),
+        (
+            "<Panel>for id in ids { <Badge/> }</Panel>",
+            "explicit stable id",
+        ),
+        ("<Card label={a} label={b}/>", "duplicate attribute `label`"),
+    ] {
+        let error = expand(source).expect_err(source).to_string();
+
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+}

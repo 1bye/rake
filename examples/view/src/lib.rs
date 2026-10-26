@@ -4,6 +4,8 @@ use rake::App;
 use rake::gpui::prelude::*;
 use rake::gpui::{self, Context, Entity, FocusHandle, KeyBinding, ScrollHandle, Window, div, rgb};
 
+mod components;
+
 gpui::actions!(
     counter,
     [
@@ -141,10 +143,19 @@ impl Render for Counter {
                 on:ReverseHistory={cx.listener(Self::reverse_history)}
                 on:ToggleLocked={cx.listener(Self::toggle_locked)}
                 style={|s| s.bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8))}>
-                <section class="w-full flex flex-col gap-4 p-6 rounded-xl"
-                    style={|s| s.max_w(gpui::px(640.)).bg(rgb(0x22323d))}>
-                    <h1>"HTML-like views. Native GPUI."</h1>
-                    <p class="text-sm">"Clicks and shortcuts share typed actions."</p>
+                <components::Card id={"counter-card".into()}
+                    header={rake::view! {
+                        <div class="flex flex-col gap-2">
+                            <h1>"HTML-like views. Native GPUI."</h1>
+                            <p class="text-sm">"Typed components. Retained state. Native actions."</p>
+                        </div>
+                    }.into_any_element()}
+                    footer={Some(rake::view! {
+                        <p class="text-xs">"Card header and footer are typed slots; its body contains retained history views."</p>
+                    }.into_any_element())}>
+                    <components::Badge id={"editing-status".into()}
+                        label={if self.locked { "Locked".into() } else { "Editing enabled".into() }}
+                        highlighted={self.locked}/>
                     <p class="text-3xl font-bold">{format!("Count: {}", self.count)}</p>
 
                     if self.locked {
@@ -220,7 +231,7 @@ impl Render for Counter {
                     }
 
                     {div().text_xs().child("Existing GPUI elements embed with {expression}.")}
-                </section>
+                </components::Card>
             </div>
         }
     }

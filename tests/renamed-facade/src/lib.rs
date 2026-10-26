@@ -6,6 +6,38 @@
 use framework::gpui;
 use framework::prelude::*;
 
+#[derive(gpui::IntoElement)]
+struct ComponentPanel {
+    id: gpui::ElementId,
+    title: gpui::SharedString,
+    footer: Option<gpui::AnyElement>,
+    children: Vec<gpui::AnyElement>,
+}
+
+impl gpui::RenderOnce for ComponentPanel {
+    fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl gpui::IntoElement {
+        framework::view! {
+            <section id={self.id}>
+                <h2>{self.title}</h2>
+                <div style={|s| s.children(self.children)}/>
+                if let Some(footer) = self.footer {
+                    {footer}
+                }
+            </section>
+        }
+    }
+}
+
+/// Typed components and their children also work through a renamed Rake dependency.
+pub fn component_markup() -> impl gpui::IntoElement {
+    framework::view! {
+        <self::ComponentPanel id={"panel".into()} title={"Components".into()} footer={None}>
+            <p>"A typed child"</p>
+            <button onclick={|_, _, _| {}}>"Accept"</button>
+        </self::ComponentPanel>
+    }
+}
+
 gpui::actions!(
     renamed_view,
     [

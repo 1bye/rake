@@ -14,6 +14,9 @@ use std::rc::Rc;
 #[path = "view_state/keyboard.rs"]
 mod keyboard;
 
+#[path = "view_state/components.rs"]
+mod components;
+
 struct Draft {
     text: String,
     selection: Range<usize>,
