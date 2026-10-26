@@ -147,7 +147,9 @@ impl Render for Counter {
                     header={rake::view! {
                         <div class="flex flex-col gap-2">
                             <h1>"HTML-like views. Native GPUI."</h1>
-                            <p class="text-sm">"Typed components. Retained state. Native actions."</p>
+                            <p class="text-sm">
+                                <strong>"Typed components."</strong>" Retained state. "<em>"Native actions."</em>
+                            </p>
                         </div>
                     }.into_any_element()}
                     footer={Some(rake::view! {
@@ -165,6 +167,22 @@ impl Render for Counter {
                     } else {
                         <p>{format!("You have counted {} times.", self.count)}</p>
                     }
+
+                    <p class="text-sm" wrap={true} max-lines={2} ellipsis={true}>
+                        <strong>"Rich text preview. "</strong>
+                        "Count "
+                        <span style={gpui::HighlightStyle::color(gpui::rgb_to_hsla(rgb(0xb9dcbd)))}>
+                            {self.count.to_string()}
+                        </span>
+                        ": styled runs wrap together in one paragraph, including "
+                        <em>"italic text"</em>
+                        " and Unicode such as café, 你好 and 🙂. This preview stops at two lines, "
+                        "while the complete text remains available to accessibility. More content demonstrates the ellipsis."
+                    </p>
+                    <p class="text-xs" wrap={false} ellipsis={true}>
+                        <span class="font-semibold">"Single-line title: "</span>
+                        "A deliberately long document title that demonstrates truncation without splitting the text into separate layout elements or cutting through UTF-8 characters."
+                    </p>
 
                     <div class="flex flex-row flex-wrap gap-2">
                         <button id="increment" disabled={self.locked} aria-label="Increment counter"

@@ -27,6 +27,9 @@ mod view;
 /// Uppercase component tags (`<ui::Card ...>...</ui::Card>`) construct typed Rust
 /// structs; paired tags collect `children: Vec<gpui::AnyElement>`. Slots are ordinary
 /// properties. Components own their root IDs and render through GPUI's `RenderOnce`.
+/// Paragraphs compose string-like values and inline `span`/`strong`/`em`/`br` into
+/// one styled text layout, with `wrap`, `ellipsis`, and `max-lines` controls.
+/// Paragraphs reject layout/widget children; inline `style` takes `gpui::HighlightStyle`.
 /// Debug builds diagnose duplicate direct sibling IDs visible at construction.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///

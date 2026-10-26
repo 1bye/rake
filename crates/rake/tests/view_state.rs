@@ -17,6 +17,9 @@ mod keyboard;
 #[path = "view_state/components.rs"]
 mod components;
 
+#[path = "view_state/paragraphs.rs"]
+mod paragraphs;
+
 struct Draft {
     text: String,
     selection: Range<usize>,

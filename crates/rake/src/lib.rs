@@ -128,6 +128,38 @@ pub use gpui;
 /// struct Badge { label: String }
 /// let _ = rake::view! { <Badge label={"Label".into()}>"No children field"</Badge> };
 /// ```
+///
+/// Paragraphs compose string-like expressions and inline styles into one text layout:
+///
+/// ```
+/// use rake::gpui;
+/// let labels = ["Ada", "Lin"];
+/// let _paragraph = rake::view! {
+///     <p wrap={true} max-lines={2} ellipsis={true}
+///         style={|s| s.w(gpui::px(240.))}>
+///         <strong>"Hello, "</strong>
+///         for (index, label) in labels.iter().enumerate() {
+///             if index > 0 { ", " }
+///             <span class="italic underline">{label}</span>
+///         }
+///         <br/>"One shaped paragraph."
+///     </p>
+/// };
+/// ```
+///
+/// Inline `style` accepts `gpui::HighlightStyle`; sizes and layout belong on `p`.
+/// Paragraphs preserve the complete accessible text when visually truncated.
+/// `max-lines={0}` normalizes to one. Selection and inline links are not implemented.
+/// Use `div`/`section` for layout and embedded widgets; paragraph expressions must
+/// implement `AsRef<str>`:
+///
+/// ```compile_fail
+/// let _ = rake::view! { <p>{rake::gpui::div()}</p> };
+/// ```
+///
+/// ```compile_fail
+/// let _ = rake::view! { <p><button>"A widget"</button></p> };
+/// ```
 pub use rake_macros::view;
 pub use rake_macros::{Command, Route, app, data, instrument};
 pub use router::Route;
@@ -171,7 +203,8 @@ pub mod __private {
     #[cfg(feature = "experimental-view")]
     pub use crate::view::{
         Children as ViewChildren, ComponentChildren as ViewComponentChildren,
-        button as view_button, entity as view_entity, focus as view_focus, image as view_image,
+        ParagraphContent as ViewParagraphContent, RunStyle as ViewRunStyle, button as view_button,
+        entity as view_entity, focus as view_focus, image as view_image,
         tab_index as view_tab_index, tab_navigation as view_tab_navigation,
     };
 

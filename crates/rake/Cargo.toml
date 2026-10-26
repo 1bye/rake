@@ -12,11 +12,12 @@ workspace = true
 
 [features]
 default = ["gpui"]
-experimental-view = ["gpui"]
+experimental-view = ["gpui", "dep:unicode-segmentation"]
 view-test-support = ["experimental-view", "gpui/test-support"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
 
 [dependencies]
+unicode-segmentation = { version = "1.13.3", optional = true }
 rake-macros = { path = "../rake-macros" }
 serde.workspace = true
 serde_json.workspace = true

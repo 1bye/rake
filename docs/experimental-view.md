@@ -37,20 +37,21 @@ Each invocation returns one concrete GPUI element or component and requires exac
 tag. Closing tags must match; empty elements can use `<div/>`. Text must be a Rust
 string literal (`"Hello"`) or a Rust expression (`{format!("Hello, {name}")}`).
 Literal text is not interpolated automatically. Rust comments work within markup.
-Expressions may contain statements and must produce an `IntoElement` value. They
+Outside paragraphs, expressions may contain statements and must produce an `IntoElement` value. They
 can embed existing GPUI builders, `Entity` handles, or `RenderOnce` components;
 clone retained handles explicitly when needed. There is no string-based HTML
 parser, Dioxus runtime, virtual DOM, or JavaScript execution.
 
-Literal strings and expressions whose GPUI element is `SharedString` or a static
+Outside paragraphs, literal strings and expressions whose GPUI element is `SharedString` or a static
 string become identified, accessible `gpui::Text` nodes. Other embedded elements
 keep their own identity and semantics. Literal-only buttons/headings get an
 accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 
 | Tags | GPUI behavior |
 | --- | --- |
-| `div`, `section`, `span` | Flex-column containers |
-| `p` | Flex-column container with a paragraph accessibility role |
+| `div`, `section`, standalone `span` | Flex-column containers |
+| `p` | One composed GPUI text layout inside a styled paragraph container |
+| `span`, `strong`, `em`, `br` inside `p` | Inline style ranges and explicit line breaks, without separate layout boxes |
 | `h1`–`h6` | Containers with a heading accessibility role/level, bold text, and default sizes |
 | `ul`, `ol`, `li` | Containers with list/list-item accessibility roles; no generated bullets or numbering |
 | `button` | Button role, pointer cursor, and tab stop; GPUI dispatches mouse clicks and focused Enter/Space activation |
@@ -60,8 +61,9 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 
 Heading sizes are 30, 24, 20, 16, 16, and 16 logical pixels. Classes and style
 closures can override them. Containers have no browser margins or user-agent
-stylesheet. `span` and `p` do **not** implement browser inline text flow; mixed
-inline formatting needs a GPUI text component embedded as an expression.
+stylesheet. Paragraphs compose inline text as described below. A standalone
+`span` remains a layout container; heading and button children still use the
+ordinary element-child rules.
 
 ## Attributes, styling and events
 
@@ -113,6 +115,90 @@ macro-authored button event handlers are only constructed when enabled.
 Callbacks receive `(event, window, app)` as in GPUI; use `cx.listener(...)` for
 access to view state. Events retain GPUI propagation and default-prevention
 behavior. Keyboard events require the appropriate focus path.
+
+## Paragraph composition, wrapping and truncation
+
+`p` collects text into one UTF-8 buffer with styled runs, rendered by GPUI's
+text shaping system. End truncation measures the actual styled runs and font
+fallbacks, and cuts only at grapheme boundaries. Its only inline tags are `span`, `strong` (bold), `em` (italic),
+and `br` (newline). They do not create layout boxes or independent element IDs.
+Nested formatting inherits and combines. Spaces remain explicit in string
+literals; markup indentation adds no spaces, and HTML entities are not decoded.
+
+```rust
+use rake::gpui::{self, rgb, rgb_to_hsla};
+let name = "Ada";
+let _paragraph = rake::view! {
+    <p wrap={true} style={|s| s.w(gpui::px(320.))}>
+        "Hello, "<strong>{name}</strong>". "
+        <span style={gpui::HighlightStyle::color(rgb_to_hsla(rgb(0x365849)))}>
+            "One "<em>"continuous"</em>" paragraph."
+        </span>
+        <br/>"An explicit second line."
+    </p>
+};
+```
+
+Paragraph expressions must implement `AsRef<str>`, including `String`, `&str`,
+`SharedString`, and borrowed string values. Use `format!` for numbers or other
+`Display` values. Arbitrary `IntoElement` values, components, widgets, images,
+and block tags are not paragraph content. `if`/`if let` and `for` work inside
+paragraphs, evaluating only selected text once in written order. Inline loops
+need no IDs because their output is text, not independently retained elements.
+An empty `<p/>` is supported.
+
+Inline `class` accepts only `font-normal`, `font-medium`, `font-semibold`,
+`font-bold`, `italic`, `not-italic`, and `underline`. Inline `style` takes a typed
+`gpui::HighlightStyle` value, **not** the builder closure used on layout tags.
+It supports GPUI run properties such as color, weight, italics, underline,
+strikethrough, and background. `font-family` accepts a GPUI font-family string.
+Attributes apply after the tag's default style in written order. Font size,
+line height, alignment, dimensions, padding and other layout belong on `p`.
+Inline IDs, events and accessibility overrides are rejected; `br` accepts no
+attributes or children.
+
+| Paragraph attribute | Behavior |
+| --- | --- |
+| `wrap={true}` | Soft-wrap at the available width; this is the default |
+| `wrap={false}` | Disable soft wrapping; explicit newlines remain |
+| `ellipsis={true}` | Enable GPUI end-ellipsis and clip overflow |
+| `max-lines={n}` | Apply GPUI's line clamp and clip overflow; zero normalizes to one |
+
+```rust
+# use rake::gpui;
+# let title = "A long document title";
+# let preview = "A longer preview that can wrap onto several lines.";
+let _text = rake::view! {
+    <section>
+        <p wrap={false} ellipsis={true} style={|s| s.w(gpui::px(240.))}>
+            {title}
+        </p>
+        <p wrap={true} max-lines={3} ellipsis={true}
+            style={|s| s.w(gpui::px(320.))}>
+            <strong>"Preview: "</strong>{preview}
+        </p>
+    </section>
+};
+```
+
+A constrained width is necessary for wrapping and truncation. For multiline
+ellipsis, specify `max-lines`; ellipsis without a line limit truncates to the
+available width. A line cap without ellipsis clips without adding an ellipsis.
+Ellipsis without `max-lines` targets one visible line, including when the source
+contains explicit breaks. `ellipsis={false}` does not add truncation styling. These controls use the normal
+attribute/style order, so later raw GPUI styling can override earlier settings.
+This phase supports end truncation; start/middle truncation and text transforms
+through raw style builders are not implemented. The paragraph keeps one accessible
+text node containing the full composed text,
+even when the visual preview is truncated. Selection and interactive links are
+not implemented by this phase.
+
+**Migration:** `p` previously accepted arbitrary layout children and embedded
+GPUI elements. Move those into a `div` or `section`, or embed an existing custom
+text component there. Use inline `span` styles only for text refinements inside
+`p`; standalone spans keep their existing layout API. Paragraph IDs still scope
+under their parent and follow the normal loop identity rules when a loop emits
+multiple paragraphs.
 
 ## Keyboard, focus and accessibility
 
@@ -209,14 +295,14 @@ rake::view! {
 ```
 
 Untaken branches and empty-loop bodies do not evaluate their children. Built-in
-tags add each child directly to their GPUI parent without an intermediate tree or
-child vector. Paired component tags collect their authored children in the
+layout tags add each child directly to their GPUI parent without an intermediate
+tree or child vector. Paragraphs build their one text buffer and styled-run list. Paired component tags collect their authored children in the
 component's `Vec<AnyElement>`. Large lists should use an embedded GPUI virtual
 list instead of eagerly generating every item.
 
 Each built-in tag gets a GPUI ID, either explicit or derived from its source site and
 position in the macro. GPUI scopes IDs under their nearest identified ancestor.
-Elements emitted directly by a loop **must** have explicit IDs, including elements
+Outside paragraph text, elements emitted directly by a loop **must** have explicit IDs, including elements
 in conditional branches immediately inside that loop. Prefer stable data keys,
 such as `id={("row", row.id)}`, over positions when rows can reorder. Nested
 children under an explicitly identified row can use generated IDs. Direct text/expression
@@ -372,7 +458,8 @@ runtime.
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
 markup are compile errors. This version does not implement input controls,
 links/forms, automatic shortcut labels, focus traps, relationships such as
-`aria-labelledby`, or a complete ARIA attribute vocabulary, CSS selectors/cascade, HTML whitespace/entity
+`aria-labelledby`, or a complete ARIA attribute vocabulary, selectable text or inline links,
+CSS selectors/cascade, HTML whitespace/entity
 parsing, fragments, dedicated slot syntax, automatic signal tracking, or hot reload
 of markup. Existing GPUI components remain available through `{expression}`.
 Images follow the application's GPUI asset/HTTP configuration.
@@ -389,7 +476,7 @@ python3 scripts/build-web.py --example view
 python3 scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
-cargo test -p rake --features experimental-view --test view --test view_components --locked
+cargo test -p rake --features experimental-view --test view --test view_components --test view_paragraphs --locked
 cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake --features experimental-view --doc --locked
 cargo check -p rake-view -p renamed-facade --all-targets --locked
@@ -399,7 +486,9 @@ cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown
 The example uses reusable `components::Card` and `components::Badge` components.
 Card accepts typed header/footer slots and collects the counter controls and
 retained history into its body. Badge derives its label and appearance from
-ordinary typed properties. The example routes clicks and shortcuts through typed actions. Command+I on
+ordinary typed properties. Paragraphs demonstrate nested bold/italic runs,
+colored dynamic text, Unicode, a two-line preview, and a single-line ellipsis.
+The example routes clicks and shortcuts through typed actions. Command+I on
 macOS targets (Control+I elsewhere) increments, Escape resets, H toggles history,
 R reverses rows, and L locks/unlocks editing. Reset and Reverse are disabled when
 unavailable; locking disables Increment and Reset. Tab/Shift+Tab skip disabled
@@ -413,7 +502,9 @@ The updated example was smoke-tested on macOS: Enter and Command+I activation,
 locked mouse/keyboard activation, Tab skipping disabled controls, native disabled
 accessibility state, and row activation after a typed reorder. The component
 follow-up also verified header/body/footer layout, dynamic Badge properties, and
-retained row activation/focus after reordering inside Card. Web compilation
+retained row activation/focus after reordering inside Card. Paragraph composition
+was checked on macOS for nested bold/italic runs, dynamic colored text, Unicode,
+single- and two-line ellipses, and complete untruncated accessibility values. Web compilation
 is checked; browser input and screen-reader interaction have not been verified.
 
 The opt-in `view-test-support` feature enables GPUI's own deterministic TestPlatform.
@@ -421,7 +512,8 @@ Its frame tests exercise keyed element state, implicit button focus, retained
 entity data/selection, explicit focus and scroll offsets across parent rerenders,
 reordering and insertion. Component frame tests check forwarded root IDs, implicit
 focus and keyed state across reorder/insertion, and retained child ownership.
-Keyboard frame tests cover typed actions, Tab/Shift+Tab,
+Paragraph frame tests cover shared inline flow, width changes, explicit breaks,
+line limits, and GPUI truncation. Keyboard frame tests cover typed actions, Tab/Shift+Tab,
 negative indices, consumed events, disabled mouse/keyboard activation, and
 keyboard-visible styling. The platform's window/text/GPU backend is a test double;
 these checks do not establish native editor or browser input behavior.

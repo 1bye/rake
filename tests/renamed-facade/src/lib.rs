@@ -38,6 +38,20 @@ pub fn component_markup() -> impl gpui::IntoElement {
     }
 }
 
+/// Paragraph composition and inline run helpers resolve through the renamed facade.
+pub fn paragraph_markup(labels: &[&str]) -> impl gpui::IntoElement {
+    framework::view! {
+        <p wrap={true} max-lines={2} ellipsis={true} style={|s| s.w(gpui::px(240.))}>
+            <strong>"Names: "</strong>
+            for (index, label) in labels.iter().enumerate() {
+                if index > 0 { ", " }
+                <span class="italic underline">{label}</span>
+            }
+            <br/><em>"One composed paragraph."</em>
+        </p>
+    }
+}
+
 gpui::actions!(
     renamed_view,
     [

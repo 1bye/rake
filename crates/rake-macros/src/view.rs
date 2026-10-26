@@ -206,8 +206,6 @@ impl Parse for Node {
             let iterator = input.call(Expr::parse_without_eager_brace)?;
             let children = parse_nodes(input)?;
 
-            require_loop_ids(&children)?;
-
             return Ok(Self::For {
                 pattern,
                 iterator,
@@ -361,8 +359,8 @@ impl Element {
 
         let mut builder = match tag.as_str() {
             "div" | "section" | "span" => quote!(#rake::gpui::div().id(#id).flex().flex_col()),
-            "p" => quote!(#rake::gpui::div().id(#id).flex().flex_col()
-                .role(#rake::gpui::accesskit::Role::Paragraph)),
+            "p" => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
+                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 let level = tag.as_bytes()[1] as usize - b'0' as usize;
 
@@ -474,6 +472,17 @@ impl Element {
 
                     quote!(.track_scroll(#value))
                 }
+                "wrap" if tag == "p" => quote!(.when_else(#value,
+                    |#mapped| #mapped.whitespace_normal(),
+                    |#mapped| #mapped.whitespace_nowrap())),
+                "ellipsis" if tag == "p" => quote!(.when(#value,
+                    |#mapped| #mapped.overflow_hidden().text_ellipsis())),
+                "max-lines" if tag == "p" => {
+                    let limit =
+                        format_ident!("__rake_paragraph_limit_{index}", span = Span::mixed_site());
+
+                    quote!(.line_clamp({ let #limit: usize = #value; #limit.max(1) }))
+                }
                 "class" => class_methods(value, rake)?,
                 "style" => quote!(.map(#value)),
                 "onclick" => quote!(.on_click(#value)),
@@ -528,6 +537,10 @@ impl Element {
             let focus = focus.map_or_else(|| quote!(None), |value| quote!(Some((#value).clone())));
 
             builder = quote!(#rake::__private::view_button(#builder, #disabled, #focus, #tabindex));
+        }
+
+        if tag == "p" {
+            return self.expand_paragraph(builder, rake, next);
         }
 
         let children = expand_children(&self.children, &node, &siblings, rake, next)?;
@@ -653,6 +666,7 @@ fn expand_children(
                 iterator,
                 children,
             } => {
+                require_loop_ids(children)?;
                 let children = expand_children(children, parent, siblings, rake, next)?;
 
                 quote!(for #pattern in #iterator { #children })
@@ -809,6 +823,7 @@ fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
 }
 
 mod component;
+mod paragraph;
 
 #[cfg(test)]
 mod tests;

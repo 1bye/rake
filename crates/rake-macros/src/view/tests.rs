@@ -239,3 +239,41 @@ fn component_paths_properties_and_children_expand_to_struct_literals() {
         assert!(error.contains(expected), "{source}: {error}");
     }
 }
+
+#[test]
+fn paragraphs_compose_inline_content_and_reject_layout_or_interactive_children() {
+    for source in [
+        "<p wrap={true} max-lines={3} ellipsis={true}>\"Hello \"<strong>{name}</strong><br/><em>\"Again\"</em></p>",
+        "<p><span class=\"font-bold italic underline\" font-family=\"monospace\" style={highlight}>\"Text\"</span></p>",
+        "<p>for (index, label) in labels { if index > 0 { \", \" } <span>{label}</span> }</p>",
+        "<p>if let Some(value) = selected { <em>{value}</em> } else { \"None\" }</p>",
+        "<p/>",
+    ] {
+        let expanded = expand(source).expect(source);
+
+        syn::parse2::<syn::Expr>(expanded).expect("one paragraph expression");
+    }
+
+    for (source, expected) in [
+        ("<p><div/></p>", "place layout elements"),
+        ("<p><Card/></p>", "place layout elements"),
+        (
+            "<p><a href=\"https://example.com\">\"Link\"</a></p>",
+            "place layout elements",
+        ),
+        ("<p><span id=\"inline\">\"Text\"</span></p>", "inline IDs"),
+        (
+            "<p><span class=\"text-xl\">\"Text\"</span></p>",
+            "unsupported inline text utility",
+        ),
+        ("<p><span class={classes}/></p>", "literal text utility"),
+        ("<p><br class=\"p-2\"/></p>", "br accepts no attributes"),
+        ("<p><br>\"Text\"</br></p>", "br accepts no attributes"),
+        ("<section wrap={true}/>", "unsupported attribute `wrap`"),
+        ("<strong>\"Text\"</strong>", "unsupported view element"),
+    ] {
+        let error = expand(source).expect_err(source).to_string();
+
+        assert!(error.contains(expected), "{source}: {error}");
+    }
+}

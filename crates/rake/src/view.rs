@@ -1,8 +1,10 @@
 //! Accessible text conversion and image delegation for experimental views.
 
 mod button;
+mod paragraph;
 
 pub use button::button;
+pub use paragraph::{ParagraphContent, RunStyle};
 
 use std::any::Any;
 #[cfg(debug_assertions)]
