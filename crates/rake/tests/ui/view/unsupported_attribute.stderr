@@ -1,0 +1,5 @@
+error: unsupported attribute `title` on <div>
+ --> tests/ui/view/unsupported_attribute.rs:2:32
+  |
+2 |     let _ = rake::view! { <div title="x"/> };
+  |                                ^^^^^

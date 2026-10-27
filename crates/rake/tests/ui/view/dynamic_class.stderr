@@ -1,0 +1,5 @@
+error: class requires a literal utility string; use style={|s| ...} for dynamic styles
+ --> tests/ui/view/dynamic_class.rs:2:39
+  |
+2 |     let _ = rake::view! { <div class={classes}/> };
+  |                                       ^^^^^^^

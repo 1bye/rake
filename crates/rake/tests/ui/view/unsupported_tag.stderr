@@ -1,0 +1,5 @@
+error: unsupported view element <input>
+ --> tests/ui/view/unsupported_tag.rs:2:28
+  |
+2 |     let _ = rake::view! { <input/> };
+  |                            ^^^^^

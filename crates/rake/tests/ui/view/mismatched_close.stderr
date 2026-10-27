@@ -1,0 +1,5 @@
+error: expected closing </div>
+ --> tests/ui/view/mismatched_close.rs:2:34
+  |
+2 |     let _ = rake::view! { <div></span> };
+  |                                  ^^^^

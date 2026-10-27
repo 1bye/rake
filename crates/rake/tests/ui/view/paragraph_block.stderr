@@ -1,0 +1,5 @@
+error: paragraphs accept text, span, strong, em, br, if and for; place layout elements, components and widgets outside p
+ --> tests/ui/view/paragraph_block.rs:2:31
+  |
+2 |     let _ = rake::view! { <p><div/></p> };
+  |                               ^^^

@@ -55,6 +55,7 @@ raw-window-handle = { version = "0.6", optional = true }
 
 [dev-dependencies]
 futures.workspace = true
+trybuild = "1"
 
 [[test]]
 name = "view_state"

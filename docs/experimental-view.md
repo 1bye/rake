@@ -485,6 +485,7 @@ python3 scripts/build-web.py --example view
 python3 scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
+cargo test -p rake --features experimental-view --test view_ui --locked
 cargo test -p rake --features experimental-view --test view --test view_components --test view_paragraphs --locked
 cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake --features experimental-view --doc --locked

@@ -1,0 +1,1 @@
+{ use :: renamed :: gpui :: prelude :: { FluentBuilder as _ , InteractiveElement as _ , ParentElement as _ , StatefulInteractiveElement as _ , Styled as _ , StyledImage as _ , } ; :: renamed :: __private :: view_entity (& self . editor) }

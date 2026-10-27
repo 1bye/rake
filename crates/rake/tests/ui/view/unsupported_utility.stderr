@@ -1,0 +1,5 @@
+error: unsupported utility class `bg-red-500`; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/unsupported_utility.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="bg-red-500"/> };
+  |                                      ^^^^^^^^^^^^

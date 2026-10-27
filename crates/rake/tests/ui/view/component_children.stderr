@@ -1,0 +1,5 @@
+error: component children must use either children={value} on a self-closing tag or nested markup, not both
+ --> tests/ui/view/component_children.rs:2:33
+  |
+2 |     let _ = rake::view! { <Card children={children}></Card> };
+  |                                 ^^^^^^^^

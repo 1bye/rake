@@ -1,0 +1,5 @@
+error: scroll must borrow stored state, e.g. scroll={&self.scroll}; construct it once outside render
+ --> tests/ui/view/owned_scroll.rs:2:40
+  |
+2 |     let _ = rake::view! { <div scroll={scroll}/> };
+  |                                        ^^^^^^
