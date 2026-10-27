@@ -50,6 +50,9 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 | Tags | GPUI behavior |
 | --- | --- |
 | `div`, `section`, standalone `span` | Flex-column containers |
+| `nav`, `header`, `footer`, `main`, `aside`, `article` | Flex-column containers with Navigation, Banner, ContentInfo, Main, Complementary and Article roles |
+| `hr` | Full-width, one-point rule; no separator role in this AccessKit version |
+| `svg` | SVG asset leaf with required `path`; decorative unless aria-label is nonempty |
 | `p` | One composed GPUI text layout inside a styled paragraph container |
 | `span`, `strong`, `em`, `br` inside `p` | Inline style ranges and explicit line breaks, without separate layout boxes |
 | `h1`–`h6` | Composed text with a heading role/level, bold defaults, and the full composed accessible name |
@@ -64,6 +67,14 @@ closures can override them. Containers have no browser margins or user-agent
 stylesheet. Paragraphs compose inline text as described below. A standalone
 `span` remains a layout container; button children still use the ordinary element-child rules. Headings use the
 same composed inline text as paragraphs.
+
+SVGs accept `path`, `class`, conditional classes, `style`, `aria-label` and
+`aria-description`. For example, `<svg path="icons/search.svg" class="size-4"
+aria-label="Search" style={|s| s.text_color(rgb(0xffffff))}/>` uses GPUI's asset
+source and current text color. SVGs have no macro ID and are exempt from loop-ID
+requirements. Wrap them in an identified element for retained identity, focus or
+events. SVGs and rules reject children; style a rule's color explicitly, for
+example with `style={|s| s.bg(rgb(0x61717c))}`.
 
 ## Attributes, styling and events
 

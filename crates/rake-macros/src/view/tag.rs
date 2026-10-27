@@ -9,6 +9,8 @@ pub(super) enum Tag {
     ListItem,
     Button,
     Image,
+    Svg,
+    Rule,
     Entity,
     Component,
     Inline,
@@ -41,7 +43,8 @@ impl Tag {
         }
 
         match display_name(path).as_str() {
-            "div" | "section" | "span" => Self::Container,
+            "div" | "section" | "span" | "nav" | "header" | "footer" | "main" | "aside"
+            | "article" => Self::Container,
             "p" => Self::Paragraph,
             "h1" => Self::Heading(1),
             "h2" => Self::Heading(2),
@@ -53,9 +56,23 @@ impl Tag {
             "li" => Self::ListItem,
             "button" => Self::Button,
             "img" => Self::Image,
+            "svg" => Self::Svg,
+            "hr" => Self::Rule,
             "view" => Self::Entity,
             "strong" | "em" | "br" => Self::Inline,
             _ => Self::Unsupported,
+        }
+    }
+
+    pub fn semantic_role(self, name: &str) -> Option<&'static str> {
+        match name {
+            "nav" => Some("Navigation"),
+            "header" => Some("Banner"),
+            "footer" => Some("ContentInfo"),
+            "main" => Some("Main"),
+            "aside" => Some("Complementary"),
+            "article" => Some("Article"),
+            _ => None,
         }
     }
 

@@ -307,7 +307,8 @@ fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
     for node in nodes {
         match node {
             Node::Element(element)
-                if element.resolved != Tag::Entity && element.attribute("id").is_none() =>
+                if !matches!(element.resolved, Tag::Entity | Tag::Svg)
+                    && element.attribute("id").is_none() =>
             {
                 return Err(syn::Error::new(
                     element.tag.span(),
@@ -458,7 +459,17 @@ impl Element {
 
     fn base_builder(&self, id: &TokenStream, rake: &TokenStream) -> syn::Result<TokenStream> {
         Ok(match self.resolved {
-            Tag::Container => quote!(#rake::gpui::div().id(#id).flex().flex_col()),
+            Tag::Container => {
+                let mut builder = quote!(#rake::gpui::div().id(#id).flex().flex_col());
+
+                if let Some(role) = self.resolved.semantic_role(&self.display_name) {
+                    let role = format_ident!("{role}");
+
+                    builder.extend(quote!(.role(#rake::gpui::accesskit::Role::#role)));
+                }
+
+                builder
+            }
             Tag::Paragraph => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
                 .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
             Tag::Heading(level) => {
@@ -482,6 +493,26 @@ impl Element {
                 .role(#rake::gpui::accesskit::Role::ListItem)),
             Tag::Button => quote!(#rake::gpui::div().id(#id).flex().items_center().justify_center()
                 .role(#rake::gpui::accesskit::Role::Button).cursor_pointer()),
+            Tag::Svg => {
+                let path = self
+                    .attribute("path")
+                    .ok_or_else(|| syn::Error::new(self.tag.span(), "svg requires path"))?;
+
+                if !self.children.is_empty() {
+                    return Err(syn::Error::new(self.tag.span(), "svg cannot have children"));
+                }
+
+                let path = &path.value;
+
+                quote!(#rake::__private::view_svg(#path))
+            }
+            Tag::Rule => {
+                if !self.children.is_empty() {
+                    return Err(syn::Error::new(self.tag.span(), "hr cannot have children"));
+                }
+
+                quote!(#rake::gpui::div().id(#id).w_full().h(#rake::gpui::px(1.)))
+            }
             Tag::Image => {
                 let source = self
                     .attribute("src")
@@ -520,6 +551,19 @@ impl Element {
 
         for attribute in &self.attributes {
             let value = &attribute.value;
+
+            if self.resolved == Tag::Svg
+                && !matches!(
+                    attribute.name.as_str(),
+                    "path" | "class" | "style" | "aria-label" | "aria-description"
+                )
+                && !attribute.name.starts_with("class:")
+            {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "svg supports path, class, conditional classes, style, aria-label and aria-description; put identity, focus and events on a surrounding element",
+                ));
+            }
 
             if self.resolved == Tag::Image
                 && matches!(
@@ -572,6 +616,7 @@ impl Element {
                 "id" => continue,
                 "disabled" | "focus" | "tabindex" | "tab-navigation" => continue,
                 "src" if self.resolved == Tag::Image => continue,
+                "path" if self.resolved == Tag::Svg => continue,
                 "alt" if self.resolved == Tag::Image => quote!(.aria_label(#value)),
                 "aria-label" => quote!(.aria_label(#value)),
                 "aria-description" => quote!(.aria_description(#value)),

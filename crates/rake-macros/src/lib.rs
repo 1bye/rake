@@ -37,6 +37,10 @@ mod view;
 /// Both reject layout/widget children; use a div with a heading role for rich content.
 /// Headings expose the full composed text as their name; explicit aria-label wins.
 /// Inline `style` takes `gpui::HighlightStyle`.
+/// Semantic nav/header/footer/main/aside/article tags set AccessKit roles; hr is
+/// a one-point rule without a separator role in the pinned AccessKit version.
+/// SVG leaves use path, styling and optional image labels; they have no macro ID
+/// and are exempt from loop IDs. Wrap SVGs for identity, focus and events.
 /// Independent local diagnostics are combined. Attribute parsing recovers at the
 /// next attribute/tag boundary, and valid builder contexts remain type-checked
 /// beside macro errors. Malformed markup structure can still stop parsing.

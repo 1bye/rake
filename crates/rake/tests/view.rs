@@ -315,3 +315,47 @@ fn disabled_buttons_skip_new_event_builders_but_keep_tooltips() {
 
     assert_eq!(*seen.borrow(), ["tooltip"]);
 }
+
+#[test]
+fn semantic_containers_rules_and_svg_expose_their_documented_semantics() {
+    let containers = [
+        (rake::view! { <nav/> }, accesskit::Role::Navigation),
+        (rake::view! { <header/> }, accesskit::Role::Banner),
+        (rake::view! { <footer/> }, accesskit::Role::ContentInfo),
+        (rake::view! { <main/> }, accesskit::Role::Main),
+        (rake::view! { <aside/> }, accesskit::Role::Complementary),
+        (rake::view! { <article/> }, accesskit::Role::Article),
+    ];
+
+    for (container, role) in containers {
+        assert_eq!(container.a11y_role(), Some(role));
+    }
+
+    let decorative = rake::view! { <svg path="icons/search.svg" class="size-4"/> };
+
+    let labelled = rake::view! {
+        <svg path="icons/search.svg" aria-label="Search" aria-description="Find text"
+            class="size-4" style={|s| s.text_color(rgb(0xffffff))}/>
+    };
+
+    let mut info = accesskit::Node::new(labelled.a11y_role().unwrap());
+
+    labelled.write_a11y_info(&mut info);
+
+    assert_eq!(decorative.a11y_role(), None);
+    assert_eq!(Element::id(&labelled), None);
+    assert_eq!(labelled.a11y_role(), Some(accesskit::Role::Image));
+    assert_eq!(info.label(), Some("Search"));
+    assert_eq!(info.description(), Some("Find text"));
+    let mut rule = rake::view! { <hr/> };
+    let mut expected = div().w_full().h(px(1.));
+
+    assert_eq!(rule.a11y_role(), None);
+    assert_eq!(
+        format!("{:?}", rule.style()),
+        format!("{:?}", expected.style())
+    );
+    let _ = rake::view! {
+        <div>for path in ["a.svg", "b.svg"] { <svg path={path}/> }</div>
+    };
+}

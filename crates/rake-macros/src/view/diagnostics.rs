@@ -116,6 +116,7 @@ impl Element {
 
             for name in match self.resolved {
                 Tag::Image => &["src", "alt"][..],
+                Tag::Svg => &["path"][..],
                 Tag::Entity => &["entity"][..],
                 _ => &[],
             } {
@@ -123,6 +124,7 @@ impl Element {
                     let message = match *name {
                         "src" => "img requires src",
                         "alt" => "img requires alt text",
+                        "path" => "svg requires path",
                         _ => "view requires entity={&stored_entity}",
                     };
 
@@ -131,11 +133,16 @@ impl Element {
                 }
             }
 
-            if matches!(self.resolved, Tag::Image | Tag::Entity) && !self.children.is_empty() {
-                let message = if self.resolved == Tag::Image {
-                    "img cannot have children"
-                } else {
-                    "view mounts a retained entity and cannot have children"
+            if matches!(
+                self.resolved,
+                Tag::Image | Tag::Entity | Tag::Svg | Tag::Rule
+            ) && !self.children.is_empty()
+            {
+                let message = match self.resolved {
+                    Tag::Image => "img cannot have children",
+                    Tag::Svg => "svg cannot have children",
+                    Tag::Rule => "hr cannot have children",
+                    _ => "view mounts a retained entity and cannot have children",
                 };
 
                 errors.push(syn::Error::new(self.tag.span(), message));
@@ -199,6 +206,7 @@ impl Element {
             // Required properties are context, not independent errors on every attribute.
             for name in match self.resolved {
                 Tag::Image => &["src", "alt"][..],
+                Tag::Svg => &["path"][..],
                 Tag::Entity => &["entity"][..],
                 _ => &[],
             } {

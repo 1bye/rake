@@ -145,15 +145,25 @@ pub fn image(source: impl Into<gpui::ImageSource>, id: impl Into<ElementId>) -> 
     }
 }
 
-/// Preserves GPUI image layout, styling, identity and events while exposing its semantics.
+/// Constructs an SVG leaf; a nonempty aria-label makes it an accessible image.
 #[doc(hidden)]
-pub struct Image {
-    inner: Stateful<Img>,
+pub fn svg(path: impl Into<SharedString>) -> Image<gpui::Svg> {
+    Image {
+        inner: gpui::svg().path(path),
+        label: SharedString::default(),
+        description: None,
+    }
+}
+
+/// Preserves GPUI raster/vector layout and styling while exposing image semantics.
+#[doc(hidden)]
+pub struct Image<E = Stateful<Img>> {
+    inner: E,
     label: SharedString,
     description: Option<SharedString>,
 }
 
-impl Image {
+impl<E> Image<E> {
     /// Sets alternative text; an empty label marks a decorative image.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
@@ -169,27 +179,27 @@ impl Image {
     }
 }
 
-impl Styled for Image {
+impl<E: Styled> Styled for Image<E> {
     fn style(&mut self) -> &mut StyleRefinement {
         self.inner.style()
     }
 }
 
-impl StyledImage for Image {
+impl<E: StyledImage> StyledImage for Image<E> {
     fn image_style(&mut self) -> &mut gpui::ImageStyle {
         self.inner.image_style()
     }
 }
 
-impl InteractiveElement for Image {
+impl<E: InteractiveElement> InteractiveElement for Image<E> {
     fn interactivity(&mut self) -> &mut Interactivity {
         self.inner.interactivity()
     }
 }
 
-impl StatefulInteractiveElement for Image {}
+impl<E: StatefulInteractiveElement> StatefulInteractiveElement for Image<E> {}
 
-impl IntoElement for Image {
+impl<E: Element> IntoElement for Image<E> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
@@ -197,9 +207,9 @@ impl IntoElement for Image {
     }
 }
 
-impl Element for Image {
-    type RequestLayoutState = <Stateful<Img> as Element>::RequestLayoutState;
-    type PrepaintState = <Stateful<Img> as Element>::PrepaintState;
+impl<E: Element> Element for Image<E> {
+    type RequestLayoutState = E::RequestLayoutState;
+    type PrepaintState = E::PrepaintState;
 
     fn id(&self) -> Option<ElementId> {
         Element::id(&self.inner)

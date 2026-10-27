@@ -207,7 +207,7 @@ pub mod __private {
     pub use crate::view::{
         Children as ViewChildren, ComponentChildren as ViewComponentChildren,
         ParagraphContent as ViewParagraphContent, RunStyle as ViewRunStyle, button as view_button,
-        entity as view_entity, focus as view_focus, image as view_image,
+        entity as view_entity, focus as view_focus, image as view_image, svg as view_svg,
         tab_index as view_tab_index, tab_navigation as view_tab_navigation,
     };
 
