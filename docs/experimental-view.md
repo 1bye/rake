@@ -37,13 +37,13 @@ Each invocation returns one concrete GPUI element or component and requires exac
 tag. Closing tags must match; empty elements can use `<div/>`. Text must be a Rust
 string literal (`"Hello"`) or a Rust expression (`{format!("Hello, {name}")}`).
 Literal text is not interpolated automatically. Rust comments work within markup.
-Outside paragraphs, expressions may contain statements and must produce an `IntoElement` value. They
-can embed existing GPUI builders, `Entity` handles, or `RenderOnce` components;
+Outside paragraphs and headings, expressions may contain statements and must produce
+an `IntoElement` value. They can embed existing GPUI builders, `Entity` handles, or `RenderOnce` components;
 clone retained handles explicitly when needed. There is no string-based HTML
 parser, Dioxus runtime, virtual DOM, or JavaScript execution.
 
-Outside paragraphs, literal strings and expressions whose GPUI element is `SharedString` or a static
-string become identified, accessible `gpui::Text` nodes. Other embedded elements
+Outside paragraphs and headings, literal strings and expressions whose GPUI element
+is `SharedString` or a static string become identified, accessible `gpui::Text` nodes. Other embedded elements
 keep their own identity and semantics. Literal-only buttons get an
 accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 
@@ -54,7 +54,7 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 | `hr` | Full-width, one-point rule; no separator role in this AccessKit version |
 | `svg` | SVG asset leaf with required `path`; decorative unless aria-label is nonempty |
 | `p` | One composed GPUI text layout inside a styled paragraph container |
-| `span`, `strong`, `em`, `br` inside `p` | Inline style ranges and explicit line breaks, without separate layout boxes |
+| `span`, `strong`, `em`, `br` inside `p` or headings | Inline style ranges and explicit line breaks, without separate layout boxes |
 | `h1`–`h6` | Composed text with a heading role/level, bold defaults, and the full composed accessible name |
 | `ul`, `ol`, `li` | Containers with list/list-item accessibility roles; no generated bullets or numbering |
 | `button` | Button role, pointer cursor, and tab stop; GPUI dispatches mouse clicks and focused Enter/Space activation |
@@ -65,8 +65,8 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 Heading sizes are 30, 24, 20, 16, 16, and 16 logical pixels. Classes and style
 closures can override them. Containers have no browser margins or user-agent
 stylesheet. Paragraphs compose inline text as described below. A standalone
-`span` remains a layout container; button children still use the ordinary element-child rules. Headings use the
-same composed inline text as paragraphs.
+`span` remains a layout container; buttons keep ordinary element children.
+Headings use the same composed inline text as paragraphs.
 
 SVGs accept `path`, `class`, conditional classes, `style`, `aria-label` and
 `aria-description`. For example, `<svg path="icons/search.svg" class="size-4"
@@ -86,7 +86,8 @@ It preserves the property's normal type and ownership rules; in particular,
 `{focus}` does not automatically borrow a handle. The supported built-in
 attributes are `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`,
 `focus`, `scroll`, `key-context`, `tab-navigation`, typed `on:Action` handlers,
-`disabled` on buttons, `tooltip`, and `src`/`alt` on images. Containers and buttons also accept
+`disabled` on buttons, `tooltip`, `src`/`alt` on images, and `path` on SVGs.
+Containers and buttons also accept
 typed `role`, `aria-keyshortcuts`, and `aria-expanded`. `alt` maps to the image's accessible
 label; `aria-label` can override it when supplied after `alt`.
 An empty image label (`alt=""`) marks it as decorative and omits its accessibility role.
@@ -96,6 +97,7 @@ utility methods, in the order written. These are utilities, not stylesheet class
 names or a complete Tailwind implementation:
 
 <!-- view-utilities:start -->
+
 - `flex`, `block`, `grid`, `hidden`, `flex-col`, `flex-row`.
 - `flex-wrap`, `flex-1`, `items-start`, `items-center`, `items-end`, `justify-start`.
 - `justify-center`, `justify-end`, `justify-between`, `w-full`, `h-full`, `size-full`.
@@ -114,6 +116,7 @@ names or a complete Tailwind implementation:
 - `pl-N`, `pr-N`, `m-N`, `mx-N`, `my-N`, `mt-N`.
 - `mb-N`, `ml-N`, `mr-N`, `gap-N`, `gap-x-N`, `gap-y-N`.
 - `w-N`, `h-N`, `size-N`.
+
 <!-- view-utilities:end -->
 
 `N` uses the spacing scale 0–8, 12, 16, 20, 24, 32; `grid-cols-N` uses 1–12.
@@ -167,15 +170,65 @@ attribute. Migrate them to the corresponding canonical `on:*` names. Disabled
 buttons skip every macro-authored event/action builder, including drag/drop and
 hover. `tooltip` remains available when disabled, so controls can explain why.
 
-Callbacks receive `(event, window, app)` as in GPUI; use `cx.listener(...)` for
+Most event callbacks receive `(event, window, app)` as in GPUI; use `cx.listener(...)` for
 access to view state. Events retain GPUI propagation and default-prevention
 behavior. Keyboard events require the appropriate focus path.
+
+## Formatting
+
+Rustfmt formats surrounding Rust but does not format `view!` bodies. Once a tag
+has more than about three attributes, put one attribute on each line. Extract
+long styling closures and listeners into named bindings or methods. A named style
+closure may need a GPUI builder type annotation when Rust cannot infer it.
+
+For example, this inspector-style control is difficult to scan:
+
+```rust
+# use rake::gpui::{self, IntoElement};
+# fn dense(selected: bool) -> impl IntoElement {
+rake::view! {
+    <button id="details" class="px-3 rounded-md" aria-label="Show details" style={|s| s.h(gpui::px(28.)).bg(gpui::rgb(if selected { 0x365849 } else { 0x22323d })).hover(|s| s.bg(gpui::rgb(0x526857)))} on:click={|_, _, _| {}}>"Details"</button>
+}
+# }
+```
+
+The same control can keep its layout, appearance and handler easy to find:
+
+```rust
+# use rake::gpui::{self, prelude::*};
+# fn formatted(selected: bool) -> impl IntoElement {
+let details_style = move |s: gpui::Stateful<gpui::Div>| {
+    s.h(gpui::px(28.))
+        .bg(gpui::rgb(if selected { 0x365849 } else { 0x22323d }))
+        .hover(|s| s.bg(gpui::rgb(0x526857)))
+};
+let show_details = |_: &gpui::ClickEvent, _: &mut gpui::Window, _: &mut gpui::App| {};
+
+rake::view! {
+    <button
+        id="details"
+        class="px-3 rounded-md"
+        aria-label="Show details"
+        style={details_style}
+        on:click={show_details}
+    >
+        "Details"
+    </button>
+}
+# }
+```
+
+For stateful listeners, a binding such as `let save = cx.listener(Self::save);`
+keeps GPUI's typed callback context. Extract widgets into typed components when
+they have reusable structure; keep their retained entities and handles in their
+owner. A dedicated formatter for macro bodies, similar to `leptosfmt`, is a
+follow-up outside this plan.
 
 ## Paragraph and heading composition, wrapping and truncation
 
 `p` and `h1`–`h6` collect text into one UTF-8 buffer with styled runs, rendered by GPUI's
 text shaping system. End truncation measures the actual styled runs and font
-fallbacks, and cuts only at grapheme boundaries. Its only inline tags are `span`, `strong` (bold), `em` (italic),
+fallbacks, and cuts only at grapheme boundaries. The inline tags are `span`, `strong` (bold), `em` (italic),
 and `br` (newline). They do not create layout boxes or independent element IDs.
 Nested formatting inherits and combines. Spaces remain explicit in string
 literals; markup indentation adds no spaces, and HTML entities are not decoded.
@@ -194,7 +247,7 @@ let _paragraph = rake::view! {
 };
 ```
 
-Paragraph expressions must implement `AsRef<str>`, including `String`, `&str`,
+Paragraph and heading expressions must implement `AsRef<str>`, including `String`, `&str`,
 `SharedString`, and borrowed string values. Use `format!` for numbers or other
 `Display` values. Arbitrary `IntoElement` values, components, widgets, images,
 and block tags are not paragraph content. `if`/`if let`, `for` and `match` work inside
@@ -380,10 +433,10 @@ tree or child vector. Paragraphs build their one text buffer and styled-run list
 component's `Vec<AnyElement>`. Large lists should use an embedded GPUI virtual
 list instead of eagerly generating every item.
 
-Each built-in tag gets a GPUI ID, either explicit or derived from its source site and
-position in the macro. GPUI scopes IDs under their nearest identified ancestor.
-Outside paragraph text, elements emitted directly by a loop **must** have explicit IDs, including elements
-in conditional branches and match arms immediately inside that loop. Prefer stable data keys,
+Each built-in layout tag and image gets a GPUI ID (SVGs are exempt), either explicit
+or derived from its source site and position in the macro. GPUI scopes IDs under their nearest identified ancestor.
+Outside composed paragraph/heading text, elements emitted directly by a loop
+**must** have explicit IDs, including elements in conditional branches and match arms immediately inside that loop. Prefer stable data keys,
 such as `id={("row", row.id)}`, over positions when rows can reorder. Nested
 children under an explicitly identified row can use generated IDs. Direct text/expression
 children inside loops need an element wrapper with an explicit stable ID.
@@ -461,7 +514,7 @@ arguments in tag paths are not supported.
 Self-closing tags initialize their listed properties, optionally followed by component defaults. Paired tags always
 supply `children: Vec<AnyElement>`, including an empty vector for `<Stack></Stack>`.
 This is a convention for arbitrary nested GPUI elements, not a `ParentElement`
-requirement on the component struct. `if`, `for`, string-to-accessible-text
+requirement on the component struct. `if`, `for`, `match`, string-to-accessible-text
 conversion, and retained `<view>` mounts work within those children. Alternatively,
 pass `children={existing_children}` on a self-closing tag. Combining that property
 with a paired tag is rejected. Authored properties evaluate once in written order,
@@ -564,12 +617,16 @@ code never runs, and erroneous markup never builds successfully.
 
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
 markup are compile errors. This version does not implement input controls,
-links/forms, automatic shortcut labels, general-purpose focus traps outside the overlay controls, relationships such as
-`aria-labelledby`, or a complete ARIA attribute vocabulary, selectable text or inline links,
-CSS selectors/cascade, HTML whitespace/entity
-parsing, fragments, dedicated slot syntax, automatic signal tracking, or hot reload
-of markup. Existing GPUI components remain available through `{expression}`.
-Images follow the application's GPUI asset/HTTP configuration.
+links/forms, automatic shortcut labels, selectable text or interactive inline
+links, `aria-labelledby` and the complete ARIA vocabulary, general-purpose focus
+traps outside the overlay controls, CSS selectors/cascade, HTML whitespace/entity
+parsing, fragments, explicit generic arguments in component tags, dedicated slot
+syntax, automatic signal tracking, or markup hot reload. Inline text accepts a
+fixed set of styles and rejects conditional classes, events and IDs. SVG leaves
+use the documented restricted attribute set; wrap them for interaction and
+identity. Existing GPUI components remain available through `{expression}`.
+Raster images follow the application's asset/HTTP configuration, and SVG paths
+use its GPUI asset source.
 
 Automatic Rake inspection boundaries are not inserted. A returned styled element
 can use the existing `.inspect(...)` extension; descendants need their own
@@ -587,7 +644,7 @@ cargo test -p rake --features experimental-view --test view_ui --locked
 cargo test -p rake --features experimental-view --test view --test view_components --test view_paragraphs --locked
 cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake --features experimental-view --doc --locked
-cargo check -p rake-view -p renamed-facade --all-targets --locked
+cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
 
@@ -615,13 +672,25 @@ was checked on macOS for nested bold/italic runs, dynamic colored text, Unicode,
 single- and two-line ellipses, and complete untruncated accessibility values. Web compilation
 is checked; browser input and screen-reader interaction have not been verified.
 
+Expansion snapshots preserve builder order and generated identities. Compiler UI
+fixtures cover individual and combined errors, attribute recovery, legacy event
+warnings and expression/listener type checking beside macro errors. Utility
+coverage tests compare the documented list with the checked table and compile all
+supported methods against GPUI. Runtime construction tests cover match arms,
+booleans, shorthand, component defaults, semantic roles and SVG labels. A direct
+rust-analyzer completion probe verified typed listener fields beside an invalid
+utility; it did not modify the source files.
+
 The opt-in `view-test-support` feature enables GPUI's own deterministic TestPlatform.
 Its frame tests exercise keyed element state, implicit button focus, retained
 entity data/selection, explicit focus and scroll offsets across parent rerenders,
 reordering and insertion. Component frame tests check forwarded root IDs, implicit
 focus and keyed state across reorder/insertion, and retained child ownership.
-Paragraph frame tests cover shared inline flow, width changes, explicit breaks,
-line limits, and GPUI truncation. Keyboard frame tests cover typed actions, Tab/Shift+Tab,
+Paragraph and heading frame tests cover shared inline flow, width changes, explicit
+breaks, line limits, composed heading names and GPUI truncation. The TestPlatform
+has no active accessibility adapter; heading node properties are inspected during
+render alongside real layout measurements. Keyboard frame tests cover typed actions, Tab/Shift+Tab,
 negative indices, consumed events, disabled mouse/keyboard activation, and
-keyboard-visible styling. The platform's window/text/GPU backend is a test double;
+keyboard-visible styling. Pointer tests exercise right/middle buttons, hover and
+wheel dispatch, including disabled suppression. The platform's window/text/GPU backend is a test double;
 these checks do not establish native editor or browser input behavior.

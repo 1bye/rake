@@ -17,8 +17,8 @@ mod view;
 /// quoted text, `{expression}` children, `if`/`else`, `for`, and guarded `match`
 /// children with braced arm bodies. Untaken branches are not evaluated.
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
-/// conditionally in attribute order (layout tags only); `style={|s| ...}` applies GPUI
-/// builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
+/// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
+/// GPUI builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
 /// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
 /// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy
 /// event aliases remain accepted with deprecation warnings. Drag takes a
@@ -37,8 +37,9 @@ mod view;
 /// and paired children. Built-in bare booleans are limited to disabled, wrap,
 /// ellipsis, tab-navigation and aria-expanded. Slots are ordinary
 /// properties. Components own their root IDs and render through GPUI's `RenderOnce`.
-/// Paragraphs and h1–h6 headings compose string-like values and inline `span`/`strong`/`em`/`br` into
-/// one styled text layout, with `wrap`, `ellipsis`, and `max-lines` controls.
+/// Paragraphs and h1–h6 headings compose string-like values and inline
+/// `span`/`strong`/`em`/`br` into one styled text layout, with `wrap`, `ellipsis`,
+/// and `max-lines` controls.
 /// Both reject layout/widget children; use a div with a heading role for rich content.
 /// Headings expose the full composed text as their name; explicit aria-label wins.
 /// Inline `style` takes `gpui::HighlightStyle`.
@@ -50,6 +51,9 @@ mod view;
 /// next attribute/tag boundary, and valid builder contexts remain type-checked
 /// beside macro errors. Malformed markup structure can still stop parsing.
 /// Debug builds diagnose duplicate direct sibling IDs visible at construction.
+/// Rustfmt does not format view! bodies; put longer attribute lists on separate
+/// lines and extract long style/listener expressions into named bindings.
+/// A dedicated macro formatter remains a follow-up.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///
 #[proc_macro]
