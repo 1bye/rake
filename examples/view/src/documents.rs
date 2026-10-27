@@ -46,7 +46,7 @@ impl Render for Documents {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
             <section focus={&self.focus} key-context="Documents" class="flex flex-col gap-2"
-                onkeydown={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                on:key-down={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                     if event.keystroke.modifiers.modified() { return; }
 
                     let index = this.selected.unwrap_or(0);
@@ -78,7 +78,7 @@ impl Render for Documents {
                                     style={|s| s.h(gpui::px(32.)).px_3().justify_start()
                                         .when(selected, |s| s.bg(gpui::rgb(0x365849)))
                                         .focus_visible(|s| s.bg(gpui::rgb(0x526857)))}
-                                    onclick={cx.listener(move |this, _, window, cx| this.jump(index, window, cx))}>
+                                    on:click={cx.listener(move |this, _, window, cx| this.jump(index, window, cx))}>
                                     {row.title.clone()}
                                 </button>
                             }

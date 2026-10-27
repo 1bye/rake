@@ -17,7 +17,11 @@ mod view;
 /// quoted text, `{expression}` children, `if`/`else`, and `for` children.
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies GPUI
-/// builder methods. Events use GPUI callbacks, including `cx.listener(...)`.
+/// builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
+/// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
+/// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy
+/// event aliases remain accepted with deprecation warnings. Drag takes a
+/// `(payload, constructor)` tuple; drop callbacks need a typed first parameter.
 /// Repeated element roots require explicit, stable `id` attributes.
 /// `<view entity={&self.editor}/>` mounts a retained entity by borrowing its handle.
 /// `focus` and `scroll` borrow stored GPUI handles; inline constructors are rejected.

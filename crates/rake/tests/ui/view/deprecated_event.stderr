@@ -1,0 +1,11 @@
+error: use of deprecated constant `rake::__private::view_legacy::ONCLICK`: use on:click
+ --> tests/ui/view/deprecated_event.rs:3:35
+  |
+3 |     let _ = rake::view! { <button onclick={|_, _, _| {}}>"Old"</button> };
+  |                                   ^^^^^^^
+  |
+note: the lint level is defined here
+ --> tests/ui/view/deprecated_event.rs:1:9
+  |
+1 | #![deny(deprecated)]
+  |         ^^^^^^^^^^

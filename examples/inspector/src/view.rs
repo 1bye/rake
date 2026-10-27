@@ -285,7 +285,7 @@ impl ElementsView {
     ) -> impl IntoElement {
         rake::view! {
             <button id={format!("detail-{tab}")} class="px-3" style={|s| s.h_full().text_color(rgb(if self.detail_tab == tab { colors.accent } else { colors.muted })).border_b(px(if self.detail_tab == tab { 2. } else { 0. })).border_color(rgb(colors.accent)).hover(|s| s.bg(rgb(colors.hover)))}
-                onclick={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
+                on:click={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
         }.inspect(format!("inspector.tab.{tab}"))
     }
 
@@ -390,13 +390,13 @@ impl ElementsView {
                 if row.branch && !row.closing {
                     <button id={format!("disclose-{}", row.index)} aria-label={format!("{} {}", if row.collapsed { "Expand" } else { "Collapse" }, element.semantic_id.as_deref().unwrap_or(&element.id))}
                         style={|s| s.w(px(14.)).h_full().flex_shrink_0()}
-                        onclick={ { let id = element.id.clone(); cx.listener(move |this, _, _, cx| { if !this.collapsed.remove(&id) { this.collapsed.insert(id.clone()); } cx.stop_propagation(); cx.notify(); }) } }>
+                        on:click={ { let id = element.id.clone(); cx.listener(move |this, _, _, cx| { if !this.collapsed.remove(&id) { this.collapsed.insert(id.clone()); } cx.stop_propagation(); cx.notify(); }) } }>
                         {icon(if row.collapsed { Icon::Right } else { Icon::Down }, colors.muted)}
                     </button>
                 } else { <span style={|s| s.w(px(14.)).flex_shrink_0()}/> }
                 <button id={format!("select-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}", element.semantic_id.as_deref().unwrap_or(&element.id))}
                     style={|s| s.h_full().flex_row().justify_start().flex_shrink_0().font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.)).whitespace_nowrap()}
-                    onclick={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>
+                    on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>
                     <span style={|s| s.text_color(rgb(colors.tag))}>{if row.closing { "</" } else { "<" }}</span>
                     <span style={|s| s.text_color(rgb(colors.tag))}>{kind.clone()}</span>
                     if !row.closing {
@@ -434,7 +434,7 @@ impl ElementsView {
                 <div class="flex flex-row" style={|s| s.min_h(px(20.)).pl(px(8.)).pr(px(10.)).hover(|s| s.bg(rgb(colors.hover)))}>
                     if complex {
                         <button id={format!("expand-{}", row.name)} aria-label={format!("{} {} metadata", if expanded { "Collapse" } else { "Expand" }, row.name)} style={|s| s.w(px(16.)).h(px(20.)).flex_shrink_0()}
-                            onclick={ { let name = row.name.clone(); cx.listener(move |this, _, _, cx| { if !this.expanded_styles.remove(&name) { this.expanded_styles.insert(name.clone()); } cx.notify(); }) } }>{icon(if expanded { Icon::Down } else { Icon::Right }, colors.muted)}</button>
+                            on:click={ { let name = row.name.clone(); cx.listener(move |this, _, _, cx| { if !this.expanded_styles.remove(&name) { this.expanded_styles.insert(name.clone()); } cx.notify(); }) } }>{icon(if expanded { Icon::Down } else { Icon::Right }, colors.muted)}</button>
                     } else { <span style={|s| s.w(px(16.)).flex_shrink_0()}/> }
                     <div class="flex flex-row min-w-0" style={|s| s.flex_wrap().gap_x(px(6.)).font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.))}>
                         <span style={|s| s.text_color(rgb(colors.property))}>{format!("{}:", row.name)}</span>
@@ -546,7 +546,7 @@ impl Render for ElementsView {
                     <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(30.)).flex_shrink_0().border_b_1().border_color(rgb(colors.line))}>
                         {icon(Icon::Search, colors.muted)}
                         <div class="flex-1 min-w-0">{self.filter.clone()}</div>
-                        <button id="close-find" aria-label="Close tree search" style={|s| s.w(px(20.)).h(px(24.))} onclick={cx.listener(Self::toggle_find)}>"×"</button>
+                        <button id="close-find" aria-label="Close tree search" style={|s| s.w(px(20.)).h(px(24.))} on:click={cx.listener(Self::toggle_find)}>"×"</button>
                     </div>
                 }
                 <section id="element-tree" class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_scroll().py(px(5.))}>
@@ -565,7 +565,7 @@ impl Render for ElementsView {
                             if stale { <span class="px-2" style={|s| s.text_color(rgb(colors.muted)).whitespace_nowrap()}>{label.clone()}</span> }
                             else {
                                 <button id={format!("select-crumb-{id}")} class="px-2" style={|s| s.h_full().whitespace_nowrap().bg(rgb(if model.selected.as_ref() == Some(id) { colors.field } else { colors.bar })).hover(|s| s.bg(rgb(colors.field)))}
-                                    onclick={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>{label.clone()}</button>
+                                    on:click={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>{label.clone()}</button>
                             }
                             {icon(Icon::Right, colors.muted)}
                         </div>
@@ -599,7 +599,7 @@ impl Render for ElementsView {
                                     <span class="flex-1"/>
                                     <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; declaration provenance is unavailable."
                                         style={|s| s.flex_shrink_0().text_color(rgb(colors.muted)).underline().hover(|s| s.text_color(rgb(colors.ink)))}
-                                        onclick={cx.listener(|this, _, _, cx| { this.detail_tab = "Source"; cx.notify(); })}>{source_label(element)}</button>
+                                        on:click={cx.listener(|this, _, _, cx| { this.detail_tab = "Source"; cx.notify(); })}>{source_label(element)}</button>
                                 </div>
                                 for group in [styles::Group::Layout, styles::Group::Spacing, styles::Group::Appearance, styles::Group::Typography, styles::Group::Other] {
                                     <div id={format!("group-{}", group.label())} class="flex flex-col">
@@ -649,29 +649,29 @@ impl Render for ElementsView {
 
         rake::view! {
             <div id="inspector" class="size-full flex flex-col min-h-0" style={|s| s.relative().bg(rgb(colors.background)).text_color(rgb(colors.ink)).text_size(px(12.)).line_height(px(20.)).track_focus(&self.focus)}
-                onkeydown={cx.listener(Self::key)}
-                onmousemove={cx.listener(|this, event: &MouseMoveEvent, window, cx| { if this.dragging { if event.dragging() { this.split = (f32::from(event.position.x) / f32::from(window.viewport_size().width)).clamp(0.2, 0.8); cx.notify(); } else { this.dragging = false; } } })}
-                onmouseup={cx.listener(|this, _, _, _| this.dragging = false)}>
+                on:key-down={cx.listener(Self::key)}
+                on:mouse-move={cx.listener(|this, event: &MouseMoveEvent, window, cx| { if this.dragging { if event.dragging() { this.split = (f32::from(event.position.x) / f32::from(window.viewport_size().width)).clamp(0.2, 0.8); cx.notify(); } else { this.dragging = false; } } })}
+                on:mouse-up={cx.listener(|this, _, _, _| this.dragging = false)}>
                 <div class="flex flex-row items-center" style={|s| s.h(px(32.)).flex_shrink_0().bg(rgb(colors.bar)).border_b_1().border_color(rgb(colors.line))}>
                     <div class="flex flex-row items-center gap-1 px-2" style={|s| s.text_color(rgb(colors.muted))}>{icon(Icon::Code, colors.muted)}<span>"Rake"</span></div>
                     <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
                     <div class="flex items-center px-3" style={|s| s.h_full().border_b_2().border_color(rgb(colors.accent)).text_color(rgb(colors.accent)).font_weight(FontWeight::SEMIBOLD)}>"Elements"</div>
                     <span class="flex-1"/>
                     <button id="targets" aria-label="Select target runtime" class="flex flex-row items-center gap-1 px-2" style={|s| s.h(px(26.)).text_color(rgb(colors.muted)).hover(|s| s.bg(rgb(colors.field)))}
-                        onclick={cx.listener(|this, _, _, cx| { this.show_targets = !this.show_targets; cx.notify(); })}><span>{target_name}</span>{icon(Icon::Down, colors.muted)}</button>
+                        on:click={cx.listener(|this, _, _, cx| { this.show_targets = !this.show_targets; cx.notify(); })}><span>{target_name}</span>{icon(Icon::Down, colors.muted)}</button>
                     <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
-                    <button id="find" aria-label="Find in element tree" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
-                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
-                    <button id="refresh" aria-label="Refresh capture" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
-                    <button id="theme" aria-label="Toggle theme" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
+                    <button id="find" aria-label="Find in element tree" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
+                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
+                    <button id="refresh" aria-label="Refresh capture" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
+                    <button id="theme" aria-label="Toggle theme" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
                 </div>
                 if let Some(error) = error { <p class="px-3 py-1" style={|s| s.text_color(rgb(colors.property)).border_b_1().border_color(rgb(colors.line))}>{error}</p> }
                 <div class="flex flex-1 min-h-0 min-w-0" style={|s| if narrow { s.flex_col() } else { s.flex_row() }}>
                     {tree_pane}
                     if !narrow {
                         <div id="divider" tabindex={0} aria-label="Resize inspection panes" style={|s| s.w(px(4.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(colors.line)).cursor(CursorStyle::ResizeColumn).track_focus(&self.divider).hover(|s| s.bg(rgb(colors.field)))}
-                            onmousedown={cx.listener(|this, _, window, cx| { this.dragging = true; window.focus(&this.divider, cx); })}
-                            onkeydown={cx.listener(|this, event: &KeyDownEvent, _, cx| { match event.keystroke.key.as_str() { "left" => this.split = (this.split - 0.025).max(0.2), "right" => this.split = (this.split + 0.025).min(0.8), "home" => this.split = 0.2, "end" => this.split = 0.8, _ => return } cx.stop_propagation(); cx.notify(); })}/>
+                            on:mouse-down={cx.listener(|this, _, window, cx| { this.dragging = true; window.focus(&this.divider, cx); })}
+                            on:key-down={cx.listener(|this, event: &KeyDownEvent, _, cx| { match event.keystroke.key.as_str() { "left" => this.split = (this.split - 0.025).max(0.2), "right" => this.split = (this.split + 0.025).min(0.8), "home" => this.split = 0.2, "end" => this.split = 0.8, _ => return } cx.stop_propagation(); cx.notify(); })}/>
                     }
                     {details}
                 </div>
@@ -682,16 +682,16 @@ impl Render for ElementsView {
                     </section>
                 }
                 <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(23.)).flex_shrink_0().bg(rgb(colors.bar)).border_t_1().border_color(rgb(colors.line)).text_size(px(10.)).text_color(rgb(colors.muted))}>
-                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1" style={|s| s.h_full().hover(|s| s.text_color(rgb(colors.ink)))} onclick={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
+                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1" style={|s| s.h_full().hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
                     <span class="flex-1"/>
                     <span style={|s| s.w(px(6.)).h(px(6.)).rounded_full().bg(rgb(if model.disconnected { colors.muted } else if self.config_error.is_some() || model.error.is_some() { colors.property } else { 0x6d9668 }))}/>
                     <span>{status}</span>
-                    <button id="disconnect" style={|s| s.h_full().px(px(5.)).hover(|s| s.text_color(rgb(colors.ink)))} onclick={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
+                    <button id="disconnect" style={|s| s.h_full().px(px(5.)).hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
                 </div>
                 if self.show_targets {
                     <section id="target-menu" class="flex flex-col p-1 border" style={|s| s.absolute().top(px(32.)).right(px(6.)).w(px(490.)).max_w_full().max_h(px(220.)).overflow_y_scroll().bg(rgb(colors.background)).border_color(rgb(colors.line)).shadow_lg()}>
                         for instance in &model.instances {
-                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2" style={|s| s.justify_start().text_size(px(11.)).hover(|s| s.bg(rgb(colors.hover)))} onclick={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
+                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2" style={|s| s.justify_start().text_size(px(11.)).hover(|s| s.bg(rgb(colors.hover)))} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
                         }
                         if model.instances.is_empty() { <p class="p-3">"No runtimes advertised by this broker."</p> }
                     </section>

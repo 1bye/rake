@@ -66,7 +66,7 @@ pub use gpui;
 ///         <section focus={&focus} key-context="Editor" tab-navigation={true}
 ///             on:Save={|_: &Save, _, _| {}}>
 ///             <button disabled={busy} aria-keyshortcuts="Control+S"
-///                 onclick={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
+///                 on:click={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
 ///                 "Save"
 ///             </button>
 ///         </section>
@@ -210,6 +210,28 @@ pub mod __private {
         entity as view_entity, focus as view_focus, image as view_image,
         tab_index as view_tab_index, tab_navigation as view_tab_navigation,
     };
+
+    /// Deprecated macro event aliases; referenced at the authored attribute span.
+    #[cfg(feature = "experimental-view")]
+    pub mod view_legacy {
+        #[deprecated(note = "use on:click")]
+        pub const ONCLICK: () = ();
+
+        #[deprecated(note = "use on:key-down")]
+        pub const ONKEYDOWN: () = ();
+
+        #[deprecated(note = "use on:key-up")]
+        pub const ONKEYUP: () = ();
+
+        #[deprecated(note = "use on:mouse-move")]
+        pub const ONMOUSEMOVE: () = ();
+
+        #[deprecated(note = "use on:mouse-down")]
+        pub const ONMOUSEDOWN: () = ();
+
+        #[deprecated(note = "use on:mouse-up")]
+        pub const ONMOUSEUP: () = ();
+    }
 
     pub use tracing;
     #[cfg(target_family = "wasm")]

@@ -19,7 +19,7 @@ impl Render for Counter {
                 <h1>"Counter"</h1>
                 <p>{format!("Count: {}", self.count)}</p>
                 <button id="increment" class="px-4 py-2 rounded-md"
-                    onclick={cx.listener(|this, _, _, cx| {
+                    on:click={cx.listener(|this, _, _, cx| {
                         this.count += 1;
                         cx.notify();
                     })}>
@@ -70,7 +70,7 @@ same composed inline text as paragraphs.
 Attribute values are quoted strings or `{Rust expressions}`. The supported built-in
 attributes are `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`,
 `focus`, `scroll`, `key-context`, `tab-navigation`, typed `on:Action` handlers,
-`disabled` on buttons, and `src`/`alt` on images. Containers and buttons also accept
+`disabled` on buttons, `tooltip`, and `src`/`alt` on images. Containers and buttons also accept
 typed `role`, `aria-keyshortcuts`, and `aria-expanded`. `alt` maps to the image's accessible
 label; `aria-label` can override it when supplied after `alt`.
 An empty image label (`alt=""`) marks it as decorative and omits its accessibility role.
@@ -122,12 +122,34 @@ Tab handler apply after authored styles and handlers, irrespective of attribute
 order. Other attribute expressions run once, before children, in written order;
 macro-authored button event handlers are only constructed when enabled.
 
-| Attribute | Callback event |
+| Attribute | Callback event / value |
 | --- | --- |
-| `onclick` | `gpui::ClickEvent` |
-| `onkeydown`, `onkeyup` | `gpui::KeyDownEvent`, `gpui::KeyUpEvent` |
-| `onmousemove` | `gpui::MouseMoveEvent` |
-| `onmousedown`, `onmouseup` | `gpui::MouseDownEvent`, `gpui::MouseUpEvent`, left button |
+| `on:click` | `gpui::ClickEvent` |
+| `on:key-down`, `on:key-up` | `gpui::KeyDownEvent`, `gpui::KeyUpEvent` |
+| `on:mouse-move` | `gpui::MouseMoveEvent` |
+| `on:mouse-down`, `on:mouse-up` | Left-button `MouseDownEvent` / `MouseUpEvent` |
+| `on:right-mouse-down`, `on:right-mouse-up` | Right-button events |
+| `on:middle-mouse-down`, `on:middle-mouse-up` | Middle-button events |
+| `on:any-mouse-down` | `MouseDownEvent` for any button |
+| `on:mouse-down-out` | Any-button mouse down outside the element, during GPUI capture |
+| `on:mouse-up-out` | Left-button mouse up outside the element, during GPUI capture |
+| `on:hover` | `&bool` indicating hover enter/leave |
+| `on:scroll-wheel` | `gpui::ScrollWheelEvent` |
+| `on:drop` | Typed payload callback; annotate its first parameter, e.g. `|value: &Document, _, _| ...` |
+| `on:drag` | `(payload, constructor)`; constructor takes `(&T, Point<Pixels>, &mut Window, &mut App)` and returns `Entity<V>` |
+| `tooltip` | GPUI builder `Fn(&mut Window, &mut App) -> AnyView` |
+
+Lowercase `on:*` names select built-in events. A path ending in an uppercase
+identifier remains a typed action (`on:Save`, `on:crate::actions::Save`). Unknown
+events report the supported names. A drag tuple evaluates once when its handler
+is constructed; payload ownership follows GPUI. Explicit callback parameter types
+or a named constructor function help inference when building the tuple separately.
+
+The legacy aliases `onclick`, `onkeydown`, `onkeyup`, `onmousemove`, `onmousedown`
+and `onmouseup` remain accepted with deprecation warnings pointing at the
+attribute. Migrate them to the corresponding canonical `on:*` names. Disabled
+buttons skip every macro-authored event/action builder, including drag/drop and
+hover. `tooltip` remains available when disabled, so controls can explain why.
 
 Callbacks receive `(event, window, app)` as in GPUI; use `cx.listener(...)` for
 access to view state. Events retain GPUI propagation and default-prevention
@@ -239,7 +261,7 @@ fn toolbar(focus: &FocusHandle, saving: bool) -> impl IntoElement {
             <button disabled={saving} aria-label="Save document"
                 aria-keyshortcuts="Control+S"
                 style={|s| s.focus_visible(|s| s.border_2())}
-                onclick={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
+                on:click={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
                 "Save"
             </button>
         </section>
@@ -388,7 +410,7 @@ let _card = rake::view! {
         header={rake::view! { <h2>"Profile"</h2> }.into_any_element()}
         footer={Some(rake::view! { <p>"Saved locally"</p> }.into_any_element())}>
         <p>"Your profile information."</p>
-        <button onclick={|_, _, _| {}}>"Edit"</button>
+        <button on:click={|_, _, _| {}}>"Edit"</button>
     </Card>
 };
 ```

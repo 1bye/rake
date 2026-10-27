@@ -89,7 +89,7 @@ let body = rake::view! {
     <section class="p-4">
         <OverlayAnchor state={anchor.clone()}>
             <button aria-expanded={actions.is_open()}
-                onclick={move |_, window, cx| { open_actions.open(window, cx); }}>
+                on:click={move |_, window, cx| { open_actions.open(window, cx); }}>
                 "More actions"
             </button>
         </OverlayAnchor>
@@ -100,7 +100,7 @@ let open_documents = documents.clone();
 rake::view! {
     <OverlayHost state={overlays} body={body}>
         <Popover state={actions} anchor={anchor}>
-            <button onclick={move |_, window, cx| { open_documents.open(window, cx); }}>
+            <button on:click={move |_, window, cx| { open_documents.open(window, cx); }}>
                 "Browse documents"
             </button>
         </Popover>

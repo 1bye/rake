@@ -27,7 +27,7 @@ fn accepts_nested_markup_and_rust_control_flow() {
                 }
             }
             <img src={source()} alt="Preview" />
-            <button onclick={cx.listener(|this, _, _, cx| this.save(cx))}>"Save"</button>
+            <button on:click={cx.listener(|this, _, _, cx| this.save(cx))}>"Save"</button>
         </section>
     "#,
     )
@@ -172,7 +172,7 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
             on:Save={cx.listener(Self::save)}
             on:crate::actions::Cancel={cx.listener(Self::cancel)}>
             <button disabled={self.busy} tabindex={-1} focus={&self.save_focus}
-                aria-keyshortcuts="Control+S" onclick={|_, _, _| {}}>"Save"</button>
+                aria-keyshortcuts="Control+S" on:click={|_, _, _| {}}>"Save"</button>
             <div role={Role::Status}/>
         </section>
     "#,
@@ -284,14 +284,15 @@ fn expansion_snapshots() {
         ("containers", r#"<section id="root" class="flex flex-col"><div/><span>{label}</span></section>"#.to_owned()),
         ("paragraph", r#"<p wrap={true} ellipsis={true} max-lines={2}>"Hi "<strong>{name}</strong><em>"!"</em><br/><span class="underline" style={highlight}>"More"</span></p>"#.to_owned()),
         ("headings", r#"<div><h1>"Title"</h1><h2>"Count: "{count.to_string()}</h2><h3/><h4/><h5/><h6/></div>"#.to_owned()),
-        ("button", r#"<button disabled={busy} focus={&self.focus} tabindex={-1} onclick={handler} style={style}>"Save"</button>"#.to_owned()),
+        ("button", r#"<button disabled={busy} focus={&self.focus} tabindex={-1} on:click={handler} style={style}>"Save"</button>"#.to_owned()),
         ("image", r#"<img id="preview" src={path} alt="Preview" style={style}/>"#.to_owned()),
         ("entity", r#"<view entity={&self.editor}/>"#.to_owned()),
         ("component", r#"<ui::Badge id={id} label={label} highlighted={true}/>"#.to_owned()),
         ("slots", r#"<Card id={id} header={header} footer={None}><p>"Body"</p>{widget}</Card>"#.to_owned()),
         ("branches", r#"<div>if let Some(value) = selected { <p>{value}</p> } else if busy { "Loading" } else { <span/> }</div>"#.to_owned()),
         ("loops", r#"<ul>for row in rows { if row.visible { <li id={row.id}>{row.label}</li> } }</ul>"#.to_owned()),
-        ("actions", r#"<section key-context="Editor" on:Save={save} on:crate::actions::Cancel={cancel}><button onclick={click}>"Save"</button></section>"#.to_owned()),
+        ("actions", r#"<section key-context="Editor" on:Save={save} on:crate::actions::Cancel={cancel}><button on:click={click}>"Save"</button></section>"#.to_owned()),
+        ("events", r#"<div on:click={handler} on:key-down={handler} on:key-up={handler} on:mouse-move={handler} on:mouse-down={handler} on:mouse-up={handler} on:right-mouse-down={handler} on:right-mouse-up={handler} on:middle-mouse-down={handler} on:middle-mouse-up={handler} on:any-mouse-down={handler} on:mouse-down-out={handler} on:mouse-up-out={handler} on:hover={handler} on:scroll-wheel={handler} on:drop={handler} on:drag={(value, constructor)} tooltip={help}/>"#.to_owned()),
         ("conditional_classes", r#"<div class="relative" class:shrink-0={fixed} class:font-bold={selected}/>"#.to_owned()),
         ("navigation", r#"<section focus={&self.focus} scroll={&self.scroll} tab-navigation={true}><button tabindex={0}/></section>"#.to_owned()),
     ];

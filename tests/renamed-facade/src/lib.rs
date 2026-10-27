@@ -33,7 +33,7 @@ pub fn component_markup() -> impl gpui::IntoElement {
     framework::view! {
         <self::ComponentPanel id={"panel".into()} title={"Components".into()} footer={None}>
             <p>"A typed child"</p>
-            <button onclick={|_, _, _| {}}>"Accept"</button>
+            <button on:click={|_, _, _| {}}>"Accept"</button>
         </self::ComponentPanel>
     }
 }
@@ -66,7 +66,7 @@ pub fn overlay_markup(
 
     let body = framework::view! {
         <OverlayAnchor state={anchor.clone()}>
-            <button onclick={move |_, window, cx| { open_popup.open(window, cx); }}>"Actions"</button>
+            <button on:click={move |_, window, cx| { open_popup.open(window, cx); }}>"Actions"</button>
         </OverlayAnchor>
     }.into_any_element();
 
@@ -96,7 +96,7 @@ pub fn keyboard_markup(focus: &gpui::FocusHandle, disabled: bool) -> impl gpui::
         <section focus={&focus} key-context="Renamed" tab-navigation={true}
             role={gpui::accesskit::Role::Group} on:Accept={|_, _, _| {}}>
             <button disabled={disabled} tabindex={0} aria-keyshortcuts="Control+Enter"
-                onclick={|_, window, cx| window.dispatch_action(Box::new(Accept), cx)}>
+                on:click={|_, window, cx| window.dispatch_action(Box::new(Accept), cx)}>
                 "Accept"
             </button>
         </section>
@@ -111,7 +111,7 @@ pub fn markup() -> impl framework::gpui::IntoElement {
             for index in 0..2usize {
                 <p id={("row", index)}>{format!("Row {index}")}</p>
             }
-            <button onclick={|_, _, _| {}}>"Save"</button>
+            <button on:click={|_, _, _| {}}>"Save"</button>
         </div>
     }
 }

@@ -172,7 +172,14 @@ fn parse_attribute(input: ParseStream<'_>) -> syn::Result<Attribute> {
             let path = input.call(syn::Path::parse_mod_style)?;
 
             name = format!("on:{}", display_name(&path));
-            action = Some(path);
+
+            if path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident.to_string().starts_with(char::is_uppercase))
+            {
+                action = Some(path);
+            }
         } else {
             return Err(syn::Error::new(
                 span,
@@ -539,6 +546,19 @@ impl Element {
                 continue;
             }
 
+            if events::is_event(&attribute.name) {
+                let method = events::expand(attribute, rake, index)?;
+
+                let method = if is_button {
+                    quote!(.when(!#disabled, |#mapped| #mapped #method))
+                } else {
+                    method
+                };
+
+                builder.extend(quote_spanned!(attribute.span=> #method));
+                continue;
+            }
+
             if let Some(class) = attribute.name.strip_prefix("class:") {
                 let methods = utility_methods(class, attribute.span, rake)?;
 
@@ -577,12 +597,7 @@ impl Element {
                 }
                 "class" => class_methods(value, rake)?,
                 "style" => quote!(.map(#value)),
-                "onclick" => quote!(.on_click(#value)),
-                "onkeydown" => quote!(.on_key_down(#value)),
-                "onkeyup" => quote!(.on_key_up(#value)),
-                "onmousemove" => quote!(.on_mouse_move(#value)),
-                "onmousedown" => quote!(.on_mouse_down(#rake::gpui::MouseButton::Left, #value)),
-                "onmouseup" => quote!(.on_mouse_up(#rake::gpui::MouseButton::Left, #value)),
+                "tooltip" => quote!(.tooltip(#value)),
                 _ => {
                     return Err(syn::Error::new(
                         attribute.span,
@@ -780,6 +795,7 @@ fn expand_text_child(
 mod classes;
 mod component;
 mod diagnostics;
+mod events;
 mod paragraph;
 mod tag;
 

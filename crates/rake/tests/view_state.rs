@@ -26,6 +26,9 @@ mod overlays;
 #[path = "view_state/lists.rs"]
 mod lists;
 
+#[path = "view_state/events.rs"]
+mod events;
+
 struct Draft {
     text: String,
     selection: Range<usize>,

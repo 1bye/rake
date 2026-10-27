@@ -1,0 +1,5 @@
+error: unknown built-in event `unknown`; supported events: click, key-down, key-up, mouse-move, mouse-down, mouse-up, right-mouse-down, right-mouse-up, middle-mouse-down, middle-mouse-up, any-mouse-down, mouse-down-out, mouse-up-out, hover, scroll-wheel, drop, drag
+ --> tests/ui/view/unknown_event.rs:2:32
+  |
+2 |     let _ = rake::view! { <div on:unknown={|_, _, _| {}}/> };
+  |                                ^^

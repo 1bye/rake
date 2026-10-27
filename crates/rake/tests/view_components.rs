@@ -32,7 +32,7 @@ impl RenderOnce for Badge {
         rake::view! {
             <button id={self.id} aria-label={self.label.clone()}
                 style={|s| s.opacity(if self.tone == Tone::Quiet { 0.5 } else { 1. })}
-                onclick={move |_, _, _| (self.on_activate)()}>
+                on:click={move |_, _, _| (self.on_activate)()}>
                 {self.label}
             </button>
         }

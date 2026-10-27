@@ -50,7 +50,7 @@ fn maps_headings_buttons_lists_and_images_to_accessibility_roles() {
     let heading = rake::view! { <h2 aria-label="Heading"/> };
 
     let button = rake::view! {
-        <button aria-expanded={false} onclick={|_, _, _| {}}>"Save"</button>
+        <button aria-expanded={false} on:click={|_, _, _| {}}>"Save"</button>
     };
 
     let list = rake::view! { <ul/> };
@@ -111,12 +111,12 @@ fn event_handlers_and_styles_use_gpui_types_without_a_caller_prelude() {
     let _view = rake::view! {
         <section class="grid grid-cols-2 p-2 font-medium">
             <button id="save" class="rounded border px-4 py-2 text-sm"
-                onclick={|event, _, _| { let _: &rake::gpui::ClickEvent = event; }}
-                onkeydown={|event, _, _| { let _: &rake::gpui::KeyDownEvent = event; }}
-                onkeyup={|_, _, _| {}}
-                onmousedown={|_, _, _| {}}
-                onmouseup={|_, _, _| {}}
-                onmousemove={|_, _, _| {}}>
+                on:click={|event, _, _| { let _: &rake::gpui::ClickEvent = event; }}
+                on:key-down={|event, _, _| { let _: &rake::gpui::KeyDownEvent = event; }}
+                on:key-up={|_, _, _| {}}
+                on:mouse-down={|_, _, _| {}}
+                on:mouse-up={|_, _, _| {}}
+                on:mouse-move={|_, _, _| {}}>
                 "Save"
             </button>
             <span>{__rake_view_element_0}</span>
@@ -199,7 +199,7 @@ fn disabled_buttons_expose_their_state_without_accessibility_activation_actions(
     let button = rake::view! {
         <button disabled={ { calls.set(calls.get() + 1); true } }
             aria-label="Save document" aria-description="Unavailable while saving"
-            aria-keyshortcuts="Control+S" onclick={|_, _, _| {}}>
+            aria-keyshortcuts="Control+S" on:click={|_, _, _| {}}>
             "Save"
         </button>
     };
@@ -252,4 +252,66 @@ fn conditional_classes_apply_once_in_attribute_order() {
         format!("{:?}", view.style()),
         format!("{:?}", expected.style())
     );
+}
+
+struct DragPreview;
+
+impl rake::gpui::Render for DragPreview {
+    fn render(
+        &mut self,
+        _: &mut rake::gpui::Window,
+        _: &mut rake::gpui::Context<Self>,
+    ) -> impl rake::gpui::IntoElement {
+        rake::gpui::Empty
+    }
+}
+
+fn drag_preview(
+    _: &usize,
+    _: rake::gpui::Point<rake::gpui::Pixels>,
+    _: &mut rake::gpui::Window,
+    cx: &mut rake::gpui::App,
+) -> rake::gpui::Entity<DragPreview> {
+    use rake::gpui::AppContext;
+
+    cx.new(|_| DragPreview)
+}
+
+#[test]
+fn every_canonical_event_compiles_against_the_gpui_signature() {
+    use rake::gpui::AppContext;
+
+    let _ = rake::view! {
+        <div on:click={|_, _, _| {}}
+            on:key-down={|_, _, _| {}} on:key-up={|_, _, _| {}}
+            on:mouse-move={|_, _, _| {}}
+            on:mouse-down={|_, _, _| {}} on:mouse-up={|_, _, _| {}}
+            on:right-mouse-down={|_, _, _| {}} on:right-mouse-up={|_, _, _| {}}
+            on:middle-mouse-down={|_, _, _| {}} on:middle-mouse-up={|_, _, _| {}}
+            on:any-mouse-down={|_, _, _| {}}
+            on:mouse-down-out={|_, _, _| {}} on:mouse-up-out={|_, _, _| {}}
+            on:hover={|_: &bool, _, _| {}} on:scroll-wheel={|_, _, _| {}}
+            on:drop={|_: &usize, _, _| {}}
+            on:drag={(4usize, drag_preview)}
+            tooltip={|_, cx| cx.new(|_| DragPreview).into()}/>
+    };
+}
+
+#[test]
+fn disabled_buttons_skip_new_event_builders_but_keep_tooltips() {
+    use rake::gpui::AppContext;
+
+    let seen = std::cell::RefCell::new(Vec::new());
+
+    let _ = rake::view! {
+        <button disabled={true}
+            on:drag={ { seen.borrow_mut().push("drag"); (4usize, drag_preview) } }
+            on:hover={ { seen.borrow_mut().push("hover"); |_, _, _| {} } }
+            on:scroll-wheel={ { seen.borrow_mut().push("scroll"); |_, _, _| {} } }
+            tooltip={ { seen.borrow_mut().push("tooltip"); |_, cx| cx.new(|_| DragPreview).into() } }>
+            "Disabled"
+        </button>
+    };
+
+    assert_eq!(*seen.borrow(), ["tooltip"]);
 }
