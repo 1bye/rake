@@ -4,7 +4,12 @@ use rake::App;
 use rake::gpui::prelude::*;
 use rake::gpui::{self, Context, Entity, FocusHandle, KeyBinding, ScrollHandle, Window, div, rgb};
 
+use rake::overlay::{
+    AnchorState, Dialog, OverlayAnchor, OverlayHost, OverlayHostState, OverlayState, Popover,
+};
+
 mod components;
+mod documents;
 
 gpui::actions!(
     counter,
@@ -62,6 +67,12 @@ struct Counter {
     locked: bool,
     focus: FocusHandle,
     history_scroll: ScrollHandle,
+    overlays: OverlayHostState,
+    actions_anchor: AnchorState,
+    actions_popup: OverlayState,
+    documents_dialog: OverlayState,
+    documents: Entity<documents::Documents>,
+    actions_hint: Entity<components::ActionsHint>,
 }
 
 impl Counter {
@@ -123,8 +134,8 @@ impl Counter {
     }
 }
 
-impl Render for Counter {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Counter {
+    fn content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let reset_disabled = self.locked || self.count == 0;
 
         let increment_shortcut = if cfg!(target_os = "macos") {
@@ -207,6 +218,20 @@ impl Render for Counter {
                             onclick={|_, window, cx| window.dispatch_action(Box::new(ToggleHistory), cx)}>
                             {if self.show_history { "Hide history" } else { "Show history" }}
                         </button>
+                        <OverlayAnchor state={self.actions_anchor.clone()}>
+                            <button id="actions" aria-label="More actions" aria-expanded={self.actions_popup.is_open()}
+                                aria-description="Open actions or browse a virtualized list of 10,000 documents"
+                                class="px-4 py-2 rounded-md border"
+                                style={|s| {
+                                    let hint = self.actions_hint.clone();
+
+                                    s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))
+                                        .tooltip(move |_, _| hint.clone().into())
+                                }}
+                                onclick={cx.listener(|this, _, window, cx| { this.actions_popup.open(window, cx); })}>
+                                "More actions"
+                            </button>
+                        </OverlayAnchor>
                         <button id="toggle-lock" class="px-4 py-2 rounded-md border"
                             aria-label={if self.locked { "Unlock counter" } else { "Lock counter" }}
                             aria-keyshortcuts="L"
@@ -255,6 +280,50 @@ impl Render for Counter {
     }
 }
 
+impl Render for Counter {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = self.content(cx).into_any_element();
+
+        let footer = rake::view! {
+            <div class="flex flex-row gap-2">
+                <button class="px-3 py-2 rounded-md border"
+                    style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
+                    onclick={cx.listener(|this, _, window, cx| {
+                        this.documents.update(cx, |documents, cx| documents.jump(4_999, window, cx));
+                    })}>"Jump to 5,000"</button>
+                <button class="px-3 py-2 rounded-md border"
+                    style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
+                    onclick={cx.listener(|this, _, window, cx| { this.documents_dialog.close(window, cx); })}>"Close"</button>
+            </div>
+        }.into_any_element();
+
+        rake::view! {
+            <OverlayHost state={self.overlays.clone()} body={body}>
+                <Popover state={self.actions_popup.clone()} anchor={self.actions_anchor.clone()}>
+                    <p class="font-semibold">"Document actions"</p>
+                    <button disabled={self.locked} class="px-3 py-2 rounded-md"
+                        style={|s| s.bg(rgb(0x365849)).opacity(if self.locked { 0.4 } else { 1. }).focus_visible(|s| s.bg(rgb(0x526857)))}
+                        onclick={cx.listener(|this, _, window, cx| {
+                            this.actions_popup.close(window, cx);
+                            this.increment(&Increment, window, cx);
+                        })}>"Increment counter"</button>
+                    <button class="px-3 py-2 rounded-md border"
+                        style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
+                        onclick={cx.listener(|this, _, window, cx| { this.documents_dialog.open(window, cx); })}>
+                        "Browse 10,000 documents"
+                    </button>
+                    <button class="px-3 py-2 rounded-md"
+                        style={|s| s.focus_visible(|s| s.bg(rgb(0x365849)))}
+                        onclick={cx.listener(|this, _, window, cx| { this.actions_popup.close(window, cx); })}>"Close actions"</button>
+                </Popover>
+                <Dialog state={self.documents_dialog.clone()} title={"Document browser".into()} footer={Some(footer)}>
+                    <view entity={&self.documents}/>
+                </Dialog>
+            </OverlayHost>
+        }
+    }
+}
+
 /// Configures the same macro-authored view on native and browser hosts.
 pub fn application() -> App {
     App::new("com.example.rake.view").root(|_, window, cx| {
@@ -270,14 +339,24 @@ pub fn application() -> App {
 
         window.focus(&focus, cx);
 
-        cx.new(|_| Counter {
-            count: 0,
-            history: Vec::new(),
-            show_history: true,
-            newest_first: true,
-            locked: false,
-            focus,
-            history_scroll: ScrollHandle::new(),
+        cx.new(|cx| {
+            let overlays = OverlayHostState::new(cx);
+
+            Counter {
+                actions_anchor: overlays.anchor(),
+                actions_popup: overlays.popover(cx),
+                documents_dialog: overlays.dialog(cx),
+                documents: cx.new(|cx| documents::Documents::new(cx)),
+                actions_hint: cx.new(|_| components::ActionsHint),
+                overlays,
+                count: 0,
+                history: Vec::new(),
+                show_history: true,
+                newest_first: true,
+                locked: false,
+                focus,
+                history_scroll: ScrollHandle::new(),
+            }
         })
         .into()
     })

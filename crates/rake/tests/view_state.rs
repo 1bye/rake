@@ -20,6 +20,12 @@ mod components;
 #[path = "view_state/paragraphs.rs"]
 mod paragraphs;
 
+#[path = "view_state/overlays.rs"]
+mod overlays;
+
+#[path = "view_state/lists.rs"]
+mod lists;
+
 struct Draft {
     text: String,
     selection: Range<usize>,

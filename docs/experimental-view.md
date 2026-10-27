@@ -453,11 +453,20 @@ while absent from the rendered tree; dropping/replacing the owner's handle ends
 that lifetime normally. There is no global component cache or additional state
 runtime.
 
+## Scrolling, virtual lists and overlays
+
+Retained scroll handles work through `scroll`; GPUI virtual lists embed through
+`{expression}`. The experimental `rake::overlay` module adds `OverlayHost`,
+`OverlayAnchor`, `Popover` and `Dialog` as ordinary typed components, with retained
+state, live anchor geometry, stacked dismissal and modal focus containment. See
+[scrolling and overlays](experimental-overlays.md) for ownership, snippets and limits.
+The example opens a retained 10,000-document virtual list from a nested dialog.
+
 ## Current limits
 
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
 markup are compile errors. This version does not implement input controls,
-links/forms, automatic shortcut labels, focus traps, relationships such as
+links/forms, automatic shortcut labels, general-purpose focus traps outside the overlay controls, relationships such as
 `aria-labelledby`, or a complete ARIA attribute vocabulary, selectable text or inline links,
 CSS selectors/cascade, HTML whitespace/entity
 parsing, fragments, dedicated slot syntax, automatic signal tracking, or hot reload

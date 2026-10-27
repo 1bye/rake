@@ -42,3 +42,16 @@ impl RenderOnce for Card {
         }
     }
 }
+
+/// Stateless help content retained by the example's owner.
+pub(super) struct ActionsHint;
+
+impl Render for ActionsHint {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        rake::view! {
+            <p class="px-3 py-2 rounded-md text-sm" style={|s| s.bg(rgb(0x365849)).text_color(rgb(0xf0f4e8))}>
+                "Actions open an anchored popover; the document browser keeps its selection and virtual-list scroll."
+            </p>
+        }
+    }
+}

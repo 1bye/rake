@@ -52,6 +52,36 @@ pub fn paragraph_markup(labels: &[&str]) -> impl gpui::IntoElement {
     }
 }
 
+/// Overlay components are ordinary typed tags through a renamed facade, too.
+pub fn overlay_markup(
+    state: framework::overlay::OverlayHostState,
+    anchor: framework::overlay::AnchorState,
+    popup: framework::overlay::OverlayState,
+    dialog: framework::overlay::OverlayState,
+) -> impl gpui::IntoElement {
+    use framework::overlay::{Dialog, OverlayAnchor, OverlayHost, Popover};
+    use gpui::IntoElement;
+
+    let open_popup = popup.clone();
+
+    let body = framework::view! {
+        <OverlayAnchor state={anchor.clone()}>
+            <button onclick={move |_, window, cx| { open_popup.open(window, cx); }}>"Actions"</button>
+        </OverlayAnchor>
+    }.into_any_element();
+
+    framework::view! {
+        <OverlayHost state={state} body={body}>
+            <Popover state={popup} anchor={anchor}>
+                <p>"Controls"</p>
+            </Popover>
+            <Dialog state={dialog} title={"Documents".into()} footer={None}>
+                <p>"Retained content can be mounted here."</p>
+            </Dialog>
+        </OverlayHost>
+    }
+}
+
 gpui::actions!(
     renamed_view,
     [

@@ -21,6 +21,9 @@ mod application;
 #[cfg(feature = "experimental-view")]
 mod view;
 
+#[cfg(feature = "experimental-view")]
+pub mod overlay;
+
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError};
 #[cfg(feature = "gpui")]
