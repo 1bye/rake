@@ -57,7 +57,7 @@ impl Children {
 
             if let Some(first) = self.ids.insert(id.clone(), source) {
                 panic!(
-                    "rake::view! duplicate sibling id {id:?}: first at {first}, repeated at {source}; use stable, unique data IDs"
+                    "rake::view! duplicate sibling id {id:?}: first at {first}, repeated at {source}; use stable, unique data IDs; if this comes from a helper rendered more than once, pass a distinct root id into it"
                 );
             }
         }

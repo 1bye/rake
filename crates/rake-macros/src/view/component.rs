@@ -3,7 +3,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 
-use super::{Element, expand_children};
+use super::{Element, expand_children_into};
 
 impl Element {
     pub(super) fn expand_component(
@@ -52,7 +52,7 @@ impl Element {
             span = Span::mixed_site()
         );
 
-        let body = expand_children(&self.children, &children, &siblings, rake, next)?;
+        let body = expand_children_into(&self.children, &children, &siblings, rake, next)?;
 
         // Rust evaluates explicit properties before the children field, exactly once.
         Ok(quote!(#path {
