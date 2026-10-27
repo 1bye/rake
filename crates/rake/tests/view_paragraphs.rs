@@ -126,3 +126,67 @@ fn paragraph_and_heading_match_arms_share_the_same_text_composition() {
         <p>match selected { Some(name) => { {name} }, None => { "guest" } }</p>
     };
 }
+
+#[test]
+fn unquoted_text_composes_with_inline_markup_expressions_and_control_flow() {
+    let name = "Ada";
+    let selected = Some("friend");
+
+    let heading = rake::view! {
+        <h2>
+            Hello, <strong>{name}</strong>!<br/>
+            Welcome
+            back, {name}.
+            if true { <em> Good</em> } else { Unreachable }
+            match selected { Some(label) => { <span>{label}</span> } _ => { guest } }
+            for word in ["one", "two"] { <span>{word}</span> }
+        </h2>
+    };
+
+    let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut node);
+
+    assert_eq!(
+        node.label(),
+        Some("Hello, Ada!\nWelcome back, Ada. Goodfriendonetwo")
+    );
+}
+
+#[test]
+fn unquoted_button_text_gets_an_accessible_label_and_quoted_spacing_stays_exact() {
+    let button = rake::view! { <button>Save changes</button> };
+    let heading = rake::view! { <h2>"  exact   spacing  "</h2> };
+    let mut button_info = gpui::accesskit::Node::new(button.a11y_role().unwrap());
+    let mut heading_info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    button.write_a11y_info(&mut button_info);
+    heading.write_a11y_info(&mut heading_info);
+
+    assert_eq!(button_info.label(), Some("Save changes"));
+    assert_eq!(heading_info.label(), Some("  exact   spacing  "));
+}
+
+#[test]
+fn text_source_locations_survive_macro_rules_forwarding() {
+    macro_rules! heading {
+        ($($body:tt)*) => { rake::view! { <h2>$($body)*</h2> } };
+    }
+
+    macro_rules! literal_heading {
+        ($text:literal) => {
+            rake::view! { <h2>$text</h2> }
+        };
+    }
+
+    let heading = heading!(Hello, world!);
+    let quoted = literal_heading!("  exact   spacing  ");
+    let mut heading_info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+    let mut quoted_info = gpui::accesskit::Node::new(quoted.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut heading_info);
+    quoted.write_a11y_info(&mut quoted_info);
+
+    assert_eq!(heading_info.label(), Some("Hello, world!"));
+    assert_eq!(quoted_info.label(), Some("  exact   spacing  "));
+}

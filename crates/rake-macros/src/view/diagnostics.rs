@@ -5,7 +5,7 @@ use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
 use super::tag::{HEADING_CONTENT, PARAGRAPH_CONTENT, Tag};
-use super::{Attribute, Diagnostics, Element, Node, View, require_loop_ids};
+use super::{Attribute, AttributeValue, Diagnostics, Element, Node, View, require_loop_ids};
 
 impl View {
     pub(crate) fn expand_resilient(mut self, rake: &TokenStream) -> syn::Result<TokenStream> {
@@ -57,6 +57,12 @@ impl Element {
 
         for error in self.parse_errors.drain(..) {
             errors.push(error);
+        }
+
+        for attribute in &mut self.attributes {
+            if let AttributeValue::Markup(element) = &mut attribute.value {
+                element.recover(rake, None, errors);
+            }
         }
 
         let original = Self {
@@ -183,7 +189,7 @@ impl Element {
                         name: (*name).into(),
                         action: None,
                         span: self.tag.span(),
-                        value: syn::parse_quote!(""),
+                        value: AttributeValue::Expression(syn::parse_quote!("")),
                     });
 
                     probe.attributes.push(value);

@@ -155,44 +155,41 @@ impl Counter {
                 on:ToggleLocked={cx.listener(Self::toggle_locked)}
                 style={|s| s.bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8))}>
                 <components::Card id={"counter-card".into()}
-                    header={rake::view! {
+                    header={
                         <div class="flex flex-col gap-2">
-                            <h1>"HTML-like views. Native GPUI."</h1>
+                            <h1>HTML-like views. Native GPUI.</h1>
                             <p class="text-sm">
-                                <strong>"Typed components."</strong>" Retained state. "<em>"Native actions."</em>
+                                <strong>Typed components.</strong> Retained state. <em>Native actions.</em>
                             </p>
                         </div>
-                    }.into_any_element()}
+                    }
                     footer={Some(rake::view! {
-                        <p class="text-xs">"Card header and footer are typed slots; its body contains retained history views."</p>
+                        <p class="text-xs">Card header and footer are typed slots; its body contains retained history views.</p>
                     }.into_any_element())}>
                     <components::Badge id={"editing-status".into()}
                         label={if self.locked { "Locked".into() } else { "Editing enabled".into() }}
                         highlighted={self.locked}/>
-                    <p class="text-3xl font-bold">{format!("Count: {}", self.count)}</p>
+                    <p class="text-3xl font-bold">Count: {self.count.to_string()}</p>
 
                     if self.locked {
-                        <p>"Counter locked. Increment and Reset are disabled."</p>
+                        <p>Counter locked. Increment and Reset are disabled.</p>
                     } else if self.count == 0 {
-                        <p>"Click Increment to get started."</p>
+                        <p>Click Increment to get started.</p>
                     } else {
-                        <p>{format!("You have counted {} times.", self.count)}</p>
+                        <p>You have counted {self.count.to_string()} times.</p>
                     }
 
                     <p class="text-sm" wrap={true} max-lines={2} ellipsis={true}>
-                        <strong>"Rich text preview. "</strong>
-                        "Count "
-                        <span style={gpui::HighlightStyle::color(gpui::rgb_to_hsla(rgb(0xb9dcbd)))}>
+                        <strong>Rich text preview.</strong> Count <span
+                            style={gpui::HighlightStyle::color(gpui::rgb_to_hsla(rgb(0xb9dcbd)))}>
                             {self.count.to_string()}
-                        </span>
-                        ": styled runs wrap together in one paragraph, including "
-                        <em>"italic text"</em>
-                        " and Unicode such as café, 你好 and 🙂. This preview stops at two lines, "
-                        "while the complete text remains available to accessibility. More content demonstrates the ellipsis."
+                        </span>: styled runs wrap together in one paragraph, including <em>italic text</em> and Unicode such as café, 你好 and {"🙂"}.
+                        This preview stops at two lines, while the complete text remains available to accessibility.
+                        More content demonstrates the ellipsis.
                     </p>
                     <p class="text-xs" wrap={false} ellipsis={true}>
-                        <span class="font-semibold">"Single-line title: "</span>
-                        "A deliberately long document title that demonstrates truncation without splitting the text into separate layout elements or cutting through UTF-8 characters."
+                        <span class="font-semibold">Single-line title: </span>
+                        A deliberately long document title that demonstrates truncation without splitting the text into separate layout elements or cutting through UTF-8 characters.
                     </p>
 
                     <div class="flex flex-row flex-wrap gap-2">
@@ -202,21 +199,21 @@ impl Counter {
                             style={|s| s.bg(rgb(0x365849)).opacity(if self.locked { 0.4 } else { 1. })
                                 .focus_visible(|s| s.bg(rgb(0x46715e)))}
                             on:click={|_, window, cx| window.dispatch_action(Box::new(Increment), cx)}>
-                            "Increment"
+                            Increment
                         </button>
                         <button id="reset" disabled={reset_disabled} aria-keyshortcuts="Escape"
                             class="px-4 py-2 rounded-md border"
                             style={|s| s.border_color(rgb(0x61717c)).opacity(if reset_disabled { 0.4 } else { 1. })
                                 .focus_visible(|s| s.bg(rgb(0x365849)))}
                             on:click={|_, window, cx| window.dispatch_action(Box::new(Reset), cx)}>
-                            "Reset"
+                            Reset
                         </button>
                         <button id="toggle-history" class="px-4 py-2 rounded-md border"
                             aria-label={if self.show_history { "Hide history" } else { "Show history" }}
                             aria-expanded={self.show_history} aria-keyshortcuts="H"
                             style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
                             on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleHistory), cx)}>
-                            {if self.show_history { "Hide history" } else { "Show history" }}
+                            if self.show_history { Hide history } else { Show history }
                         </button>
                         <OverlayAnchor state={self.actions_anchor.clone()}>
                             <button id="actions" aria-label="More actions" aria-expanded={self.actions_popup.is_open()}
@@ -229,7 +226,7 @@ impl Counter {
                                         .tooltip(move |_, _| hint.clone().into())
                                 }}
                                 on:click={cx.listener(|this, _, window, cx| { this.actions_popup.open(window, cx); })}>
-                                "More actions"
+                                More actions
                             </button>
                         </OverlayAnchor>
                         <button id="toggle-lock" class="px-4 py-2 rounded-md border"
@@ -237,7 +234,7 @@ impl Counter {
                             aria-keyshortcuts="L"
                             style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
                             on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleLocked), cx)}>
-                            {if self.locked { "Unlock counter" } else { "Lock counter" }}
+                            if self.locked { Unlock counter } else { Lock counter }
                         </button>
                     </div>
                     <p class="text-xs">"⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock"</p>
@@ -245,18 +242,18 @@ impl Counter {
                     if self.show_history {
                         <section class="flex flex-col gap-2">
                             <div class="flex flex-row items-center justify-between">
-                                <h2 class="text-lg">"Recent counts"</h2>
+                                <h2 class="text-lg">Recent counts</h2>
                                 <button id="reverse-history" disabled={self.history.len() < 2}
                                     aria-keyshortcuts="R" class="text-sm px-3 py-1 rounded-md border"
                                     style={|s| s.border_color(rgb(0x61717c)).opacity(if self.history.len() < 2 { 0.4 } else { 1. })
                                         .focus_visible(|s| s.bg(rgb(0x365849)))}
                                     on:click={|_, window, cx| window.dispatch_action(Box::new(ReverseHistory), cx)}>
-                                    "Reverse order"
+                                    Reverse order
                                 </button>
                             </div>
-                            <p class="text-xs">"Click a row, then press R: its state and focus follow it. B activates the focused row."</p>
+                            <p class="text-xs">Click a row, then press R: its state and focus follow it. B activates the focused row.</p>
                             if self.history.is_empty() {
-                                <p>"No entries yet."</p>
+                                <p>No entries yet.</p>
                             }
                             <ul class="flex flex-col gap-1" scroll={&self.history_scroll}
                                 style={|s| s.max_h(gpui::px(150.)).overflow_y_scroll()}>
@@ -290,31 +287,31 @@ impl Render for Counter {
                     style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
                     on:click={cx.listener(|this, _, window, cx| {
                         this.documents.update(cx, |documents, cx| documents.jump(4_999, window, cx));
-                    })}>"Jump to 5,000"</button>
+                    })}>Jump to 5,000</button>
                 <button class="px-3 py-2 rounded-md border"
                     style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
-                    on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.close(window, cx); })}>"Close"</button>
+                    on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.close(window, cx); })}>Close</button>
             </div>
         }.into_any_element();
 
         rake::view! {
             <OverlayHost state={self.overlays.clone()} body={body}>
                 <Popover state={self.actions_popup.clone()} anchor={self.actions_anchor.clone()}>
-                    <p class="font-semibold">"Document actions"</p>
+                    <p class="font-semibold">Document actions</p>
                     <button disabled={self.locked} class="px-3 py-2 rounded-md"
                         style={|s| s.bg(rgb(0x365849)).opacity(if self.locked { 0.4 } else { 1. }).focus_visible(|s| s.bg(rgb(0x526857)))}
                         on:click={cx.listener(|this, _, window, cx| {
                             this.actions_popup.close(window, cx);
                             this.increment(&Increment, window, cx);
-                        })}>"Increment counter"</button>
+                        })}>Increment counter</button>
                     <button class="px-3 py-2 rounded-md border"
                         style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
                         on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.open(window, cx); })}>
-                        "Browse 10,000 documents"
+                        Browse 10,000 documents
                     </button>
                     <button class="px-3 py-2 rounded-md"
                         style={|s| s.focus_visible(|s| s.bg(rgb(0x365849)))}
-                        on:click={cx.listener(|this, _, window, cx| { this.actions_popup.close(window, cx); })}>"Close actions"</button>
+                        on:click={cx.listener(|this, _, window, cx| { this.actions_popup.close(window, cx); })}>Close actions</button>
                 </Popover>
                 <Dialog state={self.documents_dialog.clone()} title={"Document browser".into()} footer={Some(footer)}>
                     <view entity={&self.documents}/>

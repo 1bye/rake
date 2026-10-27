@@ -34,8 +34,9 @@ impl Render for Counter {
 ## Elements and values
 
 Each invocation returns one concrete GPUI element or component and requires exactly one root
-tag. Closing tags must match; empty elements can use `<div/>`. Text must be a Rust
-string literal (`"Hello"`) or a Rust expression (`{format!("Hello, {name}")}`).
+tag. Closing tags must match; empty elements can use `<div/>`. Text can be unquoted
+(`Hello world`), a Rust string literal (`"Hello"`), or a Rust expression
+(`{format!("Hello, {name}")}`).
 Literal text is not interpolated automatically. Rust comments work within markup.
 Outside paragraphs and headings, expressions may contain statements and must produce
 an `IntoElement` value. They can embed existing GPUI builders, `Entity` handles, or `RenderOnce` components;
@@ -230,8 +231,24 @@ follow-up outside this plan.
 text shaping system. End truncation measures the actual styled runs and font
 fallbacks, and cuts only at grapheme boundaries. The inline tags are `span`, `strong` (bold), `em` (italic),
 and `br` (newline). They do not create layout boxes or independent element IDs.
-Nested formatting inherits and combines. Spaces remain explicit in string
-literals; markup indentation adds no spaces, and HTML entities are not decoded.
+Nested formatting inherits and combines. Unquoted text preserves punctuation and
+collapses whitespace between words to one space. Same-line spaces next to that
+text are retained; leading/trailing multiline indentation is ignored. Gaps solely
+between tags or braced expressions add no text: write `{" "}` when a separator is
+needed. Quoted strings retain exact whitespace. HTML entities are not decoded.
+
+Unquoted text must tokenize as Rust: use quoted strings for emoji, apostrophes,
+arbitrary symbols, unmatched delimiters, or literal `<` and `{` characters.
+Rust comments are ignored. `if`, `for` and `match` followed by their control-flow
+syntax start control flow; quote such text when it should be displayed literally.
+For example:
+
+```rust
+let name = "Ada";
+let _ = rake::view! {
+    <h2>Hello, <strong>{name}</strong>!</h2>
+};
+```
 
 ```rust
 use rake::gpui::{self, rgb, rgb_to_hsla};
@@ -493,7 +510,7 @@ impl RenderOnce for Card {
 
 let _card = rake::view! {
     <Card id={"profile".into()}
-        header={rake::view! { <h2>"Profile"</h2> }.into_any_element()}
+        header={<h2>Profile</h2>}
         footer={Some(rake::view! { <p>"Saved locally"</p> }.into_any_element())}>
         <p>"Your profile information."</p>
         <button on:click={|_, _, _| {}}>"Edit"</button>
@@ -501,9 +518,18 @@ let _card = rake::view! {
 };
 ```
 
+A component property may contain one markup root, such as
+`header={<h2>Profile</h2>}`. The macro expands that root and converts it to
+`gpui::AnyElement`, so the property must accept `AnyElement`. This works with
+built-in tags, custom components and retained `<view>` roots, including nested
+markup properties. It adds no wrapper and evaluates the slot once in property
+order. Ordinary Rust expressions keep their existing types; optional slots still
+use `None` or `Some(rake::view! { ... }.into_any_element())`. Markup-valued
+properties are component-only.
+
 Properties map directly to Rust fields. Values have their declared types, with
 ordinary Rust moves, borrows, and visibility checks. Rust rejects missing, unknown,
-or incorrectly typed properties. There is no automatic `.into()`, cloning,
+or incorrectly typed properties. Expression properties have no automatic `.into()`, cloning,
 optional-property default, builder-method lookup, or property spreading. A quoted
 value is an `&'static str`; use `label={"Title".into()}` for `SharedString`.
 GPUI's `RenderOnce` requires `'static` components: own values or explicitly clone
@@ -619,8 +645,8 @@ Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
 markup are compile errors. This version does not implement input controls,
 links/forms, automatic shortcut labels, selectable text or interactive inline
 links, `aria-labelledby` and the complete ARIA vocabulary, general-purpose focus
-traps outside the overlay controls, CSS selectors/cascade, HTML whitespace/entity
-parsing, fragments, explicit generic arguments in component tags, dedicated slot
+traps outside the overlay controls, CSS selectors/cascade, HTML entity decoding,
+fragments, explicit generic arguments in component tags, dedicated slot
 syntax, automatic signal tracking, or markup hot reload. Inline text accepts a
 fixed set of styles and rejects conditional classes, events and IDs. SVG leaves
 use the documented restricted attribute set; wrap them for interaction and
@@ -673,7 +699,7 @@ checks also covered paragraph composition for nested bold/italic runs, dynamic
 colored text, Unicode, single- and two-line ellipses, and complete untruncated
 accessibility values.
 The later events, tooltips, SVGs, semantic containers, rules, composed headings,
-`match`, shorthand and defaults have compile, unit, UI and TestPlatform
+`match`, shorthand, defaults, unquoted text and markup-valued properties have compile, unit, UI and TestPlatform
 frame coverage only, without native or browser interaction checks. Web compilation
 is checked; browser input and screen-reader interaction have not been verified.
 

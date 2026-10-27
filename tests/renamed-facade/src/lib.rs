@@ -10,6 +10,7 @@ use framework::prelude::*;
 struct ComponentPanel {
     id: gpui::ElementId,
     title: gpui::SharedString,
+    header: gpui::AnyElement,
     footer: Option<gpui::AnyElement>,
     children: Vec<gpui::AnyElement>,
 }
@@ -18,6 +19,7 @@ impl gpui::RenderOnce for ComponentPanel {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl gpui::IntoElement {
         framework::view! {
             <section id={self.id}>
+                {self.header}
                 <h2>{self.title}</h2>
                 <div style={|s| s.children(self.children)}/>
                 if let Some(footer) = self.footer {
@@ -31,8 +33,8 @@ impl gpui::RenderOnce for ComponentPanel {
 /// Typed components and their children also work through a renamed Rake dependency.
 pub fn component_markup() -> impl gpui::IntoElement {
     framework::view! {
-        <self::ComponentPanel id={"panel".into()} title={"Components".into()} footer={None}>
-            <p>"A typed child"</p>
+        <self::ComponentPanel id={"panel".into()} title={"Components".into()} header={<h2>Markup through a renamed facade</h2>} footer={None}>
+            <p>A typed child</p>
             <button on:click={|_, _, _| {}}>"Accept"</button>
         </self::ComponentPanel>
     }
@@ -183,6 +185,7 @@ impl Default for ComponentPanel {
         Self {
             id: "defaults".into(),
             title: "Panel".into(),
+            header: gpui::IntoElement::into_any_element(gpui::div()),
             footer: None,
             children: Vec::new(),
         }

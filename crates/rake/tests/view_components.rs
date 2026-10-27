@@ -207,3 +207,49 @@ fn component_shorthand_booleans_defaults_and_match_children_compose() {
     assert!(panel.compact);
     assert!(panel.children.is_empty());
 }
+
+#[test]
+fn markup_slots_convert_to_any_element_and_evaluate_once_before_children() {
+    let seen = RefCell::new(Vec::new());
+    let title = String::from("Profile");
+
+    let mut card = rake::view! {
+        <ui::Card
+            id={{ seen.borrow_mut().push(0); "inline-slots".into() }}
+            header={<h2>{ { seen.borrow_mut().push(1); title } }</h2>}
+            footer={{ seen.borrow_mut().push(2); None }}>
+            <p>{ { seen.borrow_mut().push(3); "Account details" } }</p>
+        </ui::Card>
+    };
+
+    assert_eq!(*seen.borrow(), [0, 1, 2, 3]);
+    assert_eq!(card.children.len(), 1);
+
+    let heading = card
+        .header
+        .downcast_mut::<gpui::Stateful<gpui::Div>>()
+        .expect("markup slot is a real GPUI heading");
+
+    let mut info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut info);
+
+    assert_eq!(info.label(), Some("Profile"));
+}
+
+#[test]
+fn nested_markup_slots_accept_component_roots() {
+    let card = rake::view! {
+        <ui::Card id={"outer".into()} footer={None}
+            header={<ui::Card id={"inner".into()} header={<h2>Inner</h2>} footer={None}>
+                <p>Nested body</p>
+            </ui::Card>}
+        >
+            if false { <p>Untaken</p> }
+            <p>Outer body</p>
+        </ui::Card>
+    };
+
+    assert_eq!(card.children.len(), 1);
+    let _: AnyElement = card.header;
+}

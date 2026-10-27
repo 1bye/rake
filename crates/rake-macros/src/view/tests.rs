@@ -43,7 +43,6 @@ fn reports_bad_markup_at_compile_time() {
         ("<div>", "missing closing </div>"),
         ("<div></span>", "expected closing </div>"),
         ("<div/><p/>", "exactly one root"),
-        ("<div>unquoted</div>", "quoted text"),
         ("<input/>", "unsupported view element <input>"),
         ("<div id=\"a\" id=\"b\"/>", "duplicate attribute `id`"),
         ("<div title=\"x\"/>", "unsupported attribute `title`"),
@@ -415,4 +414,104 @@ fn final_emission_errors_keep_previously_collected_diagnostics() {
         .collect::<Vec<_>>();
 
     assert_eq!(messages, ["recovery error", "emission error"]);
+}
+
+#[test]
+fn unquoted_text_preserves_punctuation_and_normalizes_source_whitespace() {
+    for (source, expected) in [
+        ("<p>Save changes</p>", vec!["Save changes"]),
+        (
+            "<p>Hello, <strong>{name}</strong>!</p>",
+            vec!["Hello, ", "!"],
+        ),
+        ("<p>Hello {name} world!</p>", vec!["Hello ", " world!"]),
+        ("<p>\n    Hello,\n      world!\n</p>", vec!["Hello, world!"]),
+        (
+            "<p>Use if, for and match here.</p>",
+            vec!["Use if, for and match here."],
+        ),
+        ("<p>for everyone</p>", vec!["for everyone"]),
+        ("<p>1 + 2 = 3; a-b/c.</p>", vec!["1 + 2 = 3; a-b/c."]),
+        (
+            "<p>Hello (world!), items[0].</p>",
+            vec!["Hello (world!), items[0]."],
+        ),
+        ("<p>你好 世界</p>", vec!["你好 世界"]),
+        ("<p>Hello /* comment */ world</p>", vec!["Hello world"]),
+        ("<p>\" exact   spacing \"</p>", vec![" exact   spacing "]),
+    ] {
+        let view = syn::parse_str::<View>(source).expect(source);
+
+        let texts = view
+            .0
+            .children
+            .iter()
+            .filter_map(|node| match node {
+                super::Node::Text(text) => Some(text.value()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(texts, expected, "{source}");
+        syn::parse2::<syn::Expr>(view.expand(&quote!(::renamed)).expect(source))
+            .expect("one Rust expression");
+    }
+
+    let view = syn::parse2::<View>(quote!(<p>Hello world!</p>)).expect("synthesized tokens");
+
+    let super::Node::Text(text) = &view.0.children[0] else {
+        panic!("expected text");
+    };
+
+    assert_eq!(text.value(), "Hello world!");
+}
+
+#[test]
+fn markup_properties_recover_nested_errors_and_require_one_component_slot_root() {
+    let expanded = expand("<Card header={<h2>Profile</h2>}><p>Account details</p></Card>")
+        .expect("markup slot");
+
+    syn::parse2::<syn::Expr>(expanded).expect("one Rust expression");
+
+    for source in [
+        "<Card header={<T as Trait>::header()}/>",
+        "<div role={<T as Trait>::role()}/>",
+    ] {
+        syn::parse2::<syn::Expr>(expand(source).expect(source))
+            .expect("qualified Rust paths remain expressions");
+    }
+
+    for (source, expected) in [
+        ("<div style={<p>Wrong</p>}/>", "only on components"),
+        ("<Card header={<h2/><p/>}/>", "exactly one root element"),
+        ("<Card header={<h2></p>}/>", "expected closing </h2>"),
+        ("<Card header={<p><div/></p>}/>", "place layout elements"),
+        ("<Card header={<img/>}/>", "img requires src"),
+    ] {
+        let errors = expand(source)
+            .expect_err(source)
+            .into_iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(
+            errors.iter().any(|error| error.contains(expected)),
+            "{source}: {errors:?}"
+        );
+    }
+
+    let errors = expand("<Card header={<img/>} footer={<svg/>}/>")
+        .expect_err("independent slot diagnostics")
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        [
+            "img requires src",
+            "img requires alt text",
+            "svg requires path"
+        ]
+    );
 }

@@ -93,24 +93,26 @@ pub use gpui;
 /// #[derive(IntoElement)]
 /// struct Stack {
 ///     id: gpui::ElementId,
+///     header: gpui::AnyElement,
 ///     children: Vec<gpui::AnyElement>,
 /// }
 /// impl RenderOnce for Stack {
 ///     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
-///         gpui::div().id(self.id).flex().flex_col().children(self.children)
+///         gpui::div().id(self.id).flex().flex_col()
+///             .child(self.header).children(self.children)
 ///     }
 /// }
 /// let _stack = rake::view! {
-///     <Stack id={"stack".into()}>
-///         <h2>"Typed children"</h2>
-///         <p>"Ordinary GPUI elements."</p>
+///     <Stack id={"stack".into()} header={<h2>Typed children</h2>}>
+///         <p>Ordinary GPUI elements.</p>
 ///     </Stack>
 /// };
 /// ```
 ///
 /// Component properties follow Rust field types, visibility, and ownership rules.
-/// No property defaults or implicit conversions are added; component root IDs must
-/// be forwarded to the rendered GPUI root. Retain state in caller-owned entities.
+/// Markup-valued properties such as `header={<h2>Title</h2>}` produce `AnyElement`.
+/// Expression properties retain their types without implicit conversions. Component
+/// root IDs must be forwarded to the rendered GPUI root. Retain state in caller-owned entities.
 ///
 /// ```compile_fail
 /// struct Badge { label: String }

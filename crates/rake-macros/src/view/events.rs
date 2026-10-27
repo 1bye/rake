@@ -43,7 +43,7 @@ pub(super) fn expand(
     rake: &TokenStream,
     index: usize,
 ) -> syn::Result<TokenStream> {
-    let attribute_value = &attribute.value;
+    let attribute_value = attribute.expression()?;
     let mut value = quote!(#attribute_value);
 
     let name = if let Some((_, canonical)) =

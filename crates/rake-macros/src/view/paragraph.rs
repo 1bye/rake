@@ -144,7 +144,7 @@ pub(super) fn inline_element(
     let mut style = base;
 
     for attribute in &element.attributes {
-        let value = &attribute.value;
+        let value = attribute.expression()?;
 
         let method = match attribute.name.as_str() {
             "class" => inline_classes(value, rake)?,

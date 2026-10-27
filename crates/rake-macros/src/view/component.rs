@@ -3,7 +3,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 
-use super::{Element, expand_children_into};
+use super::{AttributeValue, Element, expand_children_into};
 
 impl Element {
     pub(super) fn expand_component(
@@ -30,7 +30,14 @@ impl Element {
             })?;
 
             name.set_span(attribute.span);
-            let value = &attribute.value;
+            let value = match &attribute.value {
+                AttributeValue::Expression(value) => quote!(#value),
+                AttributeValue::Markup(element) => {
+                    let element = element.expand(rake, next)?;
+
+                    quote!(#rake::gpui::IntoElement::into_any_element(#element))
+                }
+            };
 
             fields.extend(quote_spanned!(attribute.span=> #name: #value,));
         }

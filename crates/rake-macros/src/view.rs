@@ -32,7 +32,25 @@ struct Attribute {
     name: String,
     action: Option<syn::Path>,
     span: Span,
-    value: Expr,
+    value: AttributeValue,
+}
+
+#[derive(Clone)]
+enum AttributeValue {
+    Expression(Box<Expr>),
+    Markup(Box<Element>),
+}
+
+impl Attribute {
+    fn expression(&self) -> syn::Result<&Expr> {
+        match &self.value {
+            AttributeValue::Expression(value) => Ok(value),
+            AttributeValue::Markup(_) => Err(syn::Error::new(
+                self.span,
+                "markup property values are supported only on components",
+            )),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -199,8 +217,9 @@ impl Parse for Element {
             input.parse::<Token![/]>()?;
         }
 
-        input.parse::<Token![>]>()?;
+        let opening: Token![>] = input.parse()?;
         let mut children = Vec::new();
+        let mut previous = opening.span();
 
         if !self_closing {
             while !(input.peek(Token![<]) && input.peek2(Token![/])) {
@@ -211,7 +230,7 @@ impl Parse for Element {
                     ));
                 }
 
-                children.push(input.parse()?);
+                text::push_node(input, &mut children, &mut previous)?;
             }
 
             input.parse::<Token![<]>()?;
@@ -274,7 +293,7 @@ fn parse_attribute(input: ParseStream<'_>, tag: Tag) -> syn::Result<ParsedAttrib
             span: name.span(),
             name: name.to_string(),
             action: None,
-            value: syn::parse_quote!(#name),
+            value: AttributeValue::Expression(syn::parse_quote!(#name)),
         }));
     }
 
@@ -329,17 +348,58 @@ fn parse_attribute(input: ParseStream<'_>, tag: Tag) -> syn::Result<ParsedAttrib
             ));
         }
 
-        syn::parse_quote!(true)
+        AttributeValue::Expression(syn::parse_quote!(true))
     } else {
         input.parse::<Token![=]>()?;
 
         if input.peek(LitStr) {
-            Expr::Lit(syn::ExprLit {
+            AttributeValue::Expression(Box::new(Expr::Lit(syn::ExprLit {
                 attrs: Vec::new(),
                 lit: syn::Lit::Str(input.parse()?),
-            })
+            })))
         } else if input.peek(syn::token::Brace) {
-            parse_expression_block(input)?
+            let fork = input.fork();
+            let content;
+
+            braced!(content in fork);
+
+            // Qualified Rust paths such as <T as Trait>::value() stay expressions.
+            let expression = content.fork();
+
+            let markup = content.peek(Token![<])
+                && !(expression.parse::<Expr>().is_ok() && expression.is_empty());
+
+            if markup {
+                let content;
+
+                braced!(content in input);
+                let element = match content.parse() {
+                    Ok(element) => element,
+                    Err(error) => {
+                        let _: TokenStream = content.parse()?;
+
+                        return Err(error);
+                    }
+                };
+
+                if !content.is_empty() {
+                    let error = content.error("markup properties require exactly one root element");
+                    let _: TokenStream = content.parse()?;
+
+                    return Err(error);
+                }
+
+                if tag != Tag::Component {
+                    return Err(syn::Error::new(
+                        span,
+                        "markup property values are supported only on components",
+                    ));
+                }
+
+                AttributeValue::Markup(Box::new(element))
+            } else {
+                AttributeValue::Expression(Box::new(parse_expression_block(input)?))
+            }
         } else {
             return Err(
                 input.error("attribute values must be quoted strings or {Rust expressions}")
@@ -377,7 +437,7 @@ impl Parse for Node {
             return parse_expression_block(input).map(Self::Expression);
         }
 
-        if input.peek(Token![match]) {
+        if input.peek(Token![match]) && text::starts_control(input) {
             input.parse::<Token![match]>()?;
             let expression = input.call(Expr::parse_without_eager_brace)?;
             let content;
@@ -413,7 +473,7 @@ impl Parse for Node {
             return Ok(Self::Match { expression, arms });
         }
 
-        if input.peek(Token![if]) {
+        if input.peek(Token![if]) && text::starts_control(input) {
             input.parse::<Token![if]>()?;
             let condition = input.call(Expr::parse_without_eager_brace)?;
             let then_nodes = parse_nodes(input)?;
@@ -436,7 +496,7 @@ impl Parse for Node {
             });
         }
 
-        if input.peek(Token![for]) {
+        if input.peek(Token![for]) && text::starts_control(input) {
             input.parse::<Token![for]>()?;
             let pattern = input.call(Pat::parse_single)?;
 
@@ -451,7 +511,7 @@ impl Parse for Node {
             });
         }
 
-        Err(input.error("expected an element, quoted text, {expression}, if, for, or match"))
+        text::parse(input).map(Self::Text)
     }
 }
 
@@ -460,9 +520,10 @@ fn parse_nodes(input: ParseStream<'_>) -> syn::Result<Vec<Node>> {
 
     braced!(content in input);
     let mut nodes = Vec::new();
+    let mut previous = content.span();
 
     while !content.is_empty() {
-        nodes.push(content.parse()?);
+        text::push_node(&content, &mut nodes, &mut previous)?;
     }
 
     Ok(nodes)
@@ -601,13 +662,20 @@ impl Element {
         }
 
         if is_button {
-            let value = self.attribute("disabled").map(|attribute| &attribute.value);
+            let value = self
+                .attribute("disabled")
+                .map(Attribute::expression)
+                .transpose()?;
+
             let value = value.map_or_else(|| quote!(false), |value| quote!(#value));
 
             setup.extend(quote!(let #disabled: bool = #value;));
         }
 
-        let id = self.attribute("id").map(|attribute| &attribute.value);
+        let id = self
+            .attribute("id")
+            .map(Attribute::expression)
+            .transpose()?;
 
         let id = id.map_or_else(
             || {
@@ -705,7 +773,7 @@ impl Element {
 
                 self.reject_leaf_children()?;
 
-                let path = &path.value;
+                let path = path.expression()?;
 
                 quote!(#rake::__private::view_svg(#path))
             }
@@ -721,7 +789,7 @@ impl Element {
 
                 self.reject_leaf_children()?;
 
-                let source = &source.value;
+                let source = source.expression()?;
 
                 quote!(#rake::__private::view_image(#source, #id))
             }
@@ -745,7 +813,7 @@ impl Element {
         let is_button = self.resolved.supports_disabled();
 
         for attribute in &self.attributes {
-            let value = &attribute.value;
+            let value = attribute.expression()?;
 
             if self.resolved == Tag::Svg
                 && !matches!(
@@ -863,27 +931,38 @@ impl Element {
         mapped: &Ident,
     ) -> syn::Result<TokenStream> {
         let is_button = self.resolved.supports_disabled();
-        let focus = self.attribute("focus").map(|attribute| &attribute.value);
+
+        let focus = self
+            .attribute("focus")
+            .map(Attribute::expression)
+            .transpose()?;
 
         if let Some(focus) = focus {
             require_borrowed_place(focus, "focus")?;
         }
 
-        let tabindex = self.attribute("tabindex").map(|attribute| &attribute.value);
+        let tabindex = self
+            .attribute("tabindex")
+            .map(Attribute::expression)
+            .transpose()?;
+
         let tabindex = tabindex.map_or_else(|| quote!(None), |value| quote!(Some(#value)));
 
         if !is_button {
             if let Some(focus) = focus {
                 builder = quote!(#rake::__private::view_focus(#builder, #focus, #tabindex));
             } else if self.attribute("tabindex").is_some() {
-                let value = &self.attribute("tabindex").expect("checked tabindex").value;
+                let value = self
+                    .attribute("tabindex")
+                    .expect("checked tabindex")
+                    .expression()?;
 
                 builder = quote!(#rake::__private::view_tab_index(#builder, #value));
             }
         }
 
         if let Some(navigation) = self.attribute("tab-navigation") {
-            let value = &navigation.value;
+            let value = navigation.expression()?;
 
             builder.extend(quote!(.when(#value, |#mapped| #mapped.on_key_down(#rake::__private::view_tab_navigation))));
         }
@@ -911,8 +990,9 @@ impl Element {
 
         let entity = self.required_attribute("entity")?;
 
-        require_borrowed_place(&entity.value, "entity")?;
-        let value = &entity.value;
+        let value = entity.expression()?;
+
+        require_borrowed_place(value, "entity")?;
 
         Ok(quote_spanned!(entity.span=> #rake::__private::view_entity(#value)))
     }
@@ -1041,6 +1121,7 @@ mod diagnostics;
 mod events;
 mod paragraph;
 mod tag;
+mod text;
 
 #[cfg(test)]
 mod tests;

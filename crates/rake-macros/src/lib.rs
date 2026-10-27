@@ -14,7 +14,7 @@ mod view;
 /// Builds a GPUI element tree from experimental HTML-like markup.
 ///
 /// Exposed as `rake::view!` with Rake's `experimental-view` feature. Supports
-/// quoted text, `{expression}` children, `if`/`else`, `for`, and guarded `match`
+/// unquoted/quoted text, `{expression}` children, `if`/`else`, `for`, and guarded `match`
 /// children with braced arm bodies. Untaken branches are not evaluated.
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies

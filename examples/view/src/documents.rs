@@ -63,8 +63,7 @@ impl Render for Documents {
                     cx.stop_propagation();
                 })}>
                 <p class="text-sm">
-                    "10,000 retained records. "
-                    {self.selected.map(|id| format!("Selected: {}.", id + 1)).unwrap_or_else(|| "No selection.".into())}
+                    10,000 retained records. {self.selected.map(|id| format!("Selected: {}.", id + 1)).unwrap_or_else(|| "No selection.".into())}
                 </p>
                 <section style={|s| s.h(gpui::px(280.)).overflow_hidden()}>
                     {gpui::uniform_list("documents", self.rows.len(), cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
@@ -85,7 +84,7 @@ impl Render for Documents {
                         }).collect()
                     })).track_scroll(&self.scroll).h(gpui::px(280.)).flex_shrink_0()}
                 </section>
-                <p class="text-xs">"Scroll or select a row, then use ↑/↓, Home or End. Selection and scroll survive closing this dialog."</p>
+                <p class="text-xs">Scroll or select a row, then use {"↑/↓"}, Home or End. Selection and scroll survive closing this dialog.</p>
             </section>
         }
     }
