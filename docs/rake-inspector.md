@@ -34,7 +34,26 @@ The frontend provides a target picker, semantic/type/source filter, Pause/Resume
 explicit Refresh, disconnect/reconnect, resizable panes, and dark/light themes.
 Styles, Layout, and Source show owned metadata from the target. The divider also
 supports Left/Right and Home/End when focused. At narrow widths, the panes stack.
-The filter supports platform text input, IME, selection and clipboard shortcuts.
+The interface starts in a light theme, with a compact toolbar and a 55/45 split.
+Connection, capture and coverage details live in the bottom status bar. The theme
+button switches both panes and their inputs together.
+
+The tree uses monospace type names, syntax-colored semantic `id` attributes,
+indentation guides, real disclosure controls, closing tags and ancestor
+breadcrumbs. Find opens from the toolbar or Cmd/Ctrl+F and includes matching
+ancestors. A new query expands its ancestor path. Disclosure state belongs to
+one capture and resets when it is replaced; stable identities across captures
+are a separate runtime capability. The filter supports platform text input,
+IME, selection and clipboard shortcuts.
+
+Styles displays the captured authored refinements as declarations grouped by
+layout, spacing, appearance and typography. Supplied dimensions and edges expand
+into readable property rows, preserving their units. Recognized solid colors get
+swatches; unknown structured values retain an expandable raw JSON view. The
+property filter matches names and supplied values. Its source link switches to
+the captured boundary's Source details; it does not claim per-declaration source
+provenance. Layout measurements remain in the Layout pane. These blocks show GPUI
+base refinements, without introducing a CSS cascade or computed style model.
 
 Capture IDs belong to one exact runtime and capture. A replaced capture leaves
 selected details frozen and visibly marked; another node with the same semantic

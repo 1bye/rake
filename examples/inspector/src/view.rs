@@ -1,13 +1,15 @@
 //! Macro-authored Elements screen; remote work is owned by its Rake entry activity.
 
+use crate::appearance::{CODE_FONT, Icon, Palette, icon};
 use crate::input::FilterInput;
 use crate::{Connection, ConnectionConfig, Inspector, Update};
+use crate::{styles, tree};
 use rake::control::{Query, Reply};
 use rake::gpui::{self, prelude::*, *};
 use rake::prelude::*;
 use rake::router::{MountError, RuntimeId};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -25,6 +27,14 @@ struct ElementsView {
     model: Rc<RefCell<Inspector>>,
     config_error: Option<String>,
     filter: Entity<FilterInput>,
+    style_filter: Entity<FilterInput>,
+    style_query: String,
+    show_find: bool,
+    show_coverage: bool,
+    collapsed: BTreeSet<String>,
+    capture: Option<(RuntimeId, String)>,
+    breadcrumbs: Vec<(String, String)>,
+    breadcrumb_scroll: ScrollHandle,
     focus: FocusHandle,
     divider: FocusHandle,
     show_targets: bool,
@@ -71,13 +81,33 @@ impl RouteViews<Destination> for Views {
 
         let view = cx.new(|cx| {
             let weak = cx.weak_entity();
+            let style_owner = weak.clone();
             let state = model.clone();
 
             let filter = cx.new(|cx| {
                 FilterInput::new(
+                    "Find elements",
+                    "Find by ID, type or source",
                     move |text, cx| {
                         state.borrow_mut().filter = text;
-                        let _ = weak.update(cx, |_, cx| cx.notify());
+                        let _ = weak.update(cx, |this: &mut ElementsView, cx| {
+                            this.collapsed.clear();
+                            cx.notify();
+                        });
+                    },
+                    cx,
+                )
+            });
+
+            let style_filter = cx.new(|cx| {
+                FilterInput::new(
+                    "Filter styles",
+                    "Filter properties or values",
+                    move |text, cx| {
+                        let _ = style_owner.update(cx, |this: &mut ElementsView, cx| {
+                            this.style_query = text;
+                            cx.notify();
+                        });
                     },
                     cx,
                 )
@@ -87,13 +117,21 @@ impl RouteViews<Destination> for Views {
                 model,
                 config_error: config.0.as_ref().err().cloned(),
                 filter,
+                style_filter,
+                style_query: String::new(),
+                show_find: false,
+                show_coverage: false,
+                collapsed: BTreeSet::new(),
+                capture: None,
+                breadcrumbs: Vec::new(),
+                breadcrumb_scroll: ScrollHandle::new(),
                 focus: cx.focus_handle(),
                 divider: cx.focus_handle(),
                 show_targets: false,
                 detail_tab: "Styles",
-                split: 0.58,
+                split: 0.55,
                 dragging: false,
-                light: false,
+                light: true,
                 expanded_styles: std::collections::BTreeSet::new(),
             }
         });
@@ -213,95 +251,68 @@ impl RouteViews<Destination> for Views {
     }
 }
 
-fn short_kind(kind: &str) -> String {
-    kind.split_inclusive(['<', '>', ','])
-        .map(|part| part.rsplit("::").next().unwrap_or(part))
-        .collect()
-}
-
-fn style_summary(value: &serde_json::Value) -> String {
-    if let Some(color) = value
-        .get("Color")
-        .filter(|color| color["tag"] == "Solid")
-        .and_then(|color| color.get("solid"))
-    {
-        let components: Option<Vec<f64>> = ["h", "s", "l", "a"]
-            .into_iter()
-            .map(|name| {
-                color[name]
-                    .as_f64()
-                    .filter(|value| (0.0..=1.0).contains(value))
-            })
-            .collect();
-
-        if let Some(c) = components {
-            return format!(
-                "hsl({:.1} {:.1}% {:.1}% / {:.2})",
-                c[0] * 360.,
-                c[1] * 100.,
-                c[2] * 100.,
-                c[3]
-            );
-        }
-    }
-
-    if let Some(fields) = value.as_object() {
-        let mut text = fields
-            .iter()
-            .take(4)
-            .map(|(name, value)| {
-                format!(
-                    "{name}: {}",
-                    if value.is_object() || value.is_array() {
-                        "…".into()
-                    } else {
-                        style_summary(value)
-                    }
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        if fields.len() > 4 {
-            text.push_str(", …");
-        }
-
-        format!("{{ {text} }}")
-    } else {
-        value
-            .as_str()
-            .map_or_else(|| value.to_string(), str::to_owned)
-    }
-}
-
-fn property(label: &str, value: impl Into<SharedString>) -> impl IntoElement {
+fn property(label: &str, value: impl Into<SharedString>, colors: Palette) -> impl IntoElement {
     let label = label.to_owned();
     let value = value.into();
 
     rake::view! {
-        <div id={format!("property-{label}")} class="flex flex-row gap-3 px-3 py-2 border" style={|s| s.border_color(rgb(0x3c4043))}>
-            <span style={|s| s.w(px(95.)).flex_shrink_0().text_color(rgb(0x9aa0a6))}>{label}</span>
-            <span class="min-w-0">{value}</span>
+        <div id={format!("property-{label}")} class="flex flex-row gap-3 px-3 py-1" style={|s| s.border_b_1().border_color(rgb(colors.line))}>
+            <span style={|s| s.w(px(86.)).flex_shrink_0().text_color(rgb(colors.muted))}>{label}</span>
+            <span class="min-w-0" style={|s| s.font_family(CODE_FONT).text_size(px(11.))}>{value}</span>
         </div>
     }
+}
+
+fn source_label(element: &rake::inspection::Element) -> String {
+    element.source.as_ref().map_or_else(
+        || "Source unavailable".into(),
+        |source| {
+            format!(
+                "{}:{}",
+                source.file.rsplit('/').next().unwrap_or(&source.file),
+                source.line
+            )
+        },
+    )
 }
 
 impl ElementsView {
     fn detail_button(
         &self,
         tab: &'static str,
-        blue: u32,
-        muted: u32,
+        colors: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         rake::view! {
-            <button id={format!("detail-{tab}")} class="px-3" style={|s| s.h_full().text_color(rgb(if self.detail_tab == tab { blue } else { muted })).border_b(px(if self.detail_tab == tab { 2. } else { 0. })).border_color(rgb(blue))}
+            <button id={format!("detail-{tab}")} class="px-3" style={|s| s.h_full().text_color(rgb(if self.detail_tab == tab { colors.accent } else { colors.muted })).border_b(px(if self.detail_tab == tab { 2. } else { 0. })).border_color(rgb(colors.accent)).hover(|s| s.bg(rgb(colors.hover)))}
                 onclick={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
         }.inspect(format!("inspector.tab.{tab}"))
     }
 
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.model.borrow_mut().select_element(id);
+        let mut model = self.model.borrow_mut();
+
+        if let Some(tree) = &model.tree {
+            self.breadcrumbs = tree::ancestors(&tree.elements, id)
+                .iter()
+                .map(|element| {
+                    let label = format!(
+                        "{}{}",
+                        tree::tag(&element.kind),
+                        element
+                            .semantic_id
+                            .as_ref()
+                            .map_or_else(String::new, |id| format!("#{id}"))
+                    );
+
+                    (element.id.clone(), label)
+                })
+                .collect();
+        }
+
+        model.select_element(id);
+        self.breadcrumb_scroll
+            .scroll_to_item(self.breadcrumbs.len().saturating_sub(1));
         self.expanded_styles.clear();
         window.focus(&self.focus, cx);
         cx.notify();
@@ -316,9 +327,36 @@ impl ElementsView {
         cx.notify();
     }
 
+    fn toggle_find(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_find = !self.show_find;
+
+        if self.show_find {
+            self.filter.update(cx, |input, cx| input.focus(window, cx));
+        } else {
+            self.filter.update(cx, |input, cx| input.reset(cx));
+            self.model.borrow_mut().filter.clear();
+            self.collapsed.clear();
+        }
+
+        cx.notify();
+    }
+
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.key == "tab" {
-            if event.keystroke.modifiers.shift {
+        let key = &event.keystroke.key;
+        let modifiers = event.keystroke.modifiers;
+
+        if key == "f" && (modifiers.platform || modifiers.control) {
+            self.show_find = true;
+            self.filter.update(cx, |input, cx| input.focus(window, cx));
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+        } else if key == "escape" {
+            self.show_targets = false;
+            self.show_coverage = false;
+            cx.notify();
+        } else if key == "tab" && !modifiers.platform && !modifiers.control && !modifiers.alt {
+            if modifiers.shift {
                 window.focus_prev(cx);
             } else {
                 window.focus_next(cx);
@@ -328,19 +366,113 @@ impl ElementsView {
             cx.stop_propagation();
         }
     }
+
+    fn tree_row(
+        &self,
+        row: tree::Row,
+        element: &rake::inspection::Element,
+        colors: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selected = self.model.borrow().selected.as_ref() == Some(&element.id);
+        let kind = tree::tag(&element.kind);
+
+        let flex = element
+            .styles
+            .as_ref()
+            .is_some_and(|styles| styles["display"] == "Flex");
+
+        rake::view! {
+            <div id={format!("line-{}-{}", row.index, row.closing)} class="flex flex-row items-center min-w-0" style={|s| s.h(px(20.)).min_w_full().flex_shrink_0().pl(px(6.)).bg(rgb(if selected { colors.selection } else { colors.background })).hover(|s| s.bg(rgb(if selected { colors.selection } else { colors.hover })))}>
+                for depth in 0..row.depth.min(16) {
+                    <span id={format!("indent-{depth}")} style={|s| s.w(px(12.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(colors.guide))}/>
+                }
+                if row.branch && !row.closing {
+                    <button id={format!("disclose-{}", row.index)} aria-label={format!("{} {}", if row.collapsed { "Expand" } else { "Collapse" }, element.semantic_id.as_deref().unwrap_or(&element.id))}
+                        style={|s| s.w(px(14.)).h_full().flex_shrink_0()}
+                        onclick={ { let id = element.id.clone(); cx.listener(move |this, _, _, cx| { if !this.collapsed.remove(&id) { this.collapsed.insert(id.clone()); } cx.stop_propagation(); cx.notify(); }) } }>
+                        {icon(if row.collapsed { Icon::Right } else { Icon::Down }, colors.muted)}
+                    </button>
+                } else { <span style={|s| s.w(px(14.)).flex_shrink_0()}/> }
+                <button id={format!("select-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}", element.semantic_id.as_deref().unwrap_or(&element.id))}
+                    style={|s| s.h_full().flex_row().justify_start().flex_shrink_0().font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.)).whitespace_nowrap()}
+                    onclick={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>
+                    <span style={|s| s.text_color(rgb(colors.tag))}>{if row.closing { "</" } else { "<" }}</span>
+                    <span style={|s| s.text_color(rgb(colors.tag))}>{kind.clone()}</span>
+                    if !row.closing {
+                        if let Some(id) = &element.semantic_id {
+                            <span style={|s| s.text_color(rgb(colors.attribute))}>" id="</span>
+                            <span style={|s| s.text_color(rgb(colors.value)).when(row.matched, |s| s.bg(rgb(if self.light { 0xffedb1 } else { 0x614c2b })))}>{serde_json::to_string(id).unwrap_or_default()}</span>
+                        }
+                        if row.collapsed {
+                            <span style={|s| s.text_color(rgb(colors.tag))}> ">"</span>
+                            <span style={|s| s.px(px(3.)).text_color(rgb(colors.muted))}>"…"</span>
+                            <span style={|s| s.text_color(rgb(colors.tag))}>{format!("</{kind}>")}</span>
+                        } else {
+                            <span style={|s| s.text_color(rgb(colors.tag))}>{if row.branch { ">" } else { " />" }}</span>
+                        }
+                        if flex {
+                            <span class="px-1" style={|s| s.ml(px(6.)).rounded(px(3.)).text_size(px(10.)).line_height(px(14.)).bg(rgb(colors.field)).text_color(rgb(colors.muted))}>"flex"</span>
+                        }
+                    } else { <span style={|s| s.text_color(rgb(colors.tag))}>">"</span> }
+                </button>
+            </div>
+        }.into_any_element()
+    }
+
+    fn style_row(
+        &self,
+        row: &styles::Declaration<'_>,
+        colors: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let expanded = self.expanded_styles.contains(&row.name);
+        let complex = row.raw.is_object() || row.raw.is_array();
+
+        rake::view! {
+            <div id={format!("declaration-{}", row.name)} class="flex flex-col min-w-0">
+                <div class="flex flex-row" style={|s| s.min_h(px(20.)).pl(px(8.)).pr(px(10.)).hover(|s| s.bg(rgb(colors.hover)))}>
+                    if complex {
+                        <button id={format!("expand-{}", row.name)} aria-label={format!("{} {} metadata", if expanded { "Collapse" } else { "Expand" }, row.name)} style={|s| s.w(px(16.)).h(px(20.)).flex_shrink_0()}
+                            onclick={ { let name = row.name.clone(); cx.listener(move |this, _, _, cx| { if !this.expanded_styles.remove(&name) { this.expanded_styles.insert(name.clone()); } cx.notify(); }) } }>{icon(if expanded { Icon::Down } else { Icon::Right }, colors.muted)}</button>
+                    } else { <span style={|s| s.w(px(16.)).flex_shrink_0()}/> }
+                    <div class="flex flex-row min-w-0" style={|s| s.flex_wrap().gap_x(px(6.)).font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.))}>
+                        <span style={|s| s.text_color(rgb(colors.property))}>{format!("{}:", row.name)}</span>
+                        <div class="flex flex-row items-center gap-1 min-w-0">
+                            if let Some(color) = row.color {
+                                <span aria-label="Authored color swatch" style={|s| s.w(px(11.)).h(px(11.)).flex_shrink_0().border_1().border_color(rgb(colors.muted)).bg(hsla(color.h, color.s, color.l, color.a))}/>
+                            }
+                            <span style={|s| s.text_color(rgb(colors.ink))}>{format!("{};", row.value)}</span>
+                        </div>
+                    </div>
+                </div>
+                if expanded {
+                    <div class="px-3 py-2" style={|s| s.ml(px(24.)).max_h(px(180.)).overflow_scroll().bg(rgb(colors.bar)).font_family(CODE_FONT).text_size(px(11.)).line_height(px(17.)).text_color(rgb(colors.muted))}>{serde_json::to_string_pretty(row.raw).unwrap_or_default()}</div>
+                }
+            </div>
+        }.into_any_element()
+    }
 }
 
 impl Render for ElementsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = f32::from(window.viewport_size().width);
         let narrow = width < 720.;
-        let background = if self.light { 0xffffff } else { 0x202124 };
-        let surface = if self.light { 0xf1f3f4 } else { 0x292a2d };
-        let ink = if self.light { 0x202124 } else { 0xe8eaed };
-        let line = if self.light { 0xdadce0 } else { 0x3c4043 };
-        let blue = if self.light { 0x1a73e8 } else { 0xa8c7fa };
-        let muted = if self.light { 0x5f6368 } else { 0x9aa0a6 };
+        let colors = Palette::new(self.light);
         let model = self.model.borrow();
+
+        let capture = model
+            .runtime
+            .zip(model.tree.as_ref().map(|tree| tree.capture.clone()));
+
+        if capture != self.capture {
+            self.collapsed.clear();
+            self.capture = capture;
+        }
+
+        if model.selected.is_none() {
+            self.breadcrumbs.clear();
+        }
 
         let target = model
             .instances
@@ -348,33 +480,41 @@ impl Render for ElementsView {
             .find(|instance| Some(instance.info.runtime_id) == model.runtime);
 
         let target_name = target.map_or_else(
-            || "Select runtime".to_owned(),
-            |instance| format!("{} · {}", instance.application_id, instance.info.platform),
+            || "Select runtime".into(),
+            |instance| {
+                format!(
+                    "{} · {}",
+                    instance
+                        .application_id
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(&instance.application_id),
+                    instance.info.platform
+                )
+            },
         );
-
-        let elements = model.visible_elements();
-        let mut depths = BTreeMap::new();
-
-        if let Some(tree) = &model.tree {
-            for element in &tree.elements {
-                depths.insert(
-                    element.id.clone(),
-                    element
-                        .parent
-                        .as_ref()
-                        .and_then(|parent| depths.get(parent))
-                        .copied()
-                        .unwrap_or(0usize)
-                        + usize::from(element.parent.is_some()),
-                );
-            }
-        }
 
         let error = self.config_error.as_ref().or(model.error.as_ref()).cloned();
         let selected = model.detail.as_ref();
-        let selected_id = model.selected.clone();
-        let tree_count = model.tree.as_ref().map_or(0, |tree| tree.elements.len());
-        let omitted = model.tree.as_ref().map_or(0, |tree| tree.omitted);
+
+        let elements = model
+            .tree
+            .as_ref()
+            .map_or(&[][..], |tree| tree.elements.as_slice());
+
+        let rows = tree::rows(elements, &model.filter, &self.collapsed);
+
+        let style_rows = selected
+            .and_then(|element| element.styles.as_ref())
+            .map(styles::declarations)
+            .unwrap_or_default();
+
+        let style_count = style_rows
+            .iter()
+            .filter(|row| styles::matches(row, &self.style_query))
+            .count();
+
+        let stale = model.stale();
 
         let status = if model.disconnected {
             "Disconnected"
@@ -386,151 +526,176 @@ impl Render for ElementsView {
             "Connecting"
         };
 
-        let tree_status = model.tree.as_ref().map_or_else(
+        let capture_status = model.tree.as_ref().map_or_else(
             || "Waiting for capture".into(),
             |tree| {
                 format!(
-                    "{:?} · {tree_count} boundaries · {omitted} omitted · capture {}",
-                    tree.status, tree.capture
+                    "{} boundaries · {} omitted · capture {}",
+                    tree.elements.len(),
+                    tree.omitted,
+                    tree.capture
                 )
             },
         );
 
-        let stale = model.stale();
         let current_tab = self.detail_tab;
 
-        let tree = rake::view! {
-            <section id="element-tree" class="flex flex-col min-h-0" style={|s| s.flex_1().overflow_y_scroll()} aria-label="Element tree">
-                for element in elements {
-                    <button id={format!("boundary-{}", element.id)} aria-label={format!("Inspect {}", element.semantic_id.as_deref().unwrap_or(&element.id))}
-                        style={|s| s.w_full().h(px(25.)).flex_shrink_0().flex_row().items_center().justify_start().gap(px(5.)).pl(px(10. + depths.get(&element.id).copied().unwrap_or(0).min(16) as f32 * 14.)).pr(px(8.)).text_size(px(12.)).overflow_hidden().bg(rgb(if selected_id.as_ref() == Some(&element.id) { if self.light { 0xd3e3fd } else { 0x3c4b64 } } else { background })).hover(|s| s.bg(rgb(surface)))}
-                        onclick={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>
-                        <span style={|s| s.text_color(rgb(muted))}>"‹"</span>
-                        <span style={|s| s.text_color(rgb(if self.light { 0x881280 } else { 0xc58af9 }))}>{short_kind(&element.kind)}</span>
-                        <span style={|s| s.text_color(rgb(if self.light { 0x196127 } else { 0xa8dab5 }))}>{element.semantic_id.clone().unwrap_or_else(|| element.id.clone())}</span>
-                        <span style={|s| s.text_color(rgb(muted))}>"›"</span>
-                    </button>
+        let tree_pane = rake::view! {
+            <section id="tree-pane" class="flex flex-col min-h-0 min-w-0" aria-label="Element tree" style={|s| if narrow { s.h(px(260.)).w_full().flex_shrink_0() } else { s.w(px((width * self.split).clamp(180., (width - 260.).max(180.)))).flex_shrink_0() }}>
+                if self.show_find {
+                    <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(30.)).flex_shrink_0().border_b_1().border_color(rgb(colors.line))}>
+                        {icon(Icon::Search, colors.muted)}
+                        <div class="flex-1 min-w-0">{self.filter.clone()}</div>
+                        <button id="close-find" aria-label="Close tree search" style={|s| s.w(px(20.)).h(px(24.))} onclick={cx.listener(Self::toggle_find)}>"×"</button>
+                    </div>
                 }
-                if tree_count == 0 {
-                    <div class="p-6" style={|s| s.text_color(rgb(muted))}>{if model.tree.is_some() { "No inspection boundaries available. Enable capture in the target application." } else { "Connect to a running Rake application to inspect its elements." }}</div>
-                } else if model.visible_elements().is_empty() {
-                    <div class="p-6" style={|s| s.text_color(rgb(muted))}>"No matching boundaries."</div>
-                }
+                <section id="element-tree" class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_scroll().py(px(5.))}>
+                    for row in &rows {
+                        <div id={format!("tree-row-{}-{}", row.index, row.closing)} style={|s| s.h(px(20.)).flex_shrink_0()}>{self.tree_row(*row, &elements[row.index], colors, cx)}</div>
+                    }
+                    if elements.is_empty() {
+                        <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>{if model.tree.is_some() { "No captured boundaries. Enable inspection in the target application." } else { "Select a running Rake application to inspect its views." }}</p>
+                    } else if rows.is_empty() {
+                        <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>"No matching elements."</p>
+                    }
+                </section>
+                <div id="breadcrumbs" aria-label="Selected element ancestors" scroll={&self.breadcrumb_scroll} class="flex flex-row items-center min-w-0" style={|s| s.h(px(24.)).flex_shrink_0().overflow_x_scroll().border_t_1().border_color(rgb(colors.line)).bg(rgb(colors.bar)).font_family(CODE_FONT).text_size(px(10.))}>
+                    for (id, label) in &self.breadcrumbs {
+                        <div id={format!("crumb-{id}")} class="flex flex-row items-center" style={|s| s.h_full().flex_shrink_0()}>
+                            if stale { <span class="px-2" style={|s| s.text_color(rgb(colors.muted)).whitespace_nowrap()}>{label.clone()}</span> }
+                            else {
+                                <button id={format!("select-crumb-{id}")} class="px-2" style={|s| s.h_full().whitespace_nowrap().bg(rgb(if model.selected.as_ref() == Some(id) { colors.field } else { colors.bar })).hover(|s| s.bg(rgb(colors.field)))}
+                                    onclick={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>{label.clone()}</button>
+                            }
+                            {icon(Icon::Right, colors.muted)}
+                        </div>
+                    }
+                    if self.breadcrumbs.is_empty() { <span class="px-2" style={|s| s.text_color(rgb(colors.muted))}>"Rake view tree"</span> }
+                </div>
             </section>
         }.inspect("inspector.tree");
 
         let details = rake::view! {
-            <section id="element-details" class="flex flex-col flex-1 min-w-0 min-h-0" style={|s| s.overflow_y_scroll()} aria-label="Element details">
-                <div class="flex flex-row" style={|s| s.h(px(30.)).flex_shrink_0().bg(rgb(surface)).border_b_1().border_color(rgb(line))}>
+            <section id="element-details" class="flex flex-col flex-1 min-w-0 min-h-0" aria-label="Element details">
+                <div class="flex flex-row" style={|s| s.h(px(29.)).flex_shrink_0().bg(rgb(colors.bar)).border_b_1().border_color(rgb(colors.line))}>
                     for tab in ["Styles", "Layout", "Source"] {
-                        <div id={format!("tab-container-{tab}")} style={|s| s.h_full()}>{self.detail_button(tab, blue, muted, cx)}</div>
+                        <div id={format!("tab-container-{tab}")} style={|s| s.h_full()}>{self.detail_button(tab, colors, cx)}</div>
                     }
                 </div>
-                if stale {
-                    <div class="px-3 py-2" style={|s| s.text_color(rgb(0xfdd663)).bg(rgb(0x3b3321))}>"Capture replaced. Details are frozen; select a current boundary."</div>
-                }
-                if let Some(error) = &model.lookup_error { <p class="p-3" style={|s| s.text_color(rgb(0xf28b82))}>{error.clone()}</p> }
-                if let Some(element) = selected {
-                    <div class="p-3 flex flex-col gap-1" style={|s| s.border_b_1().border_color(rgb(line))}>
-                        <span style={|s| s.text_color(rgb(blue))}>{short_kind(&element.kind)}</span>
-                        <span>{element.semantic_id.clone().unwrap_or_else(|| "No semantic ID".into())}</span>
-                        <span style={|s| s.text_color(rgb(muted))}>{element.id.clone()}</span>
+                if current_tab == "Styles" {
+                    <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(31.)).flex_shrink_0().border_b_1().border_color(rgb(colors.line))}>
+                        {icon(Icon::Search, colors.muted)}
+                        <div class="flex-1 min-w-0">{self.style_filter.clone()}</div>
                     </div>
-                    if current_tab == "Styles" {
-                        <div class="p-3 flex flex-col gap-2">
-                            <span style={|s| s.text_color(rgb(muted))}>"Authored base styles"</span>
-                            if let Some(styles) = element.styles.as_ref().and_then(|styles| styles.as_object()) {
-                                for (name, value) in styles {
-                                    <div id={format!("style-{name}")} class="flex flex-col gap-1">
-                                        <div class="flex flex-row gap-2">
-                                            <span style={|s| s.text_color(rgb(if self.light { 0x881280 } else { 0xc58af9 }))}>{format!("{name}:")}</span>
-                                            if value.is_object() || value.is_array() {
-                                                <button id={format!("expand-{name}")} aria-label={format!("Expand {name} metadata")}
-                                                    style={|s| s.justify_start().text_color(rgb(if self.light { 0x196127 } else { 0xa8dab5 }))}
-                                                    onclick={ { let name = name.clone(); cx.listener(move |this, _, _, cx| { if !this.expanded_styles.remove(&name) { this.expanded_styles.insert(name.clone()); } cx.notify(); }) } }>{format!("{} {}", if self.expanded_styles.contains(name) { "-" } else { "+" }, style_summary(value))}</button>
-                                            } else {
-                                                <span style={|s| s.text_color(rgb(if self.light { 0x196127 } else { 0xa8dab5 }))}>{style_summary(value)}</span>
+                }
+                <section id="detail-content" class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_y_scroll()}>
+                    if stale { <p class="px-3 py-1" style={|s| s.text_size(px(11.)).text_color(rgb(if self.light { 0x826113 } else { 0xfdd663 })).bg(rgb(if self.light { 0xfff6d9 } else { 0x3b3321 }))}>"Previous capture · details frozen"</p> }
+                    if let Some(error) = &model.lookup_error { <p class="px-3 py-1" style={|s| s.text_size(px(11.)).text_color(rgb(colors.property))}>{error.clone()}</p> }
+                    if let Some(element) = selected {
+                        if current_tab == "Styles" {
+                            <div id="authored-rule" class="flex flex-col" style={|s| s.border_b_1().border_color(rgb(colors.line)).pb(px(6.))}>
+                                <div class="flex flex-row items-center gap-2 px-2" style={|s| s.min_h(px(30.)).font_family(CODE_FONT).text_size(px(11.))}>
+                                    <span class="min-w-0" style={|s| s.text_color(rgb(colors.ink))}>{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
+                                    <span class="flex-1"/>
+                                    <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; declaration provenance is unavailable."
+                                        style={|s| s.flex_shrink_0().text_color(rgb(colors.muted)).underline().hover(|s| s.text_color(rgb(colors.ink)))}
+                                        onclick={cx.listener(|this, _, _, cx| { this.detail_tab = "Source"; cx.notify(); })}>{source_label(element)}</button>
+                                </div>
+                                for group in [styles::Group::Layout, styles::Group::Spacing, styles::Group::Appearance, styles::Group::Typography, styles::Group::Other] {
+                                    <div id={format!("group-{}", group.label())} class="flex flex-col">
+                                        if style_rows.iter().any(|row| row.group == group && styles::matches(row, &self.style_query)) {
+                                            <span style={|s| s.pl(px(24.)).pt(px(3.)).text_color(rgb(colors.muted)).font_family(CODE_FONT).text_size(px(10.)).line_height(px(19.))}>{format!("/* {} */", group.label().to_lowercase())}</span>
+                                            for row in style_rows.iter().filter(|row| row.group == group && styles::matches(row, &self.style_query)) {
+                                                <div id={format!("property-row-{}", row.name)}>{self.style_row(row, colors, cx)}</div>
                                             }
-                                        </div>
-                                        if self.expanded_styles.contains(name) {
-                                            <div class="p-2" style={|s| s.bg(rgb(surface))}>{serde_json::to_string_pretty(value).unwrap_or_default()}</div>
                                         }
                                     </div>
                                 }
-                            } else { <p>"Authored style refinements unavailable."</p> }
-                        </div>
-                    }
-                    if current_tab != "Source" {
-                        <div class="px-3 py-2" style={|s| s.bg(rgb(surface))}>"Layout · window logical pixels"</div>
-                        if let Some(layout) = element.layout {
-                            <div class="m-4 p-4 flex flex-col gap-3 border" style={|s| s.border_color(rgb(muted)).items_center()}>
-                                <span style={|s| s.text_color(rgb(muted))}>{format!("x: {} · y: {}", layout.x, layout.y)}</span>
-                                <div class="p-4 border" style={|s| s.border_color(rgb(blue)).bg(rgb(surface))}>{format!("{} × {}", layout.width, layout.height)}</div>
-                                <span style={|s| s.text_color(rgb(muted))}>"Measured bounds before clipping"</span>
+                                if style_count == 0 { <p class="px-3 py-2" style={|s| s.text_color(rgb(colors.muted))}>{if style_rows.is_empty() { "No authored refinements captured." } else { "No matching properties." }}</p> }
+                                <span class="px-2" style={|s| s.font_family(CODE_FONT)}>"}"</span>
                             </div>
-                        } else { <p class="p-3">"Layout unavailable."</p> }
-                    }
-                    if current_tab == "Source" {
-                        if let Some(source) = &element.source {
-                            {property("Source file", source.file.clone())}
-                            {property("Line", source.line.to_string())}
-                            {property("Column", source.column.to_string())}
-                        } else { <p class="p-3">"Source location unavailable."</p> }
-                        {property("Type", element.kind.clone())}
-                        {property("Parent", element.parent.clone().unwrap_or_else(|| "Inspection root".into()))}
-                        {property("Entry", element.entry_id.map_or_else(|| "Workspace shell".into(), |id| id.to_string()))}
-                    }
-                    <p class="p-3" style={|s| s.text_color(rgb(muted))}>{if element.metadata_truncated { "Some metadata exceeded capture limits." } else { "Read-only inspection metadata." }}</p>
-                } else {
-                    <div class="p-6" style={|s| s.text_color(rgb(muted))}>"Select a view to inspect its styles, layout and source."</div>
-                }
+                            <p class="px-3 py-2" style={|s| s.text_size(px(10.)).text_color(rgb(colors.muted))}>"Authored base refinements · read-only"</p>
+                        } else {
+                            <div class="px-3 py-2" style={|s| s.font_family(CODE_FONT).border_b_1().border_color(rgb(colors.line)).text_color(rgb(colors.tag))}>{format!("{}{}", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
+                        }
+                        if current_tab == "Layout" {
+                            <p class="px-3 py-2" style={|s| s.text_color(rgb(colors.muted))}>"Bounds · window logical pixels"</p>
+                            if let Some(layout) = element.layout {
+                                <div class="m-4 p-4 flex flex-col gap-3 border" style={|s| s.border_color(rgb(colors.line)).items_center().font_family(CODE_FONT)}>
+                                    <span style={|s| s.text_color(rgb(colors.muted))}>{format!("x: {:.1} · y: {:.1}", layout.x, layout.y)}</span>
+                                    <div class="px-4 py-3 border" style={|s| s.border_color(rgb(colors.accent)).bg(rgb(colors.bar))}>{format!("{:.1} × {:.1}", layout.width, layout.height)}</div>
+                                    <span style={|s| s.text_size(px(10.)).text_color(rgb(colors.muted))}>"Measured before clipping"</span>
+                                </div>
+                            } else { <p class="p-3">"Layout unavailable."</p> }
+                        }
+                        if current_tab == "Source" {
+                            if let Some(source) = &element.source {
+                                {property("Source file", source.file.clone(), colors)}
+                                {property("Line", source.line.to_string(), colors)}
+                                {property("Column", source.column.to_string(), colors)}
+                            } else { <p class="p-3">"Source location unavailable."</p> }
+                            {property("Rust type", element.kind.clone(), colors)}
+                            {property("Capture ID", element.id.clone(), colors)}
+                            {property("Semantic ID", element.semantic_id.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
+                            {property("Parent", element.parent.clone().unwrap_or_else(|| "Inspection root".into()), colors)}
+                            {property("Entry", element.entry_id.map_or_else(|| "Workspace shell".into(), |id| id.to_string()), colors)}
+                            <p class="px-3 py-2" style={|s| s.text_size(px(10.)).text_color(rgb(colors.muted))}>"Source identifies the inspection boundary."</p>
+                        }
+                        if element.metadata_truncated { <p class="px-3 py-2" style={|s| s.text_color(rgb(colors.property))}>"Some metadata exceeded capture limits."</p> }
+                    } else { <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>"Select an element to inspect its authored styles, layout and source."</p> }
+                </section>
             </section>
         }.inspect("inspector.details");
 
         rake::view! {
-            <div id="inspector" class="size-full flex flex-col min-h-0" style={|s| s.bg(rgb(background)).text_color(rgb(ink)).text_size(px(12.)).track_focus(&self.focus)}
+            <div id="inspector" class="size-full flex flex-col min-h-0" style={|s| s.relative().bg(rgb(colors.background)).text_color(rgb(colors.ink)).text_size(px(12.)).line_height(px(20.)).track_focus(&self.focus)}
                 onkeydown={cx.listener(Self::key)}
-                onmousemove={cx.listener(|this, event: &MouseMoveEvent, window, cx| { if this.dragging { if event.dragging() { let width = f32::from(window.viewport_size().width); this.split = (f32::from(event.position.x) / width).clamp(0.2, 0.8); cx.notify(); } else { this.dragging = false; } } })}
+                onmousemove={cx.listener(|this, event: &MouseMoveEvent, window, cx| { if this.dragging { if event.dragging() { this.split = (f32::from(event.position.x) / f32::from(window.viewport_size().width)).clamp(0.2, 0.8); cx.notify(); } else { this.dragging = false; } } })}
                 onmouseup={cx.listener(|this, _, _, _| this.dragging = false)}>
-                <div class="flex flex-row items-center gap-3 px-3" style={|s| s.h(px(35.)).flex_shrink_0().bg(rgb(surface)).border_b_1().border_color(rgb(line))}>
-                    <span style={|s| s.text_color(rgb(muted))}>"Rake Inspector"</span>
-                    <div class="px-3 flex items-center" style={|s| s.h_full().border_b_2().border_color(rgb(blue)).text_color(rgb(blue))}>"Elements"</div>
+                <div class="flex flex-row items-center" style={|s| s.h(px(32.)).flex_shrink_0().bg(rgb(colors.bar)).border_b_1().border_color(rgb(colors.line))}>
+                    <div class="flex flex-row items-center gap-1 px-2" style={|s| s.text_color(rgb(colors.muted))}>{icon(Icon::Code, colors.muted)}<span>"Rake"</span></div>
+                    <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
+                    <div class="flex items-center px-3" style={|s| s.h_full().border_b_2().border_color(rgb(colors.accent)).text_color(rgb(colors.accent)).font_weight(FontWeight::SEMIBOLD)}>"Elements"</div>
                     <span class="flex-1"/>
-                    <button id="theme" aria-label="Toggle theme" onclick={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>"◐"</button>
+                    <button id="targets" aria-label="Select target runtime" class="flex flex-row items-center gap-1 px-2" style={|s| s.h(px(26.)).text_color(rgb(colors.muted)).hover(|s| s.bg(rgb(colors.field)))}
+                        onclick={cx.listener(|this, _, _, cx| { this.show_targets = !this.show_targets; cx.notify(); })}><span>{target_name}</span>{icon(Icon::Down, colors.muted)}</button>
+                    <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
+                    <button id="find" aria-label="Find in element tree" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
+                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
+                    <button id="refresh" aria-label="Refresh capture" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
+                    <button id="theme" aria-label="Toggle theme" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} onclick={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
                 </div>
-                <div class="flex flex-row items-center gap-3 px-3" style={|s| s.h(px(32.)).flex_shrink_0().border_b_1().border_color(rgb(line))}>
-                    <button id="targets" aria-label="Select target runtime" style={|s| s.text_color(rgb(blue))} onclick={cx.listener(|this, _, _, cx| { this.show_targets = !this.show_targets; cx.notify(); })}>{target_name}</button>
-                    <span class="flex-1"/>
-                    <span style={|s| s.text_color(rgb(muted))}>{status}</span>
-                    <button id="disconnect" onclick={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
-                </div>
-                if self.show_targets {
-                    <section class="flex flex-col p-2 gap-1" style={|s| s.max_h(px(160.)).overflow_y_scroll().bg(rgb(surface))}>
-                        for instance in &model.instances {
-                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-1" onclick={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {} · {}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
-                        }
-                        if model.instances.is_empty() { <p>"No runtimes advertised by this broker."</p> }
-                    </section>
-                }
-                <div class="flex flex-row items-center gap-3 px-2" style={|s| s.h(px(34.)).flex_shrink_0().border_b_1().border_color(rgb(line))}>
-                    <div style={|s| s.w(px(300.)).max_w_full()}>{self.filter.clone()}</div>
-                    <button id="pause" onclick={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{if model.paused { "Resume" } else { "Pause" }}</button>
-                    <button id="refresh" onclick={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>"Refresh"</button>
-                </div>
-                if let Some(error) = error { <div class="px-3 py-2" style={|s| s.bg(rgb(0x3c2021)).text_color(rgb(0xf28b82))}>{error}</div> }
-                <div class="px-3 py-1" style={|s| s.text_color(rgb(muted)).border_b_1().border_color(rgb(line))}>{tree_status}</div>
+                if let Some(error) = error { <p class="px-3 py-1" style={|s| s.text_color(rgb(colors.property)).border_b_1().border_color(rgb(colors.line))}>{error}</p> }
                 <div class="flex flex-1 min-h-0 min-w-0" style={|s| if narrow { s.flex_col() } else { s.flex_row() }}>
-                    <div class="flex flex-col min-h-0" style={|s| if narrow { s.h(px(260.)).w_full().flex_shrink_0() } else { s.w(px((width * self.split).clamp(180., (width - 260.).max(180.)))) .flex_shrink_0() }}>
-                        {tree}
-                    </div>
+                    {tree_pane}
                     if !narrow {
-                        <div id="divider" tabindex={0} aria-label="Resize inspection panes" style={|s| s.w(px(5.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(line)).cursor(CursorStyle::ResizeColumn).track_focus(&self.divider)}
+                        <div id="divider" tabindex={0} aria-label="Resize inspection panes" style={|s| s.w(px(4.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(colors.line)).cursor(CursorStyle::ResizeColumn).track_focus(&self.divider).hover(|s| s.bg(rgb(colors.field)))}
                             onmousedown={cx.listener(|this, _, window, cx| { this.dragging = true; window.focus(&this.divider, cx); })}
                             onkeydown={cx.listener(|this, event: &KeyDownEvent, _, cx| { match event.keystroke.key.as_str() { "left" => this.split = (this.split - 0.025).max(0.2), "right" => this.split = (this.split + 0.025).min(0.8), "home" => this.split = 0.2, "end" => this.split = 0.8, _ => return } cx.stop_propagation(); cx.notify(); })}/>
                     }
                     {details}
                 </div>
-                <div class="px-3 py-1" style={|s| s.flex_shrink_0().bg(rgb(surface)).border_t_1().border_color(rgb(line)).text_color(rgb(muted))}>{model.tree.as_ref().map_or_else(|| "Rake views · shared inspection protocol".into(), |tree| tree.coverage.clone())}</div>
+                if self.show_coverage {
+                    <section class="px-3 py-2" style={|s| s.flex_shrink_0().border_t_1().border_color(rgb(colors.line)).bg(rgb(colors.bar)).text_size(px(11.)).text_color(rgb(colors.muted))} aria-label="Inspection coverage">
+                        <p>{model.tree.as_ref().map_or_else(|| "Waiting for capture coverage.".into(), |tree| tree.coverage.clone())}</p>
+                        <p>"Tree id attributes show semantic IDs. Source links identify inspection boundaries."</p>
+                    </section>
+                }
+                <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(23.)).flex_shrink_0().bg(rgb(colors.bar)).border_t_1().border_color(rgb(colors.line)).text_size(px(10.)).text_color(rgb(colors.muted))}>
+                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1" style={|s| s.h_full().hover(|s| s.text_color(rgb(colors.ink)))} onclick={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
+                    <span class="flex-1"/>
+                    <span style={|s| s.w(px(6.)).h(px(6.)).rounded_full().bg(rgb(if model.disconnected { colors.muted } else if self.config_error.is_some() || model.error.is_some() { colors.property } else { 0x6d9668 }))}/>
+                    <span>{status}</span>
+                    <button id="disconnect" style={|s| s.h_full().px(px(5.)).hover(|s| s.text_color(rgb(colors.ink)))} onclick={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
+                </div>
+                if self.show_targets {
+                    <section id="target-menu" class="flex flex-col p-1 border" style={|s| s.absolute().top(px(32.)).right(px(6.)).w(px(490.)).max_w_full().max_h(px(220.)).overflow_y_scroll().bg(rgb(colors.background)).border_color(rgb(colors.line)).shadow_lg()}>
+                        for instance in &model.instances {
+                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2" style={|s| s.justify_start().text_size(px(11.)).hover(|s| s.bg(rgb(colors.hover)))} onclick={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
+                        }
+                        if model.instances.is_empty() { <p class="p-3">"No runtimes advertised by this broker."</p> }
+                    </section>
+                }
             </div>
         }.inspect("inspector.workspace")
     }
@@ -573,15 +738,24 @@ pub(crate) fn application() -> rake::App<Destination> {
 
 #[cfg(test)]
 mod tests {
-    use super::property;
+    use super::{Palette, property};
     use rake::gpui::{Element, IntoElement};
 
     #[test]
     fn source_properties_have_distinct_stable_sibling_identities() {
         let mut ids = std::collections::HashSet::new();
 
-        for label in ["Source file", "Line", "Column", "Type", "Parent", "Entry"] {
-            let element = property(label, "value").into_element();
+        for label in [
+            "Source file",
+            "Line",
+            "Column",
+            "Rust type",
+            "Capture ID",
+            "Semantic ID",
+            "Parent",
+            "Entry",
+        ] {
+            let element = property(label, "value", Palette::new(true)).into_element();
 
             assert!(
                 ids.insert(Element::id(&element).expect("property identity")),

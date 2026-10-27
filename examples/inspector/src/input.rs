@@ -1,5 +1,6 @@
 //! Small single-line filter input with platform text/IME and clipboard handling.
 
+use crate::appearance::Palette;
 use rake::gpui::{self, prelude::*, *};
 use std::ops::Range;
 use std::rc::Rc;
@@ -8,6 +9,8 @@ type Changed = Rc<dyn Fn(String, &mut App)>;
 
 pub(crate) struct FilterInput {
     text: String,
+    label: &'static str,
+    placeholder: &'static str,
     cursor: usize,
     anchor: usize,
     marked: Option<Range<usize>>,
@@ -33,19 +36,35 @@ fn byte_index(text: &str, offset: usize) -> usize {
 
 impl FilterInput {
     pub(crate) fn new(
+        label: &'static str,
+        placeholder: &'static str,
         changed: impl Fn(String, &mut App) + 'static,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             text: String::new(),
+            label,
+            placeholder,
             cursor: 0,
             anchor: 0,
             marked: None,
             focus: cx.focus_handle(),
             changed: Rc::new(changed),
             bounds: Bounds::default(),
-            light: false,
+            light: true,
         }
+    }
+
+    pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.focus, cx);
+    }
+
+    pub(crate) fn reset(&mut self, cx: &mut Context<Self>) {
+        self.text.clear();
+        self.cursor = 0;
+        self.anchor = 0;
+        self.marked = None;
+        cx.notify();
     }
 
     pub(crate) fn set_light(&mut self, light: bool, cx: &mut Context<Self>) {
@@ -270,6 +289,7 @@ impl EntityInputHandler for FilterInput {
 
 impl Render for FilterInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = Palette::new(self.light);
         let entity = cx.entity();
         let painted = entity.clone();
         let focus = self.focus.clone();
@@ -277,7 +297,7 @@ impl Render for FilterInput {
         let focused = self.focus.is_focused(window);
 
         let content = if self.text.is_empty() {
-            "Filter by semantic ID, type or source".into()
+            self.placeholder.into()
         } else {
             self.text.clone()
         };
@@ -288,26 +308,21 @@ impl Render for FilterInput {
             .tab_index(0)
             .track_focus(&self.focus)
             .role(gpui::accesskit::Role::TextInput)
-            .aria_label("Filter elements")
+            .aria_label(self.label)
             .aria_value(self.text.clone())
-            .h(px(26.))
+            .h(px(24.))
             .w_full()
             .px_2()
             .text_size(px(12.))
-            .line_height(px(24.))
+            .line_height(px(22.))
+            .rounded(px(12.))
             .border_1()
-            .border_color(rgb(if focused {
-                0x8ab4f8
-            } else if self.light {
-                0xdadce0
-            } else {
-                0x3c4043
-            }))
-            .bg(rgb(if self.light { 0xffffff } else { 0x292a2d }))
+            .border_color(rgb(if focused { 0x8ab4f8 } else { colors.field }))
+            .bg(rgb(colors.field))
             .text_color(rgb(if self.text.is_empty() {
-                if self.light { 0x5f6368 } else { 0x9aa0a6 }
+                colors.muted
             } else {
-                if self.light { 0x202124 } else { 0xe8eaed }
+                colors.ink
             }))
             .overflow_hidden()
             .on_key_down(cx.listener(Self::key))
@@ -324,7 +339,7 @@ impl Render for FilterInput {
                     .child(self.text[..self.cursor].to_string())
                     .child(
                         div()
-                            .h(px(18.))
+                            .h(px(16.))
                             .mt(px(3.))
                             .border_l_1()
                             .border_color(rgb(0x8ab4f8)),
