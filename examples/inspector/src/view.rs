@@ -35,6 +35,10 @@ struct ElementsView {
     capture: Option<(RuntimeId, String)>,
     breadcrumbs: Vec<(String, String)>,
     breadcrumb_scroll: ScrollHandle,
+    tree_scroll: ScrollHandle,
+    detail_scrolls: [ScrollHandle; 3],
+    tree_focus: FocusHandle,
+    _focus_observers: [Subscription; 3],
     focus: FocusHandle,
     divider: FocusHandle,
     show_targets: bool,
@@ -95,6 +99,7 @@ impl RouteViews<Destination> for Views {
                             cx.notify();
                         });
                     },
+                    window,
                     cx,
                 )
             });
@@ -109,9 +114,18 @@ impl RouteViews<Destination> for Views {
                             cx.notify();
                         });
                     },
+                    window,
                     cx,
                 )
             });
+
+            let tree_focus = cx.focus_handle();
+
+            let focus_observers = [
+                cx.on_focus(&tree_focus, window, |_, _, cx| cx.notify()),
+                cx.on_blur(&tree_focus, window, |_, _, cx| cx.notify()),
+                cx.observe_window_activation(window, |_, _, cx| cx.notify()),
+            ];
 
             ElementsView {
                 model,
@@ -125,6 +139,10 @@ impl RouteViews<Destination> for Views {
                 capture: None,
                 breadcrumbs: Vec::new(),
                 breadcrumb_scroll: ScrollHandle::new(),
+                tree_scroll: ScrollHandle::new(),
+                detail_scrolls: std::array::from_fn(|_| ScrollHandle::new()),
+                tree_focus,
+                _focus_observers: focus_observers,
                 focus: cx.focus_handle(),
                 divider: cx.focus_handle(),
                 show_targets: false,
@@ -136,7 +154,7 @@ impl RouteViews<Destination> for Views {
             }
         });
 
-        let focus = view.read(cx).focus.clone();
+        let focus = view.read(cx).tree_focus.clone();
 
         window.focus(&focus, cx);
         let weak = view.downgrade();
@@ -284,16 +302,26 @@ impl ElementsView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         rake::view! {
-            <button id={format!("detail-{tab}")} class="px-3" style={|s| s.h_full().text_color(rgb(if self.detail_tab == tab { colors.accent } else { colors.muted })).border_b(px(if self.detail_tab == tab { 2. } else { 0. })).border_color(rgb(colors.accent)).hover(|s| s.bg(rgb(colors.hover)))}
+            <button id={format!("detail-{tab}")} class="px-3" style={|s| colors.control(s).h_full().text_color(rgb(if self.detail_tab == tab { colors.accent } else { colors.muted })).border_b(px(if self.detail_tab == tab { 2. } else { 0. })).border_color(rgb(colors.accent)).hover(|s| s.bg(rgb(colors.hover)))}
                 on:click={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
         }.inspect(format!("inspector.tab.{tab}"))
     }
 
-    fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let mut model = self.model.borrow_mut();
+    fn select(&mut self, id: &str, reveal: bool, window: &mut Window, cx: &mut Context<Self>) {
+        {
+            let mut model = self.model.borrow_mut();
 
-        if let Some(tree) = &model.tree {
-            self.breadcrumbs = tree::ancestors(&tree.elements, id)
+            let Some(capture) = &model.tree else {
+                return;
+            };
+
+            let path = tree::ancestors(&capture.elements, id);
+
+            if path.is_empty() {
+                return;
+            }
+
+            self.breadcrumbs = path
                 .iter()
                 .map(|element| {
                     let label = format!(
@@ -308,14 +336,170 @@ impl ElementsView {
                     (element.id.clone(), label)
                 })
                 .collect();
+            model.select_element(id);
         }
-
-        model.select_element(id);
         self.breadcrumb_scroll
             .scroll_to_item(self.breadcrumbs.len().saturating_sub(1));
         self.expanded_styles.clear();
-        window.focus(&self.focus, cx);
+
+        if reveal {
+            self.reveal_selection(window, cx);
+        }
+
+        window.focus(&self.tree_focus, cx);
         cx.notify();
+    }
+
+    fn reveal_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (id, path, clear_filter) = {
+            let model = self.model.borrow();
+
+            let Some(capture) = &model.tree else {
+                return;
+            };
+
+            let Some(id) = &model.selected else {
+                return;
+            };
+
+            let path = tree::ancestors(&capture.elements, id);
+
+            if path.is_empty() {
+                return;
+            }
+
+            let uncollapsed = tree::rows(&capture.elements, &model.filter, &BTreeSet::new());
+
+            let clear_filter = !uncollapsed
+                .iter()
+                .any(|row| !row.closing && capture.elements[row.index].id == *id);
+
+            (
+                id.clone(),
+                path.iter()
+                    .map(|element| element.id.clone())
+                    .collect::<Vec<_>>(),
+                clear_filter,
+            )
+        };
+
+        for ancestor in path.iter().filter(|ancestor| **ancestor != id) {
+            self.collapsed.remove(ancestor);
+        }
+
+        if clear_filter {
+            self.filter.update(cx, |input, cx| input.reset(cx));
+            self.model.borrow_mut().filter.clear();
+        }
+
+        let model = self.model.borrow();
+
+        if let Some(capture) = &model.tree {
+            let rows = tree::rows(&capture.elements, &model.filter, &self.collapsed);
+
+            if let Some(line) = rows
+                .iter()
+                .position(|row| !row.closing && capture.elements[row.index].id == id)
+            {
+                let offset = self.tree_scroll.offset();
+                let height = f32::from(self.tree_scroll.bounds().size.height);
+                let y = tree::reveal_offset(f32::from(offset.y), height, line, rows.len());
+
+                self.tree_scroll.set_offset(point(offset.x, px(y)));
+            }
+        }
+
+        window.focus(&self.tree_focus, cx);
+        cx.notify();
+    }
+
+    fn toggle_branch(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(id) {
+            self.collapsed.insert(id.to_owned());
+            let hides_selected = {
+                let model = self.model.borrow();
+
+                model
+                    .tree
+                    .as_ref()
+                    .zip(model.selected.as_deref())
+                    .is_some_and(|(capture, selected)| {
+                        selected != id
+                            && tree::ancestors(&capture.elements, selected)
+                                .iter()
+                                .any(|ancestor| ancestor.id == id)
+                    })
+            };
+
+            if hides_selected {
+                self.select(id, true, window, cx);
+            }
+        }
+
+        window.focus(&self.tree_focus, cx);
+        cx.notify();
+    }
+
+    fn tree_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tree_focus.is_focused(window) || event.keystroke.modifiers.modified() {
+            return;
+        }
+
+        let key = match event.keystroke.key.as_str() {
+            "up" => tree::Key::Up,
+            "down" => tree::Key::Down,
+            "left" => tree::Key::Left,
+            "right" => tree::Key::Right,
+            "home" => tree::Key::Home,
+            "end" => tree::Key::End,
+            "pageup" => tree::Key::PageUp,
+            "pagedown" => tree::Key::PageDown,
+            "enter" | "space" => tree::Key::Toggle,
+            _ => return,
+        };
+
+        let change = {
+            let model = self.model.borrow();
+
+            model.tree.as_ref().and_then(|capture| {
+                let rows = tree::rows(&capture.elements, &model.filter, &self.collapsed);
+
+                let page_lines = (f32::from(self.tree_scroll.bounds().size.height)
+                    / tree::ROW_HEIGHT)
+                    .floor()
+                    .max(1.) as usize;
+
+                tree::navigate(
+                    &capture.elements,
+                    &rows,
+                    model.selected.as_deref(),
+                    key,
+                    page_lines,
+                )
+                .map(|change| {
+                    let index = match change {
+                        tree::Change::Select(i)
+                        | tree::Change::Expand(i)
+                        | tree::Change::Collapse(i) => i,
+                    };
+
+                    (change, capture.elements[index].id.clone())
+                })
+            })
+        };
+
+        if let Some((change, id)) = change {
+            match change {
+                tree::Change::Select(_) => self.select(&id, true, window, cx),
+                tree::Change::Expand(_) | tree::Change::Collapse(_) => {
+                    self.toggle_branch(&id, window, cx);
+                    self.reveal_selection(window, cx);
+                }
+            }
+        }
+
+        window.prevent_default();
+        cx.stop_propagation();
     }
 
     fn select_runtime(&mut self, runtime: RuntimeId, cx: &mut Context<Self>) {
@@ -324,6 +508,17 @@ impl ElementsView {
         model.disconnected = false;
         model.select_runtime(Some(runtime));
         self.show_targets = false;
+
+        for scroll in [
+            &self.tree_scroll,
+            &self.breadcrumb_scroll,
+            &self.detail_scrolls[0],
+            &self.detail_scrolls[1],
+            &self.detail_scrolls[2],
+        ] {
+            scroll.set_offset(Point::default());
+        }
+
         cx.notify();
     }
 
@@ -336,6 +531,7 @@ impl ElementsView {
             self.filter.update(cx, |input, cx| input.reset(cx));
             self.model.borrow_mut().filter.clear();
             self.collapsed.clear();
+            window.focus(&self.tree_focus, cx);
         }
 
         cx.notify();
@@ -372,9 +568,22 @@ impl ElementsView {
         row: tree::Row,
         element: &rake::inspection::Element,
         colors: Palette,
+        tree_active: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selected = self.model.borrow().selected.as_ref() == Some(&element.id);
+        let opening_selected = selected && !row.closing;
+
+        let background = if selected {
+            if opening_selected && tree_active {
+                colors.selection
+            } else {
+                colors.inactive_selection
+            }
+        } else {
+            colors.background
+        };
+
         let kind = tree::tag(&element.kind);
 
         let flex = element
@@ -383,20 +592,22 @@ impl ElementsView {
             .is_some_and(|styles| styles["display"] == "Flex");
 
         rake::view! {
-            <div id={format!("line-{}-{}", row.index, row.closing)} class="flex flex-row items-center min-w-0" style={|s| s.h(px(20.)).min_w_full().flex_shrink_0().pl(px(6.)).bg(rgb(if selected { colors.selection } else { colors.background })).hover(|s| s.bg(rgb(if selected { colors.selection } else { colors.hover })))}>
+            <div id={format!("line-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}{}", element.semantic_id.as_deref().unwrap_or(&element.id), if row.closing { " (closing tag)" } else { "" })}
+                class="flex flex-row items-center min-w-0"
+                style={|s| s.h(px(tree::ROW_HEIGHT)).min_w_full().flex_shrink_0().pl(px(4.)).border_l_2().border_color(rgba(if opening_selected && tree_active { (colors.focus << 8) | 255 } else { 0 })).bg(rgb(background)).hover(|s| s.bg(rgb(if selected { background } else { colors.hover })))
+                    .when(!row.closing, |s| s.role(gpui::accesskit::Role::TreeItem).aria_level(row.depth + 1).aria_selected(opening_selected).when(row.branch, |s| s.aria_expanded(!row.collapsed)).when(opening_selected, |s| s.aria_active_descendant()))}
+                on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, false, window, cx)) } }>
                 for depth in 0..row.depth.min(16) {
                     <span id={format!("indent-{depth}")} style={|s| s.w(px(12.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(colors.guide))}/>
                 }
                 if row.branch && !row.closing {
-                    <button id={format!("disclose-{}", row.index)} aria-label={format!("{} {}", if row.collapsed { "Expand" } else { "Collapse" }, element.semantic_id.as_deref().unwrap_or(&element.id))}
-                        style={|s| s.w(px(14.)).h_full().flex_shrink_0()}
-                        on:click={ { let id = element.id.clone(); cx.listener(move |this, _, _, cx| { if !this.collapsed.remove(&id) { this.collapsed.insert(id.clone()); } cx.stop_propagation(); cx.notify(); }) } }>
+                    <button id={format!("disclose-{}", row.index)} tabindex={-1} aria-label={format!("{} {}", if row.collapsed { "Expand" } else { "Collapse" }, element.semantic_id.as_deref().unwrap_or(&element.id))}
+                        style={|s| colors.control(s).w(px(14.)).h_full().flex_shrink_0()}
+                        on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| { this.toggle_branch(&id, window, cx); cx.stop_propagation(); }) } }>
                         {icon(if row.collapsed { Icon::Right } else { Icon::Down }, colors.muted)}
                     </button>
                 } else { <span style={|s| s.w(px(14.)).flex_shrink_0()}/> }
-                <button id={format!("select-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}", element.semantic_id.as_deref().unwrap_or(&element.id))}
-                    style={|s| s.h_full().flex_row().justify_start().flex_shrink_0().font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.)).whitespace_nowrap()}
-                    on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>
+                <span class="flex flex-row" style={|s| s.h_full().flex_row().justify_start().flex_shrink_0().font_family(CODE_FONT).text_size(px(12.)).line_height(px(tree::ROW_HEIGHT)).whitespace_nowrap()}>
                     <span style={|s| s.text_color(rgb(colors.tag))}>{if row.closing { "</" } else { "<" }}</span>
                     <span style={|s| s.text_color(rgb(colors.tag))}>{kind.clone()}</span>
                     if !row.closing {
@@ -415,7 +626,7 @@ impl ElementsView {
                             <span class="px-1" style={|s| s.ml(px(6.)).rounded(px(3.)).text_size(px(10.)).line_height(px(14.)).bg(rgb(colors.field)).text_color(rgb(colors.muted))}>"flex"</span>
                         }
                     } else { <span style={|s| s.text_color(rgb(colors.tag))}>">"</span> }
-                </button>
+                </span>
             </div>
         }.into_any_element()
     }
@@ -433,7 +644,7 @@ impl ElementsView {
             <div id={format!("declaration-{}", row.name)} class="flex flex-col min-w-0">
                 <div class="flex flex-row" style={|s| s.min_h(px(20.)).pl(px(8.)).pr(px(10.)).hover(|s| s.bg(rgb(colors.hover)))}>
                     if complex {
-                        <button id={format!("expand-{}", row.name)} aria-label={format!("{} {} metadata", if expanded { "Collapse" } else { "Expand" }, row.name)} style={|s| s.w(px(16.)).h(px(20.)).flex_shrink_0()}
+                        <button id={format!("expand-{}", row.name)} aria-label={format!("{} {} metadata", if expanded { "Collapse" } else { "Expand" }, row.name)} style={|s| colors.control(s).w(px(16.)).h(px(20.)).flex_shrink_0()}
                             on:click={ { let name = row.name.clone(); cx.listener(move |this, _, _, cx| { if !this.expanded_styles.remove(&name) { this.expanded_styles.insert(name.clone()); } cx.notify(); }) } }>{icon(if expanded { Icon::Down } else { Icon::Right }, colors.muted)}</button>
                     } else { <span style={|s| s.w(px(16.)).flex_shrink_0()}/> }
                     <div class="flex flex-row min-w-0" style={|s| s.flex_wrap().gap_x(px(6.)).font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.))}>
@@ -503,6 +714,12 @@ impl Render for ElementsView {
             .map_or(&[][..], |tree| tree.elements.as_slice());
 
         let rows = tree::rows(elements, &model.filter, &self.collapsed);
+        let tree_active = self.tree_focus.is_focused(window) && window.is_window_active();
+
+        let can_reveal = model
+            .selected
+            .as_ref()
+            .is_some_and(|id| elements.iter().any(|element| element.id == *id));
 
         let style_rows = selected
             .and_then(|element| element.styles.as_ref())
@@ -540,18 +757,28 @@ impl Render for ElementsView {
 
         let current_tab = self.detail_tab;
 
+        let detail_scroll = self.detail_scrolls[match current_tab {
+            "Styles" => 0,
+            "Layout" => 1,
+            _ => 2,
+        }]
+        .clone();
+
         let tree_pane = rake::view! {
             <section id="tree-pane" class="flex flex-col min-h-0 min-w-0" aria-label="Element tree" style={|s| if narrow { s.h(px(260.)).w_full().flex_shrink_0() } else { s.w(px((width * self.split).clamp(180., (width - 260.).max(180.)))).flex_shrink_0() }}>
                 if self.show_find {
                     <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(30.)).flex_shrink_0().border_b_1().border_color(rgb(colors.line))}>
                         {icon(Icon::Search, colors.muted)}
                         <div class="flex-1 min-w-0">{self.filter.clone()}</div>
-                        <button id="close-find" aria-label="Close tree search" style={|s| s.w(px(20.)).h(px(24.))} on:click={cx.listener(Self::toggle_find)}>"×"</button>
+                        <button id="close-find" aria-label="Close tree search" style={|s| colors.control(s).w(px(20.)).h(px(24.))} on:click={cx.listener(Self::toggle_find)}>"×"</button>
                     </div>
                 }
-                <section id="element-tree" class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_scroll().py(px(5.))}>
+                <section id="element-tree" role={gpui::accesskit::Role::Tree} aria-label="Element tree" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Enter Space"
+                    tabindex={0} focus={&self.tree_focus} scroll={&self.tree_scroll} class="flex flex-col flex-1 min-h-0"
+                    style={|s| s.overflow_scroll().py(px(5.)).border_1().border_color(rgba(if tree_active { (colors.focus << 8) | 255 } else { 0 }))}
+                    on:key-down={cx.listener(Self::tree_key)} on:mouse-down={cx.listener(|this, _, window, cx| { window.focus(&this.tree_focus, cx); window.prevent_default(); })}>
                     for row in &rows {
-                        <div id={format!("tree-row-{}-{}", row.index, row.closing)} style={|s| s.h(px(20.)).flex_shrink_0()}>{self.tree_row(*row, &elements[row.index], colors, cx)}</div>
+                        <div id={format!("tree-row-{}-{}-{}-{}", model.epoch, model.tree.as_ref().map_or("0", |capture| capture.capture.as_str()), row.index, row.closing)} style={|s| s.h(px(tree::ROW_HEIGHT)).flex_shrink_0()}>{self.tree_row(*row, &elements[row.index], colors, tree_active, cx)}</div>
                     }
                     if elements.is_empty() {
                         <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>{if model.tree.is_some() { "No captured boundaries. Enable inspection in the target application." } else { "Select a running Rake application to inspect its views." }}</p>
@@ -564,8 +791,8 @@ impl Render for ElementsView {
                         <div id={format!("crumb-{id}")} class="flex flex-row items-center" style={|s| s.h_full().flex_shrink_0()}>
                             if stale { <span class="px-2" style={|s| s.text_color(rgb(colors.muted)).whitespace_nowrap()}>{label.clone()}</span> }
                             else {
-                                <button id={format!("select-crumb-{id}")} class="px-2" style={|s| s.h_full().whitespace_nowrap().bg(rgb(if model.selected.as_ref() == Some(id) { colors.field } else { colors.bar })).hover(|s| s.bg(rgb(colors.field)))}
-                                    on:click={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, window, cx)) } }>{label.clone()}</button>
+                                <button id={format!("select-crumb-{id}")} class="px-2" style={|s| colors.control(s).h_full().whitespace_nowrap().bg(rgb(if model.selected.as_ref() == Some(id) { colors.field } else { colors.bar })).hover(|s| s.bg(rgb(colors.field)))}
+                                    on:click={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, true, window, cx)) } }>{label.clone()}</button>
                             }
                             {icon(Icon::Right, colors.muted)}
                         </div>
@@ -588,7 +815,7 @@ impl Render for ElementsView {
                         <div class="flex-1 min-w-0">{self.style_filter.clone()}</div>
                     </div>
                 }
-                <section id="detail-content" class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_y_scroll()}>
+                <section id={format!("detail-content-{current_tab}")} scroll={&detail_scroll} class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_y_scroll()}>
                     if stale { <p class="px-3 py-1" style={|s| s.text_size(px(11.)).text_color(rgb(if self.light { 0x826113 } else { 0xfdd663 })).bg(rgb(if self.light { 0xfff6d9 } else { 0x3b3321 }))}>"Previous capture · details frozen"</p> }
                     if let Some(error) = &model.lookup_error { <p class="px-3 py-1" style={|s| s.text_size(px(11.)).text_color(rgb(colors.property))}>{error.clone()}</p> }
                     if let Some(element) = selected {
@@ -598,7 +825,7 @@ impl Render for ElementsView {
                                     <span class="min-w-0" style={|s| s.text_color(rgb(colors.ink))}>{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
                                     <span class="flex-1"/>
                                     <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; declaration provenance is unavailable."
-                                        style={|s| s.flex_shrink_0().text_color(rgb(colors.muted)).underline().hover(|s| s.text_color(rgb(colors.ink)))}
+                                        style={|s| colors.control(s).flex_shrink_0().text_color(rgb(colors.muted)).underline().hover(|s| s.text_color(rgb(colors.ink)))}
                                         on:click={cx.listener(|this, _, _, cx| { this.detail_tab = "Source"; cx.notify(); })}>{source_label(element)}</button>
                                 </div>
                                 for group in [styles::Group::Layout, styles::Group::Spacing, styles::Group::Appearance, styles::Group::Typography, styles::Group::Other] {
@@ -657,13 +884,15 @@ impl Render for ElementsView {
                     <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
                     <div class="flex items-center px-3" style={|s| s.h_full().border_b_2().border_color(rgb(colors.accent)).text_color(rgb(colors.accent)).font_weight(FontWeight::SEMIBOLD)}>"Elements"</div>
                     <span class="flex-1"/>
-                    <button id="targets" aria-label="Select target runtime" class="flex flex-row items-center gap-1 px-2" style={|s| s.h(px(26.)).text_color(rgb(colors.muted)).hover(|s| s.bg(rgb(colors.field)))}
+                    <button id="targets" aria-label="Select target runtime" class="flex flex-row items-center gap-1 px-2" style={|s| colors.control(s).h(px(26.)).text_color(rgb(colors.muted)).hover(|s| s.bg(rgb(colors.field)))}
                         on:click={cx.listener(|this, _, _, cx| { this.show_targets = !this.show_targets; cx.notify(); })}><span>{target_name}</span>{icon(Icon::Down, colors.muted)}</button>
                     <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
-                    <button id="find" aria-label="Find in element tree" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
-                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
-                    <button id="refresh" aria-label="Refresh capture" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
-                    <button id="theme" aria-label="Toggle theme" style={|s| s.w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
+                    <button id="find" aria-label="Find in element tree" style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
+                    <button id="reveal-selection" disabled={!can_reveal} aria-label="Reveal selected element in tree" aria-description="Expand its current ancestors and scroll it into view. A replaced capture cannot be retargeted."
+                        style={|s| colors.control(s).w(px(30.)).h_full().opacity(if can_reveal { 1. } else { 0.35 }).hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, window, cx| this.reveal_selection(window, cx))}>{icon(Icon::Reveal, colors.muted)}</button>
+                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
+                    <button id="refresh" aria-label="Refresh capture" style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
+                    <button id="theme" aria-label="Toggle theme" style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
                 </div>
                 if let Some(error) = error { <p class="px-3 py-1" style={|s| s.text_color(rgb(colors.property)).border_b_1().border_color(rgb(colors.line))}>{error}</p> }
                 <div class="flex flex-1 min-h-0 min-w-0" style={|s| if narrow { s.flex_col() } else { s.flex_row() }}>
@@ -682,16 +911,16 @@ impl Render for ElementsView {
                     </section>
                 }
                 <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(23.)).flex_shrink_0().bg(rgb(colors.bar)).border_t_1().border_color(rgb(colors.line)).text_size(px(10.)).text_color(rgb(colors.muted))}>
-                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1" style={|s| s.h_full().hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
+                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1" style={|s| colors.control(s).h_full().hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
                     <span class="flex-1"/>
                     <span style={|s| s.w(px(6.)).h(px(6.)).rounded_full().bg(rgb(if model.disconnected { colors.muted } else if self.config_error.is_some() || model.error.is_some() { colors.property } else { 0x6d9668 }))}/>
                     <span>{status}</span>
-                    <button id="disconnect" style={|s| s.h_full().px(px(5.)).hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
+                    <button id="disconnect" style={|s| colors.control(s).h_full().px(px(5.)).hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
                 </div>
                 if self.show_targets {
                     <section id="target-menu" class="flex flex-col p-1 border" style={|s| s.absolute().top(px(32.)).right(px(6.)).w(px(490.)).max_w_full().max_h(px(220.)).overflow_y_scroll().bg(rgb(colors.background)).border_color(rgb(colors.line)).shadow_lg()}>
                         for instance in &model.instances {
-                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2" style={|s| s.justify_start().text_size(px(11.)).hover(|s| s.bg(rgb(colors.hover)))} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
+                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2" style={|s| colors.control(s).justify_start().text_size(px(11.)).hover(|s| s.bg(rgb(colors.hover)))} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
                         }
                         if model.instances.is_empty() { <p class="p-3">"No runtimes advertised by this broker."</p> }
                     </section>

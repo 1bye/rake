@@ -46,6 +46,27 @@ one capture and resets when it is replaced; stable identities across captures
 are a separate runtime capability. The filter supports platform text input,
 IME, selection and clipboard shortcuts.
 
+The tree is one keyboard tab stop. Up/Down select visible nodes, skipping closing
+tag annotations. Left collapses an expanded branch or selects its parent; Right
+expands a collapsed branch or selects its first child. Home/End select the first
+or last visible node. Page Up/Down move by the visible tree height, and Enter or
+Space toggle a branch. Text inputs and the pane divider retain their own keys.
+The selected tree item exposes its level, expansion and selection state to native
+accessibility, using the tree's active-descendant focus.
+
+Reveal selection in the toolbar expands the current ancestors, clears a tree
+filter only if it hides that node, and scrolls the selection into view. Breadcrumbs
+also reveal their exact current node. A replaced capture's frozen selection cannot
+be revealed by substituting a node with the same semantic ID. Collapsing an ancestor
+of the current selection explicitly selects that ancestor instead.
+
+The tree keeps its horizontal and vertical scroll offsets through polling and
+capture updates. Keyboard selection changes only the vertical offset needed to
+show the row. Styles, Layout and Source each retain a separate scroll position
+when switching panes. Positions clamp when content shrinks; explicitly choosing a
+runtime resets the pane positions. Active selection, inactive selection, pointer
+hover and keyboard-focused controls have distinct treatments in both themes.
+
 Styles displays the captured authored refinements as declarations grouped by
 layout, spacing, appearance and typography. Supplied dimensions and edges expand
 into readable property rows, preserving their units. Recognized solid colors get
@@ -90,6 +111,8 @@ python3 scripts/test-inspector.py
 
 The Rust tests cover exact shared query envelopes over real loopback HTTP, launch
 validation, response bounds, stale captures, selection races and reload identity.
+Presentation tests cover keyboard traversal of filtered and collapsed trees,
+closing-tag annotations, page movement and minimal reveal offsets.
 The Python suite covers the real broker's asset isolation, authentication and
 native/Web forwarding. GPU/native interaction and browser rendering require a
 real host; compilation alone does not establish them.

@@ -25,6 +25,8 @@ pub(crate) struct Palette {
     pub value: u32,
     pub property: u32,
     pub selection: u32,
+    pub inactive_selection: u32,
+    pub focus: u32,
     pub hover: u32,
 }
 
@@ -45,6 +47,8 @@ impl Palette {
                 value: 0x1a1aa6,
                 property: 0xd33422,
                 selection: 0xdce8f5,
+                inactive_selection: 0xe7e7e4,
+                focus: 0x1a73e8,
                 hover: 0xf0f0ed,
             }
         } else {
@@ -62,9 +66,15 @@ impl Palette {
                 value: 0x9dc7f5,
                 property: 0xf28b82,
                 selection: 0x354b69,
+                inactive_selection: 0x3a3d42,
+                focus: 0x8ab4f8,
                 hover: 0x2c2e32,
             }
         }
+    }
+
+    pub fn control<E: Styled + InteractiveElement>(self, element: E) -> E {
+        element.focus_visible(|s| s.bg(rgb(self.selection)).text_color(rgb(self.ink)))
     }
 }
 
@@ -78,6 +88,7 @@ pub(crate) enum Icon {
     Play,
     Theme,
     Code,
+    Reveal,
 }
 
 pub(crate) fn icon(kind: Icon, color: u32) -> impl IntoElement {
@@ -147,6 +158,14 @@ pub(crate) fn icon(kind: Icon, color: u32) -> impl IntoElement {
                 Icon::Code => &[
                     &[(6., 4.), (2., 8.), (6., 12.)],
                     &[(10., 4.), (14., 8.), (10., 12.)],
+                ],
+                Icon::Reveal => &[
+                    &[(6., 2.), (2., 2.), (2., 6.)],
+                    &[(10., 2.), (14., 2.), (14., 6.)],
+                    &[(2., 10.), (2., 14.), (6., 14.)],
+                    &[(14., 10.), (14., 14.), (10., 14.)],
+                    &[(5., 8.), (11., 8.)],
+                    &[(8., 5.), (8., 11.)],
                 ],
             };
 
