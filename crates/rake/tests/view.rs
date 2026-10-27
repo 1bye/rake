@@ -216,3 +216,40 @@ fn disabled_buttons_expose_their_state_without_accessibility_activation_actions(
     assert_eq!(info.description(), Some("Unavailable while saving"));
     assert_eq!(info.keyboard_shortcut(), Some("Control+S"));
 }
+
+#[test]
+fn every_supported_utility_compiles_against_gpui() {
+    let _ = rake::view! { <div class="flex block grid hidden flex-col flex-row flex-wrap flex-1 items-start items-center items-end justify-start justify-center justify-end justify-between w-full h-full size-full min-w-0 min-h-0 overflow-hidden overflow-scroll overflow-x-scroll overflow-y-scroll rounded-none rounded-sm rounded-md rounded-lg rounded-xl rounded-full border-0 border-1"/> };
+    let _ = rake::view! { <div class="border-2 shadow-sm shadow-md shadow-lg cursor-pointer text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-left text-center text-right rounded border shrink-0 grow grow-0 flex-none relative absolute items-stretch self-start self-center self-end justify-around truncate whitespace-nowrap overflow-x-hidden overflow-y-hidden"/> };
+    let _ = rake::view! { <div class="border-t border-t-0 border-t-1 border-t-2 border-b border-b-0 border-b-1 border-b-2 border-l border-l-0 border-l-1 border-l-2 border-r border-r-0 border-r-1 border-r-2 font-normal font-medium font-semibold font-bold grid-cols-1 grid-cols-2 grid-cols-3 grid-cols-4 grid-cols-5 grid-cols-6 grid-cols-7 grid-cols-8 grid-cols-9 grid-cols-10 grid-cols-11 grid-cols-12"/> };
+    let _ = rake::view! { <div class="p-0 p-1 p-2 p-3 p-4 p-5 p-6 p-7 p-8 p-12 p-16 p-20 p-24 p-32 px-0 px-1 px-2 px-3 px-4 px-5 px-6 px-7 px-8 px-12 px-16 px-20 px-24 px-32 py-0 py-1 py-2 py-3"/> };
+    let _ = rake::view! { <div class="py-4 py-5 py-6 py-7 py-8 py-12 py-16 py-20 py-24 py-32 pt-0 pt-1 pt-2 pt-3 pt-4 pt-5 pt-6 pt-7 pt-8 pt-12 pt-16 pt-20 pt-24 pt-32 pb-0 pb-1 pb-2 pb-3 pb-4 pb-5 pb-6 pb-7"/> };
+    let _ = rake::view! { <div class="pb-8 pb-12 pb-16 pb-20 pb-24 pb-32 pl-0 pl-1 pl-2 pl-3 pl-4 pl-5 pl-6 pl-7 pl-8 pl-12 pl-16 pl-20 pl-24 pl-32 pr-0 pr-1 pr-2 pr-3 pr-4 pr-5 pr-6 pr-7 pr-8 pr-12 pr-16 pr-20"/> };
+    let _ = rake::view! { <div class="pr-24 pr-32 m-0 m-1 m-2 m-3 m-4 m-5 m-6 m-7 m-8 m-12 m-16 m-20 m-24 m-32 mx-0 mx-1 mx-2 mx-3 mx-4 mx-5 mx-6 mx-7 mx-8 mx-12 mx-16 mx-20 mx-24 mx-32 my-0 my-1"/> };
+    let _ = rake::view! { <div class="my-2 my-3 my-4 my-5 my-6 my-7 my-8 my-12 my-16 my-20 my-24 my-32 mt-0 mt-1 mt-2 mt-3 mt-4 mt-5 mt-6 mt-7 mt-8 mt-12 mt-16 mt-20 mt-24 mt-32 mb-0 mb-1 mb-2 mb-3 mb-4 mb-5"/> };
+    let _ = rake::view! { <div class="mb-6 mb-7 mb-8 mb-12 mb-16 mb-20 mb-24 mb-32 ml-0 ml-1 ml-2 ml-3 ml-4 ml-5 ml-6 ml-7 ml-8 ml-12 ml-16 ml-20 ml-24 ml-32 mr-0 mr-1 mr-2 mr-3 mr-4 mr-5 mr-6 mr-7 mr-8 mr-12"/> };
+    let _ = rake::view! { <div class="mr-16 mr-20 mr-24 mr-32 gap-0 gap-1 gap-2 gap-3 gap-4 gap-5 gap-6 gap-7 gap-8 gap-12 gap-16 gap-20 gap-24 gap-32 gap-x-0 gap-x-1 gap-x-2 gap-x-3 gap-x-4 gap-x-5 gap-x-6 gap-x-7 gap-x-8 gap-x-12 gap-x-16 gap-x-20 gap-x-24 gap-x-32"/> };
+    let _ = rake::view! { <div class="gap-y-0 gap-y-1 gap-y-2 gap-y-3 gap-y-4 gap-y-5 gap-y-6 gap-y-7 gap-y-8 gap-y-12 gap-y-16 gap-y-20 gap-y-24 gap-y-32 w-0 w-1 w-2 w-3 w-4 w-5 w-6 w-7 w-8 w-12 w-16 w-20 w-24 w-32 h-0 h-1 h-2 h-3"/> };
+    let _ = rake::view! { <div class="h-4 h-5 h-6 h-7 h-8 h-12 h-16 h-20 h-24 h-32 size-0 size-1 size-2 size-3 size-4 size-5 size-6 size-7 size-8 size-12 size-16 size-20 size-24 size-32"/> };
+}
+
+#[test]
+fn conditional_classes_apply_once_in_attribute_order() {
+    let visits = std::cell::Cell::new(0);
+
+    let mut view = rake::view! {
+        <div class="shrink-0"
+            class:grow={ { visits.set(visits.get() + 1); true } }
+            class:grow-0={false}
+            class:font-bold={false}
+            style={|s| s.p_4()}/>
+    };
+
+    let mut expected = div().flex().flex_col().flex_shrink_0().flex_grow_1().p_4();
+
+    assert_eq!(visits.get(), 1);
+    assert_eq!(
+        format!("{:?}", view.style()),
+        format!("{:?}", expected.style())
+    );
+}

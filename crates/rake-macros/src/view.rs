@@ -9,6 +9,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
+use self::classes::{class_methods, utility_methods};
 use self::tag::{Tag, display_name};
 
 #[derive(Clone)]
@@ -162,24 +163,34 @@ fn parse_attribute(input: ParseStream<'_>) -> syn::Result<Attribute> {
     let mut action = None;
 
     if input.peek(Token![:]) {
-        if name != "on" {
+        input.parse::<Token![:]>()?;
+
+        if name == "class" {
+            name.push(':');
+            name.push_str(&input.call(Ident::parse_any)?.to_string());
+        } else if name == "on" {
+            let path = input.call(syn::Path::parse_mod_style)?;
+
+            name = format!("on:{}", display_name(&path));
+            action = Some(path);
+        } else {
             return Err(syn::Error::new(
                 span,
                 "typed actions use on:Action={handler}",
             ));
         }
-
-        input.parse::<Token![:]>()?;
-        let path = input.call(syn::Path::parse_mod_style)?;
-
-        name = format!("on:{}", quote!(#path).to_string().replace(' ', ""));
-        action = Some(path);
     }
 
     while action.is_none() && input.peek(Token![-]) {
         input.parse::<Token![-]>()?;
         name.push('-');
-        name.push_str(&input.call(Ident::parse_any)?.to_string());
+        let part = if input.peek(syn::LitInt) {
+            input.parse::<syn::LitInt>()?.to_string()
+        } else {
+            input.call(Ident::parse_any)?.to_string()
+        };
+
+        name.push_str(&part);
     }
 
     input.parse::<Token![=]>()?;
@@ -528,6 +539,15 @@ impl Element {
                 continue;
             }
 
+            if let Some(class) = attribute.name.strip_prefix("class:") {
+                let methods = utility_methods(class, attribute.span, rake)?;
+
+                builder.extend(
+                    quote_spanned!(attribute.span=> .when(#value, |#mapped| #mapped #methods)),
+                );
+                continue;
+            }
+
             let method = match attribute.name.as_str() {
                 "id" => continue,
                 "disabled" | "focus" | "tabindex" | "tab-navigation" => continue,
@@ -757,164 +777,7 @@ fn expand_text_child(
     );)
 }
 
-fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
-    let Expr::Lit(syn::ExprLit {
-        lit: syn::Lit::Str(classes),
-        ..
-    }) = value
-    else {
-        return Err(syn::Error::new_spanned(
-            value,
-            "class requires a literal utility string; use style={|s| ...} for dynamic styles",
-        ));
-    };
-
-    let mut methods = TokenStream::new();
-    let mut errors: Option<syn::Error> = None;
-
-    for class in classes.value().split_whitespace() {
-        if let Some(weight) = match class {
-            "font-normal" => Some("NORMAL"),
-            "font-medium" => Some("MEDIUM"),
-            "font-semibold" => Some("SEMIBOLD"),
-            "font-bold" => Some("BOLD"),
-            _ => None,
-        } {
-            let weight = format_ident!("{weight}");
-
-            methods.extend(quote!(.font_weight(#rake::gpui::FontWeight::#weight)));
-            continue;
-        }
-
-        if let Some(columns) = class
-            .strip_prefix("grid-cols-")
-            .and_then(|value| value.parse::<u16>().ok())
-            && (1..=12).contains(&columns)
-        {
-            methods.extend(quote!(.grid_cols(#columns)));
-            continue;
-        }
-
-        let fixed = matches!(
-            class,
-            "flex"
-                | "block"
-                | "grid"
-                | "hidden"
-                | "flex-col"
-                | "flex-row"
-                | "flex-wrap"
-                | "flex-1"
-                | "items-start"
-                | "items-center"
-                | "items-end"
-                | "justify-start"
-                | "justify-center"
-                | "justify-end"
-                | "justify-between"
-                | "w-full"
-                | "h-full"
-                | "size-full"
-                | "min-w-0"
-                | "min-h-0"
-                | "overflow-hidden"
-                | "overflow-scroll"
-                | "overflow-x-scroll"
-                | "overflow-y-scroll"
-                | "rounded-none"
-                | "rounded-sm"
-                | "rounded-md"
-                | "rounded-lg"
-                | "rounded-xl"
-                | "rounded-full"
-                | "border-0"
-                | "border-1"
-                | "border-2"
-                | "shadow-sm"
-                | "shadow-md"
-                | "shadow-lg"
-                | "cursor-pointer"
-                | "text-xs"
-                | "text-sm"
-                | "text-base"
-                | "text-lg"
-                | "text-xl"
-                | "text-2xl"
-                | "text-3xl"
-                | "text-left"
-                | "text-center"
-                | "text-right"
-        );
-
-        let spacing = class.rsplit_once('-').is_some_and(|(prefix, value)| {
-            matches!(
-                prefix,
-                "p" | "px"
-                    | "py"
-                    | "pt"
-                    | "pb"
-                    | "pl"
-                    | "pr"
-                    | "m"
-                    | "mx"
-                    | "my"
-                    | "mt"
-                    | "mb"
-                    | "ml"
-                    | "mr"
-                    | "gap"
-            ) && matches!(
-                value,
-                "0" | "1"
-                    | "2"
-                    | "3"
-                    | "4"
-                    | "5"
-                    | "6"
-                    | "7"
-                    | "8"
-                    | "12"
-                    | "16"
-                    | "20"
-                    | "24"
-                    | "32"
-            )
-        });
-
-        let method = match class {
-            "rounded" => "rounded_md".to_string(),
-            "border" => "border_1".to_string(),
-            _ if fixed || spacing => class.replace('-', "_"),
-            _ => {
-                let error = syn::Error::new(
-                    classes.span(),
-                    format!(
-                        "unsupported utility class `{class}`; use style={{|s| ...}} for GPUI styling"
-                    ),
-                );
-
-                if let Some(errors) = &mut errors {
-                    errors.combine(error);
-                } else {
-                    errors = Some(error);
-                }
-
-                continue;
-            }
-        };
-
-        let method = format_ident!("{method}", span = classes.span());
-
-        methods.extend(quote!(.#method()));
-    }
-
-    if let Some(errors) = errors {
-        return Err(errors);
-    }
-
-    Ok(methods)
-}
-
+mod classes;
 mod component;
 mod diagnostics;
 mod paragraph;

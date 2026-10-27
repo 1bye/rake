@@ -171,6 +171,12 @@ pub(super) fn inline_element(
             "class" => inline_classes(value, rake)?,
             "style" => quote!(.highlight(#value)),
             "font-family" => quote!(.font_family(#value)),
+            name if name.starts_with("class:") => {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "conditional inline text classes are unsupported; select a HighlightStyle with style={...}",
+                ));
+            }
             _ => {
                 return Err(syn::Error::new(
                     attribute.span,

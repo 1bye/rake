@@ -1,0 +1,5 @@
+error: unsupported utility class `unknown`; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/conditional_utility.rs:2:32
+  |
+2 |     let _ = rake::view! { <div class:unknown={true}/> };
+  |                                ^^^^^

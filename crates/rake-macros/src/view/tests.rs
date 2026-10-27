@@ -292,6 +292,7 @@ fn expansion_snapshots() {
         ("branches", r#"<div>if let Some(value) = selected { <p>{value}</p> } else if busy { "Loading" } else { <span/> }</div>"#.to_owned()),
         ("loops", r#"<ul>for row in rows { if row.visible { <li id={row.id}>{row.label}</li> } }</ul>"#.to_owned()),
         ("actions", r#"<section key-context="Editor" on:Save={save} on:crate::actions::Cancel={cancel}><button onclick={click}>"Save"</button></section>"#.to_owned()),
+        ("conditional_classes", r#"<div class="relative" class:shrink-0={fixed} class:font-bold={selected}/>"#.to_owned()),
         ("navigation", r#"<section focus={&self.focus} scroll={&self.scroll} tab-navigation={true}><button tabindex={0}/></section>"#.to_owned()),
     ];
 
@@ -341,4 +342,52 @@ fn collects_independent_errors_and_recovers_attribute_boundaries() {
     assert!(errors[0].contains("quoted strings"));
     assert!(errors[1].contains("unsupported attribute `title`"));
     assert!(errors[2].contains("img requires alt"));
+}
+
+#[test]
+fn documented_utilities_match_the_checked_table() {
+    use super::classes::{FIXED, PREFIXES, SCALES};
+
+    let docs = include_str!("../../../../docs/experimental-view.md");
+
+    let list = docs
+        .split("<!-- view-utilities:start -->")
+        .nth(1)
+        .unwrap()
+        .split("<!-- view-utilities:end -->")
+        .next()
+        .unwrap();
+
+    let names = list
+        .split('`')
+        .enumerate()
+        .filter_map(|(index, value)| (index % 2 == 1).then_some(value))
+        .collect::<Vec<_>>();
+
+    for (utility, _) in FIXED {
+        assert!(
+            names.contains(utility),
+            "missing documented utility {utility}"
+        );
+    }
+
+    for prefix in PREFIXES {
+        assert!(names.contains(&format!("{prefix}-N").as_str()));
+    }
+
+    for name in names {
+        let utilities = if name == "grid-cols-N" {
+            (1..=12)
+                .map(|n| format!("grid-cols-{n}"))
+                .collect::<Vec<_>>()
+        } else if let Some(prefix) = name.strip_suffix("-N") {
+            SCALES.iter().map(|n| format!("{prefix}-{n}")).collect()
+        } else {
+            vec![name.to_owned()]
+        };
+
+        for utility in utilities {
+            expand(&format!("<div class={utility:?}/>")).expect(&utility);
+        }
+    }
 }

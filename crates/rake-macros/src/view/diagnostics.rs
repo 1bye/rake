@@ -72,6 +72,7 @@ impl Element {
             children: Vec::new(),
             parse_errors: Vec::new(),
         };
+
         let mut invalid_component = false;
 
         if let Some(heading) = inline {

@@ -79,20 +79,37 @@ An empty image label (`alt=""`) marks it as decorative and omits its accessibili
 utility methods, in the order written. These are utilities, not stylesheet class
 names or a complete Tailwind implementation:
 
-- Layout: `flex`, `block`, `grid`, `hidden`, `flex-col`, `flex-row`, `flex-wrap`,
-  `flex-1`, `grid-cols-1` through `grid-cols-12`.
-- Alignment: `items-start`, `items-center`, `items-end`, `justify-start`,
-  `justify-center`, `justify-end`, `justify-between`.
-- Size: `w-full`, `h-full`, `size-full`, `min-w-0`, `min-h-0`.
-- Spacing: `p`, `px`, `py`, `pt`, `pb`, `pl`, `pr`, `m`, `mx`, `my`, `mt`, `mb`,
-  `ml`, `mr`, and `gap`, followed by `-0` through `-8`, or `-12`, `-16`, `-20`,
-  `-24`, `-32`. Values use GPUI's rem-based spacing scale.
-- Decoration: `rounded`, `rounded-none`, `rounded-sm`, `rounded-md`, `rounded-lg`,
-  `rounded-xl`, `rounded-full`; `border`, `border-0`, `border-1`, `border-2`;
-  `shadow-sm`, `shadow-md`, `shadow-lg`; `cursor-pointer`.
-- Text: `text-xs`, `text-sm`, `text-base`, `text-lg`, `text-xl`, `text-2xl`,
-  `text-3xl`, `text-left`, `text-center`, `text-right`; `font-normal`,
-  `font-medium`, `font-semibold`, `font-bold`.
+<!-- view-utilities:start -->
+- `flex`, `block`, `grid`, `hidden`, `flex-col`, `flex-row`.
+- `flex-wrap`, `flex-1`, `items-start`, `items-center`, `items-end`, `justify-start`.
+- `justify-center`, `justify-end`, `justify-between`, `w-full`, `h-full`, `size-full`.
+- `min-w-0`, `min-h-0`, `overflow-hidden`, `overflow-scroll`, `overflow-x-scroll`, `overflow-y-scroll`.
+- `rounded-none`, `rounded-sm`, `rounded-md`, `rounded-lg`, `rounded-xl`, `rounded-full`.
+- `border-0`, `border-1`, `border-2`, `shadow-sm`, `shadow-md`, `shadow-lg`.
+- `cursor-pointer`, `text-xs`, `text-sm`, `text-base`, `text-lg`, `text-xl`.
+- `text-2xl`, `text-3xl`, `text-left`, `text-center`, `text-right`, `rounded`.
+- `border`, `shrink-0`, `grow`, `grow-0`, `flex-none`, `relative`.
+- `absolute`, `items-stretch`, `self-start`, `self-center`, `self-end`, `justify-around`.
+- `truncate`, `whitespace-nowrap`, `overflow-x-hidden`, `overflow-y-hidden`, `border-t`, `border-t-0`.
+- `border-t-1`, `border-t-2`, `border-b`, `border-b-0`, `border-b-1`, `border-b-2`.
+- `border-l`, `border-l-0`, `border-l-1`, `border-l-2`, `border-r`, `border-r-0`.
+- `border-r-1`, `border-r-2`, `font-normal`, `font-medium`, `font-semibold`, `font-bold`.
+- `grid-cols-N`, `p-N`, `px-N`, `py-N`, `pt-N`, `pb-N`.
+- `pl-N`, `pr-N`, `m-N`, `mx-N`, `my-N`, `mt-N`.
+- `mb-N`, `ml-N`, `mr-N`, `gap-N`, `gap-x-N`, `gap-y-N`.
+- `w-N`, `h-N`, `size-N`.
+<!-- view-utilities:end -->
+
+`N` uses the spacing scale 0–8, 12, 16, 20, 24, 32; `grid-cols-N` uses 1–12.
+Utilities map to the pinned GPUI builder methods. `truncate` and `whitespace-nowrap`
+are raw GPUI text styling; composed paragraphs/headings also provide explicit
+`wrap`, `ellipsis` and `max-lines` controls.
+
+Conditional classes use a literal utility name: `class:shrink-0={fixed}` or
+`class:font-bold={selected}`. Each condition is evaluated once, and the utility
+applies in attribute order only when true. Unknown/dynamic names are errors.
+Inline text tags reject conditional classes; select a `HighlightStyle` through
+`style={...}` there instead.
 
 `style={|s| ...}` receives the GPUI builder through `FluentBuilder::map` and can
 use its typed styling API, including colors, dimensions, hover and focus styles.

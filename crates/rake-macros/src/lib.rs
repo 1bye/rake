@@ -15,7 +15,8 @@ mod view;
 ///
 /// Exposed as `rake::view!` with Rake's `experimental-view` feature. Supports
 /// quoted text, `{expression}` children, `if`/`else`, and `for` children.
-/// `class` accepts a checked utility subset; `style={|s| ...}` applies GPUI
+/// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
+/// conditionally in attribute order (layout tags only); `style={|s| ...}` applies GPUI
 /// builder methods. Events use GPUI callbacks, including `cx.listener(...)`.
 /// Repeated element roots require explicit, stable `id` attributes.
 /// `<view entity={&self.editor}/>` mounts a retained entity by borrowing its handle.
