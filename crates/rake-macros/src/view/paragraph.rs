@@ -5,7 +5,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, Lit};
 
-use super::tag::Tag;
+use super::tag::{PARAGRAPH_CONTENT, Tag};
 use super::{Element, Node};
 
 impl Element {
@@ -15,10 +15,6 @@ impl Element {
         rake: &TokenStream,
         next: &mut usize,
     ) -> syn::Result<TokenStream> {
-        if matches!(self.resolved, Tag::Heading(_)) {
-            validate_heading_children(&self.children)?;
-        }
-
         let index = *next;
 
         *next += 1;
@@ -56,43 +52,6 @@ impl Element {
             #finish
         }))
     }
-}
-
-fn validate_heading_children(nodes: &[Node]) -> syn::Result<()> {
-    for node in nodes {
-        match node {
-            Node::Element(element) => {
-                if !["span", "strong", "em", "br"]
-                    .iter()
-                    .any(|tag| element.tag.is_ident(tag))
-                {
-                    return Err(syn::Error::new(
-                        element.tag.span(),
-                        "headings compose text like p; use a div with role={Role::Heading} for rich content",
-                    ));
-                }
-
-                validate_heading_children(&element.children)?;
-            }
-            Node::If {
-                then_nodes,
-                else_nodes,
-                ..
-            } => {
-                validate_heading_children(then_nodes)?;
-                validate_heading_children(else_nodes)?;
-            }
-            Node::Match { arms, .. } => {
-                for arm in arms {
-                    validate_heading_children(&arm.children)?;
-                }
-            }
-            Node::For { children, .. } => validate_heading_children(children)?,
-            _ => {}
-        }
-    }
-
-    Ok(())
 }
 
 fn inline_children(
@@ -157,6 +116,10 @@ pub(super) fn inline_element(
     rake: &TokenStream,
     next: &mut usize,
 ) -> syn::Result<TokenStream> {
+    if !Tag::is_inline_name(&element.tag) {
+        return Err(syn::Error::new(element.tag.span(), PARAGRAPH_CONTENT));
+    }
+
     if element.tag.is_ident("br") {
         if !element.attributes.is_empty() || !element.children.is_empty() {
             return Err(syn::Error::new(
@@ -175,10 +138,7 @@ pub(super) fn inline_element(
     } else if element.tag.is_ident("em") {
         quote!(#inherited.clone().highlight(#rake::gpui::FontStyle::Italic.into()))
     } else {
-        return Err(syn::Error::new(
-            element.tag.span(),
-            "paragraphs accept text, span, strong, em, br, if and for; place layout elements, components and widgets outside p",
-        ));
+        unreachable!("Tag::is_inline_name admitted an inline tag without a style")
     };
 
     let mut style = base;

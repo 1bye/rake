@@ -394,3 +394,25 @@ fn documented_utilities_match_the_checked_table() {
         }
     }
 }
+
+#[test]
+fn final_emission_errors_keep_previously_collected_diagnostics() {
+    let mut diagnostics = super::Diagnostics::default();
+
+    diagnostics.push(syn::Error::new(
+        proc_macro2::Span::call_site(),
+        "recovery error",
+    ));
+    let result = diagnostics.finish(Err(syn::Error::new(
+        proc_macro2::Span::call_site(),
+        "emission error",
+    )));
+
+    let messages = result
+        .unwrap_err()
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(messages, ["recovery error", "emission error"]);
+}

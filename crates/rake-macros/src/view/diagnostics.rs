@@ -4,28 +4,25 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
-use super::tag::Tag;
-use super::{Attribute, Element, Node, View, require_loop_ids};
-
-#[derive(Default)]
-struct Diagnostics(Option<syn::Error>);
-
-impl Diagnostics {
-    fn push(&mut self, error: syn::Error) {
-        if let Some(errors) = &mut self.0 {
-            errors.combine(error);
-        } else {
-            self.0 = Some(error);
-        }
-    }
-}
+use super::tag::{HEADING_CONTENT, PARAGRAPH_CONTENT, Tag};
+use super::{Attribute, Diagnostics, Element, Node, View, require_loop_ids};
 
 impl View {
     pub(crate) fn expand_resilient(mut self, rake: &TokenStream) -> syn::Result<TokenStream> {
         let mut diagnostics = Diagnostics::default();
 
         self.0.recover(rake, None, &mut diagnostics);
-        let root = self.emit(rake)?;
+        let root = match self.emit(rake) {
+            Ok(root) => root,
+            Err(error) => {
+                diagnostics.push(error);
+
+                return Ok(diagnostics
+                    .0
+                    .expect("emission error was just recorded")
+                    .to_compile_error());
+            }
+        };
 
         if let Some(errors) = diagnostics.0 {
             let errors = errors.to_compile_error();
@@ -49,11 +46,7 @@ impl View {
 
         self.0.recover(rake, None, &mut diagnostics);
 
-        if let Some(errors) = diagnostics.0 {
-            return Err(errors);
-        }
-
-        self.emit(rake)
+        diagnostics.finish(self.emit(rake))
     }
 }
 
@@ -78,14 +71,11 @@ impl Element {
         };
 
         if let Some(heading) = inline {
-            if !["span", "strong", "em", "br"]
-                .iter()
-                .any(|tag| self.tag.is_ident(tag))
-            {
+            if !Tag::is_inline_name(&self.tag) {
                 let message = if heading {
-                    "headings compose text like p; use a div with role={Role::Heading} for rich content"
+                    HEADING_CONTENT
                 } else {
-                    "paragraphs accept text, span, strong, em, br, if and for; place layout elements, components and widgets outside p"
+                    PARAGRAPH_CONTENT
                 };
 
                 errors.push(syn::Error::new(self.tag.span(), message));
@@ -116,37 +106,16 @@ impl Element {
                 return;
             }
 
-            for name in match self.resolved {
-                Tag::Image => &["src", "alt"][..],
-                Tag::Svg => &["path"][..],
-                Tag::Entity => &["entity"][..],
-                _ => &[],
-            } {
+            for (name, message) in self.resolved.required_attributes() {
                 if self.attribute(name).is_none() {
-                    let message = match *name {
-                        "src" => "img requires src",
-                        "alt" => "img requires alt text",
-                        "path" => "svg requires path",
-                        _ => "view requires entity={&stored_entity}",
-                    };
-
                     errors.push(syn::Error::new(self.tag.span(), message));
                     invalid_component = true;
                 }
             }
 
-            if matches!(
-                self.resolved,
-                Tag::Image | Tag::Entity | Tag::Svg | Tag::Rule
-            ) && !self.children.is_empty()
+            if let Some(message) = self.resolved.leaf_message()
+                && !self.children.is_empty()
             {
-                let message = match self.resolved {
-                    Tag::Image => "img cannot have children",
-                    Tag::Svg => "svg cannot have children",
-                    Tag::Rule => "hr cannot have children",
-                    _ => "view mounts a retained entity and cannot have children",
-                };
-
                 errors.push(syn::Error::new(self.tag.span(), message));
                 self.children.clear();
             }
@@ -166,7 +135,7 @@ impl Element {
         if invalid_component {
             // A malformed component/entity cannot supply reliable property types.
             // Skip its properties to avoid unrelated missing-type errors.
-            self.resolved = Tag::Container;
+            self.resolved = Tag::Container(None);
             self.tag = syn::parse_quote!(div);
             self.display_name = "div".into();
             self.attributes.clear();
@@ -208,12 +177,7 @@ impl Element {
             super::paragraph::inline_element(&probe, &dummy, &dummy, rake, &mut 0)?;
         } else {
             // Required properties are context, not independent errors on every attribute.
-            for name in match self.resolved {
-                Tag::Image => &["src", "alt"][..],
-                Tag::Svg => &["path"][..],
-                Tag::Entity => &["entity"][..],
-                _ => &[],
-            } {
+            for (name, _) in self.resolved.required_attributes() {
                 if attribute.name != *name {
                     let value = self.attribute(name).cloned().unwrap_or_else(|| Attribute {
                         name: (*name).into(),

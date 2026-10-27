@@ -68,6 +68,33 @@ enum ParsedAttribute {
     Defaults(Expr, Span),
 }
 
+#[derive(Default)]
+struct Diagnostics(Option<syn::Error>);
+
+impl Diagnostics {
+    #[cfg(test)]
+    fn finish(mut self, result: syn::Result<TokenStream>) -> syn::Result<TokenStream> {
+        let root = match result {
+            Ok(root) => root,
+            Err(error) => {
+                self.push(error);
+
+                TokenStream::new()
+            }
+        };
+
+        self.0.map_or(Ok(root), Err)
+    }
+
+    fn push(&mut self, error: syn::Error) {
+        if let Some(errors) = &mut self.0 {
+            errors.combine(error);
+        } else {
+            self.0 = Some(error);
+        }
+    }
+}
+
 impl Parse for View {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let root = Element::parse(input)?;
@@ -522,6 +549,29 @@ impl Element {
             .find(|attribute| attribute.name == name)
     }
 
+    fn required_attribute(&self, name: &str) -> syn::Result<&Attribute> {
+        self.attribute(name).ok_or_else(|| {
+            let (_, message) = self
+                .resolved
+                .required_attributes()
+                .iter()
+                .find(|(required, _)| *required == name)
+                .expect("tag defines the required attribute");
+
+            syn::Error::new(self.tag.span(), message)
+        })
+    }
+
+    fn reject_leaf_children(&self) -> syn::Result<()> {
+        if let Some(message) = self.resolved.leaf_message()
+            && !self.children.is_empty()
+        {
+            return Err(syn::Error::new(self.tag.span(), message));
+        }
+
+        Ok(())
+    }
+
     fn expand(&self, rake: &TokenStream, next: &mut usize) -> syn::Result<TokenStream> {
         if self.resolved == Tag::Entity {
             return self.expand_entity(rake);
@@ -616,10 +666,10 @@ impl Element {
 
     fn base_builder(&self, id: &TokenStream, rake: &TokenStream) -> syn::Result<TokenStream> {
         Ok(match self.resolved {
-            Tag::Container => {
+            Tag::Container(role) => {
                 let mut builder = quote!(#rake::gpui::div().id(#id).flex().flex_col());
 
-                if let Some(role) = self.resolved.semantic_role(&self.display_name) {
+                if let Some(role) = role {
                     let role = format_ident!("{role}");
 
                     builder.extend(quote!(.role(#rake::gpui::accesskit::Role::#role)));
@@ -651,37 +701,25 @@ impl Element {
             Tag::Button => quote!(#rake::gpui::div().id(#id).flex().items_center().justify_center()
                 .role(#rake::gpui::accesskit::Role::Button).cursor_pointer()),
             Tag::Svg => {
-                let path = self
-                    .attribute("path")
-                    .ok_or_else(|| syn::Error::new(self.tag.span(), "svg requires path"))?;
+                let path = self.required_attribute("path")?;
 
-                if !self.children.is_empty() {
-                    return Err(syn::Error::new(self.tag.span(), "svg cannot have children"));
-                }
+                self.reject_leaf_children()?;
 
                 let path = &path.value;
 
                 quote!(#rake::__private::view_svg(#path))
             }
             Tag::Rule => {
-                if !self.children.is_empty() {
-                    return Err(syn::Error::new(self.tag.span(), "hr cannot have children"));
-                }
+                self.reject_leaf_children()?;
 
                 quote!(#rake::gpui::div().id(#id).w_full().h(#rake::gpui::px(1.)))
             }
             Tag::Image => {
-                let source = self
-                    .attribute("src")
-                    .ok_or_else(|| syn::Error::new(self.tag.span(), "img requires src"))?;
+                let source = self.required_attribute("src")?;
 
-                if self.attribute("alt").is_none() {
-                    return Err(syn::Error::new(self.tag.span(), "img requires alt text"));
-                }
+                self.required_attribute("alt")?;
 
-                if !self.children.is_empty() {
-                    return Err(syn::Error::new(self.tag.span(), "img cannot have children"));
-                }
+                self.reject_leaf_children()?;
 
                 let source = &source.value;
 
@@ -811,12 +849,6 @@ impl Element {
                 }
             };
 
-            let method = if is_button && attribute.name.starts_with("on") {
-                quote!(.when(!#disabled, |#mapped| #mapped #method))
-            } else {
-                method
-            };
-
             builder.extend(quote_spanned!(attribute.span=> #method));
         }
 
@@ -866,12 +898,7 @@ impl Element {
     }
 
     fn expand_entity(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
-        if !self.children.is_empty() {
-            return Err(syn::Error::new(
-                self.tag.span(),
-                "view mounts a retained entity and cannot have children",
-            ));
-        }
+        self.reject_leaf_children()?;
 
         for attribute in &self.attributes {
             if attribute.name != "entity" {
@@ -882,9 +909,7 @@ impl Element {
             }
         }
 
-        let entity = self.attribute("entity").ok_or_else(|| {
-            syn::Error::new(self.tag.span(), "view requires entity={&stored_entity}")
-        })?;
+        let entity = self.required_attribute("entity")?;
 
         require_borrowed_place(&entity.value, "entity")?;
         let value = &entity.value;
