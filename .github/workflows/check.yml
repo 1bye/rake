@@ -16,6 +16,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo test -p rake --features view-test-support --lib --test view_state --locked
+      - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo check -p rake --no-default-features --locked
       - run: cargo clippy -p rake --no-default-features --locked -- -D warnings
       - run: cargo build -p rake-cli --locked

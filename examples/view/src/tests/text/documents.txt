@@ -1,0 +1,14 @@
+Document browser
+Jump to 5,000
+Close
+10,000 retained records. No selection.
+Scroll or select a row, then use ↑/↓, Home or End. Selection and scroll survive closing this dialog.
+Document 00001
+Document 00002
+Document 00003
+Document 00004
+Document 00005
+Document 00006
+Document 00007
+Document 00008
+Document 00009

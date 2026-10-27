@@ -1,0 +1,9 @@
+Editing enabled
+You have counted 2 times.
+Hide history
+Lock counter
+Recent counts
+Reverse order
+Click a row, then press R: its state and focus follow it. B activates the focused row.
+Reached 1 · row clicks: 1
+Reached 2 · row clicks: 0

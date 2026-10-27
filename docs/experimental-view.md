@@ -669,6 +669,7 @@ cargo test -p rake-macros --locked
 cargo test -p rake --features experimental-view --test view_ui --locked
 cargo test -p rake --features experimental-view --test view --test view_components --test view_paragraphs --locked
 cargo test -p rake --features view-test-support --test view_state --locked
+cargo test -p rake-view --features view-test-support --lib --locked
 cargo test -p rake --features experimental-view --doc --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown --locked
@@ -725,3 +726,12 @@ negative indices, consumed events, disabled mouse/keyboard activation, and
 keyboard-visible styling. Pointer tests exercise right/middle buttons, hover and
 wheel dispatch, including disabled suppression. The platform's window/text/GPU backend is a test double;
 these checks do not establish native editor or browser input behavior.
+
+The example's opt-in `view-test-support` tests render the actual counter,
+components, retained history, popover, document dialog and help view. Reviewed
+text fixtures assert the exact distinct strings sent to GPUI text layout, with
+no whitespace normalization in the assertions. Scenarios cover initial and
+incremented counts, locked/hidden history, open overlays and a selected virtual
+document. The recorder keeps full composed text before truncation and omits
+ellipsis measurement candidates; it does not assert pixel output, text order,
+duplicate occurrences or native/browser rendering. CI runs these tests explicitly.

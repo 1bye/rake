@@ -76,6 +76,30 @@ struct Counter {
 }
 
 impl Counter {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+
+        window.focus(&focus, cx);
+
+        let overlays = OverlayHostState::new(cx);
+
+        Self {
+            actions_anchor: overlays.anchor(),
+            actions_popup: overlays.popover(cx),
+            documents_dialog: overlays.dialog(cx),
+            documents: cx.new(|cx| documents::Documents::new(cx)),
+            actions_hint: cx.new(|_| components::ActionsHint),
+            overlays,
+            count: 0,
+            history: Vec::new(),
+            show_history: true,
+            newest_first: true,
+            locked: false,
+            focus,
+            history_scroll: ScrollHandle::new(),
+        }
+    }
+
     fn increment(&mut self, _: &Increment, _: &mut Window, cx: &mut Context<Self>) {
         if self.locked {
             return;
@@ -332,30 +356,8 @@ pub fn application() -> App {
             KeyBinding::new("l", ToggleLocked, Some("Counter")),
             KeyBinding::new("b", BumpRow, Some("HistoryItem")),
         ]);
-        let focus = cx.focus_handle();
 
-        window.focus(&focus, cx);
-
-        cx.new(|cx| {
-            let overlays = OverlayHostState::new(cx);
-
-            Counter {
-                actions_anchor: overlays.anchor(),
-                actions_popup: overlays.popover(cx),
-                documents_dialog: overlays.dialog(cx),
-                documents: cx.new(|cx| documents::Documents::new(cx)),
-                actions_hint: cx.new(|_| components::ActionsHint),
-                overlays,
-                count: 0,
-                history: Vec::new(),
-                show_history: true,
-                newest_first: true,
-                locked: false,
-                focus,
-                history_scroll: ScrollHandle::new(),
-            }
-        })
-        .into()
+        cx.new(|cx| Counter::new(window, cx)).into()
     })
 }
 
@@ -363,3 +365,6 @@ pub fn application() -> App {
 fn app() -> App {
     application()
 }
+
+#[cfg(all(test, feature = "view-test-support"))]
+mod tests;
