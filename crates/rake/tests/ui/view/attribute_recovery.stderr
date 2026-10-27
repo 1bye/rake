@@ -1,0 +1,17 @@
+error: attribute values must be quoted strings or {Rust expressions}
+ --> tests/ui/view/attribute_recovery.rs:3:20
+  |
+3 |         <div class=42 title="invalid">
+  |                    ^^
+
+error: unsupported attribute `title` on <div>
+ --> tests/ui/view/attribute_recovery.rs:3:23
+  |
+3 |         <div class=42 title="invalid">
+  |                       ^^^^^
+
+error: img requires alt text
+ --> tests/ui/view/attribute_recovery.rs:4:14
+  |
+4 |             <img src="icon.png"/>
+  |              ^^^

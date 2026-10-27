@@ -470,6 +470,17 @@ state, live anchor geometry, stacked dismissal and modal focus containment. See
 [scrolling and overlays](experimental-overlays.md) for ownership, snippets and limits.
 The example opens a retained 10,000-document virtual list from a nested dialog.
 
+## Diagnostics and editing
+
+Independent local errors are reported together, including invalid attributes,
+utilities and missing required properties. An invalid attribute value recovers at
+the next attribute name or tag boundary. Malformed closing tags remain fatal.
+On failure, valid parts of the invocation retain their GPUI builder context in
+unreachable generated code, preserving expression and listener type checking for
+editor tooling. Invalid component properties and invalid loop roots are omitted
+from that recovery output to avoid unrelated inference/name errors. This recovery
+code never runs, and erroneous markup never builds successfully.
+
 ## Current limits
 
 Unknown tags, attributes, duplicate attributes, invalid utilities and malformed

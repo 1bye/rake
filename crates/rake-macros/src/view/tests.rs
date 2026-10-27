@@ -327,3 +327,18 @@ fn expansion_snapshots() {
         );
     }
 }
+
+#[test]
+fn collects_independent_errors_and_recovers_attribute_boundaries() {
+    let error = expand(r#"<div class=42 title="invalid"><img src="icon.png"/></div>"#).unwrap_err();
+
+    let errors = error
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 3);
+    assert!(errors[0].contains("quoted strings"));
+    assert!(errors[1].contains("unsupported attribute `title`"));
+    assert!(errors[2].contains("img requires alt"));
+}

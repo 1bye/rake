@@ -11,8 +11,10 @@ use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
 use self::tag::{Tag, display_name};
 
+#[derive(Clone)]
 pub(super) struct View(Element);
 
+#[derive(Clone)]
 struct Element {
     tag: syn::Path,
     resolved: Tag,
@@ -20,8 +22,10 @@ struct Element {
     self_closing: bool,
     attributes: Vec<Attribute>,
     children: Vec<Node>,
+    parse_errors: Vec<syn::Error>,
 }
 
+#[derive(Clone)]
 struct Attribute {
     name: String,
     action: Option<syn::Path>,
@@ -29,6 +33,7 @@ struct Attribute {
     value: Expr,
 }
 
+#[derive(Clone)]
 enum Node {
     Element(Element),
     Text(LitStr),
@@ -53,8 +58,6 @@ impl Parse for View {
             return Err(input.error("view! requires exactly one root element"));
         }
 
-        root.check_tags()?;
-
         Ok(Self(root))
     }
 }
@@ -67,61 +70,42 @@ impl Parse for Element {
         let resolved = Tag::resolve(&tag);
         let mut attributes = Vec::new();
         let mut names = BTreeSet::new();
+        let mut parse_errors = Vec::new();
 
         while !input.peek(Token![>]) && !input.peek(Token![/]) {
-            let name = input.call(Ident::parse_any)?;
-            let span = name.span();
-            let mut name = name.to_string();
-            let mut action = None;
+            if input.is_empty() {
+                return Err(input.error("expected `>` after attributes"));
+            }
 
-            if input.peek(Token![:]) {
-                if name != "on" {
-                    return Err(syn::Error::new(
-                        span,
-                        "typed actions use on:Action={handler}",
-                    ));
+            match parse_attribute(input) {
+                Ok(attribute) => {
+                    if names.insert(attribute.name.clone()) {
+                        attributes.push(attribute);
+                    } else {
+                        parse_errors.push(syn::Error::new(
+                            attribute.span,
+                            format!("duplicate attribute `{}`", attribute.name),
+                        ));
+                    }
                 }
+                Err(error) => {
+                    parse_errors.push(error);
 
-                input.parse::<Token![:]>()?;
-                let path = input.call(syn::Path::parse_mod_style)?;
+                    while !input.is_empty() && !input.peek(Token![>]) && !input.peek(Token![/]) {
+                        let fork = input.fork();
 
-                name = format!("on:{}", quote!(#path).to_string().replace(' ', ""));
-                action = Some(path);
+                        if fork.call(Ident::parse_any).is_ok()
+                            && (fork.peek(Token![=])
+                                || fork.peek(Token![:])
+                                || fork.peek(Token![-]))
+                        {
+                            break;
+                        }
+
+                        input.parse::<proc_macro2::TokenTree>()?;
+                    }
+                }
             }
-
-            while action.is_none() && input.peek(Token![-]) {
-                input.parse::<Token![-]>()?;
-                name.push('-');
-                name.push_str(&input.call(Ident::parse_any)?.to_string());
-            }
-
-            if !names.insert(name.clone()) {
-                return Err(syn::Error::new(
-                    span,
-                    format!("duplicate attribute `{name}`"),
-                ));
-            }
-
-            input.parse::<Token![=]>()?;
-            let value = if input.peek(LitStr) {
-                Expr::Lit(syn::ExprLit {
-                    attrs: Vec::new(),
-                    lit: syn::Lit::Str(input.parse()?),
-                })
-            } else if input.peek(syn::token::Brace) {
-                parse_expression_block(input)?
-            } else {
-                return Err(
-                    input.error("attribute values must be quoted strings or {Rust expressions}")
-                );
-            };
-
-            attributes.push(Attribute {
-                name,
-                action,
-                span,
-                value,
-            });
         }
 
         let self_closing = input.peek(Token![/]);
@@ -166,8 +150,56 @@ impl Parse for Element {
             self_closing,
             attributes,
             children,
+            parse_errors,
         })
     }
+}
+
+fn parse_attribute(input: ParseStream<'_>) -> syn::Result<Attribute> {
+    let name = input.call(Ident::parse_any)?;
+    let span = name.span();
+    let mut name = name.to_string();
+    let mut action = None;
+
+    if input.peek(Token![:]) {
+        if name != "on" {
+            return Err(syn::Error::new(
+                span,
+                "typed actions use on:Action={handler}",
+            ));
+        }
+
+        input.parse::<Token![:]>()?;
+        let path = input.call(syn::Path::parse_mod_style)?;
+
+        name = format!("on:{}", quote!(#path).to_string().replace(' ', ""));
+        action = Some(path);
+    }
+
+    while action.is_none() && input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        name.push('-');
+        name.push_str(&input.call(Ident::parse_any)?.to_string());
+    }
+
+    input.parse::<Token![=]>()?;
+    let value = if input.peek(LitStr) {
+        Expr::Lit(syn::ExprLit {
+            attrs: Vec::new(),
+            lit: syn::Lit::Str(input.parse()?),
+        })
+    } else if input.peek(syn::token::Brace) {
+        parse_expression_block(input)?
+    } else {
+        return Err(input.error("attribute values must be quoted strings or {Rust expressions}"));
+    };
+
+    Ok(Attribute {
+        name,
+        action,
+        span,
+        value,
+    })
 }
 
 impl Parse for Node {
@@ -290,7 +322,7 @@ fn loop_text_error(span: Span) -> syn::Error {
 }
 
 impl View {
-    pub(super) fn expand(self, rake: &TokenStream) -> syn::Result<TokenStream> {
+    fn emit(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
         let root = self.0.expand(rake, &mut 0)?;
 
         Ok(quote!({
@@ -306,41 +338,6 @@ impl View {
 impl Element {
     fn is_component(&self) -> bool {
         self.resolved == Tag::Component
-    }
-
-    fn check_tags(&self) -> syn::Result<()> {
-        if matches!(self.resolved, Tag::Inline | Tag::Unsupported) {
-            return Err(syn::Error::new(
-                self.tag.span(),
-                format!("unsupported view element <{}>", self.display_name),
-            ));
-        }
-
-        if self.resolved.composes_text() {
-            return Ok(());
-        }
-
-        fn check_nodes(nodes: &[Node]) -> syn::Result<()> {
-            for node in nodes {
-                match node {
-                    Node::Element(element) => element.check_tags()?,
-                    Node::If {
-                        then_nodes,
-                        else_nodes,
-                        ..
-                    } => {
-                        check_nodes(then_nodes)?;
-                        check_nodes(else_nodes)?;
-                    }
-                    Node::For { children, .. } => check_nodes(children)?,
-                    _ => {}
-                }
-            }
-
-            Ok(())
-        }
-
-        check_nodes(&self.children)
     }
 
     fn attribute(&self, name: &str) -> Option<&Attribute> {
@@ -773,6 +770,7 @@ fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
     };
 
     let mut methods = TokenStream::new();
+    let mut errors: Option<syn::Error> = None;
 
     for class in classes.value().split_whitespace() {
         if let Some(weight) = match class {
@@ -888,12 +886,20 @@ fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
             "border" => "border_1".to_string(),
             _ if fixed || spacing => class.replace('-', "_"),
             _ => {
-                return Err(syn::Error::new(
+                let error = syn::Error::new(
                     classes.span(),
                     format!(
                         "unsupported utility class `{class}`; use style={{|s| ...}} for GPUI styling"
                     ),
-                ));
+                );
+
+                if let Some(errors) = &mut errors {
+                    errors.combine(error);
+                } else {
+                    errors = Some(error);
+                }
+
+                continue;
             }
         };
 
@@ -902,10 +908,15 @@ fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
         methods.extend(quote!(.#method()));
     }
 
+    if let Some(errors) = errors {
+        return Err(errors);
+    }
+
     Ok(methods)
 }
 
 mod component;
+mod diagnostics;
 mod paragraph;
 mod tag;
 

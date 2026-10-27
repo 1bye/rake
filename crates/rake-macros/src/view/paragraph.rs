@@ -131,7 +131,7 @@ fn inline_children(
     Ok(output)
 }
 
-fn inline_element(
+pub(super) fn inline_element(
     element: &Element,
     content: &Ident,
     inherited: &Ident,
@@ -207,6 +207,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
     };
 
     let mut methods = TokenStream::new();
+    let mut errors: Option<syn::Error> = None;
 
     for class in classes.value().split_whitespace() {
         let style = match class {
@@ -222,16 +223,28 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                 }), ..Default::default()
             }),
             _ => {
-                return Err(syn::Error::new(
+                let error = syn::Error::new(
                     classes.span(),
                     format!(
                         "unsupported inline text utility `{class}`; font size, line height, alignment and layout belong on p"
                     ),
-                ));
+                );
+
+                if let Some(errors) = &mut errors {
+                    errors.combine(error);
+                } else {
+                    errors = Some(error);
+                }
+
+                continue;
             }
         };
 
         methods.extend(quote!(.highlight(#style)));
+    }
+
+    if let Some(errors) = errors {
+        return Err(errors);
     }
 
     Ok(methods)

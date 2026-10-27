@@ -32,13 +32,16 @@ mod view;
 /// Both reject layout/widget children; use a div with a heading role for rich content.
 /// Headings expose the full composed text as their name; explicit aria-label wins.
 /// Inline `style` takes `gpui::HighlightStyle`.
+/// Independent local diagnostics are combined. Attribute parsing recovers at the
+/// next attribute/tag boundary, and valid builder contexts remain type-checked
+/// beside macro errors. Malformed markup structure can still stop parsing.
 /// Debug builds diagnose duplicate direct sibling IDs visible at construction.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///
 #[proc_macro]
 pub fn view(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as view::View);
-    let expanded = facade().and_then(|rake| input.expand(&rake));
+    let expanded = facade().and_then(|rake| input.expand_resilient(&rake));
 
     expanded
         .unwrap_or_else(|error| error.to_compile_error())
