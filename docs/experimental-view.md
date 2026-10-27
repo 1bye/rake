@@ -663,13 +663,18 @@ The list uses a stored scroll handle. Resetting or hiding history explicitly
 returns focus to the counter root before rows disappear. Native and Web use the
 same render method.
 
-The updated example was smoke-tested on macOS: Enter and Command+I activation,
+Before heading composition, canonical events and the newer elements were added,
+the example was smoke-tested on macOS: Enter and Command+I activation,
 locked mouse/keyboard activation, Tab skipping disabled controls, native disabled
 accessibility state, and row activation after a typed reorder. The component
 follow-up also verified header/body/footer layout, dynamic Badge properties, and
-retained row activation/focus after reordering inside Card. Paragraph composition
-was checked on macOS for nested bold/italic runs, dynamic colored text, Unicode,
-single- and two-line ellipses, and complete untruncated accessibility values. Web compilation
+retained row activation/focus after reordering inside Card. Those earlier macOS
+checks also covered paragraph composition for nested bold/italic runs, dynamic
+colored text, Unicode, single- and two-line ellipses, and complete untruncated
+accessibility values.
+The later events, tooltips, SVGs, semantic containers, rules, composed headings,
+`match`, shorthand and defaults have compile, unit, UI and TestPlatform
+frame coverage only, without native or browser interaction checks. Web compilation
 is checked; browser input and screen-reader interaction have not been verified.
 
 Expansion snapshots preserve builder order and generated identities. Compiler UI
