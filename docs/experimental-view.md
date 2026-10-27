@@ -44,7 +44,7 @@ parser, Dioxus runtime, virtual DOM, or JavaScript execution.
 
 Outside paragraphs, literal strings and expressions whose GPUI element is `SharedString` or a static
 string become identified, accessible `gpui::Text` nodes. Other embedded elements
-keep their own identity and semantics. Literal-only buttons/headings get an
+keep their own identity and semantics. Literal-only buttons get an
 accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 
 | Tags | GPUI behavior |
@@ -52,7 +52,7 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 | `div`, `section`, standalone `span` | Flex-column containers |
 | `p` | One composed GPUI text layout inside a styled paragraph container |
 | `span`, `strong`, `em`, `br` inside `p` | Inline style ranges and explicit line breaks, without separate layout boxes |
-| `h1`–`h6` | Containers with a heading accessibility role/level, bold text, and default sizes |
+| `h1`–`h6` | Composed text with a heading role/level, bold defaults, and the full composed accessible name |
 | `ul`, `ol`, `li` | Containers with list/list-item accessibility roles; no generated bullets or numbering |
 | `button` | Button role, pointer cursor, and tab stop; GPUI dispatches mouse clicks and focused Enter/Space activation |
 | `img` | GPUI image with required `src` and `alt`; accepts no children |
@@ -62,8 +62,8 @@ accessible label automatically; supply `aria-label` for dynamic or icon buttons.
 Heading sizes are 30, 24, 20, 16, 16, and 16 logical pixels. Classes and style
 closures can override them. Containers have no browser margins or user-agent
 stylesheet. Paragraphs compose inline text as described below. A standalone
-`span` remains a layout container; heading and button children still use the
-ordinary element-child rules.
+`span` remains a layout container; button children still use the ordinary element-child rules. Headings use the
+same composed inline text as paragraphs.
 
 ## Attributes, styling and events
 
@@ -116,9 +116,9 @@ Callbacks receive `(event, window, app)` as in GPUI; use `cx.listener(...)` for
 access to view state. Events retain GPUI propagation and default-prevention
 behavior. Keyboard events require the appropriate focus path.
 
-## Paragraph composition, wrapping and truncation
+## Paragraph and heading composition, wrapping and truncation
 
-`p` collects text into one UTF-8 buffer with styled runs, rendered by GPUI's
+`p` and `h1`–`h6` collect text into one UTF-8 buffer with styled runs, rendered by GPUI's
 text shaping system. End truncation measures the actual styled runs and font
 fallbacks, and cuts only at grapheme boundaries. Its only inline tags are `span`, `strong` (bold), `em` (italic),
 and `br` (newline). They do not create layout boxes or independent element IDs.
@@ -193,6 +193,14 @@ text node containing the full composed text,
 even when the visual preview is truncated. Selection and interactive links are
 not implemented by this phase.
 
+**Heading migration:** headings now accept string-like expressions and inline
+`span`, `strong`, `em` and `br`, including conditional/loop text. Use `format!` for
+numbers. Layout elements, components and embedded widgets belong in a `div` with
+`role={gpui::accesskit::Role::Heading}` (set its level with
+`style={|s| s.aria_level(2)}`). Explicit `aria-label` overrides the complete composed
+heading name. For example, `<h2>"Count: "<strong>{count.to_string()}</strong></h2>`
+forms one continuous text flow.
+
 **Migration:** `p` previously accepted arbitrary layout children and embedded
 GPUI elements. Move those into a `div` or `section`, or embed an existing custom
 text component there. Use inline `span` styles only for text refinements inside
@@ -262,7 +270,7 @@ code. Disabled appearance remains explicit, for example an opacity style.
 Use `aria-label` for dynamic/icon controls, `aria-description` for extra context,
 `aria-expanded={open}` on disclosure buttons, and typed
 `role={gpui::accesskit::Role::Group}` for containers with custom semantics.
-Literal-only buttons/headings get labels automatically. GPUI's
+Literal-only buttons get labels automatically; headings use their full composed text. GPUI's
 `focus_visible(|s| ...)` supplies keyboard-visible styling. Button contents should
 be noninteractive; embed existing GPUI widgets for more complex controls.
 Arbitrary Rust builder code inside `style` is an escape hatch and remains the

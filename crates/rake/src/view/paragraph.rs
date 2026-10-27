@@ -89,6 +89,13 @@ pub struct ParagraphText {
     layout: std::rc::Rc<std::cell::RefCell<layout::ParagraphLayout>>,
 }
 
+impl ParagraphText {
+    /// Shares the complete, untruncated text for a composed heading's accessible name.
+    pub fn full_text(&self) -> SharedString {
+        self.text.clone()
+    }
+}
+
 impl IntoElement for ParagraphText {
     type Element = Self;
 

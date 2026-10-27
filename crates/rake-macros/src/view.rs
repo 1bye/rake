@@ -458,7 +458,8 @@ impl Element {
 
                 quote!(#rake::gpui::div().id(#id).flex().flex_col()
                     .role(#rake::gpui::accesskit::Role::Heading).aria_level(#level)
-                    .text_size(#rake::gpui::px(#size)).font_weight(#rake::gpui::FontWeight::BOLD))
+                    .text_size(#rake::gpui::px(#size)).font_weight(#rake::gpui::FontWeight::BOLD)
+                    .min_w_0().whitespace_normal())
             }
             Tag::List => quote!(#rake::gpui::div().id(#id).flex().flex_col()
                 .role(#rake::gpui::accesskit::Role::List)),

@@ -283,7 +283,7 @@ fn expansion_snapshots() {
     let mut fixtures = vec![
         ("containers", r#"<section id="root" class="flex flex-col"><div/><span>{label}</span></section>"#.to_owned()),
         ("paragraph", r#"<p wrap={true} ellipsis={true} max-lines={2}>"Hi "<strong>{name}</strong><em>"!"</em><br/><span class="underline" style={highlight}>"More"</span></p>"#.to_owned()),
-        ("headings", r#"<div><h1>"Title"</h1><h2>"Count: "{count}</h2><h3/><h4/><h5/><h6/></div>"#.to_owned()),
+        ("headings", r#"<div><h1>"Title"</h1><h2>"Count: "{count.to_string()}</h2><h3/><h4/><h5/><h6/></div>"#.to_owned()),
         ("button", r#"<button disabled={busy} focus={&self.focus} tabindex={-1} onclick={handler} style={style}>"Save"</button>"#.to_owned()),
         ("image", r#"<img id="preview" src={path} alt="Preview" style={style}/>"#.to_owned()),
         ("entity", r#"<view entity={&self.editor}/>"#.to_owned()),

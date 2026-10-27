@@ -102,3 +102,70 @@ fn spans_share_one_flow_and_width_changes_remeasure_paragraphs() {
     assert_eq!(wide[0].size.height, wide[1].size.height);
     assert_eq!(wide[7].size.height, gpui::px(20.));
 }
+
+struct HeadingHost {
+    info: Rc<RefCell<Vec<gpui::accesskit::Node>>>,
+    bounds: Rc<RefCell<Vec<gpui::Bounds<gpui::Pixels>>>>,
+}
+
+impl Render for HeadingHost {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let count = 42;
+
+        let heading = rake::view! {
+            <h2 max-lines={1} style={|s| s.w(gpui::px(400.))}>
+                "Count: "<strong>{count.to_string()}</strong><em>" finished"</em>
+            </h2>
+        };
+
+        let explicit = rake::view! {
+            <h3 aria-label="Custom name">"Visible "<strong>"text"</strong></h3>
+        };
+
+        let mut info = Vec::new();
+
+        // TestPlatform has no active AccessKit adapter. Inspect the real nodes
+        // produced during Render, alongside real frame measurement below.
+        for element in [&heading, &explicit] {
+            let mut node = gpui::accesskit::Node::new(element.a11y_role().expect("heading role"));
+
+            element.write_a11y_info(&mut node);
+            info.push(node);
+        }
+
+        self.info.replace(info);
+        let bounds = self.bounds.clone();
+
+        gpui::div()
+            .flex()
+            .flex_col()
+            .line_height(gpui::px(24.))
+            .on_children_prepainted(move |measured, _, _| {
+                bounds.replace(measured);
+            })
+            .child(heading)
+            .child(explicit)
+    }
+}
+
+#[test]
+fn headings_share_one_text_flow_and_expose_the_full_composed_name() {
+    let mut cx = gpui::TestAppContext::single();
+    let info = Rc::new(RefCell::new(Vec::new()));
+    let bounds = Rc::new(RefCell::new(Vec::new()));
+
+    let window = cx.add_window(|_, _| HeadingHost {
+        info: info.clone(),
+        bounds: bounds.clone(),
+    });
+
+    draw(&mut cx, window);
+    let info = info.borrow();
+
+    assert_eq!(info[0].role(), gpui::accesskit::Role::Heading);
+    assert_eq!(info[0].level(), Some(2));
+    assert_eq!(info[0].label(), Some("Count: 42 finished"));
+    assert_eq!(info[1].label(), Some("Custom name"));
+    assert_eq!(info[1].level(), Some(3));
+    assert_eq!(bounds.borrow()[0].size.height, gpui::px(24.));
+}

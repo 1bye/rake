@@ -60,7 +60,7 @@ impl Tag {
     }
 
     pub fn composes_text(self) -> bool {
-        self == Self::Paragraph
+        matches!(self, Self::Paragraph | Self::Heading(_))
     }
 
     pub fn supports_disabled(self) -> bool {
@@ -68,6 +68,6 @@ impl Tag {
     }
 
     pub fn auto_label(self) -> bool {
-        matches!(self, Self::Button | Self::Heading(_))
+        self == Self::Button
     }
 }

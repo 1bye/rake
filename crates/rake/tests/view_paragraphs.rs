@@ -84,3 +84,22 @@ fn empty_paragraphs_construct_and_standalone_spans_keep_their_layout_contract() 
 fn unreachable_text() -> &'static str {
     panic!("untaken paragraph branch evaluated")
 }
+
+#[test]
+fn headings_accept_composed_runs_and_paragraph_controls() {
+    let name = "Ada";
+
+    let mut heading = rake::view! {
+        <h1 wrap={false} ellipsis={true} max-lines={2}>
+            "Hello, "<strong>{name}</strong><br/><em>"Welcome"</em>
+        </h1>
+    };
+
+    let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut node);
+
+    assert_eq!(node.label(), Some("Hello, Ada\nWelcome"));
+    assert_eq!(node.level(), Some(1));
+    assert_eq!(heading.style().text.line_clamp, Some(2));
+}

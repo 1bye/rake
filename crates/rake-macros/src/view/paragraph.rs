@@ -5,6 +5,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, Lit};
 
+use super::tag::Tag;
 use super::{Element, Node};
 
 impl Element {
@@ -14,6 +15,10 @@ impl Element {
         rake: &TokenStream,
         next: &mut usize,
     ) -> syn::Result<TokenStream> {
+        if matches!(self.resolved, Tag::Heading(_)) {
+            validate_heading_children(&self.children)?;
+        }
+
         let index = *next;
 
         *next += 1;
@@ -31,14 +36,58 @@ impl Element {
 
         let children = inline_children(&self.children, &content, &style, rake, next)?;
 
+        let heading_text = format_ident!("__rake_heading_text_{index}", span = Span::mixed_site());
+
+        let finish =
+            if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
+                quote!({
+                    let #heading_text = #content.finish();
+                    #node.aria_label(#heading_text.full_text()).child(#heading_text)
+                })
+            } else {
+                quote!(#node.child(#content.finish()))
+            };
+
         Ok(quote!({
             let #node = #builder;
             let mut #content = #rake::__private::ViewParagraphContent::default();
             let #style = #rake::__private::ViewRunStyle::default();
             #children
-            #node.child(#content.finish())
+            #finish
         }))
     }
+}
+
+fn validate_heading_children(nodes: &[Node]) -> syn::Result<()> {
+    for node in nodes {
+        match node {
+            Node::Element(element) => {
+                if !["span", "strong", "em", "br"]
+                    .iter()
+                    .any(|tag| element.tag.is_ident(tag))
+                {
+                    return Err(syn::Error::new(
+                        element.tag.span(),
+                        "headings compose text like p; use a div with role={Role::Heading} for rich content",
+                    ));
+                }
+
+                validate_heading_children(&element.children)?;
+            }
+            Node::If {
+                then_nodes,
+                else_nodes,
+                ..
+            } => {
+                validate_heading_children(then_nodes)?;
+                validate_heading_children(else_nodes)?;
+            }
+            Node::For { children, .. } => validate_heading_children(children)?,
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 fn inline_children(
