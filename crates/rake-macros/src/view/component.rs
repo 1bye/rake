@@ -35,8 +35,10 @@ impl Element {
             fields.extend(quote_spanned!(attribute.span=> #name: #value,));
         }
 
+        let defaults = self.defaults.as_ref().map(|value| quote!(..#value));
+
         if self.self_closing {
-            return Ok(quote!(#path { #fields }));
+            return Ok(quote!(#path { #fields #defaults }));
         }
 
         let index = *next;
@@ -63,6 +65,7 @@ impl Element {
                 #body
                 #children.into_vec()
             },
+            #defaults
         }))
     }
 }

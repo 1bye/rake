@@ -24,6 +24,7 @@ struct Element {
     attributes: Vec<Attribute>,
     children: Vec<Node>,
     parse_errors: Vec<syn::Error>,
+    defaults: Option<Expr>,
 }
 
 #[derive(Clone)]
@@ -36,6 +37,10 @@ struct Attribute {
 
 #[derive(Clone)]
 enum Node {
+    Match {
+        expression: Expr,
+        arms: Vec<MatchArm>,
+    },
     Element(Element),
     Text(LitStr),
     Expression(Expr),
@@ -49,6 +54,18 @@ enum Node {
         iterator: Expr,
         children: Vec<Node>,
     },
+}
+
+#[derive(Clone)]
+struct MatchArm {
+    pattern: Pat,
+    guard: Option<Expr>,
+    children: Vec<Node>,
+}
+
+enum ParsedAttribute {
+    Named(Attribute),
+    Defaults(Expr, Span),
 }
 
 impl Parse for View {
@@ -72,14 +89,32 @@ impl Parse for Element {
         let mut attributes = Vec::new();
         let mut names = BTreeSet::new();
         let mut parse_errors = Vec::new();
+        let mut defaults = None;
 
         while !input.peek(Token![>]) && !input.peek(Token![/]) {
             if input.is_empty() {
                 return Err(input.error("expected `>` after attributes"));
             }
 
-            match parse_attribute(input) {
-                Ok(attribute) => {
+            match parse_attribute(input, resolved) {
+                Ok(ParsedAttribute::Defaults(value, span)) => {
+                    if resolved != Tag::Component {
+                        parse_errors.push(syn::Error::new(
+                            span,
+                            "default fields are supported only on components",
+                        ));
+                    } else if !input.peek(Token![>]) && !input.peek(Token![/]) {
+                        parse_errors.push(syn::Error::new(
+                            span,
+                            "component defaults must be the last attribute",
+                        ));
+                    } else if defaults.is_some() {
+                        parse_errors.push(syn::Error::new(span, "duplicate component defaults"));
+                    } else {
+                        defaults = Some(value);
+                    }
+                }
+                Ok(ParsedAttribute::Named(attribute)) => {
                     if names.insert(attribute.name.clone()) {
                         attributes.push(attribute);
                     } else {
@@ -93,12 +128,34 @@ impl Parse for Element {
                     parse_errors.push(error);
 
                     while !input.is_empty() && !input.peek(Token![>]) && !input.peek(Token![/]) {
+                        if input.peek(syn::token::Brace) {
+                            let fork = input.fork();
+                            let _: proc_macro2::TokenTree = fork.parse()?;
+
+                            if !fork.peek(Token![=]) {
+                                break;
+                            }
+
+                            // A dynamic name such as class:{name}={value} is one
+                            // invalid attribute, not two shorthand properties.
+                            input.parse::<proc_macro2::TokenTree>()?;
+                            input.parse::<Token![=]>()?;
+
+                            if !input.is_empty() && !input.peek(Token![>]) && !input.peek(Token![/])
+                            {
+                                input.parse::<proc_macro2::TokenTree>()?;
+                            }
+
+                            continue;
+                        }
+
                         let fork = input.fork();
 
-                        if fork.call(Ident::parse_any).is_ok()
+                        if let Ok(name) = fork.call(Ident::parse_any)
                             && (fork.peek(Token![=])
                                 || fork.peek(Token![:])
-                                || fork.peek(Token![-]))
+                                || fork.peek(Token![-])
+                                || boolean_attribute(resolved, &name.to_string()))
                         {
                             break;
                         }
@@ -152,11 +209,48 @@ impl Parse for Element {
             attributes,
             children,
             parse_errors,
+            defaults,
         })
     }
 }
 
-fn parse_attribute(input: ParseStream<'_>) -> syn::Result<Attribute> {
+fn parse_attribute(input: ParseStream<'_>, tag: Tag) -> syn::Result<ParsedAttribute> {
+    if input.peek(syn::token::Brace) {
+        let content;
+
+        braced!(content in input);
+
+        if content.peek(Token![..]) {
+            let dots: Token![..] = content.parse()?;
+            let expression = content.parse()?;
+
+            if !content.is_empty() {
+                let error = content.error("expected one component defaults expression");
+                let _: TokenStream = content.parse()?;
+
+                return Err(error);
+            }
+
+            return Ok(ParsedAttribute::Defaults(expression, dots.span()));
+        }
+
+        let name = content.call(Ident::parse_any)?;
+
+        if !content.is_empty() {
+            let error = content.error("prop shorthand requires a bare identifier");
+            let _: TokenStream = content.parse()?;
+
+            return Err(error);
+        }
+
+        return Ok(ParsedAttribute::Named(Attribute {
+            span: name.span(),
+            name: name.to_string(),
+            action: None,
+            value: syn::parse_quote!(#name),
+        }));
+    }
+
     let name = input.call(Ident::parse_any)?;
     let span = name.span();
     let mut name = name.to_string();
@@ -200,24 +294,46 @@ fn parse_attribute(input: ParseStream<'_>) -> syn::Result<Attribute> {
         name.push_str(&part);
     }
 
-    input.parse::<Token![=]>()?;
-    let value = if input.peek(LitStr) {
-        Expr::Lit(syn::ExprLit {
-            attrs: Vec::new(),
-            lit: syn::Lit::Str(input.parse()?),
-        })
-    } else if input.peek(syn::token::Brace) {
-        parse_expression_block(input)?
+    let value = if !input.peek(Token![=]) {
+        if !boolean_attribute(tag, &name) {
+            return Err(syn::Error::new(
+                span,
+                format!("attribute `{name}` requires a value"),
+            ));
+        }
+
+        syn::parse_quote!(true)
     } else {
-        return Err(input.error("attribute values must be quoted strings or {Rust expressions}"));
+        input.parse::<Token![=]>()?;
+
+        if input.peek(LitStr) {
+            Expr::Lit(syn::ExprLit {
+                attrs: Vec::new(),
+                lit: syn::Lit::Str(input.parse()?),
+            })
+        } else if input.peek(syn::token::Brace) {
+            parse_expression_block(input)?
+        } else {
+            return Err(
+                input.error("attribute values must be quoted strings or {Rust expressions}")
+            );
+        }
     };
 
-    Ok(Attribute {
+    Ok(ParsedAttribute::Named(Attribute {
         name,
         action,
         span,
         value,
-    })
+    }))
+}
+
+fn boolean_attribute(tag: Tag, name: &str) -> bool {
+    tag == Tag::Component
+        || matches!(
+            name,
+            "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
+        )
 }
 
 impl Parse for Node {
@@ -232,6 +348,42 @@ impl Parse for Node {
 
         if input.peek(syn::token::Brace) {
             return parse_expression_block(input).map(Self::Expression);
+        }
+
+        if input.peek(Token![match]) {
+            input.parse::<Token![match]>()?;
+            let expression = input.call(Expr::parse_without_eager_brace)?;
+            let content;
+
+            braced!(content in input);
+            let mut arms = Vec::new();
+
+            while !content.is_empty() {
+                let pattern = content.call(Pat::parse_multi_with_leading_vert)?;
+
+                let guard = if content.peek(Token![if]) {
+                    content.parse::<Token![if]>()?;
+
+                    Some(content.call(Expr::parse_without_eager_brace)?)
+                } else {
+                    None
+                };
+
+                content.parse::<Token![=>]>()?;
+                let children = parse_nodes(&content)?;
+
+                if content.peek(Token![,]) {
+                    content.parse::<Token![,]>()?;
+                }
+
+                arms.push(MatchArm {
+                    pattern,
+                    guard,
+                    children,
+                });
+            }
+
+            return Ok(Self::Match { expression, arms });
         }
 
         if input.peek(Token![if]) {
@@ -272,7 +424,7 @@ impl Parse for Node {
             });
         }
 
-        Err(input.error("expected an element, quoted text, {expression}, if, or for"))
+        Err(input.error("expected an element, quoted text, {expression}, if, for, or match"))
     }
 }
 
@@ -322,6 +474,11 @@ fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
             } => {
                 require_loop_ids(then_nodes)?;
                 require_loop_ids(else_nodes)?;
+            }
+            Node::Match { arms, .. } => {
+                for arm in arms {
+                    require_loop_ids(&arm.children)?;
+                }
             }
             Node::For { children, .. } => require_loop_ids(children)?,
             Node::Text(text) => return Err(loop_text_error(text.span())),
@@ -803,6 +960,22 @@ fn expand_children_into(
                 } else {
                     quote!(if #condition { #then_nodes } else { #else_nodes })
                 }
+            }
+            Node::Match { expression, arms } => {
+                let arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let pattern = &arm.pattern;
+                        let guard = arm.guard.as_ref().map(|guard| quote!(if #guard));
+
+                        let body =
+                            expand_children_into(&arm.children, parent, siblings, rake, next)?;
+
+                        Ok(quote!(#pattern #guard => { #body },))
+                    })
+                    .collect::<syn::Result<Vec<_>>>()?;
+
+                quote!(match #expression { #(#arms)* })
             }
             Node::For {
                 pattern,

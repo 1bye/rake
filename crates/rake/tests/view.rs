@@ -359,3 +359,51 @@ fn semantic_containers_rules_and_svg_expose_their_documented_semantics() {
         <div>for path in ["a.svg", "b.svg"] { <svg path={path}/> }</div>
     };
 }
+
+#[test]
+fn bare_boolean_attributes_and_builtin_shorthand_keep_their_types() {
+    let disabled = true;
+    let button = rake::view! { <button {disabled} aria-expanded>"Unavailable"</button> };
+    let mut info = accesskit::Node::new(button.a11y_role().unwrap());
+
+    button.write_a11y_info(&mut info);
+
+    assert!(info.is_disabled());
+    assert_eq!(info.is_expanded(), Some(true));
+    let mut paragraph = rake::view! { <p wrap ellipsis>"Text"</p> };
+
+    assert_eq!(
+        paragraph.style().text.white_space,
+        Some(rake::gpui::WhiteSpace::Normal)
+    );
+    assert!(paragraph.style().text.text_overflow.is_some());
+    let _ = rake::view! { <section tab-navigation><button disabled/></section> };
+}
+
+#[test]
+fn match_children_evaluate_only_the_selected_guarded_arm_and_keep_loop_ids() {
+    let visits = std::cell::RefCell::new(Vec::new());
+    let values = [Some(2usize), None];
+
+    let _ = rake::view! {
+        <div>
+            for (index, value) in values.iter().enumerate() {
+                match value {
+                    Some(n) if *n > 1 => {
+                        <span id={("value", index)}>{ { visits.borrow_mut().push(*n); "Selected" } }</span>
+                    },
+                    Some(_) => { <span id={("other", index)}>{unreachable_text_for_match()}</span> }
+                    None => {
+                        <span id={("empty", index)}>{ { visits.borrow_mut().push(0); "None" } }</span>
+                    }
+                }
+            }
+        </div>
+    };
+
+    assert_eq!(*visits.borrow(), [2, 0]);
+}
+
+fn unreachable_text_for_match() -> &'static str {
+    panic!("untaken match arm")
+}

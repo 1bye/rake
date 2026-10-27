@@ -192,7 +192,7 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
         ),
         ("<div onclick:Save={a}/>", "typed actions use on:Action"),
         ("<div on:={a}/>", "expected identifier"),
-        ("<div on:Save-extra={a}/>", "expected `=`"),
+        ("<div on:Save-extra={a}/>", "requires a value"),
         (
             "<img src=\"icon.png\" alt=\"Icon\" role={Role::Button}/>",
             "this attribute requires a container or button",
@@ -292,6 +292,7 @@ fn expansion_snapshots() {
         ("branches", r#"<div>if let Some(value) = selected { <p>{value}</p> } else if busy { "Loading" } else { <span/> }</div>"#.to_owned()),
         ("loops", r#"<ul>for row in rows { if row.visible { <li id={row.id}>{row.label}</li> } }</ul>"#.to_owned()),
         ("actions", r#"<section key-context="Editor" on:Save={save} on:crate::actions::Cancel={cancel}><button on:click={click}>"Save"</button></section>"#.to_owned()),
+        ("syntax", r#"<Card {id} compact {..Default::default()}><p ellipsis>match value { Some(text) if !text.is_empty() => { <strong>{text}</strong> } _ => { "Empty" } }</p></Card>"#.to_owned()),
         ("semantic_elements", r#"<main><nav/><header/><article/><aside/><footer/><hr/><svg path="icons/search.svg" aria-label="Search" class="size-4"/></main>"#.to_owned()),
         ("events", r#"<div on:click={handler} on:key-down={handler} on:key-up={handler} on:mouse-move={handler} on:mouse-down={handler} on:mouse-up={handler} on:right-mouse-down={handler} on:right-mouse-up={handler} on:middle-mouse-down={handler} on:middle-mouse-up={handler} on:any-mouse-down={handler} on:mouse-down-out={handler} on:mouse-up-out={handler} on:hover={handler} on:scroll-wheel={handler} on:drop={handler} on:drag={(value, constructor)} tooltip={help}/>"#.to_owned()),
         ("conditional_classes", r#"<div class="relative" class:shrink-0={fixed} class:font-bold={selected}/>"#.to_owned()),

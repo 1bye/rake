@@ -178,6 +178,33 @@ fn app() -> App {
         .root(|_, _, cx| framework::gpui::AppContext::new(cx, |_| framework::gpui::Empty).into())
 }
 
+impl Default for ComponentPanel {
+    fn default() -> Self {
+        Self {
+            id: "defaults".into(),
+            title: "Panel".into(),
+            footer: None,
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Shorthand, defaults, booleans and match arms also resolve through a renamed facade.
+pub fn syntax_markup(id: gpui::ElementId, selected: Option<String>) -> impl gpui::IntoElement {
+    framework::view! {
+        <self::ComponentPanel {id} {..Default::default()}>
+            <main>
+                <h2 ellipsis>
+                    match selected {
+                        Some(label) if !label.is_empty() => { <strong>{label}</strong> }
+                        _ => { "Nothing selected" }
+                    }
+                </h2>
+            </main>
+        </self::ComponentPanel>
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Document;

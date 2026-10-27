@@ -154,3 +154,56 @@ fn duplicate_authored_children_are_diagnosed_before_component_rendering() {
 fn unreachable_child() -> &'static str {
     panic!("untaken component child")
 }
+
+#[derive(IntoElement)]
+struct DefaultsPanel {
+    id: ElementId,
+    compact: bool,
+    footer: Option<AnyElement>,
+    children: Vec<AnyElement>,
+}
+
+impl Default for DefaultsPanel {
+    fn default() -> Self {
+        Self {
+            id: "default".into(),
+            compact: false,
+            footer: None,
+            children: Vec::new(),
+        }
+    }
+}
+
+impl RenderOnce for DefaultsPanel {
+    fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
+        gpui::div()
+            .id(self.id)
+            .children(self.children)
+            .children(self.footer)
+    }
+}
+
+#[test]
+fn component_shorthand_booleans_defaults_and_match_children_compose() {
+    let id = ElementId::from("panel");
+    let seen = RefCell::new(Vec::new());
+
+    let panel = rake::view! {
+        <DefaultsPanel {id} compact {..{ seen.borrow_mut().push("defaults"); DefaultsPanel::default() }}>
+            match Some("Body") {
+                Some(label) if !label.is_empty() => { <p>{ { seen.borrow_mut().push("child"); label } }</p> }
+                _ => { <p>"Empty"</p> }
+            }
+        </DefaultsPanel>
+    };
+
+    assert_eq!(panel.id, ElementId::from("panel"));
+    assert!(panel.compact);
+    assert!(panel.footer.is_none());
+    assert_eq!(panel.children.len(), 1);
+    assert_eq!(*seen.borrow(), ["child", "defaults"]);
+    let panel = rake::view! { <DefaultsPanel compact {..DefaultsPanel::default()}/> };
+
+    assert!(panel.compact);
+    assert!(panel.children.is_empty());
+}

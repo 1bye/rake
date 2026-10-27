@@ -1,0 +1,5 @@
+error: attribute `on:click` requires a value
+ --> tests/ui/view/boolean_event.rs:2:32
+  |
+2 |     let _ = rake::view! { <div on:click/> };
+  |                                ^^

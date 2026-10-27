@@ -14,7 +14,8 @@ mod view;
 /// Builds a GPUI element tree from experimental HTML-like markup.
 ///
 /// Exposed as `rake::view!` with Rake's `experimental-view` feature. Supports
-/// quoted text, `{expression}` children, `if`/`else`, and `for` children.
+/// quoted text, `{expression}` children, `if`/`else`, `for`, and guarded `match`
+/// children with braced arm bodies. Untaken branches are not evaluated.
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies GPUI
 /// builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
@@ -30,7 +31,11 @@ mod view;
 /// Buttons support `disabled`, retained focus, and keyboard activation; style their
 /// focus-visible and disabled appearance with GPUI builders.
 /// Uppercase component tags (`<ui::Card ...>...</ui::Card>`) construct typed Rust
-/// structs; paired tags collect `children: Vec<gpui::AnyElement>`. Slots are ordinary
+/// structs; paired tags collect `children: Vec<gpui::AnyElement>`. Bare boolean
+/// properties mean true; `{id}` is shorthand for `id={id}`. A final `{..expr}`
+/// supplies component defaults through Rust struct update, after explicit fields
+/// and paired children. Built-in bare booleans are limited to disabled, wrap,
+/// ellipsis, tab-navigation and aria-expanded. Slots are ordinary
 /// properties. Components own their root IDs and render through GPUI's `RenderOnce`.
 /// Paragraphs and h1–h6 headings compose string-like values and inline `span`/`strong`/`em`/`br` into
 /// one styled text layout, with `wrap`, `ellipsis`, and `max-lines` controls.

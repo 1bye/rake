@@ -1,0 +1,5 @@
+error: expected curly braces
+ --> tests/ui/view/match_braces.rs:2:51
+  |
+2 |     let _ = rake::view! { <div>match value { _ => <span/> }</div> };
+  |                                                   ^

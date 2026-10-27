@@ -78,7 +78,12 @@ example with `style={|s| s.bg(rgb(0x61717c))}`.
 
 ## Attributes, styling and events
 
-Attribute values are quoted strings or `{Rust expressions}`. The supported built-in
+Attribute values are quoted strings or `{Rust expressions}`. Bare `disabled`,
+`wrap`, `ellipsis`, `tab-navigation` and `aria-expanded` mean `={true}`. Component
+props can also be bare booleans. Other attributes require a value. A braced bare
+identifier in attribute position is shorthand: `<div {id}/>` means `id={id}`.
+It preserves the property's normal type and ownership rules; in particular,
+`{focus}` does not automatically borrow a handle. The supported built-in
 attributes are `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`,
 `focus`, `scroll`, `key-context`, `tab-navigation`, typed `on:Action` handlers,
 `disabled` on buttons, `tooltip`, and `src`/`alt` on images. Containers and buttons also accept
@@ -192,7 +197,7 @@ let _paragraph = rake::view! {
 Paragraph expressions must implement `AsRef<str>`, including `String`, `&str`,
 `SharedString`, and borrowed string values. Use `format!` for numbers or other
 `Display` values. Arbitrary `IntoElement` values, components, widgets, images,
-and block tags are not paragraph content. `if`/`if let` and `for` work inside
+and block tags are not paragraph content. `if`/`if let`, `for` and `match` work inside
 paragraphs, evaluating only selected text once in written order. Inline loops
 need no IDs because their output is text, not independently retained elements.
 An empty `<p/>` is supported.
@@ -328,9 +333,10 @@ caller's responsibility, including any event listeners it installs directly.
 
 ## Conditions, loops and identity
 
-Write `if`/`else if`/`else` and `for` directly among children. Each branch or loop
+Write `if`/`else if`/`else`, `for`, and `match` directly among children. Each branch or loop
 body may contain zero or more siblings. `if let` and destructured loop patterns
-work. Conditions and iterators are Rust expressions; wrap struct literals in
+work. Match arms accept patterns, optional guards and braced node lists; trailing
+commas are optional. Rust checks exhaustiveness. Conditions and iterators are Rust expressions; wrap struct literals in
 parentheses as with ordinary Rust control flow.
 
 ```rust
@@ -352,7 +358,23 @@ rake::view! {
 # }
 ```
 
-Untaken branches and empty-loop bodies do not evaluate their children. Built-in
+Match children work inside containers, paired components, paragraphs and headings:
+
+```rust
+# use rake::gpui::IntoElement;
+# fn status(value: Option<&str>) -> impl IntoElement {
+rake::view! {
+    <h2>
+        match value {
+            Some(name) if !name.is_empty() => { "Hello, "<strong>{name}</strong> }
+            _ => { <em>"Welcome"</em> },
+        }
+    </h2>
+}
+# }
+```
+
+Untaken branches/arms and empty-loop bodies do not evaluate their children. Built-in
 layout tags add each child directly to their GPUI parent without an intermediate
 tree or child vector. Paragraphs build their one text buffer and styled-run list. Paired component tags collect their authored children in the
 component's `Vec<AnyElement>`. Large lists should use an embedded GPUI virtual
@@ -361,7 +383,7 @@ list instead of eagerly generating every item.
 Each built-in tag gets a GPUI ID, either explicit or derived from its source site and
 position in the macro. GPUI scopes IDs under their nearest identified ancestor.
 Outside paragraph text, elements emitted directly by a loop **must** have explicit IDs, including elements
-in conditional branches immediately inside that loop. Prefer stable data keys,
+in conditional branches and match arms immediately inside that loop. Prefer stable data keys,
 such as `id={("row", row.id)}`, over positions when rows can reorder. Nested
 children under an explicitly identified row can use generated IDs. Direct text/expression
 children inside loops need an element wrapper with an explicit stable ID.
@@ -436,7 +458,7 @@ retained handles instead of storing references to render-time locals.
 Generic component types can be inferred from their fields; explicit generic
 arguments in tag paths are not supported.
 
-Self-closing tags initialize only their listed properties. Paired tags always
+Self-closing tags initialize their listed properties, optionally followed by component defaults. Paired tags always
 supply `children: Vec<AnyElement>`, including an empty vector for `<Stack></Stack>`.
 This is a convention for arbitrary nested GPUI elements, not a `ParentElement`
 requirement on the component struct. `if`, `for`, string-to-accessible-text
@@ -447,7 +469,14 @@ followed by the selected children in render order. Component rendering happens
 later through GPUI's usual `RenderOnce` lifecycle.
 
 Named slots are ordinary typed properties, such as the required `header` and
-optional `footer` above. Supply `None` explicitly for an absent optional slot.
+optional `footer` above. Supply `None` for an absent optional slot, or provide it through a final `{..expr}`.
+An optional final `{..expr}` uses ordinary Rust struct-update syntax:
+`<Card {id} {..Default::default()}/>` or `<Card {id} {..base}>...</Card>`.
+The component must provide the fields through that expression; no defaults are
+implicitly created. Explicit fields override the base, and paired children
+supply the children field. Defaults must be last and are component-only.
+Authored fields evaluate first, then paired children, then the defaults expression,
+following Rust's struct construction order. Normal move/borrow rules still apply.
 The component chooses where to render each slot and its children. Dedicated
 `<slot>` syntax is not implemented. Callback properties work the same way:
 `on_save={cx.listener(Self::save)}` must match the component field's Rust type.

@@ -103,3 +103,26 @@ fn headings_accept_composed_runs_and_paragraph_controls() {
     assert_eq!(node.level(), Some(1));
     assert_eq!(heading.style().text.line_clamp, Some(2));
 }
+
+#[test]
+fn paragraph_and_heading_match_arms_share_the_same_text_composition() {
+    let selected = Some("Ada");
+
+    let heading = rake::view! {
+        <h2>"Hello, "
+            match selected {
+                Some(name) if !name.is_empty() => { <strong>{name}</strong> }
+                _ => { <em>"guest"</em> }
+            }
+        </h2>
+    };
+
+    let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut node);
+
+    assert_eq!(node.label(), Some("Hello, Ada"));
+    let _ = rake::view! {
+        <p>match selected { Some(name) => { {name} }, None => { "guest" } }</p>
+    };
+}

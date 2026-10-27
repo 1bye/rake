@@ -59,6 +59,9 @@ impl View {
 
 impl Element {
     fn recover(&mut self, rake: &TokenStream, inline: Option<bool>, errors: &mut Diagnostics) {
+        let mut invalid_component =
+            self.resolved == Tag::Component && !self.parse_errors.is_empty();
+
         for error in self.parse_errors.drain(..) {
             errors.push(error);
         }
@@ -71,9 +74,8 @@ impl Element {
             attributes: self.attributes.clone(),
             children: Vec::new(),
             parse_errors: Vec::new(),
+            defaults: self.defaults.clone(),
         };
-
-        let mut invalid_component = false;
 
         if let Some(heading) = inline {
             if !["span", "strong", "em", "br"]
@@ -168,6 +170,7 @@ impl Element {
             self.tag = syn::parse_quote!(div);
             self.display_name = "div".into();
             self.attributes.clear();
+            self.defaults = None;
         }
 
         let child_inline = inline.or_else(|| {
@@ -185,6 +188,7 @@ impl Element {
         self.display_name = name.into();
         self.attributes.clear();
         self.children.clear();
+        self.defaults = None;
     }
 
     fn probe_attribute(
@@ -245,6 +249,11 @@ fn recover_nodes(
             } => {
                 recover_nodes(then_nodes, rake, inline, errors);
                 recover_nodes(else_nodes, rake, inline, errors);
+            }
+            Node::Match { arms, .. } => {
+                for arm in arms {
+                    recover_nodes(&mut arm.children, rake, inline, errors);
+                }
             }
             Node::For { children, .. } => {
                 if inline.is_none() {

@@ -82,6 +82,11 @@ fn validate_heading_children(nodes: &[Node]) -> syn::Result<()> {
                 validate_heading_children(then_nodes)?;
                 validate_heading_children(else_nodes)?;
             }
+            Node::Match { arms, .. } => {
+                for arm in arms {
+                    validate_heading_children(&arm.children)?;
+                }
+            }
             Node::For { children, .. } => validate_heading_children(children)?,
             _ => {}
         }
@@ -114,6 +119,20 @@ fn inline_children(
                 let else_nodes = inline_children(else_nodes, content, inherited, rake, next)?;
 
                 quote!(if #condition { #then_nodes } else { #else_nodes })
+            }
+            Node::Match { expression, arms } => {
+                let arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let pattern = &arm.pattern;
+                        let guard = arm.guard.as_ref().map(|guard| quote!(if #guard));
+                        let body = inline_children(&arm.children, content, inherited, rake, next)?;
+
+                        Ok(quote!(#pattern #guard => { #body },))
+                    })
+                    .collect::<syn::Result<Vec<_>>>()?;
+
+                quote!(match #expression { #(#arms)* })
             }
             Node::For {
                 pattern,
