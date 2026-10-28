@@ -166,6 +166,10 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
                 }
                 Err(e) => panic!("{e}"),
             };
+            socket.set_nonblocking(false).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut line = String::new();
             BufReader::new(socket.try_clone().unwrap())
                 .read_line(&mut line)

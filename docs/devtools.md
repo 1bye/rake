@@ -68,6 +68,14 @@ wire byte counts and JavaScript initiator stacks are unavailable. Body/post-data
 retrieval returns a descriptive CDP error; reported byte totals are received body
 bytes rather than measured compressed network traffic.
 
+Console shows structured tracing events through Log and Runtime, with inline
+previews and read-only JSON property expansion. Object retention is limited to
+128 objects and 1 MiB per connection; evicted IDs return an error. Loss warnings
+report collector drops, output drops, sequence gaps and outbound queue overflow.
+With `--session`, supervisor process text appears as `[stdout]`/`[stderr]` using
+its own observation clock and without inferred runtime ownership. Structured
+events can also appear in process stderr; these are distinct sources.
+
 ## Rake application preview
 
 An [Elements-only Inspector built with Rake](rake-inspector.md) is also available

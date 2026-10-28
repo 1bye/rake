@@ -153,7 +153,7 @@ fn connection(
     )
     .map_err(|e| format!("CDP handshake: {e}"))?;
 
-    session::run(socket, instance)
+    session::run(socket, instance, options.process_output.clone())
 }
 
 pub(super) fn serve(options: Options) -> Result<()> {

@@ -21,10 +21,13 @@ struct Session {
     outbound: VecDeque<Event>,
     dropped: u64,
     epoch_seconds: Option<f64>,
+    objects: super::console::Objects,
+    loss: super::console::Loss,
+    process_output: super::console::ProcessOutput,
 }
 
 impl Session {
-    fn new(instance: Instance) -> Self {
+    fn new(instance: Instance, output: Option<std::path::PathBuf>) -> Self {
         Self {
             instance,
             cursor: 0,
@@ -32,6 +35,9 @@ impl Session {
             outbound: VecDeque::new(),
             dropped: 0,
             epoch_seconds: None,
+            objects: super::console::Objects::default(),
+            loss: super::console::Loss::default(),
+            process_output: super::console::ProcessOutput::new(output),
         }
     }
 
@@ -51,6 +57,27 @@ impl Session {
         let method = request.method.as_str();
 
         match method {
+            "Runtime.getProperties" => {
+                let id = request.params["objectId"]
+                    .as_str()
+                    .ok_or_else(|| Error::new(-32602, "objectId required"))?;
+                if request.params["accessorPropertiesOnly"] == true {
+                    return Ok(json!({"result":[]}));
+                }
+
+                self.objects.properties(id)
+            }
+            "Runtime.releaseObject" => {
+                if let Some(id) = request.params["objectId"].as_str() {
+                    self.objects.release(id);
+                }
+
+                Ok(json!({}))
+            }
+            "Runtime.releaseObjectGroup" => {
+                self.objects.clear();
+                Ok(json!({}))
+            }
             "Network.getResponseBody" | "Network.getRequestPostData" => Err(Error::new(
                 -32000,
                 "Request and response bodies are not captured by Rake",
@@ -104,10 +131,39 @@ impl Session {
             return Err("unexpected diagnostics reply".into());
         };
 
+        let warning = self.loss.observe(&snapshot, self.cursor);
+
         if let Some(record) = snapshot.records.last() {
             self.epoch_seconds
                 .get_or_insert_with(|| unix_seconds() - record.elapsed_us as f64 / 1e6);
             self.cursor = record.sequence;
+        }
+
+        if self.domains.contains("Log") || self.domains.contains("Runtime") {
+            if let Some(warning) = warning {
+                self.warning(warning);
+            }
+
+            for record in &snapshot.records {
+                if self.domains.contains("Log")
+                    && let Some(event) =
+                        super::console::translate(record, self.epoch_seconds.unwrap_or_default())
+                {
+                    self.event(event);
+                }
+                if self.domains.contains("Runtime") && record.kind == "event" {
+                    let event = self
+                        .objects
+                        .called(record, self.epoch_seconds.unwrap_or_default());
+                    self.event(event);
+                }
+            }
+
+            if self.domains.contains("Log") {
+                for event in self.process_output.poll(unix_seconds()) {
+                    self.event(event);
+                }
+            }
         }
 
         if self.domains.contains("Network") {
@@ -126,6 +182,19 @@ impl Session {
 
         Ok(())
     }
+
+    fn warning(&mut self, text: String) {
+        if self.domains.contains("Log") {
+            self.event(super::console::entry(
+                "warning",
+                text,
+                unix_seconds() * 1000.,
+                "rake://adapter",
+            ));
+        } else if self.domains.contains("Runtime") {
+            self.event(Event::new("Runtime.consoleAPICalled",json!({"type":"warning","args":[{"type":"string","value":text}],"executionContextId":1,"timestamp":unix_seconds()*1000.})));
+        }
+    }
 }
 
 fn unix_seconds() -> f64 {
@@ -141,14 +210,18 @@ fn frame() -> Value {
         "crossOriginIsolatedContextType":"NotIsolated", "gatedAPIFeatures":[]})
 }
 
-pub(super) fn run(mut socket: WebSocket<TcpStream>, instance: Instance) -> Result<()> {
+pub(super) fn run(
+    mut socket: WebSocket<TcpStream>,
+    instance: Instance,
+    output: Option<std::path::PathBuf>,
+) -> Result<()> {
     socket
         .get_mut()
         .set_read_timeout(Some(Duration::from_millis(20)))?;
     socket
         .get_mut()
         .set_write_timeout(Some(Duration::from_secs(1)))?;
-    let mut session = Session::new(instance);
+    let mut session = Session::new(instance, output);
     let mut next_poll = Instant::now();
 
     loop {
@@ -186,6 +259,13 @@ pub(super) fn run(mut socket: WebSocket<TcpStream>, instance: Instance) -> Resul
 
         while let Some(event) = session.outbound.pop_front() {
             socket.send(Message::text(serde_json::to_string(&event)?))?;
+        }
+
+        if session.dropped > 0
+            && (session.domains.contains("Log") || session.domains.contains("Runtime"))
+        {
+            let dropped = std::mem::take(&mut session.dropped);
+            session.warning(format!("Rake CDP outbound queue dropped {dropped} events"));
         }
     }
 }

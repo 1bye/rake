@@ -1,5 +1,6 @@
 //! Loopback CDP adapter; runtime access always goes through the shared protocol.
 
+mod console;
 mod network;
 mod server;
 mod session;
@@ -20,6 +21,7 @@ struct Options {
     port: u16,
     open: bool,
     json: bool,
+    process_output: Option<PathBuf>,
 }
 
 impl Options {
@@ -31,15 +33,16 @@ impl Options {
             port: 0,
             open: true,
             json: false,
+            process_output: None,
         };
         let mut args = args.into_iter();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--session" => {
-                    options.directory =
-                        PathBuf::from(args.next().ok_or("--session requires a path")?)
-                            .join("control")
+                    let session = PathBuf::from(args.next().ok_or("--session requires a path")?);
+                    options.directory = session.join("control");
+                    options.process_output = Some(session.join("output.json"));
                 }
                 "--instance" => {
                     options.selector = Some(args.next().ok_or("--instance requires a selector")?)
