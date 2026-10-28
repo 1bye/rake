@@ -182,11 +182,6 @@ impl StylePlan {
     }
 
     pub fn emit_refinement(&self, mapped: &Ident) -> TokenStream {
-        debug_assert!(
-            self.variants.is_empty(),
-            "inline text has no interaction variants"
-        );
-
         emit_segments(&self.base, mapped)
     }
 

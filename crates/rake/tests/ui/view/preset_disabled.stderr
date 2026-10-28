@@ -1,0 +1,5 @@
+error: 1st class `disabled:opacity-50`: disabled: classes are supported only on buttons
+ --> tests/ui/view/preset_disabled.rs:1:15
+  |
+1 | #[rake::style("disabled:opacity-50")]
+  |               ^^^^^^^^^^^^^^^^^^^^^

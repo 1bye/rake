@@ -169,7 +169,7 @@ pub use rake_macros::{Command, Route, app, data, instrument};
 /// ```compile_fail
 /// let _ = rake::view! { <p><button>"A widget"</button></p> };
 /// ```
-pub use rake_macros::{Theme, view};
+pub use rake_macros::{Theme, style, view};
 pub use router::Route;
 pub use schemars;
 pub use serde;

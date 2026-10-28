@@ -303,3 +303,11 @@ framework::theme!(ViewTheme);
 pub fn themed_markup() -> impl gpui::IntoElement {
     framework::view! { <div class="bg-surface hover:bg-surface"/> }
 }
+
+#[framework::style("p-2 hover:bg-surface")]
+fn themed_control();
+
+/// Presets resolve their helpers through the renamed facade.
+pub fn preset_markup() -> impl gpui::IntoElement {
+    framework::view! { <div style={themed_control}/> }
+}

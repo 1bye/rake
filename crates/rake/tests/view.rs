@@ -600,3 +600,42 @@ fn theme_class_compile_probe() -> impl rake::gpui::IntoElement {
         </div>
     }
 }
+
+#[rake::style("h-[24px] px-2 rounded-sm")]
+fn control();
+
+#[rake::style("hover:bg-hover hover:opacity-50")]
+fn hover_control();
+
+#[rake::style("focus-visible:bg-hover active:opacity-50 group-active/card:text-ink")]
+fn focus_control();
+
+#[rake::style("focus-visible:opacity-50")]
+fn focus_only();
+
+#[rake::style("overflow-y-scroll")]
+fn scrolling();
+
+#[test]
+fn presets_are_typed_style_functions_and_compose_with_builders() {
+    use rake::gpui::{self, prelude::*};
+    let mut actual = control(gpui::StyleRefinement::default());
+
+    let mut expected = gpui::StyleRefinement::default()
+        .h(px(24.))
+        .px_2()
+        .rounded_sm();
+
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let _ = rake::view! { <div style={|s| control(s).w(px(10.))}/> };
+    let _ = rake::view! { <div style={scrolling}/> };
+    let _ = focus_only(gpui::div());
+}
+
+#[allow(dead_code)]
+fn themed_presets_compile() -> impl rake::gpui::IntoElement {
+    rake::view! { <div style={focus_control}><div style={hover_control}/></div> }
+}

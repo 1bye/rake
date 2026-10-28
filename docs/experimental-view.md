@@ -848,3 +848,28 @@ variant refinements. Nested `view!` expressions bind their own handle. Deep
 components need no theme props. Switching calls `install` with another value
 of the same type and rebuilds views; existing styles retain their old values.
 `examples/view` demonstrates a typed `ToggleTheme` action and a T shortcut.
+
+## Style presets
+
+Define reusable, typed builder functions using the same class grammar:
+
+```rust
+#[rake::style("h-[24px] px-2 rounded-sm hover:opacity-50")]
+pub fn control();
+fn toolbar() -> impl rake::gpui::IntoElement {
+    rake::view! { <button style={control}>Save</button> }
+}
+```
+
+Use `style={control}` or compose `style={|s| control(s).w(gpui::px(10.))}`.
+Presets support literal utilities, themes and merged variants. Their generated
+function accepts `Styled`; hover/focus/group utilities add `InteractiveElement`, and
+active/scrolling utilities require `StatefulInteractiveElement` as GPUI
+requires. A plain preset also works on `StyleRefinement`. Marker functions have
+no body, parameters, generics or qualifiers; visibility and doc attributes
+are preserved. Conditional attributes, branches and button-only `disabled:`
+need an element context and are rejected.
+
+A preset's `hover:` conflicts with `hover:` classes on the same element, as do
+other interaction kinds. The token scanner cannot inspect a named function;
+GPUI's debug assertion is the backstop. Keep each kind in one place.

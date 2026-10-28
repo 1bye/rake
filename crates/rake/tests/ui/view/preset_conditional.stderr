@@ -1,0 +1,5 @@
+error: style presets accept one literal utility string; conditional attributes and branches require view!
+ --> tests/ui/view/preset_conditional.rs:1:15
+  |
+1 | #[rake::style("class:p-2={active}")]
+  |               ^^^^^^^^^^^^^^^^^^^^

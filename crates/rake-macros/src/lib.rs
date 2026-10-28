@@ -30,6 +30,9 @@ mod view;
 /// Named text/bg/border/font/rounded classes read its fields (hyphens become
 /// underscores); built-in values win. Inline text themes accept colors, not
 /// TextToken sizes. Each invocation captures one ambient Rc at construction.
+/// `#[rake::style("px-2 hover:opacity-50")] fn control();` defines a reusable
+/// style function for `style={control}`. Presets support themes and variants,
+/// but no conditions; indirect refinement conflicts remain GPUI debug assertions.
 /// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
 /// font families and opacity; negative lengths are limited to margins and inset.
 /// Interaction variants merge into one GPUI call per kind: hover, active, focus,
@@ -292,6 +295,22 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Theme)]
 pub fn derive_theme(input: TokenStream) -> TokenStream {
     view::theme::derive(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Defines a reusable GPUI style function from a checked utility string.
+/// Write `#[rake::style("px-2 hover:opacity-50")] pub fn control();` and use
+/// `style={control}`. Presets accept themes and variants, but no conditions.
+/// GPUI permits one refinement per interaction kind: do not combine a preset's
+/// hover/focus style with classes setting the same kind on the same element.
+#[proc_macro_attribute]
+pub fn style(attributes: TokenStream, input: TokenStream) -> TokenStream {
+    let classes = parse_macro_input!(attributes as syn::LitStr);
+    let item = parse_macro_input!(input as syn::ForeignItemFn);
+
+    facade()
+        .and_then(|rake| view::preset::expand(classes, item, &rake))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
