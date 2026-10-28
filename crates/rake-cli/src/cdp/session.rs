@@ -18,7 +18,8 @@ struct Session {
     instance: Instance,
     cursor: u64,
     domains: BTreeSet<String>,
-    outbound: VecDeque<Event>,
+    outbound: VecDeque<(Event, usize)>,
+    outbound_bytes: usize,
     dropped: u64,
     epoch_seconds: Option<f64>,
     objects: super::console::Objects,
@@ -34,6 +35,7 @@ impl Session {
             cursor: 0,
             domains: BTreeSet::new(),
             outbound: VecDeque::new(),
+            outbound_bytes: 0,
             dropped: 0,
             epoch_seconds: None,
             objects: super::console::Objects::default(),
@@ -44,10 +46,17 @@ impl Session {
     }
 
     fn event(&mut self, event: Event) {
-        if self.outbound.len() == QUEUE_LIMIT {
-            self.dropped += 1;
+        let bytes = serde_json::to_vec(&event)
+            .map(|bytes| bytes.len())
+            .unwrap_or(usize::MAX);
+        if self.outbound.len() == QUEUE_LIMIT
+            || bytes > 1024 * 1024
+            || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
+        {
+            self.dropped = self.dropped.saturating_add(1);
         } else {
-            self.outbound.push_back(event);
+            self.outbound_bytes += bytes;
+            self.outbound.push_back((event, bytes));
         }
     }
 
@@ -59,6 +68,53 @@ impl Session {
         let method = request.method.as_str();
 
         match method {
+            "Runtime.evaluate" => {
+                if request.params["throwOnSideEffect"] == true {
+                    return Err(Error::new(
+                        -32000,
+                        "Typed commands mutate state; side-effect-free/eager evaluation is unavailable",
+                    ));
+                }
+                if request
+                    .params
+                    .get("contextId")
+                    .is_some_and(|id| id.as_u64() != Some(1))
+                    || request.params.get("uniqueContextId").is_some_and(|id| {
+                        id.as_str() != Some(&self.instance.info.runtime_id.to_string())
+                    })
+                {
+                    return Err(Error::new(
+                        -32602,
+                        "Execution context is stale or unavailable",
+                    ));
+                }
+                let expression = request.params["expression"]
+                    .as_str()
+                    .ok_or_else(|| Error::new(-32602, "expression required"))?;
+                let value = super::evaluate::execute(&self.instance, expression)?;
+                let remote = if request.params["returnByValue"] == true {
+                    json!({"type":"object","value":value})
+                } else {
+                    self.objects.remote(value)
+                };
+                Ok(json!({"result":remote}))
+            }
+            "Runtime.globalLexicalScopeNames" => {
+                Ok(json!({"names":super::evaluate::names(&self.instance)?}))
+            }
+            "Runtime.compileScript" => {
+                let expression = request.params["expression"]
+                    .as_str()
+                    .ok_or_else(|| Error::new(-32602, "expression required"))?;
+                super::evaluate::validate(&self.instance, expression)?;
+                if request.params["persistScript"] == true {
+                    return Err(Error::new(
+                        -32000,
+                        "Persisted scripts are unavailable; use Runtime.evaluate for a typed command",
+                    ));
+                }
+                Ok(json!({}))
+            }
             "DOM.enable" | "CSS.enable" => {
                 self.domains
                     .insert(method.split('.').next().unwrap_or_default().into());
@@ -247,6 +303,7 @@ impl Session {
         self.loss = super::console::Loss::default();
         self.dom.clear();
         self.outbound.clear();
+        self.outbound_bytes = 0;
         self.dropped = 0;
         self.event(Event::new("Runtime.executionContextsCleared", json!({})));
         self.event(Event::new("DOM.documentUpdated", json!({})));
@@ -323,7 +380,7 @@ pub(super) fn run(
                     Ok(request) => Response::new(Some(request.id), session.handle(&request)),
                     Err(error) => Response::new(None, Err(Error::new(-32600, error.to_string()))),
                 };
-                socket.send(Message::text(serde_json::to_string(&response)?))?;
+                socket.send(Message::text(response.encode()?))?;
             }
             Ok(Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => return Ok(()),
             Ok(_) => {}
@@ -358,7 +415,8 @@ pub(super) fn run(
             next_poll = Instant::now() + INTERVAL;
         }
 
-        while let Some(event) = session.outbound.pop_front() {
+        while let Some((event, bytes)) = session.outbound.pop_front() {
+            session.outbound_bytes -= bytes;
             socket.send(Message::text(serde_json::to_string(&event)?))?;
         }
 
@@ -368,5 +426,39 @@ pub(super) fn run(
             let dropped = std::mem::take(&mut session.dropped);
             session.warning(format!("Rake CDP outbound queue dropped {dropped} events"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outbound_retention_is_bounded_by_count_and_bytes() {
+        let router = rake::router::Router::<rake::router::NoRoute>::new(
+            rake::router::RouterConfig::default(),
+        );
+        let instance = Instance {
+            application_id: "test.queue".into(),
+            pid: 1,
+            info: router.client().info(),
+            endpoint: rake::control::local::Endpoint::Local {
+                path: "/unused".into(),
+            },
+        };
+        let mut session = Session::new(instance, None);
+        for _ in 0..QUEUE_LIMIT + 2 {
+            session.event(Event::new("Log.entryAdded", json!({})));
+        }
+        assert_eq!(session.outbound.len(), QUEUE_LIMIT);
+        assert_eq!(session.dropped, 2);
+        session.outbound.clear();
+        session.outbound_bytes = 0;
+        session.event(Event::new(
+            "Log.entryAdded",
+            json!({"text":"x".repeat(1024*1024)}),
+        ));
+        assert!(session.outbound.is_empty());
+        assert_eq!(session.dropped, 3);
     }
 }

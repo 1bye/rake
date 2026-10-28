@@ -133,3 +133,88 @@ Checks: cargo test -p rake-cli; cargo clippy -p rake-cli --all-targets;
 cargo fmt --all --check; Python inspector (9), supervisor (10), broker (3) tests;
 Node inspector model/UI checks; actual Chrome 156 stock frontend. No rake shared
 type or runtime implementation changes; no Wasm build was needed for these phases.
+
+## Phase 6 and final verification
+
+The owner's implement-every-phase instruction authorized this typed-command write
+path. Evaluation accepts exactly name(JSON), resolves the registered command from
+Query::Commands, and submits Command::Run once with a fresh UUID key. Invalid JSON,
+unregistered commands, stale contexts and throwOnSideEffect/eager evaluation fail
+before dispatch. Compile checks are non-persisting registry/syntax checks. Global
+scope names list registered command IDs. Persisted scripts and JavaScript function
+calls are deliberately unavailable.
+
+The actual routing example was inspected through stock Chrome 156 after calling
+demo.echo and demo.fetch through the implemented Runtime.evaluate path. Network
+showed a 200 Fetch with 52 B transferred; Console showed the typed echo and request
+completion, structured fields and honest supervisor output loss warnings.
+
+Final Rust checks: cargo fmt --all --check; cargo clippy -p rake-cli --all-targets;
+cargo test -p rake-cli (14 unit tests, 3 CDP boundary tests, 1 timeout test and
+3 existing runtime tests). The CDP boundary suite exercises real CLI processes,
+TCP/WebSockets and native runtime sockets; HTTP capture uses a diagnostics-only
+protocol fixture backed by a real HTTP collector. Runtime replacement includes an
+unrelated same-application runtime. A lost-reply fixture verified one submission,
+no resend and the exact retry key in the error. Outbound events are bounded by
+256 entries and 1 MiB per connection; replies above 1 MiB become an error that
+preserves an evaluated command's retry key.
+
+Affected script checks: inspector Python tests (9), supervisor tests (10), broker
+tests (3), inspector model/UI Node checks, Python compilation and JavaScript syntax.
+No shared rake types changed, so no rake/Wasm build was required. No loaded Web
+broker performance, hosted frontend WebSocket use, CPU/heap profiling, native
+highlight protocol or live Performance recording was established. Trace files are
+implemented; live Tracing.start/end remain unsupported under the Phase 0 stretch
+gate. Computed bounds and SDK quads are verified; full Chrome box decoration and
+CSS inference remain incomplete because only actual captured metrics are returned.
+
+## Error surface
+
+Explicit unavailable: Network.getResponseBody, Network.getRequestPostData,
+Overlay.highlightNode, Overlay.setInspectMode, Runtime.compileScript with
+persistScript=true, and Runtime.evaluate for JavaScript or side-effect-free/eager
+requests. Expired object/node IDs, invalid params and unavailable captures also
+return errors. All methods outside the supported list in docs/devtools.md return
+-32601. This includes all Debugger, Profiler and Tracing methods, CSS/DOM edits,
+Runtime.callFunctionOn and Runtime.runScript.
+
+The following methods observed during Chrome startup/interaction still return
+-32601 (unsupported model setup is tolerated by the tested frontend):
+
+- `Accessibility.enable`
+- `Animation.enable`
+- `Audits.enable`
+- `Autofill.enable`
+- `Autofill.setAddresses`
+- `CSS.takeComputedStyleUpdates`
+- `CSS.trackComputedStyleUpdates`
+- `DOMDebugger.setBreakOnCSPViolation`
+- `Debugger.enable`
+- `Debugger.setAsyncCallStackDepth`
+- `Debugger.setBlackboxPatterns`
+- `Debugger.setPauseOnExceptions`
+- `Emulation.setEmulatedMedia`
+- `Emulation.setEmulatedVisionDeficiency`
+- `Emulation.setFocusEmulationEnabled`
+- `Log.startViolationsReport`
+- `Network.configureDurableMessages`
+- `Network.emulateNetworkConditionsByRule`
+- `Network.overrideNetworkState`
+- `Network.setAttachDebugStack`
+- `Network.setBlockedURLs`
+- `Overlay.setShowContainerQueryOverlays`
+- `Overlay.setShowFlexOverlays`
+- `Overlay.setShowGridOverlays`
+- `Overlay.setShowIsolatedElements`
+- `Overlay.setShowScrollSnapOverlays`
+- `Overlay.setShowViewportSizeOnResize`
+- `Page.addScriptToEvaluateOnNewDocument`
+- `Page.setAdBlockingEnabled`
+- `Profiler.enable`
+- `Runtime.addBinding`
+- `Runtime.getIsolateId`
+- `ServiceWorker.enable`
+- `Storage.getStorageKey`
+- `Target.setAutoAttach`
+- `Target.setDiscoverTargets`
+- `Target.setRemoteLocations`

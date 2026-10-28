@@ -106,6 +106,31 @@ matches the selected RuntimeId, including when `--instance` originally named tha
 UUID. Replacement clears runtime contexts, cursors, objects and DOM IDs. An
 unrelated instance with the same application ID is never followed.
 
+Console evaluation accepts only a registered typed command with JSON arguments,
+for example `demo.echo({"message":"Hello from Chrome"})` or `demo.fetch({"url":
+"http://127.0.0.1:8081/"})`. Each evaluation submits one `Command::Run` with a
+fresh retry key. The result contains that key and the operation's state/result;
+queued, running and awaiting-decision states are not a successful commit. An
+uncertain delivery error names the key and is never resent automatically. Use
+`rake ctl` to observe or explicitly retry with the identical payload and key;
+evaluating again submits a new mutation. Eager/side-effect-free evaluation is
+rejected. Registry names and non-persisting compile checks read `Query::Commands`.
+JavaScript evaluation, persisted scripts, autocomplete via JavaScript calls and
+`Runtime.callFunctionOn` remain unavailable.
+
+Supported CDP methods are the domain enable/disable methods for Network, Log,
+Runtime, DOM, CSS and Overlay; Inspector.enable; Page.enable/disable,
+Page.getResourceTree/getFrameTree; Runtime.runIfWaitingForDebugger,
+Runtime.evaluate, Runtime.compileScript (without persistence),
+Runtime.globalLexicalScopeNames, Runtime.getProperties,
+Runtime.releaseObject/releaseObjectGroup; DOM.getDocument, DOM.requestChildNodes,
+DOM.describeNode, DOM.getAttributes, DOM.getBoxModel,
+DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
+CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
+Network.getResponseBody/getRequestPostData and Overlay.highlightNode/setInspectMode
+return descriptive unavailable errors. Every unlisted method returns `-32601`,
+including Debugger, Profiler, Tracing, CSS/DOM edits and JavaScript function calls.
+
 ## Rake application preview
 
 An [Elements-only Inspector built with Rake](rake-inspector.md) is also available

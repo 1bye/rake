@@ -2,6 +2,7 @@
 
 mod console;
 mod dom;
+mod evaluate;
 mod network;
 mod server;
 mod session;

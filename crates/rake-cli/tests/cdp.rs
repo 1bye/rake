@@ -14,6 +14,32 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "test.echo", output = String, capability = Headless)]
+#[serde(deny_unknown_fields)]
+struct Echo {
+    message: String,
+}
+
+fn cdp_call(
+    socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
+    method: &str,
+    params: Value,
+) -> Value {
+    socket
+        .send(tungstenite::Message::text(
+            json!({"id":99,"method":method,"params":params}).to_string(),
+        ))
+        .unwrap();
+    loop {
+        let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        if reply["id"] == 99 {
+            return reply;
+        }
+    }
+}
+
 struct Adapter(Child);
 
 impl Drop for Adapter {
@@ -46,6 +72,15 @@ fn discovery_access_wire_and_detach() {
     let directory = std::path::PathBuf::from(format!("/tmp/rake-cdp-{}", uuid::Uuid::new_v4()));
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let client = router.client();
+    let executions = std::rc::Rc::new(std::cell::Cell::new(0));
+    let executed = executions.clone();
+    client
+        .commands()
+        .register::<Echo, _, _>(move |args, _| {
+            executed.set(executed.get() + 1);
+            async move { Ok(args.message) }
+        })
+        .unwrap();
     let server = LocalServer::bind(&client, "test.cdp", &directory).unwrap();
     let (gone, vanish) = oneshot::channel();
     let worker_directory = directory.clone();
@@ -114,6 +149,52 @@ fn discovery_access_wire_and_detach() {
             .unwrap();
         let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(reply["result"], json!({}));
+        let names = cdp_call(&mut socket, "Runtime.globalLexicalScopeNames", json!({}));
+        assert_eq!(names["result"]["names"], json!(["test.echo"]));
+        let compiled = cdp_call(
+            &mut socket,
+            "Runtime.compileScript",
+            json!({"expression":"test.echo({\"message\":\"hello\"})","persistScript":false}),
+        );
+        assert_eq!(compiled["result"], json!({}));
+        let eager = cdp_call(
+            &mut socket,
+            "Runtime.evaluate",
+            json!({"expression":"test.echo({\"message\":\"hello\"})","throwOnSideEffect":true}),
+        );
+        assert_eq!(eager["error"]["code"], -32000);
+        let unknown = cdp_call(
+            &mut socket,
+            "Runtime.evaluate",
+            json!({"expression":"unknown({})"}),
+        );
+        assert_eq!(unknown["error"]["code"], -32602);
+        let first = cdp_call(
+            &mut socket,
+            "Runtime.evaluate",
+            json!({"expression":"test.echo({\"message\":\"hello\"})","returnByValue":true}),
+        );
+        let second = cdp_call(
+            &mut socket,
+            "Runtime.evaluate",
+            json!({"expression":"test.echo({\"message\":\"hello\"})","returnByValue":true}),
+        );
+        assert_eq!(
+            first["result"]["result"]["value"]["operation"]["result"],
+            "hello"
+        );
+        assert_eq!(
+            first["result"]["result"]["value"]["operation"]["state"],
+            "Committed"
+        );
+        let first_key = first["result"]["result"]["value"]["requestKey"]
+            .as_str()
+            .unwrap();
+        let second_key = second["result"]["result"]["value"]["requestKey"]
+            .as_str()
+            .unwrap();
+        uuid::Uuid::parse_str(first_key).unwrap();
+        assert_ne!(first_key, second_key);
         gone.send(()).unwrap();
         let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
         assert_eq!(reply["method"], "Inspector.detached");
@@ -127,6 +208,7 @@ fn discovery_access_wire_and_detach() {
     });
     drop(server);
     worker.join().unwrap();
+    assert_eq!(executions.get(), 2);
     router.shutdown();
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -363,16 +445,27 @@ fn follows_only_a_checkpointed_successor() {
         let _ = select(Box::pin(old_server.run(old.client())), Box::pin(replace)).await;
     });
     drop(old_server);
+    let unrelated = Router::<NoRoute>::new(RouterConfig::default());
+    let unrelated_server =
+        LocalServer::bind(&unrelated.client(), "test.replace", &directory).unwrap();
     let replacement_server =
         LocalServer::bind(&replacement.client(), "test.replace", &directory).unwrap();
     pool.run_until(async {
         let _ = select(
-            Box::pin(replacement_server.run(replacement.client())),
+            Box::pin(async {
+                let (replacement_result, unrelated_result) = futures::join!(
+                    replacement_server.run(replacement.client()),
+                    unrelated_server.run(unrelated.client())
+                );
+                replacement_result.unwrap();
+                unrelated_result.unwrap();
+            }),
             Box::pin(finished),
         )
         .await;
     });
     worker.join().unwrap();
     drop(replacement_server);
+    drop(unrelated_server);
     std::fs::remove_dir_all(directory).unwrap();
 }
