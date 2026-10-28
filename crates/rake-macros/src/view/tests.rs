@@ -658,3 +658,32 @@ fn conditional_negative_utilities_accept_a_variant_prefix() {
         assert!(expand(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn signed_bracket_values_explain_where_negatives_belong() {
+    let errors = expand(r#"<div class="mt-[-5px] w-[-5px]"/>"#)
+        .expect_err("signed bracket values")
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        [
+            "1st class `mt-[-5px]`: write negative values with a leading `-`, such as `-mt-[5px]`",
+            "2nd class `w-[-5px]`: negative values are supported only for margins and inset",
+        ]
+    );
+    assert!(
+        expand(r#"<div class="w-[+5px]"/>"#)
+            .expect_err("signed width")
+            .to_string()
+            .contains("negative values are supported only for margins and inset")
+    );
+    let expanded = expand(r#"<div class="-mt-[5px]"/>"#)
+        .expect("negative margin")
+        .to_string()
+        .replace(' ', "");
+
+    assert!(expanded.contains(".mt(::renamed::gpui::px(-5f32))"));
+}

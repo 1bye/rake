@@ -1,0 +1,11 @@
+error: 1st class `mt-[-5px]`: write negative values with a leading `-`, such as `-mt-[5px]`
+ --> tests/ui/view/negative_bracket.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="mt-[-5px] w-[-5px]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^
+
+error: 2nd class `w-[-5px]`: negative values are supported only for margins and inset
+ --> tests/ui/view/negative_bracket.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="mt-[-5px] w-[-5px]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^

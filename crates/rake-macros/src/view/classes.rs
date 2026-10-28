@@ -164,6 +164,14 @@ fn extended_methods(
         return Err(error("use only one negative sign"));
     }
 
+    if !negative && arbitrary.is_some_and(|value| value.starts_with(['-', '+'])) {
+        return Err(error(if permits_negative {
+            "write negative values with a leading `-`, such as `-mt-[5px]`"
+        } else {
+            "negative values are supported only for margins and inset"
+        }));
+    }
+
     let mut length = if let Some(value) = arbitrary {
         value::length(value).map_err(error)?
     } else if raw.contains('/') {
@@ -190,17 +198,7 @@ fn extended_methods(
         value::Length::Pixels(n) | value::Length::Rems(n) | value::Length::Relative(n) => n,
     };
 
-    if *n < 0. && !permits_negative {
-        return Err(error(
-            "negative values are supported only for margins and inset",
-        ));
-    }
-
     if negative {
-        if *n < 0. {
-            return Err(error("use only one negative sign"));
-        }
-
         *n = -*n;
     }
 
