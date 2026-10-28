@@ -5,6 +5,28 @@
 use super::*;
 
 #[test]
+fn display_names_hide_wrappers_paths_and_generic_arguments() {
+    for (kind, expected) in [
+        ("gpui::elements::div::Div", "Div"),
+        (
+            "gpui::elements::div::Stateful<gpui::elements::div::Div>",
+            "Div",
+        ),
+        (
+            "gpui::view::ViewElement<rake::router::TabBar<app::Destination>>",
+            "TabBar",
+        ),
+        ("gpui::ViewElement<gpui::Stateful<app::Button>>", "Button"),
+        ("app::List<app::Item>", "List"),
+        ("Button", "Button"),
+        ("", ""),
+        ("gpui::ViewElement<app::Truncated", "ViewElement"),
+    ] {
+        assert_eq!(display_name(kind), expected, "{kind}");
+    }
+}
+
+#[test]
 fn identities_expire_without_semantic_retargeting() {
     let store = Store::default();
 

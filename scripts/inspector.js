@@ -1,4 +1,4 @@
-import {InspectorState, commandArguments, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
+import {InspectorState, commandArguments, elementName, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
 
 const $ = id => document.getElementById(id);
 const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Elements', 'Reload'];
@@ -579,7 +579,7 @@ function elementsPanel() {
     control.setAttribute('aria-pressed', String(selectedElement === element.id));
     control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
     control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
-    const kind = element.kind.replace(/\b(?:[a-z_]\w*::)+/g, '');
+    const kind = elementName(element.kind);
     control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
     if (element.semantic_id != null) control.append(el('span', 'id=', 'syntax-attribute'), el('span', '"' + element.semantic_id + '"', 'syntax-value'));
     control.append(el('span', '>', 'muted'));

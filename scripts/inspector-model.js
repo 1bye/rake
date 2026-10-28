@@ -1,4 +1,11 @@
 // Pure projections of shared runtime replies. Authoritative state only comes from snapshots.
+export function elementName(kind) {
+  while (/^(?:\w+::)*(?:Stateful|ViewElement)</.test(kind) && kind.endsWith('>')) {
+    kind = kind.slice(kind.indexOf('<') + 1, -1);
+  }
+  return kind.split('<')[0].split('::').at(-1);
+}
+
 export function safeJSON(text) {
   return JSON.parse(text, (_key, value) => {
     if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {

@@ -319,16 +319,14 @@ fn overlay(
     let layout = element.layout?;
     let label = format!(
         "{} {} · {}×{}",
-        element.kind,
+        super::display_name(&element.kind),
         element.semantic_id.as_deref().unwrap_or(""),
         layout.width,
         layout.height
     );
     drop(state);
     let mut element = div()
-        .absolute()
-        .left(px(layout.x))
-        .top(px(layout.y))
+        .debug_selector(|| "rake.inspection.highlight".into())
         .w(px(layout.width))
         .h(px(layout.height))
         .bg(rgba(0x4da3ff30))
@@ -351,7 +349,8 @@ fn overlay(
         window,
         cx,
     );
-    element.prepaint_at(point(px(0.), px(0.)), window, cx);
+    // Root layout ignores positional styles; place the overlay in window coordinates.
+    element.prepaint_at(point(px(layout.x), px(layout.y)), window, cx);
     Some(element)
 }
 
@@ -484,9 +483,44 @@ mod tests {
                 .on_mouse_down(gpui::MouseButton::Left, move |_, _, _| {
                     clicks.set(clicks.get() + 1)
                 })
+                .child(
+                    gpui::div()
+                        .absolute()
+                        .left(gpui::px(80.))
+                        .top(gpui::px(120.))
+                        .w(gpui::px(100.))
+                        .h(gpui::px(40.))
+                        .inspect("offset-button"),
+                )
                 .inspect("button")
                 .root(self.store.clone(), 0, WindowId(1))
         }
+    }
+
+    #[test]
+    fn hover_highlight_uses_the_picked_elements_window_position() {
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (_, cx) = app.add_window_view(|_, _| TestView {
+            store: store.clone(),
+            clicks: Rc::new(Cell::new(0)),
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        store.inspect_mode(true, 1000).unwrap();
+        store.pointer(WindowId(1), 100., 140., false);
+        let picked = store
+            .element(store.pick().unwrap().hovered.as_deref().unwrap())
+            .unwrap();
+        assert_eq!(picked.semantic_id.as_deref(), Some("offset-button"));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let bounds = cx.debug_bounds("rake.inspection.highlight").unwrap();
+        assert_eq!(bounds.origin, gpui::point(gpui::px(80.), gpui::px(120.)));
+        assert_eq!(bounds.size, gpui::size(gpui::px(100.), gpui::px(40.)));
     }
 
     #[test]

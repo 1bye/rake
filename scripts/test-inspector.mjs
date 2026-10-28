@@ -3,7 +3,13 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const code = readFileSync(new URL('./inspector-model.js', import.meta.url), 'utf8');
-const {InspectorState, commandArguments, matches, request, requests, safeJSON, traces} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const {InspectorState, commandArguments, elementName, matches, request, requests, safeJSON, traces} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+for (const [kind, expected] of [
+  ['gpui::elements::div::Stateful<gpui::elements::div::Div>', 'Div'],
+  ['gpui::ViewElement<rake::TabBar<app::Destination>>', 'TabBar'],
+  ['app::List<app::Item>', 'List'],
+  ['Button', 'Button'],
+]) assert.equal(elementName(kind), expected);
 const state = new InspectorState(2, 4096);
 state.reset('old');
 const snapshot = {runtime_id: 'old', tabs: [{id: 7}], operations: [[9, 'Committed']]};

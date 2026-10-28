@@ -55,6 +55,11 @@ select a new node. Capture IDs are strings to avoid JavaScript numeric precision
 loss. The panel keeps selected details frozen when their capture is replaced;
 it never silently selects a new element with the same semantic ID.
 
+Tree and overlay labels use short type names such as `Div` and `TabBar`, omitting
+module paths, generic arguments and GPUI's `Stateful`/`ViewElement` wrappers.
+The captured `kind` and Rake's element details retain the complete Rust type.
+Chrome's Elements panel still supplies its own tag-style punctuation.
+
 GPUI's pinned public API cannot enumerate every element/view. **Coverage is Rake
 inspection boundaries**, with uninstrumented intermediates omitted. Opaque children
 and reused cached GPUI subtrees are not enumerated; their missing node count is

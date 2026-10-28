@@ -6,19 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const ROW_HEIGHT: f32 = 20.;
 pub(crate) const ROW_INSET: f32 = 6.;
 
-pub(crate) fn short_kind(kind: &str) -> String {
-    kind.split_inclusive(['<', '>', ','])
-        .map(|part| part.rsplit("::").next().unwrap_or(part))
-        .collect()
-}
-
 pub(crate) fn tag(kind: &str) -> String {
-    let kind = short_kind(kind);
-
-    kind.strip_prefix("Stateful<")
-        .and_then(|kind| kind.strip_suffix('>'))
-        .unwrap_or(&kind)
-        .to_owned()
+    rake::inspection::display_name(kind).to_owned()
 }
 
 pub(crate) fn matches(element: &Element, query: &str) -> bool {

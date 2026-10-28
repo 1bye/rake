@@ -141,7 +141,8 @@ impl Dom {
             .filter(|v| !v.is_null())
             .collect();
 
-        json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":element.kind,"localName":element.kind,
+        let name = rake::inspection::display_name(&element.kind);
+        json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
             "nodeValue":"","attributes":attributes(element),"childNodeCount":children.len(),"children":children})
     }
 
@@ -315,8 +316,8 @@ mod tests {
     use super::*;
     fn capture(id: &str) -> Snapshot {
         serde_json::from_value(json!({"status":"captured","capture":id,"router_revision":1,"omitted":2,"coverage":"test","elements":[
-            {"id":format!("{id}-a"),"parent":null,"kind":"Div","semantic_id":"root","source":{"file":"app.rs","line":3,"column":4},"layout":{"x":1.,"y":2.,"width":10.,"height":20.},"styles":{"display":"Flex","size":{"width":"100%"},"background":{"Color":"opaque"}},"metadata_truncated":false,"tab_id":null,"entry_id":null},
-            {"id":format!("{id}-b"),"parent":format!("{id}-a"),"kind":"Button","metadata_truncated":false}
+            {"id":format!("{id}-a"),"parent":null,"kind":"gpui::Stateful<gpui::elements::div::Div>","semantic_id":"root","source":{"file":"app.rs","line":3,"column":4},"layout":{"x":1.,"y":2.,"width":10.,"height":20.},"styles":{"display":"Flex","size":{"width":"100%"},"background":{"Color":"opaque"}},"metadata_truncated":false,"tab_id":null,"entry_id":null},
+            {"id":format!("{id}-b"),"parent":format!("{id}-a"),"kind":"gpui::ViewElement<app::Button<app::Action>>","metadata_truncated":false}
         ]})).unwrap()
     }
     #[test]
@@ -329,7 +330,13 @@ mod tests {
             root["attributes"],
             json!(["id", "root", "data-source", "app.rs:3:4"])
         );
+        assert_eq!(root["nodeName"], "Div");
+        assert_eq!(root["localName"], "Div");
         assert_eq!(root["children"][0]["nodeName"], "Button");
+        assert_eq!(
+            dom.nodes.values().next().unwrap().kind,
+            "gpui::Stateful<gpui::elements::div::Div>"
+        );
         assert_eq!(doc["children"][1]["nodeValue"], "2 elements omitted");
         let params = json!({"nodeId":root["nodeId"]});
         assert_eq!(

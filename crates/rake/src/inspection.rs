@@ -79,6 +79,34 @@ pub struct Element {
     pub entry_id: Option<EntryId>,
 }
 
+/// Short inspection label without Rust module paths, generic arguments or GPUI wrappers.
+/// The captured [`Element::kind`] retains the complete Rust type.
+///
+/// ```
+/// assert_eq!(rake::inspection::display_name("gpui::Stateful<gpui::Div>"), "Div");
+/// assert_eq!(rake::inspection::display_name("gpui::ViewElement<app::TabBar<app::Route>>"), "TabBar");
+/// ```
+pub fn display_name(mut kind: &str) -> &str {
+    while let Some((wrapper, inner)) = kind.split_once('<') {
+        if matches!(
+            wrapper.rsplit("::").next(),
+            Some("Stateful" | "ViewElement")
+        ) && let Some(inner) = inner.strip_suffix('>')
+        {
+            kind = inner;
+        } else {
+            break;
+        }
+    }
+
+    kind.split('<')
+        .next()
+        .unwrap_or(kind)
+        .rsplit("::")
+        .next()
+        .unwrap_or(kind)
+}
+
 /// Coverage and availability, independent of whether the current tree is empty.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
