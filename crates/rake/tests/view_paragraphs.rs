@@ -58,6 +58,19 @@ fn borrowed_and_shared_strings_are_text_without_display_or_element_coercion() {
 }
 
 #[test]
+fn inline_literal_colors_and_font_families_compile_with_styled_runs() {
+    let heading = rake::view! {
+        <h2><span class="text-[#aabbcc] font-[JetBrains_Mono]">Typed text</span></h2>
+    };
+
+    let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut node);
+
+    assert_eq!(node.label(), Some("Typed text"));
+}
+
+#[test]
 fn wrapping_ellipsis_and_zero_line_limits_configure_the_real_gpui_style() {
     let mut paragraph = rake::view! {
         <p wrap={false} ellipsis={true} max-lines={0}>"A long title"</p>

@@ -417,6 +417,38 @@ fn final_emission_errors_keep_previously_collected_diagnostics() {
 }
 
 #[test]
+fn arbitrary_classes_report_every_bad_value_and_reject_inline_sizes() {
+    let errors = expand("<div class=\"w-[320] bg-[#ggg] -p-2 w-1/0 opacity-[1.2]\"/>")
+        .expect_err("invalid values")
+        .into_iter()
+        .count();
+
+    assert_eq!(errors, 5);
+
+    for source in [
+        "<p><span class=\"text-[11px]\"/></p>",
+        "<p><span class=\"leading-[20px]\"/></p>",
+    ] {
+        assert!(
+            expand(source)
+                .expect_err(source)
+                .to_string()
+                .contains("belong on p")
+        );
+    }
+
+    assert_eq!(
+        expand("<p><span class=\"text-[#badhex] font-[]\"/></p>")
+            .expect_err("invalid inline values")
+            .into_iter()
+            .count(),
+        2
+    );
+    assert!(expand("<div class=\"-mx-[-4px]\"/>").is_err());
+    assert!(expand("<div class=\"rounded-[50%]\"/>").is_err());
+}
+
+#[test]
 fn unquoted_text_preserves_punctuation_and_normalizes_source_whitespace() {
     for (source, expected) in [
         ("<p>Save changes</p>", vec!["Save changes"]),

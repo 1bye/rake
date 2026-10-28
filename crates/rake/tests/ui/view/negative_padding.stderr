@@ -1,0 +1,5 @@
+error: negative values are supported only for margins and inset
+ --> tests/ui/view/negative_padding.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="-p-2"/> };
+  |                                      ^^^^^^

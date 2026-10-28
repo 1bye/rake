@@ -308,7 +308,7 @@ fn parse_attribute(input: ParseStream<'_>, tag: Tag) -> syn::Result<ParsedAttrib
 
         if name == "class" {
             name.push(':');
-            name.push_str(&input.call(Ident::parse_any)?.to_string());
+            name.push_str(&parse_class_name(input)?);
         } else if name == "on" {
             let path = input.call(syn::Path::parse_mod_style)?;
 
@@ -422,6 +422,44 @@ fn boolean_attribute(tag: Tag, name: &str) -> bool {
             name,
             "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
         )
+}
+
+fn parse_class_name(input: ParseStream<'_>) -> syn::Result<String> {
+    let mut name = String::new();
+
+    if input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        name.push('-');
+    }
+
+    loop {
+        if input.peek(syn::token::Bracket) {
+            let content;
+
+            syn::bracketed!(content in input);
+            let tokens: TokenStream = content.parse()?;
+
+            name.push('[');
+            name.push_str(&tokens.to_string().replace(' ', ""));
+            name.push(']');
+        } else if input.peek(syn::LitFloat) {
+            name.push_str(&input.parse::<syn::LitFloat>()?.to_string());
+        } else if input.peek(syn::LitInt) {
+            name.push_str(&input.parse::<syn::LitInt>()?.to_string());
+        } else {
+            name.push_str(&input.call(Ident::parse_any)?.to_string());
+        }
+
+        if !(input.peek(Token![-]) || input.peek(Token![:]) || input.peek(Token![/])) {
+            break;
+        }
+
+        let punctuation: proc_macro2::Punct = input.parse()?;
+
+        name.push(punctuation.as_char());
+    }
+
+    Ok(name)
 }
 
 impl Parse for Node {

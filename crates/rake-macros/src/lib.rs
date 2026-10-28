@@ -19,6 +19,8 @@ mod view;
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
 /// GPUI builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
+/// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
+/// font families and opacity; negative lengths are limited to margins and inset.
 /// Utility strings are checked and lowered to ordered GPUI style calls at compile time.
 /// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
 /// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy

@@ -6,6 +6,198 @@ use syn::{Expr, Lit};
 
 use super::style_plan::StylePlan;
 
+pub(super) mod value;
+
+const LENGTH_PREFIXES: &[(&str, &str)] = &[
+    ("min-w", "min_w"),
+    ("max-w", "max_w"),
+    ("min-h", "min_h"),
+    ("max-h", "max_h"),
+    ("border-t", "border_t"),
+    ("border-b", "border_b"),
+    ("border-l", "border_l"),
+    ("border-r", "border_r"),
+    ("rounded", "rounded"),
+    ("border", "border"),
+    ("inset", "inset"),
+    ("top", "top"),
+    ("right", "right"),
+    ("bottom", "bottom"),
+    ("left", "left"),
+    ("basis", "flex_basis"),
+    ("leading", "line_height"),
+    ("text", "text_size"),
+];
+
+fn length_tokens(length: value::Length, rake: &TokenStream) -> TokenStream {
+    let (method, number) = match length {
+        value::Length::Pixels(n) => ("px", n),
+        value::Length::Rems(n) => ("rems", n),
+        value::Length::Relative(n) => ("relative", n),
+    };
+
+    let method = format_ident!("{method}");
+    let number = proc_macro2::Literal::f32_suffixed(number);
+
+    quote!(#rake::gpui::#method(#number))
+}
+
+pub(super) fn literal_color(
+    value: &str,
+    span: Span,
+    rake: &TokenStream,
+) -> syn::Result<TokenStream> {
+    let (value, alpha) = value::color(value).map_err(|message| syn::Error::new(span, message))?;
+
+    Ok(if alpha {
+        quote!(#rake::gpui::rgba(#value))
+    } else {
+        quote!(#rake::gpui::rgb(#value))
+    })
+}
+
+fn extended_methods(
+    class: &str,
+    span: Span,
+    rake: &TokenStream,
+) -> syn::Result<Option<TokenStream>> {
+    let error = |message| syn::Error::new(span, message);
+
+    if let Some(raw) = class.strip_prefix("opacity-") {
+        let n = value::opacity(raw).map_err(error)?;
+        let n = proc_macro2::Literal::f32_suffixed(n);
+
+        return Ok(Some(quote!(.opacity(#n))));
+    }
+
+    if class == "leading-none" {
+        let n = length_tokens(value::Length::Relative(1.), rake);
+
+        return Ok(Some(quote!(.line_height(#n))));
+    }
+
+    for (prefix, method) in [
+        ("text", "text_color"),
+        ("bg", "bg"),
+        ("border", "border_color"),
+    ] {
+        if let Some(hex) = class
+            .strip_prefix(&format!("{prefix}-["))
+            .and_then(|v| v.strip_suffix(']'))
+            .filter(|v| v.starts_with('#'))
+        {
+            let color = literal_color(hex, span, rake)?;
+            let method = format_ident!("{method}");
+
+            return Ok(Some(quote!(.#method(#color))));
+        }
+    }
+
+    if let Some(font) = class
+        .strip_prefix("font-[")
+        .and_then(|v| v.strip_suffix(']'))
+    {
+        if font.is_empty() {
+            return Err(error("font family cannot be empty"));
+        }
+
+        let font = font.replace('_', " ");
+
+        return Ok(Some(quote!(.font_family(#font))));
+    }
+
+    let negative = class.starts_with('-');
+    let class = class.strip_prefix('-').unwrap_or(class);
+
+    let found = LENGTH_PREFIXES
+        .iter()
+        .find_map(|(prefix, method)| {
+            class
+                .strip_prefix(&format!("{prefix}-"))
+                .map(|raw| (*prefix, (*method).to_owned(), raw))
+        })
+        .or_else(|| {
+            PREFIXES.iter().rev().find_map(|prefix| {
+                class
+                    .strip_prefix(&format!("{prefix}-"))
+                    .map(|raw| (*prefix, prefix.replace('-', "_"), raw))
+            })
+        });
+
+    let Some((prefix, method, raw)) = found else {
+        return Ok(None);
+    };
+
+    let arbitrary = raw.strip_prefix('[').and_then(|v| v.strip_suffix(']'));
+
+    // Named values remain unknown until a theme is declared by the later grammar.
+    if arbitrary.is_none() && !raw.starts_with(|c: char| c.is_ascii_digit()) && !negative {
+        return Ok(None);
+    }
+
+    let permits_negative = matches!(
+        prefix,
+        "m" | "mx"
+            | "my"
+            | "mt"
+            | "mb"
+            | "ml"
+            | "mr"
+            | "top"
+            | "right"
+            | "bottom"
+            | "left"
+            | "inset"
+    );
+
+    if negative && !permits_negative {
+        return Err(error(
+            "negative values are supported only for margins and inset",
+        ));
+    }
+
+    let mut length = if let Some(value) = arbitrary {
+        value::length(value).map_err(error)?
+    } else if raw.contains('/') {
+        if !matches!(prefix, "w" | "h" | "basis") {
+            return Err(error("fractions are supported only for w, h and basis"));
+        }
+
+        value::fraction(raw).map_err(error)?
+    } else {
+        value::scale(raw).map_err(error)?
+    };
+
+    let n = match &mut length {
+        value::Length::Pixels(n) | value::Length::Rems(n) | value::Length::Relative(n) => n,
+    };
+
+    if *n < 0. && !permits_negative {
+        return Err(error(
+            "negative values are supported only for margins and inset",
+        ));
+    }
+
+    if negative {
+        if *n < 0. {
+            return Err(error("use only one negative sign"));
+        }
+
+        *n = -*n;
+    }
+
+    if matches!(length, value::Length::Relative(_))
+        && (prefix.starts_with("border") || matches!(prefix, "rounded" | "text"))
+    {
+        return Err(error("this utility requires px or rem, not %"));
+    }
+
+    let value = length_tokens(length, rake);
+    let method = format_ident!("{method}", span = span);
+
+    Ok(Some(quote!(.#method(#value))))
+}
+
 pub(super) const FIXED: &[(&str, &str)] = &[
     ("flex", "flex"),
     ("block", "block"),
@@ -130,6 +322,8 @@ pub(super) fn utility_methods(
                 .is_ok_and(|value| SCALES.contains(&value) && value.to_string() == value_text)
     }) {
         class.replace('-', "_")
+    } else if let Some(methods) = extended_methods(class, span, rake)? {
+        return Ok(methods);
     } else {
         return Err(syn::Error::new(
             span,

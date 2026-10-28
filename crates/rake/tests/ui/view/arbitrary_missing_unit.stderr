@@ -1,0 +1,5 @@
+error: arbitrary lengths require a unit; add px, rem or %
+ --> tests/ui/view/arbitrary_missing_unit.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="w-[320]"/> };
+  |                                      ^^^^^^^^^

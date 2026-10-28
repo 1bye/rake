@@ -193,7 +193,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
     };
 
     let mut methods = TokenStream::new();
-    let mut errors: Option<syn::Error> = None;
+    let mut errors = super::Diagnostics::default();
 
     for class in classes.value().split_whitespace() {
         let style = match class {
@@ -208,6 +208,35 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                     thickness: #rake::gpui::px(1.), color: None, wavy: false,
                 }), ..Default::default()
             }),
+            _ if class.starts_with("text-[#") && class.ends_with(']') => {
+                let color = match super::classes::literal_color(
+                    &class[6..class.len() - 1],
+                    classes.span(),
+                    rake,
+                ) {
+                    Ok(color) => color,
+                    Err(error) => {
+                        errors.push(error);
+                        continue;
+                    }
+                };
+
+                quote!(#rake::gpui::HighlightStyle::color(#rake::gpui::rgb_to_hsla(#color)))
+            }
+            _ if class.starts_with("font-[") && class.ends_with(']') => {
+                let font = class[6..class.len() - 1].replace('_', " ");
+
+                if font.is_empty() {
+                    errors.push(syn::Error::new(
+                        classes.span(),
+                        "font family cannot be empty",
+                    ));
+                    continue;
+                }
+
+                methods.extend(quote!(.font_family(#font)));
+                continue;
+            }
             _ => {
                 let error = syn::Error::new(
                     classes.span(),
@@ -216,11 +245,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                     ),
                 );
 
-                if let Some(errors) = &mut errors {
-                    errors.combine(error);
-                } else {
-                    errors = Some(error);
-                }
+                errors.push(error);
 
                 continue;
             }
@@ -229,7 +254,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
         methods.extend(quote!(.highlight(#style)));
     }
 
-    if let Some(errors) = errors {
+    if let Some(errors) = errors.0 {
         return Err(errors);
     }
 

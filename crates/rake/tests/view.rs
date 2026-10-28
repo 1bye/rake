@@ -236,6 +236,8 @@ fn disabled_buttons_expose_their_state_without_accessibility_activation_actions(
 
 #[test]
 fn every_supported_utility_compiles_against_gpui() {
+    let _ = rake::view! { <div class="p-13 gap-1.5 gap-x-2.5 gap-y-[4px] w-[320px] h-[0.75rem] size-[50%] w-1/2 h-2/3 basis-1/3 -mt-1 -mx-[4px] -top-2 right-1 bottom-[2px] left-[10%] inset-0 text-[11px] text-[0.75rem] text-[#abc] bg-[#123456] border-[#12345678] leading-[20px] leading-none opacity-35 opacity-[0.35] font-[JetBrains_Mono] rounded-[4px] border-[2px] border-t-[2px] border-b-[1px] border-l-[3px] border-r-[0px] min-w-[12px] max-w-[50%] min-h-[1rem] max-h-[240px]"/> };
+    let _ = rake::view! { <div class:w-[320px]={true} class:gap-1.5={true} class:-mt-1={true}/> };
     let _ = rake::view! { <div class="flex block grid hidden flex-col flex-row flex-wrap flex-1 items-start items-center items-end justify-start justify-center justify-end justify-between w-full h-full size-full min-w-0 min-h-0 overflow-hidden overflow-scroll overflow-x-scroll overflow-y-scroll rounded-none rounded-sm rounded-md rounded-lg rounded-xl rounded-full border-0 border-1"/> };
     let _ = rake::view! { <div class="border-2 shadow-sm shadow-md shadow-lg cursor-pointer text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-left text-center text-right rounded border shrink-0 grow grow-0 flex-none relative absolute items-stretch self-start self-center self-end justify-around truncate whitespace-nowrap overflow-x-hidden overflow-y-hidden"/> };
     let _ = rake::view! { <div class="border-t border-t-0 border-t-1 border-t-2 border-b border-b-0 border-b-1 border-b-2 border-l border-l-0 border-l-1 border-l-2 border-r border-r-0 border-r-1 border-r-2 font-normal font-medium font-semibold font-bold grid-cols-1 grid-cols-2 grid-cols-3 grid-cols-4 grid-cols-5 grid-cols-6 grid-cols-7 grid-cols-8 grid-cols-9 grid-cols-10 grid-cols-11 grid-cols-12"/> };
@@ -248,6 +250,33 @@ fn every_supported_utility_compiles_against_gpui() {
     let _ = rake::view! { <div class="mr-16 mr-20 mr-24 mr-32 gap-0 gap-1 gap-2 gap-3 gap-4 gap-5 gap-6 gap-7 gap-8 gap-12 gap-16 gap-20 gap-24 gap-32 gap-x-0 gap-x-1 gap-x-2 gap-x-3 gap-x-4 gap-x-5 gap-x-6 gap-x-7 gap-x-8 gap-x-12 gap-x-16 gap-x-20 gap-x-24 gap-x-32"/> };
     let _ = rake::view! { <div class="gap-y-0 gap-y-1 gap-y-2 gap-y-3 gap-y-4 gap-y-5 gap-y-6 gap-y-7 gap-y-8 gap-y-12 gap-y-16 gap-y-20 gap-y-24 gap-y-32 w-0 w-1 w-2 w-3 w-4 w-5 w-6 w-7 w-8 w-12 w-16 w-20 w-24 w-32 h-0 h-1 h-2 h-3"/> };
     let _ = rake::view! { <div class="h-4 h-5 h-6 h-7 h-8 h-12 h-16 h-20 h-24 h-32 size-0 size-1 size-2 size-3 size-4 size-5 size-6 size-7 size-8 size-12 size-16 size-20 size-24 size-32"/> };
+}
+
+#[test]
+fn arbitrary_utilities_set_real_lengths_colors_and_opacity() {
+    let mut view = rake::view! {
+        <div class="w-[320px] h-1/2 p-13 gap-1.5 -mt-1 -mx-[4px] top-2 opacity-[0.35] rounded-[4px] border-t-[2px] bg-[#abc]"/>
+    };
+
+    let mut expected = div()
+        .flex()
+        .flex_col()
+        .w(px(320.))
+        .h(rake::gpui::relative(0.5))
+        .p(rake::gpui::rems(3.25))
+        .gap(rake::gpui::rems(0.375))
+        .mt(rake::gpui::rems(-0.25))
+        .mx(px(-4.))
+        .top(rake::gpui::rems(0.5))
+        .opacity(0.35)
+        .rounded(px(4.))
+        .border_t(px(2.))
+        .bg(rgb(0xaabbcc));
+
+    assert_eq!(
+        format!("{:?}", view.style()),
+        format!("{:?}", expected.style())
+    );
 }
 
 #[test]

@@ -120,10 +120,23 @@ between their preceding and following authored attributes.
 - `pl-N`, `pr-N`, `m-N`, `mx-N`, `my-N`, `mt-N`.
 - `mb-N`, `ml-N`, `mr-N`, `gap-N`, `gap-x-N`, `gap-y-N`.
 - `w-N`, `h-N`, `size-N`.
+- `top-N`, `right-N`, `bottom-N`, `left-N`, `inset-N`, `leading-none`.
+- `p-13`, `gap-1.5`, `w-[320px]`, `h-[0.75rem]`, `size-[50%]`.
+- `w-1/2`, `h-2/3`, `basis-1/3`, `-mt-1`, `-mx-[4px]`, `-top-2`.
+- `text-[11px]`, `text-[0.75rem]`, `text-[#abc]`, `bg-[#123456]`, `border-[#12345678]`.
+- `leading-[20px]`, `opacity-35`, `opacity-[0.35]`, `font-[JetBrains_Mono]`.
+- `rounded-[4px]`, `border-[2px]`, `border-t-[2px]`.
+- `min-w-[12px]`, `max-w-[50%]`, `min-h-[1rem]`, `max-h-[240px]`.
 
 <!-- view-utilities:end -->
 
-`N` uses the spacing scale 0–8, 12, 16, 20, 24, 32; `grid-cols-N` uses 1–12.
+`N` accepts any nonnegative whole or half step, with one step equal to 0.25rem;
+`grid-cols-N` uses 1–12. Existing scale values keep their GPUI convenience methods.
+Length values in brackets require `px`, `rem` or `%`; text sizes, border widths
+and radii accept only px/rem. Width, height and basis accept fractions with
+denominators 2, 3, 4, 5, 6 and 12. Only margins and insets accept negatives.
+Colors accept `#rgb`, `#rrggbb` and `#rrggbbaa`, inside brackets. Opacity uses
+0–100 in steps of 5, or `[0..1]`. Font-family underscores become spaces.
 Utilities map to the pinned GPUI builder methods. `truncate` and `whitespace-nowrap`
 are raw GPUI text styling; composed paragraphs/headings also provide explicit
 `wrap`, `ellipsis` and `max-lines` controls.
@@ -275,7 +288,7 @@ paragraphs, evaluating only selected text once in written order. Inline loops
 need no IDs because their output is text, not independently retained elements.
 An empty `<p/>` is supported.
 
-Inline `class` accepts only `font-normal`, `font-medium`, `font-semibold`,
+Inline `class` also accepts `text-[#rrggbb]` and `font-[Family_Name]`. Other supported inline utilities are `font-normal`, `font-medium`, `font-semibold`,
 `font-bold`, `italic`, `not-italic`, and `underline`. Inline `style` takes a typed
 `gpui::HighlightStyle` value, **not** the builder closure used on layout tags.
 It supports GPUI run properties such as color, weight, italics, underline,
