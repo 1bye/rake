@@ -127,6 +127,9 @@ between their preceding and following authored attributes.
 - `leading-[20px]`, `opacity-35`, `opacity-[0.35]`, `font-[JetBrains_Mono]`.
 - `rounded-[4px]`, `border-[2px]`, `border-t-[2px]`.
 - `min-w-[12px]`, `max-w-[50%]`, `min-h-[1rem]`, `max-h-[240px]`.
+- `group/card`, `hover:bg-[#fff]`, `active:opacity-50`, `focus:border-2`.
+- `focus-visible:text-[#000]`, `in-focus:font-bold`, `disabled:opacity-35`.
+- `group-hover/card:bg-[#fff]`, `group-active/card:opacity-50`.
 
 <!-- view-utilities:end -->
 
@@ -140,6 +143,21 @@ Colors accept `#rgb`, `#rrggbb` and `#rrggbbaa`, inside brackets. Opacity uses
 Utilities map to the pinned GPUI builder methods. `truncate` and `whitespace-nowrap`
 are raw GPUI text styling; composed paragraphs/headings also provide explicit
 `wrap`, `ellipsis` and `max-lines` controls.
+
+Interaction variants use `hover:`, `active:`, `focus:`, `focus-visible:` and
+`in-focus:`. Named groups use `group/card`, `group-hover/card:` and
+`group-active/card:`. Each interaction kind is merged into one GPUI style call,
+including contributions from conditional class attributes. Variants apply after
+authored attributes. `disabled:` is button-only and applies base styles at its
+written position. Variants cannot stack, and reject group and overflow-scroll
+utilities because those configure interactivity. GPUI supports only one named
+group per group-hover/group-active kind on an element. SVG interaction classes
+require a surrounding container.
+
+A token scan rejects a style closure calling `.hover(..)` when the element also
+has `hover:` classes, and similarly for the other interaction kinds. This is a
+heuristic: named functions and indirect calls are opaque; GPUI's debug assertion
+remains the backstop. Put a kind's refinements entirely in classes or in style.
 
 Conditional classes use a literal utility name: `class:shrink-0={fixed}` or
 `class:font-bold={selected}`. Each condition is evaluated once, and the utility

@@ -280,6 +280,17 @@ fn arbitrary_utilities_set_real_lengths_colors_and_opacity() {
 }
 
 #[test]
+fn disabled_classes_use_the_existing_predicate_and_keep_base_order() {
+    let mut disabled = rake::view! { <button disabled class="opacity-100 disabled:opacity-35"/> };
+    let mut enabled = rake::view! { <button class="opacity-100 disabled:opacity-35"/> };
+    let mut overridden = rake::view! { <button disabled class="disabled:opacity-35 opacity-100"/> };
+
+    assert_eq!(disabled.style().opacity, Some(0.35));
+    assert_eq!(enabled.style().opacity, Some(1.));
+    assert_eq!(overridden.style().opacity, Some(1.));
+}
+
+#[test]
 fn conditional_classes_apply_once_in_attribute_order() {
     let visits = std::cell::Cell::new(0);
 
@@ -452,4 +463,20 @@ fn match_children_evaluate_only_the_selected_guarded_arm_and_keep_loop_ids() {
 
 fn unreachable_text_for_match() -> &'static str {
     panic!("untaken match arm")
+}
+
+#[test]
+fn every_supported_style_utility_compiles_inside_a_merged_hover_variant() {
+    let _ = rake::view! { <div class="hover:flex hover:block hover:grid hover:hidden hover:flex-col hover:flex-row hover:flex-wrap hover:flex-1 hover:items-start hover:items-center hover:items-end hover:justify-start hover:justify-center hover:justify-end hover:justify-between hover:w-full hover:h-full hover:size-full hover:min-w-0 hover:min-h-0 hover:overflow-hidden hover:rounded-none hover:rounded-sm hover:rounded-md hover:rounded-lg hover:rounded-xl hover:rounded-full hover:border-0 hover:border-1 hover:border-2 hover:shadow-sm hover:shadow-md hover:shadow-lg hover:cursor-pointer hover:text-xs hover:text-sm hover:text-base hover:text-lg hover:text-xl hover:text-2xl hover:text-3xl hover:text-left"/> };
+    let _ = rake::view! { <div class="hover:text-center hover:text-right hover:rounded hover:border hover:shrink-0 hover:grow hover:grow-0 hover:flex-none hover:relative hover:absolute hover:items-stretch hover:self-start hover:self-center hover:self-end hover:justify-around hover:truncate hover:whitespace-nowrap hover:overflow-x-hidden hover:overflow-y-hidden hover:border-t hover:border-t-0 hover:border-t-1 hover:border-t-2 hover:border-b hover:border-b-0 hover:border-b-1 hover:border-b-2 hover:border-l hover:border-l-0 hover:border-l-1 hover:border-l-2 hover:border-r hover:border-r-0 hover:border-r-1 hover:border-r-2 hover:p-0 hover:p-1 hover:p-2 hover:p-3 hover:p-4 hover:p-5 hover:p-6 hover:p-7 hover:p-8 hover:p-12"/> };
+    let _ = rake::view! { <div class="hover:p-16 hover:p-20 hover:p-24 hover:p-32 hover:px-0 hover:px-1 hover:px-2 hover:px-3 hover:px-4 hover:px-5 hover:px-6 hover:px-7 hover:px-8 hover:px-12 hover:px-16 hover:px-20 hover:px-24 hover:px-32 hover:py-0 hover:py-1 hover:py-2 hover:py-3 hover:py-4 hover:py-5 hover:py-6 hover:py-7 hover:py-8 hover:py-12 hover:py-16 hover:py-20 hover:py-24 hover:py-32 hover:pt-0 hover:pt-1 hover:pt-2 hover:pt-3 hover:pt-4 hover:pt-5 hover:pt-6 hover:pt-7 hover:pt-8 hover:pt-12 hover:pt-16 hover:pt-20 hover:pt-24"/> };
+    let _ = rake::view! { <div class="hover:pt-32 hover:pb-0 hover:pb-1 hover:pb-2 hover:pb-3 hover:pb-4 hover:pb-5 hover:pb-6 hover:pb-7 hover:pb-8 hover:pb-12 hover:pb-16 hover:pb-20 hover:pb-24 hover:pb-32 hover:pl-0 hover:pl-1 hover:pl-2 hover:pl-3 hover:pl-4 hover:pl-5 hover:pl-6 hover:pl-7 hover:pl-8 hover:pl-12 hover:pl-16 hover:pl-20 hover:pl-24 hover:pl-32 hover:pr-0 hover:pr-1 hover:pr-2 hover:pr-3 hover:pr-4 hover:pr-5 hover:pr-6 hover:pr-7 hover:pr-8 hover:pr-12 hover:pr-16 hover:pr-20 hover:pr-24 hover:pr-32 hover:m-0 hover:m-1"/> };
+    let _ = rake::view! { <div class="hover:m-2 hover:m-3 hover:m-4 hover:m-5 hover:m-6 hover:m-7 hover:m-8 hover:m-12 hover:m-16 hover:m-20 hover:m-24 hover:m-32 hover:mx-0 hover:mx-1 hover:mx-2 hover:mx-3 hover:mx-4 hover:mx-5 hover:mx-6 hover:mx-7 hover:mx-8 hover:mx-12 hover:mx-16 hover:mx-20 hover:mx-24 hover:mx-32 hover:my-0 hover:my-1 hover:my-2 hover:my-3 hover:my-4 hover:my-5 hover:my-6 hover:my-7 hover:my-8 hover:my-12 hover:my-16 hover:my-20 hover:my-24 hover:my-32 hover:mt-0 hover:mt-1 hover:mt-2 hover:mt-3 hover:mt-4"/> };
+    let _ = rake::view! { <div class="hover:mt-5 hover:mt-6 hover:mt-7 hover:mt-8 hover:mt-12 hover:mt-16 hover:mt-20 hover:mt-24 hover:mt-32 hover:mb-0 hover:mb-1 hover:mb-2 hover:mb-3 hover:mb-4 hover:mb-5 hover:mb-6 hover:mb-7 hover:mb-8 hover:mb-12 hover:mb-16 hover:mb-20 hover:mb-24 hover:mb-32 hover:ml-0 hover:ml-1 hover:ml-2 hover:ml-3 hover:ml-4 hover:ml-5 hover:ml-6 hover:ml-7 hover:ml-8 hover:ml-12 hover:ml-16 hover:ml-20 hover:ml-24 hover:ml-32 hover:mr-0 hover:mr-1 hover:mr-2 hover:mr-3 hover:mr-4 hover:mr-5 hover:mr-6 hover:mr-7"/> };
+    let _ = rake::view! { <div class="hover:mr-8 hover:mr-12 hover:mr-16 hover:mr-20 hover:mr-24 hover:mr-32 hover:gap-0 hover:gap-1 hover:gap-2 hover:gap-3 hover:gap-4 hover:gap-5 hover:gap-6 hover:gap-7 hover:gap-8 hover:gap-12 hover:gap-16 hover:gap-20 hover:gap-24 hover:gap-32 hover:gap-x-0 hover:gap-x-1 hover:gap-x-2 hover:gap-x-3 hover:gap-x-4 hover:gap-x-5 hover:gap-x-6 hover:gap-x-7 hover:gap-x-8 hover:gap-x-12 hover:gap-x-16 hover:gap-x-20 hover:gap-x-24 hover:gap-x-32 hover:gap-y-0 hover:gap-y-1 hover:gap-y-2 hover:gap-y-3 hover:gap-y-4 hover:gap-y-5 hover:gap-y-6 hover:gap-y-7 hover:gap-y-8 hover:gap-y-12 hover:gap-y-16"/> };
+    let _ = rake::view! { <div class="hover:gap-y-20 hover:gap-y-24 hover:gap-y-32 hover:w-0 hover:w-1 hover:w-2 hover:w-3 hover:w-4 hover:w-5 hover:w-6 hover:w-7 hover:w-8 hover:w-12 hover:w-16 hover:w-20 hover:w-24 hover:w-32 hover:h-0 hover:h-1 hover:h-2 hover:h-3 hover:h-4 hover:h-5 hover:h-6 hover:h-7 hover:h-8 hover:h-12 hover:h-16 hover:h-20 hover:h-24 hover:h-32 hover:size-0 hover:size-1 hover:size-2 hover:size-3 hover:size-4 hover:size-5 hover:size-6 hover:size-7 hover:size-8 hover:size-12 hover:size-16 hover:size-20 hover:size-24 hover:size-32"/> };
+    let _ = rake::view! { <div class="hover:font-normal hover:font-medium hover:font-semibold hover:font-bold hover:grid-cols-1 hover:grid-cols-2 hover:grid-cols-3 hover:grid-cols-4 hover:grid-cols-5 hover:grid-cols-6 hover:grid-cols-7 hover:grid-cols-8 hover:grid-cols-9 hover:grid-cols-10 hover:grid-cols-11 hover:grid-cols-12 hover:p-13 hover:gap-1.5 hover:w-[320px] hover:h-[50%] hover:w-1/2 hover:basis-1/3 hover:-mt-1 hover:-top-2 hover:text-[11px] hover:text-[#abc] hover:bg-[#123456] hover:border-[#12345678] hover:leading-[20px] hover:leading-none hover:opacity-[0.35] hover:font-[JetBrains_Mono] hover:rounded-[4px] hover:border-t-[2px] hover:min-w-[12px] hover:max-h-[240px]"/> };
+    let _ = rake::view! { <div class="group/card hover:opacity-50 active:border-2 focus:bg-[#fff] focus-visible:text-[#000] in-focus:opacity-100 group-hover/card:p-2 group-active/card:border-1"/> };
+    let _ = rake::view! { <img src="x.png" alt="Preview" class="hover:opacity-50 focus-visible:border-2"/> };
+    let _ = rake::view! { <button disabled class="disabled:opacity-35" class:disabled:font-bold={true}/> };
 }

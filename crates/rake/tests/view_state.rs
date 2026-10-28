@@ -29,6 +29,9 @@ mod lists;
 #[path = "view_state/events.rs"]
 mod events;
 
+#[path = "view_state/classes.rs"]
+mod classes;
+
 struct Draft {
     text: String,
     selection: Range<usize>,

@@ -9,7 +9,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
-use self::classes::{class_methods, utility_methods};
+use self::classes::{class_methods, utility_plan};
 use self::style_plan::StylePlan;
 use self::tag::{Tag, display_name};
 
@@ -851,6 +851,7 @@ impl Element {
         setup: &mut TokenStream,
     ) -> syn::Result<TokenStream> {
         let is_button = self.resolved.supports_disabled();
+        let mut variants = StylePlan::default();
 
         for (position, attribute) in self.attributes.iter().enumerate() {
             let value = attribute.expression()?;
@@ -906,18 +907,35 @@ impl Element {
                 continue;
             }
 
-            if let Some(class) = attribute.name.strip_prefix("class:") {
-                let methods = utility_methods(class, attribute.span, rake)?;
+            if attribute.name == "class" || attribute.name.starts_with("class:") {
+                let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
+                    utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?
+                } else {
+                    class_methods(value, rake, is_button.then_some(disabled))?
+                };
 
-                let condition = format_ident!(
-                    "__rake_class_cond_{index}_{position}",
-                    span = Span::mixed_site()
-                );
+                if plan.interactive && self.resolved == Tag::Svg {
+                    return Err(syn::Error::new(
+                        attribute.span,
+                        "SVG interaction classes require a surrounding container",
+                    ));
+                }
 
-                // Evaluate preceding attributes before binding this condition.
-                setup.extend(quote!(let #mapped = #builder; let #condition: bool = #value;));
-                builder = quote!(#mapped);
-                builder.extend(StylePlan::conditional(condition, methods).emit_base(mapped));
+                if attribute.name.starts_with("class:") {
+                    let condition = format_ident!(
+                        "__rake_class_cond_{index}_{position}",
+                        span = Span::mixed_site()
+                    );
+
+                    // Evaluate preceding attributes before binding this condition.
+                    setup.extend(quote!(let #mapped = #builder; let #condition: bool = #value;));
+                    builder = quote!(#mapped);
+                    plan.gate(&condition, setup);
+                }
+
+                builder.extend(plan.emit_base(mapped));
+                plan.base.clear();
+                variants.extend(plan, attribute.span)?;
                 continue;
             }
 
@@ -949,7 +967,6 @@ impl Element {
 
                     quote!(.line_clamp({ let #limit: usize = #value; #limit.max(1) }))
                 }
-                "class" => class_methods(value, rake)?.emit_base(mapped),
                 "style" => quote!(.map(#value)),
                 "tooltip" => quote!(.tooltip(#value)),
                 _ => {
@@ -965,6 +982,31 @@ impl Element {
 
             builder.extend(quote_spanned!(attribute.span=> #method));
         }
+
+        for attribute in self
+            .attributes
+            .iter()
+            .filter(|attribute| attribute.name == "style")
+        {
+            let value = attribute.expression()?;
+            let calls = style_calls(quote!(#value));
+
+            for variant in variants.variants.keys() {
+                if calls.contains(variant.method()) {
+                    return Err(syn::Error::new_spanned(
+                        value,
+                        format!(
+                            "`{}:` classes and `.{}(..)` in style both set GPUI's single {} style; move one into the other",
+                            variant.name(),
+                            variant.method(),
+                            variant.name()
+                        ),
+                    ));
+                }
+            }
+        }
+
+        builder.extend(variants.emit_variants(mapped));
 
         Ok(builder)
     }
@@ -1042,6 +1084,28 @@ impl Element {
 
         Ok(quote_spanned!(entity.span=> #rake::__private::view_entity(#value)))
     }
+}
+
+fn style_calls(tokens: TokenStream) -> BTreeSet<String> {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let mut calls = BTreeSet::new();
+
+    for window in tokens.windows(3) {
+        if matches!(&window[0], proc_macro2::TokenTree::Punct(p) if p.as_char() == '.')
+            && let proc_macro2::TokenTree::Ident(name) = &window[1]
+            && matches!(&window[2], proc_macro2::TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis)
+        {
+            calls.insert(name.to_string());
+        }
+    }
+
+    for token in tokens {
+        if let proc_macro2::TokenTree::Group(group) = token {
+            calls.extend(style_calls(group.stream()));
+        }
+    }
+
+    calls
 }
 
 fn require_borrowed_place(value: &Expr, attribute: &str) -> syn::Result<()> {

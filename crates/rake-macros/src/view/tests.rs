@@ -296,6 +296,8 @@ fn expansion_snapshots() {
         ("events", r#"<div on:click={handler} on:key-down={handler} on:key-up={handler} on:mouse-move={handler} on:mouse-down={handler} on:mouse-up={handler} on:right-mouse-down={handler} on:right-mouse-up={handler} on:middle-mouse-down={handler} on:middle-mouse-up={handler} on:any-mouse-down={handler} on:mouse-down-out={handler} on:mouse-up-out={handler} on:hover={handler} on:scroll-wheel={handler} on:drop={handler} on:drag={(value, constructor)} tooltip={help}/>"#.to_owned()),
         ("conditional_classes", r#"<div class="relative" class:shrink-0={fixed} class:font-bold={selected}/>"#.to_owned()),
         ("navigation", r#"<section focus={&self.focus} scroll={&self.scroll} tab-navigation={true}><button tabindex={0}/></section>"#.to_owned()),
+        ("variants", r#"<div class="p-4 group/card hover:bg-[#fff] hover:opacity-50 focus-visible:border-2 group-hover/card:text-[#000]" class:hover:font-bold={selected} style={|s| s.rounded_md()}/>"#.to_owned()),
+        ("disabled_classes", r#"<button disabled={busy} class="disabled:opacity-35 opacity-100" class:disabled:font-bold={selected}/>"#.to_owned()),
     ];
 
     let mut utilities = "flex block grid hidden flex-col flex-row flex-wrap flex-1 items-start items-center items-end justify-start justify-center justify-end justify-between w-full h-full size-full min-w-0 min-h-0 overflow-hidden overflow-scroll overflow-x-scroll overflow-y-scroll rounded rounded-none rounded-sm rounded-md rounded-lg rounded-xl rounded-full border border-0 border-1 border-2 shadow-sm shadow-md shadow-lg cursor-pointer text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-left text-center text-right font-normal font-medium font-semibold font-bold".to_owned();
@@ -389,7 +391,13 @@ fn documented_utilities_match_the_checked_table() {
         };
 
         for utility in utilities {
-            expand(&format!("<div class={utility:?}/>")).expect(&utility);
+            let tag = if utility.starts_with("disabled:") {
+                "button"
+            } else {
+                "div"
+            };
+
+            expand(&format!("<{tag} class={utility:?}/>")).expect(&utility);
         }
     }
 }
@@ -414,6 +422,23 @@ fn final_emission_errors_keep_previously_collected_diagnostics() {
         .collect::<Vec<_>>();
 
     assert_eq!(messages, ["recovery error", "emission error"]);
+}
+
+#[test]
+fn variant_conflicts_keep_recovered_errors_and_merge_one_call() {
+    let expanded =
+        expand("<div class=\"hover:opacity-50 hover:border-2\" class:hover:font-bold={selected}/>")
+            .expect("merged hover")
+            .to_string();
+
+    assert_eq!(expanded.matches(". hover (").count(), 1);
+    assert!(expanded.contains("if __rake_class_cond"));
+    let errors = expand("<div class=\"hover:opacity-50\" class:unknown={true} style={|s| s.hover(|s| s.opacity(1.))}/>")
+        .expect_err("independent and emission errors").into_iter().map(|error| error.to_string()).collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 2);
+    assert!(errors[0].contains("unknown"));
+    assert!(errors[1].contains("both set GPUI's single hover style"));
 }
 
 #[test]

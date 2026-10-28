@@ -1,0 +1,5 @@
+error: this utility sets interactivity and cannot be used inside variants
+ --> tests/ui/view/variant_group_style.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="hover:group/card"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^

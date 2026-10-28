@@ -21,6 +21,10 @@ mod view;
 /// GPUI builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
 /// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
 /// font families and opacity; negative lengths are limited to margins and inset.
+/// Interaction variants merge into one GPUI call per kind: hover, active, focus,
+/// focus-visible, in-focus and named group-hover/group-active. disabled is button-only.
+/// Variants cannot stack or configure interactivity. Conflicting calls inside style
+/// closures are detected heuristically; indirect calls remain GPUI's responsibility.
 /// Utility strings are checked and lowered to ordered GPUI style calls at compile time.
 /// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
 /// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy

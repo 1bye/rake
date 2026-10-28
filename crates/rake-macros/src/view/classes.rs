@@ -4,7 +4,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Expr, Lit};
 
-use super::style_plan::StylePlan;
+use super::style_plan::{StylePlan, Variant};
 
 pub(super) mod value;
 
@@ -293,6 +293,14 @@ pub(super) fn utility_methods(
     span: Span,
     rake: &TokenStream,
 ) -> syn::Result<TokenStream> {
+    if let Some(name) = class.strip_prefix("group/") {
+        if name.is_empty() {
+            return Err(syn::Error::new(span, "group utility requires a name"));
+        }
+
+        return Ok(quote!(.group(#name)));
+    }
+
     if let Some(weight) = match class {
         "font-normal" => Some("NORMAL"),
         "font-medium" => Some("MEDIUM"),
@@ -336,7 +344,11 @@ pub(super) fn utility_methods(
     Ok(quote!(.#method()))
 }
 
-pub(super) fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<StylePlan> {
+pub(super) fn class_methods(
+    value: &Expr,
+    rake: &TokenStream,
+    disabled: Option<&proc_macro2::Ident>,
+) -> syn::Result<StylePlan> {
     let Expr::Lit(syn::ExprLit {
         lit: Lit::Str(classes),
         ..
@@ -348,25 +360,89 @@ pub(super) fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<Sty
         ));
     };
 
-    let mut methods = TokenStream::new();
-    let mut errors: Option<syn::Error> = None;
+    let mut plan = StylePlan::default();
+    let mut errors = super::Diagnostics::default();
 
     for class in classes.value().split_whitespace() {
-        match utility_methods(class, classes.span(), rake) {
-            Ok(tokens) => methods.extend(tokens),
-            Err(error) => {
-                if let Some(errors) = &mut errors {
-                    errors.combine(error);
-                } else {
-                    errors = Some(error);
-                }
-            }
+        let contribution = utility_plan(class, classes.span(), rake, disabled)
+            .and_then(|contribution| plan.extend(contribution, classes.span()));
+
+        if let Err(error) = contribution {
+            errors.push(error);
         }
     }
 
-    if let Some(errors) = errors {
+    if let Some(errors) = errors.0 {
         return Err(errors);
     }
 
-    Ok(StylePlan::always(methods))
+    Ok(plan)
+}
+
+fn split_variant(class: &str) -> Option<(&str, &str)> {
+    let mut bracket = false;
+
+    for (index, character) in class.char_indices() {
+        match character {
+            '[' => bracket = true,
+            ']' => bracket = false,
+            ':' if !bracket => return Some((&class[..index], &class[index + 1..])),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+pub(super) fn utility_plan(
+    class: &str,
+    span: Span,
+    rake: &TokenStream,
+    disabled: Option<&proc_macro2::Ident>,
+) -> syn::Result<StylePlan> {
+    let Some((name, utility)) = split_variant(class) else {
+        let mut plan = StylePlan::always(utility_methods(class, span, rake)?);
+
+        plan.interactive = class.starts_with("group/");
+
+        return Ok(plan);
+    };
+
+    if split_variant(utility).is_some() {
+        return Err(syn::Error::new(
+            span,
+            "variants can't be stacked; GPUI applies one interaction state per style block",
+        ));
+    }
+
+    if utility.starts_with("group/")
+        || matches!(
+            utility,
+            "overflow-scroll" | "overflow-x-scroll" | "overflow-y-scroll"
+        )
+    {
+        return Err(syn::Error::new(
+            span,
+            "this utility sets interactivity and cannot be used inside variants",
+        ));
+    }
+
+    let methods = utility_methods(utility, span, rake)?;
+
+    if name == "disabled" {
+        let condition = disabled.ok_or_else(|| {
+            syn::Error::new(span, "disabled: classes are supported only on buttons")
+        })?;
+
+        return Ok(StylePlan::conditional(condition.clone(), methods));
+    }
+
+    let variant = Variant::parse(name, span)?;
+    let mut plan = StylePlan::default();
+
+    plan.variants
+        .insert(variant, vec![super::style_plan::Segment::Always(methods)]);
+    plan.interactive = true;
+
+    Ok(plan)
 }
