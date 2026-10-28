@@ -8,6 +8,17 @@ pub(super) enum Length {
 }
 
 fn number(value: &str) -> Result<f32, &'static str> {
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+
+    let decimal = value.split_once('.').map_or_else(
+        || digits(value),
+        |(whole, fraction)| digits(whole) && digits(fraction),
+    );
+
+    if !decimal {
+        return Err("expected a finite number");
+    }
+
     value
         .parse::<f32>()
         .ok()
@@ -127,11 +138,13 @@ mod tests {
         assert_eq!(opacity("35"), Ok(0.35));
         assert_eq!(opacity("[0.35]"), Ok(0.35));
 
-        for value in ["320", "NaNpx", "infrem", "3em", "px"] {
+        for value in [
+            "320", "NaNpx", "infrem", "3em", "px", "1e1px", "4.px", ".5rem", "+4%", "-5px",
+        ] {
             assert!(length(value).is_err(), "{value}");
         }
 
-        for value in ["-1", "1.25", "NaN", "inf"] {
+        for value in ["-1", "1.25", "NaN", "inf", "1e1", "4.", ".5", "+4"] {
             assert!(scale(value).is_err(), "{value}");
         }
 
@@ -143,7 +156,9 @@ mod tests {
             assert!(color(value).is_err(), "{value}");
         }
 
-        for value in ["101", "33", "[-0.1]", "[1.01]", "[NaN]"] {
+        for value in [
+            "101", "33", "[-0.1]", "[1.01]", "[NaN]", "[1e0]", "[1.]", "[.5]", "[+0.5]",
+        ] {
             assert!(opacity(value).is_err(), "{value}");
         }
     }

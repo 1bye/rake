@@ -160,6 +160,10 @@ fn extended_methods(
         ));
     }
 
+    if negative && arbitrary.is_some_and(|value| value.starts_with('-')) {
+        return Err(error("use only one negative sign"));
+    }
+
     let mut length = if let Some(value) = arbitrary {
         value::length(value).map_err(error)?
     } else if raw.contains('/') {

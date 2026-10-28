@@ -473,7 +473,16 @@ fn arbitrary_classes_report_every_bad_value_and_reject_inline_sizes() {
             .count(),
         2
     );
-    assert!(expand("<div class=\"-mx-[-4px]\"/>").is_err());
+
+    for source in ["<div class=\"-mx-[-4px]\"/>", "<div class=\"-mt-[-5px]\"/>"] {
+        assert!(
+            expand(source)
+                .expect_err("two negative signs")
+                .to_string()
+                .contains("use only one negative sign")
+        );
+    }
+
     assert!(expand("<div class=\"rounded-[50%]\"/>").is_err());
 }
 

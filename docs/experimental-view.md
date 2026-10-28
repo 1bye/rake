@@ -161,6 +161,9 @@ named-value and reusable-function APIs.
 
 `N` accepts any nonnegative whole or half step, with one step equal to 0.25rem;
 `grid-cols-N` uses 1–12. Existing scale values keep their GPUI convenience methods.
+Numbers use plain decimal digits, optionally followed by a decimal point and
+more digits (`4`, `1.5`, `0.35`). Signs, exponents, `.5` and `4.` are rejected;
+negative margins/insets use the utility’s leading `-`.
 Length values in brackets require `px`, `rem` or `%`; text sizes, border widths
 and radii accept only px/rem. Width, height and basis accept fractions with
 denominators 2, 3, 4, 5, 6 and 12. Only margins and insets accept negatives.
