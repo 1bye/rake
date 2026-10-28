@@ -794,3 +794,18 @@ incremented counts, locked/hidden history, open overlays and a selected virtual
 document. The recorder keeps full composed text before truncation and omits
 ellipsis measurement candidates; it does not assert pixel output, text order,
 duplicate occurrences or native/browser rendering. CI runs these tests explicitly.
+
+## Ambient theme runtime
+
+With `experimental-view`, `rake::theme::install(cx, my_theme)` installs any
+app-owned `'static` value and refreshes windows. `current::<MyTheme>()` clones
+an `Rc`; `try_current::<MyTheme>()` returns `None` before installation. Different
+theme types coexist. Observe replacements through the public
+`ThemeGlobal<MyTheme>` GPUI global; change themes only through `install`.
+Direct global writes leave the ambient value stale.
+
+Themes are local to the UI thread: setup, switching and view construction must
+run there, on native and Wasm. Existing built elements retain old values until
+rebuilt. A missing theme panic names the type and tells you to call `install`.
+`TextToken { size, line_height, weight }` describes paragraph typography using
+pixels and an optional GPUI font weight. The class integration follows below.

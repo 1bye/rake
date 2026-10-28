@@ -24,6 +24,9 @@ mod view;
 #[cfg(feature = "experimental-view")]
 pub mod overlay;
 
+#[cfg(feature = "experimental-view")]
+pub mod theme;
+
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError};
 #[cfg(feature = "gpui")]
@@ -205,6 +208,11 @@ pub mod prelude {
 
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "experimental-view")]
+    pub use crate::theme::apply::{
+        ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeText,
+    };
+
     #[cfg(feature = "experimental-view")]
     pub use crate::view::{
         Children as ViewChildren, ComponentChildren as ViewComponentChildren,

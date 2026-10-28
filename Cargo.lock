@@ -4531,6 +4531,7 @@ dependencies = [
  "gpui_ce_platform",
  "libc",
  "objc2-app-kit 0.3.2",
+ "palette",
  "percent-encoding",
  "rake-macros",
  "raw-window-handle",

@@ -32,6 +32,9 @@ mod events;
 #[path = "view_state/classes.rs"]
 mod classes;
 
+#[path = "view_state/theme.rs"]
+mod theme;
+
 struct Draft {
     text: String,
     selection: Range<usize>,

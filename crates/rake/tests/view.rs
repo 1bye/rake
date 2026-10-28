@@ -538,3 +538,42 @@ fn every_supported_style_utility_compiles_inside_a_merged_hover_variant() {
     let _ = rake::view! { <img src="x.png" alt="Preview" class="hover:opacity-50 focus-visible:border-2"/> };
     let _ = rake::view! { <button disabled class="disabled:opacity-35" class:disabled:font-bold={true}/> };
 }
+
+#[test]
+fn theme_values_apply_to_native_gpui_refinements() {
+    use rake::__private::{ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeText};
+    use rake::gpui::{self, FontWeight};
+    use rake::theme::TextToken;
+
+    let mut style = gpui::StyleRefinement::default();
+
+    style = ThemeBackground::apply(rgb(0x112233), style);
+    style = ThemeBorder::apply(gpui::hsla(0., 1., 0.5, 1.), style);
+    style = ThemeText::apply(rgb(0x445566), style);
+    style = ThemeText::apply(
+        TextToken {
+            size: px(13.),
+            line_height: Some(px(20.)),
+            weight: Some(FontWeight::BOLD),
+        },
+        style,
+    );
+    style = ThemeFont::apply("Test Font", style);
+    style = ThemeRadius::apply(gpui::rems(0.5), style);
+    style = ThemeRadius::apply(px(4.), style);
+
+    let mut expected = gpui::StyleRefinement::default()
+        .bg(rgb(0x112233))
+        .border_color(gpui::hsla(0., 1., 0.5, 1.))
+        .text_color(rgb(0x445566))
+        .text_size(px(13.))
+        .line_height(px(20.))
+        .font_weight(FontWeight::BOLD)
+        .font_family("Test Font")
+        .rounded(px(4.));
+
+    assert_eq!(
+        format!("{:?}", style.style()),
+        format!("{:?}", expected.style())
+    );
+}

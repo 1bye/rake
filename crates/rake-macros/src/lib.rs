@@ -23,6 +23,8 @@ mod view;
 /// Conditions and scrutinees evaluate once; patterns cannot bind variables.
 /// Qualify unit variants/constants (for example Option::None). Inline runs also
 /// accept literal branches, restricted to text-run utilities.
+/// Ambient themes are installed with `rake::theme::install(cx, theme)` on the UI
+/// thread; current/try_current expose Rc handles and ThemeGlobal is observable.
 /// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
 /// font families and opacity; negative lengths are limited to margins and inset.
 /// Interaction variants merge into one GPUI call per kind: hover, active, focus,
