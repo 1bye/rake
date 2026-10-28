@@ -602,3 +602,24 @@ fn numeric_border_widths_use_pixels() {
         assert!(expanded.contains(expected), "{class}: {expanded}");
     }
 }
+
+#[test]
+fn class_patterns_accept_bare_uppercase_names_and_reject_bindings() {
+    for pattern in ["None", "Ready", "READY"] {
+        expand(&format!(
+            "<div class={{if let {pattern} = value {{ \"p-1\" }}}}/>"
+        ))
+        .expect("unit variant or constant");
+    }
+
+    for pattern in ["value", "ref Ready", "mut Ready", "Ready @ _"] {
+        assert!(
+            expand(&format!(
+                "<div class={{if let {pattern} = value {{ \"p-1\" }}}}/>"
+            ))
+            .expect_err("binding")
+            .to_string()
+            .contains("class patterns cannot bind variables")
+        );
+    }
+}

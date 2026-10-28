@@ -143,10 +143,18 @@ impl Branches<'_> {
 
 fn check_pattern(pattern: &Pat) -> syn::Result<()> {
     match pattern {
+        Pat::Ident(value)
+            if value.by_ref.is_none()
+                && value.mutability.is_none()
+                && value.subpat.is_none()
+                && value
+                    .ident
+                    .to_string()
+                    .starts_with(|c: char| c.is_ascii_uppercase()) => {}
         Pat::Ident(_) | Pat::Macro(_) | Pat::Verbatim(_) => {
             return Err(syn::Error::new_spanned(
                 pattern,
-                "class patterns cannot bind variables; use `_`, a qualified constant/variant path, or a plain comparison",
+                "class patterns cannot bind variables; use `_`, a constant or unit variant (`None`, `Mode::Dark`), or a plain comparison",
             ));
         }
         Pat::Tuple(value) => {

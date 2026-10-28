@@ -203,9 +203,10 @@ let _ = rake::view! {
 
 Conditions, scrutinees and guards evaluate once in authored attribute order;
 untaken nested conditions are skipped. Missing `else` means no classes.
-Patterns cannot bind variables: use `Some(_)`, `_`, or qualified paths such as
-`Option::None` / `Status::Ready`. Qualifying unit variants and constants avoids
-confusing their identifiers with bindings. Match exhaustiveness is checked by
+Use `Some(_)`, `_`, uppercase unit variants/constants such as `None`, or
+qualified paths such as `Mode::Dark`. Lowercase bindings and `ref`, `mut` or
+`@` binding patterns are rejected. Bare uppercase names follow Rust naming
+conventions; they should name actual variants/constants. Match exhaustiveness is checked by
 rustc. Variables, function calls and `format!` cannot produce class strings.
 Inline text accepts the same literal-branch selection with its restricted run
 utilities; interaction variants remain unsupported inside runs.

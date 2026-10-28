@@ -21,7 +21,7 @@ mod view;
 /// GPUI builder methods.
 /// Class expressions can choose literal leaves using lazy if/if-let/match branches.
 /// Conditions and scrutinees evaluate once; patterns cannot bind variables.
-/// Qualify unit variants/constants (for example Option::None). Inline runs also
+/// Bare uppercase unit variants/constants (for example None) are accepted. Inline runs also
 /// accept literal branches, restricted to text-run utilities.
 /// Ambient themes are installed with `rake::theme::install(cx, theme)` on the UI
 /// thread; current/try_current expose Rc handles and ThemeGlobal is observable.

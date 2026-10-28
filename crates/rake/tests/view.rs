@@ -652,3 +652,22 @@ fn numeric_border_widths_match_explicit_pixel_lengths() {
         format!("{:?}", explicit.style())
     );
 }
+
+#[test]
+fn bare_unit_variants_select_class_leaves_without_moving_the_scrutinee() {
+    for value in [Some("owned".to_owned()), None] {
+        let mut actual = rake::view! {
+            <div class={match value { Some(_) => "p-1", None => "p-2" }}/>
+        };
+
+        let mut expected = div()
+            .flex()
+            .flex_col()
+            .p(rake::gpui::rems(if value.is_some() { 0.25 } else { 0.5 }));
+
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+}
