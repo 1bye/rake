@@ -230,7 +230,9 @@ Names under theme prefixes go to Rust's field/type checker; `bg-bra` reports
 
 Conditional classes use a literal utility name: `class:shrink-0={fixed}` or
 `class:font-bold={selected}`. Each condition is evaluated once, and the utility
-applies in attribute order only when true. Unknown/dynamic names are errors.
+applies in attribute order only when true. A negative utility can follow a
+variant prefix: `class:hover:-mt-1={raised}`; `class:-mt-1={raised}` also works.
+Unknown/dynamic names are errors.
 Inline text tags reject conditional classes; select a `HighlightStyle` through
 `style={...}` there instead.
 

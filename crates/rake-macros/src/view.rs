@@ -457,6 +457,11 @@ fn parse_class_name(input: ParseStream<'_>) -> syn::Result<String> {
         let punctuation: proc_macro2::Punct = input.parse()?;
 
         name.push(punctuation.as_char());
+
+        if punctuation.as_char() == ':' && input.peek(Token![-]) {
+            input.parse::<Token![-]>()?;
+            name.push('-');
+        }
     }
 
     Ok(name)

@@ -636,3 +636,25 @@ fn let_chain_patterns_follow_the_binding_restriction() {
             .contains("class patterns cannot bind variables")
     );
 }
+
+#[test]
+fn conditional_negative_utilities_accept_a_variant_prefix() {
+    let expanded = expand(r#"<div class:-mt-1={enabled} class:hover:-mt-1={enabled} class:hover:-mx-[4px]={enabled}/>"#)
+        .expect("conditional negative classes").to_string().replace(' ', "");
+
+    assert_eq!(
+        expanded
+            .matches(".mt(::renamed::gpui::rems(-0.25f32))")
+            .count(),
+        2
+    );
+    assert!(expanded.contains(".mx(::renamed::gpui::px(-4f32))"));
+    assert_eq!(expanded.matches(".hover(").count(), 1);
+
+    for source in [
+        "<div class:hover/-mt-1={enabled}/>",
+        "<div class:mt--1={enabled}/>",
+    ] {
+        assert!(expand(source).is_err(), "{source}");
+    }
+}

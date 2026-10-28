@@ -715,3 +715,14 @@ fn class_let_chains_evaluate_once_and_short_circuit_left_to_right() {
         );
     }
 }
+
+#[test]
+fn conditional_negative_classes_build_real_gpui_styles() {
+    let mut actual = rake::view! { <div class:-mt-1={true} class:hover:-mt-1={true}/> };
+    let mut expected = div().flex().flex_col().mt(rake::gpui::rems(-0.25));
+
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
