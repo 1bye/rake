@@ -289,11 +289,26 @@ class Supervisor:
         waiting.mkdir()
         (waiting / "index.html").write_text("<!doctype html><html><head><title>Rake development</title></head><body>Waiting for the first successful build…</body></html>")
         env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control)}
+        cdp_url = None
+        if self.project.args.cdp:
+            executable = os.environ.get("RAKE_CLI") or shutil.which("rake")
+            if not executable:
+                raise RuntimeError("--cdp requires the rake CLI (or RAKE_CLI)")
+            cdp = self.processes.start([executable, "cdp", "--session", str(self.session), "--no-open", "--json"],
+                env=env, stdout=subprocess.PIPE, text=True)
+            ready = json.loads(cdp.stdout.readline())
+            if ready.get("event") != "cdp_listening":
+                raise RuntimeError("CDP adapter could not start")
+            cdp_url = ready["url"]
+            cdp.stdout.close()
+            private_json(self.session / "cdp.json", {"url": cdp_url})
+            print(json.dumps(ready) if self.project.args.json else f"Chrome DevTools discovery: {cdp_url}/json/list", flush=True)
         self.server = self.processes.start([sys.executable, str(Path(__file__).with_name("serve-web.py")),
             "--control", "--port", str(self.project.args.port), "--directory", str(waiting),
             "--development-state", str(self.status_path), "--build-root", str(self.builds),
             "--process-output", str(self.session / "output.json"),
-            *(["--inspector-only"] if self.project.args.target == "desktop" else [])],
+            *(["--inspector-only"] if self.project.args.target == "desktop" else []),
+            *(["--cdp-url", cdp_url] if cdp_url else [])],
             env=env, stdout=subprocess.PIPE, text=True)
         # Server writes its private launch URL after binding, before serving requests.
         line = self.server.stdout.readline()
@@ -521,6 +536,7 @@ def main():
     parser.add_argument("--restart-without-state", action="store_true", help="Explicitly allow restarting apps without a control endpoint")
     parser.add_argument("--port", type=int)
     parser.add_argument("--instance", help="Initial inspector runtime UUID or application ID")
+    parser.add_argument("--cdp", action="store_true", help="Expose opted-in runtimes to stock Chrome DevTools")
     parser.add_argument("--elements", action="store_true", help="Launch the Elements-only Rake Inspector; --target selects desktop or Web")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -531,6 +547,8 @@ def main():
     parser.add_argument("--sign-identity", help="macOS bundle signing identity; default '-' uses ad-hoc signing")
     parser.add_argument("--entitlements", type=Path, help="macOS signing entitlements plist")
     args = parser.parse_args()
+    if args.cdp and args.command != "dev":
+        parser.error("--cdp applies to dev")
     if args.elements and args.command != "inspect":
         parser.error("--elements applies to inspect")
     args.release = args.release if args.release is not None else args.command == "bundle"
@@ -589,6 +607,10 @@ def main():
             if args.elements and args.target == "web":
                 command += ["--inspector-app", str(elements_artifact)]
             if args.session:
+                cdp_metadata = args.session / "cdp.json"
+                if cdp_metadata.is_file():
+                    from inspector import private_read
+                    command += ["--cdp-url", private_read(cdp_metadata)["url"]]
                 command += ["--development-state", str(args.session.resolve() / "status.json"),
                             "--build-root", str(args.session.resolve() / "builds"),
                             "--process-output", str(args.session.resolve() / "output.json")]

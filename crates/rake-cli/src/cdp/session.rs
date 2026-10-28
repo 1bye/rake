@@ -24,6 +24,7 @@ struct Session {
     objects: super::console::Objects,
     loss: super::console::Loss,
     process_output: super::console::ProcessOutput,
+    dom: super::dom::Dom,
 }
 
 impl Session {
@@ -38,6 +39,7 @@ impl Session {
             objects: super::console::Objects::default(),
             loss: super::console::Loss::default(),
             process_output: super::console::ProcessOutput::new(output),
+            dom: super::dom::Dom::default(),
         }
     }
 
@@ -57,6 +59,43 @@ impl Session {
         let method = request.method.as_str();
 
         match method {
+            "DOM.enable" | "CSS.enable" => {
+                self.domains
+                    .insert(method.split('.').next().unwrap_or_default().into());
+                if method == "DOM.enable" {
+                    self.warning("Rake layout uses the same bounds for all box quads; separate margin/padding metrics are unavailable. Styles are authored GPUI metadata.".into());
+                }
+                Ok(json!({}))
+            }
+            "DOM.disable" | "CSS.disable" => {
+                self.domains
+                    .remove(method.split('.').next().unwrap_or_default());
+                Ok(json!({}))
+            }
+            "DOM.getDocument" => {
+                self.refresh_dom()?;
+                Ok(json!({"root":self.dom.document()}))
+            }
+            "DOM.requestChildNodes" => {
+                let node = self.dom.handle("DOM.describeNode", &request.params)?;
+                self.event(Event::new(
+                    "DOM.setChildNodes",
+                    json!({"parentId":request.params["nodeId"],"nodes":node["node"]["children"]}),
+                ));
+                Ok(json!({}))
+            }
+            "DOM.getBoxModel"
+            | "DOM.describeNode"
+            | "DOM.getAttributes"
+            | "DOM.pushNodesByBackendIdsToFrontend"
+            | "CSS.getInlineStylesForNode"
+            | "CSS.getMatchedStylesForNode"
+            | "CSS.getComputedStyleForNode" => self.dom.handle(method, &request.params),
+            "Overlay.highlightNode" | "Overlay.setInspectMode" => Err(Error::new(
+                -32000,
+                "Runtime highlighting is unavailable; a separate runtime protocol extension is required",
+            )),
+            "Overlay.enable" | "Overlay.disable" | "Overlay.hideHighlight" => Ok(json!({})),
             "Runtime.getProperties" => {
                 let id = request.params["objectId"]
                     .as_str()
@@ -117,6 +156,10 @@ impl Session {
         match query(&self.instance, Query::Info {}, TIMEOUT)? {
             Reply::Info(info) if info.runtime_id == self.instance.info.runtime_id => {}
             _ => return Err("runtime identity changed".into()),
+        }
+
+        if self.domains.contains("DOM") {
+            self.refresh_dom().map_err(|e| e.message)?;
         }
 
         let Reply::Diagnostics(snapshot) = query(
@@ -183,6 +226,53 @@ impl Session {
         Ok(())
     }
 
+    fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
+        let reply = query(&self.instance, Query::InspectTree {}, TIMEOUT)
+            .map_err(|e| Error::new(-32000, e.to_string()))?;
+        let Reply::Elements(snapshot) = reply else {
+            return Err(Error::new(-32000, "Unexpected inspection reply"));
+        };
+        if self.dom.update(snapshot)? && self.domains.contains("DOM") {
+            self.event(Event::new("DOM.documentUpdated", json!({})));
+        }
+        Ok(())
+    }
+
+    fn replace(&mut self, instance: Instance) {
+        let old = self.instance.info.runtime_id;
+        self.instance = instance;
+        self.cursor = 0;
+        self.epoch_seconds = None;
+        self.objects.clear();
+        self.loss = super::console::Loss::default();
+        self.dom.clear();
+        self.outbound.clear();
+        self.dropped = 0;
+        self.event(Event::new("Runtime.executionContextsCleared", json!({})));
+        self.event(Event::new("DOM.documentUpdated", json!({})));
+        self.event(super::console::entry(
+            "info",
+            format!("restored from {old}"),
+            unix_seconds() * 1000.,
+            "rake://adapter",
+        ));
+        if self.domains.contains("Runtime") {
+            self.event(Event::new("Runtime.executionContextCreated",json!({"context":{"id":1,"origin":"rake://runtime","name":self.instance.application_id,
+                "uniqueId":self.instance.info.runtime_id.to_string(),"auxData":{"isDefault":true,"frameId":"rake"}}})));
+        }
+    }
+
+    fn successor(&self, directory: &std::path::Path) -> Option<Instance> {
+        let instances = rake::control::local::discover(directory).ok()?;
+        let mut successors=instances.into_iter().filter(|i|i.application_id==self.instance.application_id && i.info.runtime_id!=self.instance.info.runtime_id)
+            .filter(|i|matches!(query(i,Query::Reload {},TIMEOUT),Ok(Reply::Reload(status)) if status.restored_from==Some(self.instance.info.runtime_id)));
+        let successor = successors.next()?;
+        if successors.next().is_some() {
+            return None;
+        }
+        Some(successor)
+    }
+
     fn warning(&mut self, text: String) {
         if self.domains.contains("Log") {
             self.event(super::console::entry(
@@ -214,6 +304,7 @@ pub(super) fn run(
     mut socket: WebSocket<TcpStream>,
     instance: Instance,
     output: Option<std::path::PathBuf>,
+    directory: std::path::PathBuf,
 ) -> Result<()> {
     socket
         .get_mut()
@@ -223,6 +314,7 @@ pub(super) fn run(
         .set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut session = Session::new(instance, output);
     let mut next_poll = Instant::now();
+    let mut missing_since: Option<Instant> = None;
 
     loop {
         match socket.read() {
@@ -244,14 +336,23 @@ pub(super) fn run(
         }
 
         if !session.domains.is_empty() && Instant::now() >= next_poll {
-            if let Err(error) = session.poll() {
-                socket.send(Message::text(serde_json::to_string(&Event::new(
-                    "Inspector.detached",
-                    json!({"reason": error.to_string()}),
-                ))?))?;
-                let _ = socket.close(None);
-
-                return Ok(());
+            match session.poll() {
+                Ok(()) => missing_since = None,
+                Err(error) => {
+                    if let Some(successor) = session.successor(&directory) {
+                        session.replace(successor);
+                        missing_since = None;
+                    } else if missing_since.get_or_insert_with(Instant::now).elapsed()
+                        >= Duration::from_secs(5)
+                    {
+                        socket.send(Message::text(serde_json::to_string(&Event::new(
+                            "Inspector.detached",
+                            json!({"reason":error.to_string()}),
+                        ))?))?;
+                        let _ = socket.close(None);
+                        return Ok(());
+                    }
+                }
             }
 
             next_poll = Instant::now() + INTERVAL;

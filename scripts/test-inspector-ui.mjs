@@ -18,6 +18,7 @@ class Element {
   append(...children) { for (const child of children) { this.children.push(child); if (child instanceof Element) child.parent = this; } }
   replaceChildren(...children) { this.children = []; this.content = ''; this.append(...children); }
   setAttribute(name, value) { this.attributes[name] = String(value); }
+  removeAttribute(name) { delete this.attributes[name]; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   get firstChild() { return this.children[0]; }
   closest(tag) { return this.tagName === tag ? this : this.parent?.closest(tag); }
@@ -74,6 +75,7 @@ globalThis.fetch = async (url, options) => {
   const body = JSON.parse(options.body);
   let result;
   if (url.endsWith('inspect_instances')) result = advertised;
+  else if (url.endsWith('inspect_cdp')) result = [{id: runtime, devtoolsFrontendUrl: `devtools://devtools/bundled/devtools_app.html?ws=127.0.0.1:9229/${'a'.repeat(32)}/${runtime}`}];
   else if (url.endsWith('development')) result = {phase: 'watching', published: 1};
   else if (url.endsWith('inspect_output')) result = {records: [], dropped: 0};
   else {
@@ -109,6 +111,8 @@ await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64
 await settle();
 await timers.find(timer => timer.delay === 750).callback(); await settle();
 assert.match(ids.content.textContent, /Current/);
+assert.equal(ids['open-cdp'].hidden, false);
+assert.match(ids['open-cdp'].href, /^devtools:\/\/devtools\/bundled\/devtools_app\.html/);
 assert.match(ids.content.textContent, /Dirty/);
 assert.equal(ids.panels.children.filter(item => item.tabIndex === 0).length, 1);
 assert.equal(ids.panels.children[0].attributes.role, 'tab');

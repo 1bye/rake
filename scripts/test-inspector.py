@@ -184,6 +184,19 @@ class ElementsHosting(unittest.TestCase):
 
 
 class Bounds(unittest.TestCase):
+    def test_cdp_discovery_rejects_non_loopback_and_defaults_to_disabled(self):
+        with tempfile.TemporaryDirectory(prefix="rake-cdp-link-", dir="/tmp") as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            bridge = DevBridge("http://127.0.0.1:1", root)
+            try:
+                self.assertEqual(Inspector(bridge).handle("inspect_cdp", {}), [])
+                for url in ["https://example.test", "http://127.0.0.1:9/other", "http://user@127.0.0.1:9", "http://localhost:9"]:
+                    with self.assertRaises(BridgeError):
+                        Inspector(bridge, cdp_url=url).handle("inspect_cdp", {})
+            finally:
+                bridge.close()
+
     def test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime(self):
         with tempfile.TemporaryDirectory(prefix="rake-lineage-", dir="/tmp") as temporary:
             root = Path(temporary)

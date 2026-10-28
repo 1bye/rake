@@ -1,6 +1,7 @@
 //! Loopback CDP adapter; runtime access always goes through the shared protocol.
 
 mod console;
+mod dom;
 mod network;
 mod server;
 mod session;

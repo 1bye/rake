@@ -31,11 +31,12 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Inspector:
-    def __init__(self, bridge, output=None, allow_native=False):
+    def __init__(self, bridge, output=None, allow_native=False, cdp_url=None):
         self.bridge = bridge
         self.directory = bridge.directory
         self.output = output
         self.allow_native = allow_native
+        self.cdp_url = cdp_url
 
     def manifest(self, runtime):
         try:
@@ -74,6 +75,20 @@ class Inspector:
         return values
 
     def handle(self, action, body):
+        if action == "inspect_cdp":
+            if not self.cdp_url:
+                return []
+            parsed = urllib.parse.urlsplit(self.cdp_url)
+            if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+                raise BridgeError(403, "CDP discovery must use IPv4 loopback HTTP")
+            try:
+                with urllib.request.build_opener(NoRedirect).open(self.cdp_url.rstrip("/") + "/json/list", timeout=3) as response:
+                    data = response.read(MAX_BYTES + 1)
+                if len(data) > MAX_BYTES:
+                    raise BridgeError(413, "CDP discovery exceeds 1 MiB")
+                return json.loads(data)
+            except (OSError, ValueError):
+                return []
         if action == "inspect_instances":
             return self.instances()
         if action == "inspect_output":

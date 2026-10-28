@@ -48,6 +48,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
             .arg(directory.join("dev.py"))
             .args(arguments)
             .env("RAKE_EMBEDDED_HELPERS", &directory)
+            .env("RAKE_CLI", std::env::current_exe()?)
             .exec();
 
         Err(error.into())

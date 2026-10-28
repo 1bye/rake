@@ -266,3 +266,113 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     drop(server);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn follows_only_a_checkpointed_successor() {
+    use futures::task::LocalSpawnExt;
+    let directory = std::path::PathBuf::from(format!("/tmp/rake-cdp-{}", uuid::Uuid::new_v4()));
+    let old = Router::<NoRoute>::new(RouterConfig::default());
+    let mut pool = futures::executor::LocalPool::new();
+    let driver = old.clone();
+    pool.spawner()
+        .spawn_local(async move {
+            driver.run().await.unwrap();
+        })
+        .unwrap();
+    old.prepare_reload(rake::reload::ReloadRequest {
+        id: "replacement".into(),
+        mechanism: rake::reload::ReloadMechanism::NativeCodeReplacement,
+    })
+    .unwrap();
+    pool.run_until_stalled();
+    let checkpoint = old.reload_checkpoint("test.replace").unwrap();
+    let replacement = Router::<NoRoute>::new(RouterConfig::default());
+    pool.run_until(replacement.restore_workspace(&checkpoint, "test.replace"))
+        .unwrap();
+    let old_server = LocalServer::bind(&old.client(), "test.replace", &directory).unwrap();
+    let old_id = old.runtime_id();
+    let new_id = replacement.runtime_id();
+    let (ready, replace) = oneshot::channel();
+    let (done, finished) = oneshot::channel();
+    let worker_directory = directory.clone();
+    let worker = std::thread::spawn(move || {
+        let mut adapter = Adapter(
+            Command::new(env!("CARGO_BIN_EXE_rake"))
+                .env("RAKE_CONTROL_DIR", worker_directory)
+                .args([
+                    "cdp",
+                    "--instance",
+                    &old_id.to_string(),
+                    "--no-open",
+                    "--json",
+                ])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut line = String::new();
+        BufReader::new(adapter.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let listening: Value = serde_json::from_str(&line).unwrap();
+        let (mut socket, _) = tungstenite::connect(
+            listening["targets"][0]["webSocketDebuggerUrl"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+        }
+        socket
+            .send(tungstenite::Message::text(
+                json!({"id":1,"method":"Runtime.enable"}).to_string(),
+            ))
+            .unwrap();
+        loop {
+            let event: Value =
+                serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+            if event["method"] == "Runtime.executionContextCreated" {
+                break;
+            }
+        }
+        ready.send(()).unwrap();
+        let mut methods = Vec::new();
+        loop {
+            let event: Value =
+                serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+            let method = event["method"].as_str().unwrap_or_default().to_owned();
+            methods.push(method.clone());
+            assert_ne!(method, "Inspector.detached");
+            if method == "Runtime.executionContextCreated" {
+                assert_eq!(event["params"]["context"]["uniqueId"], new_id.to_string());
+                break;
+            }
+        }
+        assert!(methods.iter().any(|m| m == "DOM.documentUpdated"));
+        assert!(
+            methods
+                .iter()
+                .any(|m| m == "Runtime.executionContextsCleared")
+        );
+        done.send(()).unwrap();
+    });
+    pool.run_until(async {
+        let _ = select(Box::pin(old_server.run(old.client())), Box::pin(replace)).await;
+    });
+    drop(old_server);
+    let replacement_server =
+        LocalServer::bind(&replacement.client(), "test.replace", &directory).unwrap();
+    pool.run_until(async {
+        let _ = select(
+            Box::pin(replacement_server.run(replacement.client())),
+            Box::pin(finished),
+        )
+        .await;
+    });
+    worker.join().unwrap();
+    drop(replacement_server);
+    std::fs::remove_dir_all(directory).unwrap();
+}

@@ -237,6 +237,12 @@ async function refresh() {
         choose(next?.info.runtime_id || null);
       }
     }
+    const cdpTargets = await rpc('inspect_cdp', {});
+    const cdpTarget = cdpTargets.find(target => target.id === model.runtime);
+    $('open-cdp').hidden = !cdpTarget;
+    if (cdpTarget && /^devtools:\/\/devtools\/bundled\/devtools_app\.html\?ws=127\.0\.0\.1:[0-9]+\/[a-f0-9]+\/[a-f0-9-]+$/.test(cdpTarget.devtoolsFrontendUrl)) {
+      $('open-cdp').href = cdpTarget.devtoolsFrontendUrl;
+    } else { $('open-cdp').hidden = true; $('open-cdp').removeAttribute('href'); }
     development = await rpc('development', {});
     if (panel === 'Console') {
       const delta = await rpc('inspect_output', {after: output.records.at(-1)?.sequence || 0});

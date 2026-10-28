@@ -102,3 +102,34 @@ Keep protocol and shared runtime types unchanged.
 - `Target.setAutoAttach`
 - `Target.setDiscoverTargets`
 - `Target.setRemoteLocations`
+
+## Phase 5 frontend and integration verification
+
+Chrome 156's stock Elements frontend displayed the routing example's actual
+GPUI tree, semantic IDs, source attributes and authored inline styles. Selecting
+the workspace node showed display:flex, flex-direction:column and the raw
+-gpui-* metadata. Its Computed sidebar displayed measured width/height
+(1510px × 964px in the test). Chrome's own metrics widget received those computed
+values and all four 1510×964 quads from DOM.getBoxModel. Separate box decorations
+are incomplete with width/height-only computed styles; do not fabricate metrics.
+The Rake Elements inspector remains the primary source for capture coverage.
+New capture IDs can reset stock frontend selection; stable-capture checks disabled
+DOM refresh and waited for Chrome's asynchronous node selection to complete.
+CSS.getInlineStylesForNode was additionally required by Chrome's metrics model.
+Highlight/inspect mode deliberately return a descriptive unsupported error.
+
+A real CLI/WebSocket test restored an empty headless router checkpoint into a new
+runtime, kept the old UUID selector, and observed context clearing, documentUpdated
+and the new unique context identity. Normal disappearance detaches after a bounded
+five-second successor window. The supervisor --cdp smoke run printed both CDP and
+HTML inspector endpoints and advertised the new runtime after startup.
+
+Native polling measurement: 20 Info+Diagnostics pairs on the running routing
+example had median 0.660 ms and maximum 2.808 ms (Python Unix client including
+JSON encoding/decoding). Keep the initial 250 ms interval. This small-record native
+measurement does not establish loaded/broker performance.
+
+Checks: cargo test -p rake-cli; cargo clippy -p rake-cli --all-targets;
+cargo fmt --all --check; Python inspector (9), supervisor (10), broker (3) tests;
+Node inspector model/UI checks; actual Chrome 156 stock frontend. No rake shared
+type or runtime implementation changes; no Wasm build was needed for these phases.

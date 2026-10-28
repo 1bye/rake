@@ -84,6 +84,28 @@ to 4 MiB and includes loss/omission counts. Times describe elapsed wall time,
 with a logical thread lane; they are not CPU samples. Live `Tracing.start`/`end`
 remain unsupported pending a verified frame-less Performance recording.
 
+`rake dev --target desktop --package rake-routing --cdp` starts the adapter under
+the supervisor and prints its discovery URL beside the HTML inspector URL. The
+HTML inspector offers **Open in Chrome DevTools** for its selected target. Chrome
+may require copying that link into its address bar. A later `rake inspect --session
+PATH` can reuse the same running adapter.
+
+Elements projects captured boundaries into a synthetic document, with semantic IDs,
+source attributes, authored styles and measured width/height. Omitted boundaries
+appear as a comment. Capture changes invalidate node IDs and send documentUpdated;
+rapid redraws can reset Chrome's selection. Unmappable style names keep a `-gpui-`
+prefix. Every box quad uses the captured bounds: separate margin, border and padding
+measurements are unavailable. Computed styles contain only measured width/height;
+Chrome's inferred CSS hints and full box decorations may therefore be incomplete.
+Highlighting and inspect mode return explicit errors pending a separate runtime
+protocol extension. Rake's own Elements inspector remains available for full
+capture coverage and stale-selection details.
+
+Sessions wait up to five seconds for a unique successor whose `restored_from`
+matches the selected RuntimeId, including when `--instance` originally named that
+UUID. Replacement clears runtime contexts, cursors, objects and DOM IDs. An
+unrelated instance with the same application ID is never followed.
+
 ## Rake application preview
 
 An [Elements-only Inspector built with Rake](rake-inspector.md) is also available

@@ -27,6 +27,7 @@ parser.add_argument("--build-root", type=Path, help="Immutable published Web bui
 parser.add_argument("--inspector-only", action="store_true", help="Serve native runtime inspection without application assets")
 parser.add_argument("--process-output", type=Path, help="Private supervisor output snapshot")
 parser.add_argument("--inspector-app", type=Path, help="Serve the built Rake Elements Wasm frontend on the dedicated inspector origin")
+parser.add_argument("--cdp-url", help="Private loopback CDP discovery endpoint")
 args = parser.parse_args()
 if args.inspector_app:
     if not args.inspector_only or not args.control:
@@ -36,10 +37,12 @@ if args.inspector_app:
         parser.error("--inspector-app must contain a built Rake Inspector")
 if bool(args.development_state) != bool(args.build_root) or (args.development_state and not args.control):
     parser.error("development state/build root require each other and --control")
+if args.cdp_url and not args.control:
+    parser.error("--cdp-url requires --control")
 if args.inspector_only and not args.control:
     parser.error("--inspector-only requires --control")
 bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
-inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only) if bridge else None
+inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only, cdp_url=args.cdp_url) if bridge else None
 directory = args.directory or Path(__file__).resolve().parents[1] / "dist" / args.example
 
 if not args.inspector_only and not (directory / "index.html").is_file():
