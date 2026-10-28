@@ -103,7 +103,8 @@ model; it does not implement a stylesheet engine.
 | Form | Meaning | Tiny example |
 | --- | --- | --- |
 | Fixed name | A checked GPUI convenience method | `flex-col`, `items-center` |
-| `prefix-N` | Whole/half steps, each 0.25rem | `p-13`, `gap-1.5` |
+| `prefix-N` | Spacing: whole/half steps of 0.25rem; `border-N`: N px | `p-13`, `gap-1.5`, `border-3` |
+| `text-` / `rounded-` | Named values, theme fields or explicit `[value]`; no numeric N | `text-sm`, `text-[11px]`, `rounded-[4px]` |
 | `prefix-[value]` | Explicit finite value and unit | `w-[320px]`, `h-[50%]` |
 | `prefix-A/B` | A supported relative fraction | `w-1/2`, `basis-1/3` |
 | `-prefix-value` | Negative margin or inset | `-mt-1`, `-left-[4px]` |
@@ -149,7 +150,7 @@ named-value and reusable-function APIs.
 - `w-1/2`, `h-2/3`, `basis-1/3`, `-mt-1`, `-mx-[4px]`, `-top-2`.
 - `text-[11px]`, `text-[0.75rem]`, `text-[#abc]`, `bg-[#123456]`, `border-[#12345678]`.
 - `leading-[20px]`, `opacity-35`, `opacity-[0.35]`, `font-[JetBrains_Mono]`.
-- `rounded-[4px]`, `border-[2px]`, `border-t-[2px]`.
+- `rounded-[4px]`, `border-[2px]`, `border-t-[2px]`, `border-3`, `border-t-1.5`.
 - `min-w-[12px]`, `max-w-[50%]`, `min-h-[1rem]`, `max-h-[240px]`.
 - `group/card`, `hover:bg-[#fff]`, `active:opacity-50`, `focus:border-2`.
 - `focus-visible:text-[#000]`, `in-focus:font-bold`, `disabled:opacity-35`.
@@ -159,7 +160,10 @@ named-value and reusable-function APIs.
 
 <!-- view-utilities:end -->
 
-`N` accepts any nonnegative whole or half step, with one step equal to 0.25rem;
+For spacing and sizing, `N` accepts any nonnegative whole or half step, with one
+step equal to 0.25rem. `border-N` and `border-t/b/l/r-N` instead use nonnegative
+pixel widths, including decimals (`border-1.5`). `text-N` and `rounded-N` are
+unsupported: use a built-in name, a theme field, or an explicit bracketed length.
 `grid-cols-N` uses 1–12. Existing scale values keep their GPUI convenience methods.
 Numbers use plain decimal digits, optionally followed by a decimal point and
 more digits (`4`, `1.5`, `0.35`). Signs, exponents, `.5` and `4.` are rejected;

@@ -35,6 +35,8 @@ mod view;
 /// but no conditions; indirect refinement conflicts remain GPUI debug assertions.
 /// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
 /// font families and opacity; negative lengths are limited to margins and inset.
+/// Numeric border widths are pixels. Text sizes and radii use names, theme fields
+/// or explicit bracketed lengths, rather than numeric text-N/rounded-N.
 /// Interaction variants merge into one GPUI call per kind: hover, active, focus,
 /// focus-visible, in-focus and named group-hover/group-active. disabled is button-only.
 /// Variants cannot stack or configure interactivity. Conflicting calls inside style

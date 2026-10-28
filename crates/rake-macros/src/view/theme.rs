@@ -22,7 +22,14 @@ pub(super) fn local() -> Ident {
 }
 
 pub(super) fn field(class: &str) -> Option<(&'static str, String)> {
-    if FIXED.iter().any(|(name, _)| *name == class) {
+    if FIXED.iter().any(|(name, _)| *name == class)
+        || LENGTH_PREFIXES.iter().any(|(prefix, _)| {
+            prefix.starts_with("border-")
+                && class
+                    .strip_prefix(&format!("{prefix}-"))
+                    .is_some_and(|value| value.starts_with(|c: char| c.is_ascii_digit()))
+        })
+    {
         return None;
     }
 
@@ -215,5 +222,7 @@ mod tests {
         assert!(!reserved("hover"));
         assert_eq!(field("bg-surface-raised").unwrap().1, "surface_raised");
         assert!(field("text-[12px]").is_none());
+        assert!(field("border-t-4").is_none());
+        assert_eq!(field("border-t-custom").unwrap().1, "t_custom");
     }
 }

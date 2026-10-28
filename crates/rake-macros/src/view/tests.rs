@@ -585,3 +585,20 @@ fn markup_properties_recover_nested_errors_and_require_one_component_slot_root()
         ]
     );
 }
+
+#[test]
+fn numeric_border_widths_use_pixels() {
+    for (class, expected) in [
+        ("border-3", ". border (:: renamed :: gpui :: px (3f32))"),
+        (
+            "border-t-1.5",
+            ". border_t (:: renamed :: gpui :: px (1.5f32))",
+        ),
+    ] {
+        let expanded = expand(&format!("<div class={class:?}/>"))
+            .expect("numeric border")
+            .to_string();
+
+        assert!(expanded.contains(expected), "{class}: {expanded}");
+    }
+}

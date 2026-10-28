@@ -639,3 +639,16 @@ fn presets_are_typed_style_functions_and_compose_with_builders() {
 fn themed_presets_compile() -> impl rake::gpui::IntoElement {
     rake::view! { <div style={focus_control}><div style={hover_control}/></div> }
 }
+
+#[test]
+fn numeric_border_widths_match_explicit_pixel_lengths() {
+    let mut numeric =
+        rake::view! { <div class="border-3 border-t-4 border-b-1.5 border-l-0.25 border-r-16"/> };
+
+    let mut explicit = rake::view! { <div class="border-[3px] border-t-[4px] border-b-[1.5px] border-l-[0.25px] border-r-[16px]"/> };
+
+    assert_eq!(
+        format!("{:?}", numeric.style()),
+        format!("{:?}", explicit.style())
+    );
+}

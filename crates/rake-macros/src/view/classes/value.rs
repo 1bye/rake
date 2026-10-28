@@ -7,7 +7,7 @@ pub(super) enum Length {
     Relative(f32),
 }
 
-fn number(value: &str) -> Result<f32, &'static str> {
+pub(super) fn number(value: &str) -> Result<f32, &'static str> {
     let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
 
     let decimal = value.split_once('.').map_or_else(

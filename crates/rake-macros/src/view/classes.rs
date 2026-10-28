@@ -172,6 +172,16 @@ fn extended_methods(
         }
 
         value::fraction(raw).map_err(error)?
+    } else if prefix.starts_with("border") {
+        value::Length::Pixels(value::number(raw).map_err(error)?)
+    } else if prefix == "text" {
+        return Err(error(
+            "text sizes use a name (`text-sm`), a theme field or `[11px]`; numeric text-N isn't supported",
+        ));
+    } else if prefix == "rounded" {
+        return Err(error(
+            "radius uses a name (`rounded-md`), a theme field or `[4px]`",
+        ));
     } else {
         value::scale(raw).map_err(error)?
     };
