@@ -4,7 +4,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{DeriveInput, Expr, Lit};
 
-use super::classes::FIXED;
+use super::classes::{FIXED, LENGTH_PREFIXES};
 use super::{AttributeValue, Element, Node};
 
 const PREFIXES: &[(&str, &str)] = &[
@@ -176,6 +176,13 @@ pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
 fn reserved(name: &str) -> bool {
     WEIGHTS.contains(&name)
+        || LENGTH_PREFIXES
+            .iter()
+            .filter_map(|(prefix, _)| prefix.strip_prefix("border-"))
+            .any(|side| {
+                name.strip_prefix(&format!("{side}_"))
+                    .is_some_and(|value| value.parse::<usize>().is_ok())
+            })
         || FIXED.iter().any(|(class, _)| {
             PREFIXES.iter().any(|(prefix, _)| {
                 class
@@ -201,6 +208,10 @@ mod tests {
         }
 
         assert!(reserved("semibold"));
+        assert!(reserved("t_13"));
+        assert!(reserved("r_999"));
+        assert!(reserved("l_01"));
+        assert!(!reserved("t_custom"));
         assert!(!reserved("hover"));
         assert_eq!(field("bg-surface-raised").unwrap().1, "surface_raised");
         assert!(field("text-[12px]").is_none());

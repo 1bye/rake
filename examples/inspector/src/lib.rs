@@ -3,6 +3,10 @@
 
 #[cfg(feature = "gui")]
 mod appearance;
+
+#[cfg(feature = "gui")]
+rake::theme!(appearance::Palette);
+
 mod connection;
 #[cfg(feature = "gui")]
 mod input;

@@ -18,7 +18,7 @@ mod view;
 /// children with braced arm bodies. Untaken branches are not evaluated.
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
-/// GPUI builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
+/// GPUI builder methods.
 /// Class expressions can choose literal leaves using lazy if/if-let/match branches.
 /// Conditions and scrutinees evaluate once; patterns cannot bind variables.
 /// Qualify unit variants/constants (for example Option::None). Inline runs also
@@ -42,7 +42,8 @@ mod view;
 /// Errors identify each bad class by ordinal position and suggest nearby utility
 /// names or variants. All literal leaves are checked, including untaken branches.
 /// Utility strings are checked and lowered to ordered GPUI style calls at compile time.
-/// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
+/// Canonical events use `on:click`, `on:key-down`, mouse-button, outside-pointer,
+/// hover, wheel, drop and drag names with GPUI callbacks.
 /// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy
 /// event aliases remain accepted with deprecation warnings. Drag takes a
 /// `(payload, constructor)` tuple; drop callbacks need a typed first parameter.

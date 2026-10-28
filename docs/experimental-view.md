@@ -93,13 +93,36 @@ typed `role`, `aria-keyshortcuts`, and `aria-expanded`. `alt` maps to the image'
 label; `aria-label` can override it when supplied after `alt`.
 An empty image label (`alt=""`) marks it as decorative and omits its accessibility role.
 
-`class` accepts a literal string or an `if`/`if let`/`match` expression whose
-leaves are literal strings. It expands into a checked subset of GPUI
-utility methods, in the order written. These are utilities, not stylesheet class
-names or a complete Tailwind implementation:
+### Class grammar
 
-Utility strings are resolved at compile time. Conditional classes evaluate once
-between their preceding and following authored attributes.
+A class string is a whitespace-separated sequence of checked GPUI utilities.
+The macro resolves every token at compile time and emits builders in written
+order. It supplies familiar markup syntax over GPUI's layout and interaction
+model; it does not implement a stylesheet engine.
+
+| Form | Meaning | Tiny example |
+| --- | --- | --- |
+| Fixed name | A checked GPUI convenience method | `flex-col`, `items-center` |
+| `prefix-N` | Whole/half steps, each 0.25rem | `p-13`, `gap-1.5` |
+| `prefix-[value]` | Explicit finite value and unit | `w-[320px]`, `h-[50%]` |
+| `prefix-A/B` | A supported relative fraction | `w-1/2`, `basis-1/3` |
+| `-prefix-value` | Negative margin or inset | `-mt-1`, `-left-[4px]` |
+| `text/bg/border-[#hex]` | Literal color | `text-[#abc]`, `bg-[#11223380]` |
+| `font-[family]` | Font family; underscores become spaces | `font-[JetBrains_Mono]` |
+| `variant:utility` | One interaction refinement | `hover:bg-surface` |
+| `group/name` | Names an interaction group | `group/card` |
+| `class:utility={bool}` | One conditional utility | `class:font-bold={selected}` |
+| `class={if ...}` | Lazy selection between literal leaves | `if busy { "opacity-50" }` |
+| Named theme value | Reads an app-owned theme field | `bg-surface`, `text-body` |
+| `style={preset}` | Applies a typed reusable style function | `style={control}` |
+
+A literal can be written as `class="..."` or as a literal leaf inside an
+`if`/`if let`/`match` expression. Conditions and scrutinees run once between the
+preceding and following authored attributes. Every leaf is checked, including
+untaken ones. See [Themes](#themes) and [Style presets](#style-presets) for the
+named-value and reusable-function APIs.
+
+### Checked utility vocabulary
 
 <!-- view-utilities:start -->
 
@@ -180,11 +203,19 @@ rustc. Variables, function calls and `format!` cannot produce class strings.
 Inline text accepts the same literal-branch selection with its restricted run
 utilities; interaction variants remain unsupported inside runs.
 
-Errors quote each bad class and its ordinal position in the literal (for example,
-`2nd class ` followed by `justify-betwen`). Nearby utility names and variants
-receive suggestions such as `justify-between` and `hover:`. Every bad class is
-reported, including classes in untaken literal branches; stable Rust spans
-underline the whole literal. Value errors explain the expected units or range.
+Errors quote each bad class and its ordinal position. Stable Rust spans
+underline the whole literal, so the message identifies the individual token:
+
+```text
+2nd class `justify-betwen`: unsupported utility class `justify-betwen`; did you mean `justify-between`?
+3rd class `hovr:p-2`: unknown variant `hovr:`; did you mean `hover:`?
+1st class `w-[320]`: arbitrary lengths require a unit; add px, rem or %
+1st class `opacity-[1.2]`: opacity must be in the range 0..=1
+```
+
+All bad classes are reported together, including errors across branch leaves.
+Names under theme prefixes go to Rust's field/type checker; `bg-bra` reports
+`no field bra` on your theme, rather than a utility typo suggestion.
 
 Conditional classes use a literal utility name: `class:shrink-0={fixed}` or
 `class:font-bold={selected}`. Each condition is evaluated once, and the utility
@@ -709,7 +740,8 @@ links, `aria-labelledby` and the complete ARIA vocabulary, general-purpose focus
 traps outside the overlay controls, CSS selectors/cascade, HTML entity decoding,
 fragments, explicit generic arguments in component tags, dedicated slot
 syntax, automatic signal tracking, or markup hot reload. Inline text accepts a
-fixed set of styles and rejects conditional classes, events and IDs. SVG leaves
+checked text-run styles and theme colors/fonts, and rejects conditional class
+attributes, events and IDs. Literal class branches are supported. SVG leaves
 use the documented restricted attribute set; wrap them for interaction and
 identity. Existing GPUI components remain available through `{expression}`.
 Raster images follow the application's asset/HTTP configuration, and SVG paths
@@ -733,7 +765,7 @@ cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake-view --features view-test-support --lib --locked
 cargo test -p rake --features experimental-view --doc --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
-cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown --locked
+cargo check -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
 
 The example uses reusable `components::Card` and `components::Badge` components.
@@ -743,7 +775,7 @@ ordinary typed properties. Paragraphs demonstrate nested bold/italic runs,
 colored dynamic text, Unicode, a two-line preview, and a single-line ellipsis.
 The example routes clicks and shortcuts through typed actions. Command+I on
 macOS targets (Control+I elsewhere) increments, Escape resets, H toggles history,
-R reverses rows, and L locks/unlocks editing. Reset and Reverse are disabled when
+R reverses rows, L locks/unlocks editing, and T switches the ambient theme. Reset and Reverse are disabled when
 unavailable; locking disables Increment and Reset. Tab/Shift+Tab skip disabled
 controls and expose visible focus styling. History rows are retained entities
 with their own focus and click counts; B or Enter/Space activates a focused row.
@@ -792,12 +824,12 @@ The example's opt-in `view-test-support` tests render the actual counter,
 components, retained history, popover, document dialog and help view. Reviewed
 text fixtures assert the exact distinct strings sent to GPUI text layout, with
 no whitespace normalization in the assertions. Scenarios cover initial and
-incremented counts, locked/hidden history, open overlays and a selected virtual
+incremented counts, light/dark themes, locked/hidden history, open overlays and a selected virtual
 document. The recorder keeps full composed text before truncation and omits
 ellipsis measurement candidates; it does not assert pixel output, text order,
 duplicate occurrences or native/browser rendering. CI runs these tests explicitly.
 
-## Ambient theme runtime
+## Themes
 
 With `experimental-view`, `rake::theme::install(cx, my_theme)` installs any
 app-owned `'static` value and refreshes windows. `current::<MyTheme>()` clones
@@ -810,9 +842,9 @@ Themes are local to the UI thread: setup, switching and view construction must
 run there, on native and Wasm. Existing built elements retain old values until
 rebuilt. A missing theme panic names the type and tells you to call `install`.
 `TextToken { size, line_height, weight }` describes paragraph typography using
-pixels and an optional GPUI font weight. The class integration follows below.
+pixels and an optional GPUI font weight. Use it with a named `text-` class on the paragraph.
 
-## Theme classes
+### Declaration and field types
 
 Declare your type once at the crate root, and install it on the UI thread:
 
@@ -839,8 +871,8 @@ a valid field name. There is no built-in palette or `dark:` variant.
 accepts colors; `font-` accepts `SharedString`/`&'static str`; `rounded-` accepts
 pixels/rems. Inline `text-` accepts colors only: a `TextToken` gives a
 `ThemeRunText` trait error because font size belongs on p. Inline `font-` is
-also supported. Wrong field names and value types are compiler errors at the
-class literal. A missing declaration reports “cannot find type `__RakeTheme`
+also supported. Wrong field names and value types produce Rust field/trait
+errors; field identifiers carry the class literal’s span. A missing declaration reports “cannot find type `__RakeTheme`
 in the crate root”; add `rake::theme!(YourTheme)` at that root.
 
 Each invocation clones one ambient `Rc` before building its elements, including
@@ -873,3 +905,11 @@ need an element context and are rejected.
 A preset's `hover:` conflicts with `hover:` classes on the same element, as do
 other interaction kinds. The token scanner cannot inspect a named function;
 GPUI's debug assertion is the backstop. Keep each kind in one place.
+
+The inspector also declares an app-owned `Palette` theme and uses the same
+grammar, literal branches and focus preset. Its `view.rs` migration reduced
+`style={|...| ...}` closures from 84 to 10. Remaining closures handle computed
+pane/row dimensions, dynamic captured swatches, tree semantics, an underline,
+a resize cursor/focus handle, or the explicit-palette property helper. The
+helper remains independent of ambient setup for its construction-only identity
+test. `style={control}` applies the shared focus preset to toolbar buttons.

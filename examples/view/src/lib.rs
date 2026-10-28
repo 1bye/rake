@@ -16,11 +16,25 @@ struct Colors {
     surface: gpui::Rgba,
     ink: gpui::Rgba,
     hover: gpui::Rgba,
+    panel: gpui::Rgba,
+    line: gpui::Rgba,
+    accent: gpui::Rgba,
+    accent_focus: gpui::Rgba,
+    focus: gpui::Rgba,
+    success: gpui::Rgba,
+    warning: gpui::Rgba,
 }
 
 impl Colors {
     fn dark() -> Self {
         Self {
+            panel: rgb(0x22323d),
+            line: rgb(0x61717c),
+            accent: rgb(0x365849),
+            accent_focus: rgb(0x46715e),
+            focus: rgb(0x526857),
+            success: rgb(0xb9dcbd),
+            warning: rgb(0x6b4939),
             surface: rgb(0x18232b),
             ink: rgb(0xf0f4e8),
             hover: rgb(0x365849),
@@ -29,6 +43,13 @@ impl Colors {
 
     fn light() -> Self {
         Self {
+            panel: rgb(0xffffff),
+            line: rgb(0x93a39d),
+            accent: rgb(0xd4e3d8),
+            accent_focus: rgb(0xb4cebe),
+            focus: rgb(0xadc7b2),
+            success: rgb(0x365849),
+            warning: rgb(0xebcdbb),
             surface: rgb(0xf0f4e8),
             ink: rgb(0x18232b),
             hover: rgb(0xc7d8ca),
@@ -74,12 +95,12 @@ impl HistoryItem {
 impl Render for HistoryItem {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
-            <li class="px-3 py-1 rounded-md" style={|s| s.bg(rgb(0x18232b))}>
+            <li class="px-3 py-1 rounded-md bg-surface">
                 <button focus={&self.focus} key-context="HistoryItem"
                     on:BumpRow={cx.listener(Self::bump)}
                     aria-label={format!("Count {}, row clicks {}", self.count, self.clicks)}
                     aria-keyshortcuts="B"
-                    style={|s| s.focus_visible(|s| s.bg(rgb(0x365849)))}
+                    class="focus-visible:bg-accent"
                     on:click={|_, window, cx| window.dispatch_action(Box::new(BumpRow), cx)}>
                     {format!("Reached {} · row clicks: {}", self.count, self.clicks)}
                 </button>
@@ -250,7 +271,7 @@ impl Counter {
 
                     <p class="text-sm" wrap={true} max-lines={2} ellipsis={true}>
                         <strong>Rich text preview.</strong> Count <span
-                            style={gpui::HighlightStyle::color(gpui::rgb_to_hsla(rgb(0xb9dcbd)))}>
+                            class="text-success">
                             {self.count.to_string()}
                         </span>: styled runs wrap together in one paragraph, including <em>italic text</em> and Unicode such as café, 你好 and {"🙂"}.
                         This preview stops at two lines, while the complete text remains available to accessibility.
@@ -264,44 +285,33 @@ impl Counter {
                     <div class="flex flex-row flex-wrap gap-2">
                         <button id="increment" disabled={self.locked} aria-label="Increment counter"
                             aria-keyshortcuts={increment_shortcut}
-                            class="px-4 py-2 rounded-md font-semibold"
-                            style={|s| s.bg(rgb(0x365849)).opacity(if self.locked { 0.4 } else { 1. })
-                                .focus_visible(|s| s.bg(rgb(0x46715e)))}
+                            class="px-4 py-2 rounded-md font-semibold disabled:opacity-40 bg-accent focus-visible:bg-accent-focus"
                             on:click={|_, window, cx| window.dispatch_action(Box::new(Increment), cx)}>
                             Increment
                         </button>
                         <button id="reset" disabled={reset_disabled} aria-keyshortcuts="Escape"
-                            class="px-4 py-2 rounded-md border"
-                            style={|s| s.border_color(rgb(0x61717c)).opacity(if reset_disabled { 0.4 } else { 1. })
-                                .focus_visible(|s| s.bg(rgb(0x365849)))}
+                            class="px-4 py-2 rounded-md border disabled:opacity-40 border-line focus-visible:bg-accent"
                             on:click={|_, window, cx| window.dispatch_action(Box::new(Reset), cx)}>
                             Reset
                         </button>
-                        <button id="toggle-history" class="px-4 py-2 rounded-md border"
+                        <button id="toggle-history" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
                             aria-label={if self.show_history { "Hide history" } else { "Show history" }}
                             aria-expanded={self.show_history} aria-keyshortcuts="H"
-                            style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
                             on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleHistory), cx)}>
                             if self.show_history { Hide history } else { Show history }
                         </button>
                         <OverlayAnchor state={self.actions_anchor.clone()}>
                             <button id="actions" aria-label="More actions" aria-expanded={self.actions_popup.is_open()}
                                 aria-description="Open actions or browse a virtualized list of 10,000 documents"
-                                class="px-4 py-2 rounded-md border"
-                                style={|s| {
-                                    let hint = self.actions_hint.clone();
-
-                                    s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))
-                                        .tooltip(move |_, _| hint.clone().into())
-                                }}
+                                class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                                tooltip={{ let hint = self.actions_hint.clone(); move |_, _| hint.clone().into() }}
                                 on:click={cx.listener(|this, _, window, cx| { this.actions_popup.open(window, cx); })}>
                                 More actions
                             </button>
                         </OverlayAnchor>
-                        <button id="toggle-lock" class="px-4 py-2 rounded-md border"
+                        <button id="toggle-lock" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
                             aria-label={if self.locked { "Unlock counter" } else { "Lock counter" }}
                             aria-keyshortcuts="L"
-                            style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
                             on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleLocked), cx)}>
                             if self.locked { Unlock counter } else { Lock counter }
                         </button>
@@ -318,9 +328,7 @@ impl Counter {
                             <div class="flex flex-row items-center justify-between">
                                 <h2 class="text-lg">Recent counts</h2>
                                 <button id="reverse-history" disabled={self.history.len() < 2}
-                                    aria-keyshortcuts="R" class="text-sm px-3 py-1 rounded-md border"
-                                    style={|s| s.border_color(rgb(0x61717c)).opacity(if self.history.len() < 2 { 0.4 } else { 1. })
-                                        .focus_visible(|s| s.bg(rgb(0x365849)))}
+                                    aria-keyshortcuts="R" class="text-sm px-3 py-1 rounded-md border disabled:opacity-40 border-line focus-visible:bg-accent"
                                     on:click={|_, window, cx| window.dispatch_action(Box::new(ReverseHistory), cx)}>
                                     Reverse order
                                 </button>
@@ -329,8 +337,7 @@ impl Counter {
                             if self.history.is_empty() {
                                 <p>No entries yet.</p>
                             }
-                            <ul class="flex flex-col gap-1" scroll={&self.history_scroll}
-                                style={|s| s.max_h(gpui::px(150.)).overflow_y_scroll()}>
+                            <ul class="flex flex-col gap-1 max-h-[150px] overflow-y-scroll" scroll={&self.history_scroll}>
                                 if self.newest_first {
                                     for item in self.history.iter().rev() {
                                         <view entity={&item}/>
@@ -357,13 +364,11 @@ impl Render for Counter {
 
         let footer = rake::view! {
             <div class="flex flex-row gap-2">
-                <button class="px-3 py-2 rounded-md border"
-                    style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
+                <button class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
                     on:click={cx.listener(|this, _, window, cx| {
                         this.documents.update(cx, |documents, cx| documents.jump(4_999, window, cx));
                     })}>Jump to 5,000</button>
-                <button class="px-3 py-2 rounded-md border"
-                    style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
+                <button class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
                     on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.close(window, cx); })}>Close</button>
             </div>
         }.into_any_element();
@@ -372,19 +377,16 @@ impl Render for Counter {
             <OverlayHost state={self.overlays.clone()} body={body}>
                 <Popover state={self.actions_popup.clone()} anchor={self.actions_anchor.clone()}>
                     <p class="font-semibold">Document actions</p>
-                    <button disabled={self.locked} class="px-3 py-2 rounded-md"
-                        style={|s| s.bg(rgb(0x365849)).opacity(if self.locked { 0.4 } else { 1. }).focus_visible(|s| s.bg(rgb(0x526857)))}
+                    <button disabled={self.locked} class="px-3 py-2 rounded-md bg-accent focus-visible:bg-focus disabled:opacity-40"
                         on:click={cx.listener(|this, _, window, cx| {
                             this.actions_popup.close(window, cx);
                             this.increment(&Increment, window, cx);
                         })}>Increment counter</button>
-                    <button class="px-3 py-2 rounded-md border"
-                        style={|s| s.border_color(rgb(0x61717c)).focus_visible(|s| s.bg(rgb(0x365849)))}
+                    <button class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
                         on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.open(window, cx); })}>
                         Browse 10,000 documents
                     </button>
-                    <button class="px-3 py-2 rounded-md"
-                        style={|s| s.focus_visible(|s| s.bg(rgb(0x365849)))}
+                    <button class="px-3 py-2 rounded-md focus-visible:bg-accent"
                         on:click={cx.listener(|this, _, window, cx| { this.actions_popup.close(window, cx); })}>Close actions</button>
                 </Popover>
                 <Dialog state={self.documents_dialog.clone()} title={"Document browser".into()} footer={Some(footer)}>

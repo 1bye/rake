@@ -1,6 +1,6 @@
 //! Macro-authored Elements screen; remote work is owned by its Rake entry activity.
 
-use crate::appearance::{CODE_FONT, Icon, Palette, icon};
+use crate::appearance::{CODE_FONT, Icon, Palette, control, icon};
 use crate::input::FilterInput;
 use crate::{Connection, ConnectionConfig, Inspector, Update};
 use crate::{styles, tree};
@@ -83,6 +83,7 @@ impl RouteViews<Destination> for Views {
 
         let owned = model.clone();
 
+        rake::theme::install(cx, Palette::new(true));
         let view = cx.new(|cx| {
             let weak = cx.weak_entity();
             let style_owner = weak.clone();
@@ -274,8 +275,8 @@ fn property(label: &str, value: impl Into<SharedString>, colors: Palette) -> imp
     let value = value.into();
 
     rake::view! {
-        <div id={format!("property-{label}")} class="flex flex-row gap-3 px-3 py-1" style={|s| s.border_b_1().border_color(rgb(colors.line))}>
-            <span style={|s| s.w(px(86.)).flex_shrink_0().text_color(rgb(colors.muted))}>{label}</span>
+        <div id={format!("property-{label}")} class="flex flex-row gap-3 px-3 py-1" style={|s| s.border_b_1().border_color(colors.line)}>
+            <span style={|s| s.w(px(86.)).flex_shrink_0().text_color(colors.muted)}>{label}</span>
             <span class="min-w-0" style={|s| s.font_family(CODE_FONT).text_size(px(11.))}>{value}</span>
         </div>
     }
@@ -295,14 +296,9 @@ fn source_label(element: &rake::inspection::Element) -> String {
 }
 
 impl ElementsView {
-    fn detail_button(
-        &self,
-        tab: &'static str,
-        colors: Palette,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn detail_button(&self, tab: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
-            <button id={format!("detail-{tab}")} class="px-3" style={|s| colors.control(s).h_full().text_color(rgb(if self.detail_tab == tab { colors.accent } else { colors.muted })).border_b(px(if self.detail_tab == tab { 2. } else { 0. })).border_color(rgb(colors.accent)).hover(|s| s.bg(rgb(colors.hover)))}
+            <button id={format!("detail-{tab}")} class={if self.detail_tab == tab { "px-3 h-full border-accent hover:bg-hover text-accent border-b-[2px]" } else { "px-3 h-full border-accent hover:bg-hover text-muted border-b-0" }} style={control}
                 on:click={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
         }.inspect(format!("inspector.tab.{tab}"))
     }
@@ -593,39 +589,38 @@ impl ElementsView {
 
         rake::view! {
             <div id={format!("line-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}{}", element.semantic_id.as_deref().unwrap_or(&element.id), if row.closing { " (closing tag)" } else { "" })}
-                class="flex flex-row items-center min-w-0"
-                style={|s| s.h(px(tree::ROW_HEIGHT)).min_w_full().flex_shrink_0().pl(px(4.)).border_l_2().border_color(rgba(if opening_selected && tree_active { (colors.focus << 8) | 255 } else { 0 })).bg(rgb(background)).hover(|s| s.bg(rgb(if selected { background } else { colors.hover })))
-                    .when(!row.closing, |s| s.role(gpui::accesskit::Role::TreeItem).aria_level(row.depth + 1).aria_selected(opening_selected).when(row.branch, |s| s.aria_expanded(!row.collapsed)).when(opening_selected, |s| s.aria_active_descendant()))}
+                class="flex flex-row items-center min-w-0 shrink-0 pl-[4px] border-l-2"
+                style={|s| s.h(px(tree::ROW_HEIGHT)).min_w_full().border_color(if opening_selected && tree_active { colors.focus } else { rgba(0) }).bg(background).hover(|s| s.bg(if selected { background } else { colors.hover })).when(!row.closing, |s| s.role(gpui::accesskit::Role::TreeItem).aria_level(row.depth + 1).aria_selected(opening_selected).when(row.branch, |s| s.aria_expanded(!row.collapsed)).when(opening_selected, |s| s.aria_active_descendant()))}
                 on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, false, window, cx)) } }>
                 for depth in 0..row.depth.min(16) {
-                    <span id={format!("indent-{depth}")} style={|s| s.w(px(12.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(colors.guide))}/>
+                    <span id={format!("indent-{depth}")} class="w-[12px] h-full shrink-0 border-l-1 border-guide"/>
                 }
                 if row.branch && !row.closing {
                     <button id={format!("disclose-{}", row.index)} tabindex={-1} aria-label={format!("{} {}", if row.collapsed { "Expand" } else { "Collapse" }, element.semantic_id.as_deref().unwrap_or(&element.id))}
-                        style={|s| colors.control(s).w(px(14.)).h_full().flex_shrink_0()}
+                        class="w-[14px] h-full shrink-0" style={control}
                         on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| { this.toggle_branch(&id, window, cx); cx.stop_propagation(); }) } }>
                         {icon(if row.collapsed { Icon::Right } else { Icon::Down }, colors.muted)}
                     </button>
-                } else { <span style={|s| s.w(px(14.)).flex_shrink_0()}/> }
-                <span class="flex flex-row" style={|s| s.h_full().flex_row().justify_start().flex_shrink_0().font_family(CODE_FONT).text_size(px(12.)).line_height(px(tree::ROW_HEIGHT)).whitespace_nowrap()}>
-                    <span style={|s| s.text_color(rgb(colors.tag))}>{if row.closing { "</" } else { "<" }}</span>
-                    <span style={|s| s.text_color(rgb(colors.tag))}>{kind.clone()}</span>
+                } else { <span class="w-[14px] shrink-0"/> }
+                <span class="flex flex-row h-full justify-start shrink-0 font-code text-[12px] whitespace-nowrap" style={|s| s.line_height(px(tree::ROW_HEIGHT))}>
+                    <span class="text-tag">{if row.closing { "</" } else { "<" }}</span>
+                    <span class="text-tag">{kind.clone()}</span>
                     if !row.closing {
                         if let Some(id) = &element.semantic_id {
-                            <span style={|s| s.text_color(rgb(colors.attribute))}>" id="</span>
-                            <span style={|s| s.text_color(rgb(colors.value)).when(row.matched, |s| s.bg(rgb(if self.light { 0xffedb1 } else { 0x614c2b })))}>{serde_json::to_string(id).unwrap_or_default()}</span>
+                            <span class="text-attribute">" id="</span>
+                            <span class="text-value" class:bg-matched={row.matched}>{serde_json::to_string(id).unwrap_or_default()}</span>
                         }
                         if row.collapsed {
-                            <span style={|s| s.text_color(rgb(colors.tag))}> ">"</span>
-                            <span style={|s| s.px(px(3.)).text_color(rgb(colors.muted))}>"…"</span>
-                            <span style={|s| s.text_color(rgb(colors.tag))}>{format!("</{kind}>")}</span>
+                            <span class="text-tag"> ">"</span>
+                            <span class="px-[3px] text-muted">"…"</span>
+                            <span class="text-tag">{format!("</{kind}>")}</span>
                         } else {
-                            <span style={|s| s.text_color(rgb(colors.tag))}>{if row.branch { ">" } else { " />" }}</span>
+                            <span class="text-tag">{if row.branch { ">" } else { " />" }}</span>
                         }
                         if flex {
-                            <span class="px-1" style={|s| s.ml(px(6.)).rounded(px(3.)).text_size(px(10.)).line_height(px(14.)).bg(rgb(colors.field)).text_color(rgb(colors.muted))}>"flex"</span>
+                            <span class="px-1 ml-[6px] rounded-[3px] text-[10px] leading-[14px] bg-field text-muted">"flex"</span>
                         }
-                    } else { <span style={|s| s.text_color(rgb(colors.tag))}>">"</span> }
+                    } else { <span class="text-tag">">"</span> }
                 </span>
             </div>
         }.into_any_element()
@@ -642,23 +637,23 @@ impl ElementsView {
 
         rake::view! {
             <div id={format!("declaration-{}", row.name)} class="flex flex-col min-w-0">
-                <div class="flex flex-row" style={|s| s.min_h(px(20.)).pl(px(8.)).pr(px(10.)).hover(|s| s.bg(rgb(colors.hover)))}>
+                <div class="flex flex-row min-h-[20px] pl-[8px] pr-[10px] hover:bg-hover">
                     if complex {
-                        <button id={format!("expand-{}", row.name)} aria-label={format!("{} {} metadata", if expanded { "Collapse" } else { "Expand" }, row.name)} style={|s| colors.control(s).w(px(16.)).h(px(20.)).flex_shrink_0()}
+                        <button id={format!("expand-{}", row.name)} aria-label={format!("{} {} metadata", if expanded { "Collapse" } else { "Expand" }, row.name)} class="w-[16px] h-[20px] shrink-0" style={control}
                             on:click={ { let name = row.name.clone(); cx.listener(move |this, _, _, cx| { if !this.expanded_styles.remove(&name) { this.expanded_styles.insert(name.clone()); } cx.notify(); }) } }>{icon(if expanded { Icon::Down } else { Icon::Right }, colors.muted)}</button>
-                    } else { <span style={|s| s.w(px(16.)).flex_shrink_0()}/> }
-                    <div class="flex flex-row min-w-0" style={|s| s.flex_wrap().gap_x(px(6.)).font_family(CODE_FONT).text_size(px(12.)).line_height(px(20.))}>
-                        <span style={|s| s.text_color(rgb(colors.property))}>{format!("{}:", row.name)}</span>
+                    } else { <span class="w-[16px] shrink-0"/> }
+                    <div class="flex flex-row min-w-0 flex-wrap gap-x-[6px] font-code text-[12px] leading-[20px]">
+                        <span class="text-property">{format!("{}:", row.name)}</span>
                         <div class="flex flex-row items-center gap-1 min-w-0">
                             if let Some(color) = row.color {
-                                <span aria-label="Authored color swatch" style={|s| s.w(px(11.)).h(px(11.)).flex_shrink_0().border_1().border_color(rgb(colors.muted)).bg(hsla(color.h, color.s, color.l, color.a))}/>
+                                <span aria-label="Authored color swatch" class="w-[11px] h-[11px] shrink-0 border-1 border-muted" style={|s| s.bg(hsla(color.h, color.s, color.l, color.a))}/>
                             }
-                            <span style={|s| s.text_color(rgb(colors.ink))}>{format!("{};", row.value)}</span>
+                            <span class="text-ink">{format!("{};", row.value)}</span>
                         </div>
                     </div>
                 </div>
                 if expanded {
-                    <div class="px-3 py-2" style={|s| s.ml(px(24.)).max_h(px(180.)).overflow_scroll().bg(rgb(colors.bar)).font_family(CODE_FONT).text_size(px(11.)).line_height(px(17.)).text_color(rgb(colors.muted))}>{serde_json::to_string_pretty(row.raw).unwrap_or_default()}</div>
+                    <div class="px-3 py-2 ml-[24px] max-h-[180px] overflow-scroll bg-bar font-code text-[11px] leading-[17px] text-muted">{serde_json::to_string_pretty(row.raw).unwrap_or_default()}</div>
                 }
             </div>
         }.into_any_element()
@@ -669,7 +664,7 @@ impl Render for ElementsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = f32::from(window.viewport_size().width);
         let narrow = width < 720.;
-        let colors = Palette::new(self.light);
+        let colors = *rake::theme::current::<Palette>();
         let model = self.model.borrow();
 
         let capture = model
@@ -767,91 +762,91 @@ impl Render for ElementsView {
         let tree_pane = rake::view! {
             <section id="tree-pane" class="flex flex-col min-h-0 min-w-0" aria-label="Element tree" style={|s| if narrow { s.h(px(260.)).w_full().flex_shrink_0() } else { s.w(px((width * self.split).clamp(180., (width - 260.).max(180.)))).flex_shrink_0() }}>
                 if self.show_find {
-                    <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(30.)).flex_shrink_0().border_b_1().border_color(rgb(colors.line))}>
+                    <div class="flex flex-row items-center gap-2 px-2 h-[30px] shrink-0 border-b-1 border-line">
                         {icon(Icon::Search, colors.muted)}
                         <div class="flex-1 min-w-0">{self.filter.clone()}</div>
-                        <button id="close-find" aria-label="Close tree search" style={|s| colors.control(s).w(px(20.)).h(px(24.))} on:click={cx.listener(Self::toggle_find)}>"×"</button>
+                        <button id="close-find" aria-label="Close tree search" class="w-[20px] h-[24px]" style={control} on:click={cx.listener(Self::toggle_find)}>"×"</button>
                     </div>
                 }
                 <section id="element-tree" role={gpui::accesskit::Role::Tree} aria-label="Element tree" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End PageUp PageDown Enter Space"
-                    tabindex={0} focus={&self.tree_focus} scroll={&self.tree_scroll} class="flex flex-col flex-1 min-h-0"
-                    style={|s| s.overflow_scroll().py(px(5.)).border_1().border_color(rgba(if tree_active { (colors.focus << 8) | 255 } else { 0 }))}
+                    tabindex={0} focus={&self.tree_focus} scroll={&self.tree_scroll} class="flex flex-col flex-1 min-h-0 overflow-scroll py-[5px] border-1 border-[#00000000]"
+                    class:border-focus={tree_active}
                     on:key-down={cx.listener(Self::tree_key)} on:mouse-down={cx.listener(|this, _, window, cx| { window.focus(&this.tree_focus, cx); window.prevent_default(); })}>
                     for row in &rows {
-                        <div id={format!("tree-row-{}-{}-{}-{}", model.epoch, model.tree.as_ref().map_or("0", |capture| capture.capture.as_str()), row.index, row.closing)} style={|s| s.h(px(tree::ROW_HEIGHT)).flex_shrink_0()}>{self.tree_row(*row, &elements[row.index], colors, tree_active, cx)}</div>
+                        <div id={format!("tree-row-{}-{}-{}-{}", model.epoch, model.tree.as_ref().map_or("0", |capture| capture.capture.as_str()), row.index, row.closing)} class="shrink-0" style={|s| s.h(px(tree::ROW_HEIGHT))}>{self.tree_row(*row, &elements[row.index], colors, tree_active, cx)}</div>
                     }
                     if elements.is_empty() {
-                        <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>{if model.tree.is_some() { "No captured boundaries. Enable inspection in the target application." } else { "Select a running Rake application to inspect its views." }}</p>
+                        <p class="px-3 py-4 text-muted">{if model.tree.is_some() { "No captured boundaries. Enable inspection in the target application." } else { "Select a running Rake application to inspect its views." }}</p>
                     } else if rows.is_empty() {
-                        <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>"No matching elements."</p>
+                        <p class="px-3 py-4 text-muted">"No matching elements."</p>
                     }
                 </section>
-                <div id="breadcrumbs" aria-label="Selected element ancestors" scroll={&self.breadcrumb_scroll} class="flex flex-row items-center min-w-0" style={|s| s.h(px(24.)).flex_shrink_0().overflow_x_scroll().border_t_1().border_color(rgb(colors.line)).bg(rgb(colors.bar)).font_family(CODE_FONT).text_size(px(10.))}>
+                <div id="breadcrumbs" aria-label="Selected element ancestors" scroll={&self.breadcrumb_scroll} class="flex flex-row items-center min-w-0 h-[24px] shrink-0 overflow-x-scroll border-t-1 border-line bg-bar font-code text-[10px]">
                     for (id, label) in &self.breadcrumbs {
-                        <div id={format!("crumb-{id}")} class="flex flex-row items-center" style={|s| s.h_full().flex_shrink_0()}>
-                            if stale { <span class="px-2" style={|s| s.text_color(rgb(colors.muted)).whitespace_nowrap()}>{label.clone()}</span> }
+                        <div id={format!("crumb-{id}")} class="flex flex-row items-center h-full shrink-0">
+                            if stale { <span class="px-2 text-muted whitespace-nowrap">{label.clone()}</span> }
                             else {
-                                <button id={format!("select-crumb-{id}")} class="px-2" style={|s| colors.control(s).h_full().whitespace_nowrap().bg(rgb(if model.selected.as_ref() == Some(id) { colors.field } else { colors.bar })).hover(|s| s.bg(rgb(colors.field)))}
+                                <button id={format!("select-crumb-{id}")} class={if model.selected.as_ref() == Some(id) { "px-2 h-full whitespace-nowrap hover:bg-field bg-field" } else { "px-2 h-full whitespace-nowrap hover:bg-field bg-bar" }} style={control}
                                     on:click={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, true, window, cx)) } }>{label.clone()}</button>
                             }
                             {icon(Icon::Right, colors.muted)}
                         </div>
                     }
-                    if self.breadcrumbs.is_empty() { <span class="px-2" style={|s| s.text_color(rgb(colors.muted))}>"Rake view tree"</span> }
+                    if self.breadcrumbs.is_empty() { <span class="px-2 text-muted">"Rake view tree"</span> }
                 </div>
             </section>
         }.inspect("inspector.tree");
 
         let details = rake::view! {
             <section id="element-details" class="flex flex-col flex-1 min-w-0 min-h-0" aria-label="Element details">
-                <div class="flex flex-row" style={|s| s.h(px(29.)).flex_shrink_0().bg(rgb(colors.bar)).border_b_1().border_color(rgb(colors.line))}>
+                <div class="flex flex-row h-[29px] shrink-0 bg-bar border-b-1 border-line">
                     for tab in ["Styles", "Layout", "Source"] {
-                        <div id={format!("tab-container-{tab}")} style={|s| s.h_full()}>{self.detail_button(tab, colors, cx)}</div>
+                        <div id={format!("tab-container-{tab}")} class="h-full">{self.detail_button(tab, cx)}</div>
                     }
                 </div>
                 if current_tab == "Styles" {
-                    <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(31.)).flex_shrink_0().border_b_1().border_color(rgb(colors.line))}>
+                    <div class="flex flex-row items-center gap-2 px-2 h-[31px] shrink-0 border-b-1 border-line">
                         {icon(Icon::Search, colors.muted)}
                         <div class="flex-1 min-w-0">{self.style_filter.clone()}</div>
                     </div>
                 }
-                <section id={format!("detail-content-{current_tab}")} scroll={&detail_scroll} class="flex flex-col flex-1 min-h-0" style={|s| s.overflow_y_scroll()}>
-                    if stale { <p class="px-3 py-1" style={|s| s.text_size(px(11.)).text_color(rgb(if self.light { 0x826113 } else { 0xfdd663 })).bg(rgb(if self.light { 0xfff6d9 } else { 0x3b3321 }))}>"Previous capture · details frozen"</p> }
-                    if let Some(error) = &model.lookup_error { <p class="px-3 py-1" style={|s| s.text_size(px(11.)).text_color(rgb(colors.property))}>{error.clone()}</p> }
+                <section id={format!("detail-content-{current_tab}")} scroll={&detail_scroll} class="flex flex-col flex-1 min-h-0 overflow-y-scroll">
+                    if stale { <p class="px-3 py-1 text-[11px] text-warning bg-warning-surface">"Previous capture · details frozen"</p> }
+                    if let Some(error) = &model.lookup_error { <p class="px-3 py-1 text-[11px] text-property">{error.clone()}</p> }
                     if let Some(element) = selected {
                         if current_tab == "Styles" {
-                            <div id="authored-rule" class="flex flex-col" style={|s| s.border_b_1().border_color(rgb(colors.line)).pb(px(6.))}>
-                                <div class="flex flex-row items-center gap-2 px-2" style={|s| s.min_h(px(30.)).font_family(CODE_FONT).text_size(px(11.))}>
-                                    <span class="min-w-0" style={|s| s.text_color(rgb(colors.ink))}>{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
+                            <div id="authored-rule" class="flex flex-col border-b-1 border-line pb-[6px]">
+                                <div class="flex flex-row items-center gap-2 px-2 min-h-[30px] font-code text-[11px]">
+                                    <span class="min-w-0 text-ink">{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
                                     <span class="flex-1"/>
                                     <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; declaration provenance is unavailable."
-                                        style={|s| colors.control(s).flex_shrink_0().text_color(rgb(colors.muted)).underline().hover(|s| s.text_color(rgb(colors.ink)))}
+                                        class="shrink-0 text-muted hover:text-ink" style={|s| control(s).underline()}
                                         on:click={cx.listener(|this, _, _, cx| { this.detail_tab = "Source"; cx.notify(); })}>{source_label(element)}</button>
                                 </div>
                                 for group in [styles::Group::Layout, styles::Group::Spacing, styles::Group::Appearance, styles::Group::Typography, styles::Group::Other] {
                                     <div id={format!("group-{}", group.label())} class="flex flex-col">
                                         if style_rows.iter().any(|row| row.group == group && styles::matches(row, &self.style_query)) {
-                                            <span style={|s| s.pl(px(24.)).pt(px(3.)).text_color(rgb(colors.muted)).font_family(CODE_FONT).text_size(px(10.)).line_height(px(19.))}>{format!("/* {} */", group.label().to_lowercase())}</span>
+                                            <span class="pl-[24px] pt-[3px] text-muted font-code text-[10px] leading-[19px]">{format!("/* {} */", group.label().to_lowercase())}</span>
                                             for row in style_rows.iter().filter(|row| row.group == group && styles::matches(row, &self.style_query)) {
                                                 <div id={format!("property-row-{}", row.name)}>{self.style_row(row, colors, cx)}</div>
                                             }
                                         }
                                     </div>
                                 }
-                                if style_count == 0 { <p class="px-3 py-2" style={|s| s.text_color(rgb(colors.muted))}>{if style_rows.is_empty() { "No authored refinements captured." } else { "No matching properties." }}</p> }
-                                <span class="px-2" style={|s| s.font_family(CODE_FONT)}>"}"</span>
+                                if style_count == 0 { <p class="px-3 py-2 text-muted">{if style_rows.is_empty() { "No authored refinements captured." } else { "No matching properties." }}</p> }
+                                <span class="px-2 font-code">"}"</span>
                             </div>
-                            <p class="px-3 py-2" style={|s| s.text_size(px(10.)).text_color(rgb(colors.muted))}>"Authored base refinements · read-only"</p>
+                            <p class="px-3 py-2 text-[10px] text-muted">"Authored base refinements · read-only"</p>
                         } else {
-                            <div class="px-3 py-2" style={|s| s.font_family(CODE_FONT).border_b_1().border_color(rgb(colors.line)).text_color(rgb(colors.tag))}>{format!("{}{}", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
+                            <div class="px-3 py-2 font-code border-b-1 border-line text-tag">{format!("{}{}", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
                         }
                         if current_tab == "Layout" {
-                            <p class="px-3 py-2" style={|s| s.text_color(rgb(colors.muted))}>"Bounds · window logical pixels"</p>
+                            <p class="px-3 py-2 text-muted">"Bounds · window logical pixels"</p>
                             if let Some(layout) = element.layout {
-                                <div class="m-4 p-4 flex flex-col gap-3 border" style={|s| s.border_color(rgb(colors.line)).items_center().font_family(CODE_FONT)}>
-                                    <span style={|s| s.text_color(rgb(colors.muted))}>{format!("x: {:.1} · y: {:.1}", layout.x, layout.y)}</span>
-                                    <div class="px-4 py-3 border" style={|s| s.border_color(rgb(colors.accent)).bg(rgb(colors.bar))}>{format!("{:.1} × {:.1}", layout.width, layout.height)}</div>
-                                    <span style={|s| s.text_size(px(10.)).text_color(rgb(colors.muted))}>"Measured before clipping"</span>
+                                <div class="m-4 p-4 flex flex-col gap-3 border border-line items-center font-code">
+                                    <span class="text-muted">{format!("x: {:.1} · y: {:.1}", layout.x, layout.y)}</span>
+                                    <div class="px-4 py-3 border border-accent bg-bar">{format!("{:.1} × {:.1}", layout.width, layout.height)}</div>
+                                    <span class="text-[10px] text-muted">"Measured before clipping"</span>
                                 </div>
                             } else { <p class="p-3">"Layout unavailable."</p> }
                         }
@@ -866,61 +861,61 @@ impl Render for ElementsView {
                             {property("Semantic ID", element.semantic_id.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
                             {property("Parent", element.parent.clone().unwrap_or_else(|| "Inspection root".into()), colors)}
                             {property("Entry", element.entry_id.map_or_else(|| "Workspace shell".into(), |id| id.to_string()), colors)}
-                            <p class="px-3 py-2" style={|s| s.text_size(px(10.)).text_color(rgb(colors.muted))}>"Source identifies the inspection boundary."</p>
+                            <p class="px-3 py-2 text-[10px] text-muted">"Source identifies the inspection boundary."</p>
                         }
-                        if element.metadata_truncated { <p class="px-3 py-2" style={|s| s.text_color(rgb(colors.property))}>"Some metadata exceeded capture limits."</p> }
-                    } else { <p class="px-3 py-4" style={|s| s.text_color(rgb(colors.muted))}>"Select an element to inspect its authored styles, layout and source."</p> }
+                        if element.metadata_truncated { <p class="px-3 py-2 text-property">"Some metadata exceeded capture limits."</p> }
+                    } else { <p class="px-3 py-4 text-muted">"Select an element to inspect its authored styles, layout and source."</p> }
                 </section>
             </section>
         }.inspect("inspector.details");
 
         rake::view! {
-            <div id="inspector" class="size-full flex flex-col min-h-0" style={|s| s.relative().bg(rgb(colors.background)).text_color(rgb(colors.ink)).text_size(px(12.)).line_height(px(20.)).track_focus(&self.focus)}
+            <div id="inspector" class="size-full flex flex-col min-h-0 relative bg-background text-ink text-[12px] leading-[20px]" focus={&self.focus}
                 on:key-down={cx.listener(Self::key)}
                 on:mouse-move={cx.listener(|this, event: &MouseMoveEvent, window, cx| { if this.dragging { if event.dragging() { this.split = (f32::from(event.position.x) / f32::from(window.viewport_size().width)).clamp(0.2, 0.8); cx.notify(); } else { this.dragging = false; } } })}
                 on:mouse-up={cx.listener(|this, _, _, _| this.dragging = false)}>
-                <div class="flex flex-row items-center" style={|s| s.h(px(32.)).flex_shrink_0().bg(rgb(colors.bar)).border_b_1().border_color(rgb(colors.line))}>
-                    <div class="flex flex-row items-center gap-1 px-2" style={|s| s.text_color(rgb(colors.muted))}>{icon(Icon::Code, colors.muted)}<span>"Rake"</span></div>
-                    <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
-                    <div class="flex items-center px-3" style={|s| s.h_full().border_b_2().border_color(rgb(colors.accent)).text_color(rgb(colors.accent)).font_weight(FontWeight::SEMIBOLD)}>"Elements"</div>
+                <div class="flex flex-row items-center h-[32px] shrink-0 bg-bar border-b-1 border-line">
+                    <div class="flex flex-row items-center gap-1 px-2 text-muted">{icon(Icon::Code, colors.muted)}<span>"Rake"</span></div>
+                    <span class="w-[1px] h-[16px] bg-line"/>
+                    <div class="flex items-center px-3 h-full border-b-2 border-accent text-accent font-semibold">"Elements"</div>
                     <span class="flex-1"/>
-                    <button id="targets" aria-label="Select target runtime" class="flex flex-row items-center gap-1 px-2" style={|s| colors.control(s).h(px(26.)).text_color(rgb(colors.muted)).hover(|s| s.bg(rgb(colors.field)))}
+                    <button id="targets" aria-label="Select target runtime" class="flex flex-row items-center gap-1 px-2 h-[26px] text-muted hover:bg-field" style={control}
                         on:click={cx.listener(|this, _, _, cx| { this.show_targets = !this.show_targets; cx.notify(); })}><span>{target_name}</span>{icon(Icon::Down, colors.muted)}</button>
-                    <span style={|s| s.w(px(1.)).h(px(16.)).bg(rgb(colors.line))}/>
-                    <button id="find" aria-label="Find in element tree" style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
+                    <span class="w-[1px] h-[16px] bg-line"/>
+                    <button id="find" aria-label="Find in element tree" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
                     <button id="reveal-selection" disabled={!can_reveal} aria-label="Reveal selected element in tree" aria-description="Expand its current ancestors and scroll it into view. A replaced capture cannot be retargeted."
-                        style={|s| colors.control(s).w(px(30.)).h_full().opacity(if can_reveal { 1. } else { 0.35 }).hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, window, cx| this.reveal_selection(window, cx))}>{icon(Icon::Reveal, colors.muted)}</button>
-                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
-                    <button id="refresh" aria-label="Refresh capture" style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
-                    <button id="theme" aria-label="Toggle theme" style={|s| colors.control(s).w(px(30.)).h_full().hover(|s| s.bg(rgb(colors.field)))} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
+                        class="w-[30px] h-full hover:bg-field opacity-100" class:opacity-35={!can_reveal} style={control} on:click={cx.listener(|this, _, window, cx| this.reveal_selection(window, cx))}>{icon(Icon::Reveal, colors.muted)}</button>
+                    <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
+                    <button id="refresh" aria-label="Refresh capture" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
+                    <button id="theme" aria-label="Toggle theme" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; rake::theme::install(cx, Palette::new(this.light)); this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
                 </div>
-                if let Some(error) = error { <p class="px-3 py-1" style={|s| s.text_color(rgb(colors.property)).border_b_1().border_color(rgb(colors.line))}>{error}</p> }
-                <div class="flex flex-1 min-h-0 min-w-0" style={|s| if narrow { s.flex_col() } else { s.flex_row() }}>
+                if let Some(error) = error { <p class="px-3 py-1 text-property border-b-1 border-line">{error}</p> }
+                <div class="flex flex-1 min-h-0 min-w-0" class:flex-col={narrow} class:flex-row={!narrow}>
                     {tree_pane}
                     if !narrow {
-                        <div id="divider" tabindex={0} aria-label="Resize inspection panes" style={|s| s.w(px(4.)).h_full().flex_shrink_0().border_l_1().border_color(rgb(colors.line)).cursor(CursorStyle::ResizeColumn).track_focus(&self.divider).hover(|s| s.bg(rgb(colors.field)))}
+                        <div id="divider" tabindex={0} aria-label="Resize inspection panes" class="w-[4px] h-full shrink-0 border-l-1 border-line hover:bg-field" style={|s| s.cursor(CursorStyle::ResizeColumn).track_focus(&self.divider)}
                             on:mouse-down={cx.listener(|this, _, window, cx| { this.dragging = true; window.focus(&this.divider, cx); })}
                             on:key-down={cx.listener(|this, event: &KeyDownEvent, _, cx| { match event.keystroke.key.as_str() { "left" => this.split = (this.split - 0.025).max(0.2), "right" => this.split = (this.split + 0.025).min(0.8), "home" => this.split = 0.2, "end" => this.split = 0.8, _ => return } cx.stop_propagation(); cx.notify(); })}/>
                     }
                     {details}
                 </div>
                 if self.show_coverage {
-                    <section class="px-3 py-2" style={|s| s.flex_shrink_0().border_t_1().border_color(rgb(colors.line)).bg(rgb(colors.bar)).text_size(px(11.)).text_color(rgb(colors.muted))} aria-label="Inspection coverage">
+                    <section class="px-3 py-2 shrink-0 border-t-1 border-line bg-bar text-[11px] text-muted"  aria-label="Inspection coverage">
                         <p>{model.tree.as_ref().map_or_else(|| "Waiting for capture coverage.".into(), |tree| tree.coverage.clone())}</p>
                         <p>"Tree id attributes show semantic IDs. Source links identify inspection boundaries."</p>
                     </section>
                 }
-                <div class="flex flex-row items-center gap-2 px-2" style={|s| s.h(px(23.)).flex_shrink_0().bg(rgb(colors.bar)).border_t_1().border_color(rgb(colors.line)).text_size(px(10.)).text_color(rgb(colors.muted))}>
-                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1" style={|s| colors.control(s).h_full().hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
+                <div class="flex flex-row items-center gap-2 px-2 h-[23px] shrink-0 bg-bar border-t-1 border-line text-[10px] text-muted">
+                    <button id="coverage" aria-label="Show capture and coverage details" class="flex flex-row items-center gap-1 h-full hover:text-ink" style={control} on:click={cx.listener(|this, _, _, cx| { this.show_coverage = !this.show_coverage; cx.notify(); })}>{icon(if self.show_coverage { Icon::Down } else { Icon::Right }, colors.muted)}<span>{capture_status}</span></button>
                     <span class="flex-1"/>
-                    <span style={|s| s.w(px(6.)).h(px(6.)).rounded_full().bg(rgb(if model.disconnected { colors.muted } else if self.config_error.is_some() || model.error.is_some() { colors.property } else { 0x6d9668 }))}/>
+                    <span class={if model.disconnected { "w-[6px] h-[6px] rounded-full bg-muted" } else if self.config_error.is_some() || model.error.is_some() { "w-[6px] h-[6px] rounded-full bg-property" } else { "w-[6px] h-[6px] rounded-full bg-status-success" }}/>
                     <span>{status}</span>
-                    <button id="disconnect" style={|s| colors.control(s).h_full().px(px(5.)).hover(|s| s.text_color(rgb(colors.ink)))} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
+                    <button id="disconnect" class="h-full px-[5px] hover:text-ink" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
                 </div>
                 if self.show_targets {
-                    <section id="target-menu" class="flex flex-col p-1 border" style={|s| s.absolute().top(px(32.)).right(px(6.)).w(px(490.)).max_w_full().max_h(px(220.)).overflow_y_scroll().bg(rgb(colors.background)).border_color(rgb(colors.line)).shadow_lg()}>
+                    <section id="target-menu" class="flex flex-col p-1 border absolute top-[32px] right-[6px] w-[490px] max-w-[100%] max-h-[220px] overflow-y-scroll bg-background border-line shadow-lg">
                         for instance in &model.instances {
-                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2" style={|s| colors.control(s).justify_start().text_size(px(11.)).hover(|s| s.bg(rgb(colors.hover)))} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
+                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2 justify-start text-[11px] hover:bg-hover" style={control} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
                         }
                         if model.instances.is_empty() { <p class="p-3">"No runtimes advertised by this broker."</p> }
                     </section>

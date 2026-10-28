@@ -89,6 +89,7 @@ impl PlatformTextSystem for RecordedText {
 #[derive(Clone, Copy, Debug)]
 enum Scene {
     Initial,
+    LightTheme,
     Counted,
     LockedHidden,
     Actions,
@@ -141,6 +142,7 @@ fn expected_text(scene: Scene) -> BTreeSet<String> {
 fn example_complete_composed_text_matches_reviewed_fixtures() {
     for scene in [
         Scene::Initial,
+        Scene::LightTheme,
         Scene::Counted,
         Scene::LockedHidden,
         Scene::Actions,
@@ -160,6 +162,10 @@ fn example_complete_composed_text_matches_reviewed_fixtures() {
             },
             |window, cx| {
                 let mut counter = Counter::new(window, cx);
+
+                if matches!(scene, Scene::LightTheme) {
+                    counter.toggle_theme(&super::ToggleTheme, window, cx);
+                }
 
                 if matches!(scene, Scene::Counted | Scene::LockedHidden) {
                     counter.increment(&Increment, window, cx);
@@ -211,7 +217,10 @@ fn example_complete_composed_text_matches_reviewed_fixtures() {
 fn tooltip_complete_text_matches_the_real_help_view() {
     let text = Arc::new(RecordedText::default());
     let mut app = gpui::TestApp::with_text_system(text.clone());
-    let mut window = app.open_window(|_, _| components::ActionsHint);
+    let mut window = app.open_window(|_, cx| {
+        rake::theme::install(cx, super::Colors::dark());
+        components::ActionsHint
+    });
 
     window.draw();
 

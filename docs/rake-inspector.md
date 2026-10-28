@@ -36,7 +36,14 @@ Styles, Layout, and Source show owned metadata from the target. The divider also
 supports Left/Right and Home/End when focused. At narrow widths, the panes stack.
 The interface starts in a light theme, with a compact toolbar and a 55/45 split.
 Connection, capture and coverage details live in the bottom status bar. The theme
-button switches both panes and their inputs together.
+button switches both panes and their inputs together. Its typed, app-owned
+`Palette` derives `rake::Theme` and is declared once with `rake::theme!`.
+Setup and switching use `rake::theme::install`; named classes and the shared
+focus preset read that ambient value. Static styling in `view.rs` uses the
+[class grammar](experimental-view.md#class-grammar), reducing style closures
+from 84 to 10. Computed layout, captured swatches and tree semantics keep GPUI
+builders. The explicit-palette property helper also retains its builders so its
+construction-only identity test needs no ambient application setup.
 
 The tree uses monospace type names, syntax-colored semantic `id` attributes,
 indentation guides, real disclosure controls, closing tags and ancestor

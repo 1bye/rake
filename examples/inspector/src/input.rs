@@ -327,13 +327,13 @@ impl Render for FilterInput {
             .line_height(px(22.))
             .rounded(px(12.))
             .border_1()
-            .border_color(rgb(if focused { 0x8ab4f8 } else { colors.field }))
-            .bg(rgb(colors.field))
-            .text_color(rgb(if self.text.is_empty() {
+            .border_color(if focused { rgb(0x8ab4f8) } else { colors.field })
+            .bg(colors.field)
+            .text_color(if self.text.is_empty() {
                 colors.muted
             } else {
                 colors.ink
-            }))
+            })
             .overflow_hidden()
             .on_key_down(cx.listener(Self::key))
             .on_mouse_down(

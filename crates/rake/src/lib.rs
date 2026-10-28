@@ -51,6 +51,41 @@ pub use rake_macros::{Command, Route, app, data, instrument};
 /// };
 /// ```
 ///
+/// Classes support explicit units, interaction variants and literal branches:
+///
+/// ```
+/// let selected = true;
+/// let _ = rake::view! {
+///     <button class="h-[24px] px-2 hover:opacity-50"
+///         class:font-bold={selected}>Save</button>
+/// };
+/// ```
+///
+/// App-owned themes and reusable style functions keep views concise:
+///
+/// ```
+/// use rake::gpui::{self, IntoElement};
+/// #[derive(Clone, rake::Theme)]
+/// struct Colors { surface: gpui::Rgba, ink: gpui::Rgba }
+/// rake::theme!(Colors);
+/// #[rake::style("px-2 rounded-sm hover:bg-surface")]
+/// fn control();
+/// fn panel() -> impl IntoElement {
+///     rake::view! { <button class="text-ink" style={control}>Save</button> }
+/// }
+/// fn setup(cx: &mut gpui::App) {
+///     rake::theme::install(cx, Colors { surface: gpui::rgb(0x223344), ink: gpui::rgb(0xffffff) });
+/// }
+/// # fn main() {}
+/// ```
+///
+/// Declare the theme at the crate root and install it on the UI thread before
+/// constructing views. Built-in utility values take precedence over theme fields;
+/// hyphens in field names become underscores. Inline theme text accepts colors,
+/// while `TextToken` typography belongs on the paragraph. Each invocation reads
+/// one theme handle at construction. Presets and classes cannot both set the same
+/// interaction kind; named functions are opaque to the conflict heuristic.
+///
 /// Mount stateful views by borrowing an entity retained by their owner:
 ///
 /// ```

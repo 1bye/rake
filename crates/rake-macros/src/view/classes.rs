@@ -12,7 +12,7 @@ pub(super) mod value;
 
 pub(super) use branch::{compile as expression_plan, compile_with as expression_plan_with};
 
-const LENGTH_PREFIXES: &[(&str, &str)] = &[
+pub(super) const LENGTH_PREFIXES: &[(&str, &str)] = &[
     ("min-w", "min_w"),
     ("max-w", "max_w"),
     ("min-h", "min_h"),
