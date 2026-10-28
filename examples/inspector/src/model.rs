@@ -198,6 +198,13 @@ impl Inspector {
                         }) {
                             self.hover = None;
                         }
+                        if let Some(current) = self
+                            .selected
+                            .as_ref()
+                            .and_then(|id| tree.elements.iter().find(|element| &element.id == id))
+                        {
+                            self.detail = Some(current.clone());
+                        }
                         self.tree = Some(tree);
                         self.error = None;
                         self.apply_pick();

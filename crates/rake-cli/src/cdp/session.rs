@@ -33,6 +33,7 @@ struct Session {
     highlight: Option<(String, String)>,
     last_hover: Option<(String, String)>,
     last_pick_sequence: u64,
+    tracked_style_node: Option<i32>,
 }
 
 impl Session {
@@ -54,6 +55,7 @@ impl Session {
             highlight: None,
             last_hover: None,
             last_pick_sequence: 0,
+            tracked_style_node: None,
         }
     }
 
@@ -128,8 +130,17 @@ impl Session {
                 Ok(json!({}))
             }
             "DOM.enable" | "CSS.enable" => {
-                self.domains
+                let fresh = self
+                    .domains
                     .insert(method.split('.').next().unwrap_or_default().into());
+                if method == "CSS.enable" && fresh {
+                    self.event(Event::new("CSS.styleSheetAdded", json!({"header":{
+                        "styleSheetId":"rake-resolved", "frameId":"rake", "sourceURL":"rake://resolved-styles",
+                        "origin":"regular", "title":"GPUI resolved styles", "disabled":false,
+                        "isInline":false, "isMutable":false, "isConstructed":true,
+                        "startLine":0, "startColumn":0, "length":0
+                    }})));
+                }
                 if method == "DOM.enable" {
                     self.warning("Rake layout uses the same bounds for all box quads; separate margin/padding metrics are unavailable. Styles are authored GPUI metadata.".into());
                 }
@@ -157,6 +168,23 @@ impl Session {
             | "CSS.getInlineStylesForNode"
             | "CSS.getMatchedStylesForNode"
             | "CSS.getComputedStyleForNode" => self.dom.handle(method, &request.params),
+            "CSS.getStyleSheetText" if request.params["styleSheetId"] == "rake-resolved" => {
+                Ok(json!({"text":self.dom.style_sheet_text()}))
+            }
+            "CSS.trackComputedStyleUpdatesForNode" => {
+                self.tracked_style_node = if request.params["nodeId"].is_null() {
+                    None
+                } else {
+                    self.dom.handle("DOM.getAttributes", &request.params)?;
+                    Some(
+                        request.params["nodeId"]
+                            .as_i64()
+                            .and_then(|id| i32::try_from(id).ok())
+                            .ok_or_else(|| Error::new(-32602, "nodeId required"))?,
+                    )
+                };
+                Ok(json!({}))
+            }
             "Overlay.highlightNode" | "Overlay.hideHighlight" | "Overlay.setInspectMode" => {
                 let command = self.dom.overlay_command(method, &request.params)?;
                 if !self.instance.info.element_interaction {
@@ -458,7 +486,20 @@ impl Session {
             return Err(Error::new(-32000, "Unexpected inspection reply"));
         };
         if self.dom.update(snapshot)? && self.domains.contains("DOM") {
+            self.tracked_style_node = None;
             self.event(Event::new("DOM.documentUpdated", json!({})));
+        }
+        let changed = self.dom.take_style_updates();
+        if !changed.is_empty() && self.domains.contains("CSS") {
+            self.event(Event::new(
+                "CSS.styleSheetChanged",
+                json!({"styleSheetId":"rake-resolved"}),
+            ));
+            for id in changed {
+                if self.tracked_style_node == Some(id) {
+                    self.event(Event::new("CSS.computedStyleUpdated", json!({"nodeId":id})));
+                }
+            }
         }
         Ok(())
     }
@@ -467,6 +508,7 @@ impl Session {
         self.cleanup();
         self.last_hover = None;
         self.last_pick_sequence = 0;
+        self.tracked_style_node = None;
         let old = self.instance.info.runtime_id;
         self.instance = instance;
         self.cursor = 0;
@@ -774,6 +816,72 @@ mod tests {
             ))
             .unwrap();
         assert!(session.outbound.is_empty());
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn live_style_events_invalidate_chrome_without_document_resets() {
+        let mut snapshot = capture("live");
+        snapshot.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
+            properties: json!({"opacity":1.0}),
+            hovered: false,
+        });
+        let mut initial = true;
+        let (instance, worker, path) = fixture(
+            move |_| {
+                if initial {
+                    initial = false;
+                } else {
+                    snapshot.elements[0].resolved.as_mut().unwrap().properties["opacity"] =
+                        json!(0.5);
+                    snapshot.elements[0].resolved.as_mut().unwrap().hovered = true;
+                }
+                Reply::Elements(snapshot.clone())
+            },
+            2,
+        );
+        let mut session = Session::new(instance, None);
+        let request = |method: &str, params| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        session.handle(&request("CSS.enable", json!({}))).unwrap();
+        assert_eq!(
+            session.outbound.front().unwrap().0.method,
+            "CSS.styleSheetAdded"
+        );
+        let doc = session
+            .handle(&request("DOM.getDocument", json!({})))
+            .unwrap();
+        let id = doc["root"]["children"][0]["nodeId"].as_i64().unwrap();
+        session
+            .handle(&request(
+                "CSS.trackComputedStyleUpdatesForNode",
+                json!({"nodeId":id}),
+            ))
+            .unwrap();
+        session.outbound.clear();
+        session.outbound_bytes = 0;
+        session.refresh_dom().unwrap();
+        let events: Vec<_> = session
+            .outbound
+            .iter()
+            .map(|(event, _)| event.method.as_str())
+            .collect();
+        assert_eq!(
+            events,
+            ["CSS.styleSheetChanged", "CSS.computedStyleUpdated"]
+        );
+        assert_eq!(session.outbound.back().unwrap().0.params["nodeId"], id);
+        let text = session
+            .handle(&request(
+                "CSS.getStyleSheetText",
+                json!({"styleSheetId":"rake-resolved"}),
+            ))
+            .unwrap();
+        assert!(text["text"].as_str().unwrap().contains("0.5"));
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }

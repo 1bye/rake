@@ -279,6 +279,8 @@ async function refresh() {
         const tree = await query('inspect_tree', {}, runtime);
         if (runtime !== model.runtime) return;
         elements = tree.value;
+        const current = elements.elements.find(element => element.id === selectedElement);
+        if (current) elementDetail = current;
         if (hoveredBoundary && hoveredBoundary.generation !== elements.capture) hoveredBoundary = null;
       }
       if (!connected) message('Connected to ' + (info?.platform || 'application') + ' runtime.');
@@ -596,7 +598,7 @@ function elementsPanel() {
     details('Inspection coverage', elements.coverage, 'inspection-coverage'));
   const detail = el('div');
   const tabs = el('div', null, 'inspector-tabs');
-  for (const name of ['Styles', 'Layout', 'Source']) {
+  for (const name of ['Styles', 'Computed', 'Layout', 'Source']) {
     const control = button(name, () => { elementTab = name; render(true); });
     control.dataset.focus = 'element-tab:' + name;
     control.setAttribute('aria-pressed', String(elementTab === name)); tabs.append(control);
@@ -609,12 +611,14 @@ function elementsPanel() {
     const layout = selected.layout, source = selected.source;
     detail.append(append(el('div', null, 'element-identity'), el('span', selected.kind, 'syntax-tag'), el('p', selected.semantic_id ?? 'Semantic ID not supplied', 'syntax-value'),
       el('p', selected.id, 'muted'), el('p', source ? `${source.file}:${source.line}:${source.column}` : 'Source location unavailable.', 'muted')));
-    if (elementTab === 'Styles') {
-      if (selected.styles) {
-        const styles = append(el('div', null, 'style-block'), el('span', 'Authored base styles {', 'muted'));
-        for (const [property, value] of Object.entries(selected.styles)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
+    if (elementTab === 'Styles' || elementTab === 'Computed') {
+      const values = elementTab === 'Computed' ? selected.resolved?.properties : selected.styles;
+      if (values) {
+        const heading = elementTab === 'Computed' ? `Resolved GPUI styles${selected.resolved.hovered ? ' · hovered' : ''} {` : 'Authored base styles {';
+        const styles = append(el('div', null, 'style-block'), el('span', heading, 'muted'));
+        for (const [property, value] of Object.entries(values)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
         styles.append(el('span', '}', 'muted')); detail.append(styles);
-      } else detail.append(empty('Style refinements unavailable for this boundary.'));
+      } else detail.append(empty(elementTab === 'Computed' ? 'Resolved styles unavailable for this boundary. Rebuild the app if it predates resolved capture.' : 'Style refinements unavailable for this boundary.'));
     }
     if (elementTab !== 'Source') {
       detail.append(el('h3', 'Layout', 'pane-heading'));

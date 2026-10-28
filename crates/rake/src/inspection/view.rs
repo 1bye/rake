@@ -99,7 +99,7 @@ impl<E: gpui::Element> IntoElement for Inspected<E> {
 
 impl<E: gpui::Element> gpui::Element for Inspected<E> {
     type RequestLayoutState = E::RequestLayoutState;
-    type PrepaintState = (E::PrepaintState, Option<gpui::AnyElement>);
+    type PrepaintState = (E::PrepaintState, Option<gpui::AnyElement>, Option<usize>);
 
     fn id(&self) -> Option<ElementId> {
         self.inner.id()
@@ -143,6 +143,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             })
         });
 
+        let mut retained_index = None;
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
             let owner = self
                 .owner
@@ -216,15 +217,16 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                         .then_some(mask)
                 },
                 styles,
+                resolved: None,
                 metadata_truncated: truncated,
                 tab_id: owner.map(|owner| owner.0),
                 entry_id: owner.map(|owner| owner.1),
             };
 
-            let parent = capture
-                .snapshot
-                .retain(element, &mut capture.bytes)
-                .or_else(|| capture.parents.last().cloned().flatten());
+            let index = capture.snapshot.elements.len();
+            let retained = capture.snapshot.retain(element, &mut capture.bytes);
+            retained_index = retained.as_ref().map(|_| index);
+            let parent = retained.or_else(|| capture.parents.last().cloned().flatten());
 
             capture.parents.push(parent);
             capture.owners.push(owner);
@@ -251,7 +253,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             .root
             .as_ref()
             .and_then(|(store, _, host)| overlay(store, *host, window, cx));
-        (result, overlay)
+        (result, overlay, retained_index)
     }
 
     fn paint(
@@ -264,11 +266,40 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let previous = self.root.as_ref().and_then(|(store, _, host)| {
+            let snapshot = store.0.borrow().windows.get(host)?.snapshot.clone();
+            Some(cx.global_mut::<ActiveCapture>().0.replace(Capture {
+                snapshot,
+                parents: Vec::new(),
+                owners: Vec::new(),
+                bytes: 0,
+            }))
+        });
+        if let Some(index) = prepaint.2
+            && cx.global::<ActiveCapture>().0.is_some()
+        {
+            let resolved = resolved_style(&mut self.inner, &prepaint.0, id, bounds, window, cx);
+            if let Some(element) = cx
+                .global_mut::<ActiveCapture>()
+                .0
+                .as_mut()
+                .and_then(|capture| capture.snapshot.elements.get_mut(index))
+            {
+                element.resolved = resolved;
+            }
+        }
         if let Some((store, _, host)) = &self.root {
             listeners(store, *host, window, cx);
         }
         self.inner
             .paint(id, inspector_id, bounds, state, &mut prepaint.0, window, cx);
+        if let Some(previous) = previous {
+            let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
+            if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
+                completed.snapshot.bound_resolved_styles();
+                store.publish(*host, completed.snapshot);
+            }
+        }
         if let Some(overlay) = &mut prepaint.1 {
             overlay.paint(window, cx);
         }
@@ -288,6 +319,100 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         builder: &mut gpui::A11ySubtreeBuilder,
     ) {
         self.inner.a11y_synthetic_children(&mut prepaint.0, builder);
+    }
+}
+
+fn resolved_style<E: gpui::Element>(
+    inner: &mut E,
+    prepaint: &E::PrepaintState,
+    id: Option<&GlobalElementId>,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<super::ResolvedStyle> {
+    use gpui::{InteractiveElement, Refineable};
+    use std::any::Any;
+    let hitbox = (prepaint as &dyn Any)
+        .downcast_ref::<Option<gpui::Hitbox>>()?
+        .as_ref();
+    let inner = inner as &mut dyn Any;
+    let interactive = if inner.is::<gpui::Div>() {
+        inner.downcast_mut::<gpui::Div>()?.interactivity()
+    } else {
+        inner
+            .downcast_mut::<gpui::Stateful<gpui::Div>>()?
+            .interactivity()
+    };
+    let style = interactive.compute_style(id, hitbox, window, cx);
+    let mut text = window.text_style();
+    text.refine(&style.text);
+    let font_size = text.font_size.to_pixels(window.rem_size());
+    text.line_height = text
+        .line_height
+        .to_pixels(font_size.into(), window.rem_size())
+        .into();
+    text.font_size = font_size.into();
+    let mut properties = serde_json::to_value(style.subtract(&Default::default())).ok()?;
+    properties["text"] = serde_json::to_value(text.subtract(&Default::default())).ok()?;
+    if style.background.is_none() {
+        properties["background"] = serde_json::Value::Null;
+    }
+    if style.border_color.is_none() {
+        properties["border_color"] = serde_json::Value::Null;
+    }
+    properties["opacity"] = serde_json::json!(style.opacity.unwrap_or(1.));
+    properties["size"] = serde_json::json!({
+        "width":format!("{}px", f32::from(bounds.size.width)),
+        "height":format!("{}px", f32::from(bounds.size.height)),
+    });
+    resolve_lengths(&mut properties, window.rem_size().into());
+    Some(super::ResolvedStyle {
+        properties,
+        hovered: hitbox.is_some_and(|hitbox| hitbox.is_hovered(window)),
+    })
+}
+
+fn resolve_lengths(properties: &mut serde_json::Value, rem_size: f32) {
+    for name in [
+        "size",
+        "min_size",
+        "max_size",
+        "inset",
+        "padding",
+        "margin",
+        "gap",
+        "border_widths",
+        "corner_radii",
+        "flex_basis",
+        "scrollbar_width",
+    ] {
+        if let Some(value) = properties.get_mut(name) {
+            resolve_rems(value, rem_size);
+        }
+    }
+}
+
+fn resolve_rems(value: &mut serde_json::Value, rem_size: f32) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(number) = text
+                .strip_suffix("rem")
+                .and_then(|text| text.parse::<f32>().ok())
+            {
+                *text = format!("{}px", number * rem_size);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for value in fields.values_mut() {
+                resolve_rems(value, rem_size);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                resolve_rems(value, rem_size);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -470,6 +595,15 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    #[test]
+    fn length_resolution_preserves_literal_font_names_and_percentages() {
+        let mut value = serde_json::json!({"text":{"font_family":"2rem"}, "padding":{"top":"0.5rem","left":"50%"}});
+        resolve_lengths(&mut value, 16.);
+        assert_eq!(value["text"]["font_family"], "2rem");
+        assert_eq!(value["padding"]["top"], "8px");
+        assert_eq!(value["padding"]["left"], "50%");
+    }
+
     struct TestView {
         store: Store,
         clicks: Rc<Cell<u32>>,
@@ -485,16 +619,107 @@ mod tests {
                 })
                 .child(
                     gpui::div()
-                        .absolute()
-                        .left(gpui::px(80.))
-                        .top(gpui::px(120.))
-                        .w(gpui::px(100.))
-                        .h(gpui::px(40.))
-                        .inspect("offset-button"),
+                        .text_color(gpui::rgb(0xabcdef))
+                        .text_size(gpui::rems(1.5))
+                        .child(
+                            gpui::div()
+                                .absolute()
+                                .left(gpui::px(80.))
+                                .top(gpui::px(120.))
+                                .w(gpui::px(100.))
+                                .h(gpui::px(40.))
+                                .bg(gpui::rgb(0x29424b))
+                                .hover(|style| style.bg(gpui::rgb(0x365849)))
+                                .inspect("offset-button"),
+                        ),
                 )
                 .inspect("button")
                 .root(self.store.clone(), 0, WindowId(1))
         }
+    }
+
+    #[test]
+    fn resolved_styles_follow_real_hover_and_uninstrumented_text_inheritance() {
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (_, cx) = app.add_window_view(|_, _| TestView {
+            store: store.clone(),
+            clicks: Rc::new(Cell::new(0)),
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let before = store.snapshot();
+        let button = |snapshot: &Snapshot| {
+            snapshot
+                .elements
+                .iter()
+                .find(|element| element.semantic_id.as_deref() == Some("offset-button"))
+                .unwrap()
+                .clone()
+        };
+        let initial = button(&before);
+        let resolved = initial.resolved.as_ref().unwrap();
+        assert!(!resolved.hovered);
+        assert_eq!(
+            super::super::styles::color(&resolved.properties["background"])
+                .unwrap()
+                .css(),
+            "#29424b"
+        );
+        assert_eq!(
+            super::super::styles::color(&resolved.properties["text"]["color"])
+                .unwrap()
+                .css(),
+            "#abcdef"
+        );
+        assert!(
+            resolved.properties["text"]["font_size"]
+                .as_str()
+                .unwrap()
+                .ends_with("px")
+        );
+        assert_eq!(resolved.properties["size"]["width"], "100px");
+        let moving = |cx: &mut gpui::VisualTestContext, x, y| {
+            cx.simulate_event(gpui::MouseMoveEvent {
+                position: gpui::point(gpui::px(x), gpui::px(y)),
+                pressed_button: None,
+                modifiers: Default::default(),
+            });
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            });
+        };
+        moving(cx, 100., 140.);
+        let hovered = store.snapshot();
+        let hovered_button = button(&hovered);
+        let resolved = hovered_button.resolved.as_ref().unwrap();
+        assert!(resolved.hovered);
+        assert_eq!(
+            super::super::styles::color(&resolved.properties["background"])
+                .unwrap()
+                .css(),
+            "#365849"
+        );
+        assert_eq!(
+            hovered.capture, before.capture,
+            "style changes must keep selection IDs stable"
+        );
+        assert_eq!(hovered_button.id, initial.id);
+        assert_eq!(
+            hovered_button.styles, initial.styles,
+            "authored styles remain separate"
+        );
+        moving(cx, 5., 5.);
+        let after = button(&store.snapshot());
+        assert!(!after.resolved.as_ref().unwrap().hovered);
+        assert_eq!(
+            super::super::styles::color(&after.resolved.unwrap().properties["background"])
+                .unwrap()
+                .css(),
+            "#29424b"
+        );
     }
 
     #[test]

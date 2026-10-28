@@ -49,7 +49,8 @@ identity. Each node has an opaque `element-CAPTURE-INDEX` ID, its nearest inspec
 ancestor, Rust element type, semantic identity, construction site, real GPUI layout
 and authored base style refinements. IDs belong to one runtime and one capture;
 a changed capture expires them, even when semantic IDs repeat. Identical boundary
-metadata/geometry keeps its generation across highlight-only redraws. A restarted runtime rejects
+metadata/geometry keeps its generation across highlight-only redraws. Style-only
+updates also keep the generation and element IDs, so selection survives hover changes. A restarted runtime rejects
 the old request envelope. `NotRetained` means refresh the tree and explicitly
 select a new node. Capture IDs are strings to avoid JavaScript numeric precision
 loss. The panel keeps selected details frozen when their capture is replaced;
@@ -65,14 +66,26 @@ inspection boundaries**, with uninstrumented intermediates omitted. Opaque child
 and reused cached GPUI subtrees are not enumerated; their missing node count is
 unknown. Layout uses window-local logical pixels after layout/offsets, before
 clipping; `content_mask` separately records its intersection with the inherited
-content mask and viewport for picking. Styles are the
-serialized authored GPUI base refinement captured at the annotation, not computed,
-inherited, hover or focus styles. Text contents are excluded. Every snapshot
+content mask and viewport for picking. `styles` contains the serialized authored
+base refinement. `resolved` separately contains `properties` (GPUI's live resolved
+visual style) and `hovered` (the actual hitbox state). `Div` and `Stateful<Div>` boundaries
+sample GPUI's public resolver during paint, including current hover, focus, active
+and group states plus inherited text from uninstrumented parents. Defaults are
+included, rem lengths are normalized to pixels, and width/height are measured.
+Other relative layout lengths retain their native units; this is not a browser
+CSS cascade. Custom/opaque boundaries without a resolver omit `resolved`.
+Older runtimes also omit it. Text contents are excluded. Every snapshot
 carries this coverage description, even when it has no nodes.
+
+Each resolved style is bounded to 16 KiB and the remaining total snapshot budget.
+If it does not fit, `resolved` is omitted and `metadata_truncated` is true; its
+boundary and authored metadata are retained. Both Rake frontends provide a
+**Computed** tab and refresh selected details while their exact ID remains live.
+The **Styles** tab retains the authored base refinements.
 
 Capture retains at most 256 nodes and less than 512 KiB of serialized data, leaving
 room in the transport's 1 MiB frame. Omitted inspected nodes are counted. Semantic
-IDs/type names are limited to 256 UTF-8 bytes, source paths to 512, and style data
+IDs/type names are limited to 256 UTF-8 bytes, source paths to 512, and authored style data
 to 4 KiB per node. Oversized styles are unavailable; shortened/omitted metadata
 sets `metadata_truncated`. Non-finite geometry is unavailable. A snapshot replaces
 the previous one; there is no unbounded frame history. Source paths, semantic IDs

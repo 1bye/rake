@@ -13,6 +13,7 @@ pub(super) struct Dom {
     omitted_id: i32,
     sent: BTreeSet<i32>,
     children_sent: BTreeSet<i32>,
+    style_updates: BTreeSet<i32>,
 }
 
 impl Dom {
@@ -22,12 +23,28 @@ impl Dom {
             .as_ref()
             .is_some_and(|old| old.capture == snapshot.capture && old.status == snapshot.status)
         {
+            for (&id, element) in &mut self.nodes {
+                if let Some(current) = snapshot
+                    .elements
+                    .iter()
+                    .find(|current| current.id == element.id)
+                {
+                    if (current.styles != element.styles || current.resolved != element.resolved)
+                        && self.sent.contains(&id)
+                    {
+                        self.style_updates.insert(id);
+                    }
+                    *element = current.clone();
+                }
+            }
+            self.snapshot = Some(snapshot);
             return Ok(false);
         }
         let changed = self.snapshot.is_some();
         self.nodes.clear();
         self.sent.clear();
         self.children_sent.clear();
+        self.style_updates.clear();
         self.next = self.next.max(2);
         for element in &snapshot.elements {
             let id = self.next;
@@ -49,6 +66,25 @@ impl Dom {
 
     pub fn generation(&self) -> Option<&str> {
         self.snapshot.as_ref().map(|s| s.capture.as_str())
+    }
+
+    pub fn take_style_updates(&mut self) -> Vec<i32> {
+        std::mem::take(&mut self.style_updates)
+            .into_iter()
+            .collect()
+    }
+
+    pub fn style_sheet_text(&self) -> String {
+        let mut text = String::from("/* Read-only GPUI resolved style snapshots. */\n");
+        for (&id, element) in &self.nodes {
+            let style = super::styles::inline(visual_style(element));
+            text.push_str(&format!(
+                "/* {} */\n[data-rake-node=\"{id}\"] {{\n{}\n}}\n",
+                element.id,
+                style["cssText"].as_str().unwrap_or_default()
+            ));
+        }
+        text
     }
 
     pub fn node_id(&self, id: &str) -> Option<i32> {
@@ -104,6 +140,7 @@ impl Dom {
         self.nodes.clear();
         self.sent.clear();
         self.children_sent.clear();
+        self.style_updates.clear();
     }
 
     fn element(&self, id: i32) -> Result<&Element, Error> {
@@ -319,16 +356,26 @@ impl Dom {
                     parent = ancestor.parent.as_deref();
                 }
                 Ok(
-                    json!({"inlineStyle":super::styles::inline(element.styles.as_ref()),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
+                    json!({"inlineStyle":super::styles::inline(visual_style(element)),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
                 )
             }
             "CSS.getComputedStyleForNode" => {
                 let layout = element
                     .layout
                     .ok_or_else(|| Error::new(-32000, "Layout is not captured for this node"))?;
-                Ok(
-                    json!({"computedStyle":[{"name":"width","value":format!("{}px",layout.width)},{"name":"height","value":format!("{}px",layout.height)}]}),
-                )
+                let mut properties = super::styles::properties(
+                    element
+                        .resolved
+                        .as_ref()
+                        .map(|resolved| &resolved.properties),
+                );
+                properties
+                    .retain(|property| property["name"] != "width" && property["name"] != "height");
+                properties.extend([
+                    json!({"name":"width","value":format!("{}px",layout.width)}),
+                    json!({"name":"height","value":format!("{}px",layout.height)}),
+                ]);
+                Ok(json!({"computedStyle":properties}))
             }
             _ => Err(Error::new(
                 -32601,
@@ -336,6 +383,14 @@ impl Dom {
             )),
         }
     }
+}
+
+fn visual_style(element: &Element) -> Option<&Value> {
+    element
+        .resolved
+        .as_ref()
+        .map(|resolved| &resolved.properties)
+        .or(element.styles.as_ref())
 }
 
 fn attributes(element: &Element) -> Vec<String> {
@@ -504,6 +559,48 @@ mod tests {
             dom.element(root).unwrap().source.is_some(),
             "source metadata remains available to Rake"
         );
+    }
+
+    #[test]
+    fn resolved_style_changes_refresh_css_without_replacing_node_ids() {
+        let mut snapshot = capture("live");
+        snapshot.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
+            properties: json!({"background":{"Color":{"tag":"Solid","solid":{"h":0.,"s":1.,"l":0.5,"a":1.}}},"text":{"font_size":"24px"}}),
+            hovered: false,
+        });
+        let mut dom = Dom::default();
+        dom.update(snapshot.clone()).unwrap();
+        dom.document(&json!({"depth":-1})).unwrap();
+        let id = dom.node_id("live-a").unwrap();
+        snapshot.elements[0].resolved.as_mut().unwrap().properties["background"]["Color"]["solid"]
+            ["h"] = json!(0.5);
+        snapshot.elements[0].resolved.as_mut().unwrap().hovered = true;
+        assert!(!dom.update(snapshot).unwrap());
+        assert_eq!(dom.node_id("live-a"), Some(id));
+        assert_eq!(dom.take_style_updates(), vec![id]);
+        let computed = dom
+            .handle("CSS.getComputedStyleForNode", &json!({"nodeId":id}))
+            .unwrap();
+        let get = |name| {
+            computed["computedStyle"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["name"] == name)
+                .unwrap()["value"]
+                .as_str()
+                .unwrap()
+        };
+        assert_eq!(get("background-color"), "#00ffff");
+        assert_eq!(get("font-size"), "24px");
+        assert_eq!(get("width"), "10px");
+        assert!(
+            dom.push_nodes(&json!({"backendNodeIds":[id]}))
+                .unwrap()
+                .1
+                .is_empty()
+        );
+        assert!(dom.style_sheet_text().contains("#00ffff"));
     }
 
     #[test]

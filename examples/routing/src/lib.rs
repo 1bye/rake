@@ -209,6 +209,7 @@ impl Render for Screen {
                                 .id("new-window")
                                 .p_2()
                                 .bg(rgb(0x29424b))
+                                .hover(|style| style.bg(rgb(0x365849)))
                                 .cursor_pointer()
                                 .child("Open A in new window")
                                 .on_click(move |_, _, _| {

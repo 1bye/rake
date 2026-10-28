@@ -44,6 +44,7 @@ fn element(id: &str) -> Element {
         layout: None,
         content_mask: None,
         styles: None,
+        resolved: None,
         metadata_truncated: false,
         tab_id: None,
         entry_id: None,
@@ -196,4 +197,46 @@ fn picker_waits_for_its_exact_capture_and_never_replays_a_click() {
     model.select_element("manual-selection");
     model.apply(Update::Pick(epoch, runtime(1), Ok(pick)));
     assert_eq!(model.selected.as_deref(), Some("manual-selection"));
+}
+
+#[test]
+fn live_resolved_styles_update_the_selection_without_replacing_its_capture() {
+    let mut inspector = Inspector::new(None);
+    inspector.apply(Update::Instances(0, Ok(vec![instance(1, None)])));
+    let epoch = inspector.epoch;
+    inspector.apply(Update::Tree(
+        epoch,
+        runtime(1),
+        Ok(tree("live", "element-live-0")),
+    ));
+    inspector.select_element("element-live-0");
+    let mut changed = tree("live", "element-live-0");
+    changed.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
+        properties: serde_json::json!({"background":"hover color"}),
+        hovered: true,
+    });
+    inspector.apply(Update::Tree(epoch, runtime(1), Ok(changed)));
+    assert!(!inspector.stale());
+    assert_eq!(inspector.selected.as_deref(), Some("element-live-0"));
+    assert!(
+        inspector
+            .detail
+            .as_ref()
+            .unwrap()
+            .resolved
+            .as_ref()
+            .unwrap()
+            .hovered
+    );
+    assert_eq!(
+        inspector
+            .detail
+            .as_ref()
+            .unwrap()
+            .resolved
+            .as_ref()
+            .unwrap()
+            .properties["background"],
+        "hover color"
+    );
 }

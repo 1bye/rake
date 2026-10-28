@@ -28,7 +28,8 @@ updates and panel switching. Narrow windows stack the panes. The theme button
 switches between dark and light, retaining the choice for that browser session.
 Successful control receipts collapse into a bottom drawer; uncertain delivery stays
 expanded with its exact-request retry. The status bar expands to show retention and
-loss details. Styles remain read-only authored GPUI metadata; layout reports actual
+loss details. Styles show read-only authored GPUI metadata; Computed shows live resolved Div
+styles, including inherited text and real hover/focus states. Layout reports actual
 captured bounds, without inventing computed margins or padding.
 
 The browser UI belongs to the development host, so it survives application
@@ -101,8 +102,15 @@ Solid sRGB colors, typography, borders, spacing, overflow and layout refinements
 are translated to CSS values, with captured ancestor declarations shown as inherited
 styles. Unsupported values remain visible under `--gpui-` metadata properties.
 Every box quad uses the captured bounds: separate margin, border and padding
-measurements are unavailable. Computed styles contain only measured width/height;
-Chrome's inferred CSS hints and full box decorations may therefore be incomplete.
+measurements are unavailable. Chrome Styles and Computed expose the live resolved
+GPUI snapshot when available, with measured width/height and pixel rem lengths.
+Other relative lengths retain their units and unsupported values remain metadata;
+this does not recreate a browser CSS cascade. A read-only virtual style snapshot
+sends CSS change notifications, so hovering the app updates the selected node's
+values without rebuilding the document. Older runtimes and opaque custom boundaries
+fall back to authored styles and measured geometry. Force-pseudo-state controls
+are unavailable; hover reflects the real app pointer. Chrome's inferred CSS hints
+and full box decorations may therefore be incomplete.
 Highlighting and inspect mode use the leased development inspection controls
 described in [element inspection](element-inspection.md). Chrome tree hover
 highlights the app; its picker selects the clicked instrumented boundary. Rake's own Elements inspector remains available for full
@@ -157,7 +165,7 @@ from the Rake workspace; the multi-panel frontend described here stays available
 | Console | Structured tracing severity/fields/context, bounded build and native stdout/stderr, registered typed commands with argument/result schemas and JSON input. |
 | Requests | Method, redacted URL, status, elapsed time, bytes consumed and observed lifecycle events; distinguish headers, completion, cancellation/failure and abandonment. |
 | Traces | Collector-local span identities and parent links, inherited fields, elapsed wall-time timeline and related tasks/requests/logs. Missing ancestry or closes remain explicit. |
-| Elements | Presented inspection boundaries, real layout, authored base styles, source sites, semantic IDs and exact capture lookup; stale selections remain frozen. See [coverage](element-inspection.md). |
+| Elements | Presented inspection boundaries, real layout, authored and live resolved styles, source sites, semantic IDs and exact capture lookup; stale selections remain frozen. See [coverage](element-inspection.md). |
 | Reload | Supervisor build/reload/error status and the runtime lifecycle boundary, generation and restoration origin. |
 
 Search, context filters, paging and JSON diagnostic export operate on retained

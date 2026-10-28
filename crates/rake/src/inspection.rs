@@ -2,8 +2,9 @@
 //!
 //! GPUI's public API does not enumerate arbitrary descendants. Rake captures its
 //! shell and application-supplied inspection boundaries, preserving their nearest
-//! inspected ancestor. Layout is measured by GPUI; styles are authored base
-//! refinements, not computed/hover styles. No views or source contents are retained.
+//! inspected ancestor. Layout is measured by GPUI. Authored refinements and live
+//! resolved styles are separate; opaque custom elements may not expose resolution.
+//! No views, text contents or source contents are retained.
 
 #[cfg(feature = "gpui")]
 mod view;
@@ -29,6 +30,8 @@ use crate::router::{EntryId, TabId, WindowId};
 pub const MAX_ELEMENTS: usize = 256;
 /// Maximum serialized snapshot size, below the transport's 1 MiB limit.
 pub const MAX_SNAPSHOT_BYTES: usize = 512 * 1024;
+/// Maximum serialized resolved style per boundary, within the total snapshot budget.
+pub const MAX_RESOLVED_STYLE_BYTES: usize = 16 * 1024;
 
 /// Window-local logical pixels, after layout and element offsets; not screen pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -54,6 +57,15 @@ pub struct SourceLocation {
     pub column: u32,
 }
 
+/// GPUI's current visual style sampled during paint, including inherited text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResolvedStyle {
+    /// Complete resolved GPUI style; relative layout lengths retain their units.
+    pub properties: Value,
+    /// Whether GPUI's actual hitbox is hovered in this frame.
+    pub hovered: bool,
+}
+
 /// One boundary in prepaint traversal order. Semantic IDs may repeat in a tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Element {
@@ -74,6 +86,9 @@ pub struct Element {
     pub content_mask: Option<Layout>,
     /// Serialized GPUI base style refinement; None for custom unstyled elements.
     pub styles: Option<Value>,
+    /// Live resolved style for GPUI `Div`/`Stateful<Div>`; absent for opaque/custom elements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedStyle>,
     /// Whether a metadata field exceeded its capture limit.
     pub metadata_truncated: bool,
     /// Presented route owner; None for the workspace shell.
@@ -211,7 +226,7 @@ impl Default for Store {
                 router_revision: 0,
                 elements: Vec::new(),
                 omitted: 0,
-                coverage: "Rake inspection boundaries only; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Styles are authored base refinements, not computed, inherited or interaction styles. Text content is not captured.".into(),
+                coverage: "Rake inspection boundaries only; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div> styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Text content is not captured.".into(),
             },
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
@@ -399,8 +414,23 @@ impl Store {
                     element.parent = Some(format!("element-{}-{index}", stable.capture));
                 }
             }
-            if stable.elements == host.snapshot.elements && stable.omitted == host.snapshot.omitted
-            {
+            let same_boundaries = stable.elements.len() == host.snapshot.elements.len()
+                && stable
+                    .elements
+                    .iter()
+                    .zip(&host.snapshot.elements)
+                    .all(|(element, old)| {
+                        element.id == old.id
+                            && element.parent == old.parent
+                            && element.kind == old.kind
+                            && element.semantic_id == old.semantic_id
+                            && element.source == old.source
+                            && element.layout == old.layout
+                            && element.content_mask == old.content_mask
+                            && element.tab_id == old.tab_id
+                            && element.entry_id == old.entry_id
+                    });
+            if same_boundaries && stable.omitted == host.snapshot.omitted {
                 snapshot = stable;
             }
         }
@@ -502,6 +532,31 @@ impl Layout {
 
 #[cfg(any(feature = "gpui", test))]
 impl Snapshot {
+    #[cfg(feature = "gpui")]
+    fn bound_resolved_styles(&mut self) {
+        let mut base_bytes = 0;
+        for element in &mut self.elements {
+            let resolved = element.resolved.take();
+            base_bytes +=
+                serde_json::to_vec(&*element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len());
+            element.resolved = resolved;
+        }
+        let mut remaining = (MAX_SNAPSHOT_BYTES - 4096).saturating_sub(base_bytes);
+        for element in &mut self.elements {
+            if let Some(resolved) = &element.resolved {
+                let bytes = serde_json::to_vec(resolved)
+                    .map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len())
+                    + 16;
+                if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
+                    element.resolved = None;
+                    element.metadata_truncated = true;
+                } else {
+                    remaining -= bytes;
+                }
+            }
+        }
+    }
+
     // Leaves room for envelope, coverage and JSON separators below the wire limit.
     fn retain(&mut self, element: Element, bytes: &mut usize) -> Option<String> {
         let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len());

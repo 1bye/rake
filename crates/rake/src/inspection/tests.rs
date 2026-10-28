@@ -48,6 +48,7 @@ fn identities_expire_without_semantic_retargeting() {
         layout: None,
         content_mask: None,
         styles: None,
+        resolved: None,
         metadata_truncated: false,
         tab_id: None,
         entry_id: None,
@@ -90,6 +91,7 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
         layout: None,
         content_mask: None,
         styles: None,
+        resolved: None,
         metadata_truncated: false,
         tab_id: None,
         entry_id: None,
@@ -133,6 +135,7 @@ fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Ele
         layout: Some(bounds),
         content_mask: Some(mask),
         styles: None,
+        resolved: None,
         metadata_truncated: false,
         tab_id: None,
         entry_id: None,
@@ -265,4 +268,41 @@ fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
     assert_eq!(store.pick().unwrap().generation, generation);
     assert!(store.pick().unwrap().hovered.is_none());
     assert!(store.0.borrow().windows[&WindowId(1)].highlight.is_none());
+}
+
+#[test]
+#[cfg(feature = "gpui")]
+fn resolved_metadata_is_bounded_without_losing_boundaries() {
+    let store = Store::default();
+    let mut snapshot = store.begin(0);
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    for index in 0..MAX_ELEMENTS {
+        let mut element = boundary(&format!("element-1-{index}"), None, bounds, bounds);
+        element.resolved = Some(ResolvedStyle {
+            properties: serde_json::json!({"large":"x".repeat(8000)}),
+            hovered: false,
+        });
+        snapshot.elements.push(element);
+    }
+    snapshot.bound_resolved_styles();
+    assert_eq!(snapshot.elements.len(), MAX_ELEMENTS);
+    assert_eq!(snapshot.omitted, 0);
+    assert!(
+        snapshot
+            .elements
+            .iter()
+            .any(|element| element.resolved.is_some())
+    );
+    assert!(
+        snapshot
+            .elements
+            .iter()
+            .any(|element| element.resolved.is_none() && element.metadata_truncated)
+    );
+    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_SNAPSHOT_BYTES);
 }

@@ -63,8 +63,14 @@ pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
 }
 
 fn push(properties: &mut Vec<Value>, name: &str, value: &Value) {
-    let css = if matches!(name, "color" | "background-color" | "border-color") {
+    let css = if value.is_null() && matches!(name, "background-color" | "border-color") {
+        Some("transparent".into())
+    } else if matches!(name, "color" | "background-color" | "border-color") {
         color(value).map(|color| color.css())
+    } else if name == "font-family" && value.is_string() {
+        Some(value.to_string())
+    } else if matches!(name, "max-width" | "max-height") && value == "auto" {
+        Some("none".into())
     } else if !name.starts_with("--gpui-") {
         match value {
             Value::String(value) => Some(
@@ -88,7 +94,11 @@ fn push(properties: &mut Vec<Value>, name: &str, value: &Value) {
                         | "text-transform"
                         | "cursor"
                 ) {
-                    if name == "cursor" && value == "PointingHand" {
+                    if value == "NoWrap" {
+                        "nowrap".into()
+                    } else if name == "cursor" && value == "Arrow" {
+                        "default".into()
+                    } else if name == "cursor" && value == "PointingHand" {
                         "pointer".into()
                     } else if name == "cursor" && value == "IBeam" {
                         "text".into()
@@ -188,5 +198,24 @@ mod tests {
             assert_eq!(properties[0]["name"], "--gpui-background-color");
             assert!(properties[0]["value"].as_str().unwrap().contains("Oklab"));
         }
+    }
+
+    #[test]
+    fn resolved_defaults_use_css_spellings() {
+        let properties = properties(Some(&json!({
+            "flex_wrap":"NoWrap", "mouse_cursor":"Arrow", "background":null,
+            "max_size":{"width":"auto"}, "text":{"font_family":".SystemUIFont","white_space":"NoWrap"}
+        })));
+        let get = |name| {
+            properties.iter().find(|p| p["name"] == name).unwrap()["value"]
+                .as_str()
+                .unwrap()
+        };
+        assert_eq!(get("flex-wrap"), "nowrap");
+        assert_eq!(get("white-space"), "nowrap");
+        assert_eq!(get("font-family"), "\".SystemUIFont\"");
+        assert_eq!(get("max-width"), "none");
+        assert_eq!(get("background-color"), "transparent");
+        assert_eq!(get("cursor"), "default");
     }
 }

@@ -837,7 +837,16 @@ impl Render for ElementsView {
             .is_some_and(|id| elements.iter().any(|element| element.id == *id));
 
         let style_rows = selected
-            .and_then(|element| element.styles.as_ref())
+            .and_then(|element| {
+                if self.detail_tab == "Computed" {
+                    element
+                        .resolved
+                        .as_ref()
+                        .map(|resolved| &resolved.properties)
+                } else {
+                    element.styles.as_ref()
+                }
+            })
             .map(styles::declarations)
             .unwrap_or_default();
 
@@ -920,11 +929,11 @@ impl Render for ElementsView {
         let details = rake::view! {
             <section id="element-details" class="flex flex-col flex-1 min-w-0 min-h-0" aria-label="Element details">
                 <div class="flex flex-row h-[29px] shrink-0 bg-bar border-b-1 border-line">
-                    for tab in ["Styles", "Layout", "Source"] {
+                    for tab in ["Styles", "Computed", "Layout", "Source"] {
                         <div id={format!("tab-container-{tab}")} class="h-full">{self.detail_button(tab, cx)}</div>
                     }
                 </div>
-                if current_tab == "Styles" {
+                if current_tab == "Styles" || current_tab == "Computed" {
                     <div class="flex flex-row items-center gap-2 px-2 h-[31px] shrink-0 border-b-1 border-line">
                         {icon(Icon::Search, colors.muted)}
                         <div class="flex-1 min-w-0">{self.style_filter.clone()}</div>
@@ -934,7 +943,7 @@ impl Render for ElementsView {
                     if stale { <p class="px-3 py-1 text-[11px] text-warning bg-warning-surface">"Previous capture · details frozen"</p> }
                     if let Some(error) = &model.lookup_error { <p class="px-3 py-1 text-[11px] text-property">{error.clone()}</p> }
                     if let Some(element) = selected {
-                        if current_tab == "Styles" {
+                        if current_tab == "Styles" || current_tab == "Computed" {
                             <div id="authored-rule" class="flex flex-col border-b-1 border-line pb-[6px]">
                                 <div class="flex flex-row items-center gap-2 px-2 min-h-[30px] font-code text-[11px]">
                                     <span class="min-w-0 text-ink">{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
@@ -953,10 +962,10 @@ impl Render for ElementsView {
                                         }
                                     </div>
                                 }
-                                if style_count == 0 { <p class="px-3 py-2 text-muted">{if style_rows.is_empty() { "No authored refinements captured." } else { "No matching properties." }}</p> }
+                                if style_count == 0 { <p class="px-3 py-2 text-muted">{if style_rows.is_empty() { if current_tab == "Computed" { "Resolved styles unavailable for this boundary." } else { "No authored refinements captured." } } else { "No matching properties." }}</p> }
                                 <span class="px-2 font-code">"}"</span>
                             </div>
-                            <p class="px-3 py-2 text-[10px] text-muted">"Authored base refinements · read-only"</p>
+                            <p class="px-3 py-2 text-[10px] text-muted">{if current_tab == "Computed" { if element.resolved.as_ref().is_some_and(|resolved| resolved.hovered) { "Resolved GPUI styles · hovered · read-only" } else { "Resolved GPUI styles · read-only" } } else { "Authored base refinements · read-only" }}</p>
                         } else {
                             <div class="px-3 py-2 font-code border-b-1 border-line text-tag">{format!("{}{}", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
                         }
