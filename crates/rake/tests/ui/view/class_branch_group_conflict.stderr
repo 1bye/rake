@@ -1,0 +1,5 @@
+error: GPUI supports one named group-hover group per element, across all class branches; use the same group name in every branch
+ --> tests/ui/view/class_branch_group_conflict.rs:3:21
+  |
+3 |         <div class={if true { "group-hover/a:p-1" } else { "group-hover/b:p-2" }}/>
+  |                     ^^

@@ -261,7 +261,14 @@ pub(in crate::view) fn compile_with(
 
         setup.extend(quote!(let #selected: bool = #prefix == #id;));
         leaf.gate(&selected, setup);
-        plan.extend(leaf, value.span())?;
+        plan.extend(leaf, value.span()).map_err(|error| {
+            syn::Error::new(
+                error.span(),
+                format!(
+                    "{error}, across all class branches; use the same group name in every branch"
+                ),
+            )
+        })?;
     }
 
     Ok(plan)

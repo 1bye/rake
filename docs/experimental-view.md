@@ -180,8 +180,9 @@ are raw GPUI text styling; composed paragraphs/headings also provide explicit
 Interaction variants use `hover:`, `active:`, `focus:`, `focus-visible:` and
 `in-focus:`. Named groups use `group/card`, `group-hover/card:` and
 `group-active/card:`. Each interaction kind is merged into one GPUI style call,
-including contributions from conditional class attributes. Variants apply after
-authored attributes. `disabled:` is button-only and applies base styles at its
+including contributions from conditional class attributes. A named group must
+use the same name across all literal class branches, even when the leaves are
+mutually exclusive. Variants apply after authored attributes. `disabled:` is button-only and applies base styles at its
 written position. Variants cannot stack, and reject group and overflow-scroll
 utilities because those configure interactivity. GPUI supports only one named
 group per group-hover/group-active kind on an element. SVG interaction classes
