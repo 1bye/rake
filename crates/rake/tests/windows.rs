@@ -225,6 +225,94 @@ fn window_close_guards_hidden_history_blocks_only_its_host_and_revalidates_edits
 }
 
 #[test]
+fn application_reveal_cannot_add_a_tab_while_its_window_is_closing() {
+    let (router, mut pool, host) = harness();
+
+    router
+        .entry_guard(|context| async move {
+            if matches!(context.destination, Destination::Document(2)) {
+                GuardResult::Ask(DecisionRequest {
+                    message: "Open document?".into(),
+                    choices: vec![DecisionChoice::proceed("allow", "Allow")],
+                })
+            } else {
+                GuardResult::Allow
+            }
+        })
+        .unwrap();
+    let first = open(&router, &mut pool, OpenTarget::NewTab, 1);
+    let entry = router.entry(first.entry_id).unwrap();
+
+    entry.set_dirty(true).unwrap();
+    let reveal = router
+        .navigator()
+        .reveal(Destination::Document(2), RevealScope::Application);
+
+    pool.run_until_stalled();
+    let access = router.snapshot().decisions[0].id;
+    let close = router.close_window(first.window_id);
+
+    pool.run_until_stalled();
+    let disposal = router
+        .snapshot()
+        .decisions
+        .into_iter()
+        .find(|decision| decision.entry_id == first.entry_id)
+        .unwrap();
+
+    router.navigator().respond(access, "allow").unwrap();
+    assert!(matches!(
+        pool.run_until(reveal.wait()),
+        Err(OperationError::WindowClosing)
+    ));
+    assert_eq!(router.snapshot().tabs.len(), 1);
+    assert!(entry.is_dirty().unwrap());
+    assert!(host.closed.borrow().is_empty());
+    router.navigator().respond(disposal.id, "cancel").unwrap();
+    assert!(matches!(
+        pool.run_until(close.wait()).unwrap(),
+        Outcome::Cancelled(CancelReason::Decision)
+    ));
+    assert!(entry.is_dirty().unwrap());
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn application_reveal_cannot_commit_after_its_window_has_closed() {
+    let (router, mut pool, host) = harness();
+
+    router
+        .entry_guard(|_| async {
+            GuardResult::Ask(DecisionRequest {
+                message: "Open document?".into(),
+                choices: vec![DecisionChoice::proceed("allow", "Allow")],
+            })
+        })
+        .unwrap();
+    let window = router.navigator().window_id();
+
+    let reveal = router
+        .navigator()
+        .reveal(Destination::Document(2), RevealScope::Application);
+
+    pool.run_until_stalled();
+    let access = router.snapshot().decisions[0].id;
+
+    commit(&mut pool, router.close_window(window));
+    router.navigator().respond(access, "allow").unwrap();
+    assert!(matches!(
+        pool.run_until(reveal.wait()),
+        Err(OperationError::WindowUnavailable)
+    ));
+    assert!(router.snapshot().tabs.is_empty());
+    assert!(router.snapshot().windows.is_empty());
+    assert_eq!(&*host.closed.borrow(), &[window]);
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
 fn failed_and_cancelled_window_creation_roll_back_provisional_hosts() {
     let (router, mut pool, host) = harness();
 

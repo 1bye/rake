@@ -124,6 +124,7 @@ fn non_elements_queries_are_rejected_without_network_access() {
         },
         CancellationToken::new(),
     ));
+
     assert!(
         result
             .unwrap_err()

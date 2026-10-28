@@ -48,6 +48,7 @@ pub(super) fn translate(record: &Record, epoch: f64) -> Option<Event> {
         if key == "message" {
             continue;
         }
+
         if !text.is_empty() {
             text.push(' ');
         }
@@ -82,6 +83,7 @@ impl Objects {
 
         if !value.is_object() && !value.is_array() {
             let mut result = json!({"type":kind,"value":value});
+
             if value.is_null() {
                 result["subtype"] = json!("null");
             }
@@ -91,6 +93,7 @@ impl Objects {
 
         self.next += 1;
         let id = format!("rake-object-{}", self.next);
+
         let properties: Vec<_> = match &value {
             Value::Object(fields) => fields.iter().take(5).map(|(k, v)| preview(k, v)).collect(),
             Value::Array(values) => values
@@ -101,11 +104,13 @@ impl Objects {
                 .collect(),
             _ => Vec::new(),
         };
+
         let length = value
             .as_object()
             .map(|v| v.len())
             .or_else(|| value.as_array().map(|v| v.len()))
             .unwrap_or(0);
+
         let mut result = json!({"type":"object","objectId":id,"className":"Object","description":"Object",
             "preview":{"type":"object","description":"Object","overflow":length>5,"properties":properties}});
 
@@ -117,6 +122,7 @@ impl Objects {
         }
 
         let bytes = value.to_string().len();
+
         self.bytes += bytes;
         self.values.push_back((id, value, bytes));
 
@@ -136,6 +142,7 @@ impl Objects {
             .find(|(key, _, _)| key == id)
             .map(|(_, v, _)| v.clone())
             .ok_or_else(|| Error::new(-32000, "Object expired or belongs to another session"))?;
+
         let fields: Vec<(String, Value)> = match value {
             Value::Object(fields) => fields.into_iter().collect(),
             Value::Array(values) => values
@@ -145,6 +152,7 @@ impl Objects {
                 .collect(),
             _ => Vec::new(),
         };
+
         let properties: Vec<_> = fields
             .into_iter()
             .map(|(name, value)| {
@@ -168,12 +176,14 @@ impl Objects {
 
     pub fn called(&mut self, record: &Record, epoch: f64) -> Event {
         let fields = serde_json::to_value(&record.fields).unwrap_or_default();
+
         let kind = match level(&record.level) {
             "verbose" => "debug",
             "warning" => "warning",
             "error" => "error",
             _ => "log",
         };
+
         let message = record
             .fields
             .get("message")
@@ -218,6 +228,7 @@ impl Loss {
         let changed = snapshot.dropped > self.dropped
             || snapshot.output_dropped > self.output_dropped
             || skipped > 0;
+
         self.dropped = snapshot.dropped;
         self.output_dropped = snapshot.output_dropped;
 
@@ -252,15 +263,19 @@ impl ProcessOutput {
     fn read(&self) -> super::Result<Option<Value>> {
         use std::io::Read;
         use std::os::unix::fs::MetadataExt;
+
         let Some(path) = &self.path else {
             return Ok(None);
         };
+
         let file = match std::fs::File::open(path) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
+
         let metadata = file.metadata()?;
+
         if !metadata.is_file()
             || metadata.mode() & 0o077 != 0
             || metadata.uid()
@@ -268,8 +283,11 @@ impl ProcessOutput {
         {
             return Err("process output must be a private owned regular file".into());
         }
+
         let mut bytes = Vec::new();
+
         file.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+
         if bytes.len() > 1024 * 1024 {
             return Err("process output exceeds 1 MiB".into());
         }
@@ -281,15 +299,19 @@ impl ProcessOutput {
         let snapshot = match self.read() {
             Ok(Some(snapshot)) => {
                 self.last_error = None;
+
                 snapshot
             }
             Ok(None) => return Vec::new(),
             Err(error) => {
                 let text = error.to_string();
+
                 if self.last_error.as_ref() == Some(&text) {
                     return Vec::new();
                 }
+
                 self.last_error = Some(text.clone());
+
                 return vec![entry(
                     "warning",
                     format!("Process output unavailable: {text}"),
@@ -298,23 +320,30 @@ impl ProcessOutput {
                 )];
             }
         };
+
         let mut events = Vec::new();
         let records = snapshot["records"].as_array().cloned().unwrap_or_default();
+
         if let Some(last) = records.last() {
             self.epoch
                 .get_or_insert(now - last["elapsed_us"].as_f64().unwrap_or_default() / 1e6);
         }
+
         let dropped = snapshot["dropped"].as_u64().unwrap_or_default();
         let mut skipped = 0;
+
         for record in records {
             let sequence = record["sequence"].as_u64().unwrap_or_default();
+
             if sequence <= self.cursor {
                 continue;
             }
+
             skipped += sequence.saturating_sub(self.cursor + 1);
             self.cursor = sequence;
             let stream = record["stream"].as_str().unwrap_or("output");
             let text = record["text"].as_str().unwrap_or_default();
+
             events.push(entry(
                 "info",
                 format!("[{stream}] {text}"),
@@ -324,6 +353,7 @@ impl ProcessOutput {
                 "rake://process",
             ));
         }
+
         if dropped > self.dropped || skipped > 0 {
             events.push(entry(
                 "warning",
@@ -332,6 +362,7 @@ impl ProcessOutput {
                 "rake://process",
             ));
         }
+
         self.dropped = dropped;
 
         events
@@ -353,8 +384,10 @@ mod tests {
         ] {
             assert_eq!(level(input), output);
         }
+
         let mut objects = Objects::default();
         let remote = objects.remote(json!({"count":3,"nested":{"yes":true}}));
+
         assert_eq!(remote["preview"]["properties"][0]["name"], "count");
         assert_eq!(
             objects
@@ -377,11 +410,13 @@ mod tests {
     #[test]
     fn cumulative_loss_warns_only_on_changes() {
         let mut loss = Loss::default();
+
         let mut snapshot = Snapshot {
             records: vec![],
             dropped: 2,
             output_dropped: 1,
         };
+
         assert!(loss.observe(&snapshot, 0).unwrap().contains("dropped=2"));
         assert!(loss.observe(&snapshot, 0).is_none());
         snapshot.records.push(serde_json::from_value(json!({"sequence":4,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"fields":{}})).unwrap());
@@ -392,15 +427,18 @@ mod tests {
     fn process_output_has_its_own_clock_cursor_and_loss() {
         use std::os::unix::fs::OpenOptionsExt;
         let path = std::env::temp_dir().join(format!("rake-output-{}.json", uuid::Uuid::new_v4()));
+
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+
         serde_json::to_writer(file,&json!({"dropped":1,"records":[{"sequence":2,"elapsed_us":500000,"stream":"stderr","text":"test"}]})).unwrap();
         let mut output = ProcessOutput::new(Some(path.clone()));
         let events = output.poll(10.);
+
         assert_eq!(events[0].params["entry"]["text"], "[stderr] test");
         assert_eq!(events[0].params["entry"]["timestamp"], 10000.);
         assert!(

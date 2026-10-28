@@ -297,6 +297,7 @@ mod tests {
 struct ViewTheme {
     surface: gpui::Rgba,
 }
+
 framework::theme!(ViewTheme);
 
 /// Theme paths also resolve through a renamed facade.

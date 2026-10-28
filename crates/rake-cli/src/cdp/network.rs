@@ -10,16 +10,20 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
     }
 
     let f = &record.fields;
+
     let Some(id) = f.get("request_id") else {
         return Vec::new();
     };
+
     let request_id = id
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| id.to_string());
+
     let timestamp = record.elapsed_us as f64 / 1e6;
     let phase = f.get("phase").and_then(Value::as_str).unwrap_or_default();
     let url = f.get("url").and_then(Value::as_str).unwrap_or_default();
+
     let (method, params) = match phase {
         "started" => (
             "Network.requestWillBeSent",
@@ -80,7 +84,9 @@ mod tests {
                 "level":"INFO","target":"rake::http","kind":"request","spans":[],"fields":{
                     "request_id":7,"phase":phase,"url":"https://example.test/redacted","method":"GET",
                     "status":200,"bytes":3,"received_bytes":9}})).unwrap();
+
             let events = translate(&record);
+
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].method, format!("Network.{method}"));
             assert_eq!(events[0].params["requestId"], "7");

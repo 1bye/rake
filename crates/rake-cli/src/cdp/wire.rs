@@ -53,13 +53,16 @@ impl Error {
 impl Response {
     pub fn encode(&self) -> Result<String, serde_json::Error> {
         let text = serde_json::to_string(self)?;
+
         if text.len() <= 1024 * 1024 {
             return Ok(text);
         }
+
         let key = self
             .result
             .as_ref()
             .and_then(|result| result["result"]["value"]["requestKey"].as_str());
+
         let message = match key {
             Some(key) => format!(
                 "CDP reply exceeds 1 MiB; request key {key}; inspect the operation through rake ctl. This command was not resent."
@@ -98,8 +101,10 @@ mod tests {
                 serde_json::json!({"result":{"value":{"requestKey":"delivery-key","data":"x".repeat(1024*1024)}}}),
             ),
         );
+
         let encoded = response.encode().unwrap();
         let reply: Value = serde_json::from_str(&encoded).unwrap();
+
         assert_eq!(reply["id"], 4);
         assert_eq!(reply["error"]["code"], -32000);
         assert!(

@@ -144,6 +144,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         });
 
         let mut retained_index = None;
+
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
             let owner = self
                 .owner
@@ -205,12 +206,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                                 origin: gpui::point(gpui::px(0.), gpui::px(0.)),
                                 size: window.viewport_size(),
                             });
+
                     let mask = Layout {
                         x: visible.origin.x.into(),
                         y: visible.origin.y.into(),
                         width: visible.size.width.into(),
                         height: visible.size.height.into(),
                     };
+
                     [mask.x, mask.y, mask.width, mask.height]
                         .iter()
                         .all(|v| v.is_finite())
@@ -225,6 +228,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
             let index = capture.snapshot.elements.len();
             let retained = capture.snapshot.retain(element, &mut capture.bytes);
+
             retained_index = retained.as_ref().map(|_| index);
             let parent = retained.or_else(|| capture.parents.last().cloned().flatten());
 
@@ -253,6 +257,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             .root
             .as_ref()
             .and_then(|(store, _, host)| overlay(store, *host, window, cx));
+
         (result, overlay, retained_index)
     }
 
@@ -268,6 +273,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
     ) {
         let previous = self.root.as_ref().and_then(|(store, _, host)| {
             let snapshot = store.0.borrow().windows.get(host)?.snapshot.clone();
+
             Some(cx.global_mut::<ActiveCapture>().0.replace(Capture {
                 snapshot,
                 parents: Vec::new(),
@@ -275,10 +281,12 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 bytes: 0,
             }))
         });
+
         if let Some(index) = prepaint.2
             && cx.global::<ActiveCapture>().0.is_some()
         {
             let resolved = resolved_style(&mut self.inner, &prepaint.0, id, bounds, window, cx);
+
             if let Some(element) = cx
                 .global_mut::<ActiveCapture>()
                 .0
@@ -288,18 +296,23 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 element.resolved = resolved;
             }
         }
+
         if let Some((store, _, host)) = &self.root {
             listeners(store, *host, window, cx);
         }
+
         self.inner
             .paint(id, inspector_id, bounds, state, &mut prepaint.0, window, cx);
+
         if let Some(previous) = previous {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
+
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
                 completed.snapshot.bound_resolved_styles();
                 store.publish(*host, completed.snapshot);
             }
         }
+
         if let Some(overlay) = &mut prepaint.1 {
             overlay.paint(window, cx);
         }
@@ -335,7 +348,9 @@ fn resolved_style<E: gpui::Element>(
     let hitbox = (prepaint as &dyn Any)
         .downcast_ref::<Option<gpui::Hitbox>>()?
         .as_ref();
+
     let inner = inner as &mut dyn Any;
+
     let interactive = if inner.is::<gpui::Div>() {
         inner.downcast_mut::<gpui::Div>()?.interactivity()
     } else {
@@ -343,29 +358,37 @@ fn resolved_style<E: gpui::Element>(
             .downcast_mut::<gpui::Stateful<gpui::Div>>()?
             .interactivity()
     };
+
     let style = interactive.compute_style(id, hitbox, window, cx);
     let mut text = window.text_style();
+
     text.refine(&style.text);
     let font_size = text.font_size.to_pixels(window.rem_size());
+
     text.line_height = text
         .line_height
         .to_pixels(font_size.into(), window.rem_size())
         .into();
     text.font_size = font_size.into();
     let mut properties = serde_json::to_value(style.subtract(&Default::default())).ok()?;
+
     properties["text"] = serde_json::to_value(text.subtract(&Default::default())).ok()?;
+
     if style.background.is_none() {
         properties["background"] = serde_json::Value::Null;
     }
+
     if style.border_color.is_none() {
         properties["border_color"] = serde_json::Value::Null;
     }
+
     properties["opacity"] = serde_json::json!(style.opacity.unwrap_or(1.));
     properties["size"] = serde_json::json!({
         "width":format!("{}px", f32::from(bounds.size.width)),
         "height":format!("{}px", f32::from(bounds.size.height)),
     });
     resolve_lengths(&mut properties, window.rem_size().into());
+
     Some(super::ResolvedStyle {
         properties,
         hovered: hitbox.is_some_and(|hitbox| hitbox.is_hovered(window)),
@@ -439,9 +462,11 @@ fn overlay(
 ) -> Option<gpui::AnyElement> {
     use gpui::{div, point, prelude::*, px, rgba};
     let mut state = store.0.borrow_mut();
+
     state.expire(web_time::Instant::now());
     let (element, _) = state.windows.get(&host)?.highlight.as_ref()?;
     let layout = element.layout?;
+
     let label = format!(
         "{} {} · {}×{}",
         super::display_name(&element.kind),
@@ -449,6 +474,7 @@ fn overlay(
         layout.width,
         layout.height
     );
+
     drop(state);
     let mut element = div()
         .debug_selector(|| "rake.inspection.highlight".into())
@@ -469,6 +495,7 @@ fn overlay(
                 .child(label),
         )
         .into_any_element();
+
     element.layout_as_root(
         window.viewport_size().map(gpui::AvailableSpace::Definite),
         window,
@@ -476,12 +503,14 @@ fn overlay(
     );
     // Root layout ignores positional styles; place the overlay in window coordinates.
     element.prepaint_at(point(px(layout.x), px(layout.y)), window, cx);
+
     Some(element)
 }
 
 fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
     use gpui::{DispatchPhase, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent};
     let moving = store.clone();
+
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
         if phase == DispatchPhase::Capture
             && moving.pointer(
@@ -496,6 +525,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
         }
     });
     let clicking = store.clone();
+
     window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
         if phase == DispatchPhase::Capture
             && clicking.pointer(
@@ -510,10 +540,13 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
         }
     });
     let releasing = store.clone();
+
     window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
         if phase == DispatchPhase::Capture {
             let mut state = releasing.0.borrow_mut();
+
             state.expire(web_time::Instant::now());
+
             if state.mode_active(web_time::Instant::now()) || std::mem::take(&mut state.suppress_up)
             {
                 cx.stop_propagation();
@@ -521,6 +554,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
         }
     });
     let scrolling = store.clone();
+
     window.on_mouse_event(move |_: &ScrollWheelEvent, phase, _, cx| {
         if phase == DispatchPhase::Capture
             && scrolling.0.borrow().mode_active(web_time::Instant::now())
@@ -528,6 +562,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
             cx.stop_propagation();
         }
     });
+
     if store
         .0
         .borrow()
@@ -537,29 +572,37 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
     {
         let owner = std::rc::Rc::downgrade(&store.0);
         let id = window.window_handle().window_id();
+
         let subscription = cx.intercept_keystrokes(move |event, window, cx| {
             if window.window_handle().window_id() != id {
                 return;
             }
+
             let Some(owner) = owner.upgrade() else {
                 return;
             };
+
             let mut state = owner.borrow_mut();
+
             state.expire(web_time::Instant::now());
+
             if state.mode_active(web_time::Instant::now()) && event.keystroke.key == "escape" {
                 state.cancel();
                 cx.stop_propagation();
                 window.refresh();
             }
         });
+
         if let Some(host) = store.0.borrow_mut().windows.get_mut(&host) {
             host.escape = Some(subscription);
         }
     }
+
     // One host-owned timer guarantees expired overlays repaint even if every client vanished.
     let now = web_time::Instant::now();
     let mut state = store.0.borrow_mut();
     let mode_until = state.mode_until;
+
     if let Some(host) = state.windows.get_mut(&host) {
         let deadline = host
             .highlight
@@ -568,6 +611,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
             .into_iter()
             .chain(mode_until)
             .min();
+
         if let Some(deadline) = deadline.filter(|deadline| {
             host.timer
                 .as_ref()
@@ -576,10 +620,12 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
             let timer = cx
                 .background_executor()
                 .timer(deadline.saturating_duration_since(now));
+
             let task = window.spawn(cx, async move |cx| {
                 timer.await;
                 let _ = cx.update(|window, _| window.refresh());
             });
+
             host.timer = Some((deadline, task));
         }
     }
@@ -598,6 +644,7 @@ mod tests {
     #[test]
     fn length_resolution_preserves_literal_font_names_and_percentages() {
         let mut value = serde_json::json!({"text":{"font_family":"2rem"}, "padding":{"top":"0.5rem","left":"50%"}});
+
         resolve_lengths(&mut value, 16.);
         assert_eq!(value["text"]["font_family"], "2rem");
         assert_eq!(value["padding"]["top"], "8px");
@@ -608,9 +655,11 @@ mod tests {
         store: Store,
         clicks: Rc<Cell<u32>>,
     }
+
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let clicks = self.clicks.clone();
+
             gpui::div()
                 .id("button")
                 .size_full()
@@ -642,15 +691,18 @@ mod tests {
     fn resolved_styles_follow_real_hover_and_uninstrumented_text_inheritance() {
         let mut app = gpui::TestAppContext::single();
         let store = Store::default();
+
         store.attach();
         let (_, cx) = app.add_window_view(|_, _| TestView {
             store: store.clone(),
             clicks: Rc::new(Cell::new(0)),
         });
+
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
         let before = store.snapshot();
+
         let button = |snapshot: &Snapshot| {
             snapshot
                 .elements
@@ -659,8 +711,10 @@ mod tests {
                 .unwrap()
                 .clone()
         };
+
         let initial = button(&before);
         let resolved = initial.resolved.as_ref().unwrap();
+
         assert!(!resolved.hovered);
         assert_eq!(
             super::super::styles::color(&resolved.properties["background"])
@@ -691,10 +745,12 @@ mod tests {
                 window.draw(cx).clear(cx);
             });
         };
+
         moving(cx, 100., 140.);
         let hovered = store.snapshot();
         let hovered_button = button(&hovered);
         let resolved = hovered_button.resolved.as_ref().unwrap();
+
         assert!(resolved.hovered);
         assert_eq!(
             super::super::styles::color(&resolved.properties["background"])
@@ -713,6 +769,7 @@ mod tests {
         );
         moving(cx, 5., 5.);
         let after = button(&store.snapshot());
+
         assert!(!after.resolved.as_ref().unwrap().hovered);
         assert_eq!(
             super::super::styles::color(&after.resolved.unwrap().properties["background"])
@@ -726,11 +783,13 @@ mod tests {
     fn hover_highlight_uses_the_picked_elements_window_position() {
         let mut app = gpui::TestAppContext::single();
         let store = Store::default();
+
         store.attach();
         let (_, cx) = app.add_window_view(|_, _| TestView {
             store: store.clone(),
             clicks: Rc::new(Cell::new(0)),
         });
+
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
@@ -739,11 +798,13 @@ mod tests {
         let picked = store
             .element(store.pick().unwrap().hovered.as_deref().unwrap())
             .unwrap();
+
         assert_eq!(picked.semantic_id.as_deref(), Some("offset-button"));
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
         });
         let bounds = cx.debug_bounds("rake.inspection.highlight").unwrap();
+
         assert_eq!(bounds.origin, gpui::point(gpui::px(80.), gpui::px(120.)));
         assert_eq!(bounds.size, gpui::size(gpui::px(100.), gpui::px(40.)));
     }
@@ -752,12 +813,15 @@ mod tests {
     fn picker_intercepts_native_dispatch_and_releases_on_expiry_and_escape() {
         let mut cx = gpui::TestAppContext::single();
         let store = Store::default();
+
         store.attach();
         let clicks = Rc::new(Cell::new(0));
+
         let window = cx.add_window(|_, _| TestView {
             store: store.clone(),
             clicks: clicks.clone(),
         });
+
         cx.update_window(window.into(), |_, window, cx| {
             window.draw(cx).clear(cx);
         })
@@ -766,6 +830,7 @@ mod tests {
         let click = |cx: &mut gpui::TestAppContext| {
             cx.update_window(window.into(), |_, window, cx| {
                 let position = gpui::point(gpui::px(5.), gpui::px(5.));
+
                 window.dispatch_event(
                     gpui::MouseMoveEvent {
                         position,
@@ -799,6 +864,7 @@ mod tests {
             })
             .unwrap();
         };
+
         click(&mut cx);
         assert_eq!(clicks.get(), 0);
         assert_eq!(store.pick().unwrap().pick_sequence, 1);

@@ -5,9 +5,11 @@ use serde_json::{Value, json};
 
 pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
     let mut properties = Vec::new();
+
     let Some(fields) = value.and_then(Value::as_object) else {
         return properties;
     };
+
     for (key, value) in fields {
         if let Some(fields) = value.as_object().filter(|_| {
             matches!(
@@ -27,6 +29,7 @@ pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
         }) {
             for (field, value) in fields {
                 let field = field.replace('_', "-");
+
                 let name = match key.as_str() {
                     "size" => field,
                     "min_size" => format!("min-{field}"),
@@ -44,10 +47,13 @@ pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
                     },
                     _ => format!("{}-{field}", key.replace('_', "-")),
                 };
+
                 push(&mut properties, &name, value);
             }
+
             continue;
         }
+
         let name = match key.as_str() {
             "background" => "background-color".into(),
             "mouse_cursor" => "cursor".into(),
@@ -57,8 +63,10 @@ pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
             | "border_style" => key.replace('_', "-"),
             _ => format!("--gpui-{}", key.replace('_', "-")),
         };
+
         push(&mut properties, &name, value);
     }
+
     properties
 }
 
@@ -115,6 +123,7 @@ fn push(properties: &mut Vec<Value>, name: &str, value: &Value) {
     } else {
         None
     };
+
     let (name, text) = if let Some(css) = css {
         (name.to_owned(), css)
     } else {
@@ -127,23 +136,28 @@ fn push(properties: &mut Vec<Value>, name: &str, value: &Value) {
             value.to_string(),
         )
     };
+
     properties
         .push(json!({"name":name,"value":text,"implicit":false,"parsedOk":true,"disabled":false}));
 }
 
 fn kebab(value: &str) -> String {
     let mut result = String::new();
+
     for (index, character) in value.chars().enumerate() {
         if character.is_ascii_uppercase() && index > 0 {
             result.push('-');
         }
+
         result.push(character.to_ascii_lowercase());
     }
+
     result
 }
 
 pub(super) fn inline(value: Option<&Value>) -> Value {
     let properties = properties(value);
+
     let text = properties
         .iter()
         .map(|p| {
@@ -155,6 +169,7 @@ pub(super) fn inline(value: Option<&Value>) -> Value {
         })
         .collect::<Vec<_>>()
         .join("\n");
+
     json!({"cssProperties":properties,"shorthandEntries":[],"cssText":text})
 }
 
@@ -171,12 +186,15 @@ mod tests {
             "padding":{"top":"0.5rem"},"border_widths":{"left":"2px"},"corner_radii":{"top_left":"4px"},
             "overflow":{"x":"Hidden"},"mouse_cursor":"PointingHand","future":{"keep":true}
         });
+
         let properties = properties(Some(&styles));
+
         let get = |name| {
             properties.iter().find(|p| p["name"] == name).unwrap()["value"]
                 .as_str()
                 .unwrap()
         };
+
         assert_eq!(get("background-color"), "#29424b");
         assert_eq!(get("color"), "#f0f4e8");
         assert_eq!(get("font-size"), "1.25rem");
@@ -195,6 +213,7 @@ mod tests {
         for tag in ["Gradient", "Solid"] {
             let value = json!({"background":{"Color":{"tag":tag,"color_space":"Oklab","solid":{"h":0.5,"s":1.0,"l":0.5,"a":1.0}}}});
             let properties = properties(Some(&value));
+
             assert_eq!(properties[0]["name"], "--gpui-background-color");
             assert!(properties[0]["value"].as_str().unwrap().contains("Oklab"));
         }
@@ -206,11 +225,13 @@ mod tests {
             "flex_wrap":"NoWrap", "mouse_cursor":"Arrow", "background":null,
             "max_size":{"width":"auto"}, "text":{"font_family":".SystemUIFont","white_space":"NoWrap"}
         })));
+
         let get = |name| {
             properties.iter().find(|p| p["name"] == name).unwrap()["value"]
                 .as_str()
                 .unwrap()
         };
+
         assert_eq!(get("flex-wrap"), "nowrap");
         assert_eq!(get("white-space"), "nowrap");
         assert_eq!(get("font-family"), "\".SystemUIFont\"");

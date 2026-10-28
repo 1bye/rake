@@ -2281,6 +2281,18 @@ async fn transition<R: Route>(
             }
 
             drop(state);
+
+            // A guard or mount can cancel synchronously within this execution poll.
+            if core
+                .state
+                .borrow()
+                .tokens
+                .get(&id)
+                .is_some_and(CancellationToken::is_cancelled)
+            {
+                return Err(Stop::Cancelled(CancelReason::Requested));
+            }
+
             commit(core, id, action, &plan)?;
 
             if let Some(provisional) = &mut provisional {
@@ -2310,6 +2322,15 @@ fn commit<R: Route>(
     let mut state = core.state.borrow_mut();
 
     let window = plan.entry.window;
+
+    let host = state
+        .windows
+        .get(&window)
+        .ok_or(OperationError::WindowUnavailable)?;
+
+    if host.closing.is_some() {
+        return Err(OperationError::WindowClosing);
+    }
 
     let before = state
         .windows

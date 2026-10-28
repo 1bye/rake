@@ -4,9 +4,11 @@ use super::wire::{Error, Event, Request, Response};
 use super::{Result, TIMEOUT};
 use crate::terminal::query;
 use rake::control::local::Instance;
+
 use rake::control::{
     Command, Message as RuntimeMessage, PROTOCOL_VERSION, Query, Reply, Request as RuntimeRequest,
 };
+
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, VecDeque};
 use std::net::TcpStream;
@@ -63,6 +65,7 @@ impl Session {
         let bytes = serde_json::to_vec(&event)
             .map(|bytes| bytes.len())
             .unwrap_or(usize::MAX);
+
         if self.outbound.len() == QUEUE_LIMIT
             || bytes > 1024 * 1024
             || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
@@ -89,6 +92,7 @@ impl Session {
                         "Typed commands mutate state; side-effect-free/eager evaluation is unavailable",
                     ));
                 }
+
                 if request
                     .params
                     .get("contextId")
@@ -102,15 +106,19 @@ impl Session {
                         "Execution context is stale or unavailable",
                     ));
                 }
+
                 let expression = request.params["expression"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "expression required"))?;
+
                 let value = super::evaluate::execute(&self.instance, expression)?;
+
                 let remote = if request.params["returnByValue"] == true {
                     json!({"type":"object","value":value})
                 } else {
                     self.objects.remote(value)
                 };
+
                 Ok(json!({"result":remote}))
             }
             "Runtime.globalLexicalScopeNames" => {
@@ -120,19 +128,23 @@ impl Session {
                 let expression = request.params["expression"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "expression required"))?;
+
                 super::evaluate::validate(&self.instance, expression)?;
+
                 if request.params["persistScript"] == true {
                     return Err(Error::new(
                         -32000,
                         "Persisted scripts are unavailable; use Runtime.evaluate for a typed command",
                     ));
                 }
+
                 Ok(json!({}))
             }
             "DOM.enable" | "CSS.enable" => {
                 let fresh = self
                     .domains
                     .insert(method.split('.').next().unwrap_or_default().into());
+
                 if method == "CSS.enable" && fresh {
                     self.event(Event::new("CSS.styleSheetAdded", json!({"header":{
                         "styleSheetId":"rake-resolved", "frameId":"rake", "sourceURL":"rake://resolved-styles",
@@ -141,25 +153,30 @@ impl Session {
                         "startLine":0, "startColumn":0, "length":0
                     }})));
                 }
+
                 if method == "DOM.enable" {
                     self.warning("Rake layout uses the same bounds for all box quads; separate margin/padding metrics are unavailable. Styles are authored GPUI metadata.".into());
                 }
+
                 Ok(json!({}))
             }
             "DOM.disable" | "CSS.disable" => {
                 self.domains
                     .remove(method.split('.').next().unwrap_or_default());
+
                 Ok(json!({}))
             }
             "DOM.getDocument" => {
                 self.refresh_dom()?;
                 self.domains.insert("DOM".into());
+
                 Ok(json!({"root":self.dom.document(&request.params)?}))
             }
             "DOM.requestChildNodes" => {
                 for params in self.dom.request_children(&request.params)? {
                     self.event(Event::new("DOM.setChildNodes", params));
                 }
+
                 Ok(json!({}))
             }
             "DOM.getBoxModel"
@@ -176,6 +193,7 @@ impl Session {
                     None
                 } else {
                     self.dom.handle("DOM.getAttributes", &request.params)?;
+
                     Some(
                         request.params["nodeId"]
                             .as_i64()
@@ -183,10 +201,12 @@ impl Session {
                             .ok_or_else(|| Error::new(-32602, "nodeId required"))?,
                     )
                 };
+
                 Ok(json!({}))
             }
             "Overlay.highlightNode" | "Overlay.hideHighlight" | "Overlay.setInspectMode" => {
                 let command = self.dom.overlay_command(method, &request.params)?;
+
                 if !self.instance.info.element_interaction {
                     if matches!(
                         command,
@@ -195,12 +215,15 @@ impl Session {
                     ) {
                         return Ok(json!({}));
                     }
+
                     return Err(Error::new(
                         -32000,
                         "Runtime highlight/picker support is unavailable",
                     ));
                 }
+
                 self.control(command.clone())?;
+
                 if matches!(
                     &command,
                     Command::HighlightElement { id: Some(_), .. }
@@ -208,7 +231,9 @@ impl Session {
                 ) {
                     self.interaction_used = true;
                 }
+
                 self.domains.insert("Overlay".into());
+
                 match command {
                     Command::HighlightElement { id, generation } => {
                         self.highlight = id.map(|id| (id, generation))
@@ -219,28 +244,34 @@ impl Session {
                     }
                     _ => {}
                 }
+
                 Ok(json!({}))
             }
             "Overlay.enable" => {
                 self.domains.insert("Overlay".into());
+
                 Ok(json!({}))
             }
             "Overlay.disable" => {
                 self.cleanup();
                 self.domains.remove("Overlay");
+
                 Ok(json!({}))
             }
             "DOM.pushNodesByBackendIdsToFrontend" => {
                 let (result, events) = self.dom.push_nodes(&request.params)?;
+
                 for params in events {
                     self.event(Event::new("DOM.setChildNodes", params));
                 }
+
                 Ok(result)
             }
             "Runtime.getProperties" => {
                 let id = request.params["objectId"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "objectId required"))?;
+
                 if request.params["accessorPropertiesOnly"] == true {
                     return Ok(json!({"result":[]}));
                 }
@@ -256,6 +287,7 @@ impl Session {
             }
             "Runtime.releaseObjectGroup" => {
                 self.objects.clear();
+
                 Ok(json!({}))
             }
             "Network.getResponseBody" | "Network.getRequestPostData" => Err(Error::new(
@@ -337,10 +369,12 @@ impl Session {
                 {
                     self.event(event);
                 }
+
                 if self.domains.contains("Runtime") && record.kind == "event" {
                     let event = self
                         .objects
                         .called(record, self.epoch_seconds.unwrap_or_default());
+
                     self.event(event);
                 }
             }
@@ -381,9 +415,11 @@ impl Session {
             TIMEOUT,
         )
         .map_err(|e| Error::new(-32000, e.to_string()))?;
+
         if !matches!(reply, Reply::Acknowledged) {
             return Err(Error::new(-32000, "Unexpected inspection control reply"));
         }
+
         Ok(())
     }
 
@@ -393,11 +429,13 @@ impl Session {
                 enabled: false,
                 lease_ms: 0,
             });
+
             let _ = self.control(Command::HighlightElement {
                 id: None,
                 generation: String::new(),
             });
         }
+
         self.interaction_used = false;
         self.picking = false;
         self.highlight = None;
@@ -410,11 +448,13 @@ impl Session {
             else {
                 return Err(Error::new(-32000, "Unexpected picker reply"));
             };
+
             if (pick.hovered.is_some() || pick.picked.is_some())
                 && self.dom.generation() != Some(pick.generation.as_str())
             {
                 self.refresh_dom()?;
             }
+
             if pick.mode {
                 self.control(Command::InspectMode {
                     enabled: true,
@@ -423,8 +463,10 @@ impl Session {
             } else {
                 self.picking = false;
             }
+
             if let Some(id) = &pick.hovered {
                 let hover = (pick.generation.clone(), id.clone());
+
                 if self.last_hover.as_ref() != Some(&hover)
                     && let Some(node) = self.dom.node_id(id)
                     && let Some(events) = self.dom.reveal_node(node)?
@@ -432,6 +474,7 @@ impl Session {
                     for params in events {
                         self.event(Event::new("DOM.setChildNodes", params));
                     }
+
                     self.event(Event::new(
                         "Overlay.nodeHighlightRequested",
                         json!({"nodeId":node}),
@@ -441,6 +484,7 @@ impl Session {
             } else {
                 self.last_hover = None;
             }
+
             if pick.pick_sequence > self.last_pick_sequence
                 && let Some(id) = pick.picked.as_deref()
             {
@@ -450,9 +494,11 @@ impl Session {
                         json!({"backendNodeId":node}),
                     ));
                 }
+
                 self.last_pick_sequence = pick.pick_sequence;
             }
         }
+
         if let Some((id, generation)) = &self.highlight {
             if self.dom.generation() == Some(generation.as_str()) {
                 if self
@@ -468,6 +514,7 @@ impl Session {
                 self.highlight = None;
             }
         }
+
         Ok(())
     }
 
@@ -476,31 +523,38 @@ impl Session {
             self.outbound_bytes -= bytes;
             socket.send(Message::text(serde_json::to_string(&event)?))?;
         }
+
         Ok(())
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
         let reply = query(&self.instance, Query::InspectTree {}, TIMEOUT)
             .map_err(|e| Error::new(-32000, e.to_string()))?;
+
         let Reply::Elements(snapshot) = reply else {
             return Err(Error::new(-32000, "Unexpected inspection reply"));
         };
+
         if self.dom.update(snapshot)? && self.domains.contains("DOM") {
             self.tracked_style_node = None;
             self.event(Event::new("DOM.documentUpdated", json!({})));
         }
+
         let changed = self.dom.take_style_updates();
+
         if !changed.is_empty() && self.domains.contains("CSS") {
             self.event(Event::new(
                 "CSS.styleSheetChanged",
                 json!({"styleSheetId":"rake-resolved"}),
             ));
+
             for id in changed {
                 if self.tracked_style_node == Some(id) {
                     self.event(Event::new("CSS.computedStyleUpdated", json!({"nodeId":id})));
                 }
             }
         }
+
         Ok(())
     }
 
@@ -510,6 +564,7 @@ impl Session {
         self.last_pick_sequence = 0;
         self.tracked_style_node = None;
         let old = self.instance.info.runtime_id;
+
         self.instance = instance;
         self.cursor = 0;
         self.epoch_seconds = None;
@@ -527,6 +582,7 @@ impl Session {
             unix_seconds() * 1000.,
             "rake://adapter",
         ));
+
         if self.domains.contains("Runtime") {
             self.event(Event::new("Runtime.executionContextCreated",json!({"context":{"id":1,"origin":"rake://runtime","name":self.instance.application_id,
                 "uniqueId":self.instance.info.runtime_id.to_string(),"auxData":{"isDefault":true,"frameId":"rake"}}})));
@@ -535,12 +591,16 @@ impl Session {
 
     fn successor(&self, directory: &std::path::Path) -> Option<Instance> {
         let instances = rake::control::local::discover(directory).ok()?;
+
         let mut successors=instances.into_iter().filter(|i|i.application_id==self.instance.application_id && i.info.runtime_id!=self.instance.info.runtime_id)
             .filter(|i|matches!(query(i,Query::Reload {},TIMEOUT),Ok(Reply::Reload(status)) if status.restored_from==Some(self.instance.info.runtime_id)));
+
         let successor = successors.next()?;
+
         if successors.next().is_some() {
             return None;
         }
+
         Some(successor)
     }
 
@@ -600,6 +660,7 @@ pub(super) fn run(
                     Ok(request) => Response::new(Some(request.id), session.handle(&request)),
                     Err(error) => Response::new(None, Err(Error::new(-32600, error.to_string()))),
                 };
+
                 session.flush(&mut socket)?;
                 socket.send(Message::text(response.encode()?))?;
             }
@@ -628,6 +689,7 @@ pub(super) fn run(
                             json!({"reason":error.to_string()}),
                         ))?))?;
                         let _ = socket.close(None);
+
                         return Ok(());
                     }
                 }
@@ -647,6 +709,7 @@ pub(super) fn run(
             && (session.domains.contains("Log") || session.domains.contains("Runtime"))
         {
             let dropped = std::mem::take(&mut session.dropped);
+
             session.warning(format!("Rake CDP outbound queue dropped {dropped} events"));
         }
     }
@@ -661,6 +724,7 @@ mod tests {
         let router = rake::router::Router::<rake::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
         );
+
         let instance = Instance {
             application_id: "test.queue".into(),
             pid: 1,
@@ -669,10 +733,13 @@ mod tests {
                 path: "/unused".into(),
             },
         };
+
         let mut session = Session::new(instance, None);
+
         for _ in 0..QUEUE_LIMIT + 2 {
             session.event(Event::new("Log.entryAdded", json!({})));
         }
+
         assert_eq!(session.outbound.len(), QUEUE_LIMIT);
         assert_eq!(session.dropped, 2);
         session.outbound.clear();
@@ -684,6 +751,7 @@ mod tests {
         assert!(session.outbound.is_empty());
         assert_eq!(session.dropped, 3);
     }
+
     fn fixture(
         mut reply: impl FnMut(RuntimeRequest) -> Reply + Send + 'static,
         requests: usize,
@@ -691,11 +759,15 @@ mod tests {
         use std::io::{BufRead, BufReader, Write};
         let path =
             std::path::PathBuf::from(format!("/tmp/rake-overlay-{}.sock", uuid::Uuid::new_v4()));
+
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
         let router = rake::router::Router::<rake::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
         );
+
         let mut info = router.client().info();
+
         info.element_interaction = true;
         let instance = Instance {
             application_id: "test.overlay".into(),
@@ -703,21 +775,26 @@ mod tests {
             info,
             endpoint: rake::control::local::Endpoint::Local { path: path.clone() },
         };
+
         let worker = std::thread::spawn(move || {
             for _ in 0..requests {
                 let (mut socket, _) = listener.accept().unwrap();
+
                 socket
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
                 let mut line = String::new();
+
                 BufReader::new(socket.try_clone().unwrap())
                     .read_line(&mut line)
                     .unwrap();
                 let request: RuntimeRequest = serde_json::from_str(&line).unwrap();
                 let result = Ok::<_, rake::control::ControlError>(reply(request));
+
                 writeln!(socket, "{}", serde_json::to_string(&result).unwrap()).unwrap();
             }
         });
+
         (instance, worker, path)
     }
 
@@ -725,18 +802,24 @@ mod tests {
     fn closing_a_session_clears_picker_and_highlight_without_retaining_retry_keys() {
         let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let commands = observed.clone();
+
         let (instance, worker, path) = fixture(
             move |request| {
                 assert!(request.key.is_none());
+
                 let RuntimeMessage::Command(command) = request.message else {
                     panic!("control command");
                 };
+
                 commands.lock().unwrap().push(command);
+
                 Reply::Acknowledged
             },
             3,
         );
+
         let mut session = Session::new(instance, None);
+
         session
             .handle(&Request {
                 id: 1,
@@ -775,35 +858,43 @@ mod tests {
     fn expand_then_reveal_keeps_the_frontend_tree_and_selection_intact() {
         let mut snapshot = capture("stable");
         let mut child = snapshot.elements[0].clone();
+
         child.id = "element-stable-1".into();
         child.parent = Some("element-stable-0".into());
         snapshot.elements.push(child);
         let (instance, worker, path) = fixture(move |_| Reply::Elements(snapshot.clone()), 1);
         let mut session = Session::new(instance, None);
+
         let request = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         let doc = session
             .handle(&request("DOM.getDocument", json!({})))
             .unwrap();
+
         let root = doc["root"]["children"][0]["nodeId"].as_i64().unwrap();
+
         assert!(session.domains.contains("DOM"));
         session
             .handle(&request("DOM.requestChildNodes", json!({"nodeId":root})))
             .unwrap();
         let event = session.outbound.pop_front().unwrap().0;
+
         session.outbound_bytes = 0;
         assert_eq!(event.method, "DOM.setChildNodes");
         assert_eq!(event.params["parentId"], root);
         let child = event.params["nodes"][0]["backendNodeId"].as_i64().unwrap();
+
         let result = session
             .handle(&request(
                 "DOM.pushNodesByBackendIdsToFrontend",
                 json!({"backendNodeIds":[child]}),
             ))
             .unwrap();
+
         assert_eq!(result["nodeIds"], json!([child]));
         assert!(
             session.outbound.is_empty(),
@@ -823,11 +914,13 @@ mod tests {
     #[test]
     fn live_style_events_invalidate_chrome_without_document_resets() {
         let mut snapshot = capture("live");
+
         snapshot.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
             properties: json!({"opacity":1.0}),
             hovered: false,
         });
         let mut initial = true;
+
         let (instance, worker, path) = fixture(
             move |_| {
                 if initial {
@@ -837,16 +930,20 @@ mod tests {
                         json!(0.5);
                     snapshot.elements[0].resolved.as_mut().unwrap().hovered = true;
                 }
+
                 Reply::Elements(snapshot.clone())
             },
             2,
         );
+
         let mut session = Session::new(instance, None);
+
         let request = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session.handle(&request("CSS.enable", json!({}))).unwrap();
         assert_eq!(
             session.outbound.front().unwrap().0.method,
@@ -855,7 +952,9 @@ mod tests {
         let doc = session
             .handle(&request("DOM.getDocument", json!({})))
             .unwrap();
+
         let id = doc["root"]["children"][0]["nodeId"].as_i64().unwrap();
+
         session
             .handle(&request(
                 "CSS.trackComputedStyleUpdatesForNode",
@@ -870,6 +969,7 @@ mod tests {
             .iter()
             .map(|(event, _)| event.method.as_str())
             .collect();
+
         assert_eq!(
             events,
             ["CSS.styleSheetChanged", "CSS.computedStyleUpdated"]
@@ -881,6 +981,7 @@ mod tests {
                 json!({"styleSheetId":"rake-resolved"}),
             ))
             .unwrap();
+
         assert!(text["text"].as_str().unwrap().contains("0.5"));
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
@@ -904,7 +1005,9 @@ mod tests {
             },
             2,
         );
+
         let mut session = Session::new(instance, None);
+
         session.dom.update(capture("1")).unwrap();
         session.domains.insert("DOM".into());
         session.picking = true;
@@ -914,11 +1017,13 @@ mod tests {
             .iter()
             .map(|(event, _)| event.method.as_str())
             .collect();
+
         assert_eq!(
             events,
             ["DOM.documentUpdated", "Overlay.inspectNodeRequested"]
         );
         let id = session.dom.node_id("element-2-0").unwrap();
+
         assert_eq!(
             session.outbound.back().unwrap().0.params["backendNodeId"],
             id

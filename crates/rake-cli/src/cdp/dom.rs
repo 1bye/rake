@@ -34,26 +34,34 @@ impl Dom {
                     {
                         self.style_updates.insert(id);
                     }
+
                     *element = current.clone();
                 }
             }
+
             self.snapshot = Some(snapshot);
+
             return Ok(false);
         }
+
         let changed = self.snapshot.is_some();
+
         self.nodes.clear();
         self.sent.clear();
         self.children_sent.clear();
         self.style_updates.clear();
         self.next = self.next.max(2);
+
         for element in &snapshot.elements {
             let id = self.next;
+
             self.next = self
                 .next
                 .checked_add(1)
                 .ok_or_else(|| Error::new(-32000, "CDP node identity exhausted; reconnect"))?;
             self.nodes.insert(id, element.clone());
         }
+
         self.omitted_id = self.next;
         self.next = self
             .next
@@ -76,14 +84,17 @@ impl Dom {
 
     pub fn style_sheet_text(&self) -> String {
         let mut text = String::from("/* Read-only GPUI resolved style snapshots. */\n");
+
         for (&id, element) in &self.nodes {
             let style = super::styles::inline(visual_style(element));
+
             text.push_str(&format!(
                 "/* {} */\n[data-rake-node=\"{id}\"] {{\n{}\n}}\n",
                 element.id,
                 style["cssText"].as_str().unwrap_or_default()
             ));
         }
+
         text
     }
 
@@ -100,6 +111,7 @@ impl Dom {
         params: &Value,
     ) -> Result<rake::control::Command, Error> {
         use rake::control::Command;
+
         match method {
             "Overlay.highlightNode" => {
                 let id = params["nodeId"]
@@ -107,7 +119,9 @@ impl Dom {
                     .or_else(|| params["backendNodeId"].as_i64())
                     .and_then(|id| i32::try_from(id).ok())
                     .ok_or_else(|| Error::new(-32602, "nodeId or backendNodeId required"))?;
+
                 let element = self.element(id)?;
+
                 Ok(Command::HighlightElement {
                     id: Some(element.id.clone()),
                     generation: self.generation().unwrap_or_default().into(),
@@ -153,7 +167,9 @@ impl Dom {
         if id != 1 && !self.nodes.contains_key(&id) {
             return Vec::new();
         }
+
         let parent = self.nodes.get(&id).map(|element| element.id.as_str());
+
         let mut children: Vec<_> = self
             .nodes
             .iter()
@@ -166,12 +182,15 @@ impl Dom {
                 } else {
                     element.parent.as_deref() == parent
                 };
+
                 belongs.then_some(child_id)
             })
             .collect();
+
         if id == 1 && self.snapshot.as_ref().is_some_and(|s| s.omitted > 0) {
             children.push(self.omitted_id);
         }
+
         children
     }
 
@@ -183,20 +202,26 @@ impl Dom {
         if !seen.insert(id) {
             return Value::Null;
         }
+
         if id == self.omitted_id {
             return json!({"nodeId":id,"backendNodeId":id,"nodeType":8,"nodeName":"#comment","localName":"","nodeValue":format!("{} elements omitted", self.snapshot.as_ref().map_or(0, |s| s.omitted))});
         }
+
         let children = self.children(id);
+
         let mut node = if id == 1 {
             json!({"nodeId":1,"backendNodeId":1,"nodeType":9,"nodeName":"#document","localName":"","nodeValue":"",
                 "documentURL":"rake://runtime","baseURL":"rake://runtime"})
         } else {
             let element = &self.nodes[&id];
             let name = rake::inspection::display_name(&element.kind);
+
             json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
                 "nodeValue":"","attributes":attributes(element)})
         };
+
         node["childNodeCount"] = json!(children.len());
+
         if depth > 0 || children.is_empty() {
             node["children"] = json!(
                 children
@@ -206,14 +231,18 @@ impl Dom {
                     .collect::<Vec<_>>()
             );
         }
+
         node
     }
 
     fn remember(&mut self, node: &Value) {
         let id = node["nodeId"].as_i64().unwrap() as i32;
+
         self.sent.insert(id);
+
         if let Some(children) = node["children"].as_array() {
             self.children_sent.insert(id);
+
             for child in children {
                 self.remember(child);
             }
@@ -222,10 +251,13 @@ impl Dom {
 
     pub fn document(&mut self, params: &Value) -> Result<Value, Error> {
         let depth = depth(params, 1)?;
+
         self.sent.clear();
         self.children_sent.clear();
         let root = self.node(1, depth);
+
         self.remember(&root);
+
         Ok(root)
     }
 
@@ -233,15 +265,19 @@ impl Dom {
         if depth == 0 {
             return;
         }
+
         let children = self.children(id);
+
         if self.children_sent.insert(id) {
             let nodes: Vec<_> = children
                 .iter()
                 .map(|&child| self.node(child, depth - 1))
                 .collect();
+
             for node in &nodes {
                 self.remember(node);
             }
+
             events.push(json!({"parentId":id,"nodes":nodes}));
         } else {
             for child in children {
@@ -253,24 +289,30 @@ impl Dom {
     pub fn request_children(&mut self, params: &Value) -> Result<Vec<Value>, Error> {
         let id = node_id(params)?;
         let depth = depth(params, 1)?;
+
         if !self.sent.contains(&id) {
             return Err(Error::new(
                 -32000,
                 "Parent node is not known; request the document first",
             ));
         }
+
         let mut events = Vec::new();
+
         self.send_children(id, depth, &mut events);
+
         Ok(events)
     }
 
     fn send_path(&mut self, mut id: i32, events: &mut Vec<Value>) -> Result<(), Error> {
         let mut parents = Vec::new();
         let mut seen = BTreeSet::new();
+
         while !self.sent.contains(&id) {
             if !seen.insert(id) {
                 return Err(Error::new(-32000, "Captured ancestry contains a cycle"));
             }
+
             id = self
                 .nodes
                 .get(&id)
@@ -279,9 +321,11 @@ impl Dom {
                 .unwrap_or(1);
             parents.push(id);
         }
+
         for parent in parents.into_iter().rev() {
             self.send_children(parent, 1, events);
         }
+
         Ok(())
     }
 
@@ -289,8 +333,11 @@ impl Dom {
         if !self.sent.contains(&1) {
             return Ok(None);
         }
+
         let mut events = Vec::new();
+
         self.send_path(id, &mut events)?;
+
         Ok(Some(events))
     }
 
@@ -298,10 +345,13 @@ impl Dom {
         let ids = params["backendNodeIds"]
             .as_array()
             .ok_or_else(|| Error::new(-32602, "backendNodeIds required"))?;
+
         if !self.sent.contains(&1) {
             return Err(Error::new(-32000, "Request the document first"));
         }
+
         let mut events = Vec::new();
+
         let nodes: Vec<_> = ids
             .iter()
             .map(|value| {
@@ -309,34 +359,43 @@ impl Dom {
                     .as_i64()
                     .and_then(|id| i32::try_from(id).ok())
                     .unwrap_or(0);
+
                 if id == 1 || self.nodes.contains_key(&id) {
                     self.send_path(id, &mut events)?;
+
                     Ok(id)
                 } else {
                     Ok(0)
                 }
             })
             .collect::<Result<_, Error>>()?;
+
         Ok((json!({"nodeIds":nodes}), events))
     }
 
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, Error> {
         let id = node_id(params)?;
+
         if method == "DOM.describeNode" {
             if id != 1 {
                 self.element(id)?;
             }
+
             return Ok(json!({"node":self.node(id, depth(params, 0)?)}));
         }
+
         let element = self.element(id)?;
+
         match method {
             "DOM.getAttributes" => Ok(json!({"attributes":attributes(element)})),
             "DOM.getBoxModel" => {
                 let layout = element
                     .layout
                     .ok_or_else(|| Error::new(-32000, "Layout is not captured for this node"))?;
+
                 let (x, y, w, h) = (layout.x, layout.y, layout.width, layout.height);
                 let quad = json!([x, y, x + w, y, x + w, y + h, x, y + h]);
+
                 Ok(
                     json!({"model":{"content":quad,"padding":quad,"border":quad,"margin":quad,"width":w,"height":h}}),
                 )
@@ -345,6 +404,7 @@ impl Dom {
                 let mut inherited = Vec::new();
                 let mut parent = element.parent.as_deref();
                 let mut seen = BTreeSet::new();
+
                 while let Some(ancestor) = parent
                     .and_then(|parent| self.node_id(parent))
                     .and_then(|id| self.nodes.get(&id))
@@ -352,9 +412,11 @@ impl Dom {
                     if !seen.insert(&ancestor.id) {
                         break;
                     }
+
                     inherited.push(json!({"inlineStyle":super::styles::inline(ancestor.styles.as_ref()),"matchedCSSRules":[]}));
                     parent = ancestor.parent.as_deref();
                 }
+
                 Ok(
                     json!({"inlineStyle":super::styles::inline(visual_style(element)),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
                 )
@@ -363,18 +425,21 @@ impl Dom {
                 let layout = element
                     .layout
                     .ok_or_else(|| Error::new(-32000, "Layout is not captured for this node"))?;
+
                 let mut properties = super::styles::properties(
                     element
                         .resolved
                         .as_ref()
                         .map(|resolved| &resolved.properties),
                 );
+
                 properties
                     .retain(|property| property["name"] != "width" && property["name"] != "height");
                 properties.extend([
                     json!({"name":"width","value":format!("{}px",layout.width)}),
                     json!({"name":"height","value":format!("{}px",layout.height)}),
                 ]);
+
                 Ok(json!({"computedStyle":properties}))
             }
             _ => Err(Error::new(
@@ -395,9 +460,11 @@ fn visual_style(element: &Element) -> Option<&Value> {
 
 fn attributes(element: &Element) -> Vec<String> {
     let mut attrs = Vec::new();
+
     if let Some(id) = &element.semantic_id {
         attrs.extend(["id".into(), id.clone()]);
     }
+
     attrs
 }
 
@@ -417,6 +484,7 @@ fn depth(params: &Value, default: i64) -> Result<usize, Error> {
     } else {
         default
     };
+
     match depth {
         -1 => Ok(rake::inspection::MAX_ELEMENTS + 1),
         0.. => Ok((depth as usize).min(rake::inspection::MAX_ELEMENTS + 1)),
@@ -427,18 +495,22 @@ fn depth(params: &Value, default: i64) -> Result<usize, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn capture(id: &str) -> Snapshot {
         serde_json::from_value(json!({"status":"captured","capture":id,"router_revision":1,"omitted":2,"coverage":"test","elements":[
             {"id":format!("{id}-a"),"parent":null,"kind":"gpui::Stateful<gpui::elements::div::Div>","semantic_id":"root","source":{"file":"app.rs","line":3,"column":4},"layout":{"x":1.,"y":2.,"width":10.,"height":20.},"styles":{"display":"Flex","size":{"width":"100%"},"background":{"Color":"opaque"}},"metadata_truncated":false,"tab_id":null,"entry_id":null},
             {"id":format!("{id}-b"),"parent":format!("{id}-a"),"kind":"gpui::ViewElement<app::Button<app::Action>>","metadata_truncated":false}
         ]})).unwrap()
     }
+
     #[test]
     fn tree_styles_bounds_and_stale_node_ids() {
         let mut dom = Dom::default();
+
         dom.update(capture("a")).unwrap();
         let doc = dom.document(&json!({"depth":-1})).unwrap();
         let root = &doc["children"][0];
+
         assert_eq!(root["attributes"], json!(["id", "root"]));
         assert_eq!(root["nodeName"], "Div");
         assert_eq!(root["localName"], "Div");
@@ -449,11 +521,13 @@ mod tests {
         );
         assert_eq!(doc["children"][1]["nodeValue"], "2 elements omitted");
         let params = json!({"nodeId":root["nodeId"]});
+
         assert_eq!(
             dom.handle("DOM.getBoxModel", &params).unwrap()["model"]["content"],
             json!([1., 2., 11., 2., 11., 22., 1., 22.])
         );
         let css = dom.handle("CSS.getMatchedStylesForNode", &params).unwrap();
+
         assert!(
             css["inlineStyle"]["cssProperties"]
                 .as_array()
@@ -471,18 +545,22 @@ mod tests {
         assert!(dom.update(capture("b")).unwrap());
         assert!(dom.handle("DOM.getBoxModel", &params).is_err());
     }
+
     #[test]
     fn expansion_and_picker_delivery_never_replace_known_nodes() {
         let mut dom = Dom::default();
+
         dom.update(capture("one")).unwrap();
         let root_id = dom.node_id("one-a").unwrap();
         let child_id = dom.node_id("one-b").unwrap();
         let doc = dom.document(&json!({})).unwrap();
+
         assert_eq!(doc["children"][0]["childNodeCount"], 1);
         assert!(doc["children"][0].get("children").is_none());
         assert!(dom.request_children(&json!({"nodeId":child_id})).is_err());
 
         let events = dom.request_children(&json!({"nodeId":root_id})).unwrap();
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["nodes"][0]["nodeId"], child_id);
         assert!(
@@ -493,6 +571,7 @@ mod tests {
         let (result, events) = dom
             .push_nodes(&json!({"backendNodeIds":[child_id,child_id,99999]}))
             .unwrap();
+
         assert_eq!(result["nodeIds"], json!([child_id, child_id, 0]));
         assert!(
             events.is_empty(),
@@ -503,6 +582,7 @@ mod tests {
         let (_, events) = dom
             .push_nodes(&json!({"backendNodeIds":[child_id]}))
             .unwrap();
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["parentId"], root_id);
         assert!(
@@ -519,28 +599,34 @@ mod tests {
     #[test]
     fn deeper_requests_extend_the_frontier_and_inherited_styles_follow_ancestors() {
         let mut snapshot = capture("nested");
+
         snapshot.omitted = 0;
         snapshot.elements[0].styles =
             Some(json!({"text":{"color":{"hue":0.,"saturation":1.,"lightness":0.5,"alpha":1.}}}));
         let mut grandchild = snapshot.elements[1].clone();
+
         grandchild.id = "nested-c".into();
         grandchild.parent = Some("nested-b".into());
         snapshot.elements.push(grandchild);
         let mut dom = Dom::default();
+
         dom.update(snapshot).unwrap();
         let root = dom.node_id("nested-a").unwrap();
         let child = dom.node_id("nested-b").unwrap();
         let leaf = dom.node_id("nested-c").unwrap();
+
         dom.document(&json!({"depth":2})).unwrap();
         let events = dom
             .request_children(&json!({"nodeId":root,"depth":-1}))
             .unwrap();
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["parentId"], child);
         assert_eq!(events[0]["nodes"][0]["nodeId"], leaf);
         let styles = dom
             .handle("CSS.getMatchedStylesForNode", &json!({"nodeId":leaf}))
             .unwrap();
+
         assert_eq!(styles["inherited"].as_array().unwrap().len(), 2);
         assert_eq!(
             styles["inherited"][1]["inlineStyle"]["cssProperties"][0]["name"],
@@ -564,14 +650,17 @@ mod tests {
     #[test]
     fn resolved_style_changes_refresh_css_without_replacing_node_ids() {
         let mut snapshot = capture("live");
+
         snapshot.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
             properties: json!({"background":{"Color":{"tag":"Solid","solid":{"h":0.,"s":1.,"l":0.5,"a":1.}}},"text":{"font_size":"24px"}}),
             hovered: false,
         });
         let mut dom = Dom::default();
+
         dom.update(snapshot.clone()).unwrap();
         dom.document(&json!({"depth":-1})).unwrap();
         let id = dom.node_id("live-a").unwrap();
+
         snapshot.elements[0].resolved.as_mut().unwrap().properties["background"]["Color"]["solid"]
             ["h"] = json!(0.5);
         snapshot.elements[0].resolved.as_mut().unwrap().hovered = true;
@@ -581,6 +670,7 @@ mod tests {
         let computed = dom
             .handle("CSS.getComputedStyleForNode", &json!({"nodeId":id}))
             .unwrap();
+
         let get = |name| {
             computed["computedStyle"]
                 .as_array()
@@ -591,6 +681,7 @@ mod tests {
                 .as_str()
                 .unwrap()
         };
+
         assert_eq!(get("background-color"), "#00ffff");
         assert_eq!(get("font-size"), "24px");
         assert_eq!(get("width"), "10px");
@@ -607,8 +698,10 @@ mod tests {
     fn overlay_commands_use_exact_capture_ids_and_shared_backend_ids() {
         use rake::control::Command;
         let mut dom = Dom::default();
+
         dom.update(capture("test")).unwrap();
         let id = dom.node_id("test-a").unwrap();
+
         for params in [json!({"nodeId":id}), json!({"backendNodeId":id})] {
             assert_eq!(
                 dom.overlay_command("Overlay.highlightNode", &params)
@@ -619,6 +712,7 @@ mod tests {
                 }
             );
         }
+
         assert_eq!(
             dom.overlay_command("Overlay.hideHighlight", &json!({}))
                 .unwrap(),

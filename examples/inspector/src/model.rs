@@ -123,6 +123,7 @@ impl Inspector {
                 match result {
                     Ok(pick) => {
                         self.picking = pick.mode;
+
                         if pick.picked.is_some() && pick.pick_sequence > self.pick_sequence {
                             self.pick_sequence = pick.pick_sequence;
                             self.pending_pick = Some(pick);
@@ -198,6 +199,7 @@ impl Inspector {
                         }) {
                             self.hover = None;
                         }
+
                         if let Some(current) = self
                             .selected
                             .as_ref()
@@ -205,6 +207,7 @@ impl Inspector {
                         {
                             self.detail = Some(current.clone());
                         }
+
                         self.tree = Some(tree);
                         self.error = None;
                         self.apply_pick();

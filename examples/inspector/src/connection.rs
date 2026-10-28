@@ -200,12 +200,14 @@ impl Connection {
         ) {
             return Err("This Inspector only supports development inspection controls.".into());
         }
+
         let request = Request {
             protocol: PROTOCOL_VERSION,
             runtime_id: runtime,
             key: None,
             message: Message::Command(command),
         };
+
         let reply: Result<Reply, ControlError> = self
             .post(
                 "inspect",
@@ -213,6 +215,7 @@ impl Connection {
                 cancellation,
             )
             .await?;
+
         match reply.map_err(|e| e.to_string())? {
             Reply::Acknowledged => Ok(()),
             _ => Err("Unexpected inspection control response.".into()),

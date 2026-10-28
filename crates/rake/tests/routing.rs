@@ -579,6 +579,80 @@ fn queued_and_waiting_operations_can_be_cancelled_explicitly() {
 }
 
 #[test]
+fn synchronous_access_guard_cancellation_prevents_commit() {
+    let (router, mut pool) = harness(RouterConfig::default());
+    let router = Rc::new(router);
+    let cancelling = Rc::downgrade(&router);
+
+    router
+        .entry_guard(move |context| {
+            assert!(
+                cancelling
+                    .upgrade()
+                    .expect("live runtime")
+                    .cancel(context.operation_id)
+                    .expect("cancel before commit")
+            );
+
+            std::future::ready(GuardResult::Allow)
+        })
+        .expect("guard");
+    let operation = router
+        .navigator()
+        .open(Destination::Home, OpenTarget::NewTab);
+
+    let id = operation.id();
+
+    assert_eq!(
+        pool.run_until(operation.wait()).expect("outcome"),
+        Outcome::Cancelled(CancelReason::Requested)
+    );
+    assert!(router.snapshot().tabs.is_empty());
+    assert_eq!(
+        router.operation(id),
+        Ok(OperationState::Cancelled(CancelReason::Requested))
+    );
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn synchronous_disposal_guard_cancellation_preserves_dirty_entry() {
+    let (router, mut pool) = harness(RouterConfig::default());
+    let router = Rc::new(router);
+    let opened = open(&router, &mut pool, "A");
+    let entry = router.entry(opened.entry_id).expect("entry");
+    let lifetime = entry.cancellation().expect("lifetime");
+    let cancelling = Rc::downgrade(&router);
+
+    entry.set_dirty(true).expect("edit");
+    entry
+        .on_dispose(move |context| {
+            assert!(
+                cancelling
+                    .upgrade()
+                    .expect("live runtime")
+                    .cancel(context.operation_id)
+                    .expect("cancel before disposal")
+            );
+
+            std::future::ready(GuardResult::Allow)
+        })
+        .expect("guard");
+    let close = router.navigator().tab(opened.tab_id).close();
+
+    assert_eq!(
+        pool.run_until(close.wait()).expect("outcome"),
+        Outcome::Cancelled(CancelReason::Requested)
+    );
+    assert_eq!(router.snapshot().tabs.len(), 1);
+    assert!(entry.is_dirty().expect("entry retained"));
+    assert!(!lifetime.is_cancelled());
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
 fn completed_retention_and_admission_are_bounded() {
     let (router, mut pool) = harness(RouterConfig {
         completed_operations: 1,

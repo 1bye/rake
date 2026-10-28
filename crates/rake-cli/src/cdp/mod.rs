@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 const TIMEOUT: Duration = Duration::from_secs(2);
 const HELP: &str = "rake cdp [--session PATH] [--instance UUID|APPLICATION_ID] [--port PORT] [--no-open] [--json] [--export-trace FILE]\nDefault port: OS-assigned. Paste the printed devtools:// URL into Chrome, or use chrome://inspect.";
 
@@ -41,6 +42,7 @@ impl Options {
             process_output: None,
             export_trace: None,
         };
+
         let mut args = args.into_iter();
 
         while let Some(arg) = args.next() {
@@ -52,6 +54,7 @@ impl Options {
                 }
                 "--session" => {
                     let session = PathBuf::from(args.next().ok_or("--session requires a path")?);
+
                     options.directory = session.join("control");
                     options.process_output = Some(session.join("output.json"));
                 }
@@ -84,6 +87,7 @@ pub(crate) fn run(args: Vec<String>) -> Result<()> {
     }
 
     let options = Options::parse(args)?;
+
     if let Some(path) = &options.export_trace {
         return trace::export(&options, path);
     }

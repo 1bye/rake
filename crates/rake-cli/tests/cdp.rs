@@ -32,8 +32,10 @@ fn cdp_call(
             json!({"id":99,"method":method,"params":params}).to_string(),
         ))
         .unwrap();
+
     loop {
         let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+
         if reply["id"] == 99 {
             return reply;
         }
@@ -51,6 +53,7 @@ impl Drop for Adapter {
 
 fn http(authority: &str, path: &str, host: &str, origin: Option<&str>) -> String {
     let mut stream = TcpStream::connect(authority).unwrap();
+
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -62,6 +65,7 @@ fn http(authority: &str, path: &str, host: &str, origin: Option<&str>) -> String
 
     write!(stream, "\r\n").unwrap();
     let mut reply = String::new();
+
     stream.read_to_string(&mut reply).unwrap();
 
     reply
@@ -74,16 +78,19 @@ fn discovery_access_wire_and_detach() {
     let client = router.client();
     let executions = std::rc::Rc::new(std::cell::Cell::new(0));
     let executed = executions.clone();
+
     client
         .commands()
         .register::<Echo, _, _>(move |args, _| {
             executed.set(executed.get() + 1);
+
             async move { Ok(args.message) }
         })
         .unwrap();
     let server = LocalServer::bind(&client, "test.cdp", &directory).unwrap();
     let (gone, vanish) = oneshot::channel();
     let worker_directory = directory.clone();
+
     let worker = std::thread::spawn(move || {
         let mut adapter = Adapter(
             Command::new(env!("CARGO_BIN_EXE_rake"))
@@ -93,16 +100,20 @@ fn discovery_access_wire_and_detach() {
                 .spawn()
                 .unwrap(),
         );
+
         let mut line = String::new();
+
         BufReader::new(adapter.0.stdout.take().unwrap())
             .read_line(&mut line)
             .unwrap();
         let ready: Value = serde_json::from_str(&line).unwrap();
+
         let authority = ready["url"]
             .as_str()
             .unwrap()
             .strip_prefix("http://")
             .unwrap();
+
         assert!(ready["port"].as_u64().unwrap() > 0);
         assert_eq!(ready["targets"][0]["type"], "page");
         assert_eq!(ready["targets"][0]["title"], "test.cdp");
@@ -123,7 +134,9 @@ fn discovery_access_wire_and_detach() {
             authority,
             Some("devtools://devtools"),
         );
+
         let list: Value = serde_json::from_str(list.split_once("\r\n\r\n").unwrap().1).unwrap();
+
         assert_eq!(list, ready["targets"]);
         let (mut socket, _) =
             tungstenite::connect(list[0]["webSocketDebuggerUrl"].as_str().unwrap()).unwrap();
@@ -140,6 +153,7 @@ fn discovery_access_wire_and_detach() {
             ))
             .unwrap();
         let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+
         assert_eq!(reply["id"], 1);
         assert_eq!(reply["error"]["code"], -32601);
         socket
@@ -148,37 +162,44 @@ fn discovery_access_wire_and_detach() {
             ))
             .unwrap();
         let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+
         assert_eq!(reply["result"], json!({}));
         let names = cdp_call(&mut socket, "Runtime.globalLexicalScopeNames", json!({}));
+
         assert_eq!(names["result"]["names"], json!(["test.echo"]));
         let compiled = cdp_call(
             &mut socket,
             "Runtime.compileScript",
             json!({"expression":"test.echo({\"message\":\"hello\"})","persistScript":false}),
         );
+
         assert_eq!(compiled["result"], json!({}));
         let eager = cdp_call(
             &mut socket,
             "Runtime.evaluate",
             json!({"expression":"test.echo({\"message\":\"hello\"})","throwOnSideEffect":true}),
         );
+
         assert_eq!(eager["error"]["code"], -32000);
         let unknown = cdp_call(
             &mut socket,
             "Runtime.evaluate",
             json!({"expression":"unknown({})"}),
         );
+
         assert_eq!(unknown["error"]["code"], -32602);
         let first = cdp_call(
             &mut socket,
             "Runtime.evaluate",
             json!({"expression":"test.echo({\"message\":\"hello\"})","returnByValue":true}),
         );
+
         let second = cdp_call(
             &mut socket,
             "Runtime.evaluate",
             json!({"expression":"test.echo({\"message\":\"hello\"})","returnByValue":true}),
         );
+
         assert_eq!(
             first["result"]["result"]["value"]["operation"]["result"],
             "hello"
@@ -190,13 +211,16 @@ fn discovery_access_wire_and_detach() {
         let first_key = first["result"]["result"]["value"]["requestKey"]
             .as_str()
             .unwrap();
+
         let second_key = second["result"]["result"]["value"]["requestKey"]
             .as_str()
             .unwrap();
+
         uuid::Uuid::parse_str(first_key).unwrap();
         assert_ne!(first_key, second_key);
         gone.send(()).unwrap();
         let reply: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+
         assert_eq!(reply["method"], "Inspector.detached");
     });
 
@@ -204,6 +228,7 @@ fn discovery_access_wire_and_detach() {
         let work = async {
             let _ = select(Box::pin(router.run()), Box::pin(server.run(client))).await;
         };
+
         let _ = select(Box::pin(work), Box::pin(vanish)).await;
     });
     drop(server);
@@ -223,14 +248,18 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     let directory = std::path::PathBuf::from(format!("/tmp/rake-cdp-{}", uuid::Uuid::new_v4()));
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let server = LocalServer::bind(&router.client(), "test.http", &directory).unwrap();
+
     let instance = rake::control::local::discover(&directory)
         .unwrap()
         .remove(0);
+
     let rake::control::local::Endpoint::Local { path } = &instance.endpoint else {
         panic!()
     };
+
     std::fs::remove_file(path).unwrap();
     let listener = UnixListener::bind(path).unwrap();
+
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
     listener.set_nonblocking(true).unwrap();
     let collector = rake::diagnostics::Collector::new(32);
@@ -238,6 +267,7 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     let info = instance.info.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let fixture_stop = stop.clone();
+
     let fixture = std::thread::spawn(move || {
         while !fixture_stop.load(std::sync::atomic::Ordering::Relaxed) {
             let (mut socket, _) = match listener.accept() {
@@ -248,25 +278,31 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
                 }
                 Err(e) => panic!("{e}"),
             };
+
             socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             let mut line = String::new();
+
             BufReader::new(socket.try_clone().unwrap())
                 .read_line(&mut line)
                 .unwrap();
             let request: Request = serde_json::from_str(&line).unwrap();
+
             let reply = match request.message {
                 rake::control::Message::Query(rake::control::Query::Diagnostics {
                     after, ..
                 }) => {
                     let mut snapshot = fixture_collector.snapshot();
+
                     snapshot.records.retain(|r| r.sequence > after);
+
                     Reply::Diagnostics(snapshot)
                 }
                 _ => Reply::Info(info.clone()),
             };
+
             writeln!(
                 socket,
                 "{}",
@@ -275,6 +311,7 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
             .unwrap();
         }
     });
+
     let mut adapter = Adapter(
         Command::new(env!("CARGO_BIN_EXE_rake"))
             .env("RAKE_CONTROL_DIR", &directory)
@@ -283,22 +320,27 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
             .spawn()
             .unwrap(),
     );
+
     let mut line = String::new();
+
     BufReader::new(adapter.0.stdout.take().unwrap())
         .read_line(&mut line)
         .unwrap();
     let ready: Value = serde_json::from_str(&line).unwrap();
+
     let (mut socket, _) = tungstenite::connect(
         ready["targets"][0]["webSocketDebuggerUrl"]
             .as_str()
             .unwrap(),
     )
     .unwrap();
+
     if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
     }
+
     socket
         .send(tungstenite::Message::text(
             json!({"id":1,"method":"Network.enable"}).to_string(),
@@ -307,31 +349,40 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     socket.read().unwrap();
     let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/test?secret=redacted", http.local_addr().unwrap());
+
     let responder = std::thread::spawn(move || {
         let (mut socket, _) = http.accept().unwrap();
         let mut request = [0; 4096];
+
         assert!(socket.read(&mut request).unwrap() > 0);
         socket
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest")
             .unwrap();
     });
+
     futures::executor::block_on(async {
         let http = rake::http::HttpClient::with_collector(rake::http::HttpConfig::new(), collector)
             .unwrap();
+
         let body = http.get(&url).send().await.unwrap().bytes().await.unwrap();
+
         assert_eq!(body.as_slice(), b"test");
     });
     responder.join().unwrap();
     let mut methods = Vec::new();
+
     loop {
         let event: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
         let method = event["method"].as_str().unwrap().to_owned();
+
         methods.push(method.clone());
+
         if method == "Network.loadingFinished" {
             assert_eq!(event["params"]["encodedDataLength"], 4);
             break;
         }
     }
+
     assert_eq!(
         methods,
         [
@@ -356,6 +407,7 @@ fn follows_only_a_checkpointed_successor() {
     let old = Router::<NoRoute>::new(RouterConfig::default());
     let mut pool = futures::executor::LocalPool::new();
     let driver = old.clone();
+
     pool.spawner()
         .spawn_local(async move {
             driver.run().await.unwrap();
@@ -369,6 +421,7 @@ fn follows_only_a_checkpointed_successor() {
     pool.run_until_stalled();
     let checkpoint = old.reload_checkpoint("test.replace").unwrap();
     let replacement = Router::<NoRoute>::new(RouterConfig::default());
+
     pool.run_until(replacement.restore_workspace(&checkpoint, "test.replace"))
         .unwrap();
     let old_server = LocalServer::bind(&old.client(), "test.replace", &directory).unwrap();
@@ -377,6 +430,7 @@ fn follows_only_a_checkpointed_successor() {
     let (ready, replace) = oneshot::channel();
     let (done, finished) = oneshot::channel();
     let worker_directory = directory.clone();
+
     let worker = std::thread::spawn(move || {
         let mut adapter = Adapter(
             Command::new(env!("CARGO_BIN_EXE_rake"))
@@ -392,47 +446,60 @@ fn follows_only_a_checkpointed_successor() {
                 .spawn()
                 .unwrap(),
         );
+
         let mut line = String::new();
+
         BufReader::new(adapter.0.stdout.take().unwrap())
             .read_line(&mut line)
             .unwrap();
         let listening: Value = serde_json::from_str(&line).unwrap();
+
         let (mut socket, _) = tungstenite::connect(
             listening["targets"][0]["webSocketDebuggerUrl"]
                 .as_str()
                 .unwrap(),
         )
         .unwrap();
+
         if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(10)))
                 .unwrap();
         }
+
         socket
             .send(tungstenite::Message::text(
                 json!({"id":1,"method":"Runtime.enable"}).to_string(),
             ))
             .unwrap();
+
         loop {
             let event: Value =
                 serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+
             if event["method"] == "Runtime.executionContextCreated" {
                 break;
             }
         }
+
         ready.send(()).unwrap();
         let mut methods = Vec::new();
+
         loop {
             let event: Value =
                 serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+
             let method = event["method"].as_str().unwrap_or_default().to_owned();
+
             methods.push(method.clone());
             assert_ne!(method, "Inspector.detached");
+
             if method == "Runtime.executionContextCreated" {
                 assert_eq!(event["params"]["context"]["uniqueId"], new_id.to_string());
                 break;
             }
         }
+
         assert!(methods.iter().any(|m| m == "DOM.documentUpdated"));
         assert!(
             methods
@@ -441,15 +508,19 @@ fn follows_only_a_checkpointed_successor() {
         );
         done.send(()).unwrap();
     });
+
     pool.run_until(async {
         let _ = select(Box::pin(old_server.run(old.client())), Box::pin(replace)).await;
     });
     drop(old_server);
     let unrelated = Router::<NoRoute>::new(RouterConfig::default());
+
     let unrelated_server =
         LocalServer::bind(&unrelated.client(), "test.replace", &directory).unwrap();
+
     let replacement_server =
         LocalServer::bind(&replacement.client(), "test.replace", &directory).unwrap();
+
     pool.run_until(async {
         let _ = select(
             Box::pin(async {
@@ -457,6 +528,7 @@ fn follows_only_a_checkpointed_successor() {
                     replacement_server.run(replacement.client()),
                     unrelated_server.run(unrelated.client())
                 );
+
                 replacement_result.unwrap();
                 unrelated_result.unwrap();
             }),

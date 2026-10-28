@@ -194,6 +194,7 @@ impl RouteViews<Destination> for Views {
                     let mut ticks = 0u64;
                     let mut controlled = None;
                     let mut highlighting = false;
+
                     loop {
                         let (epoch, disconnected) = {
                             let model = observed.borrow();
@@ -203,10 +204,12 @@ impl RouteViews<Destination> for Views {
 
                         let (target, pending, picking, hover, supported) = {
                             let mut model = observed.borrow_mut();
+
                             let supported = model.instances.iter().any(|i| {
                                 Some(i.info.runtime_id) == model.runtime
                                     && i.info.element_interaction
                             });
+
                             (
                                 model.runtime,
                                 std::mem::take(&mut model.mode_pending),
@@ -215,7 +218,9 @@ impl RouteViews<Destination> for Views {
                                 supported,
                             )
                         };
+
                         let target = target.filter(|_| !disconnected && supported);
+
                         if controlled != target {
                             if let Some(old) = controlled {
                                 let _ = connection
@@ -228,6 +233,7 @@ impl RouteViews<Destination> for Views {
                                         run.cancellation(),
                                     )
                                     .await;
+
                                 let _ = connection
                                     .control(
                                         old,
@@ -239,9 +245,11 @@ impl RouteViews<Destination> for Views {
                                     )
                                     .await;
                             }
+
                             controlled = target;
                             highlighting = false;
                         }
+
                         if let Some(runtime) = target {
                             if let Some(enabled) = pending {
                                 let result = connection
@@ -254,10 +262,12 @@ impl RouteViews<Destination> for Views {
                                         run.cancellation(),
                                     )
                                     .await;
+
                                 if let Err(error) = result {
                                     run.publish(Update::Pick(epoch, runtime, Err(error)))?;
                                 }
                             }
+
                             if picking {
                                 let result = connection
                                     .query(runtime, Query::InspectPick {}, run.cancellation())
@@ -266,6 +276,7 @@ impl RouteViews<Destination> for Views {
                                         Reply::InspectPick(pick) => Ok(pick),
                                         _ => Err("Unexpected picker reply".into()),
                                     });
+
                                 if result.as_ref().is_ok_and(|pick| pick.mode) {
                                     let _ = connection
                                         .control(
@@ -278,6 +289,7 @@ impl RouteViews<Destination> for Views {
                                         )
                                         .await;
                                 }
+
                                 run.publish(Update::Pick(epoch, runtime, result))?;
                             } else if let Some((id, generation)) = hover {
                                 let _ = connection
@@ -290,6 +302,7 @@ impl RouteViews<Destination> for Views {
                                         run.cancellation(),
                                     )
                                     .await;
+
                                 highlighting = true;
                             } else if highlighting {
                                 let _ = connection
@@ -302,9 +315,11 @@ impl RouteViews<Destination> for Views {
                                         run.cancellation(),
                                     )
                                     .await;
+
                                 highlighting = false;
                             }
                         }
+
                         if !disconnected && ticks.is_multiple_of(5) {
                             let instances = connection.instances(run.cancellation()).await;
 

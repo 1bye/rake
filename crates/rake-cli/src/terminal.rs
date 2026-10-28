@@ -178,10 +178,12 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                 "off" => false,
                 _ => return Err("inspect mode expects on or off".into()),
             };
+
             let lease_ms = option(&mut args, "--lease-ms")?
                 .map(|value| value.parse())
                 .transpose()?
                 .unwrap_or(1000);
+
             Message::Command(Command::InspectMode { enabled, lease_ms })
         }
         ("inspect", "tree") => Message::Query(Query::InspectTree {}),
@@ -478,9 +480,11 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
     {
         args.insert(0, "ctl".into());
     }
+
     let directory = option(&mut args, "--session")?
         .map(|path| std::path::PathBuf::from(path).join("control"))
         .unwrap_or_else(local::directory);
+
     let instances = local::discover(&directory)?;
     let topic = args.remove(0);
     let selector = option(&mut args, "--instance")?;
@@ -542,9 +546,11 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         let Reply::Elements(tree) = query(instance, Query::InspectTree {}, timeout)? else {
             return Err("unexpected inspection reply".into());
         };
+
         if !tree.elements.iter().any(|element| element.id == *id) {
             return Err("element is stale; refresh inspect tree".into());
         }
+
         *generation = tree.capture;
     }
 

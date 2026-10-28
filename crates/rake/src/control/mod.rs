@@ -258,10 +258,12 @@ impl<R: Route> RuntimeClient<R> {
         let id: OperationId = match command {
             Command::HighlightElement { id, generation } => {
                 self.state.inspection.highlight(id.as_deref(), generation)?;
+
                 return Ok(Reply::Acknowledged);
             }
             Command::InspectMode { enabled, lease_ms } => {
                 self.state.inspection.inspect_mode(*enabled, *lease_ms)?;
+
                 return Ok(Reply::Acknowledged);
             }
 
@@ -573,9 +575,12 @@ mod inspection_control_tests {
     fn development_lease_renewals_never_fill_application_retry_capacity() {
         let router = Router::<NoRoute>::new(RouterConfig::default());
         let client = router.client();
+
         assert!(!client.info().element_interaction);
         let snapshot = client.state.inspection.begin(0);
+
         client.state.inspection.publish(WindowId(1), snapshot);
+
         for _ in 0..2048 {
             let reply = client
                 .request(Request {
@@ -588,8 +593,10 @@ mod inspection_control_tests {
                     }),
                 })
                 .unwrap();
+
             assert!(matches!(reply, Reply::Acknowledged));
         }
+
         assert!(client.state.requests.borrow().is_empty());
         assert!(router.snapshot().operations.is_empty());
         assert!(client.info().element_interaction);

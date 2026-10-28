@@ -244,6 +244,7 @@ impl Default for Store {
 impl Store {
     pub(crate) fn snapshot(&self) -> Snapshot {
         let state = self.0.borrow();
+
         state
             .pick_window
             .and_then(|id| state.windows.get(&id))
@@ -254,6 +255,7 @@ impl Store {
 
     pub(crate) fn element(&self, id: &str) -> Result<Element, InspectionError> {
         let state = self.0.borrow();
+
         match state.latest.status {
             Status::Unavailable => Err(InspectionError::Unavailable),
             Status::Waiting => Err(InspectionError::Waiting),
@@ -279,12 +281,14 @@ impl Store {
     ) -> Result<(), InspectionError> {
         self.available()?;
         let mut state = self.0.borrow_mut();
+
         if let Some(id) = id {
             let host = state
                 .windows
                 .values_mut()
                 .find(|host| host.snapshot.capture == generation)
                 .ok_or(InspectionError::StaleGeneration)?;
+
             let element = host
                 .snapshot
                 .elements
@@ -292,13 +296,16 @@ impl Store {
                 .find(|element| element.id == id)
                 .ok_or(InspectionError::NotRetained)?
                 .clone();
+
             host.highlight = Some((element, Instant::now() + Duration::from_secs(2)));
         } else {
             for host in state.windows.values_mut() {
                 host.highlight = None;
             }
         }
+
         state.changed.notify(usize::MAX);
+
         Ok(())
     }
 
@@ -317,17 +324,22 @@ impl Store {
 
     pub(crate) fn inspect_mode(&self, enabled: bool, lease_ms: u64) -> Result<(), InspectionError> {
         self.available()?;
+
         if enabled && !(1..=2000).contains(&lease_ms) {
             return Err(InspectionError::InvalidLease);
         }
+
         let mut state = self.0.borrow_mut();
+
         if enabled {
             if !state.mode_active(Instant::now()) {
                 state.pick.hovered = None;
                 state.pick.picked = None;
                 state.pick_window = None;
             }
+
             state.mode_until = Some(Instant::now() + Duration::from_millis(lease_ms));
+
             for host in state.windows.values_mut() {
                 if let Some((_, until)) = &mut host.highlight {
                     *until = Instant::now() + Duration::from_secs(2);
@@ -336,16 +348,21 @@ impl Store {
         } else {
             state.cancel();
         }
+
         state.changed.notify(usize::MAX);
+
         Ok(())
     }
 
     pub(crate) fn pick(&self) -> Result<Pick, InspectionError> {
         self.available()?;
         let mut state = self.0.borrow_mut();
+
         state.expire(Instant::now());
         let mut pick = state.pick.clone();
+
         pick.mode = state.mode_active(Instant::now());
+
         Ok(pick)
     }
 
@@ -353,24 +370,31 @@ impl Store {
     fn pointer(&self, window: WindowId, x: f32, y: f32, click: bool) -> bool {
         let mut state = self.0.borrow_mut();
         let now = Instant::now();
+
         state.expire(now);
+
         if !state.mode_active(now) {
             return false;
         }
+
         state.hover(window, x, y, now);
+
         if click {
             state.pick.picked = state.pick.hovered.clone();
             state.pick.pick_sequence = state.pick.pick_sequence.saturating_add(1);
             state.mode_until = None;
             state.suppress_up = true;
         }
+
         true
     }
 
     #[cfg(feature = "gpui")]
     pub(crate) fn detach_window(&self, window: WindowId) {
         let mut state = self.0.borrow_mut();
+
         state.windows.remove(&window);
+
         if state.pick_window == Some(window) {
             state.pick_window = None;
             state.cancel();
@@ -380,10 +404,12 @@ impl Store {
     #[cfg(any(feature = "gpui", test))]
     pub(crate) fn begin(&self, revision: u64) -> Snapshot {
         let mut state = self.0.borrow_mut();
+
         state.next_capture = state
             .next_capture
             .checked_add(1)
             .expect("inspection capture overflow");
+
         Snapshot {
             capture: state.next_capture.to_string(),
             status: Status::Captured,
@@ -402,18 +428,23 @@ impl Store {
     #[cfg(any(feature = "gpui", test))]
     pub(crate) fn publish(&self, window: WindowId, mut snapshot: Snapshot) {
         let mut state = self.0.borrow_mut();
+
         if let Some(host) = state.windows.get(&window) {
             // Overlay-only redraws must not invalidate the node the user is picking.
             let mut stable = snapshot.clone();
+
             stable.capture = host.snapshot.capture.clone();
+
             for (index, element) in stable.elements.iter_mut().enumerate() {
                 element.id = format!("element-{}-{index}", stable.capture);
+
                 if let Some(parent) = &element.parent
                     && let Some((_, index)) = parent.rsplit_once('-')
                 {
                     element.parent = Some(format!("element-{}-{index}", stable.capture));
                 }
             }
+
             let same_boundaries = stable.elements.len() == host.snapshot.elements.len()
                 && stable
                     .elements
@@ -430,10 +461,12 @@ impl Store {
                             && element.tab_id == old.tab_id
                             && element.entry_id == old.entry_id
                     });
+
             if same_boundaries && stable.omitted == host.snapshot.omitted {
                 snapshot = stable;
             }
         }
+
         let host = state.windows.entry(window).or_insert_with(|| WindowState {
             snapshot: snapshot.clone(),
             highlight: None,
@@ -443,12 +476,16 @@ impl Store {
             #[cfg(feature = "gpui")]
             escape: None,
         });
+
         if host.snapshot.capture != snapshot.capture {
             host.highlight = None;
         }
+
         host.snapshot = snapshot.clone();
         let pointer = host.pointer;
+
         state.latest = snapshot;
+
         if state.mode_active(Instant::now())
             && state.pick_window == Some(window)
             && let Some((x, y)) = pointer
@@ -466,6 +503,7 @@ impl State {
     fn cancel(&mut self) {
         self.mode_until = None;
         self.pick.hovered = None;
+
         for host in self.windows.values_mut() {
             host.highlight = None;
         }
@@ -475,6 +513,7 @@ impl State {
         if self.mode_until.is_some_and(|until| until <= now) {
             self.cancel();
         }
+
         for host in self.windows.values_mut() {
             if host
                 .highlight
@@ -493,15 +532,19 @@ impl State {
         {
             host.highlight = None;
         }
+
         let Some(host) = self.windows.get_mut(&window) else {
             return;
         };
+
         host.pointer = Some((x, y));
         let element = hit_test(&host.snapshot, x, y).cloned();
         let id = element.as_ref().map(|e| e.id.clone());
+
         if self.pick.hovered != id || self.pick.generation != host.snapshot.capture {
             host.highlight = element.map(|e| (e, now + Duration::from_secs(2)));
         }
+
         self.pick.generation = host.snapshot.capture.clone();
         self.pick.hovered = id;
         self.pick_window = Some(window);
@@ -535,18 +578,23 @@ impl Snapshot {
     #[cfg(feature = "gpui")]
     fn bound_resolved_styles(&mut self) {
         let mut base_bytes = 0;
+
         for element in &mut self.elements {
             let resolved = element.resolved.take();
+
             base_bytes +=
                 serde_json::to_vec(&*element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len());
             element.resolved = resolved;
         }
+
         let mut remaining = (MAX_SNAPSHOT_BYTES - 4096).saturating_sub(base_bytes);
+
         for element in &mut self.elements {
             if let Some(resolved) = &element.resolved {
                 let bytes = serde_json::to_vec(resolved)
                     .map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len())
                     + 16;
+
                 if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
                     element.resolved = None;
                     element.metadata_truncated = true;

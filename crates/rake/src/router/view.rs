@@ -511,6 +511,7 @@ impl<R: Route> Workspace<R> {
 
                         loop {
                             let inspection = observed.client().inspection().listen();
+
                             if let futures::future::Either::Left((next, _)) =
                                 futures::future::select(
                                     Box::pin(observed.changed(revision)),

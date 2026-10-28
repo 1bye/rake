@@ -13,19 +13,23 @@ pub(super) fn document(snapshot: &Snapshot) -> Value {
         .filter(|r| r.kind == "span_open")
         .filter_map(|r| r.span_id.map(|id| (id, r)))
         .collect();
+
     let closes: BTreeMap<_, _> = snapshot
         .records
         .iter()
         .filter(|r| r.kind == "span_close")
         .filter_map(|r| r.span_id.map(|id| (id, r)))
         .collect();
+
     let complete: Vec<_> = opens
         .iter()
         .filter_map(|(&id, &open)| {
             let close = closes.get(&id)?;
+
             Some((id, open, close.duration_us?))
         })
         .collect();
+
     let mut asynchronous = BTreeSet::new();
 
     for (i, &(id, a, ad)) in complete.iter().enumerate() {
@@ -44,23 +48,29 @@ pub(super) fn document(snapshot: &Snapshot) -> Value {
     let mut events = Vec::new();
     let mut bytes = 512;
     let mut omitted = 0;
+
     for record in &snapshot.records {
         let Some(id) = record.span_id else {
             continue;
         };
+
         if !matches!(record.kind.as_str(), "span_open" | "span_close") {
             continue;
         }
+
         let complete =
             opens.contains_key(&id) && closes.get(&id).is_some_and(|r| r.duration_us.is_some());
+
         let mut event = json!({"name":record.spans.last().unwrap_or(&record.target),"cat":record.target,
             "pid":1,"tid":1,"ts":record.elapsed_us,"args":record.fields});
+
         event["args"]["span_id"] = json!(id);
         event["args"]["parent_span_id"] = json!(record.parent_span_id);
 
         if complete && asynchronous.contains(&id) {
             event["ph"] = json!(if record.kind == "span_open" { "b" } else { "e" });
             event["id"] = json!(id.to_string());
+
             // Close events share the measured open+duration timeline.
             if record.kind == "span_close" {
                 event["ts"] = json!(
@@ -73,6 +83,7 @@ pub(super) fn document(snapshot: &Snapshot) -> Value {
             if record.kind == "span_close" {
                 continue;
             }
+
             event["ph"] = json!("X");
             event["dur"] = json!(closes[&id].duration_us);
         } else {
@@ -87,15 +98,18 @@ pub(super) fn document(snapshot: &Snapshot) -> Value {
         }
 
         let size = event.to_string().len() + 1;
+
         if bytes + size > MAX_BYTES {
             omitted += 1;
             continue;
         }
+
         bytes += size;
         events.push(event);
     }
 
     events.sort_by_key(|event| event["ts"].as_u64().unwrap_or_default());
+
     json!({"traceEvents":events,"displayTimeUnit":"ms","metadata":{
         "clock":"runtime elapsed microseconds; logical thread, not CPU samples",
         "dropped":snapshot.dropped,"output_dropped":snapshot.output_dropped,"omitted":omitted}})
@@ -103,14 +117,17 @@ pub(super) fn document(snapshot: &Snapshot) -> Value {
 
 fn ancestor(id: u64, record: &Record, opens: &BTreeMap<u64, &Record>) -> bool {
     let mut parent = record.parent_span_id;
+
     // Bound traversal even for malformed/cyclic input.
     for _ in 0..opens.len() {
         let Some(current) = parent else {
             return false;
         };
+
         if current == id {
             return true;
         }
+
         parent = opens.get(&current).and_then(|r| r.parent_span_id);
     }
 
@@ -119,9 +136,11 @@ fn ancestor(id: u64, record: &Record, opens: &BTreeMap<u64, &Record>) -> bool {
 
 pub(super) fn export(options: &super::Options, path: &std::path::Path) -> super::Result<()> {
     let instances = super::discover(&options.directory, options.selector.as_deref())?;
+
     let [instance] = instances.as_slice() else {
         return Err("trace export requires exactly one live instance; select --instance".into());
     };
+
     let rake::control::Reply::Diagnostics(snapshot) = crate::terminal::query(
         instance,
         rake::control::Query::Diagnostics {
@@ -133,8 +152,10 @@ pub(super) fn export(options: &super::Options, path: &std::path::Path) -> super:
     else {
         return Err("unexpected trace diagnostics reply".into());
     };
+
     let bytes = serde_json::to_vec(&document(&snapshot))?;
     let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+
     let result = (|| -> super::Result<()> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
@@ -143,14 +164,18 @@ pub(super) fn export(options: &super::Options, path: &std::path::Path) -> super:
             .create_new(true)
             .mode(0o600)
             .open(&temporary)?;
+
         file.write_all(&bytes)?;
         file.sync_all()?;
         std::fs::rename(&temporary, path)?;
+
         Ok(())
     })();
+
     if result.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
+
     result?;
 
     if options.json {
@@ -191,8 +216,10 @@ mod tests {
             dropped: 0,
             output_dropped: 0,
         };
+
         let doc = document(&snapshot);
         let events = doc["traceEvents"].as_array().unwrap();
+
         assert_eq!(events.iter().filter(|e| e["ph"] == "X").count(), 2);
         assert_eq!(events.iter().filter(|e| e["ph"] == "b").count(), 2);
         assert_eq!(events.iter().filter(|e| e["ph"] == "e").count(), 2);
@@ -203,6 +230,7 @@ mod tests {
     #[test]
     fn output_is_bounded_and_reports_omissions() {
         let mut record = span(1, None, 0, None, "span_open");
+
         record
             .fields
             .insert("large".into(), json!("x".repeat(MAX_BYTES)));
@@ -211,6 +239,7 @@ mod tests {
             dropped: 3,
             output_dropped: 1,
         });
+
         assert!(doc.to_string().len() < MAX_BYTES);
         assert_eq!(doc["metadata"]["omitted"], 1);
         assert_eq!(doc["metadata"]["dropped"], 3);

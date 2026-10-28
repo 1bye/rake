@@ -166,8 +166,10 @@ fn ambiguous_runtime_selection_is_explicit_and_filtering_keeps_exact_ids() {
 #[test]
 fn picker_waits_for_its_exact_capture_and_never_replays_a_click() {
     let mut model = Inspector::default();
+
     model.apply(Update::Instances(0, Ok(vec![instance(1, None)])));
     let epoch = model.epoch;
+
     model.apply(Update::Tree(
         epoch,
         runtime(1),
@@ -180,6 +182,7 @@ fn picker_waits_for_its_exact_capture_and_never_replays_a_click() {
         picked: Some("element-2-0".into()),
         pick_sequence: 1,
     };
+
     model.apply(Update::Pick(epoch, runtime(1), Ok(pick.clone())));
     assert!(model.selected.is_none());
     model.apply(Update::Tree(
@@ -202,8 +205,10 @@ fn picker_waits_for_its_exact_capture_and_never_replays_a_click() {
 #[test]
 fn live_resolved_styles_update_the_selection_without_replacing_its_capture() {
     let mut inspector = Inspector::new(None);
+
     inspector.apply(Update::Instances(0, Ok(vec![instance(1, None)])));
     let epoch = inspector.epoch;
+
     inspector.apply(Update::Tree(
         epoch,
         runtime(1),
@@ -211,6 +216,7 @@ fn live_resolved_styles_update_the_selection_without_replacing_its_capture() {
     ));
     inspector.select_element("element-live-0");
     let mut changed = tree("live", "element-live-0");
+
     changed.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
         properties: serde_json::json!({"background":"hover color"}),
         hovered: true,

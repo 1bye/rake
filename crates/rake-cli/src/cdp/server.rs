@@ -27,16 +27,19 @@ fn http(stream: &mut TcpStream, status: &str, body: &Value) -> std::io::Result<(
 
     while !header.ends_with(b"\r\n\r\n") && header.len() < 16384 {
         let mut byte = [0];
+
         stream.read_exact(&mut byte)?;
         header.push(byte[0]);
     }
 
     let body = serde_json::to_vec(body)?;
+
     write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n",
         body.len()
     )?;
+
     stream.write_all(&body)
 }
 
@@ -50,21 +53,25 @@ fn connection(
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut buffer = [0; 16384];
+
     let size = loop {
         let size = stream.peek(&mut buffer)?;
 
         if size == 0 {
             return Ok(());
         }
+
         if let Some(end) = buffer[..size].windows(4).position(|s| s == b"\r\n\r\n") {
             break end + 4;
         }
+
         if size == buffer.len() || Instant::now() >= deadline {
             return Err("oversized or incomplete HTTP header".into());
         }
 
         std::thread::sleep(Duration::from_millis(5));
     };
+
     let header = std::str::from_utf8(&buffer[..size])?;
     let mut lines = header.split("\r\n");
     let request = lines.next().ok_or("missing HTTP request")?;
@@ -83,6 +90,7 @@ fn connection(
 
     for line in lines.filter(|s| !s.is_empty()) {
         let (key, value) = line.split_once(':').ok_or("invalid HTTP header")?;
+
         let slot = if key.eq_ignore_ascii_case("host") {
             Some(&mut host)
         } else if key.eq_ignore_ascii_case("origin") {
@@ -123,6 +131,7 @@ fn connection(
                     .collect::<Vec<_>>()
             )
         };
+
         return Ok(http(&mut stream, "200 OK", &body)?);
     }
 
@@ -133,6 +142,7 @@ fn connection(
             &json!({"error":"session token required"}),
         )?);
     };
+
     let Some(instance) = discover(&options.directory, options.selector.as_deref())?
         .into_iter()
         .find(|i| i.info.runtime_id.to_string() == id)
@@ -143,6 +153,7 @@ fn connection(
             &json!({"error":"runtime unavailable"}),
         )?);
     };
+
     let socket = tungstenite::accept_with_config(
         stream,
         Some(
@@ -165,6 +176,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, options.port))?;
     let authority = listener.local_addr()?.to_string();
     let token = uuid::Uuid::new_v4().simple().to_string();
+
     let targets: Vec<_> = discover(&options.directory, options.selector.as_deref())?
         .iter()
         .map(|i| target(i, &authority, &token))
@@ -195,6 +207,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
         let result = std::process::Command::new("open")
             .args(["-a", "Google Chrome", url])
             .status();
+
         #[cfg(not(target_os = "macos"))]
         let result = std::process::Command::new("xdg-open").arg(url).status();
 
@@ -204,6 +217,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
     }
 
     let active = AtomicUsize::new(0);
+
     std::thread::scope(|scope| -> Result<()> {
         for stream in listener.incoming() {
             let stream = stream?;
@@ -214,6 +228,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
 
             active.fetch_add(1, Ordering::Relaxed);
             let (options, authority, token, active) = (&options, &authority, &token, &active);
+
             scope.spawn(move || {
                 if let Err(error) = connection(stream, options, authority, token) {
                     eprintln!("CDP connection: {error}");

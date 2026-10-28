@@ -147,24 +147,28 @@ fn picking_respects_nesting_clipping_order_and_uninstrumented_gaps() {
     let store = Store::default();
     let window = WindowId(1);
     let mut snapshot = store.begin(1);
+
     let outer = Layout {
         x: 0.,
         y: 0.,
         width: 100.,
         height: 100.,
     };
+
     let child = Layout {
         x: 10.,
         y: 10.,
         width: 50.,
         height: 50.,
     };
+
     let clip = Layout {
         x: 10.,
         y: 10.,
         width: 10.,
         height: 10.,
     };
+
     snapshot.elements = vec![
         boundary("element-1-0", None, outer, outer),
         boundary("element-1-1", Some("element-1-0"), child, clip),
@@ -185,6 +189,7 @@ fn picking_respects_nesting_clipping_order_and_uninstrumented_gaps() {
     store.pointer(window, 110., 110., false);
     assert!(store.pick().unwrap().hovered.is_none());
     let mut empty = store.begin(1);
+
     empty.elements.clear();
     store.publish(window, empty);
     store.pointer(window, 15., 15., false);
@@ -196,12 +201,14 @@ fn leases_stale_generations_and_click_sequences_are_bounded() {
     let store = Store::default();
     let window = WindowId(1);
     let mut snapshot = store.begin(1);
+
     let bounds = Layout {
         x: 0.,
         y: 0.,
         width: 100.,
         height: 100.,
     };
+
     snapshot
         .elements
         .push(boundary("element-1-0", None, bounds, bounds));
@@ -214,6 +221,7 @@ fn leases_stale_generations_and_click_sequences_are_bounded() {
     store.inspect_mode(true, 1000).unwrap();
     store.pointer(window, 5., 5., true);
     let first = store.pick().unwrap();
+
     assert_eq!(first.picked.as_deref(), Some("element-1-0"));
     assert_eq!(first.pick_sequence, 1);
     assert!(!first.mode);
@@ -239,24 +247,28 @@ fn leases_stale_generations_and_click_sequences_are_bounded() {
 fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
     let store = Store::default();
     let mut snapshot = store.begin(1);
+
     let bounds = Layout {
         x: 0.,
         y: 0.,
         width: 10.,
         height: 10.,
     };
+
     snapshot
         .elements
         .push(boundary("element-1-0", None, bounds, bounds));
     store.publish(WindowId(1), snapshot);
     store.highlight(Some("element-1-0"), "1").unwrap();
     let mut same = store.begin(2);
+
     same.elements
         .push(boundary("element-2-0", None, bounds, bounds));
     store.publish(WindowId(1), same);
     assert_eq!(store.snapshot().capture, "1");
     assert!(store.0.borrow().windows[&WindowId(1)].highlight.is_some());
     let other = store.begin(2);
+
     store.publish(WindowId(2), other);
     assert!(store.0.borrow().windows[&WindowId(2)].highlight.is_none());
     store.inspect_mode(true, 1000).unwrap();
@@ -264,6 +276,7 @@ fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
     store.pointer(WindowId(2), 1., 1., false);
     let generation = store.pick().unwrap().generation;
     let first = store.0.borrow().windows[&WindowId(1)].snapshot.clone();
+
     store.publish(WindowId(1), first);
     assert_eq!(store.pick().unwrap().generation, generation);
     assert!(store.pick().unwrap().hovered.is_none());
@@ -275,20 +288,24 @@ fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
 fn resolved_metadata_is_bounded_without_losing_boundaries() {
     let store = Store::default();
     let mut snapshot = store.begin(0);
+
     let bounds = Layout {
         x: 0.,
         y: 0.,
         width: 10.,
         height: 10.,
     };
+
     for index in 0..MAX_ELEMENTS {
         let mut element = boundary(&format!("element-1-{index}"), None, bounds, bounds);
+
         element.resolved = Some(ResolvedStyle {
             properties: serde_json::json!({"large":"x".repeat(8000)}),
             hovered: false,
         });
         snapshot.elements.push(element);
     }
+
     snapshot.bound_resolved_styles();
     assert_eq!(snapshot.elements.len(), MAX_ELEMENTS);
     assert_eq!(snapshot.omitted, 0);
