@@ -4,6 +4,7 @@ mod console;
 mod network;
 mod server;
 mod session;
+mod trace;
 mod wire;
 
 use rake::control::local::{self, Instance};
@@ -13,7 +14,7 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const TIMEOUT: Duration = Duration::from_secs(2);
-const HELP: &str = "rake cdp [--session PATH] [--instance UUID|APPLICATION_ID] [--port PORT] [--no-open] [--json]\nDefault port: OS-assigned. Paste the printed devtools:// URL into Chrome, or use chrome://inspect.";
+const HELP: &str = "rake cdp [--session PATH] [--instance UUID|APPLICATION_ID] [--port PORT] [--no-open] [--json] [--export-trace FILE]\nDefault port: OS-assigned. Paste the printed devtools:// URL into Chrome, or use chrome://inspect.";
 
 struct Options {
     directory: PathBuf,
@@ -22,6 +23,7 @@ struct Options {
     open: bool,
     json: bool,
     process_output: Option<PathBuf>,
+    export_trace: Option<PathBuf>,
 }
 
 impl Options {
@@ -34,11 +36,17 @@ impl Options {
             open: true,
             json: false,
             process_output: None,
+            export_trace: None,
         };
         let mut args = args.into_iter();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--export-trace" => {
+                    options.export_trace = Some(PathBuf::from(
+                        args.next().ok_or("--export-trace requires a file")?,
+                    ))
+                }
                 "--session" => {
                     let session = PathBuf::from(args.next().ok_or("--session requires a path")?);
                     options.directory = session.join("control");
@@ -72,5 +80,10 @@ pub(crate) fn run(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    server::serve(Options::parse(args)?)
+    let options = Options::parse(args)?;
+    if let Some(path) = &options.export_trace {
+        return trace::export(&options, path);
+    }
+
+    server::serve(options)
 }

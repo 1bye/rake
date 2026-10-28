@@ -76,6 +76,14 @@ With `--session`, supervisor process text appears as `[stdout]`/`[stderr]` using
 its own observation clock and without inferred runtime ownership. Structured
 events can also appear in process stderr; these are distinct sources.
 
+`rake cdp --session PATH --export-trace trace.json` exports retained spans as
+Chrome trace-event JSON for Perfetto or Performance's Load profile. Synchronous
+nesting uses complete events, overlapping unrelated spans use async begin/end
+IDs, and incomplete captures use flagged instant events. The export is bounded
+to 4 MiB and includes loss/omission counts. Times describe elapsed wall time,
+with a logical thread lane; they are not CPU samples. Live `Tracing.start`/`end`
+remain unsupported pending a verified frame-less Performance recording.
+
 ## Rake application preview
 
 An [Elements-only Inspector built with Rake](rake-inspector.md) is also available
