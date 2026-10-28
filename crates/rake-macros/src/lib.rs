@@ -29,6 +29,8 @@ mod view;
 /// focus-visible, in-focus and named group-hover/group-active. disabled is button-only.
 /// Variants cannot stack or configure interactivity. Conflicting calls inside style
 /// closures are detected heuristically; indirect calls remain GPUI's responsibility.
+/// Errors identify each bad class by ordinal position and suggest nearby utility
+/// names or variants. All literal leaves are checked, including untaken branches.
 /// Utility strings are checked and lowered to ordered GPUI style calls at compile time.
 /// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
 /// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy

@@ -7,6 +7,7 @@ use syn::{Expr, Lit};
 use super::style_plan::{StylePlan, Variant};
 
 mod branch;
+pub(super) mod error;
 pub(super) mod value;
 
 pub(super) use branch::{compile as expression_plan, compile_with as expression_plan_with};
@@ -336,10 +337,7 @@ pub(super) fn utility_methods(
     } else if let Some(methods) = extended_methods(class, span, rake)? {
         return Ok(methods);
     } else {
-        return Err(syn::Error::new(
-            span,
-            format!("unsupported utility class `{class}`; use style={{|s| ...}} for GPUI styling"),
-        ));
+        return Err(syn::Error::new(span, error::unsupported(class)));
     };
 
     let method = format_ident!("{method}", span = span);
@@ -366,12 +364,12 @@ pub(super) fn class_methods(
     let mut plan = StylePlan::default();
     let mut errors = super::Diagnostics::default();
 
-    for class in classes.value().split_whitespace() {
+    for (index, class) in classes.value().split_whitespace().enumerate() {
         let contribution = utility_plan(class, classes.span(), rake, disabled)
             .and_then(|contribution| plan.extend(contribution, classes.span()));
 
         if let Err(error) = contribution {
-            errors.push(error);
+            errors.push(error::position(error, index, class));
         }
     }
 
@@ -430,6 +428,12 @@ pub(super) fn utility_plan(
         ));
     }
 
+    let variant = if name == "disabled" {
+        None
+    } else {
+        Some(Variant::parse(name, span)?)
+    };
+
     let methods = utility_methods(utility, span, rake)?;
 
     if name == "disabled" {
@@ -440,7 +444,7 @@ pub(super) fn utility_plan(
         return Ok(StylePlan::conditional(condition.clone(), methods));
     }
 
-    let variant = Variant::parse(name, span)?;
+    let variant = variant.expect("disabled returned above");
     let mut plan = StylePlan::default();
 
     plan.variants

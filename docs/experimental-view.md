@@ -178,6 +178,12 @@ rustc. Variables, function calls and `format!` cannot produce class strings.
 Inline text accepts the same literal-branch selection with its restricted run
 utilities; interaction variants remain unsupported inside runs.
 
+Errors quote each bad class and its ordinal position in the literal (for example,
+`2nd class ` followed by `justify-betwen`). Nearby utility names and variants
+receive suggestions such as `justify-between` and `hover:`. Every bad class is
+reported, including classes in untaken literal branches; stable Rust spans
+underline the whole literal. Value errors explain the expected units or range.
+
 Conditional classes use a literal utility name: `class:shrink-0={fixed}` or
 `class:font-bold={selected}`. Each condition is evaluated once, and the utility
 applies in attribute order only when true. Unknown/dynamic names are errors.

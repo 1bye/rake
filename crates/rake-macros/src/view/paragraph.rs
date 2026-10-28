@@ -227,7 +227,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
     let mut methods = TokenStream::new();
     let mut errors = super::Diagnostics::default();
 
-    for class in classes.value().split_whitespace() {
+    for (index, class) in classes.value().split_whitespace().enumerate() {
         let style = match class {
             "font-normal" => quote!(#rake::gpui::FontWeight::NORMAL.into()),
             "font-medium" => quote!(#rake::gpui::FontWeight::MEDIUM.into()),
@@ -248,7 +248,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                 ) {
                     Ok(color) => color,
                     Err(error) => {
-                        errors.push(error);
+                        errors.push(super::classes::error::position(error, index, class));
                         continue;
                     }
                 };
@@ -259,9 +259,10 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                 let font = class[6..class.len() - 1].replace('_', " ");
 
                 if font.is_empty() {
-                    errors.push(syn::Error::new(
-                        classes.span(),
-                        "font family cannot be empty",
+                    errors.push(super::classes::error::position(
+                        syn::Error::new(classes.span(), "font family cannot be empty"),
+                        index,
+                        class,
                     ));
                     continue;
                 }
@@ -277,7 +278,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                     ),
                 );
 
-                errors.push(error);
+                errors.push(super::classes::error::position(error, index, class));
 
                 continue;
             }

@@ -1,4 +1,4 @@
-error: GPUI supports one named group-hover group per element
+error: 2nd class `group-hover/b:p-2`: GPUI supports one named group-hover group per element
  --> tests/ui/view/variant_group_conflict.rs:2:38
   |
 2 |     let _ = rake::view! { <div class="group-hover/a:p-1 group-hover/b:p-2"/> };

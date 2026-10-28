@@ -1,4 +1,4 @@
-error: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
+error: 1st class `unknown-utility`: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
  --> tests/ui/view/handler_context.rs:6:20
   |
 6 |         <div class="unknown-utility">

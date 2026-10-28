@@ -36,7 +36,12 @@ impl Variant {
                     "group variants require a name, such as group-hover/card:",
                 ));
             }
-            _ => return Err(syn::Error::new(span, format!("unknown variant `{name}:`"))),
+            _ => {
+                return Err(syn::Error::new(
+                    span,
+                    super::classes::error::unknown_variant(name),
+                ));
+            }
         })
     }
 

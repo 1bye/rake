@@ -1,4 +1,4 @@
-error: fraction denominator cannot be zero
+error: 1st class `w-1/0`: fraction denominator cannot be zero
  --> tests/ui/view/fraction_zero.rs:2:38
   |
 2 |     let _ = rake::view! { <div class="w-1/0"/> };

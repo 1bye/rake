@@ -4,7 +4,7 @@ error: unsupported attribute `title` on <div>
 3 |         <div title="invalid">
   |              ^^^^^
 
-error: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
+error: 1st class `unknown-utility`: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
  --> tests/ui/view/multiple_errors.rs:4:25
   |
 4 |             <span class="unknown-utility"/>

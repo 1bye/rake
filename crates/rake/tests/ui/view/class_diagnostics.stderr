@@ -1,0 +1,87 @@
+error: 2nd class `justify-betwen`: unsupported utility class `justify-betwen`; did you mean `justify-between`?; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/class_diagnostics.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 3rd class `hovr:p-2`: unknown variant `hovr:`; did you mean `hover:`?
+ --> tests/ui/view/class_diagnostics.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 4th class `p-nope`: unsupported utility class `p-nope`; spacing values are whole or half steps (`p-4`, `p-1.5`) or `[value]` with px, rem or %; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/class_diagnostics.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 5th class `opacity-[2]`: opacity must be in the range 0..=1
+ --> tests/ui/view/class_diagnostics.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 6th class `font-[]`: font family cannot be empty
+ --> tests/ui/view/class_diagnostics.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 7th class `text-[#nope]`: invalid hex color; expected #rgb, #rrggbb or #rrggbbaa
+ --> tests/ui/view/class_diagnostics.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 1st class `p-nope`: unsupported utility class `p-nope`; spacing values are whole or half steps (`p-4`, `p-1.5`) or `[value]` with px, rem or %; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/class_diagnostics.rs:3:49
+  |
+3 |     let _ = rake::view! { <div class={if true { "p-nope gap-nope" } else { "w-nope h-nope" }}/> };
+  |                                                 ^^^^^^^^^^^^^^^^^
+
+error: 2nd class `gap-nope`: unsupported utility class `gap-nope`; spacing values are whole or half steps (`p-4`, `p-1.5`) or `[value]` with px, rem or %; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/class_diagnostics.rs:3:49
+  |
+3 |     let _ = rake::view! { <div class={if true { "p-nope gap-nope" } else { "w-nope h-nope" }}/> };
+  |                                                 ^^^^^^^^^^^^^^^^^
+
+error: 1st class `w-nope`: unsupported utility class `w-nope`; spacing values are whole or half steps (`p-4`, `p-1.5`) or `[value]` with px, rem or %; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/class_diagnostics.rs:3:76
+  |
+3 |     let _ = rake::view! { <div class={if true { "p-nope gap-nope" } else { "w-nope h-nope" }}/> };
+  |                                                                            ^^^^^^^^^^^^^^^
+
+error: 2nd class `h-nope`: unsupported utility class `h-nope`; spacing values are whole or half steps (`p-4`, `p-1.5`) or `[value]` with px, rem or %; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/class_diagnostics.rs:3:76
+  |
+3 |     let _ = rake::view! { <div class={if true { "p-nope gap-nope" } else { "w-nope h-nope" }}/> };
+  |                                                                            ^^^^^^^^^^^^^^^
+
+error: 1st class `font-[]`: font family cannot be empty
+ --> tests/ui/view/class_diagnostics.rs:4:42
+  |
+4 |     let _ = rake::view! { <p><span class="font-[] text-[#badhex] w-nope">bad</span></p> };
+  |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 2nd class `text-[#badhex]`: invalid hex color; expected #rgb, #rrggbb or #rrggbbaa
+ --> tests/ui/view/class_diagnostics.rs:4:42
+  |
+4 |     let _ = rake::view! { <p><span class="font-[] text-[#badhex] w-nope">bad</span></p> };
+  |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: 3rd class `w-nope`: unsupported inline text utility `w-nope`; font size, line height, alignment and layout belong on p
+ --> tests/ui/view/class_diagnostics.rs:4:42
+  |
+4 |     let _ = rake::view! { <p><span class="font-[] text-[#badhex] w-nope">bad</span></p> };
+  |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unreachable statement
+ --> tests/ui/view/class_diagnostics.rs:3:5
+  |
+2 |     let _ = rake::view! { <div class="flex justify-betwen hovr:p-2 p-nope opacity-[2] font-[] text-[#nope]"/> };
+  |             --------------------------------------------------------------------------------------------------- any code following this expression is unreachable
+3 |     let _ = rake::view! { <div class={if true { "p-nope gap-nope" } else { "w-nope h-nope" }}/> };
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable statement
+  |
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default

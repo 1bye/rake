@@ -1,4 +1,4 @@
-error: opacity must be in the range 0..=1
+error: 1st class `opacity-[1.2]`: opacity must be in the range 0..=1
  --> tests/ui/view/opacity_range.rs:2:38
   |
 2 |     let _ = rake::view! { <div class="opacity-[1.2]"/> };
