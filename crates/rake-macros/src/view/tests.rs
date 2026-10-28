@@ -623,3 +623,16 @@ fn class_patterns_accept_bare_uppercase_names_and_reject_bindings() {
         );
     }
 }
+
+#[test]
+fn let_chain_patterns_follow_the_binding_restriction() {
+    let error =
+        expand(r#"<div class={if ready && let Some(value) = selected { "p-1" } else { "p-2" }}/>"#)
+            .expect_err("chain binding");
+
+    assert!(
+        error
+            .to_string()
+            .contains("class patterns cannot bind variables")
+    );
+}

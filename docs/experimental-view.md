@@ -202,7 +202,10 @@ let _ = rake::view! {
 ```
 
 Conditions, scrutinees and guards evaluate once in authored attribute order;
-untaken nested conditions are skipped. Missing `else` means no classes.
+untaken nested conditions are skipped. Class conditions support let chains such
+as `if ready && let Some(_) = item && enabled { "p-1" } else { "p-2" }`.
+Checks run once, left to right, and stop on the first failure; each pattern
+inspects a borrowed scrutinee. Missing `else` means no classes.
 Use `Some(_)`, `_`, uppercase unit variants/constants such as `None`, or
 qualified paths such as `Mode::Dark`. Lowercase bindings and `ref`, `mut` or
 `@` binding patterns are rejected. Bare uppercase names follow Rust naming

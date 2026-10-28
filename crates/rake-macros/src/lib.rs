@@ -20,7 +20,8 @@ mod view;
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
 /// GPUI builder methods.
 /// Class expressions can choose literal leaves using lazy if/if-let/match branches.
-/// Conditions and scrutinees evaluate once; patterns cannot bind variables.
+/// Conditions and scrutinees evaluate once; let chains short-circuit left to right.
+/// Patterns cannot bind variables.
 /// Bare uppercase unit variants/constants (for example None) are accepted. Inline runs also
 /// accept literal branches, restricted to text-run utilities.
 /// Ambient themes are installed with `rake::theme::install(cx, theme)` on the UI

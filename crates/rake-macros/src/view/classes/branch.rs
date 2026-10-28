@@ -44,6 +44,34 @@ impl Branches<'_> {
         quote!(0usize)
     }
 
+    fn condition(&mut self, value: &Expr) -> TokenStream {
+        match value {
+            Expr::Let(value) => {
+                if let Err(error) = check_pattern(&value.pat) {
+                    self.errors.push(error);
+                }
+
+                let expression = &value.expr;
+                let pattern = &value.pat;
+
+                quote!(::core::matches!(&(#expression), #pattern))
+            }
+            Expr::Binary(value) if matches!(value.op, syn::BinOp::And(_)) => {
+                let left = self.condition(&value.left);
+                let right = self.condition(&value.right);
+
+                quote!((#left) && (#right))
+            }
+            Expr::Paren(value) => {
+                let expression = self.condition(&value.expr);
+
+                quote!((#expression))
+            }
+            Expr::Group(value) => self.condition(&value.expr),
+            _ => quote!(#value),
+        }
+    }
+
     fn select(&mut self, value: &Expr) -> TokenStream {
         match value {
             Expr::Lit(syn::ExprLit {
@@ -90,7 +118,7 @@ impl Branches<'_> {
                         if #condition { #then } else { #otherwise }
                     })
                 } else {
-                    let expression = &value.cond;
+                    let expression = self.condition(&value.cond);
 
                     quote!({
                         let #condition: bool = #expression;

@@ -671,3 +671,47 @@ fn bare_unit_variants_select_class_leaves_without_moving_the_scrutinee() {
         );
     }
 }
+
+#[test]
+fn class_let_chains_evaluate_once_and_short_circuit_left_to_right() {
+    for (enabled, first, second, finish, expected_calls) in [
+        (false, Some(1), Some(2), true, vec!["A"]),
+        (true, None, Some(2), true, vec!["A", "let1"]),
+        (true, Some(1), None, true, vec!["A", "let1", "let2"]),
+        (
+            true,
+            Some(1),
+            Some(2),
+            false,
+            vec!["A", "let1", "let2", "B"],
+        ),
+        (true, Some(1), Some(2), true, vec!["A", "let1", "let2", "B"]),
+    ] {
+        let calls = RefCell::new(Vec::new());
+
+        let mut actual = rake::view! {
+            <div class={if { calls.borrow_mut().push("A"); enabled }
+                && let Some(_) = { calls.borrow_mut().push("let1"); &first }
+                && let Some(_) = { calls.borrow_mut().push("let2"); &second }
+                && { calls.borrow_mut().push("B"); finish } {
+                    "p-1"
+                } else {
+                    "p-2"
+                }}/>
+        };
+
+        let selected = enabled && first.is_some() && second.is_some() && finish;
+
+        let mut expected =
+            div()
+                .flex()
+                .flex_col()
+                .p(rake::gpui::rems(if selected { 0.25 } else { 0.5 }));
+
+        assert_eq!(*calls.borrow(), expected_calls);
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+}
