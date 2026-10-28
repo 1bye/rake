@@ -15,7 +15,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Maximum encoded request/response size admitted by development transports.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
-/// A request for one explicitly selected runtime; mutations require a stable retry key.
+/// A request for one exact runtime; application mutations require a stable retry key.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -23,7 +23,7 @@ pub struct Request {
     pub protocol: u32,
     /// Prevents stale IDs from accidentally targeting a restarted application.
     pub runtime_id: RuntimeId,
-    /// Caller-generated unique key, 1–128 UTF-8 bytes; mandatory for commands.
+    /// Caller-generated key, 1–128 bytes; required except for transient inspection leases.
     pub key: Option<String>,
     /// Shared command or diagnostic query.
     pub message: Message,
@@ -38,16 +38,30 @@ pub struct Request {
     deny_unknown_fields
 )]
 pub enum Message {
-    /// Eager submission, explicit cancellation or a decision response.
+    /// Application actions, decision responses or leased development inspection controls.
     Command(Command),
     /// Owned state/schema/diagnostic inspection.
     Query(Query),
 }
 
-/// All supported runtime mutations; GUI adapters call the same router operations.
+/// Shared runtime commands; leased inspection controls never mutate router state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Highlight a capture boundary for a two-second development lease; no operation is retained.
+    HighlightElement {
+        /// Exact capture ID, or None to clear all window highlights.
+        id: Option<String>,
+        /// Capture identity returned by InspectTree; required when setting a highlight.
+        generation: String,
+    },
+    /// Temporarily intercept window input to pick an inspected boundary.
+    InspectMode {
+        /// Enable or clear the development picker.
+        enabled: bool,
+        /// Renewal lease in milliseconds, 1–2000 when enabled.
+        lease_ms: u64,
+    },
     /// Guard all retained entries and close exactly one native host.
     CloseWindow {
         /// Concrete runtime-scoped host.
@@ -158,6 +172,8 @@ impl Command {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
     pub fn names() -> &'static [&'static str] {
         &[
+            "highlight_element",
+            "inspect_mode",
             "close_window",
             "quit",
             "prepare_reload",
@@ -182,6 +198,8 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Leased picker status; clients deduplicate retained clicks by pick_sequence.
+    InspectPick {},
     /// All logical host identities, independent selections, visibility and close status.
     Windows {},
     /// Routing snapshot restricted to one concrete host.
@@ -252,6 +270,7 @@ impl Query {
             "windows",
             "window",
             "quit",
+            "inspect_pick",
             "inspect_tree",
             "inspect_element",
             "reload",
@@ -278,6 +297,9 @@ pub struct RuntimeInfo {
     /// Mounted inspection coverage availability; headless runtimes report Unavailable.
     #[serde(default)]
     pub element_inspection: crate::inspection::Status,
+    /// Development highlight/picker support; false for disabled or headless hosts.
+    #[serde(default)]
+    pub element_interaction: bool,
     /// Protocol version.
     pub protocol: u32,
     /// This live application lifetime.
@@ -349,6 +371,8 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    /// Capture generation, hover and sequenced click selection.
+    InspectPick(crate::inspection::Pick),
     /// Guarded application shutdown status.
     Quit(crate::quit::QuitStatus),
     /// Latest completed bounded element tree.

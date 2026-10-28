@@ -12,9 +12,11 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const HELP: &str = "rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
 rake cdp [--session PATH] [--instance UUID|application-id] [--port PORT] [--no-open] [--json] [--export-trace FILE]
+rake highlight ID|none [--generation CAPTURE] [--instance UUID|application-id]
+rake inspect pick [--instance UUID|application-id]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
-  inspect tree | inspect element ELEMENT_ID
+  inspect tree | inspect element ELEMENT_ID | inspect pick | inspect mode on|off [--lease-ms MS]
   info | schema | snapshot | events [--follow]
   quit [--jobs wait|cancel] | quit status
   reload status | reload checkpoint APPLICATION_ID
@@ -164,6 +166,23 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                 id: args.remove(0),
                 applied: action == "apply",
             })
+        }
+        ("highlight", _) if !action.is_empty() => Message::Command(Command::HighlightElement {
+            id: (action != "none").then_some(action),
+            generation: option(&mut args, "--generation")?.unwrap_or_default(),
+        }),
+        ("inspect", "pick") => Message::Query(Query::InspectPick {}),
+        ("inspect", "mode") if !args.is_empty() => {
+            let enabled = match args.remove(0).as_str() {
+                "on" => true,
+                "off" => false,
+                _ => return Err("inspect mode expects on or off".into()),
+            };
+            let lease_ms = option(&mut args, "--lease-ms")?
+                .map(|value| value.parse())
+                .transpose()?
+                .unwrap_or(1000);
+            Message::Command(Command::InspectMode { enabled, lease_ms })
         }
         ("inspect", "tree") => Message::Query(Query::InspectTree {}),
         ("inspect", "element") if args.len() == 1 => {
@@ -453,7 +472,16 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         return Err(HELP.into());
     }
 
-    let instances = local::discover(&local::directory())?;
+    if args
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "highlight" | "inspect"))
+    {
+        args.insert(0, "ctl".into());
+    }
+    let directory = option(&mut args, "--session")?
+        .map(|path| std::path::PathBuf::from(path).join("control"))
+        .unwrap_or_else(local::directory);
+    let instances = local::discover(&directory)?;
     let topic = args.remove(0);
     let selector = option(&mut args, "--instance")?;
 
@@ -483,7 +511,8 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
     let key =
         option(&mut args, "--request-key")?.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let (message, follow) = parse_message(args)?;
+    let friendly_highlight = args.first().is_some_and(|arg| arg == "highlight");
+    let (mut message, follow) = parse_message(args)?;
 
     let candidates: Vec<_> = instances
         .iter()
@@ -502,6 +531,22 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         [instance] => *instance,
         _ => return Err("ambiguous instance; select a RuntimeId using --instance".into()),
     };
+
+    if let Message::Command(Command::HighlightElement {
+        id: Some(id),
+        generation,
+    }) = &mut message
+        && generation.is_empty()
+        && friendly_highlight
+    {
+        let Reply::Elements(tree) = query(instance, Query::InspectTree {}, timeout)? else {
+            return Err("unexpected inspection reply".into());
+        };
+        if !tree.elements.iter().any(|element| element.id == *id) {
+            return Err("element is stale; refresh inspect tree".into());
+        }
+        *generation = tree.capture;
+    }
 
     let request = Request {
         protocol: PROTOCOL_VERSION,
@@ -704,6 +749,14 @@ mod tests {
         };
 
         let commands = vec![
+            Command::HighlightElement {
+                id: None,
+                generation: String::new(),
+            },
+            Command::InspectMode {
+                enabled: false,
+                lease_ms: 0,
+            },
             Command::CloseWindow {
                 window: "window-1".parse().unwrap(),
             },
@@ -758,6 +811,7 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::InspectPick {},
             Query::Windows {},
             Query::Window {
                 window: "window-1".parse().unwrap(),

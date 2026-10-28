@@ -105,7 +105,9 @@ This first application implements Elements only. It shares the existing
 [inspection coverage](element-inspection.md): explicit Rake boundaries, authored
 base styles, measured bounds before clipping, source locations and semantic IDs.
 It does not enumerate opaque GPUI descendants or provide computed CSS, style
-editing, a pixel picker, or the other DevTools panels. Trees are bounded to the
+editing, an uninstrumented pixel picker, or the other DevTools panels.
+Its Pick control and tree hover use the runtime’s leased instrumented-boundary
+inspection controls, including clipping and automatic input restoration. Trees are bounded to the
 runtime capture limit of 256 boundaries. Filter editing is single-line and bounded
 to 1 KiB. The frontend inherits the experimental status of `view!`.
 

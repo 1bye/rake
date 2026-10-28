@@ -30,6 +30,23 @@ fn headless_queries_report_coverage_without_inventing_a_tree() {
     assert!(snapshot.elements.is_empty());
     assert!(!snapshot.coverage.is_empty());
     assert_eq!(client.info().element_inspection, Status::Unavailable);
+    assert!(!client.info().element_interaction);
+    assert!(matches!(
+        client.request(request(Query::InspectPick {})),
+        Err(ControlError::Inspection(InspectionError::Unavailable))
+    ));
+    assert!(matches!(
+        client.request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: router.runtime_id(),
+            key: None,
+            message: Message::Command(rake::control::Command::HighlightElement {
+                id: None,
+                generation: String::new()
+            })
+        }),
+        Err(ControlError::Inspection(InspectionError::Unavailable))
+    ));
     assert!(matches!(
         client.request(request(Query::InspectElement {
             id: "element-1-0".into()

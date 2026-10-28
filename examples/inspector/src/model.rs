@@ -8,10 +8,12 @@ use rake::router::RuntimeId;
 pub enum Update {
     /// Discovery results for the current connection epoch.
     Instances(u64, Result<Vec<Instance>, String>),
+    /// Picker observations, deduplicated by sequence and scoped to the exact capture.
+    Pick(u64, RuntimeId, Result<rake::inspection::Pick, String>),
     /// Exact runtime tree response.
     Tree(u64, RuntimeId, Result<Snapshot, String>),
     /// Exact capture-scoped element response.
-    Element(u64, RuntimeId, String, Result<Element, String>),
+    Element(u64, RuntimeId, String, Box<Result<Element, String>>),
 }
 
 /// Authoritative frontend state; contains owned remote metadata, never target UI entities.
@@ -35,6 +37,12 @@ pub struct Inspector {
     pub filter: String,
     /// Pause tree updates; explicit refresh remains available.
     pub paused: bool,
+    /// Whether this frontend is renewing the target's input-capture lease.
+    pub picking: bool,
+    pub(crate) mode_pending: Option<bool>,
+    pub(crate) hover: Option<(String, String)>,
+    pick_sequence: u64,
+    pending_pick: Option<rake::inspection::Pick>,
     /// User disconnected from observation.
     pub disconnected: bool,
     /// Invalidates responses issued before connection/target changes.
@@ -65,6 +73,11 @@ impl Inspector {
             .find(|instance| Some(instance.info.runtime_id) == runtime)
             .map(|instance| instance.application_id.clone());
         self.tree = None;
+        self.picking = false;
+        self.mode_pending = None;
+        self.hover = None;
+        self.pick_sequence = 0;
+        self.pending_pick = None;
         self.selected = None;
         self.detail = None;
         self.detail_pending = false;
@@ -89,9 +102,41 @@ impl Inspector {
         }
     }
 
+    fn apply_pick(&mut self) {
+        if self.pending_pick.as_ref().is_some_and(|pick| {
+            self.tree
+                .as_ref()
+                .is_some_and(|tree| tree.capture == pick.generation)
+        }) && let Some(pick) = self.pending_pick.take()
+            && let Some(id) = pick.picked
+        {
+            self.select_element(&id);
+        }
+    }
+
     /// Applies a publication only when its connection/runtime/selection is still current.
     pub fn apply(&mut self, update: Update) {
         match update {
+            Update::Pick(epoch, runtime, result)
+                if epoch == self.epoch && Some(runtime) == self.runtime && !self.disconnected =>
+            {
+                match result {
+                    Ok(pick) => {
+                        self.picking = pick.mode;
+                        if pick.picked.is_some() && pick.pick_sequence > self.pick_sequence {
+                            self.pick_sequence = pick.pick_sequence;
+                            self.pending_pick = Some(pick);
+                            self.refresh = true;
+                            self.apply_pick();
+                        }
+                    }
+                    Err(error) => {
+                        self.picking = false;
+                        self.error = Some(error);
+                    }
+                }
+            }
+
             Update::Instances(epoch, result) if epoch == self.epoch => match result {
                 Ok(instances) => {
                     if let Some(runtime) = self.runtime {
@@ -147,8 +192,15 @@ impl Inspector {
             {
                 match result {
                     Ok(tree) => {
+                        if self.hover.as_ref().is_some_and(|(id, generation)| {
+                            generation != &tree.capture
+                                || !tree.elements.iter().any(|element| &element.id == id)
+                        }) {
+                            self.hover = None;
+                        }
                         self.tree = Some(tree);
                         self.error = None;
+                        self.apply_pick();
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -159,7 +211,7 @@ impl Inspector {
                     && self.selected.as_ref() == Some(&id)
                     && !self.disconnected =>
             {
-                match result {
+                match *result {
                     Ok(element) if element.id == id => {
                         self.detail = Some(element);
                         self.lookup_error = None;

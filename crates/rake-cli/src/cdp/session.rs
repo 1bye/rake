@@ -4,7 +4,9 @@ use super::wire::{Error, Event, Request, Response};
 use super::{Result, TIMEOUT};
 use crate::terminal::query;
 use rake::control::local::Instance;
-use rake::control::{Query, Reply};
+use rake::control::{
+    Command, Message as RuntimeMessage, PROTOCOL_VERSION, Query, Reply, Request as RuntimeRequest,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, VecDeque};
 use std::net::TcpStream;
@@ -26,6 +28,11 @@ struct Session {
     loss: super::console::Loss,
     process_output: super::console::ProcessOutput,
     dom: super::dom::Dom,
+    picking: bool,
+    interaction_used: bool,
+    highlight: Option<(String, String)>,
+    last_hover: Option<(String, String)>,
+    last_pick_sequence: u64,
 }
 
 impl Session {
@@ -42,6 +49,11 @@ impl Session {
             loss: super::console::Loss::default(),
             process_output: super::console::ProcessOutput::new(output),
             dom: super::dom::Dom::default(),
+            picking: false,
+            interaction_used: false,
+            highlight: None,
+            last_hover: None,
+            last_pick_sequence: 0,
         }
     }
 
@@ -143,15 +155,62 @@ impl Session {
             "DOM.getBoxModel"
             | "DOM.describeNode"
             | "DOM.getAttributes"
-            | "DOM.pushNodesByBackendIdsToFrontend"
             | "CSS.getInlineStylesForNode"
             | "CSS.getMatchedStylesForNode"
             | "CSS.getComputedStyleForNode" => self.dom.handle(method, &request.params),
-            "Overlay.highlightNode" | "Overlay.setInspectMode" => Err(Error::new(
-                -32000,
-                "Runtime highlighting is unavailable; a separate runtime protocol extension is required",
-            )),
-            "Overlay.enable" | "Overlay.disable" | "Overlay.hideHighlight" => Ok(json!({})),
+            "Overlay.highlightNode" | "Overlay.hideHighlight" | "Overlay.setInspectMode" => {
+                let command = self.dom.overlay_command(method, &request.params)?;
+                if !self.instance.info.element_interaction {
+                    if matches!(
+                        command,
+                        Command::HighlightElement { id: None, .. }
+                            | Command::InspectMode { enabled: false, .. }
+                    ) {
+                        return Ok(json!({}));
+                    }
+                    return Err(Error::new(
+                        -32000,
+                        "Runtime highlight/picker support is unavailable",
+                    ));
+                }
+                self.control(command.clone())?;
+                if matches!(
+                    &command,
+                    Command::HighlightElement { id: Some(_), .. }
+                        | Command::InspectMode { enabled: true, .. }
+                ) {
+                    self.interaction_used = true;
+                }
+                self.domains.insert("Overlay".into());
+                match command {
+                    Command::HighlightElement { id, generation } => {
+                        self.highlight = id.map(|id| (id, generation))
+                    }
+                    Command::InspectMode { enabled, .. } => {
+                        self.picking = enabled;
+                        self.last_hover = None;
+                    }
+                    _ => {}
+                }
+                Ok(json!({}))
+            }
+            "Overlay.enable" => {
+                self.domains.insert("Overlay".into());
+                Ok(json!({}))
+            }
+            "Overlay.disable" => {
+                self.cleanup();
+                self.domains.remove("Overlay");
+                Ok(json!({}))
+            }
+            "DOM.pushNodesByBackendIdsToFrontend" => {
+                let result = self.dom.handle(method, &request.params)?;
+                self.event(Event::new(
+                    "DOM.setChildNodes",
+                    json!({"parentId":1,"nodes":self.dom.document()["children"]}),
+                ));
+                Ok(result)
+            }
             "Runtime.getProperties" => {
                 let id = request.params["objectId"]
                     .as_str()
@@ -213,6 +272,8 @@ impl Session {
             Reply::Info(info) if info.runtime_id == self.instance.info.runtime_id => {}
             _ => return Err("runtime identity changed".into()),
         }
+
+        self.poll_overlay().map_err(|error| error.message)?;
 
         if self.domains.contains("DOM") {
             self.refresh_dom().map_err(|e| e.message)?;
@@ -282,6 +343,112 @@ impl Session {
         Ok(())
     }
 
+    fn control(&self, command: Command) -> std::result::Result<(), Error> {
+        let reply = crate::terminal::exchange(
+            &self.instance,
+            &RuntimeRequest {
+                protocol: PROTOCOL_VERSION,
+                runtime_id: self.instance.info.runtime_id,
+                key: None,
+                message: RuntimeMessage::Command(command),
+            },
+            TIMEOUT,
+        )
+        .map_err(|e| Error::new(-32000, e.to_string()))?;
+        if !matches!(reply, Reply::Acknowledged) {
+            return Err(Error::new(-32000, "Unexpected inspection control reply"));
+        }
+        Ok(())
+    }
+
+    fn cleanup(&mut self) {
+        if self.interaction_used {
+            let _ = self.control(Command::InspectMode {
+                enabled: false,
+                lease_ms: 0,
+            });
+            let _ = self.control(Command::HighlightElement {
+                id: None,
+                generation: String::new(),
+            });
+        }
+        self.interaction_used = false;
+        self.picking = false;
+        self.highlight = None;
+    }
+
+    fn poll_overlay(&mut self) -> std::result::Result<(), Error> {
+        if self.picking {
+            let Reply::InspectPick(pick) = query(&self.instance, Query::InspectPick {}, TIMEOUT)
+                .map_err(|e| Error::new(-32000, e.to_string()))?
+            else {
+                return Err(Error::new(-32000, "Unexpected picker reply"));
+            };
+            if (pick.hovered.is_some() || pick.picked.is_some())
+                && self.dom.generation() != Some(pick.generation.as_str())
+            {
+                self.refresh_dom()?;
+            }
+            if pick.mode {
+                self.control(Command::InspectMode {
+                    enabled: true,
+                    lease_ms: 1000,
+                })?;
+            } else {
+                self.picking = false;
+            }
+            if let Some(id) = &pick.hovered {
+                let hover = (pick.generation.clone(), id.clone());
+                if self.last_hover.as_ref() != Some(&hover)
+                    && let Some(node) = self.dom.node_id(id)
+                {
+                    self.event(Event::new(
+                        "Overlay.nodeHighlightRequested",
+                        json!({"nodeId":node}),
+                    ));
+                }
+                self.last_hover = Some(hover);
+            } else {
+                self.last_hover = None;
+            }
+            if pick.pick_sequence > self.last_pick_sequence
+                && let Some(id) = pick.picked.as_deref()
+            {
+                if let Some(node) = self.dom.node_id(id) {
+                    self.event(Event::new(
+                        "Overlay.inspectNodeRequested",
+                        json!({"backendNodeId":node}),
+                    ));
+                }
+                self.last_pick_sequence = pick.pick_sequence;
+            }
+        }
+        if let Some((id, generation)) = &self.highlight {
+            if self.dom.generation() == Some(generation.as_str()) {
+                if self
+                    .control(Command::HighlightElement {
+                        id: Some(id.clone()),
+                        generation: generation.clone(),
+                    })
+                    .is_err()
+                {
+                    self.highlight = None;
+                }
+            } else {
+                self.highlight = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self, socket: &mut WebSocket<TcpStream>) -> Result<()> {
+        while let Some((event, bytes)) = self.outbound.pop_front() {
+            self.outbound_bytes -= bytes;
+            socket.send(Message::text(serde_json::to_string(&event)?))?;
+        }
+        Ok(())
+    }
+
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
         let reply = query(&self.instance, Query::InspectTree {}, TIMEOUT)
             .map_err(|e| Error::new(-32000, e.to_string()))?;
@@ -295,6 +462,9 @@ impl Session {
     }
 
     fn replace(&mut self, instance: Instance) {
+        self.cleanup();
+        self.last_hover = None;
+        self.last_pick_sequence = 0;
         let old = self.instance.info.runtime_id;
         self.instance = instance;
         self.cursor = 0;
@@ -344,6 +514,12 @@ impl Session {
     }
 }
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
 fn unix_seconds() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -380,6 +556,7 @@ pub(super) fn run(
                     Ok(request) => Response::new(Some(request.id), session.handle(&request)),
                     Err(error) => Response::new(None, Err(Error::new(-32600, error.to_string()))),
                 };
+                session.flush(&mut socket)?;
                 socket.send(Message::text(response.encode()?))?;
             }
             Ok(Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => return Ok(()),
@@ -412,13 +589,15 @@ pub(super) fn run(
                 }
             }
 
-            next_poll = Instant::now() + INTERVAL;
+            next_poll = Instant::now()
+                + if session.picking || session.highlight.is_some() {
+                    Duration::from_millis(100)
+                } else {
+                    INTERVAL
+                };
         }
 
-        while let Some((event, bytes)) = session.outbound.pop_front() {
-            session.outbound_bytes -= bytes;
-            socket.send(Message::text(serde_json::to_string(&event)?))?;
-        }
+        session.flush(&mut socket)?;
 
         if session.dropped > 0
             && (session.domains.contains("Log") || session.domains.contains("Runtime"))
@@ -460,5 +639,137 @@ mod tests {
         ));
         assert!(session.outbound.is_empty());
         assert_eq!(session.dropped, 3);
+    }
+    fn fixture(
+        mut reply: impl FnMut(RuntimeRequest) -> Reply + Send + 'static,
+        requests: usize,
+    ) -> (Instance, std::thread::JoinHandle<()>, std::path::PathBuf) {
+        use std::io::{BufRead, BufReader, Write};
+        let path =
+            std::path::PathBuf::from(format!("/tmp/rake-overlay-{}.sock", uuid::Uuid::new_v4()));
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let router = rake::router::Router::<rake::router::NoRoute>::new(
+            rake::router::RouterConfig::default(),
+        );
+        let mut info = router.client().info();
+        info.element_interaction = true;
+        let instance = Instance {
+            application_id: "test.overlay".into(),
+            pid: 1,
+            info,
+            endpoint: rake::control::local::Endpoint::Local { path: path.clone() },
+        };
+        let worker = std::thread::spawn(move || {
+            for _ in 0..requests {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut line = String::new();
+                BufReader::new(socket.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: RuntimeRequest = serde_json::from_str(&line).unwrap();
+                let result = Ok::<_, rake::control::ControlError>(reply(request));
+                writeln!(socket, "{}", serde_json::to_string(&result).unwrap()).unwrap();
+            }
+        });
+        (instance, worker, path)
+    }
+
+    #[test]
+    fn closing_a_session_clears_picker_and_highlight_without_retaining_retry_keys() {
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let commands = observed.clone();
+        let (instance, worker, path) = fixture(
+            move |request| {
+                assert!(request.key.is_none());
+                let RuntimeMessage::Command(command) = request.message else {
+                    panic!("control command");
+                };
+                commands.lock().unwrap().push(command);
+                Reply::Acknowledged
+            },
+            3,
+        );
+        let mut session = Session::new(instance, None);
+        session
+            .handle(&Request {
+                id: 1,
+                method: "Overlay.setInspectMode".into(),
+                params: json!({"mode":"searchForNode"}),
+            })
+            .unwrap();
+        drop(session);
+        worker.join().unwrap();
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![
+                Command::InspectMode {
+                    enabled: true,
+                    lease_ms: 1000
+                },
+                Command::InspectMode {
+                    enabled: false,
+                    lease_ms: 0
+                },
+                Command::HighlightElement {
+                    id: None,
+                    generation: String::new()
+                }
+            ]
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn capture(generation: &str) -> rake::inspection::Snapshot {
+        serde_json::from_value(json!({"status":"captured","capture":generation,"router_revision":0,"elements":[{
+            "id":format!("element-{generation}-0"),"kind":"Div","metadata_truncated":false}],"omitted":0,"coverage":"test"})).unwrap()
+    }
+
+    #[test]
+    fn picker_generation_mismatch_updates_document_before_hover_and_pick() {
+        let (instance, worker, path) = fixture(
+            |request| match request.message {
+                RuntimeMessage::Query(Query::InspectPick {}) => {
+                    Reply::InspectPick(rake::inspection::Pick {
+                        mode: false,
+                        generation: "2".into(),
+                        hovered: Some("element-2-0".into()),
+                        picked: Some("element-2-0".into()),
+                        pick_sequence: 1,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(capture("2")),
+                _ => panic!("unexpected picker request"),
+            },
+            2,
+        );
+        let mut session = Session::new(instance, None);
+        session.dom.update(capture("1")).unwrap();
+        session.domains.insert("DOM".into());
+        session.picking = true;
+        session.poll_overlay().unwrap();
+        let events: Vec<_> = session
+            .outbound
+            .iter()
+            .map(|(event, _)| event.method.as_str())
+            .collect();
+        assert_eq!(
+            events,
+            [
+                "DOM.documentUpdated",
+                "Overlay.nodeHighlightRequested",
+                "Overlay.inspectNodeRequested"
+            ]
+        );
+        let id = session.dom.node_id("element-2-0").unwrap();
+        assert_eq!(
+            session.outbound.back().unwrap().0.params["backendNodeId"],
+            id
+        );
+        assert!(!session.picking);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }

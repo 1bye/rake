@@ -4,7 +4,7 @@ use crate::appearance::{CODE_FONT, Icon, Palette, control, icon};
 use crate::input::FilterInput;
 use crate::{Connection, ConnectionConfig, Inspector, Update};
 use crate::{styles, tree};
-use rake::control::{Query, Reply};
+use rake::control::{Command, Query, Reply};
 use rake::gpui::{self, prelude::*, *};
 use rake::prelude::*;
 use rake::router::{MountError, RuntimeId};
@@ -191,6 +191,9 @@ impl RouteViews<Destination> for Views {
                         model.detail_pending = model.selected.is_some() && model.detail.is_none();
                     }
 
+                    let mut ticks = 0u64;
+                    let mut controlled = None;
+                    let mut highlighting = false;
                     loop {
                         let (epoch, disconnected) = {
                             let model = observed.borrow();
@@ -198,7 +201,111 @@ impl RouteViews<Destination> for Views {
                             (model.epoch, model.disconnected)
                         };
 
-                        if !disconnected {
+                        let (target, pending, picking, hover, supported) = {
+                            let mut model = observed.borrow_mut();
+                            let supported = model.instances.iter().any(|i| {
+                                Some(i.info.runtime_id) == model.runtime
+                                    && i.info.element_interaction
+                            });
+                            (
+                                model.runtime,
+                                std::mem::take(&mut model.mode_pending),
+                                model.picking,
+                                model.hover.clone(),
+                                supported,
+                            )
+                        };
+                        let target = target.filter(|_| !disconnected && supported);
+                        if controlled != target {
+                            if let Some(old) = controlled {
+                                let _ = connection
+                                    .control(
+                                        old,
+                                        Command::InspectMode {
+                                            enabled: false,
+                                            lease_ms: 0,
+                                        },
+                                        run.cancellation(),
+                                    )
+                                    .await;
+                                let _ = connection
+                                    .control(
+                                        old,
+                                        Command::HighlightElement {
+                                            id: None,
+                                            generation: String::new(),
+                                        },
+                                        run.cancellation(),
+                                    )
+                                    .await;
+                            }
+                            controlled = target;
+                            highlighting = false;
+                        }
+                        if let Some(runtime) = target {
+                            if let Some(enabled) = pending {
+                                let result = connection
+                                    .control(
+                                        runtime,
+                                        Command::InspectMode {
+                                            enabled,
+                                            lease_ms: 1000,
+                                        },
+                                        run.cancellation(),
+                                    )
+                                    .await;
+                                if let Err(error) = result {
+                                    run.publish(Update::Pick(epoch, runtime, Err(error)))?;
+                                }
+                            }
+                            if picking {
+                                let result = connection
+                                    .query(runtime, Query::InspectPick {}, run.cancellation())
+                                    .await
+                                    .and_then(|reply| match reply {
+                                        Reply::InspectPick(pick) => Ok(pick),
+                                        _ => Err("Unexpected picker reply".into()),
+                                    });
+                                if result.as_ref().is_ok_and(|pick| pick.mode) {
+                                    let _ = connection
+                                        .control(
+                                            runtime,
+                                            Command::InspectMode {
+                                                enabled: true,
+                                                lease_ms: 1000,
+                                            },
+                                            run.cancellation(),
+                                        )
+                                        .await;
+                                }
+                                run.publish(Update::Pick(epoch, runtime, result))?;
+                            } else if let Some((id, generation)) = hover {
+                                let _ = connection
+                                    .control(
+                                        runtime,
+                                        Command::HighlightElement {
+                                            id: Some(id),
+                                            generation,
+                                        },
+                                        run.cancellation(),
+                                    )
+                                    .await;
+                                highlighting = true;
+                            } else if highlighting {
+                                let _ = connection
+                                    .control(
+                                        runtime,
+                                        Command::HighlightElement {
+                                            id: None,
+                                            generation: String::new(),
+                                        },
+                                        run.cancellation(),
+                                    )
+                                    .await;
+                                highlighting = false;
+                            }
+                        }
+                        if !disconnected && ticks.is_multiple_of(5) {
                             let instances = connection.instances(run.cancellation()).await;
 
                             run.publish(Update::Instances(epoch, instances))?;
@@ -235,7 +342,12 @@ impl RouteViews<Destination> for Views {
                                             _ => Err("Unexpected element response.".into()),
                                         });
 
-                                    run.publish(Update::Element(epoch, runtime, id, result))?;
+                                    run.publish(Update::Element(
+                                        epoch,
+                                        runtime,
+                                        id,
+                                        Box::new(result),
+                                    ))?;
                                 }
 
                                 if refresh {
@@ -259,7 +371,8 @@ impl RouteViews<Destination> for Views {
                             }
                         }
 
-                        rake::tasks::sleep(Duration::from_millis(500)).await;
+                        ticks = ticks.wrapping_add(1);
+                        rake::tasks::sleep(Duration::from_millis(100)).await;
                     }
                 }
             })
@@ -580,6 +693,7 @@ impl ElementsView {
             colors.background
         };
 
+        let hover_id = element.id.clone();
         let kind = tree::tag(&element.kind);
 
         let flex = element
@@ -591,6 +705,12 @@ impl ElementsView {
             <div id={format!("line-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}{}", element.semantic_id.as_deref().unwrap_or(&element.id), if row.closing { " (closing tag)" } else { "" })}
                 class="flex flex-row items-center min-w-0 shrink-0 pl-[4px] border-l-2"
                 style={|s| s.h(px(tree::ROW_HEIGHT)).min_w_full().border_color(if opening_selected && tree_active { colors.focus } else { rgba(0) }).bg(background).hover(|s| s.bg(if selected { background } else { colors.hover })).when(!row.closing, |s| s.role(gpui::accesskit::Role::TreeItem).aria_level(row.depth + 1).aria_selected(opening_selected).when(row.branch, |s| s.aria_expanded(!row.collapsed)).when(opening_selected, |s| s.aria_active_descendant()))}
+                on:hover={cx.listener(move |this, hovered: &bool, _, _| {
+                    let mut model=this.model.borrow_mut();
+                    if *hovered {
+                        if let Some(tree)=&model.tree {model.hover=Some((hover_id.clone(),tree.capture.clone()));}
+                    } else if model.hover.as_ref().is_some_and(|(id,_)|id==&hover_id) {model.hover=None;}
+                })}
                 on:click={ { let id = element.id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, false, window, cx)) } }>
                 for depth in 0..row.depth.min(16) {
                     <span id={format!("indent-{depth}")} class="w-[12px] h-full shrink-0 border-l-1 border-guide"/>
@@ -885,6 +1005,8 @@ impl Render for ElementsView {
                     <button id="find" aria-label="Find in element tree" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(Self::toggle_find)}>{icon(Icon::Search, colors.muted)}</button>
                     <button id="reveal-selection" disabled={!can_reveal} aria-label="Reveal selected element in tree" aria-description="Expand its current ancestors and scroll it into view. A replaced capture cannot be retargeted."
                         class="w-[30px] h-full hover:bg-field opacity-100" class:opacity-35={!can_reveal} style={control} on:click={cx.listener(|this, _, window, cx| this.reveal_selection(window, cx))}>{icon(Icon::Reveal, colors.muted)}</button>
+                    <button id="pick" aria-label="Pick element in application" disabled={!model.instances.iter().any(|i|Some(i.info.runtime_id)==model.runtime && i.info.element_interaction)} class="px-2 h-full hover:bg-field" style={control}
+                        on:click={cx.listener(|this, _, _, cx| {let mut model=this.model.borrow_mut();model.picking = !model.picking;model.mode_pending=Some(model.picking);model.hover=None;cx.notify();})}>{if model.picking {"Cancel pick"} else {"Pick"}}</button>
                     <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
                     <button id="refresh" aria-label="Refresh capture" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
                     <button id="theme" aria-label="Toggle theme" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; rake::theme::install(cx, Palette::new(this.light)); this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>

@@ -42,7 +42,7 @@ const timers = [];
 globalThis.setTimeout = (callback, delay) => { const timer = {callback, delay}; timers.push(timer); return timer; };
 globalThis.clearTimeout = timer => { timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
-const information = {runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab', 'NewWindow'],
+const information = {element_interaction: true, runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab', 'NewWindow'],
   queries: ['inspect_tree', 'inspect_element'],
   commands: ['quit', 'close_window', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
 const fields = {task_id: 'task-5', tab_id: 'tab-7', entry_id: 'entry-8', operation_id: 'op-9', request_id: 10};
@@ -66,6 +66,7 @@ let elementCapture = {status: 'captured', capture: '1', router_revision: 2, omit
   {id: 'element-1-0', parent: null, semantic_id: '<script>screen</script>', kind: 'gpui::Div', tab_id: 7, entry_id: 8,
     layout: {x: 10, y: 20, width: 300, height: 50}, source: {file: 'src/example.rs', line: 12, column: 3}, styles: {display: 'Flex'}, metadata_truncated: false}]};
 let staleElement = false;
+let pickerMode = false, pickedBoundary = null, pickSequence = 0;
 const envelopes = [];
 let advertised = [{application_id: 'test', info: information, transport: 'local'}];
 let loseReply = false;
@@ -84,10 +85,14 @@ globalThis.fetch = async (url, options) => {
     if (envelope.message.type === 'command') {
       envelopes.push(envelope);
       if (loseReply) { loseReply = false; throw new Error('response lost'); }
-      result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
+      if (envelope.message.value.type === 'inspect_mode') {
+        pickerMode = envelope.message.value.enabled;
+        result = {Ok: {type: 'acknowledged'}};
+      } else if (envelope.message.value.type === 'highlight_element') result = {Ok: {type: 'acknowledged'}};
+      else result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
     } else {
       const query = envelope.message.value;
-      const replies = {inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
+      const replies = {inspect_pick: {mode: pickerMode, generation: elementCapture.capture, hovered: null, picked: pickedBoundary, pick_sequence: pickSequence}, inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
         commands: [{id: 'test.echo', capability: 'Headless', arguments: {type: 'object', required: ['message'], properties: {message: {type: 'string'}}}, result: {type: 'string'}},
           {id: 'test.unit', capability: 'RequiresWindow', arguments: {type: 'null'}, result: {type: 'null'}},
           {id: 'test.tuple', capability: 'Headless', arguments: {type: 'array', prefixItems: [{type: 'string'}, {type: 'integer', minimum: 0}]}, result: {type: 'array'}}],
@@ -229,6 +234,22 @@ assert.match(ids.content.textContent, /localhost\/resource/);
 await panel('Traces'); assert.match(ids.content.textContent, /Closed/);
 assert.ok(all(ids.content).some(node => node.tagName === 'svg'));
 await panel('Elements'); assert.match(ids.content.textContent, /3 omitted/);
+await find('button', 'Pick element in app').click(); await settle();
+assert.equal(pickerMode, true);
+assert.equal(envelopes.at(-1).key, null);
+await timers.find(timer => timer.delay === 100).callback(); await settle();
+assert.equal(envelopes.at(-1).message.value.type, 'inspect_mode');
+assert.equal(envelopes.at(-1).message.value.lease_ms, 1000);
+pickerMode = false; pickedBoundary = 'element-1-0'; pickSequence = 1;
+await timers.filter(timer => timer.delay === 100).at(-1).callback(); await settle();
+assert.equal(find('button', 'Inspect element-1-0').attributes['aria-pressed'], 'true');
+find('button', 'Inspect element-1-0').listeners.pointerenter();
+await timers.filter(timer => timer.delay === 100).at(-1).callback(); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'highlight_element', id: 'element-1-0', generation: '1'});
+find('button', 'Inspect element-1-0').listeners.pointerleave();
+await timers.filter(timer => timer.delay === 100).at(-1).callback(); await settle();
+assert.equal(envelopes.at(-1).message.value.id, null);
+
 assert.match(ids.content.textContent, /<script>screen<\/script>/);
 assert.ok(!all(ids.content).some(node => node.tagName === 'script'));
 await find('button', 'Inspect element-1-0').click(); await settle();

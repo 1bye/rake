@@ -97,8 +97,9 @@ rapid redraws can reset Chrome's selection. Unmappable style names keep a `-gpui
 prefix. Every box quad uses the captured bounds: separate margin, border and padding
 measurements are unavailable. Computed styles contain only measured width/height;
 Chrome's inferred CSS hints and full box decorations may therefore be incomplete.
-Highlighting and inspect mode return explicit errors pending a separate runtime
-protocol extension. Rake's own Elements inspector remains available for full
+Highlighting and inspect mode use the leased development inspection controls
+described in [element inspection](element-inspection.md). Chrome tree hover
+highlights the app; its picker selects the clicked instrumented boundary. Rake's own Elements inspector remains available for full
 capture coverage and stale-selection details.
 
 Sessions wait up to five seconds for a unique successor whose `restored_from`
@@ -127,8 +128,8 @@ Runtime.releaseObject/releaseObjectGroup; DOM.getDocument, DOM.requestChildNodes
 DOM.describeNode, DOM.getAttributes, DOM.getBoxModel,
 DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
 CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
-Network.getResponseBody/getRequestPostData and Overlay.highlightNode/setInspectMode
-return descriptive unavailable errors. Every unlisted method returns `-32601`,
+Network.getResponseBody/getRequestPostData return descriptive unavailable errors.
+Overlay.highlightNode/setInspectMode require advertised runtime interaction support. Every unlisted method returns `-32601`,
 including Debugger, Profiler, Tracing, CSS/DOM edits and JavaScript function calls.
 
 ## Rake application preview

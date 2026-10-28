@@ -1,7 +1,8 @@
-//! Read-only, bounded HTTP client shared by native and Wasm inspector frontends.
+//! Bounded inspection HTTP client shared by native and Wasm inspector frontends.
 
 use rake::control::{
-    ControlError, MAX_MESSAGE_BYTES, Message, PROTOCOL_VERSION, Query, Reply, Request, RuntimeInfo,
+    Command, ControlError, MAX_MESSAGE_BYTES, Message, PROTOCOL_VERSION, Query, Reply, Request,
+    RuntimeInfo,
 };
 
 use rake::http::{CancellationToken, HttpClient, HttpConfig};
@@ -126,7 +127,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Creates a cancellable local client; it only sends inspection queries.
+    /// Creates a cancellable local client for inspection queries and leased controls.
     pub fn new(config: ConnectionConfig) -> Result<Self, String> {
         Ok(Self {
             config,
@@ -160,7 +161,10 @@ impl Connection {
     ) -> Result<Reply, String> {
         if !matches!(
             query,
-            Query::InspectTree {} | Query::InspectElement { .. } | Query::Info {}
+            Query::InspectTree {}
+                | Query::InspectElement { .. }
+                | Query::InspectPick {}
+                | Query::Info {}
         ) {
             return Err("This Inspector only supports Elements queries.".into());
         }
@@ -181,6 +185,38 @@ impl Connection {
             .await?;
 
         reply.map_err(|error| error.to_string())
+    }
+
+    /// Renews or clears development-only inspection leases; application mutations are rejected.
+    pub async fn control(
+        &self,
+        runtime: RuntimeId,
+        command: Command,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
+        if !matches!(
+            command,
+            Command::HighlightElement { .. } | Command::InspectMode { .. }
+        ) {
+            return Err("This Inspector only supports development inspection controls.".into());
+        }
+        let request = Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: runtime,
+            key: None,
+            message: Message::Command(command),
+        };
+        let reply: Result<Reply, ControlError> = self
+            .post(
+                "inspect",
+                &serde_json::json!({"request":request}),
+                cancellation,
+            )
+            .await?;
+        match reply.map_err(|e| e.to_string())? {
+            Reply::Acknowledged => Ok(()),
+            _ => Err("Unexpected inspection control response.".into()),
+        }
     }
 
     async fn post<T: Serialize, U: DeserializeOwned>(

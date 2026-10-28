@@ -19,6 +19,7 @@ fn instance(id: u8, predecessor: Option<u8>) -> Instance {
         application_id: "test.app".into(),
         info: RuntimeInfo {
             element_inspection: Status::Captured,
+            element_interaction: true,
             protocol: 1,
             runtime_id: runtime(id),
             platform: "native".into(),
@@ -41,6 +42,7 @@ fn element(id: &str) -> Element {
         semantic_id: Some("document.body".into()),
         source: None,
         layout: None,
+        content_mask: None,
         styles: None,
         metadata_truncated: false,
         tab_id: None,
@@ -76,7 +78,7 @@ fn replaced_captures_keep_frozen_details_and_reject_late_selection_responses() {
         epoch,
         runtime(1),
         "element-1-0".into(),
-        Ok(element("element-1-0")),
+        Box::new(Ok(element("element-1-0"))),
     ));
     inspector.apply(Update::Tree(
         epoch,
@@ -90,14 +92,14 @@ fn replaced_captures_keep_frozen_details_and_reject_late_selection_responses() {
         epoch,
         runtime(1),
         "element-1-0".into(),
-        Ok(element("element-1-0")),
+        Box::new(Ok(element("element-1-0"))),
     ));
     assert_eq!(inspector.detail.as_ref().unwrap().id, "element-2-0");
     inspector.apply(Update::Element(
         epoch,
         runtime(1),
         "element-2-0".into(),
-        Err("NotRetained".into()),
+        Box::new(Err("NotRetained".into())),
     ));
     inspector.apply(Update::Tree(
         epoch,
@@ -158,4 +160,40 @@ fn ambiguous_runtime_selection_is_explicit_and_filtering_keeps_exact_ids() {
         Ok(tree("3", "element-3-0")),
     ));
     assert!(inspector.tree.is_none());
+}
+
+#[test]
+fn picker_waits_for_its_exact_capture_and_never_replays_a_click() {
+    let mut model = Inspector::default();
+    model.apply(Update::Instances(0, Ok(vec![instance(1, None)])));
+    let epoch = model.epoch;
+    model.apply(Update::Tree(
+        epoch,
+        runtime(1),
+        Ok(tree("1", "element-1-0")),
+    ));
+    let pick = rake::inspection::Pick {
+        mode: false,
+        generation: "2".into(),
+        hovered: Some("element-2-0".into()),
+        picked: Some("element-2-0".into()),
+        pick_sequence: 1,
+    };
+    model.apply(Update::Pick(epoch, runtime(1), Ok(pick.clone())));
+    assert!(model.selected.is_none());
+    model.apply(Update::Tree(
+        epoch,
+        runtime(1),
+        Ok(tree("2", "element-2-0")),
+    ));
+    assert_eq!(model.selected.as_deref(), Some("element-2-0"));
+    model
+        .tree
+        .as_mut()
+        .unwrap()
+        .elements
+        .push(element("manual-selection"));
+    model.select_element("manual-selection");
+    model.apply(Update::Pick(epoch, runtime(1), Ok(pick)));
+    assert_eq!(model.selected.as_deref(), Some("manual-selection"));
 }

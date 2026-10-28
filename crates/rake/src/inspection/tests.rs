@@ -12,7 +12,7 @@ fn identities_expire_without_semantic_retargeting() {
         store.element("element-1-0"),
         Err(InspectionError::Unavailable)
     ));
-    store.0.borrow_mut().status = Status::Waiting;
+    store.0.borrow_mut().latest.status = Status::Waiting;
     assert!(matches!(
         store.element("element-1-0"),
         Err(InspectionError::Waiting)
@@ -24,20 +24,22 @@ fn identities_expire_without_semantic_retargeting() {
         semantic_id: Some("save".into()),
         source: None,
         layout: None,
+        content_mask: None,
         styles: None,
         metadata_truncated: false,
         tab_id: None,
         entry_id: None,
     };
 
-    let mut snapshot = store.0.borrow_mut();
+    let mut state = store.0.borrow_mut();
+    let snapshot = &mut state.latest;
 
     snapshot.status = Status::Captured;
     snapshot.elements.push(element);
-    drop(snapshot);
+    drop(state);
     let owned = store.element("element-1-0").unwrap();
 
-    store.0.borrow_mut().elements[0].id = "element-2-0".into();
+    store.0.borrow_mut().latest.elements[0].id = "element-2-0".into();
     assert!(matches!(
         store.element("element-1-0"),
         Err(InspectionError::NotRetained)
@@ -64,6 +66,7 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
         semantic_id: None,
         source: None,
         layout: None,
+        content_mask: None,
         styles: None,
         metadata_truncated: false,
         tab_id: None,
@@ -96,4 +99,148 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
     assert!(snapshot.elements.len() < MAX_ELEMENTS);
     assert!(snapshot.omitted > 0);
     assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_SNAPSHOT_BYTES);
+}
+
+fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Element {
+    Element {
+        id: id.into(),
+        parent: parent.map(str::to_owned),
+        kind: "Div".into(),
+        semantic_id: None,
+        source: None,
+        layout: Some(bounds),
+        content_mask: Some(mask),
+        styles: None,
+        metadata_truncated: false,
+        tab_id: None,
+        entry_id: None,
+    }
+}
+
+#[test]
+fn picking_respects_nesting_clipping_order_and_uninstrumented_gaps() {
+    let store = Store::default();
+    let window = WindowId(1);
+    let mut snapshot = store.begin(1);
+    let outer = Layout {
+        x: 0.,
+        y: 0.,
+        width: 100.,
+        height: 100.,
+    };
+    let child = Layout {
+        x: 10.,
+        y: 10.,
+        width: 50.,
+        height: 50.,
+    };
+    let clip = Layout {
+        x: 10.,
+        y: 10.,
+        width: 10.,
+        height: 10.,
+    };
+    snapshot.elements = vec![
+        boundary("element-1-0", None, outer, outer),
+        boundary("element-1-1", Some("element-1-0"), child, clip),
+        boundary("element-1-2", Some("element-1-0"), clip, clip),
+    ];
+    store.publish(window, snapshot);
+    store.inspect_mode(true, 1000).unwrap();
+    assert!(store.pointer(window, 15., 15., false));
+    assert_eq!(
+        store.pick().unwrap().hovered.as_deref(),
+        Some("element-1-2")
+    );
+    store.pointer(window, 30., 30., false);
+    assert_eq!(
+        store.pick().unwrap().hovered.as_deref(),
+        Some("element-1-0")
+    );
+    store.pointer(window, 110., 110., false);
+    assert!(store.pick().unwrap().hovered.is_none());
+    let mut empty = store.begin(1);
+    empty.elements.clear();
+    store.publish(window, empty);
+    store.pointer(window, 15., 15., false);
+    assert!(store.pick().unwrap().hovered.is_none());
+}
+
+#[test]
+fn leases_stale_generations_and_click_sequences_are_bounded() {
+    let store = Store::default();
+    let window = WindowId(1);
+    let mut snapshot = store.begin(1);
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 100.,
+        height: 100.,
+    };
+    snapshot
+        .elements
+        .push(boundary("element-1-0", None, bounds, bounds));
+    store.publish(window, snapshot);
+    assert!(matches!(
+        store.highlight(Some("element-1-0"), "old"),
+        Err(InspectionError::StaleGeneration)
+    ));
+    store.highlight(Some("element-1-0"), "1").unwrap();
+    store.inspect_mode(true, 1000).unwrap();
+    store.pointer(window, 5., 5., true);
+    let first = store.pick().unwrap();
+    assert_eq!(first.picked.as_deref(), Some("element-1-0"));
+    assert_eq!(first.pick_sequence, 1);
+    assert!(!first.mode);
+    assert_eq!(store.pick().unwrap().pick_sequence, 1);
+    assert!(matches!(
+        store.inspect_mode(true, 2001),
+        Err(InspectionError::InvalidLease)
+    ));
+    store.inspect_mode(true, 1).unwrap();
+    store
+        .0
+        .borrow_mut()
+        .expire(Instant::now() + Duration::from_secs(3));
+    assert!(!store.pick().unwrap().mode);
+    assert!(!store.pointer(window, 5., 5., false));
+    assert!(store.0.borrow().windows[&window].highlight.is_none());
+    store.inspect_mode(true, 1000).unwrap();
+    store.0.borrow_mut().cancel();
+    assert!(!store.pick().unwrap().mode);
+}
+
+#[test]
+fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
+    let store = Store::default();
+    let mut snapshot = store.begin(1);
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    snapshot
+        .elements
+        .push(boundary("element-1-0", None, bounds, bounds));
+    store.publish(WindowId(1), snapshot);
+    store.highlight(Some("element-1-0"), "1").unwrap();
+    let mut same = store.begin(2);
+    same.elements
+        .push(boundary("element-2-0", None, bounds, bounds));
+    store.publish(WindowId(1), same);
+    assert_eq!(store.snapshot().capture, "1");
+    assert!(store.0.borrow().windows[&WindowId(1)].highlight.is_some());
+    let other = store.begin(2);
+    store.publish(WindowId(2), other);
+    assert!(store.0.borrow().windows[&WindowId(2)].highlight.is_none());
+    store.inspect_mode(true, 1000).unwrap();
+    store.pointer(WindowId(1), 1., 1., false);
+    store.pointer(WindowId(2), 1., 1., false);
+    let generation = store.pick().unwrap().generation;
+    let first = store.0.borrow().windows[&WindowId(1)].snapshot.clone();
+    store.publish(WindowId(1), first);
+    assert_eq!(store.pick().unwrap().generation, generation);
+    assert!(store.pick().unwrap().hovered.is_none());
+    assert!(store.0.borrow().windows[&WindowId(1)].highlight.is_none());
 }

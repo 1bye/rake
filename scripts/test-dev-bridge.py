@@ -43,7 +43,7 @@ class BrokerHTTP(unittest.TestCase):
         with urllib.request.urlopen(self.url + "/__rake/bootstrap.js") as response:
             self.assertNotIn(self.config["token"], response.read().decode())
         self.runtime = str(uuid.uuid4())
-        self.info = {"element_inspection": "unavailable", "protocol": 1, "runtime_id": self.runtime, "platform": "web", "commands": [], "queries": ["info"], "supported_targets": ["CurrentTab", "NewTab"], "idempotency_capacity": 1024, "completed_operations": 256, "pending_operations": 1024}
+        self.info = {"element_inspection": "unavailable", "element_interaction": False, "protocol": 1, "runtime_id": self.runtime, "platform": "web", "commands": [], "queries": ["info"], "supported_targets": ["CurrentTab", "NewTab"], "idempotency_capacity": 1024, "completed_operations": 256, "pending_operations": 1024}
 
     def tearDown(self):
         try:

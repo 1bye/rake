@@ -48,7 +48,8 @@ A capture records the router revision at render time and its own monotonic strin
 identity. Each node has an opaque `element-CAPTURE-INDEX` ID, its nearest inspected
 ancestor, Rust element type, semantic identity, construction site, real GPUI layout
 and authored base style refinements. IDs belong to one runtime and one capture;
-recapture expires them, even when semantic IDs repeat. A restarted runtime rejects
+a changed capture expires them, even when semantic IDs repeat. Identical boundary
+metadata/geometry keeps its generation across highlight-only redraws. A restarted runtime rejects
 the old request envelope. `NotRetained` means refresh the tree and explicitly
 select a new node. Capture IDs are strings to avoid JavaScript numeric precision
 loss. The panel keeps selected details frozen when their capture is replaced;
@@ -58,7 +59,8 @@ GPUI's pinned public API cannot enumerate every element/view. **Coverage is Rake
 inspection boundaries**, with uninstrumented intermediates omitted. Opaque children
 and reused cached GPUI subtrees are not enumerated; their missing node count is
 unknown. Layout uses window-local logical pixels after layout/offsets, before
-clipping; it is not a screenshot or a visibility/hit-testing claim. Styles are the
+clipping; `content_mask` separately records its intersection with the inherited
+content mask and viewport for picking. Styles are the
 serialized authored GPUI base refinement captured at the annotation, not computed,
 inherited, hover or focus styles. Text contents are excluded. Every snapshot
 carries this coverage description, even when it has no nodes.
@@ -90,3 +92,56 @@ lines and route ownership through the CLI, replaces the entry, rejects stale
 IDs, and forwards the query through the real inspector HTTP proxy. It cleans up
 its application, server and private control directory. It fails if display/capture
 prerequisites are absent; in-memory tests do not stand in for GPU validation.
+
+## Development highlight and picking
+
+Mounted opt-in hosts advertise `info.element_interaction: true`; headless and
+control-disabled hosts report false. `HighlightElement { id, generation }` draws
+a translucent fill, one-pixel border and a kind/semantic-ID/dimensions label in
+that element's window. `id: null` clears highlights. An exact generation mismatch
+returns typed `StaleGeneration`; it never retargets by semantic ID. Highlights
+expire after two seconds unless renewed and clear when their capture changes.
+
+`InspectMode { enabled, lease_ms }` intercepts window mouse movement, button and
+wheel events before application handlers. Escape cancels before application
+shortcuts. A click picks the last/deepest instrumented boundary containing the
+pointer inside both its captured bounds and content mask, then exits mode. The
+matching release is swallowed too. Leases must be 1–2000 ms; input handlers check
+them even without another render, and a host-owned timer repaints expired overlays.
+The CDP and inspector clients renew one-second leases about every 100 ms.
+
+`InspectPick {}` returns `mode`, `generation`, `hovered`, `picked` and
+`pick_sequence`. Clicks increment the sequence once. Results remain readable so
+one polling client cannot consume another's pick; each client deduplicates by
+sequence. New inspect mode clears the previous selection. State is window-local
+for highlights and capture geometry; inspect mode is shared across the runtime's
+windows. The query selects the capture of the most recently hovered/picked window.
+
+These are transient development commands: they return acknowledgement, retain no
+operation or retry-key entry, and never modify router/application state. Closing
+CDP clears its controls immediately; crashed or disconnected clients lose input
+capture within one lease. Both Rake inspector frontends expose **Pick** and
+hover-to-highlight controls in Elements.
+
+```sh
+rake highlight element-3-21 --session /tmp/rake-dev-EXAMPLE
+rake highlight none --session /tmp/rake-dev-EXAMPLE
+rake ctl --session /tmp/rake-dev-EXAMPLE inspect mode on --lease-ms 1000
+rake inspect pick --session /tmp/rake-dev-EXAMPLE --json
+```
+
+The CLI obtains a generation from the current tree unless `--generation` is
+explicitly supplied. Repeating `inspect pick` shows the same sequence and does
+not replay a click. Enabling mode once from the CLI expires unless renewed.
+
+Known limits: z-order follows prepaint order, so deferred/absolute surfaces may
+be picked incorrectly. Only instrumented boundaries can be picked, with the same
+256-node cap. Opaque descendants resolve to an inspected ancestor. Polling adds
+roughly 100–250 ms of hover/selection lag and can be slower through the Web broker;
+a push channel is not implemented. A new geometry/metadata capture invalidates
+old IDs. No headers, bodies, source contents or uninstrumented text are captured.
+
+For Web inspection, keep the application in a visible tab/window while using
+DevTools (separate windows worked in Chrome 156). A hidden or suspended application
+tab cannot service broker requests or renew inspection leases reliably. Suspension
+expires the picker; it does not keep application input captured indefinitely.

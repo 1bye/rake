@@ -372,6 +372,12 @@ pub(crate) struct Workspace<R: Route> {
     _browser: super::web::browser::BrowserHistory,
 }
 
+impl<R: Route> Drop for Workspace<R> {
+    fn drop(&mut self) {
+        self.router.client().inspection().detach_window(self.window);
+    }
+}
+
 pub(crate) struct RoutingRoot<R: Route> {
     pub(crate) chrome: bool,
     pub(crate) views: Rc<dyn RouteViews<R>>,
@@ -504,7 +510,16 @@ impl<R: Route> Workspace<R> {
                         let mut revision = u64::MAX;
 
                         loop {
-                            revision = observed.changed(revision).await;
+                            let inspection = observed.client().inspection().listen();
+                            if let futures::future::Either::Left((next, _)) =
+                                futures::future::select(
+                                    Box::pin(observed.changed(revision)),
+                                    Box::pin(inspection),
+                                )
+                                .await
+                            {
+                                revision = next;
+                            }
 
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
@@ -601,7 +616,11 @@ impl<R: Route> Render for Workspace<R> {
                     "Stopping managed work…"
                 })
                 .inspect("rake.quit")
-                .root(self.router.client().inspection(), snapshot.revision);
+                .root(
+                    self.router.client().inspection(),
+                    snapshot.revision,
+                    self.window,
+                );
         }
 
         if snapshot.reload.request.is_some() {
@@ -621,7 +640,11 @@ impl<R: Route> Render for Workspace<R> {
                 .p_4()
                 .child("Preparing development reload…")
                 .inspect("rake.reload")
-                .root(self.router.client().inspection(), snapshot.revision);
+                .root(
+                    self.router.client().inspection(),
+                    snapshot.revision,
+                    self.window,
+                );
         }
 
         if snapshot.reload.phase == crate::reload::ReloadPhase::RestoreFailed {
@@ -655,7 +678,11 @@ impl<R: Route> Render for Workspace<R> {
                         .inspect("rake.restart-workspace"),
                 )
                 .inspect("rake.restore-failed")
-                .root(self.router.client().inspection(), snapshot.revision);
+                .root(
+                    self.router.client().inspection(),
+                    snapshot.revision,
+                    self.window,
+                );
         }
 
         let mut decision_area = div().flex().flex_col().gap_2();
@@ -805,7 +832,11 @@ impl<R: Route> Render for Workspace<R> {
                     .inspect("rake.content"),
             )
             .inspect("rake.workspace")
-            .root(self.router.client().inspection(), snapshot.revision)
+            .root(
+                self.router.client().inspection(),
+                snapshot.revision,
+                self.window,
+            )
     }
 }
 

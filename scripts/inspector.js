@@ -11,6 +11,7 @@ let elements = null, selectedElement = null, elementDetail = null, elementError 
 let rendered = null, workspaceFocus = null, elementTab = 'Styles', resizing = false;
 const paneSizes = new Map(), scrollPositions = new Map();
 let awaitingSuccessor = null;
+let picking = false, pickSequence = 0, hoveredBoundary = null, highlightSent = false, inspectionBusy = false;
 const parameters = new URLSearchParams(location.search);
 const secret = location.hash.startsWith('#__rake_control=') ? location.hash.slice('#__rake_control='.length) : null;
 if (secret && /^[A-Za-z0-9_-]{32,128}$/.test(secret)) sessionStorage.setItem('rake-dev-control-token', secret);
@@ -97,6 +98,7 @@ function paged(items, renderer, size = 100) {
   return append(el('div'), content, pager);
 }
 function switchPanel(name) {
+  if (panel === 'Elements') stopInspection();
   panel = name; page = 0; selectedOperation = null; operation = null;
   for (const control of $('panels').children) {
     const active = control.dataset.panel === name;
@@ -160,6 +162,7 @@ function treeRow(name, kind, id, depth, active, onInspect, meta = '') {
   return control;
 }
 function choose(runtime) {
+  stopInspection(); pickSequence = 0;
   awaitingSuccessor = null;
   model.reset(runtime); info = null; routes = []; commands = []; connected = false;
   elements = null; selectedElement = null; elementDetail = null; elementError = null;
@@ -276,6 +279,7 @@ async function refresh() {
         const tree = await query('inspect_tree', {}, runtime);
         if (runtime !== model.runtime) return;
         elements = tree.value;
+        if (hoveredBoundary && hoveredBoundary.generation !== elements.capture) hoveredBoundary = null;
       }
       if (!connected) message('Connected to ' + (info?.platform || 'application') + ' runtime.');
       connected = true; showError(null);
@@ -492,6 +496,48 @@ function tracePanel() {
       node.duration == null ? 'No duration observed' : `${(node.duration / 1000).toFixed(3)} ms`, row(badge(!node.opened || node.missingParent ? 'Partial ancestry' : node.closed ? 'Closed' : 'No close observed'),
         related(node.fields, 'Tasks'), related(node.fields, 'Requests'), related(node.fields, 'Console'), details('Span fields', node, `span:${node.id}`))]))));
 }
+function inspectionControl(value, runtime = model.runtime) {
+  return exchange(request(runtime, {type: 'command', value}));
+}
+function stopInspection() {
+  const runtime = model.runtime;
+  const used = picking || highlightSent || hoveredBoundary;
+  picking = false; hoveredBoundary = null; highlightSent = false;
+  if (runtime && used) {
+    inspectionControl({type: 'inspect_mode', enabled: false, lease_ms: 0}, runtime).catch(() => {});
+    inspectionControl({type: 'highlight_element', id: null, generation: ''}, runtime).catch(() => {});
+  }
+}
+async function inspectionLoop() {
+  if (!inspectionBusy && connected && info?.element_interaction) {
+    const runtime = model.runtime;
+    inspectionBusy = true;
+    try {
+      if (picking) {
+        const pick = (await query('inspect_pick', {}, runtime)).value;
+        if (runtime === model.runtime) {
+          picking = pick.mode;
+          if (pick.picked && pick.pick_sequence > pickSequence) {
+            pickSequence = pick.pick_sequence;
+            if (elements?.capture !== pick.generation) elements = (await query('inspect_tree', {}, runtime)).value;
+            await inspectElement(pick.picked);
+          }
+          if (picking) await inspectionControl({type: 'inspect_mode', enabled: true, lease_ms: 1000}, runtime);
+          render(true);
+        }
+      } else if (hoveredBoundary) {
+        const hover = hoveredBoundary;
+        await inspectionControl({type: 'highlight_element', ...hover}, runtime);
+        highlightSent = true;
+      } else if (highlightSent) {
+        await inspectionControl({type: 'highlight_element', id: null, generation: ''}, runtime);
+        highlightSent = false;
+      }
+    } catch (error) { stopInspection(); showError(error); }
+    finally { inspectionBusy = false; }
+  }
+  setTimeout(inspectionLoop, 100);
+}
 async function inspectElement(id) {
   const runtime = model.runtime;
   selectedElement = id; elementDetail = null; elementError = null;
@@ -526,6 +572,8 @@ function elementsPanel() {
   const replaced = selectedElement && !elements.elements.some(element => element.id === selectedElement);
   const tree = paged(elements.elements, items => append(el('div', null, 'element-tree'), ...items.map(element => {
     const control = button('', () => inspectElement(element.id), !connected, 'tree-row');
+    control.addEventListener('pointerenter', () => { if (info?.element_interaction) hoveredBoundary = {id: element.id, generation: elements.capture}; });
+    control.addEventListener('pointerleave', () => { if (hoveredBoundary?.id === element.id) hoveredBoundary = null; });
     control.dataset.focus = 'element:' + element.id;
     control.setAttribute('aria-label', 'Inspect ' + element.id);
     control.setAttribute('aria-pressed', String(selectedElement === element.id));
@@ -537,7 +585,14 @@ function elementsPanel() {
     control.append(el('span', '>', 'muted'));
     return control;
   })));
-  const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), tree,
+  const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), button(picking ? 'Cancel picking' : 'Pick element in app', async () => {
+      if (picking) stopInspection();
+      else {
+        try { await inspectionControl({type: 'inspect_mode', enabled: true, lease_ms: 1000}); picking = true; }
+        catch (error) { showError(error); }
+      }
+      render(true);
+    }, !info?.element_interaction), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), tree,
     details('Inspection coverage', elements.coverage, 'inspection-coverage'));
   const detail = el('div');
   const tabs = el('div', null, 'inspector-tabs');
@@ -655,4 +710,10 @@ $('search').addEventListener('input', () => { search = $('search').value; page =
 $('clear-context').addEventListener('click', () => { filter = {}; render(true); });
 $('pause').addEventListener('click', () => { paused = !paused; $('pause').textContent = paused ? 'Resume updates' : 'Pause updates'; $('pause').setAttribute('aria-pressed', String(paused)); $('pause').title = $('pause').textContent; message(paused ? 'Automatic observation paused. The runtime and its operations continue.' : 'Automatic observation resumed.'); if (!paused) refresh(); });
 async function loop() { if (!paused) await refresh(); setTimeout(loop, 750); }
-render(true); loop();
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => {
+  if (!model.runtime || !info?.element_interaction) return;
+  for (const value of [{type: 'inspect_mode', enabled: false, lease_ms: 0}, {type: 'highlight_element', id: null, generation: ''}]) {
+    fetch('/__rake/inspect', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json', 'X-Rake-Token': token}, body: JSON.stringify({request: request(model.runtime, {type: 'command', value})})}).catch(() => {});
+  }
+});
+render(true); loop(); inspectionLoop();

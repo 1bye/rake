@@ -124,6 +124,8 @@ impl<R: Route> RuntimeClient<R> {
 
         RuntimeInfo {
             element_inspection: self.state.inspection.status(),
+            element_interaction: self.state.inspection.status()
+                != crate::inspection::Status::Unavailable,
             protocol: PROTOCOL_VERSION,
             runtime_id: self.router.runtime_id(),
             platform: if cfg!(target_family = "wasm") {
@@ -141,7 +143,8 @@ impl<R: Route> RuntimeClient<R> {
         }
     }
 
-    /// Validates the protocol/runtime before dispatch. Every mutation requires a key.
+    /// Validates protocol/runtime before dispatch. Application mutations require a key.
+    /// Leased development highlight/picker commands are transient and do not retain keys.
     /// Keys are retained for this runtime's entire lifetime, including failures.
     /// Exhaustion rejects new keys instead of silently allowing duplicate retries.
     pub fn request(&self, request: Request) -> Result<Reply, ControlError> {
@@ -162,6 +165,14 @@ impl<R: Route> RuntimeClient<R> {
         match request.message {
             Message::Query(query) => self.query(query),
             Message::Command(command) => {
+                // Renewable development leases must not fill the lifetime mutation-key registry.
+                if matches!(
+                    command,
+                    Command::HighlightElement { .. } | Command::InspectMode { .. }
+                ) {
+                    return self.command(&command);
+                }
+
                 let key = request
                     .key
                     .filter(|key| !key.is_empty() && key.len() <= 128)
@@ -245,6 +256,15 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::HighlightElement { id, generation } => {
+                self.state.inspection.highlight(id.as_deref(), generation)?;
+                return Ok(Reply::Acknowledged);
+            }
+            Command::InspectMode { enabled, lease_ms } => {
+                self.state.inspection.inspect_mode(*enabled, *lease_ms)?;
+                return Ok(Reply::Acknowledged);
+            }
+
             Command::CloseWindow { window } => self.router.close_window(*window).id(),
             Command::Quit { options } => self.router.quit(*options).id(),
             Command::PrepareReload { request } => {
@@ -341,6 +361,7 @@ impl<R: Route> RuntimeClient<R> {
                 Ok(Reply::Snapshot(self.router.snapshot_in_window(window)?))
             }
             Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
+            Query::InspectPick {} => Ok(Reply::InspectPick(self.state.inspection.pick()?)),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),
@@ -539,4 +560,38 @@ pub(crate) async fn run_host<R: Route>(
     let _ = (client, application_id);
 
     futures::future::pending::<()>().await;
+}
+
+#[cfg(test)]
+mod inspection_control_tests {
+    //! Covers: leased commands bypass operation/key retention while preserving runtime validation.
+    //! Real: shared client dispatcher and inspection store. Doubles: an empty captured host.
+    use super::*;
+    use crate::router::{NoRoute, RouterConfig, WindowId};
+
+    #[test]
+    fn development_lease_renewals_never_fill_application_retry_capacity() {
+        let router = Router::<NoRoute>::new(RouterConfig::default());
+        let client = router.client();
+        assert!(!client.info().element_interaction);
+        let snapshot = client.state.inspection.begin(0);
+        client.state.inspection.publish(WindowId(1), snapshot);
+        for _ in 0..2048 {
+            let reply = client
+                .request(Request {
+                    protocol: PROTOCOL_VERSION,
+                    runtime_id: router.runtime_id(),
+                    key: None,
+                    message: Message::Command(Command::InspectMode {
+                        enabled: true,
+                        lease_ms: 1000,
+                    }),
+                })
+                .unwrap();
+            assert!(matches!(reply, Reply::Acknowledged));
+        }
+        assert!(client.state.requests.borrow().is_empty());
+        assert!(router.snapshot().operations.is_empty());
+        assert!(client.info().element_interaction);
+    }
 }

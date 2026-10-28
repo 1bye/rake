@@ -306,6 +306,7 @@ mod tests {
             semantic_id: Some(id.into()),
             source: None,
             layout: None,
+            content_mask: None,
             styles: None,
             metadata_truncated: false,
             tab_id: None,

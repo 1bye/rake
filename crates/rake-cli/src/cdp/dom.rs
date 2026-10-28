@@ -43,6 +43,58 @@ impl Dom {
         Ok(changed)
     }
 
+    pub fn generation(&self) -> Option<&str> {
+        self.snapshot.as_ref().map(|s| s.capture.as_str())
+    }
+
+    pub fn node_id(&self, id: &str) -> Option<i32> {
+        self.nodes
+            .iter()
+            .find(|(_, e)| e.id == id)
+            .map(|(&id, _)| id)
+    }
+
+    pub fn overlay_command(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> Result<rake::control::Command, Error> {
+        use rake::control::Command;
+        match method {
+            "Overlay.highlightNode" => {
+                let id = params["nodeId"]
+                    .as_i64()
+                    .or_else(|| params["backendNodeId"].as_i64())
+                    .and_then(|id| i32::try_from(id).ok())
+                    .ok_or_else(|| Error::new(-32602, "nodeId or backendNodeId required"))?;
+                let element = self.element(id)?;
+                Ok(Command::HighlightElement {
+                    id: Some(element.id.clone()),
+                    generation: self.generation().unwrap_or_default().into(),
+                })
+            }
+            "Overlay.hideHighlight" => Ok(Command::HighlightElement {
+                id: None,
+                generation: String::new(),
+            }),
+            "Overlay.setInspectMode" => match params["mode"].as_str() {
+                Some("searchForNode") => Ok(Command::InspectMode {
+                    enabled: true,
+                    lease_ms: 1000,
+                }),
+                Some("none") => Ok(Command::InspectMode {
+                    enabled: false,
+                    lease_ms: 0,
+                }),
+                _ => Err(Error::new(
+                    -32602,
+                    "Only searchForNode and none inspect modes are supported",
+                )),
+            },
+            _ => Err(Error::new(-32601, "Unknown Overlay method")),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.snapshot = None;
         self.nodes.clear();
@@ -301,5 +353,55 @@ mod tests {
         );
         assert!(dom.update(capture("b")).unwrap());
         assert!(dom.handle("DOM.getBoxModel", &params).is_err());
+    }
+    #[test]
+    fn overlay_commands_use_exact_capture_ids_and_shared_backend_ids() {
+        use rake::control::Command;
+        let mut dom = Dom::default();
+        dom.update(capture("test")).unwrap();
+        let id = dom.node_id("test-a").unwrap();
+        for params in [json!({"nodeId":id}), json!({"backendNodeId":id})] {
+            assert_eq!(
+                dom.overlay_command("Overlay.highlightNode", &params)
+                    .unwrap(),
+                Command::HighlightElement {
+                    id: Some("test-a".into()),
+                    generation: "test".into()
+                }
+            );
+        }
+        assert_eq!(
+            dom.overlay_command("Overlay.hideHighlight", &json!({}))
+                .unwrap(),
+            Command::HighlightElement {
+                id: None,
+                generation: String::new()
+            }
+        );
+        assert_eq!(
+            dom.overlay_command("Overlay.setInspectMode", &json!({"mode":"searchForNode"}))
+                .unwrap(),
+            Command::InspectMode {
+                enabled: true,
+                lease_ms: 1000
+            }
+        );
+        assert_eq!(
+            dom.overlay_command("Overlay.setInspectMode", &json!({"mode":"none"}))
+                .unwrap(),
+            Command::InspectMode {
+                enabled: false,
+                lease_ms: 0
+            }
+        );
+        assert!(
+            dom.overlay_command("Overlay.setInspectMode", &json!({"mode":"invalid"}))
+                .is_err()
+        );
+        dom.update(capture("replacement")).unwrap();
+        assert!(
+            dom.overlay_command("Overlay.highlightNode", &json!({"nodeId":id}))
+                .is_err()
+        );
     }
 }
