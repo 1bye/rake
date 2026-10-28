@@ -215,16 +215,47 @@ fn emit_segments(segments: &[Segment], mapped: &Ident) -> TokenStream {
 
     for segment in segments {
         body.extend(match segment {
-            Segment::Always(tokens) => quote!(let #mapped = #mapped #tokens;),
+            Segment::Always(tokens) => {
+                let value = apply_methods(mapped, tokens);
+
+                quote!(let #mapped = #value;)
+            }
             Segment::When {
                 condition,
                 then,
                 otherwise,
             } => {
-                quote!(let #mapped = if #condition { #mapped #then } else { #mapped #otherwise };)
+                let then = apply_methods(mapped, then);
+                let otherwise = apply_methods(mapped, otherwise);
+
+                quote!(let #mapped = if #condition { #then } else { #otherwise };)
             }
         });
     }
 
     body
+}
+
+// StyleRefinement and RunStyle have no FluentBuilder. Generated `.map` calls
+// are direct closure application here; authored style closures never enter this IR.
+fn apply_methods(mapped: &Ident, methods: &TokenStream) -> TokenStream {
+    fn lower(value: syn::Expr) -> TokenStream {
+        if let syn::Expr::MethodCall(mut call) = value {
+            let receiver = lower(*call.receiver);
+
+            if call.method == "map" && call.args.len() == 1 {
+                let apply = &call.args[0];
+
+                return quote!((#apply)(#receiver));
+            }
+
+            *call.receiver = syn::parse2(receiver).expect("generated receiver");
+
+            quote!(#call)
+        } else {
+            quote!(#value)
+        }
+    }
+
+    lower(syn::parse2(quote!(#mapped #methods)).expect("checked utility methods"))
 }

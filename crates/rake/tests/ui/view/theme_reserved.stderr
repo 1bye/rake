@@ -1,0 +1,11 @@
+error: theme field collides with a built-in utility value; choose a descriptive name
+ --> tests/ui/view/theme_reserved.rs:2:17
+  |
+2 | struct Colors { sm: rake::gpui::Rgba, bold: rake::gpui::Rgba }
+  |                 ^^
+
+error: theme field collides with a built-in utility value; choose a descriptive name
+ --> tests/ui/view/theme_reserved.rs:2:39
+  |
+2 | struct Colors { sm: rake::gpui::Rgba, bold: rake::gpui::Rgba }
+  |                                       ^^^^

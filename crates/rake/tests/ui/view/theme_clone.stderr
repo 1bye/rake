@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `Colors: Clone` is not satisfied
+ --> tests/ui/view/theme_clone.rs:2:8
+  |
+2 | struct Colors { ink: rake::gpui::Rgba }
+  |        ^^^^^^ the trait `Clone` is not implemented for `Colors`
+  |
+note: required by a bound in `assert_clone`
+ --> tests/ui/view/theme_clone.rs:1:10
+  |
+1 | #[derive(rake::Theme)]
+  |          ^^^^^^^^^^^ required by this bound in `assert_clone`
+  = note: this error originates in the derive macro `rake::Theme` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider annotating `Colors` with `#[derive(Clone)]`
+  |
+2 + #[derive(Clone)]
+3 | struct Colors { ink: rake::gpui::Rgba }
+  |

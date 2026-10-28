@@ -25,6 +25,11 @@ mod view;
 /// accept literal branches, restricted to text-run utilities.
 /// Ambient themes are installed with `rake::theme::install(cx, theme)` on the UI
 /// thread; current/try_current expose Rc handles and ThemeGlobal is observable.
+/// Declare the app-owned Clone theme type once at the crate root with
+/// `rake::theme!(Colors)` and validate its field names with `#[derive(rake::Theme)]`.
+/// Named text/bg/border/font/rounded classes read its fields (hyphens become
+/// underscores); built-in values win. Inline text themes accept colors, not
+/// TextToken sizes. Each invocation captures one ambient Rc at construction.
 /// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
 /// font families and opacity; negative lengths are limited to margins and inset.
 /// Interaction variants merge into one GPUI call per kind: hover, active, focus,
@@ -281,4 +286,12 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+/// Validates app-owned theme field names and requires Clone.
+#[proc_macro_derive(Theme)]
+pub fn derive_theme(input: TokenStream) -> TokenStream {
+    view::theme::derive(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }

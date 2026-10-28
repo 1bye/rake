@@ -292,3 +292,14 @@ mod tests {
         );
     }
 }
+
+#[derive(Clone, framework::Theme)]
+struct ViewTheme {
+    surface: gpui::Rgba,
+}
+framework::theme!(ViewTheme);
+
+/// Theme paths also resolve through a renamed facade.
+pub fn themed_markup() -> impl gpui::IntoElement {
+    framework::view! { <div class="bg-surface hover:bg-surface"/> }
+}

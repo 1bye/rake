@@ -9,3 +9,4 @@ Reset
 More actions
 ⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock
 Existing GPUI elements embed with {expression}.
+Switch theme

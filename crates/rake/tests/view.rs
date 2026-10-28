@@ -577,3 +577,26 @@ fn theme_values_apply_to_native_gpui_refinements() {
         format!("{:?}", expected.style())
     );
 }
+
+#[derive(Clone, rake::Theme)]
+struct Theme {
+    surface: rake::gpui::Rgba,
+    ink: rake::gpui::Hsla,
+    body: rake::theme::TextToken,
+    ui: &'static str,
+    control: rake::gpui::Pixels,
+    hover: rake::gpui::Rgba,
+}
+
+rake::theme!(Theme);
+
+// Installation is covered by the frame suite. This compile probe covers every
+// theme prefix and all three generic/refinement emission paths.
+#[allow(dead_code)]
+fn theme_class_compile_probe() -> impl rake::gpui::IntoElement {
+    rake::view! {
+        <div class="bg-surface text-body border-ink font-ui rounded-control hover:bg-hover focus:text-ink">
+            <p><span class="text-ink font-ui">Inline theme</span></p>
+        </div>
+    }
+}

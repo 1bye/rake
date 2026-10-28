@@ -1,5 +1,5 @@
-error: 1st class `bg-red-500`: unsupported utility class `bg-red-500`; colors come from your theme (`bg-surface`) or `[#rrggbb]`; use style={|s| ...} for GPUI styling
+error: 1st class `unknown-utility`: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
  --> tests/ui/view/unsupported_utility.rs:2:38
   |
-2 |     let _ = rake::view! { <div class="bg-red-500"/> };
-  |                                      ^^^^^^^^^^^^
+2 |     let _ = rake::view! { <div class="unknown-utility"/> };
+  |                                      ^^^^^^^^^^^^^^^^^

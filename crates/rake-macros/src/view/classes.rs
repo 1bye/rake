@@ -336,6 +336,8 @@ pub(super) fn utility_methods(
         class.replace('-', "_")
     } else if let Some(methods) = extended_methods(class, span, rake)? {
         return Ok(methods);
+    } else if let Some(methods) = super::theme::methods(class, span, rake) {
+        return Ok(methods);
     } else {
         return Err(syn::Error::new(span, error::unsupported(class)));
     };
@@ -380,7 +382,7 @@ pub(super) fn class_methods(
     Ok(plan)
 }
 
-fn split_variant(class: &str) -> Option<(&str, &str)> {
+pub(super) fn split_variant(class: &str) -> Option<(&str, &str)> {
     let mut bracket = false;
 
     for (index, character) in class.char_indices() {

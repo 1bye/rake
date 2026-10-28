@@ -155,7 +155,7 @@ pub(super) fn inline_element(
                         lit: Lit::Str(_),
                         ..
                     })
-                ) =>
+                ) || super::theme::expression_use(value).is_some() =>
             {
                 let local = format_ident!(
                     "__rake_inline_class_branch_{}",
@@ -268,6 +268,27 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                 }
 
                 methods.extend(quote!(.font_family(#font)));
+                continue;
+            }
+            _ if super::theme::field(class)
+                .is_some_and(|(kind, _)| kind == "ThemeText" || kind == "ThemeFont") =>
+            {
+                let (kind, field) = super::theme::field(class).expect("checked theme class");
+
+                let kind = format_ident!(
+                    "{}",
+                    if kind == "ThemeText" {
+                        "ThemeRunText"
+                    } else {
+                        "ThemeRunFont"
+                    },
+                    span = classes.span()
+                );
+
+                let field = format_ident!("{field}", span = classes.span());
+                let theme = super::theme::local();
+
+                methods.extend(quote_spanned!(classes.span()=> .map(|s| #rake::__private::#kind::apply(#theme.#field.clone(), s))));
                 continue;
             }
             _ => {

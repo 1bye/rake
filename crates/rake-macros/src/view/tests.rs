@@ -49,8 +49,8 @@ fn reports_bad_markup_at_compile_time() {
         ("<div tabindex=0/>", "quoted strings or {Rust expressions}"),
         ("<div class={classes}/>", "literal utility string"),
         (
-            "<div class=\"bg-red-500\"/>",
-            "unsupported utility class `bg-red-500`",
+            "<div class=\"unknown-utility\"/>",
+            "unsupported utility class `unknown-utility`",
         ),
         ("<img alt=\"x\"/>", "img requires src"),
         ("<img src=\"x\"/>", "img requires alt"),
@@ -298,6 +298,7 @@ fn expansion_snapshots() {
         ("navigation", r#"<section focus={&self.focus} scroll={&self.scroll} tab-navigation={true}><button tabindex={0}/></section>"#.to_owned()),
         ("variants", r#"<div class="p-4 group/card hover:bg-[#fff] hover:opacity-50 focus-visible:border-2 group-hover/card:text-[#000]" class:hover:font-bold={selected} style={|s| s.rounded_md()}/>"#.to_owned()),
         ("disabled_classes", r#"<button disabled={busy} class="disabled:opacity-35 opacity-100" class:disabled:font-bold={selected}/>"#.to_owned()),
+        ("theme", r#"<div class="bg-surface text-body hover:bg-hover border-line font-ui rounded-control"><p><span class="text-ink font-ui">Themed</span></p></div>"#.to_owned()),
         ("class_if", r#"<div class={if selected { "p-4 hover:opacity-50" } else { "p-2 hover:opacity-100" }}/>"#.to_owned()),
         ("class_if_let", r#"<div class={if let Some(_) = value { "font-bold" }}/>"#.to_owned()),
         ("class_match", r#"<div class={match value { Some(_) if active => "p-4 hover:opacity-50", Option::None => "p-0", _ => "p-2" }}/>"#.to_owned()),

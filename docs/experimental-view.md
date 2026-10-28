@@ -132,6 +132,8 @@ between their preceding and following authored attributes.
 - `focus-visible:text-[#000]`, `in-focus:font-bold`, `disabled:opacity-35`.
 - `group-hover/card:bg-[#fff]`, `group-active/card:opacity-50`.
 
+- `bg-surface`, `text-ink`, `border-line`, `font-ui`, `rounded-control`.
+
 <!-- view-utilities:end -->
 
 `N` accepts any nonnegative whole or half step, with one step equal to 0.25rem;
@@ -809,3 +811,40 @@ run there, on native and Wasm. Existing built elements retain old values until
 rebuilt. A missing theme panic names the type and tells you to call `install`.
 `TextToken { size, line_height, weight }` describes paragraph typography using
 pixels and an optional GPUI font weight. The class integration follows below.
+
+## Theme classes
+
+Declare your type once at the crate root, and install it on the UI thread:
+
+```rust
+use rake::gpui::{self, rgb};
+#[derive(Clone, rake::Theme)]
+struct Colors { surface: gpui::Rgba, ink: gpui::Rgba, hover: gpui::Rgba }
+rake::theme!(Colors);
+fn setup(cx: &mut gpui::App) {
+    rake::theme::install(cx, Colors { surface: rgb(0x18232b), ink: rgb(0xf0f4e8), hover: rgb(0x365849) });
+}
+fn panel() -> impl gpui::IntoElement {
+    rake::view! { <div class="bg-surface text-ink hover:bg-hover"><p><span class="text-ink">Themed</span></p></div> }
+}
+```
+
+Unknown names under `text-`, `bg-`, `border-`, `font-` and `rounded-` read fields
+from this type, after built-in values have been checked. Hyphens become
+underscores (`bg-surface-raised` reads `surface_raised`). Derive `Theme` checks
+reserved built-in names and requires `Clone`; fields must be named. `hover` is
+a valid field name. There is no built-in palette or `dark:` variant.
+
+`text-` accepts GPUI colors or `TextToken`; `bg-` accepts GPUI fills; `border-`
+accepts colors; `font-` accepts `SharedString`/`&'static str`; `rounded-` accepts
+pixels/rems. Inline `text-` accepts colors only: a `TextToken` gives a
+`ThemeRunText` trait error because font size belongs on p. Inline `font-` is
+also supported. Wrong field names and value types are compiler errors at the
+class literal. A missing declaration reports “cannot find type `__RakeTheme`
+in the crate root”; add `rake::theme!(YourTheme)` at that root.
+
+Each invocation clones one ambient `Rc` before building its elements, including
+variant refinements. Nested `view!` expressions bind their own handle. Deep
+components need no theme props. Switching calls `install` with another value
+of the same type and rebuilds views; existing styles retain their old values.
+`examples/view` demonstrates a typed `ToggleTheme` action and a T shortcut.

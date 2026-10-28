@@ -31,6 +31,7 @@ pub mod theme;
 pub use application::{App, AppError};
 #[cfg(feature = "gpui")]
 pub use gpui;
+pub use rake_macros::{Command, Route, app, data, instrument};
 #[cfg(feature = "experimental-view")]
 /// Builds GPUI views from experimental HTML-like markup.
 ///
@@ -168,8 +169,7 @@ pub use gpui;
 /// ```compile_fail
 /// let _ = rake::view! { <p><button>"A widget"</button></p> };
 /// ```
-pub use rake_macros::view;
-pub use rake_macros::{Command, Route, app, data, instrument};
+pub use rake_macros::{Theme, view};
 pub use router::Route;
 pub use schemars;
 pub use serde;
@@ -210,7 +210,7 @@ pub mod prelude {
 pub mod __private {
     #[cfg(feature = "experimental-view")]
     pub use crate::theme::apply::{
-        ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeText,
+        ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeRunFont, ThemeRunText, ThemeText,
     };
 
     #[cfg(feature = "experimental-view")]
@@ -246,4 +246,15 @@ pub mod __private {
     pub use tracing;
     #[cfg(target_family = "wasm")]
     pub use wasm_bindgen;
+}
+
+/// Declares this crate's ambient view theme; invoke once at the crate root.
+/// Install the value with [`theme::install`] before building themed views.
+#[cfg(feature = "experimental-view")]
+#[macro_export]
+macro_rules! theme {
+    ($theme:path) => {
+        #[doc(hidden)]
+        pub(crate) type __RakeTheme = $theme;
+    };
 }

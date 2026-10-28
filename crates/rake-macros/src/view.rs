@@ -627,12 +627,14 @@ fn loop_text_error(span: Span) -> syn::Error {
 impl View {
     fn emit(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
         let root = self.0.expand(rake, &mut 0)?;
+        let theme = theme::used(&self.0).map(|span| theme::binding(span, rake));
 
         Ok(quote!({
             use #rake::gpui::prelude::{
                 FluentBuilder as _, InteractiveElement as _, ParentElement as _,
                 StatefulInteractiveElement as _, Styled as _, StyledImage as _,
             };
+            #theme
             #root
         }))
     }
@@ -1252,3 +1254,5 @@ mod text;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod theme;

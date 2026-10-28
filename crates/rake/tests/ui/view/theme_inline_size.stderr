@@ -1,0 +1,24 @@
+error[E0277]: the trait bound `TextToken: rake::__private::ThemeRunText` is not satisfied
+ --> tests/ui/view/theme_inline_size.rs:4:21
+  |
+4 | fn main() { let _ = rake::view! { <p><span class="text-body">Hello</span></p> }; }
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                     |
+  |                     the trait `palette::alpha::WithAlpha<f32>` is not implemented for `TextToken`
+  |                     required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `palette::alpha::WithAlpha<A>`:
+            `palette::alpha::alpha::Alpha<C, A>` implements `palette::alpha::WithAlpha<A>`
+            `palette::cam16::full::Cam16<T>` implements `palette::alpha::WithAlpha<_A>`
+            `palette::cam16::partial::cam16_jch::Cam16Jch<T>` implements `palette::alpha::WithAlpha<_A>`
+            `palette::cam16::partial::cam16_jmh::Cam16Jmh<T>` implements `palette::alpha::WithAlpha<_A>`
+            `palette::cam16::partial::cam16_jsh::Cam16Jsh<T>` implements `palette::alpha::WithAlpha<_A>`
+            `palette::cam16::partial::cam16_qch::Cam16Qch<T>` implements `palette::alpha::WithAlpha<_A>`
+            `palette::cam16::partial::cam16_qmh::Cam16Qmh<T>` implements `palette::alpha::WithAlpha<_A>`
+            `palette::cam16::partial::cam16_qsh::Cam16Qsh<T>` implements `palette::alpha::WithAlpha<_A>`
+          and $N others
+  = note: required for `palette::alpha::alpha::Alpha<palette::hsl::Hsl, f32>` to implement `palette::convert::from_into_color_unclamped::FromColorUnclamped<TextToken>`
+  = note: required for `palette::alpha::alpha::Alpha<palette::hsl::Hsl, f32>` to implement `palette::convert::from_into_color::FromColor<TextToken>`
+  = note: required for `TextToken` to implement `palette::convert::from_into_color::IntoColor<palette::alpha::alpha::Alpha<palette::hsl::Hsl, f32>>`
+  = note: required for `TextToken` to implement `rake::__private::ThemeRunText`
+  = note: this error originates in the macro `rake::view` (in Nightly builds, run with -Z macro-backtrace for more info)

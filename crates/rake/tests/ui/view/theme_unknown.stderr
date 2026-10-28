@@ -1,0 +1,7 @@
+error[E0609]: no field `bra` on type `Rc<Colors>`
+ --> tests/ui/view/theme_unknown.rs:4:46
+  |
+4 | fn main() { let _ = rake::view! { <div class="bg-bra"/> }; }
+  |                                              ^^^^^^^^ unknown field
+  |
+  = note: available field is: `surface`

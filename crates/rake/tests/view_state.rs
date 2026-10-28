@@ -35,6 +35,8 @@ mod classes;
 #[path = "view_state/theme.rs"]
 mod theme;
 
+rake::theme!(theme::Palette);
+
 struct Draft {
     text: String,
     selection: Range<usize>,

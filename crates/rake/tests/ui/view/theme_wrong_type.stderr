@@ -1,0 +1,18 @@
+error[E0277]: the trait bound `palette::alpha::alpha::Alpha<palette::hsl::Hsl, f32>: rake::__private::ThemeFont` is not satisfied
+ --> tests/ui/view/theme_wrong_type.rs:4:21
+  |
+4 | fn main() { let _ = rake::view! { <div class="font-ink"/> }; }
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                     |
+  |                     the trait `rake::__private::ThemeFont` is not implemented for `palette::alpha::alpha::Alpha<palette::hsl::Hsl, f32>`
+  |                     required by a bound introduced by this call
+  |
+help: the following other types implement trait `rake::__private::ThemeFont`
+ --> src/theme/apply.rs
+  |
+  | impl ThemeFont for SharedString {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SharedString`
+...
+  | impl ThemeFont for &'static str {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&'static str`
+  = note: this error originates in the macro `rake::view` (in Nightly builds, run with -Z macro-backtrace for more info)

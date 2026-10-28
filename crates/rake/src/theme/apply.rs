@@ -100,3 +100,34 @@ impl ThemeRadius for Rems {
         style.rounded(self)
     }
 }
+
+/// Applies an inline theme color. Typography size belongs on p; TextToken is
+/// deliberately unsupported by this trait.
+pub trait ThemeRunText {
+    /// Applies only a run's foreground color.
+    fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle;
+}
+
+impl<T: IntoColor<Hsla>> ThemeRunText for T {
+    fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle {
+        style.highlight(gpui::HighlightStyle::color(self.into_color()))
+    }
+}
+
+/// Applies an inline theme font family without changing paragraph size.
+pub trait ThemeRunFont {
+    /// Applies a run's family.
+    fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle;
+}
+
+impl ThemeRunFont for SharedString {
+    fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle {
+        style.font_family(self)
+    }
+}
+
+impl ThemeRunFont for &'static str {
+    fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle {
+        style.font_family(self)
+    }
+}

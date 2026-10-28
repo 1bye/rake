@@ -11,6 +11,33 @@ use rake::overlay::{
 mod components;
 mod documents;
 
+#[derive(Clone, rake::Theme)]
+struct Colors {
+    surface: gpui::Rgba,
+    ink: gpui::Rgba,
+    hover: gpui::Rgba,
+}
+
+impl Colors {
+    fn dark() -> Self {
+        Self {
+            surface: rgb(0x18232b),
+            ink: rgb(0xf0f4e8),
+            hover: rgb(0x365849),
+        }
+    }
+
+    fn light() -> Self {
+        Self {
+            surface: rgb(0xf0f4e8),
+            ink: rgb(0x18232b),
+            hover: rgb(0xc7d8ca),
+        }
+    }
+}
+
+rake::theme!(Colors);
+
 gpui::actions!(
     counter,
     [
@@ -24,6 +51,8 @@ gpui::actions!(
         ReverseHistory,
         /// Toggles counter editing availability.
         ToggleLocked,
+        /// Switches the ambient light/dark theme.
+        ToggleTheme,
         /// Activates a retained history row.
         BumpRow,
     ]
@@ -65,6 +94,7 @@ struct Counter {
     show_history: bool,
     newest_first: bool,
     locked: bool,
+    dark: bool,
     focus: FocusHandle,
     history_scroll: ScrollHandle,
     overlays: OverlayHostState,
@@ -77,6 +107,7 @@ struct Counter {
 
 impl Counter {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        rake::theme::install(cx, Colors::dark());
         let focus = cx.focus_handle();
 
         window.focus(&focus, cx);
@@ -95,6 +126,7 @@ impl Counter {
             show_history: true,
             newest_first: true,
             locked: false,
+            dark: true,
             focus,
             history_scroll: ScrollHandle::new(),
         }
@@ -152,6 +184,19 @@ impl Counter {
         cx.notify();
     }
 
+    fn toggle_theme(&mut self, _: &ToggleTheme, _: &mut Window, cx: &mut Context<Self>) {
+        self.dark = !self.dark;
+        rake::theme::install(
+            cx,
+            if self.dark {
+                Colors::dark()
+            } else {
+                Colors::light()
+            },
+        );
+        cx.notify();
+    }
+
     fn toggle_locked(&mut self, _: &ToggleLocked, _: &mut Window, cx: &mut Context<Self>) {
         self.locked = !self.locked;
         cx.notify();
@@ -169,7 +214,7 @@ impl Counter {
         };
 
         rake::view! {
-            <div class="size-full flex flex-col items-center justify-center p-6"
+            <div class="size-full flex flex-col items-center justify-center p-6 bg-surface text-ink"
                 role={gpui::accesskit::Role::Group} aria-label="Counter"
                 focus={&self.focus} key-context="Counter" tab-navigation={true}
                 on:Increment={cx.listener(Self::increment)}
@@ -177,7 +222,7 @@ impl Counter {
                 on:ToggleHistory={cx.listener(Self::toggle_history)}
                 on:ReverseHistory={cx.listener(Self::reverse_history)}
                 on:ToggleLocked={cx.listener(Self::toggle_locked)}
-                style={|s| s.bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8))}>
+                on:ToggleTheme={cx.listener(Self::toggle_theme)}>
                 <components::Card id={"counter-card".into()}
                     header={
                         <div class="flex flex-col gap-2">
@@ -261,6 +306,11 @@ impl Counter {
                             if self.locked { Unlock counter } else { Lock counter }
                         </button>
                     </div>
+                    <button class="px-4 py-2 rounded-md hover:bg-hover focus-visible:bg-hover"
+                        aria-keyshortcuts="T"
+                        on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleTheme), cx)}>
+                        Switch theme
+                    </button>
                     <p class="text-xs">"⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock"</p>
 
                     if self.show_history {
@@ -354,6 +404,7 @@ pub fn application() -> App {
             KeyBinding::new("h", ToggleHistory, Some("Counter")),
             KeyBinding::new("r", ReverseHistory, Some("Counter")),
             KeyBinding::new("l", ToggleLocked, Some("Counter")),
+            KeyBinding::new("t", ToggleTheme, Some("Counter")),
             KeyBinding::new("b", BumpRow, Some("HistoryItem")),
         ]);
 
