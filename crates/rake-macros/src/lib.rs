@@ -19,6 +19,10 @@ mod view;
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
 /// GPUI builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
+/// Class expressions can choose literal leaves using lazy if/if-let/match branches.
+/// Conditions and scrutinees evaluate once; patterns cannot bind variables.
+/// Qualify unit variants/constants (for example Option::None). Inline runs also
+/// accept literal branches, restricted to text-run utilities.
 /// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
 /// font families and opacity; negative lengths are limited to margins and inset.
 /// Interaction variants merge into one GPUI call per kind: hover, active, focus,

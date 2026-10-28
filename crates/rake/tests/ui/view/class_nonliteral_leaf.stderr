@@ -1,0 +1,5 @@
+error: class requires a literal utility string; use style={|s| ...} for dynamic styles; class expressions may only choose between string literals
+ --> tests/ui/view/class_nonliteral_leaf.rs:2:64
+  |
+2 |     let _ = rake::view! { <div class={if true { "p-4" } else { classes }}/> };
+  |                                                                ^^^^^^^

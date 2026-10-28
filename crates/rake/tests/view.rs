@@ -291,6 +291,64 @@ fn disabled_classes_use_the_existing_predicate_and_keep_base_order() {
 }
 
 #[test]
+fn literal_class_branches_evaluate_once_in_attribute_order_and_skip_untaken_conditions() {
+    let visits = RefCell::new(Vec::new());
+
+    let mut view = rake::view! {
+        <div style={|s| { visits.borrow_mut().push(0); s }}
+            class={if { visits.borrow_mut().push(1); true } {
+                "p-4 font-bold hover:opacity-50"
+            } else if { unreachable_child(); false } { "p-2" } else { "p-0" }}
+            aria-label={{ visits.borrow_mut().push(2); "Branch" }}/>
+    };
+
+    let mut expected = div()
+        .flex()
+        .flex_col()
+        .p_4()
+        .font_weight(rake::gpui::FontWeight::BOLD);
+
+    assert_eq!(*visits.borrow(), [0, 1, 2]);
+    assert_eq!(
+        format!("{:?}", view.style()),
+        format!("{:?}", expected.style())
+    );
+}
+
+#[test]
+fn class_match_guards_and_if_let_patterns_inspect_noncopy_values_without_moving_them() {
+    let owned = Some(String::from("retained"));
+    let guards = std::cell::Cell::new(0);
+    let scrutinees = std::cell::Cell::new(0);
+
+    let mut view = rake::view! {
+        <div class={match { scrutinees.set(scrutinees.get()+1); &owned } {
+            Some(_) if { guards.set(guards.get()+1); true } => "w-1/2 hover:opacity-50",
+            Option::None => "p-0",
+            _ => "p-2",
+        }}/>
+    };
+
+    let mut absent =
+        rake::view! { <div class={if let Some(_) = Option::<String>::None { "p-4" }}/> };
+
+    let mut expected = div().flex().flex_col().w(rake::gpui::relative(0.5));
+    let mut empty = div().flex().flex_col();
+
+    assert_eq!(guards.get(), 1);
+    assert_eq!(scrutinees.get(), 1);
+    assert_eq!(owned.as_deref(), Some("retained"));
+    assert_eq!(
+        format!("{:?}", view.style()),
+        format!("{:?}", expected.style())
+    );
+    assert_eq!(
+        format!("{:?}", absent.style()),
+        format!("{:?}", empty.style())
+    );
+}
+
+#[test]
 fn conditional_classes_apply_once_in_attribute_order() {
     let visits = std::cell::Cell::new(0);
 

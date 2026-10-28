@@ -176,6 +176,15 @@ impl StylePlan {
         methods
     }
 
+    pub fn emit_refinement(&self, mapped: &Ident) -> TokenStream {
+        debug_assert!(
+            self.variants.is_empty(),
+            "inline text has no interaction variants"
+        );
+
+        emit_segments(&self.base, mapped)
+    }
+
     pub fn emit_variants(&self, mapped: &Ident) -> TokenStream {
         let mut methods = TokenStream::new();
 
@@ -187,20 +196,30 @@ impl StylePlan {
                 _ => TokenStream::new(),
             };
 
-            let mut body = TokenStream::new();
-
-            for segment in segments {
-                body.extend(match segment {
-                    Segment::Always(tokens) => quote!(let #mapped = #mapped #tokens;),
-                    Segment::When { condition, then, otherwise } => {
-                        quote!(let #mapped = if #condition { #mapped #then } else { #mapped #otherwise };)
-                    }
-                });
-            }
+            let body = emit_segments(segments, mapped);
 
             methods.extend(quote!(.#method(#group |#mapped| { #body #mapped })));
         }
 
         methods
     }
+}
+
+fn emit_segments(segments: &[Segment], mapped: &Ident) -> TokenStream {
+    let mut body = TokenStream::new();
+
+    for segment in segments {
+        body.extend(match segment {
+            Segment::Always(tokens) => quote!(let #mapped = #mapped #tokens;),
+            Segment::When {
+                condition,
+                then,
+                otherwise,
+            } => {
+                quote!(let #mapped = if #condition { #mapped #then } else { #mapped #otherwise };)
+            }
+        });
+    }
+
+    body
 }

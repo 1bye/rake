@@ -9,7 +9,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
-use self::classes::{class_methods, utility_plan};
+use self::classes::{class_methods, expression_plan, utility_plan};
 use self::style_plan::StylePlan;
 use self::tag::{Tag, display_name};
 
@@ -910,8 +910,24 @@ impl Element {
             if attribute.name == "class" || attribute.name.starts_with("class:") {
                 let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
                     utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?
-                } else {
+                } else if matches!(
+                    value,
+                    Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(_),
+                        ..
+                    })
+                ) {
                     class_methods(value, rake, is_button.then_some(disabled))?
+                } else {
+                    let selector = format_ident!(
+                        "__rake_class_branch_{index}_{position}",
+                        span = Span::mixed_site()
+                    );
+
+                    setup.extend(quote!(let #mapped = #builder;));
+                    builder = quote!(#mapped);
+
+                    expression_plan(value, rake, is_button.then_some(disabled), &selector, setup)?
                 };
 
                 if plan.interactive && self.resolved == Tag::Svg {

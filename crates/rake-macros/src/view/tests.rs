@@ -298,6 +298,9 @@ fn expansion_snapshots() {
         ("navigation", r#"<section focus={&self.focus} scroll={&self.scroll} tab-navigation={true}><button tabindex={0}/></section>"#.to_owned()),
         ("variants", r#"<div class="p-4 group/card hover:bg-[#fff] hover:opacity-50 focus-visible:border-2 group-hover/card:text-[#000]" class:hover:font-bold={selected} style={|s| s.rounded_md()}/>"#.to_owned()),
         ("disabled_classes", r#"<button disabled={busy} class="disabled:opacity-35 opacity-100" class:disabled:font-bold={selected}/>"#.to_owned()),
+        ("class_if", r#"<div class={if selected { "p-4 hover:opacity-50" } else { "p-2 hover:opacity-100" }}/>"#.to_owned()),
+        ("class_if_let", r#"<div class={if let Some(_) = value { "font-bold" }}/>"#.to_owned()),
+        ("class_match", r#"<div class={match value { Some(_) if active => "p-4 hover:opacity-50", Option::None => "p-0", _ => "p-2" }}/>"#.to_owned()),
     ];
 
     let mut utilities = "flex block grid hidden flex-col flex-row flex-wrap flex-1 items-start items-center items-end justify-start justify-center justify-end justify-between w-full h-full size-full min-w-0 min-h-0 overflow-hidden overflow-scroll overflow-x-scroll overflow-y-scroll rounded rounded-none rounded-sm rounded-md rounded-lg rounded-xl rounded-full border border-0 border-1 border-2 shadow-sm shadow-md shadow-lg cursor-pointer text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-left text-center text-right font-normal font-medium font-semibold font-bold".to_owned();

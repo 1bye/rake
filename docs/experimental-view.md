@@ -93,7 +93,8 @@ typed `role`, `aria-keyshortcuts`, and `aria-expanded`. `alt` maps to the image'
 label; `aria-label` can override it when supplied after `alt`.
 An empty image label (`alt=""`) marks it as decorative and omits its accessibility role.
 
-`class` must be a literal string. It expands into a checked subset of GPUI
+`class` accepts a literal string or an `if`/`if let`/`match` expression whose
+leaves are literal strings. It expands into a checked subset of GPUI
 utility methods, in the order written. These are utilities, not stylesheet class
 names or a complete Tailwind implementation:
 
@@ -159,6 +160,24 @@ has `hover:` classes, and similarly for the other interaction kinds. This is a
 heuristic: named functions and indirect calls are opaque; GPUI's debug assertion
 remains the backstop. Put a kind's refinements entirely in classes or in style.
 
+Literal branches can nest, select arbitrary utilities and merge variants:
+
+```rust
+let selected = true;
+let _ = rake::view! {
+    <div class={if selected { "p-4 hover:opacity-50" } else { "p-2 hover:opacity-100" }}/>
+};
+```
+
+Conditions, scrutinees and guards evaluate once in authored attribute order;
+untaken nested conditions are skipped. Missing `else` means no classes.
+Patterns cannot bind variables: use `Some(_)`, `_`, or qualified paths such as
+`Option::None` / `Status::Ready`. Qualifying unit variants and constants avoids
+confusing their identifiers with bindings. Match exhaustiveness is checked by
+rustc. Variables, function calls and `format!` cannot produce class strings.
+Inline text accepts the same literal-branch selection with its restricted run
+utilities; interaction variants remain unsupported inside runs.
+
 Conditional classes use a literal utility name: `class:shrink-0={fixed}` or
 `class:font-bold={selected}`. Each condition is evaluated once, and the utility
 applies in attribute order only when true. Unknown/dynamic names are errors.
@@ -168,7 +187,7 @@ Inline text tags reject conditional classes; select a `HighlightStyle` through
 `style={|s| ...}` receives the GPUI builder through `FluentBuilder::map` and can
 use its typed styling API, including colors, dimensions, hover and focus styles.
 It should return the same builder type and preserve the element's identity.
-Dynamic styles belong here; CSS strings and external stylesheets are unsupported.
+Other dynamic styles belong here; CSS strings and external stylesheets are unsupported.
 Classes and style closures apply in attribute order, so later settings win.
 IDs and an image's source are configured first. A button's `disabled` predicate is
 evaluated once before its builder. Focus/tab-index configuration and the optional

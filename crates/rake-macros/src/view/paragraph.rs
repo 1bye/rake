@@ -148,6 +148,38 @@ pub(super) fn inline_element(
         let value = attribute.expression()?;
 
         let method = match attribute.name.as_str() {
+            "class"
+                if !matches!(
+                    value,
+                    Expr::Lit(syn::ExprLit {
+                        lit: Lit::Str(_),
+                        ..
+                    })
+                ) =>
+            {
+                let local = format_ident!(
+                    "__rake_inline_class_branch_{}",
+                    *next,
+                    span = Span::mixed_site()
+                );
+
+                let mut setup = TokenStream::new();
+                let literal = |value: &Expr| inline_classes(value, rake).map(StylePlan::always);
+
+                let plan = super::classes::expression_plan_with(
+                    value,
+                    &local,
+                    &mut setup,
+                    &literal,
+                    "inline class requires a literal text utility string; class expressions may only choose between string literals",
+                )?;
+
+                let mapped = format_ident!("{local}_style", span = Span::mixed_site());
+                let body = plan.emit_refinement(&mapped);
+
+                style = quote!({ let #mapped = #style; #setup #body #mapped });
+                continue;
+            }
             "class" => inline_classes(value, rake)?,
             "style" => quote!(.highlight(#value)),
             "font-family" => quote!(.font_family(#value)),

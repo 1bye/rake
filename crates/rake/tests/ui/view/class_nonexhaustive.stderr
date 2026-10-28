@@ -1,0 +1,12 @@
+error[E0004]: non-exhaustive patterns: `&false` not covered
+ --> tests/ui/view/class_nonexhaustive.rs:2:13
+  |
+2 |     let _ = rake::view! { <div class={match true { true => "p-4" }}/> };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ pattern `&false` not covered
+  |
+  = note: the matched value is of type `&bool`
+  = note: this error originates in the macro `rake::view` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+  |
+2 |     let _ = rake::view! { <div class={match true { true => "p-4" }}/> }, &false => todo!();
+  |                                                                        +++++++++++++++++++

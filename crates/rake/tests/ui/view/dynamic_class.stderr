@@ -1,4 +1,4 @@
-error: class requires a literal utility string; use style={|s| ...} for dynamic styles
+error: class requires a literal utility string; use style={|s| ...} for dynamic styles; class expressions may only choose between string literals
  --> tests/ui/view/dynamic_class.rs:2:39
   |
 2 |     let _ = rake::view! { <div class={classes}/> };

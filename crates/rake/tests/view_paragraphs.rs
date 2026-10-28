@@ -71,6 +71,26 @@ fn inline_literal_colors_and_font_families_compile_with_styled_runs() {
 }
 
 #[test]
+fn inline_literal_branches_keep_run_attribute_evaluation_order() {
+    let visits = RefCell::new(Vec::new());
+
+    let heading = rake::view! {
+        <h2><span font-family={{ visits.borrow_mut().push(0); "monospace" }}
+            class={if { visits.borrow_mut().push(1); true } { "font-bold text-[#abc]" } else { "font-normal" }}
+            style={{ visits.borrow_mut().push(2); gpui::FontStyle::Italic.into() }}>
+            Inline branch
+        </span></h2>
+    };
+
+    let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
+
+    heading.write_a11y_info(&mut node);
+
+    assert_eq!(*visits.borrow(), [0, 1, 2]);
+    assert_eq!(node.label(), Some("Inline branch"));
+}
+
+#[test]
 fn wrapping_ellipsis_and_zero_line_limits_configure_the_real_gpui_style() {
     let mut paragraph = rake::view! {
         <p wrap={false} ellipsis={true} max-lines={0}>"A long title"</p>
