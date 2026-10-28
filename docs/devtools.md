@@ -62,6 +62,12 @@ Monotonic event timestamps retain the runtime's elapsed microsecond clock.
 Compatibility evidence and the tested Chrome/protocol revisions are in
 [the spike report](../.agents/reports/cdp-adapter-spike.md).
 
+Network shows Rake HTTP Fetch lifecycles, redacted URLs, status, received byte
+counts and timings, including cancellation and abandoned bodies. Headers, bodies,
+wire byte counts and JavaScript initiator stacks are unavailable. Body/post-data
+retrieval returns a descriptive CDP error; reported byte totals are received body
+bytes rather than measured compressed network traffic.
+
 ## Rake application preview
 
 An [Elements-only Inspector built with Rake](rake-inspector.md) is also available

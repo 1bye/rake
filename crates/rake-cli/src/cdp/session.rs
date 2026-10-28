@@ -51,6 +51,10 @@ impl Session {
         let method = request.method.as_str();
 
         match method {
+            "Network.getResponseBody" | "Network.getRequestPostData" => Err(Error::new(
+                -32000,
+                "Request and response bodies are not captured by Rake",
+            )),
             "Inspector.enable"
             | "Page.enable"
             | "Page.disable"
@@ -104,6 +108,20 @@ impl Session {
             self.epoch_seconds
                 .get_or_insert_with(|| unix_seconds() - record.elapsed_us as f64 / 1e6);
             self.cursor = record.sequence;
+        }
+
+        if self.domains.contains("Network") {
+            for record in &snapshot.records {
+                for mut event in super::network::translate(record) {
+                    if event.method == "Network.requestWillBeSent" {
+                        event.params["wallTime"] = json!(
+                            self.epoch_seconds.unwrap_or_default() + record.elapsed_us as f64 / 1e6
+                        );
+                    }
+
+                    self.event(event);
+                }
+            }
         }
 
         Ok(())
