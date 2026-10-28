@@ -5,6 +5,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, Lit};
 
+use super::style_plan::StylePlan;
 use super::tag::{PARAGRAPH_CONTENT, Tag};
 use super::{Element, Node};
 
@@ -232,5 +233,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
         return Err(errors);
     }
 
-    Ok(methods)
+    let mapped = format_ident!("__rake_inline_builder", span = Span::mixed_site());
+
+    Ok(StylePlan::always(methods).emit_base(&mapped))
 }

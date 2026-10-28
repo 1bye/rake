@@ -19,6 +19,7 @@ mod view;
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
 /// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
 /// GPUI builder methods. Canonical events use `on:click`, `on:key-down`, mouse-button,
+/// Utility strings are checked and lowered to ordered GPUI style calls at compile time.
 /// outside-pointer, hover, wheel, drop and drag names with GPUI callbacks.
 /// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy
 /// event aliases remain accepted with deprecation warnings. Drag takes a

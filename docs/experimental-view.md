@@ -97,6 +97,9 @@ An empty image label (`alt=""`) marks it as decorative and omits its accessibili
 utility methods, in the order written. These are utilities, not stylesheet class
 names or a complete Tailwind implementation:
 
+Utility strings are resolved at compile time. Conditional classes evaluate once
+between their preceding and following authored attributes.
+
 <!-- view-utilities:start -->
 
 - `flex`, `block`, `grid`, `hidden`, `flex-col`, `flex-row`.

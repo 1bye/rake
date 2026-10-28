@@ -4,6 +4,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Expr, Lit};
 
+use super::style_plan::StylePlan;
+
 pub(super) const FIXED: &[(&str, &str)] = &[
     ("flex", "flex"),
     ("block", "block"),
@@ -140,7 +142,7 @@ pub(super) fn utility_methods(
     Ok(quote!(.#method()))
 }
 
-pub(super) fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
+pub(super) fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<StylePlan> {
     let Expr::Lit(syn::ExprLit {
         lit: Lit::Str(classes),
         ..
@@ -172,5 +174,5 @@ pub(super) fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<Tok
         return Err(errors);
     }
 
-    Ok(methods)
+    Ok(StylePlan::always(methods))
 }

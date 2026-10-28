@@ -10,6 +10,7 @@ use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
 use self::classes::{class_methods, utility_methods};
+use self::style_plan::StylePlan;
 use self::tag::{Tag, display_name};
 
 #[derive(Clone)]
@@ -708,7 +709,7 @@ impl Element {
             }
         }
 
-        builder = self.apply_attributes(builder, rake, index, &disabled, &mapped)?;
+        builder = self.apply_attributes(builder, rake, index, &disabled, &mapped, &mut setup)?;
 
         builder = self.apply_focus(builder, rake, &disabled, &mapped)?;
 
@@ -809,10 +810,11 @@ impl Element {
         index: usize,
         disabled: &Ident,
         mapped: &Ident,
+        setup: &mut TokenStream,
     ) -> syn::Result<TokenStream> {
         let is_button = self.resolved.supports_disabled();
 
-        for attribute in &self.attributes {
+        for (position, attribute) in self.attributes.iter().enumerate() {
             let value = attribute.expression()?;
 
             if self.resolved == Tag::Svg
@@ -869,9 +871,15 @@ impl Element {
             if let Some(class) = attribute.name.strip_prefix("class:") {
                 let methods = utility_methods(class, attribute.span, rake)?;
 
-                builder.extend(
-                    quote_spanned!(attribute.span=> .when(#value, |#mapped| #mapped #methods)),
+                let condition = format_ident!(
+                    "__rake_class_cond_{index}_{position}",
+                    span = Span::mixed_site()
                 );
+
+                // Evaluate preceding attributes before binding this condition.
+                setup.extend(quote!(let #mapped = #builder; let #condition: bool = #value;));
+                builder = quote!(#mapped);
+                builder.extend(StylePlan::conditional(condition, methods).emit_base(mapped));
                 continue;
             }
 
@@ -903,7 +911,7 @@ impl Element {
 
                     quote!(.line_clamp({ let #limit: usize = #value; #limit.max(1) }))
                 }
-                "class" => class_methods(value, rake)?,
+                "class" => class_methods(value, rake)?.emit_base(mapped),
                 "style" => quote!(.map(#value)),
                 "tooltip" => quote!(.tooltip(#value)),
                 _ => {
@@ -1120,6 +1128,7 @@ mod component;
 mod diagnostics;
 mod events;
 mod paragraph;
+mod style_plan;
 mod tag;
 mod text;
 

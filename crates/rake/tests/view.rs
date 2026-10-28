@@ -10,6 +10,23 @@ use std::cell::RefCell;
 use rake::gpui::{Element, Styled, accesskit, div, px, rgb};
 
 #[test]
+fn conditional_classes_evaluate_once_between_their_authored_attributes() {
+    let calls = RefCell::new(Vec::new());
+
+    let _ = rake::view! {
+        <div
+            style={|s| { calls.borrow_mut().push(0); s }}
+            class:font-bold={{ calls.borrow_mut().push(1); true }}
+            aria-label={{ calls.borrow_mut().push(2); "Label" }}
+            class:shrink-0={{ calls.borrow_mut().push(3); false }}
+            aria-description={{ calls.borrow_mut().push(4); "Description" }}
+        />
+    };
+
+    assert_eq!(*calls.borrow(), [0, 1, 2, 3, 4]);
+}
+
+#[test]
 fn builds_gpui_styles_and_evaluates_each_selected_child_once_in_order() {
     let visited = RefCell::new(Vec::new());
 
