@@ -11,6 +11,8 @@ pub(super) struct Dom {
     nodes: BTreeMap<i32, Element>,
     next: i32,
     omitted_id: i32,
+    sent: BTreeSet<i32>,
+    children_sent: BTreeSet<i32>,
 }
 
 impl Dom {
@@ -24,6 +26,8 @@ impl Dom {
         }
         let changed = self.snapshot.is_some();
         self.nodes.clear();
+        self.sent.clear();
+        self.children_sent.clear();
         self.next = self.next.max(2);
         for element in &snapshot.elements {
             let id = self.next;
@@ -98,6 +102,8 @@ impl Dom {
     pub fn clear(&mut self) {
         self.snapshot = None;
         self.nodes.clear();
+        self.sent.clear();
+        self.children_sent.clear();
     }
 
     fn element(&self, id: i32) -> Result<&Element, Error> {
@@ -106,64 +112,184 @@ impl Dom {
             .ok_or_else(|| Error::new(-32000, "Node is stale or unavailable; refresh the document"))
     }
 
-    pub fn document(&self) -> Value {
-        let known: BTreeSet<_> = self.nodes.values().map(|e| e.id.as_str()).collect();
-        let mut seen = BTreeSet::new();
-        let mut children = Vec::new();
-        for (&id, element) in &self.nodes {
-            if element
-                .parent
-                .as_deref()
-                .is_none_or(|parent| !known.contains(parent))
-            {
-                children.push(self.node(id, &mut seen));
-            }
+    fn children(&self, id: i32) -> Vec<i32> {
+        if id != 1 && !self.nodes.contains_key(&id) {
+            return Vec::new();
         }
-        let omitted = self.snapshot.as_ref().map(|s| s.omitted).unwrap_or(0);
-        if omitted > 0 {
-            children.push(json!({"nodeId":self.omitted_id,"backendNodeId":self.omitted_id,"nodeType":8,"nodeName":"#comment","localName":"","nodeValue":format!("{omitted} elements omitted")}));
+        let parent = self.nodes.get(&id).map(|element| element.id.as_str());
+        let mut children: Vec<_> = self
+            .nodes
+            .iter()
+            .filter_map(|(&child_id, element)| {
+                let belongs = if id == 1 {
+                    element
+                        .parent
+                        .as_deref()
+                        .is_none_or(|parent| self.node_id(parent).is_none())
+                } else {
+                    element.parent.as_deref() == parent
+                };
+                belongs.then_some(child_id)
+            })
+            .collect();
+        if id == 1 && self.snapshot.as_ref().is_some_and(|s| s.omitted > 0) {
+            children.push(self.omitted_id);
         }
-
-        json!({"nodeId":1,"backendNodeId":1,"nodeType":9,"nodeName":"#document","localName":"","nodeValue":"",
-            "documentURL":"rake://runtime","baseURL":"rake://runtime","childNodeCount":children.len(),"children":children})
+        children
     }
 
-    fn node(&self, id: i32, seen: &mut BTreeSet<i32>) -> Value {
-        let element = &self.nodes[&id];
+    fn node(&self, id: i32, depth: usize) -> Value {
+        self.node_with_seen(id, depth, &mut BTreeSet::new())
+    }
+
+    fn node_with_seen(&self, id: i32, depth: usize, seen: &mut BTreeSet<i32>) -> Value {
         if !seen.insert(id) {
             return Value::Null;
         }
-        let children: Vec<_> = self
-            .nodes
-            .iter()
-            .filter(|(_, child)| child.parent.as_deref() == Some(element.id.as_str()))
-            .map(|(&id, _)| self.node(id, seen))
-            .filter(|v| !v.is_null())
-            .collect();
+        if id == self.omitted_id {
+            return json!({"nodeId":id,"backendNodeId":id,"nodeType":8,"nodeName":"#comment","localName":"","nodeValue":format!("{} elements omitted", self.snapshot.as_ref().map_or(0, |s| s.omitted))});
+        }
+        let children = self.children(id);
+        let mut node = if id == 1 {
+            json!({"nodeId":1,"backendNodeId":1,"nodeType":9,"nodeName":"#document","localName":"","nodeValue":"",
+                "documentURL":"rake://runtime","baseURL":"rake://runtime"})
+        } else {
+            let element = &self.nodes[&id];
+            let name = rake::inspection::display_name(&element.kind);
+            json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
+                "nodeValue":"","attributes":attributes(element)})
+        };
+        node["childNodeCount"] = json!(children.len());
+        if depth > 0 || children.is_empty() {
+            node["children"] = json!(
+                children
+                    .into_iter()
+                    .map(|child| self.node_with_seen(child, depth.saturating_sub(1), seen))
+                    .filter(|node| !node.is_null())
+                    .collect::<Vec<_>>()
+            );
+        }
+        node
+    }
 
-        let name = rake::inspection::display_name(&element.kind);
-        json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
-            "nodeValue":"","attributes":attributes(element),"childNodeCount":children.len(),"children":children})
+    fn remember(&mut self, node: &Value) {
+        let id = node["nodeId"].as_i64().unwrap() as i32;
+        self.sent.insert(id);
+        if let Some(children) = node["children"].as_array() {
+            self.children_sent.insert(id);
+            for child in children {
+                self.remember(child);
+            }
+        }
+    }
+
+    pub fn document(&mut self, params: &Value) -> Result<Value, Error> {
+        let depth = depth(params, 1)?;
+        self.sent.clear();
+        self.children_sent.clear();
+        let root = self.node(1, depth);
+        self.remember(&root);
+        Ok(root)
+    }
+
+    fn send_children(&mut self, id: i32, depth: usize, events: &mut Vec<Value>) {
+        if depth == 0 {
+            return;
+        }
+        let children = self.children(id);
+        if self.children_sent.insert(id) {
+            let nodes: Vec<_> = children
+                .iter()
+                .map(|&child| self.node(child, depth - 1))
+                .collect();
+            for node in &nodes {
+                self.remember(node);
+            }
+            events.push(json!({"parentId":id,"nodes":nodes}));
+        } else {
+            for child in children {
+                self.send_children(child, depth - 1, events);
+            }
+        }
+    }
+
+    pub fn request_children(&mut self, params: &Value) -> Result<Vec<Value>, Error> {
+        let id = node_id(params)?;
+        let depth = depth(params, 1)?;
+        if !self.sent.contains(&id) {
+            return Err(Error::new(
+                -32000,
+                "Parent node is not known; request the document first",
+            ));
+        }
+        let mut events = Vec::new();
+        self.send_children(id, depth, &mut events);
+        Ok(events)
+    }
+
+    fn send_path(&mut self, mut id: i32, events: &mut Vec<Value>) -> Result<(), Error> {
+        let mut parents = Vec::new();
+        let mut seen = BTreeSet::new();
+        while !self.sent.contains(&id) {
+            if !seen.insert(id) {
+                return Err(Error::new(-32000, "Captured ancestry contains a cycle"));
+            }
+            id = self
+                .nodes
+                .get(&id)
+                .and_then(|element| element.parent.as_deref())
+                .and_then(|parent| self.node_id(parent))
+                .unwrap_or(1);
+            parents.push(id);
+        }
+        for parent in parents.into_iter().rev() {
+            self.send_children(parent, 1, events);
+        }
+        Ok(())
+    }
+
+    pub fn reveal_node(&mut self, id: i32) -> Result<Option<Vec<Value>>, Error> {
+        if !self.sent.contains(&1) {
+            return Ok(None);
+        }
+        let mut events = Vec::new();
+        self.send_path(id, &mut events)?;
+        Ok(Some(events))
+    }
+
+    pub fn push_nodes(&mut self, params: &Value) -> Result<(Value, Vec<Value>), Error> {
+        let ids = params["backendNodeIds"]
+            .as_array()
+            .ok_or_else(|| Error::new(-32602, "backendNodeIds required"))?;
+        if !self.sent.contains(&1) {
+            return Err(Error::new(-32000, "Request the document first"));
+        }
+        let mut events = Vec::new();
+        let nodes: Vec<_> = ids
+            .iter()
+            .map(|value| {
+                let id = value
+                    .as_i64()
+                    .and_then(|id| i32::try_from(id).ok())
+                    .unwrap_or(0);
+                if id == 1 || self.nodes.contains_key(&id) {
+                    self.send_path(id, &mut events)?;
+                    Ok(id)
+                } else {
+                    Ok(0)
+                }
+            })
+            .collect::<Result<_, Error>>()?;
+        Ok((json!({"nodeIds":nodes}), events))
     }
 
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, Error> {
-        let id = params["nodeId"]
-            .as_i64()
-            .or_else(|| params["backendNodeId"].as_i64())
-            .and_then(|id| i32::try_from(id).ok());
-        if method == "DOM.pushNodesByBackendIdsToFrontend" {
-            let ids = params["backendNodeIds"]
-                .as_array()
-                .ok_or_else(|| Error::new(-32602, "backendNodeIds required"))?;
-            return Ok(
-                json!({"nodeIds":ids.iter().map(|id|id.as_i64().and_then(|id|i32::try_from(id).ok()).filter(|id|*id==1 || self.nodes.contains_key(id)).unwrap_or(0)).collect::<Vec<_>>()}),
-            );
-        }
-        let id = id.ok_or_else(|| Error::new(-32602, "nodeId required"))?;
+        let id = node_id(params)?;
         if method == "DOM.describeNode" {
-            return Ok(
-                json!({"node":if id==1 {self.document()} else {self.element(id)?;self.node(id,&mut BTreeSet::new())}}),
-            );
+            if id != 1 {
+                self.element(id)?;
+            }
+            return Ok(json!({"node":self.node(id, depth(params, 0)?)}));
         }
         let element = self.element(id)?;
         match method {
@@ -179,20 +305,21 @@ impl Dom {
                 )
             }
             "CSS.getMatchedStylesForNode" | "CSS.getInlineStylesForNode" => {
-                let properties = styles(element.styles.as_ref());
-                let text = properties
-                    .iter()
-                    .map(|p| {
-                        format!(
-                            "{}: {};",
-                            p["name"].as_str().unwrap_or_default(),
-                            p["value"].as_str().unwrap_or_default()
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let mut inherited = Vec::new();
+                let mut parent = element.parent.as_deref();
+                let mut seen = BTreeSet::new();
+                while let Some(ancestor) = parent
+                    .and_then(|parent| self.node_id(parent))
+                    .and_then(|id| self.nodes.get(&id))
+                {
+                    if !seen.insert(&ancestor.id) {
+                        break;
+                    }
+                    inherited.push(json!({"inlineStyle":super::styles::inline(ancestor.styles.as_ref()),"matchedCSSRules":[]}));
+                    parent = ancestor.parent.as_deref();
+                }
                 Ok(
-                    json!({"inlineStyle":{"cssProperties":properties,"shorthandEntries":[],"cssText":text},"matchedCSSRules":[],"inherited":[],"pseudoElements":[]}),
+                    json!({"inlineStyle":super::styles::inline(element.styles.as_ref()),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
                 )
             }
             "CSS.getComputedStyleForNode" => {
@@ -216,99 +343,30 @@ fn attributes(element: &Element) -> Vec<String> {
     if let Some(id) = &element.semantic_id {
         attrs.extend(["id".into(), id.clone()]);
     }
-    if let Some(source) = &element.source {
-        attrs.extend([
-            "data-source".into(),
-            format!("{}:{}:{}", source.file, source.line, source.column),
-        ]);
-    }
     attrs
 }
 
-fn styles(value: Option<&Value>) -> Vec<Value> {
-    let mut properties = Vec::new();
-    let Some(Value::Object(fields)) = value else {
-        return properties;
-    };
-    for (key, value) in fields {
-        if matches!(
-            key.as_str(),
-            "size" | "min_size" | "max_size" | "padding" | "margin" | "gap"
-        ) && value.is_object()
-        {
-            for (side, value) in value.as_object().into_iter().flatten() {
-                let name = match key.as_str() {
-                    "size" => side.clone(),
-                    "min_size" => format!("min-{side}"),
-                    "max_size" => format!("max-{side}"),
-                    "gap" => {
-                        if side == "width" {
-                            "column-gap".into()
-                        } else {
-                            "row-gap".into()
-                        }
-                    }
-                    _ => format!("{key}-{side}"),
-                };
-                properties.push(property(&name, value, true));
-            }
-            continue;
-        }
-        let name = key.replace('_', "-");
-        let known = matches!(
-            key.as_str(),
-            "display"
-                | "position"
-                | "flex_direction"
-                | "flex_wrap"
-                | "align_items"
-                | "align_self"
-                | "justify_content"
-                | "flex_grow"
-                | "flex_shrink"
-                | "opacity"
-                | "overflow_x"
-                | "overflow_y"
-        );
-        properties.push(property(
-            &if known { name } else { format!("-gpui-{name}") },
-            value,
-            known,
-        ));
-    }
-    properties
+fn node_id(params: &Value) -> Result<i32, Error> {
+    params["nodeId"]
+        .as_i64()
+        .or_else(|| params["backendNodeId"].as_i64())
+        .and_then(|id| i32::try_from(id).ok())
+        .ok_or_else(|| Error::new(-32602, "nodeId required"))
 }
 
-fn property(name: &str, value: &Value, known: bool) -> Value {
-    let value = match value.as_str() {
-        Some(v) if known => match v {
-            "Flex" => "flex",
-            "Block" => "block",
-            "None" => "none",
-            "Row" => "row",
-            "Column" => "column",
-            "Center" => "center",
-            "Start" => "start",
-            "End" => "end",
-            "FlexStart" => "flex-start",
-            "FlexEnd" => "flex-end",
-            "SpaceBetween" => "space-between",
-            "SpaceAround" => "space-around",
-            "Stretch" => "stretch",
-            "Relative" => "relative",
-            "Absolute" => "absolute",
-            "Hidden" => "hidden",
-            "Scroll" => "scroll",
-            "Visible" => "visible",
-            "Wrap" => "wrap",
-            "NoWrap" => "nowrap",
-            _ => v,
-        }
-        .to_owned(),
-        Some(v) => v.to_owned(),
-        None => value.to_string(),
+fn depth(params: &Value, default: i64) -> Result<usize, Error> {
+    let depth = if params.get("depth").is_some() {
+        params["depth"]
+            .as_i64()
+            .ok_or_else(|| Error::new(-32602, "depth must be an integer"))?
+    } else {
+        default
     };
-    json!({"name":name,"value":value,"implicit":false,"parsedOk":known,"disabled":false})
+    match depth {
+        -1 => Ok(rake::inspection::MAX_ELEMENTS + 1),
+        0.. => Ok((depth as usize).min(rake::inspection::MAX_ELEMENTS + 1)),
+        _ => Err(Error::new(-32602, "depth must be -1 or nonnegative")),
+    }
 }
 
 #[cfg(test)]
@@ -324,12 +382,9 @@ mod tests {
     fn tree_styles_bounds_and_stale_node_ids() {
         let mut dom = Dom::default();
         dom.update(capture("a")).unwrap();
-        let doc = dom.document();
+        let doc = dom.document(&json!({"depth":-1})).unwrap();
         let root = &doc["children"][0];
-        assert_eq!(
-            root["attributes"],
-            json!(["id", "root", "data-source", "app.rs:3:4"])
-        );
+        assert_eq!(root["attributes"], json!(["id", "root"]));
         assert_eq!(root["nodeName"], "Div");
         assert_eq!(root["localName"], "Div");
         assert_eq!(root["children"][0]["nodeName"], "Button");
@@ -349,7 +404,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|p| p["name"] == "-gpui-background")
+                .any(|p| p["name"] == "--gpui-background-color")
         );
         assert_eq!(
             dom.handle("CSS.getComputedStyleForNode", &params).unwrap()["computedStyle"]
@@ -361,6 +416,96 @@ mod tests {
         assert!(dom.update(capture("b")).unwrap());
         assert!(dom.handle("DOM.getBoxModel", &params).is_err());
     }
+    #[test]
+    fn expansion_and_picker_delivery_never_replace_known_nodes() {
+        let mut dom = Dom::default();
+        dom.update(capture("one")).unwrap();
+        let root_id = dom.node_id("one-a").unwrap();
+        let child_id = dom.node_id("one-b").unwrap();
+        let doc = dom.document(&json!({})).unwrap();
+        assert_eq!(doc["children"][0]["childNodeCount"], 1);
+        assert!(doc["children"][0].get("children").is_none());
+        assert!(dom.request_children(&json!({"nodeId":child_id})).is_err());
+
+        let events = dom.request_children(&json!({"nodeId":root_id})).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["nodes"][0]["nodeId"], child_id);
+        assert!(
+            dom.request_children(&json!({"nodeId":root_id}))
+                .unwrap()
+                .is_empty()
+        );
+        let (result, events) = dom
+            .push_nodes(&json!({"backendNodeIds":[child_id,child_id,99999]}))
+            .unwrap();
+        assert_eq!(result["nodeIds"], json!([child_id, child_id, 0]));
+        assert!(
+            events.is_empty(),
+            "picking a known node must not recreate Chrome DOM objects"
+        );
+
+        dom.document(&json!({})).unwrap();
+        let (_, events) = dom
+            .push_nodes(&json!({"backendNodeIds":[child_id]}))
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["parentId"], root_id);
+        assert!(
+            dom.request_children(&json!({"nodeId":root_id,"depth":-1}))
+                .unwrap()
+                .is_empty()
+        );
+        dom.update(capture("two")).unwrap();
+        assert!(dom.request_children(&json!({"nodeId":root_id})).is_err());
+        assert!(dom.document(&json!({"depth":-2})).is_err());
+        assert!(dom.document(&json!({"depth":"all"})).is_err());
+    }
+
+    #[test]
+    fn deeper_requests_extend_the_frontier_and_inherited_styles_follow_ancestors() {
+        let mut snapshot = capture("nested");
+        snapshot.omitted = 0;
+        snapshot.elements[0].styles =
+            Some(json!({"text":{"color":{"hue":0.,"saturation":1.,"lightness":0.5,"alpha":1.}}}));
+        let mut grandchild = snapshot.elements[1].clone();
+        grandchild.id = "nested-c".into();
+        grandchild.parent = Some("nested-b".into());
+        snapshot.elements.push(grandchild);
+        let mut dom = Dom::default();
+        dom.update(snapshot).unwrap();
+        let root = dom.node_id("nested-a").unwrap();
+        let child = dom.node_id("nested-b").unwrap();
+        let leaf = dom.node_id("nested-c").unwrap();
+        dom.document(&json!({"depth":2})).unwrap();
+        let events = dom
+            .request_children(&json!({"nodeId":root,"depth":-1}))
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["parentId"], child);
+        assert_eq!(events[0]["nodes"][0]["nodeId"], leaf);
+        let styles = dom
+            .handle("CSS.getMatchedStylesForNode", &json!({"nodeId":leaf}))
+            .unwrap();
+        assert_eq!(styles["inherited"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            styles["inherited"][1]["inlineStyle"]["cssProperties"][0]["name"],
+            "color"
+        );
+        assert_eq!(
+            styles["inherited"][1]["inlineStyle"]["cssProperties"][0]["value"],
+            "#ff0000"
+        );
+        assert_eq!(
+            dom.handle("DOM.getAttributes", &json!({"nodeId":root}))
+                .unwrap()["attributes"],
+            json!(["id", "root"])
+        );
+        assert!(
+            dom.element(root).unwrap().source.is_some(),
+            "source metadata remains available to Rake"
+        );
+    }
+
     #[test]
     fn overlay_commands_use_exact_capture_ids_and_shared_backend_ids() {
         use rake::control::Command;

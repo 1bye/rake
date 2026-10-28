@@ -6,6 +6,7 @@ mod evaluate;
 mod network;
 mod server;
 mod session;
+mod styles;
 mod trace;
 mod wire;
 

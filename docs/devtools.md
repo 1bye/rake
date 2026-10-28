@@ -91,10 +91,16 @@ may require copying that link into its address bar. A later `rake inspect --sess
 PATH` can reuse the same running adapter.
 
 Elements projects captured boundaries into a synthetic document, with semantic IDs,
-source attributes, authored styles and measured width/height. Omitted boundaries
-appear as a comment. Capture changes invalidate node IDs and send documentUpdated;
-rapid redraws can reset Chrome's selection. Unmappable style names keep a `-gpui-`
-prefix. Every box quad uses the captured bounds: separate margin, border and padding
+authored styles and measured width/height. Source locations stay in Rake inspection
+details rather than repeated `data-source` attributes in Chrome's tree. Omitted
+boundaries appear as a comment. Capture changes invalidate node IDs and send documentUpdated;
+rapid redraws can reset Chrome's selection. Tree expansion loads only the requested
+levels. Picking delivers missing ancestor paths without replacing nodes Chrome
+already knows, so expansion and selection do not require enabling the picker.
+Solid sRGB colors, typography, borders, spacing, overflow and layout refinements
+are translated to CSS values, with captured ancestor declarations shown as inherited
+styles. Unsupported values remain visible under `--gpui-` metadata properties.
+Every box quad uses the captured bounds: separate margin, border and padding
 measurements are unavailable. Computed styles contain only measured width/height;
 Chrome's inferred CSS hints and full box decorations may therefore be incomplete.
 Highlighting and inspect mode use the leased development inspection controls

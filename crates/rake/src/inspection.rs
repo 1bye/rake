@@ -11,6 +11,9 @@ mod view;
 #[cfg(feature = "gpui")]
 pub use view::{InspectElement, Inspected, inspect};
 
+/// Shared presentation of captured style values.
+pub mod styles;
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;

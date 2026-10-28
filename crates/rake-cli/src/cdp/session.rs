@@ -142,14 +142,13 @@ impl Session {
             }
             "DOM.getDocument" => {
                 self.refresh_dom()?;
-                Ok(json!({"root":self.dom.document()}))
+                self.domains.insert("DOM".into());
+                Ok(json!({"root":self.dom.document(&request.params)?}))
             }
             "DOM.requestChildNodes" => {
-                let node = self.dom.handle("DOM.describeNode", &request.params)?;
-                self.event(Event::new(
-                    "DOM.setChildNodes",
-                    json!({"parentId":request.params["nodeId"],"nodes":node["node"]["children"]}),
-                ));
+                for params in self.dom.request_children(&request.params)? {
+                    self.event(Event::new("DOM.setChildNodes", params));
+                }
                 Ok(json!({}))
             }
             "DOM.getBoxModel"
@@ -204,11 +203,10 @@ impl Session {
                 Ok(json!({}))
             }
             "DOM.pushNodesByBackendIdsToFrontend" => {
-                let result = self.dom.handle(method, &request.params)?;
-                self.event(Event::new(
-                    "DOM.setChildNodes",
-                    json!({"parentId":1,"nodes":self.dom.document()["children"]}),
-                ));
+                let (result, events) = self.dom.push_nodes(&request.params)?;
+                for params in events {
+                    self.event(Event::new("DOM.setChildNodes", params));
+                }
                 Ok(result)
             }
             "Runtime.getProperties" => {
@@ -401,13 +399,17 @@ impl Session {
                 let hover = (pick.generation.clone(), id.clone());
                 if self.last_hover.as_ref() != Some(&hover)
                     && let Some(node) = self.dom.node_id(id)
+                    && let Some(events) = self.dom.reveal_node(node)?
                 {
+                    for params in events {
+                        self.event(Event::new("DOM.setChildNodes", params));
+                    }
                     self.event(Event::new(
                         "Overlay.nodeHighlightRequested",
                         json!({"nodeId":node}),
                     ));
+                    self.last_hover = Some(hover);
                 }
-                self.last_hover = Some(hover);
             } else {
                 self.last_hover = None;
             }
@@ -728,7 +730,56 @@ mod tests {
     }
 
     #[test]
-    fn picker_generation_mismatch_updates_document_before_hover_and_pick() {
+    fn expand_then_reveal_keeps_the_frontend_tree_and_selection_intact() {
+        let mut snapshot = capture("stable");
+        let mut child = snapshot.elements[0].clone();
+        child.id = "element-stable-1".into();
+        child.parent = Some("element-stable-0".into());
+        snapshot.elements.push(child);
+        let (instance, worker, path) = fixture(move |_| Reply::Elements(snapshot.clone()), 1);
+        let mut session = Session::new(instance, None);
+        let request = |method: &str, params| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        let doc = session
+            .handle(&request("DOM.getDocument", json!({})))
+            .unwrap();
+        let root = doc["root"]["children"][0]["nodeId"].as_i64().unwrap();
+        assert!(session.domains.contains("DOM"));
+        session
+            .handle(&request("DOM.requestChildNodes", json!({"nodeId":root})))
+            .unwrap();
+        let event = session.outbound.pop_front().unwrap().0;
+        session.outbound_bytes = 0;
+        assert_eq!(event.method, "DOM.setChildNodes");
+        assert_eq!(event.params["parentId"], root);
+        let child = event.params["nodes"][0]["backendNodeId"].as_i64().unwrap();
+        let result = session
+            .handle(&request(
+                "DOM.pushNodesByBackendIdsToFrontend",
+                json!({"backendNodeIds":[child]}),
+            ))
+            .unwrap();
+        assert_eq!(result["nodeIds"], json!([child]));
+        assert!(
+            session.outbound.is_empty(),
+            "known node reveal must not replace any Chrome DOM objects"
+        );
+        session
+            .handle(&request(
+                "DOM.requestChildNodes",
+                json!({"nodeId":root,"depth":-1}),
+            ))
+            .unwrap();
+        assert!(session.outbound.is_empty());
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn picker_generation_mismatch_updates_document_before_pick_without_unknown_hover_ids() {
         let (instance, worker, path) = fixture(
             |request| match request.message {
                 RuntimeMessage::Query(Query::InspectPick {}) => {
@@ -757,11 +808,7 @@ mod tests {
             .collect();
         assert_eq!(
             events,
-            [
-                "DOM.documentUpdated",
-                "Overlay.nodeHighlightRequested",
-                "Overlay.inspectNodeRequested"
-            ]
+            ["DOM.documentUpdated", "Overlay.inspectNodeRequested"]
         );
         let id = session.dom.node_id("element-2-0").unwrap();
         assert_eq!(
