@@ -1,6 +1,8 @@
 //! Terminal adapter for the shared development control protocol.
 
 #[cfg(unix)]
+mod cdp;
+#[cfg(unix)]
 mod project;
 #[cfg(unix)]
 mod terminal;
@@ -10,7 +12,9 @@ fn main() {
     let json = arguments.iter().any(|argument| argument == "--json");
 
     #[cfg(unix)]
-    let result = if arguments.first().is_some_and(|command| {
+    let result = if arguments.first().is_some_and(|command| command == "cdp") {
+        cdp::run(arguments)
+    } else if arguments.first().is_some_and(|command| {
         matches!(
             command.as_str(),
             "dev" | "build" | "bundle" | "doctor" | "inspect"

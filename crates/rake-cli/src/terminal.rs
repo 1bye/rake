@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const HELP: &str = "rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
+rake cdp [--session PATH] [--instance UUID|application-id] [--port PORT] [--no-open] [--json]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   inspect tree | inspect element ELEMENT_ID
@@ -373,7 +374,7 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
     Ok((message, follow))
 }
 
-fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply> {
+pub(crate) fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply> {
     let reply = match &instance.endpoint {
         Endpoint::Local { path } => local::exchange(path, request, timeout)?,
         Endpoint::Web { url, token } => {
@@ -405,7 +406,7 @@ fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result
     Ok(reply?)
 }
 
-fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Reply> {
+pub(crate) fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Reply> {
     exchange(
         instance,
         &Request {

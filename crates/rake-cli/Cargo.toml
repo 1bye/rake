@@ -18,6 +18,8 @@ doc = false
 [dependencies]
 rake = { path = "../rake", default-features = false }
 serde_json.workspace = true
+serde.workspace = true
 futures.workspace = true
 url = "2.5"
 uuid = { version = "1", features = ["v4"] }
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }

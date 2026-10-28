@@ -38,6 +38,30 @@ the inspector follows that exact predecessor, clears all old state and diagnosti
 cursors, and uses the replacement's fresh RuntimeId. Logical tab IDs may survive
 restoration; operation IDs and retry keys never cross runtimes.
 
+## Chrome DevTools
+
+`rake cdp --session /tmp/rake-dev-EXAMPLE --no-open` starts a separate Rust
+adapter for opted-in runtimes. It prints the actual OS-assigned port and stock
+`devtools://devtools/bundled/devtools_app.html?ws=…` URLs. Paste a URL into Chrome,
+or add the printed loopback address in `chrome://inspect`. `--instance` filters by
+runtime UUID or application ID; `/json/list` advertises one page target per live
+matching runtime. `--port`, `--no-open` and `--json` are supported.
+
+The adapter binds IPv4 loopback, validates the exact bound Host, accepts only an
+absent Origin or `devtools://devtools`, and authenticates WebSockets with a random
+session path. It limits connections, message sizes, event retention and I/O time.
+Treat discovery URLs as private development credentials. Sessions detach when a
+runtime disappears or changes identity. Unsupported CDP methods return `-32601`.
+Synthetic frame/context metadata supports Chrome's frontend; it represents no
+browser DOM, JavaScript debugger, CPU profiler or heap profiler.
+
+Wall times use an adapter observation clock estimated from retained diagnostics;
+they may skew by polling/transport latency or the age of the latest record.
+Monotonic event timestamps retain the runtime's elapsed microsecond clock.
+
+Compatibility evidence and the tested Chrome/protocol revisions are in
+[the spike report](../.agents/reports/cdp-adapter-spike.md).
+
 ## Rake application preview
 
 An [Elements-only Inspector built with Rake](rake-inspector.md) is also available
