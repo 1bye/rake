@@ -581,7 +581,7 @@ function elementsPanel() {
     control.setAttribute('aria-pressed', String(selectedElement === element.id));
     control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
     control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
-    const kind = elementName(element.kind);
+    const kind = element.view?.tag || elementName(element.kind);
     control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
     if (element.semantic_id != null) control.append(el('span', 'id=', 'syntax-attribute'), el('span', '"' + element.semantic_id + '"', 'syntax-value'));
     control.append(el('span', '>', 'muted'));
@@ -652,7 +652,11 @@ function elementsPanel() {
         detail.append(properties([['Margin box', bounds(boxes.margin)], ['Border box', bounds(boxes.border)], ['Padding box', bounds(boxes.padding)], ['Content box', bounds(boxes.content)], ['Visible intersection', bounds(selected.content_mask)]]));
         for (const reason of boxes.unavailable || []) detail.append(el('p', reason, 'hint'));
       } else detail.append(el('p', 'Resolved box geometry unavailable for this boundary/runtime.', 'hint'));
-    } else detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Workspace shell' : 'entry-' + selected.entry_id]]));
+    } else {
+      detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Authored tag', selected.view?.tag], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Workspace shell' : 'entry-' + selected.entry_id]]));
+      for (const style of selected.view?.style_sources || []) detail.append(card(`${style.scope} · ${style.attribute}`, el('pre', style.expression), el('p', `${style.source.file}:${style.source.line}:${style.source.column}`, 'hint')));
+      if (selected.view) detail.append(el('p', 'Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures.', 'hint'));
+    }
     detail.append(el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
       append(el('div', null, 'pane-actions'), related(selected, 'Tasks'), related(selected, 'Requests')));
   }

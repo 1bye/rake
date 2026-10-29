@@ -80,10 +80,13 @@ into readable property rows, preserving their units. Recognized solid colors get
 swatches; unknown structured values retain an expandable raw JSON view. The
 property filter matches names and supplied values. Its source link switches to
 the captured boundary's Source details; it does not claim per-declaration source
-provenance. Layout measurements remain in the Layout pane. These blocks show GPUI
+provenance inside arbitrary closures. Automatic `view!` nodes show their authored
+tag and style attribute locations/expressions in Source, including inline paragraph
+styles attached to the paragraph. Layout measurements remain in the Layout pane.
+These blocks show GPUI
 base refinements. Computed shows live resolved values with per-property observed
 origins (defaults, inherited text context, authored base, interaction changes, measured
-layout). Equal-valued interaction rules and per-declaration Rust locations remain
+layout). Equal-valued interaction rules and opaque per-method Rust locations remain
 unavailable. Layout lists separate margin, border, padding and content bounds, plus
 the visible intersection. Unknown auto/percentage edges and scrollbar metrics are
 marked unavailable, rather than displayed as zero or duplicated border bounds.

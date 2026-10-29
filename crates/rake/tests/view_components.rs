@@ -106,7 +106,7 @@ fn paired_components_collect_selected_children_and_typed_slots_in_order() {
     assert!(card.footer.is_none());
 
     let text = card.children[0]
-        .downcast_mut::<gpui::Text>()
+        .downcast_mut::<rake::inspection::Inspected<gpui::Text>>()
         .expect("accessible child text");
 
     let mut info = gpui::accesskit::Node::new(gpui::accesskit::Role::Label);
@@ -227,8 +227,8 @@ fn markup_slots_convert_to_any_element_and_evaluate_once_before_children() {
 
     let heading = card
         .header
-        .downcast_mut::<gpui::Stateful<gpui::Div>>()
-        .expect("markup slot is a real GPUI heading");
+        .downcast_mut::<rake::inspection::Inspected<gpui::Stateful<gpui::Div>>>()
+        .expect("markup slot preserves its GPUI heading semantics through inspection");
 
     let mut info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
 
@@ -251,5 +251,5 @@ fn nested_markup_slots_accept_component_roots() {
     };
 
     assert_eq!(card.children.len(), 1);
-    let _: AnyElement = card.header;
+    let _: AnyElement = card.into_inner().header;
 }

@@ -681,7 +681,14 @@ impl Element {
 
     fn expand(&self, rake: &TokenStream, next: &mut usize) -> syn::Result<TokenStream> {
         if self.resolved == Tag::Entity {
-            return self.expand_entity(rake);
+            let index = *next;
+            *next += 1;
+            let element = self.expand_entity(rake)?;
+            let definition = self.inspection_definition(rake, index);
+            return Ok(
+                quote!(#rake::__private::view_inspect_component(#element, #definition,
+                |entity| Some(#rake::gpui::ElementId::View(entity.entity_id())))),
+            );
         }
 
         if self.is_component() {
@@ -759,7 +766,9 @@ impl Element {
         builder = self.apply_focus(builder, rake, &disabled, &mapped)?;
 
         if self.resolved.composes_text() {
-            return self.expand_paragraph(builder, rake, next);
+            let paragraph = self.expand_paragraph(builder, rake, next)?;
+            let output = self.inspect_output(paragraph, rake, index);
+            return Ok(quote!({ #setup #output }));
         }
 
         let children = expand_children_into(&self.children, &node, &siblings, rake, next)?;
@@ -775,6 +784,7 @@ impl Element {
             })
         };
 
+        let output = self.inspect_output(output, rake, index);
         Ok(quote!({ #setup #output }))
     }
 
@@ -1243,8 +1253,17 @@ fn expand_text_child(
 
     *next += 1;
 
-    quote_spanned!(source=> #siblings.push_child(
-        &mut #parent, #value, #rake::gpui::ElementId::from(("rake::view:child", #index))
+    let tag = if matches!(
+        syn::parse2::<syn::Expr>(value.clone()),
+        Ok(syn::Expr::Lit(_))
+    ) {
+        "Text"
+    } else {
+        "Expression"
+    };
+    let definition = inspection::definition(tag, source, index, TokenStream::new(), rake);
+    quote_spanned!(source=> #rake::__private::view_inspect_child(
+        &mut #siblings, &mut #parent, #value, #rake::gpui::ElementId::from(("rake::view:child", #index)), #definition
     );)
 }
 
@@ -1252,6 +1271,7 @@ mod classes;
 mod component;
 mod diagnostics;
 mod events;
+mod inspection;
 mod paragraph;
 mod style_plan;
 mod tag;

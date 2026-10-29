@@ -11,6 +11,14 @@ impl Element {
         rake: &TokenStream,
         next: &mut usize,
     ) -> syn::Result<TokenStream> {
+        let index = *next;
+        *next += 1;
+        let definition = self.inspection_definition(rake, index);
+        let key = if self.attribute("id").is_some() {
+            quote!(|component| #rake::__private::view_component_key(&component.id))
+        } else {
+            quote!(|_| None)
+        };
         let path = &self.tag;
         let mut fields = TokenStream::new();
 
@@ -45,12 +53,10 @@ impl Element {
         let defaults = self.defaults.as_ref().map(|value| quote!(..#value));
 
         if self.self_closing {
-            return Ok(quote!(#path { #fields #defaults }));
+            return Ok(
+                quote!(#rake::__private::view_inspect_component(#path { #fields #defaults }, #definition, #key)),
+            );
         }
-
-        let index = *next;
-
-        *next += 1;
         let children = format_ident!(
             "__rake_component_children_{index}",
             span = Span::mixed_site()
@@ -64,7 +70,7 @@ impl Element {
         let body = expand_children_into(&self.children, &children, &siblings, rake, next)?;
 
         // Rust evaluates explicit properties before the children field, exactly once.
-        Ok(quote!(#path {
+        Ok(quote!(#rake::__private::view_inspect_component(#path {
             #fields
             children: {
                 let mut #children = #rake::__private::ViewComponentChildren::default();
@@ -73,6 +79,6 @@ impl Element {
                 #children.into_vec()
             },
             #defaults
-        }))
+        }, #definition, #key)))
     }
 }

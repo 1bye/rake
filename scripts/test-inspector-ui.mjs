@@ -64,6 +64,7 @@ const snapshot = {runtime_id: runtime, window_id: 1, revision: 2, selected: 7,
   operations: [[9, 'AwaitingDecision']], decisions: [{id: 12, operation_id: 9, entry_id: 8, message: 'Save changed entry?', choices: [{id: 'save', label: 'Save'}, {id: 'discard', label: 'Discard'}]}]};
 let elementCapture = {status: 'captured', capture: '1', router_revision: 2, omitted: 3, coverage: 'Inspection boundaries; opaque GPUI children unavailable.', elements: [
   {id: 'element-1-0', parent: null, semantic_id: '<script>screen</script>', kind: 'gpui::Div', tab_id: 7, entry_id: 8,
+    view: {tag: 'section', style_sources: [{scope: 'section', attribute: 'class', expression: '"p-2"', source: {file: 'src/view.rs', line: 42, column: 7}}]},
     layout: {x: 10, y: 20, width: 300, height: 50}, navigation: {focus: true, scroll_into_view: true}, source: {file: 'src/example.rs', line: 12, column: 3}, styles: {display: 'Flex'}, metadata_truncated: false}]};
 const sourceRequests = [];
 let staleElement = false;
@@ -265,6 +266,11 @@ await find('button', 'Scroll into view').click(); await settle();
 assert.equal(envelopes.at(-1).message.value.action, 'scroll_into_view');
 await find('button', 'Open Rust source').click(); await settle();
 assert.deepEqual(sourceRequests.at(-1), {runtime_id: runtime, id: 'element-1-0'});
+await find('button', 'Source').click(); await settle();
+assert.match(ids.content.textContent, /section · class/);
+assert.match(ids.content.textContent, /src\/view.rs:42:7/);
+assert.match(ids.content.textContent, /"p-2"/);
+await find('button', 'Styles').click(); await settle();
 elementCapture.elements[0].box_model = {
   border: {x: 10, y: 20, width: 300, height: 50}, padding: {x: 12, y: 22, width: 296, height: 46},
   content: {x: 20, y: 30, width: 280, height: 30}, margin: null, unavailable: ['Margin box needs used auto/percentage margins']

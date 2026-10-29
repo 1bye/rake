@@ -48,9 +48,11 @@ fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots
         "resolved":{"properties":{"opacity":1.0},"hovered":false}});
     let element: Element = serde_json::from_value(legacy.clone()).unwrap();
     assert!(element.box_model.is_none());
+    assert!(element.view.is_none());
     assert!(element.resolved.unwrap().layers.is_empty());
 
     let mut current = legacy;
+    current["view"] = json!({"tag":"section","style_sources":[{"scope":"section","attribute":"class","expression":"\"p-2\"","source":{"file":"app.rs","line":8,"column":4}}]});
     current["box_model"] = json!({
         "border":{"x":1.,"y":2.,"width":100.,"height":40.},
         "padding":null,"content":null,"margin":null,"unavailable":["Used edges unavailable"]

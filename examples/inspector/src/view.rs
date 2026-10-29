@@ -479,7 +479,7 @@ impl ElementsView {
                 .map(|element| {
                     let label = format!(
                         "{}{}",
-                        tree::tag(&element.kind),
+                        element.display_name().to_owned(),
                         element
                             .semantic_id
                             .as_ref()
@@ -738,7 +738,7 @@ impl ElementsView {
         };
 
         let hover_id = element.id.clone();
-        let kind = tree::tag(&element.kind);
+        let kind = element.display_name().to_owned();
 
         let flex = element
             .styles
@@ -998,7 +998,7 @@ impl Render for ElementsView {
                         if current_tab == "Styles" || current_tab == "Computed" {
                             <div id="authored-rule" class="flex flex-col border-b-1 border-line pb-[6px]">
                                 <div class="flex flex-row items-center gap-2 px-2 min-h-[30px] font-code text-[11px]">
-                                    <span class="min-w-0 text-ink">{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
+                                    <span class="min-w-0 text-ink">{format!("{}{} {{", element.display_name().to_owned(), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
                                     <span class="flex-1"/>
                                     <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; individual declaration source locations are unavailable."
                                         class="shrink-0 text-muted hover:text-ink" style={|s| control(s).underline()}
@@ -1029,7 +1029,7 @@ impl Render for ElementsView {
                                 <p class="px-3 py-2 text-[10px] text-muted">"Origins describe observed values. Interaction rules with equal values and individual Rust declaration locations are unavailable. Inherited text may pass through uninspected ancestors."</p>
                             }
                         } else {
-                            <div class="px-3 py-2 font-code border-b-1 border-line text-tag">{format!("{}{}", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
+                            <div class="px-3 py-2 font-code border-b-1 border-line text-tag">{format!("{}{}", element.display_name().to_owned(), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
                         }
                         if current_tab == "Layout" {
                             <p class="px-3 py-2 text-muted">"Bounds · window logical pixels"</p>
@@ -1058,6 +1058,17 @@ impl Render for ElementsView {
                                 {property("Column", source.column.to_string(), colors)}
                             } else { <p class="p-3">"Source location unavailable."</p> }
                             {property("Rust type", element.kind.clone(), colors)}
+                            if let Some(view) = &element.view {
+                                {property("Authored tag", view.tag.clone(), colors)}
+                                for (index, style) in view.style_sources.iter().enumerate() {
+                                    <div id={format!("style-source-{index}")} class="px-3 py-2 border-b-1 border-line font-code text-[11px]">
+                                        <p>{format!("{} · {}", style.scope, style.attribute)}</p>
+                                        <p class="text-muted">{style.expression.clone()}</p>
+                                        <p class="text-muted">{format!("{}:{}:{}", style.source.file, style.source.line, style.source.column)}</p>
+                                    </div>
+                                }
+                                <p class="px-3 py-2 text-[10px] text-muted">"Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures."</p>
+                            }
                             {property("Capture ID", element.id.clone(), colors)}
                             {property("Semantic ID", element.semantic_id.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
                             {property("Parent", element.parent.clone().unwrap_or_else(|| "Inspection root".into()), colors)}

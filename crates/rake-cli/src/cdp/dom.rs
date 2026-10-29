@@ -60,6 +60,7 @@ impl Dom {
                     self.nodes.iter().find(|(id, old)| {
                         !used.contains(*id)
                             && old.kind == element.kind
+                            && old.display_name() == element.display_name()
                             && old.tab_id == element.tab_id
                             && old.entry_id == element.entry_id
                             && (old.id == element.id
@@ -253,11 +254,15 @@ impl Dom {
                 if let Some(id) = query.strip_prefix('#') {
                     element.semantic_id.as_deref() == Some(id)
                 } else {
-                    [&element.kind, &element.id]
-                        .into_iter()
-                        .chain(element.semantic_id.iter())
-                        .chain(element.stable_id.iter())
-                        .any(|value| value.to_lowercase().contains(&lower))
+                    [
+                        element.kind.as_str(),
+                        element.id.as_str(),
+                        element.display_name(),
+                    ]
+                    .into_iter()
+                    .chain(element.semantic_id.iter().map(String::as_str))
+                    .chain(element.stable_id.iter().map(String::as_str))
+                    .any(|value| value.to_lowercase().contains(&lower))
                 }
             })
             .filter_map(|element| self.node_id(&element.id))
@@ -330,7 +335,7 @@ impl Dom {
     pub fn resolve_node(&mut self, params: &Value) -> Result<Value, Error> {
         let id = node_id(params)?;
         let element = self.element(id)?;
-        let name = rake_protocol::inspection::display_name(&element.kind).to_owned();
+        let name = element.display_name().to_owned();
         let description = format!(
             "{}{}",
             name,
@@ -441,10 +446,14 @@ impl Dom {
 
     pub fn node_properties(&self, object: &str) -> Result<Value, Error> {
         let element = self.element(self.object_node(object)?)?;
-        Ok(json!({"result":[
-            {"name":"nodeName","value":{"type":"string","value":rake_protocol::inspection::display_name(&element.kind)},"configurable":false,"enumerable":true},
-            {"name":"id","value":{"type":"string","value":element.semantic_id.as_deref().unwrap_or_default()},"configurable":false,"enumerable":true}
-        ]}))
+        let mut result = vec![
+            json!({"name":"nodeName","value":{"type":"string","value":element.display_name()},"configurable":false,"enumerable":true}),
+            json!({"name":"id","value":{"type":"string","value":element.semantic_id.as_deref().unwrap_or_default()},"configurable":false,"enumerable":true}),
+        ];
+        if let Some(view) = &element.view {
+            result.push(json!({"name":"rakeStyleSources","value":{"type":"string","value":serde_json::to_string_pretty(&view.style_sources).unwrap_or_default()},"configurable":false,"enumerable":true}));
+        }
+        Ok(json!({"result":result}))
     }
 
     pub fn source(
@@ -620,7 +629,7 @@ impl Dom {
                 "documentURL":"rake://runtime","baseURL":"rake://runtime"})
         } else {
             let element = &self.nodes[&id];
-            let name = rake_protocol::inspection::display_name(&element.kind);
+            let name = element.display_name();
 
             json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
                 "nodeValue":"","attributes":attributes(element)})
@@ -1227,6 +1236,40 @@ mod tests {
             {"id":format!("{id}-a"),"parent":null,"kind":"gpui::Stateful<gpui::elements::div::Div>","semantic_id":"root","source":{"file":"app.rs","line":3,"column":4},"layout":{"x":1.,"y":2.,"width":10.,"height":20.},"styles":{"display":"Flex","size":{"width":"100%"},"background":{"Color":"opaque"}},"metadata_truncated":false,"tab_id":null,"entry_id":null},
             {"id":format!("{id}-b"),"parent":format!("{id}-a"),"kind":"gpui::ViewElement<app::Button<app::Action>>","metadata_truncated":false}
         ]})).unwrap()
+    }
+
+    #[test]
+    fn authored_tags_are_searchable_and_style_sources_are_available_without_preview_attributes() {
+        let mut snapshot = capture("view");
+        snapshot.elements[0].view = Some(
+            serde_json::from_value(json!({"tag":"section", "style_sources":[{
+                "scope":"section","attribute":"class","expression":"\"p-2 hover:opacity-50\"",
+                "source":{"file":"src/view.rs","line":12,"column":7}
+            }]}))
+            .unwrap(),
+        );
+        let mut dom = Dom::default();
+        dom.update(snapshot).unwrap();
+        let document = dom.document(&json!({"depth":-1})).unwrap();
+        let root = &document["children"][0];
+        assert_eq!(root["nodeName"], "section");
+        assert_eq!(root["attributes"], json!(["id", "root"]));
+        let search = dom.search("section").unwrap();
+        assert_eq!(search["resultCount"], 1);
+        let object = dom.resolve_node(&json!({"nodeId":root["nodeId"]})).unwrap();
+        let properties = dom
+            .node_properties(object["object"]["objectId"].as_str().unwrap())
+            .unwrap();
+        let sources = properties["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "rakeStyleSources")
+            .unwrap();
+        let sources: Value =
+            serde_json::from_str(sources["value"]["value"].as_str().unwrap()).unwrap();
+        assert_eq!(sources[0]["source"]["line"], 12);
+        assert_eq!(sources[0]["attribute"], "class");
     }
 
     #[test]

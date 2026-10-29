@@ -6,14 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const ROW_HEIGHT: f32 = 20.;
 pub(crate) const ROW_INSET: f32 = 6.;
 
-pub(crate) fn tag(kind: &str) -> String {
-    rake::inspection::display_name(kind).to_owned()
-}
-
 pub(crate) fn matches(element: &Element, query: &str) -> bool {
     query.is_empty()
         || format!(
-            "{} {} {} {}",
+            "{} {} {} {} {}",
+            element.display_name(),
             element.id,
             element.kind,
             element.semantic_id.as_deref().unwrap_or(""),
@@ -294,6 +291,7 @@ mod tests {
             kind: "gpui::Div".into(),
             semantic_id: Some(id.into()),
             source: None,
+            view: None,
             layout: None,
             content_mask: None,
             box_model: None,
@@ -360,7 +358,10 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(tag("gpui::Stateful<gpui::Div>"), "Div");
+        assert_eq!(
+            rake::inspection::display_name("gpui::Stateful<gpui::Div>"),
+            "Div"
+        );
     }
 
     #[test]

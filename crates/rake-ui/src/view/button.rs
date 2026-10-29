@@ -70,6 +70,12 @@ impl InteractiveElement for Interaction<'_> {
     }
 }
 
+impl InteractiveElement for Button {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.inner.interactivity()
+    }
+}
+
 impl Styled for Button {
     fn style(&mut self) -> &mut StyleRefinement {
         self.inner.style()

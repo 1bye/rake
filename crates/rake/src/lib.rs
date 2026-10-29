@@ -37,6 +37,8 @@ pub use gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
 #[cfg(feature = "experimental-view")]
 /// Builds GPUI views from experimental HTML-like markup.
+/// Rendered nodes automatically expose bounded development inspection and authored style sources.
+/// Built-in roots preserve common GPUI builder traits; `into_inner()` extracts the original value.
 ///
 /// ```
 /// let rows = ["One", "Two"];
@@ -246,6 +248,12 @@ pub mod prelude {
 
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "experimental-view")]
+    pub use crate::inspection::authored::{
+        Definition as ViewDefinition, StyleSite as ViewStyleSite, child as view_inspect_child,
+        component as view_inspect_component, component_key as view_component_key,
+        styled as view_inspect,
+    };
     #[cfg(feature = "experimental-view")]
     pub use crate::theme::apply::{
         ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeRunFont, ThemeRunText, ThemeText,

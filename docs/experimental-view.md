@@ -761,9 +761,33 @@ identity. Existing GPUI components remain available through `{expression}`.
 Raster images follow the application's asset/HTTP configuration, and SVG paths
 use its GPUI asset source.
 
-Automatic Rake inspection boundaries are not inserted. A returned styled element
-can use the existing `.inspect(...)` extension; descendants need their own
-boundaries to appear in Rake's Elements panel.
+Every rendered macro-authored element, component/entity mount and ordinary text or
+expression child automatically creates a development inspection boundary. No
+`.inspect(...)` calls are needed inside a view. An existing `.inspect("name")` on
+a built-in root renames that boundary without adding another one. GPUI IDs,
+layout and accessibility continue to delegate to the original element. Generated
+site IDs and explicit loop keys provide consecutive-frame presentation identities;
+removal expires them. Repeated unkeyed sites remain ambiguous.
+
+Components retain their typed properties through a transparent construction wrapper.
+Use `.into_inner()` when ownership of the original component or concrete GPUI root
+is required; this removes that boundary only, leaving instrumented descendants.
+Component `id` properties using `ElementId`, strings, common integer keys, common
+GPUI named-integer tuples or UUIDs supply inspection keys without changing GPUI IDs.
+Other property types stay unconstrained but do not supply a key; repeated component
+sites then have the usual ambiguity limitation.
+
+The Source pane lists authored tags and style-related attributes with file, line,
+column and bounded Rust expression spellings. It records declarations, not selected
+conditional branches or methods hidden inside arbitrary style closures. Inline
+paragraph tags are text runs: their style source metadata belongs to the paragraph,
+with no invented per-run layout boxes. Actual text content is not captured.
+
+Capture remains opt-in through the existing development host, and count/byte limits
+still apply. Without an inspection host, wrappers do not sample or serialize styles.
+Embedded third-party component internals and reused cached GPUI subtrees remain
+opaque unless they execute their own instrumented rendering. See
+[element inspection](element-inspection.md) for coverage and limits.
 
 ## Example and checks
 

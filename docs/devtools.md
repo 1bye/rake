@@ -92,7 +92,8 @@ HTML inspector offers **Open in Chrome DevTools** for its selected target. Chrom
 may require copying that link into its address bar. A later `rake inspect --session
 PATH` can reuse the same running adapter.
 
-Elements projects captured boundaries into a synthetic document, with semantic IDs,
+Elements projects captured boundaries, including automatic `rake::view!` nodes,
+into a synthetic document, with semantic IDs,
 authored styles and measured width/height. Source locations stay in Rake inspection
 details rather than repeated `data-source` attributes in Chrome's tree. Omitted
 boundaries appear as a comment. Optional runtime presentation identities keep CDP
@@ -125,8 +126,13 @@ rem lengths. Styles separates read-only synthetic rules labelled **GPUI defaults
 values can be inspected alongside the active result. These are observed GPUI origins,
 not a browser CSS cascade: inherited text can cross uninspected ancestors, and the
 public resolver cannot identify the specific hover/focus/active/drag rule or a
-same-valued override. The Rust source link is the boundary construction site, not
-an individual declaration location. Legacy snapshots show authored styles without
+same-valued override. The Rust source link opens the boundary construction site.
+Macro-authored
+style attributes additionally carry their own locations and expression spellings:
+Rake's Source pane displays them, and Chrome's node properties expose the read-only
+`rakeStyleSources` JSON string. These declarations are not a claim about which
+conditional branch or private GPUI interaction rule supplied the live value.
+Legacy snapshots show authored styles without
 inventing provenance. Unsupported values remain `--gpui-` metadata properties.
 A read-only virtual style snapshot sends CSS change notifications, so hovering the
 app updates selected values without rebuilding the document. Force-pseudo-state

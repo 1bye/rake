@@ -8,6 +8,8 @@
 
 #[cfg(feature = "gpui")]
 mod view;
+#[cfg(feature = "experimental-view")]
+pub(crate) use view::authored;
 
 #[cfg(feature = "gpui")]
 pub use view::{InspectElement, Inspected, inspect};
@@ -66,7 +68,7 @@ impl Default for Store {
                 router_revision: 0,
                 elements: Vec::new(),
                 omitted: 0,
-                coverage: "Rake inspection boundaries only; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div> styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; individual declaration locations and equal-valued overrides are unavailable. Text content is not captured.".into(),
+                coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Text content is not captured.".into(),
             }),
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
@@ -366,6 +368,7 @@ impl Store {
                                 == old.navigation.scroll_into_view
                             && element.semantic_id == old.semantic_id
                             && element.source == old.source
+                            && element.view == old.view
                             && element.layout == old.layout
                             && element.box_model == old.box_model
                             && element.content_mask == old.content_mask

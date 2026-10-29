@@ -3,7 +3,7 @@
 mod button;
 mod paragraph;
 
-pub use button::button;
+pub use button::{Button, button};
 pub use paragraph::{ParagraphContent, RunStyle};
 
 use std::any::Any;

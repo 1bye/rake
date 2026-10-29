@@ -6,8 +6,14 @@ The routed application runner attaches capture when configured with
 `ControlConfig::FromEnvironment` and enabled by `RAKE_DEV_CONTROL=1` on native
 or valid authenticated development metadata on Web. Disabled and headless hosts
 report `unavailable`. An attached host reports `waiting` until its first prepaint.
+Standalone `App::root` applications currently have no development control host;
+automatic wrappers alone do not create one.
 
-Add boundaries after configuring a styled element:
+`rake::view!` automatically instruments its rendered nodes, component/entity mounts,
+and ordinary text/expression children. Inline paragraph runs share their paragraph's
+boundary and carry style source metadata there. Existing manual root `.inspect(...)`
+calls rename automatic built-in boundaries without adding duplicates. For GPUI
+builders outside `view!`, add boundaries after configuring a styled element:
 
 ```rust,no_run
 use rake::gpui::{div, prelude::*};
@@ -29,8 +35,8 @@ it does not change the element's GPUI ID. Duplicates are allowed.
 The runner instruments the workspace, tab strip and presented route outlet.
 Descendants inherit the outlet's actual tab/entry ownership. Hidden tabs and
 retained history entries remain logical router state and do not appear as
-presented content. Source locations identify the `.inspect` call, including in
-release builds; source paths can be compiler-remapped.
+presented content. Source locations identify the authored macro node or manual
+`.inspect` call, including in release builds; source paths can be compiler-remapped.
 
 ```sh
 target/debug/rake ctl --instance APPLICATION_ID inspect tree --json
@@ -84,13 +90,15 @@ The captured `kind` and Rake's element details retain the complete Rust type.
 Chrome's Elements panel still supplies its own tag-style punctuation.
 
 GPUI's pinned public API cannot enumerate every element/view. **Coverage is Rake
-inspection boundaries**, with uninstrumented intermediates omitted. Opaque children
+inspection boundaries**, including automatic `view!` nodes, with uninstrumented
+intermediates omitted. Opaque children
 and reused cached GPUI subtrees are not enumerated; their missing node count is
 unknown. Layout uses window-local logical pixels after layout/offsets, before
 clipping; `content_mask` separately records its intersection with the inherited
 content mask and viewport for picking. `styles` contains the serialized authored
 base refinement. `resolved` separately contains `properties` (GPUI's live resolved
-visual style) and `hovered` (the actual hitbox state). `Div` and `Stateful<Div>` boundaries
+visual style) and `hovered` (the actual hitbox state). `Div`, `Stateful<Div>` and
+macro-authored button boundaries
 sample GPUI's public resolver during paint, including current hover, focus, active
 and group states plus inherited text from uninstrumented parents. Defaults are
 included, rem lengths are normalized to pixels, and width/height are measured.
@@ -111,8 +119,25 @@ Resolved `layers` partition properties by observed origin: `default`, `inherited
 text context, `authored` base, `interaction` changes from base, and measured `layout`
 size. This also works through uninspected text ancestors without attributing values
 to the nearest captured parent. GPUI does not expose the individual interaction
-rule, equal-valued overrides, or declaration source locations. The existing `source`
+rule, equal-valued overrides, or opaque per-method declaration source locations. The existing `source`
 field remains the inspection boundary construction site. Older runtimes omit layers.
+
+Automatic nodes add `view: { tag, style_sources }`. A style source records its
+`scope` tag, attribute name, bounded Rust expression spelling, and attribute
+`SourceLocation`. Both Rake frontends show these in Source; Chrome node properties
+expose the read-only `rakeStyleSources` JSON string. They list authored declarations,
+including inline paragraph declarations and untaken conditional branches; they do
+not claim that a source won the live style resolution. Opaque style closures have
+an attribute location, rather than fabricated per-method provenance. Style source
+metadata is bounded to 4 KiB per boundary (512 bytes per expression); truncation
+sets `metadata_truncated`. Older/manual boundaries omit `view`.
+
+Generated macro site IDs and explicit loop keys preserve presentation identities
+without changing underlying GPUI state IDs. Component keys accept GPUI `ElementId`,
+strings, common integer keys, common named-integer tuples and UUIDs; arbitrary typed `id`
+properties remain accepted but unknown types provide no inspection key. Duplicate
+unkeyed sites remain explicitly ambiguous. Use `ElementId` for custom component
+keys when identity must survive reordering.
 
 Each resolved style, including provenance layers, is bounded to 16 KiB and the remaining total snapshot budget.
 If it does not fit, `resolved` is omitted and `metadata_truncated` is true; its

@@ -12,6 +12,8 @@ use gpui::{
 use super::{Element, Layout, Snapshot, SourceLocation, Status, Store};
 use crate::router::{EntryId, TabId, WindowId};
 
+#[cfg(feature = "experimental-view")]
+pub(crate) mod authored;
 mod geometry;
 mod provenance;
 
@@ -46,6 +48,11 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         owner: None,
         focus: None,
         scroll: None,
+        #[cfg(feature = "experimental-view")]
+        definition: None,
+        #[cfg(feature = "experimental-view")]
+        view_key: None,
+        style_reader: None,
     }
 }
 
@@ -59,9 +66,55 @@ pub struct Inspected<E: gpui::Element> {
     owner: Option<(TabId, EntryId)>,
     focus: Option<gpui::FocusHandle>,
     scroll: Option<gpui::ScrollHandle>,
+    #[cfg(feature = "experimental-view")]
+    definition: Option<&'static authored::Definition>,
+    #[cfg(feature = "experimental-view")]
+    view_key: Option<ElementId>,
+    style_reader: Option<fn(&mut E) -> gpui::StyleRefinement>,
+}
+
+impl<E: gpui::Element + Styled> Styled for Inspected<E> {
+    fn style(&mut self) -> &mut gpui::StyleRefinement {
+        self.style_reader = Some(|inner| inner.style().clone());
+        self.inner.style()
+    }
+}
+
+impl<E: gpui::Element + gpui::ParentElement> gpui::ParentElement for Inspected<E> {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+        self.inner.extend(elements);
+    }
+}
+
+impl<E: gpui::Element + gpui::InteractiveElement> gpui::InteractiveElement for Inspected<E> {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.inner.interactivity()
+    }
+}
+
+impl<E: gpui::Element + gpui::StatefulInteractiveElement> gpui::StatefulInteractiveElement
+    for Inspected<E>
+{
+}
+
+impl<E: gpui::Element + gpui::StyledImage> gpui::StyledImage for Inspected<E> {
+    fn image_style(&mut self) -> &mut gpui::ImageStyle {
+        self.inner.image_style()
+    }
 }
 
 impl<E: gpui::Element> Inspected<E> {
+    /// Extracts the underlying GPUI element, removing this boundary only.
+    pub fn into_inner(self) -> E {
+        self.inner
+    }
+
+    /// Renames this boundary without inserting a duplicate inspection wrapper.
+    pub fn inspect(mut self, semantic_id: impl Into<String>) -> Self {
+        self.semantic_id = Some(semantic_id.into());
+        self
+    }
+
     /// Registers the same handle passed to GPUI's `track_focus`, without changing focusability.
     pub fn focus_handle(mut self, handle: &gpui::FocusHandle) -> Self {
         self.focus = Some(handle.clone());
@@ -165,6 +218,10 @@ struct BoundaryKey {
     kind: &'static str,
     source: &'static Location<'static>,
     owner: Option<(TabId, EntryId)>,
+    #[cfg(feature = "experimental-view")]
+    view_site: Option<&'static str>,
+    #[cfg(feature = "experimental-view")]
+    view_key: Option<ElementId>,
 }
 
 #[derive(Clone)]
@@ -239,6 +296,11 @@ struct ActiveCapture(Option<Capture>);
 
 impl gpui::Global for ActiveCapture {}
 
+#[derive(Default)]
+struct CapturingLayout(bool);
+
+impl gpui::Global for CapturingLayout {}
+
 impl<E: gpui::Element> IntoElement for Inspected<E> {
     type Element = Self;
 
@@ -272,10 +334,30 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             window.activate_window();
             window.focus(&focus, cx);
         }
+        if cx.try_global::<CapturingLayout>().is_none() {
+            cx.set_global(CapturingLayout::default());
+        }
+        let previous = self.root.as_ref().map(|(store, _, _)| {
+            std::mem::replace(
+                &mut cx.global_mut::<CapturingLayout>().0,
+                store.status() != Status::Unavailable,
+            )
+        });
+        let capturing = cx.global::<CapturingLayout>().0;
         let (layout, state) = self.inner.request_layout(id, inspector_id, window, cx);
+        if capturing && let Some(read) = self.style_reader {
+            self.style = Some(read(&mut self.inner));
+        }
         // Observe after GPUI has initialized focus and cleared stale drag/active state.
-        let style = interactivity(&mut self.inner)
-            .map(|interactive| interactive.compute_style(id, None, window, cx));
+        let style = capturing
+            .then(|| {
+                interactivity(&mut self.inner)
+                    .map(|interactive| interactive.compute_style(id, None, window, cx))
+            })
+            .flatten();
+        if let Some(previous) = previous {
+            cx.global_mut::<CapturingLayout>().0 = previous;
+        }
         (layout, (state, style))
     }
 
@@ -378,6 +460,17 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     line: self.source.line(),
                     column: self.source.column(),
                 }),
+                view: {
+                    #[cfg(feature = "experimental-view")]
+                    {
+                        self.definition
+                            .map(|definition| definition.capture(&mut truncated))
+                    }
+                    #[cfg(not(feature = "experimental-view"))]
+                    {
+                        None
+                    }
+                },
                 layout: valid.then_some(layout),
                 box_model: valid
                     .then(|| {
@@ -429,6 +522,10 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     kind: std::any::type_name::<E>(),
                     source: self.source,
                     owner,
+                    #[cfg(feature = "experimental-view")]
+                    view_site: self.definition.map(|definition| definition.site),
+                    #[cfg(feature = "experimental-view")]
+                    view_key: self.view_key.clone(),
                 });
                 capture.navigation.push(NavigationTarget {
                     focus: self.focus.clone(),
@@ -581,6 +678,14 @@ fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interacti
     use gpui::InteractiveElement;
     use std::any::Any;
     let inner = inner as &mut dyn Any;
+    #[cfg(feature = "experimental-view")]
+    if inner.is::<rake_ui::view::Button>() {
+        return Some(
+            inner
+                .downcast_mut::<rake_ui::view::Button>()?
+                .interactivity(),
+        );
+    }
     if inner.is::<gpui::Div>() {
         Some(inner.downcast_mut::<gpui::Div>()?.interactivity())
     } else {
@@ -613,7 +718,14 @@ fn resolved_style<E: gpui::Element>(
             (inner as &mut dyn Any)
                 .downcast_mut::<gpui::Stateful<gpui::Div>>()
                 .map(|div| div.style().clone())
-        })?;
+        });
+    #[cfg(feature = "experimental-view")]
+    let authored = authored.or_else(|| {
+        (inner as &mut dyn Any)
+            .downcast_mut::<rake_ui::view::Button>()
+            .map(|button| button.style().clone())
+    });
+    let authored = authored?;
     let mut base = gpui::Style::default();
     base.refine(&authored);
     let interactive = interactivity(inner)?;
@@ -735,7 +847,7 @@ fn overlay(
 
     let label = format!(
         "{} {} · {}×{}",
-        super::display_name(&element.kind),
+        element.display_name(),
         element.semantic_id.as_deref().unwrap_or(""),
         layout.width,
         layout.height

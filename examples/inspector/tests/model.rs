@@ -41,6 +41,7 @@ fn element(id: &str) -> Element {
         kind: "gpui::Div".into(),
         semantic_id: Some("document.body".into()),
         source: None,
+        view: None,
         layout: None,
         content_mask: None,
         box_model: None,

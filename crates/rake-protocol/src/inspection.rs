@@ -93,6 +93,28 @@ pub struct SourceLocation {
     pub column: u32,
 }
 
+/// An authored style attribute, without evaluating its expression or exposing text content.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StyleSource {
+    /// Authored tag, including an inline paragraph tag when applicable.
+    pub scope: String,
+    /// `class`, `class:utility`, `style`, or another style-related attribute.
+    pub attribute: String,
+    /// Bounded Rust expression spelling; does not indicate which conditional branch ran.
+    pub expression: String,
+    /// Attribute location, not an inferred location inside an opaque closure.
+    pub source: SourceLocation,
+}
+
+/// Automatic `view!` boundary metadata. Inline paragraph runs share their paragraph's bounds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ViewMetadata {
+    /// Authored tag/component name; `Text` and `Expression` identify child boundaries.
+    pub tag: String,
+    /// Authored style attributes in source order, including paragraph inline attributes.
+    pub style_sources: Vec<StyleSource>,
+}
+
 /// GPUI's current visual style sampled during paint, including inherited text.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedStyle {
@@ -148,6 +170,9 @@ pub struct Element {
     pub semantic_id: Option<String>,
     /// Construction site of the boundary, when supplied.
     pub source: Option<SourceLocation>,
+    /// Macro-authored source metadata; absent for manual boundaries and older runtimes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<ViewMetadata>,
     /// Actual GPUI layout, or None for invalid/non-finite geometry.
     pub layout: Option<Layout>,
     /// Resolved box geometry for supported elements; older runtimes omit it.
@@ -158,7 +183,7 @@ pub struct Element {
     pub content_mask: Option<Layout>,
     /// Serialized GPUI base style refinement; None for custom unstyled elements.
     pub styles: Option<Value>,
-    /// Live resolved style for GPUI `Div`/`Stateful<Div>`; absent for opaque/custom elements.
+    /// Live resolved style for GPUI `Div`/`Stateful<Div>` and macro-authored buttons; absent for opaque/custom elements.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved: Option<ResolvedStyle>,
     /// Whether a metadata field exceeded its capture limit.
@@ -167,6 +192,15 @@ pub struct Element {
     pub tab_id: Option<TabId>,
     /// Presented route entry, never a hidden retained history entry.
     pub entry_id: Option<EntryId>,
+}
+
+impl Element {
+    /// Authored view tag when known, otherwise a shortened Rust element name.
+    pub fn display_name(&self) -> &str {
+        self.view
+            .as_ref()
+            .map_or_else(|| display_name(&self.kind), |view| &view.tag)
+    }
 }
 
 /// Short inspection label without Rust module paths, generic arguments or GPUI wrappers.
