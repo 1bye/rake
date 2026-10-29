@@ -48,6 +48,15 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Edits rendered text without changing application state or Rust source.
+    EditElementText {
+        /// Exact current text boundary.
+        id: String,
+        /// Exact current capture; stale requests never retarget.
+        generation: String,
+        /// Bounded literal replacement, reset or undo.
+        edit: crate::inspection::TextEdit,
+    },
     /// Enables a renewable frame recording lease; disconnect expiry stops measurement.
     RecordFrames {
         /// Start/renew recording, or stop without discarding retained frames.
@@ -200,6 +209,7 @@ impl Command {
         &[
             "record_frames",
             "edit_element_style",
+            "edit_element_text",
             "navigate_element",
             "highlight_element",
             "inspect_mode",

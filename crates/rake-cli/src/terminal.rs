@@ -786,6 +786,11 @@ mod tests {
         };
 
         let commands = vec![
+            Command::EditElementText {
+                id: "boundary".into(),
+                generation: "1".into(),
+                edit: rake_protocol::inspection::TextEdit::Reset {},
+            },
             Command::RecordFrames {
                 enabled: false,
                 lease_ms: 0,

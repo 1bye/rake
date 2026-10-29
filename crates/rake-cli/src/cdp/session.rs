@@ -209,6 +209,8 @@ impl Session {
                 } else if let Some(method) = match expression {
                     "rake.resetStyles($0)" => Some("Rake.resetStyles"),
                     "rake.undoStyles($0)" => Some("Rake.undoStyles"),
+                    "rake.resetText($0)" => Some("Rake.resetText"),
+                    "rake.undoText($0)" => Some("Rake.undoText"),
                     _ => None,
                 } {
                     let node = self.dom.inspected_node()?;
@@ -304,6 +306,26 @@ impl Session {
                 Ok(result)
             }
             "DOM.discardSearchResults" => self.dom.discard_search(&request.params),
+            "DOM.setNodeValue" | "Rake.resetText" | "Rake.undoText" => {
+                self.refresh_dom()?;
+                let edit = match method {
+                    "Rake.resetText" => rake_protocol::inspection::TextEdit::Reset {},
+                    "Rake.undoText" => rake_protocol::inspection::TextEdit::Undo {},
+                    _ => rake_protocol::inspection::TextEdit::Set {
+                        text: request.params["value"]
+                            .as_str()
+                            .ok_or_else(|| Error::new(-32602, "Text value required"))?
+                            .into(),
+                    },
+                };
+                self.control(self.dom.text_command(
+                    &request.params,
+                    edit,
+                    method != "DOM.setNodeValue",
+                )?)?;
+                // Character-data events follow the actual GPUI draw, including layout and AX updates.
+                Ok(json!({}))
+            }
             "DOM.setInspectedNode" => self.dom.set_inspected_node(&request.params),
             "DOM.focus" | "DOM.scrollIntoViewIfNeeded" => {
                 // Map the retained CDP identity to the latest exact runtime capture.
@@ -1510,6 +1532,73 @@ mod tests {
         for invalid in ["$0.id", "$0, other()", "$0; evil()", "$01"] {
             assert!(session.source_selector(invalid).is_err());
         }
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn chrome_text_edits_and_selected_reset_undo_cross_runtime_once_without_operation_keys() {
+        use rake_protocol::inspection::TextEdit;
+        let mut snapshot = capture("edit-text");
+        snapshot.elements[0].text = Some("Original".into());
+        snapshot.elements[0].text_editable = true;
+        let returned = snapshot.clone();
+        let mut mutation = 0;
+        let (instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(returned.clone()),
+                RuntimeMessage::Command(Command::EditElementText {
+                    id,
+                    generation,
+                    edit,
+                }) => {
+                    assert!(request.key.is_none());
+                    assert_eq!(id, "element-edit-text-0");
+                    assert_eq!(generation, "edit-text");
+                    let expected = [
+                        TextEdit::Set {
+                            text: "café 你好 🙂".into(),
+                        },
+                        TextEdit::Reset {},
+                        TextEdit::Undo {},
+                    ];
+                    assert_eq!(edit, expected[mutation]);
+                    mutation += 1;
+                    Reply::Acknowledged
+                }
+                _ => panic!("unexpected text edit request"),
+            },
+            6,
+        );
+        let mut session = Session::new(instance, None);
+        session.dom.update(snapshot).unwrap();
+        let node = session.dom.node_id("element-edit-text-0").unwrap();
+        let call = |method: &str, params| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        session
+            .handle(&call("DOM.setInspectedNode", json!({"nodeId":node})))
+            .unwrap();
+        session
+            .handle(&call(
+                "DOM.setNodeValue",
+                json!({"nodeId":node,"value":"café 你好 🙂"}),
+            ))
+            .unwrap();
+        session
+            .handle(&call(
+                "Runtime.evaluate",
+                json!({"expression":"rake.resetText($0)"}),
+            ))
+            .unwrap();
+        session
+            .handle(&call(
+                "Runtime.evaluate",
+                json!({"expression":"rake.undoText($0)"}),
+            ))
+            .unwrap();
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }

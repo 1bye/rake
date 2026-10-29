@@ -65,6 +65,30 @@ try {
   const preview = (await call('DOM.describeNode',{nodeId:paragraph.nodeId,depth:0})).node;
   assert.equal(preview.children[0].nodeType, 3, 'lazy preview includes native text node');
   assert.equal((await call('DOM.getOuterHTML',{nodeId:paragraph.nodeId})).outerHTML, '<p>Count: 0</p>');
+  const textNode = preview.children[0], temporary = '<Temporary> café 你好 🙂 '.repeat(12);
+  const renderedText = async () => (await call('DOM.describeNode',{nodeId:textNode.nodeId})).node.nodeValue;
+  const measuredHeight = async () => parseFloat((await call('CSS.getComputedStyleForNode',{nodeId:paragraph.nodeId})).computedStyle.find(p=>p.name==='height').value);
+  const originalHeight = await measuredHeight();
+  events.length = 0;
+  await call('DOM.setNodeValue',{nodeId:textNode.nodeId,value:temporary});
+  await eventually(async () => await renderedText() === temporary);
+  assert.ok(await measuredHeight() > originalHeight, 'text edits must relayout the real paragraph');
+  assert.ok(events.some(event=>event.method==='DOM.characterDataModified' && event.params.nodeId===textNode.nodeId));
+  assert.ok(!events.some(event=>event.method==='DOM.documentUpdated'), 'editing preserves tree identities');
+  assert.ok((await call('DOM.getOuterHTML',{nodeId:paragraph.nodeId})).outerHTML.includes('&lt;Temporary&gt; café 你好 🙂'));
+  await assert.rejects(call('DOM.setNodeValue',{nodeId:paragraph.nodeId,value:'no element replacement'}), /editable text node/i);
+  await assert.rejects(call('DOM.setNodeValue',{nodeId:textNode.nodeId,value:'🙂'.repeat(4097)}), /16 KiB/);
+  await call('DOM.setInspectedNode',{nodeId:paragraph.nodeId});
+  await call('Runtime.evaluate',{expression:'rake.resetText($0)'});
+  await eventually(async () => await renderedText() === 'Count: 0');
+  await call('Runtime.evaluate',{expression:'rake.undoText($0)'});
+  await eventually(async () => await renderedText() === temporary);
+  await call('DOM.setNodeValue',{nodeId:textNode.nodeId,value:''});
+  await eventually(async () => await renderedText() === '');
+  await call('Runtime.evaluate',{expression:'rake.undoText($0)'});
+  await eventually(async () => await renderedText() === temporary);
+  await call('Runtime.evaluate',{expression:'rake.resetText($0)'});
+  await eventually(async () => await renderedText() === 'Count: 0');
   await call('CSS.setStyleSheetText',{styleSheetId:`rake-edit-${paragraph.nodeId}`,text:'display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; column-gap: 4px;'});
   await eventually(async () => (await call('CSS.getComputedStyleForNode',{nodeId:paragraph.nodeId})).computedStyle
     .some(property=>property.name==='grid-template-columns' && property.value==='repeat(2, minmax(0, 1fr))'));
@@ -114,7 +138,7 @@ try {
   assert.ok(!events.some(event=>event.method==='DOM.documentUpdated'), 'style edits preserve document identity');
   await call('DOM.focus',{nodeId:button.nodeId});
   await call('Overlay.highlightNode',{nodeId:button.nodeId}); await call('Overlay.hideHighlight');
-  console.log(`Native Elements/CDP passed: ${capture.elements.length} boundaries; lazy text, copy, sources, AX, Chrome edit/toggle ranges, stable polling, $0, real layout edits, reset/undo, stable IDs, focus and highlight.`);
+  console.log(`Native Elements/CDP passed: ${capture.elements.length} boundaries; temporary text/Unicode/empty edits and reset/undo, real relayout, stable IDs, lazy text, copy, sources, AX, style edits/toggles, stable polling, $0, focus and highlight.`);
 } catch (error) {
   console.error(readFileSync(logPath,'utf8')); throw error;
 } finally {

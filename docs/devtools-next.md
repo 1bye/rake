@@ -25,6 +25,7 @@ enables it automatically. Production build configuration is documented in
 | Source | `$0`, `rake.openSource($0)` and explicit style/handler source targets; system default editor | CDP selection/context/lifetime and source hydration tests; host path confinement tests; Console UI source opening not verified in this pass |
 | Accessibility | Captured roles, names, name origins, states and focus | Stock Chrome full AX tree and Accessibility sidebar; focused Increment, disabled Reset and expanded history; switch back retained selection |
 | Copy | Escaped synthetic outerHTML and Chrome-generated selectors | Stock Chrome Copy outerHTML produced `<button id="increment">Increment</button>`; Copy selector produced `#increment` |
+| Temporary text | Literal Unicode/empty text edits; base-format paragraph replacement; reset/undo; stable lifetimes | Stock Chrome inline edit and native text observed; live CDP set/empty/reset/undo and relayout; GPUI keyed reordering/removal and current-app-text reset |
 | Reset/undo | `rake.resetStyles($0)` and `rake.undoStyles($0)` exact Console helpers; `Rake.resetStyles`/`Rake.undoStyles` CDP commands | Live native/CDP harness; Chrome Console helper UI not verified in this pass |
 
 ## Stock Chrome verification
@@ -47,6 +48,13 @@ The native picker and live hover were also exercised in Chrome: picking exited
 without incrementing the counter, and pointer enter/leave changed the selected
 button background between a resolved hover color and transparent. WASM evidence
 is compilation, not browser/GPU execution.
+
+A later text-editing pass exercised Chrome's normal inline text editor against a
+separate native GPUI window. A Unicode replacement appeared in both Chrome and
+the application, while the counter's other values stayed unchanged. Reset/undo,
+empty text, relayout, literal markup escaping, stale targets and production feature
+gating are verified by native/CDP and GPUI tests; Console helper entry was not
+automated through Chrome's paste guard.
 
 ## Repeatable verification
 
@@ -74,7 +82,8 @@ relationships and private listener closures require additional GPUI hooks. These
 remain unavailable, with no inferred geometry or invented source locations.
 
 Chrome's browser-only controls are not all meaningful for GPUI. Force pseudo
-states, arbitrary DOM/text edits, new CSS rules/selector edits, browser DOM undo/redo,
+states, structural DOM edits and opaque text mutation, new CSS rules/selector
+edits, browser DOM undo/redo,
 persistent flex/grid overlays, browser animation/font diagnostics, general
 JavaScript evaluation and Rust source rewriting remain unsupported. Chrome's
 Sources/debugger is not a Rust debugger. The Console helper UI checks noted above remain verification work, rather than

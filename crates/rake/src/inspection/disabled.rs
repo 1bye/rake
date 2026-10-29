@@ -9,6 +9,9 @@ pub use rake_protocol::inspection::*;
 pub(crate) struct Store {}
 
 impl Store {
+    pub(crate) fn edit_text(&self, _: &str, _: &str, _: &TextEdit) -> Result<(), InspectionError> {
+        Err(InspectionError::Unavailable)
+    }
     pub(crate) fn status(&self) -> Status {
         Status::Unavailable
     }

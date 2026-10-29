@@ -17,6 +17,7 @@ mod accessibility;
 pub(crate) mod authored;
 mod geometry;
 mod provenance;
+mod text;
 
 /// Adds a named inspection boundary to a styled GPUI element. Call after styling.
 pub trait InspectElement: IntoElement + Styled {
@@ -60,6 +61,7 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         view_key: None,
         style_reader: None,
         original_style: None,
+        original_text: None,
         profile: None,
         handlers: Vec::new(),
         handlers_truncated: false,
@@ -82,6 +84,7 @@ pub struct Inspected<E: gpui::Element> {
     view_key: Option<ElementId>,
     style_reader: Option<fn(&mut E) -> gpui::StyleRefinement>,
     original_style: Option<gpui::StyleRefinement>,
+    original_text: Option<Box<text::Original>>,
     profile: Option<super::recording::Target>,
     handlers: Vec<(&'static Location<'static>, String)>,
     handlers_truncated: bool,
@@ -393,6 +396,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some(original) = self.original_text.take() {
+            text::restore(&mut self.inner, *original);
+        }
         if let Some((store, _, host)) = &self.root {
             store
                 .0
@@ -476,6 +482,13 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                         gpui::Refineable::refine(interactive.base_style.as_mut(), &refinement);
                     }
                 }
+            }
+            if let Some(replacement) = stable
+                .as_ref()
+                .and_then(|stable| state.text_edits.get(stable))
+                .and_then(|history| history.current.as_deref())
+            {
+                self.original_text = text::replace(&mut self.inner, replacement);
             }
         }
         cx.global_mut::<LayoutHost>().0 = child_context;
@@ -714,6 +727,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 resolved: None,
                 metadata_truncated: truncated,
                 text,
+                text_editable: text::editable(&self.inner),
                 paint_order: None,
                 style_editable: state.1.is_some(),
                 style_overrides: Vec::new(),
@@ -770,6 +784,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 let identities = completed.identify(store, *host);
                 for element in &mut completed.snapshot.elements {
                     element.style_editable &= element.stable_id.is_some();
+                    element.text_editable &= element.stable_id.is_some();
                     element.style_overrides = element
                         .stable_id
                         .as_ref()

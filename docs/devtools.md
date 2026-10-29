@@ -173,6 +173,25 @@ lightweight tree polls do not invalidate the Styles editor. The Console helpers
 temporary overrides. Chrome DOM undo/redo,
 arbitrary new CSS rules and CSS selector editing remain unavailable.
 
+Temporary text editing uses Chrome's normal inline text editor: double-click a
+text value in Elements, enter its replacement and press Enter. Supported captured
+GPUI text and composed paragraph text advertise `text_editable`; inputs and opaque
+custom text remain read-only. The replacement is literal text, including Unicode,
+newlines and empty strings. GPUI recalculates wrapping, bounds and accessibility
+after the real draw; stable node identities and application state are preserved.
+
+For the selected text node, or a container containing only that text boundary, type
+`rake.resetText($0)` or `rake.undoText($0)` in Chrome Console. Reset reveals the
+application's current content; undo restores the preceding override, including a
+reset. These are separate from Chrome's browser DOM undo/redo. CDP clients can use
+`DOM.setNodeValue { nodeId, value }`, `Rake.resetText { nodeId }` and
+`Rake.undoText { nodeId }`. Replacements use the paragraph's base text style;
+reset restores the application’s current inline runs. Rust source and editable field values
+are never changed. Histories retain up to 32 edits across at most 64 text nodes,
+with a 16 KiB UTF-8 replacement limit and a shared 4 MiB text-history budget.
+Removal/window closure drops overrides; process restart clears them. This entire
+backend remains behind the opt-in `devtools` feature.
+
 Sessions wait up to five seconds for a unique successor whose `restored_from`
 matches the selected RuntimeId, including when `--instance` originally named that
 UUID. Replacement clears runtime contexts, cursors, objects and DOM IDs. An
@@ -219,12 +238,13 @@ Runtime.globalLexicalScopeNames, Runtime.getProperties,
 Runtime.releaseObject/releaseObjectGroup; DOM.getDocument, DOM.requestChildNodes,
 DOM.describeNode, DOM.getAttributes, DOM.getOuterHTML, DOM.getBoxModel, DOM.performSearch,
 DOM.getSearchResults/discardSearchResults, DOM.focus/scrollIntoViewIfNeeded,
+DOM.setNodeValue (supported captured text only),
 DOM.resolveNode/requestNode/setInspectedNode, Runtime.callFunctionOn (navigation only),
 DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
 CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
 Network.getResponseBody/getRequestPostData return descriptive unavailable errors.
 Overlay.highlightNode/setInspectMode require advertised runtime interaction support. Every unlisted method returns `-32601`,
-including Debugger, Profiler, DOM edits and other JavaScript function calls.
+including Debugger, Profiler, structural DOM edits and other JavaScript function calls.
 CSS edits are restricted to temporary DevTools base override sheets; authored styles remain read-only.
 Accessibility.enable/disable, getRootAXNode/getFullAXTree/getPartialAXTree/
 getChildAXNodes/getAXNodeAndAncestors, Tracing.start/end and IO.read/close are also

@@ -4,7 +4,7 @@ mod button;
 mod paragraph;
 
 pub use button::{Button, button};
-pub use paragraph::{ParagraphContent, RunStyle};
+pub use paragraph::{ParagraphContent, ParagraphText, RunStyle};
 
 use std::any::Any;
 #[cfg(debug_assertions)]

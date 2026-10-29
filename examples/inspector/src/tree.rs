@@ -323,6 +323,7 @@ mod tests {
             metadata_truncated: false,
             text: None,
             paint_order: None,
+            text_editable: false,
             style_editable: false,
             style_overrides: Vec::new(),
             accessibility: None,

@@ -50,10 +50,12 @@ fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots
     assert!(element.box_model.is_none());
     assert!(element.view.is_none());
     assert!(element.text.is_none());
+    assert!(!element.text_editable);
     assert!(element.resolved.unwrap().layers.is_empty());
 
     let mut current = legacy;
     current["text"] = json!("Hello 世界\n🌍");
+    current["text_editable"] = json!(true);
     current["view"] = json!({"tag":"section","style_sources":[{"scope":"section","attribute":"class","expression":"\"p-2\"","source":{"file":"app.rs","line":8,"column":4}}]});
     current["box_model"] = json!({
         "border":{"x":1.,"y":2.,"width":100.,"height":40.},
@@ -71,4 +73,23 @@ fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots
         serde_json::from_value::<Element>(serde_json::to_value(&element).unwrap()).unwrap(),
         element
     );
+}
+
+#[test]
+fn literal_text_edit_commands_are_strict_and_portable() {
+    use rake_protocol::{control::Command, inspection::TextEdit};
+    let command: Command = serde_json::from_value(serde_json::json!({
+        "type":"edit_element_text", "id":"text-1", "generation":"1",
+        "edit":{"action":"set","text":"<literal> café 你好 🙂\n"}
+    }))
+    .unwrap();
+    assert!(
+        matches!(&command, Command::EditElementText { edit: TextEdit::Set { text }, .. } if text == "<literal> café 你好 🙂\n")
+    );
+    assert_eq!(
+        serde_json::from_value::<Command>(serde_json::to_value(&command).unwrap()).unwrap(),
+        command
+    );
+    assert!(serde_json::from_str::<TextEdit>(r#"{"action":"reset","extra":true}"#).is_err());
+    assert!(serde_json::from_str::<TextEdit>(r#"{"action":"set","text":null}"#).is_err());
 }

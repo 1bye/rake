@@ -73,6 +73,7 @@ impl super::host::Host for InspectionClient {
                 "highlight_element",
                 "inspect_mode",
                 "edit_element_style",
+                "edit_element_text",
                 "record_frames",
             ]
             .map(str::to_owned)
@@ -134,6 +135,14 @@ impl super::host::Host for InspectionClient {
             }
             Message::Command(Command::RecordFrames { enabled, lease_ms }) => {
                 store.record_frames(enabled, lease_ms)?;
+                Ok(Reply::Acknowledged)
+            }
+            Message::Command(Command::EditElementText {
+                id,
+                generation,
+                edit,
+            }) => {
+                store.edit_text(&id, &generation, &edit)?;
                 Ok(Reply::Acknowledged)
             }
             Message::Command(Command::EditElementStyle {

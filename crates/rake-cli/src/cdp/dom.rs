@@ -840,6 +840,40 @@ impl Dom {
     pub fn editable(&self, id: i32) -> bool {
         self.element(id).is_ok_and(|element| element.style_editable)
     }
+    pub fn text_command(
+        &self,
+        params: &Value,
+        edit: rake_protocol::inspection::TextEdit,
+        descend: bool,
+    ) -> Result<rake_protocol::control::Command, Error> {
+        let mut id = node_id(params)?;
+        let mut seen = BTreeSet::new();
+        while descend && self.element(id)?.text.is_none() && seen.insert(id) {
+            let children = self.children(id);
+            if children.len() != 1 {
+                break;
+            }
+            id = children[0];
+        }
+        let element = self.element(id)?;
+        if !element.text_editable || element.text.is_none() {
+            return Err(Error::new(
+                -32000,
+                "Select an editable text node or a container with one text child",
+            ));
+        }
+        if let rake_protocol::inspection::TextEdit::Set { text } = &edit
+            && text.len() > 16 * 1024
+        {
+            return Err(Error::new(-32602, "Text exceeds 16 KiB"));
+        }
+        Ok(rake_protocol::control::Command::EditElementText {
+            id: element.id.clone(),
+            generation: self.generation().unwrap_or_default().into(),
+            edit,
+        })
+    }
+
     pub fn edit_command(
         &self,
         id: i32,
@@ -1609,6 +1643,52 @@ mod tests {
         assert_eq!(dom.searches.len(), 8);
         dom.clear();
         assert!(dom.searches.is_empty());
+    }
+
+    #[test]
+    fn text_commands_reject_opaque_nodes_and_resolve_only_unambiguous_containers() {
+        use rake_protocol::{control::Command, inspection::TextEdit};
+        let mut snapshot = stable_capture("1", &[("root", None), ("text", Some("root"))]);
+        snapshot.elements[1].text = Some("Original".into());
+        snapshot.elements[1].text_editable = true;
+        let mut dom = Dom::default();
+        dom.update(snapshot.clone()).unwrap();
+        let root = dom.node_id("1-root").unwrap();
+        let leaf = dom.node_id("1-text").unwrap();
+        assert!(
+            dom.text_command(&json!({"nodeId":root}), TextEdit::Reset {}, false)
+                .is_err()
+        );
+        assert!(
+            matches!(dom.text_command(&json!({"nodeId":root}), TextEdit::Reset {}, true).unwrap(),
+            Command::EditElementText { id, generation, edit: TextEdit::Reset {} } if id == "1-text" && generation == "1")
+        );
+        assert!(
+            dom.text_command(
+                &json!({"nodeId":leaf}),
+                TextEdit::Set {
+                    text: "x".repeat(16385)
+                },
+                false
+            )
+            .is_err()
+        );
+        snapshot.elements[1].text_editable = false;
+        dom.update(snapshot.clone()).unwrap();
+        assert!(
+            dom.text_command(&json!({"nodeId":leaf}), TextEdit::Undo {}, false)
+                .is_err()
+        );
+        snapshot.elements[1].text_editable = true;
+        let mut other = snapshot.elements[1].clone();
+        other.id = "1-other".into();
+        other.stable_id = Some("other".into());
+        snapshot.elements.push(other);
+        dom.update(snapshot).unwrap();
+        assert!(
+            dom.text_command(&json!({"nodeId":root}), TextEdit::Reset {}, true)
+                .is_err()
+        );
     }
 
     #[test]

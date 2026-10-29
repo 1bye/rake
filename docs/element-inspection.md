@@ -363,6 +363,20 @@ Edits follow an unambiguous stable presentation identity and expire on removal o
 runtime replacement. Stale capture commands never select another element. Delivery
 is transient and never automatically retried, including undo.
 
+## Temporary text editing
+
+Temporary text editing is available for supported text boundaries when
+`text_editable` is true. `EditElementText { id, generation, edit }` accepts
+`TextEdit::Set { text }`, `Reset` and `Undo`. Exact runtime/capture IDs are required,
+requests are transient without operation retry keys, and stale targets never
+retarget. Overrides are applied before request-layout, leaving application-owned
+content intact. Composed paragraphs use base formatting during an override and
+recover their inline runs on reset. Histories are bounded to 64 nodes, 32 undo
+steps, 16 KiB per replacement and 4 MiB overall, and expire with stable boundaries.
+Chrome sends `DOM.setNodeValue`; see [text editing controls](devtools.md) for reset
+and undo helpers. Without `devtools`, the backend and all override lookups are
+compiled out.
+
 ## Accessibility and interaction metadata
 
 Both Rake Elements frontends expose **Accessibility** and **Events** tabs. Chrome

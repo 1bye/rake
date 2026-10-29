@@ -60,6 +60,13 @@ fn production_capabilities_cannot_enable_inspection_or_edits() {
             enabled: true,
             lease_ms: 1000,
         },
+        Command::EditElementText {
+            id: "anything".into(),
+            generation: "0".into(),
+            edit: rake::inspection::TextEdit::Set {
+                text: "replacement".into(),
+            },
+        },
         Command::EditElementStyle {
             id: "anything".into(),
             generation: "0".into(),

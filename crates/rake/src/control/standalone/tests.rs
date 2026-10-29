@@ -35,6 +35,7 @@ fn standalone_capabilities_and_validation_do_not_advertise_or_accept_router_acti
             "highlight_element",
             "inspect_mode",
             "edit_element_style",
+            "edit_element_text",
             "record_frames"
         ]
     );

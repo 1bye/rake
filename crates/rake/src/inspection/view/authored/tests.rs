@@ -55,6 +55,138 @@ fn named<'a>(snapshot: &'a Snapshot, semantic: &str) -> &'a crate::inspection::E
         .unwrap()
 }
 
+struct EditableTextFixture {
+    store: Store,
+    value: String,
+    rows: Vec<usize>,
+}
+
+impl Render for EditableTextFixture {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        crate::view! {
+            <section class="flex flex-col size-full">
+                <div id="plain">{self.value.clone()}</div>
+                for row in &self.rows {
+                    <p id={(*row).to_string()} class="w-[100px] shrink-0">
+                        <strong class="font-bold">{self.value.clone()}</strong>
+                    </p>
+                }
+            </section>
+        }
+        .root(self.store.clone(), 0, WindowId(1))
+    }
+}
+
+fn text_child(snapshot: &Snapshot, parent: &str) -> crate::inspection::Element {
+    let id = &named(snapshot, parent).id;
+    snapshot
+        .elements
+        .iter()
+        .find(|e| e.parent.as_ref() == Some(id) && e.text.is_some())
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn text_overrides_relayout_follow_keys_and_reset_to_current_application_content() {
+    use crate::inspection::TextEdit;
+    let mut app = gpui::TestAppContext::single();
+    let store = Store::default();
+    store.attach();
+    let (view, cx) = app.add_window_view(|_, _| EditableTextFixture {
+        store: store.clone(),
+        value: "Original".into(),
+        rows: vec![1, 2],
+    });
+    let draw = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
+    };
+    draw(cx);
+    let first = store.snapshot();
+    let original = text_child(&first, "1");
+    assert!(original.text_editable);
+    let height = original.layout.unwrap().height;
+    let replacement = "café 你好 🙂 long wrapping replacement ".repeat(8);
+    store
+        .edit_text(
+            &original.id,
+            &first.capture,
+            &TextEdit::Set {
+                text: replacement.clone(),
+            },
+        )
+        .unwrap();
+    draw(cx);
+    let changed = store.snapshot();
+    let edited = text_child(&changed, "1");
+    assert_eq!(edited.stable_id, original.stable_id);
+    assert_eq!(edited.text.as_deref(), Some(replacement.as_str()));
+    assert!(edited.layout.unwrap().height > height);
+    assert_eq!(
+        edited
+            .accessibility
+            .as_ref()
+            .unwrap()
+            .name_source
+            .as_deref(),
+        Some("text")
+    );
+    assert_eq!(text_child(&changed, "2").text.as_deref(), Some("Original"));
+    view.update(cx, |view, cx| {
+        assert_eq!(view.value, "Original");
+        view.value = "New application value".into();
+        view.rows.reverse();
+        cx.notify();
+    });
+    draw(cx);
+    let latest = store.snapshot();
+    let current = text_child(&latest, "1");
+    assert_eq!(current.stable_id, original.stable_id);
+    assert_eq!(current.text, edited.text);
+    store
+        .edit_text(&current.id, &latest.capture, &TextEdit::Reset {})
+        .unwrap();
+    draw(cx);
+    let reset = store.snapshot();
+    let current = text_child(&reset, "1");
+    assert_eq!(current.text.as_deref(), Some("New application value"));
+    store
+        .edit_text(&current.id, &reset.capture, &TextEdit::Undo {})
+        .unwrap();
+    draw(cx);
+    assert_eq!(text_child(&store.snapshot(), "1").text, edited.text);
+    let current = store.snapshot();
+    let plain = text_child(&current, "plain");
+    store
+        .edit_text(
+            &plain.id,
+            &current.capture,
+            &TextEdit::Set { text: "".into() },
+        )
+        .unwrap();
+    draw(cx);
+    assert_eq!(
+        text_child(&store.snapshot(), "plain").text.as_deref(),
+        Some("")
+    );
+    view.update(cx, |view, cx| {
+        view.rows.retain(|row| *row != 1);
+        cx.notify();
+    });
+    draw(cx);
+    view.update(cx, |view, cx| {
+        view.rows.push(1);
+        cx.notify();
+    });
+    draw(cx);
+    let returned = text_child(&store.snapshot(), "1");
+    assert_ne!(returned.stable_id, original.stable_id);
+    assert_eq!(returned.text.as_deref(), Some("New application value"));
+}
+
 #[test]
 fn automatic_boundaries_capture_styles_sources_and_rendered_text() {
     let mut app = gpui::TestAppContext::single();

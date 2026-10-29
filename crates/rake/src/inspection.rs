@@ -9,6 +9,7 @@
 
 mod editing;
 mod recording;
+mod text_editing;
 #[cfg(feature = "gpui")]
 mod view;
 #[cfg(feature = "experimental-view")]
@@ -33,6 +34,7 @@ pub(crate) struct Store(Rc<RefCell<State>>);
 struct State {
     latest: Rc<Snapshot>,
     edits: BTreeMap<String, editing::History>,
+    text_edits: BTreeMap<String, text_editing::History>,
     frames: recording::Recording,
     pages: BTreeMap<String, (Rc<Snapshot>, Instant)>,
     #[cfg(any(feature = "gpui", test))]
@@ -77,6 +79,7 @@ impl Default for Store {
                 coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Rendered text is captured at text boundaries (16 KiB UTF-8 prefix); editable control values are excluded. Bounded accessibility labels and descriptions include macro-generated control names.".into(),
             }),
             edits: BTreeMap::new(),
+            text_edits: BTreeMap::new(),
             frames: recording::Recording::default(),
             pages: BTreeMap::new(),
             #[cfg(any(feature = "gpui",test))]
@@ -461,6 +464,13 @@ impl Store {
         let mut state = self.0.borrow_mut();
 
         state.windows.remove(&window);
+        let alive: std::collections::BTreeSet<_> = state
+            .windows
+            .values()
+            .flat_map(|host| &host.snapshot.elements)
+            .filter_map(|e| e.stable_id.clone())
+            .collect();
+        state.text_edits.retain(|stable, _| alive.contains(stable));
         state.frames.detach(window);
 
         if state.pick_window == Some(window) {
@@ -516,6 +526,7 @@ impl Store {
                             )
                             && element.kind == old.kind
                             && element.text == old.text
+                            && element.text_editable == old.text_editable
                             && element.stable_id == old.stable_id
                             && (match (&element.accessibility, &old.accessibility) {
                                 (Some(a), Some(b)) => a.same_properties(b),
@@ -588,6 +599,7 @@ impl Store {
             .filter_map(|e| e.stable_id.clone())
             .collect();
         state.edits.retain(|stable, _| alive.contains(stable));
+        state.text_edits.retain(|stable, _| alive.contains(stable));
 
         if state.mode_active(Instant::now())
             && state.pick_window == Some(window)

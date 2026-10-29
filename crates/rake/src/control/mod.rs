@@ -176,6 +176,7 @@ impl<R: Route> RuntimeClient<R> {
                         | Command::InspectMode { .. }
                         | Command::NavigateElement { .. }
                         | Command::EditElementStyle { .. }
+                        | Command::EditElementText { .. }
                         | Command::RecordFrames { .. }
                 ) {
                     return self.command(&command);
@@ -266,6 +267,14 @@ impl<R: Route> RuntimeClient<R> {
         let id: OperationId = match command {
             Command::RecordFrames { enabled, lease_ms } => {
                 self.state.inspection.record_frames(*enabled, *lease_ms)?;
+                return Ok(Reply::Acknowledged);
+            }
+            Command::EditElementText {
+                id,
+                generation,
+                edit,
+            } => {
+                self.state.inspection.edit_text(id, generation, edit)?;
                 return Ok(Reply::Acknowledged);
             }
             Command::EditElementStyle {

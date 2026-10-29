@@ -207,6 +207,9 @@ pub struct Element {
     /// Editable control values are not sampled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Supports temporary text replacement; false for opaque/custom text and inputs.
+    #[serde(default)]
+    pub text_editable: bool,
     /// Application-supplied identity, distinct from GPUI state identity.
     pub semantic_id: Option<String>,
     /// Construction site of the boundary, when supplied.
@@ -363,6 +366,9 @@ pub enum InspectionError {
     /// Unsupported style property/value, unavailable edit target or exhausted edit budget.
     #[error("style edit rejected: {0}")]
     StyleEdit(String),
+    /// Unsupported text target, oversized replacement or exhausted history budget.
+    #[error("text edit rejected: {0}")]
+    TextEdit(String),
     /// Frame recording leases must be bounded.
     #[error("frame recording lease must be 1–5000 milliseconds")]
     InvalidRecordingLease,
@@ -422,6 +428,21 @@ pub enum StyleEdit {
     Reset,
     /// Restores the preceding temporary declaration list (up to 32 edits).
     Undo,
+}
+
+/// Temporary literal text operations, scoped to a stable text boundary lifetime.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TextEdit {
+    /// Replaces rendered content with at most 16 KiB of UTF-8; empty text is valid.
+    Set {
+        /// Literal content, never markup or executable code.
+        text: String,
+    },
+    /// Removes the override, revealing current application text and inline styles.
+    Reset {},
+    /// Restores the preceding override, including a previous reset, up to 32 edits.
+    Undo {},
 }
 
 /// Metadata written by the real element's GPUI accessibility implementation.
