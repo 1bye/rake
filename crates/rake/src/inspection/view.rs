@@ -1457,6 +1457,102 @@ mod tests {
     }
 
     #[test]
+    fn layout_overrides_drive_real_flex_grid_and_border_geometry() {
+        use super::super::{StyleDeclaration, StyleEdit};
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (_, cx) = app.add_window_view(|_, _| IdentityView {
+            store: store.clone(),
+            order: vec![1, 2, 3],
+            width: 20.,
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+        };
+        let edit = |values: &[(&str, &str)]| {
+            let snapshot = store.snapshot();
+            let root = snapshot
+                .elements
+                .iter()
+                .find(|e| e.semantic_id.as_deref() == Some("root"))
+                .unwrap();
+            store
+                .edit_style(
+                    &root.id,
+                    &snapshot.capture,
+                    &StyleEdit::Replace {
+                        declarations: values
+                            .iter()
+                            .map(|(property, value)| StyleDeclaration {
+                                property: (*property).into(),
+                                value: (*value).into(),
+                                enabled: true,
+                            })
+                            .collect(),
+                    },
+                )
+                .unwrap();
+        };
+        let bounds = |snapshot: &Snapshot, name: &str| {
+            snapshot
+                .elements
+                .iter()
+                .find(|e| e.semantic_id.as_deref() == Some(name))
+                .unwrap()
+                .layout
+                .unwrap()
+        };
+        draw(cx);
+        edit(&[
+            ("display", "flex"),
+            ("flex-direction", "column"),
+            ("gap", "8px"),
+        ]);
+        draw(cx);
+        let column = store.snapshot();
+        assert_eq!(
+            bounds(&column, "item-2").y - bounds(&column, "item-1").y,
+            28.
+        );
+        assert_eq!(bounds(&column, "item-2").x, bounds(&column, "item-1").x);
+        edit(&[
+            ("display", "grid"),
+            ("grid-template-columns", "repeat(2, minmax(0, 1fr))"),
+            ("width", "120px"),
+            ("gap", "8px"),
+            ("border-width", "2px"),
+            ("border-radius", "6px"),
+            ("overflow", "hidden"),
+        ]);
+        draw(cx);
+        let grid = store.snapshot();
+        assert!(bounds(&grid, "item-2").x > bounds(&grid, "item-1").x);
+        assert!(bounds(&grid, "item-3").y > bounds(&grid, "item-1").y);
+        let root = grid
+            .elements
+            .iter()
+            .find(|e| e.semantic_id.as_deref() == Some("root"))
+            .unwrap();
+        assert_eq!(
+            root.box_model.as_ref().unwrap().padding.unwrap().width,
+            116.
+        );
+        assert_eq!(
+            root.stable_id,
+            column
+                .elements
+                .iter()
+                .find(|e| e.semantic_id.as_deref() == Some("root"))
+                .unwrap()
+                .stable_id
+        );
+    }
+
+    #[test]
     fn temporary_styles_change_real_layout_toggle_undo_and_expire_on_removal() {
         use super::super::{StyleDeclaration, StyleEdit};
         let mut app = gpui::TestAppContext::single();

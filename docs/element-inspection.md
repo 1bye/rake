@@ -339,8 +339,14 @@ edit per request, rejecting unsupported batches before any mutation.
 
 Overrides refine the real GPUI base before layout and paint. Private interaction
 rules may override them; Computed always reflects the actual result. Supported
-values are hex/transparent colors, px/rem dimensions and spacing, auto dimensions,
-opacity, font size/weight and a literal font family. Unsupported declarations,
+values include hex/transparent colors, px/rem dimensions and spacing, auto dimensions,
+opacity, font size/weight and a literal font family. Layout edits also support display
+(block/flex/grid/none), visibility, relative/absolute positioning and px/rem/auto insets,
+flex direction/wrap/basis/grow/shrink, alignment, gap, and visible/hidden/scroll overflow.
+Borders support solid/dashed styles, colors, per-edge or uniform widths, and per-corner
+or uniform radii. Grid templates use `repeat(N, minmax(0|min-content|max-content, 1fr))`
+with 1–256 equal tracks, matching GPUI’s public grid representation. Unsupported CSS
+(e.g. arbitrary tracks, sticky positioning and overflow:auto) is rejected. Unsupported declarations,
 non-finite values, duplicates and oversized lists fail atomically. There are at
 most 32 declarations and 32 undo steps per edited boundary, across 64 boundaries.
 Edits follow an unambiguous stable presentation identity and expire on removal or

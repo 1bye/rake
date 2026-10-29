@@ -45,6 +45,19 @@ pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
     };
 
     for (key, value) in fields {
+        if matches!(key.as_str(), "grid_cols" | "grid_rows") && !value.is_null() {
+            let minimum = match value["min_size"].as_str() {
+                Some("Zero") => Some("0"),
+                Some("MinContent") => Some("min-content"),
+                Some("MaxContent") => Some("max-content"),
+                _ => None,
+            };
+            if let (Some(count), Some(minimum)) = (value["repeat"].as_u64(), minimum) {
+                properties.push(json!({"name":if key == "grid_cols" { "grid-template-columns" } else { "grid-template-rows" },
+                    "value":format!("repeat({count}, minmax({minimum}, 1fr))")}));
+                continue;
+            }
+        }
         if let Some(fields) = value.as_object().filter(|_| {
             matches!(
                 key.as_str(),
@@ -211,6 +224,21 @@ pub(super) fn inline(value: Option<&Value>) -> Value {
 mod tests {
     // Real captured GPUI color shapes and authored units; no renderer or CSS engine.
     use super::*;
+
+    #[test]
+    fn grid_templates_roundtrip_to_editable_css_syntax() {
+        let properties = properties(Some(
+            &json!({"grid_cols":{"repeat":3,"min_size":"Zero"},"grid_rows":{"repeat":2,"min_size":"MinContent"}}),
+        ));
+        assert!(
+            properties
+                .iter()
+                .any(|p| p["name"] == "grid-template-columns"
+                    && p["value"] == "repeat(3, minmax(0, 1fr))")
+        );
+        assert!(properties.iter().any(|p| p["name"] == "grid-template-rows"
+            && p["value"] == "repeat(2, minmax(min-content, 1fr))"));
+    }
 
     #[test]
     fn solid_colors_typography_edges_and_unknown_fields_remain_visible() {

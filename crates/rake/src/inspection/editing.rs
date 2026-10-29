@@ -123,7 +123,9 @@ pub(super) fn refinement(
             let number: f32 = number.parse().map_err(|_| rejected("invalid length"))?;
             if !number.is_finite()
                 || number.abs() > 100_000.
-                || (number < 0. && !property.starts_with("margin-"))
+                || (number < 0.
+                    && !property.starts_with("margin-")
+                    && !matches!(property, "top" | "right" | "bottom" | "left"))
             {
                 return Err(rejected("length outside supported range"));
             }
@@ -157,6 +159,78 @@ pub(super) fn refinement(
         };
         let mut next = StyleRefinement::default();
         match property {
+            "display" => next.display = Some(keyword(value)?),
+            "visibility" => next.visibility = Some(keyword(value)?),
+            "position" => next.position = Some(keyword(value)?),
+            "flex-direction" => next.flex_direction = Some(keyword(value)?),
+            "flex-wrap" => next.flex_wrap = Some(keyword(value)?),
+            "align-items" => next.align_items = Some(keyword(value)?),
+            "align-self" => next.align_self = Some(keyword(value)?),
+            "align-content" => next.align_content = Some(keyword(value)?),
+            "justify-content" => next.justify_content = Some(keyword(value)?),
+            "flex-grow" | "flex-shrink" => {
+                let number: f32 = value.parse().map_err(|_| rejected("invalid flex factor"))?;
+                if !number.is_finite() || !(0. ..=100_000.).contains(&number) {
+                    return Err(rejected("flex factor must be finite and nonnegative"));
+                }
+                if property == "flex-grow" {
+                    next.flex_grow = Some(number);
+                } else {
+                    next.flex_shrink = Some(number);
+                }
+            }
+            "flex-basis" => {
+                next.flex_basis = Some(if value == "auto" {
+                    Length::Auto
+                } else {
+                    length()?.into()
+                })
+            }
+            "grid-template-columns" => next.grid_cols = Some(grid(value)?),
+            "grid-template-rows" => next.grid_rows = Some(grid(value)?),
+            "overflow" => {
+                let overflow = keyword(value)?;
+                next.overflow.x = Some(overflow);
+                next.overflow.y = Some(overflow);
+            }
+            "overflow-x" => next.overflow.x = Some(keyword(value)?),
+            "overflow-y" => next.overflow.y = Some(keyword(value)?),
+            "border-style" => next.border_style = Some(keyword(value)?),
+            "border-width" => {
+                let width = Some(length()?);
+                next.border_widths.top = width;
+                next.border_widths.right = width;
+                next.border_widths.bottom = width;
+                next.border_widths.left = width;
+            }
+            "border-top-width" => next.border_widths.top = Some(length()?),
+            "border-right-width" => next.border_widths.right = Some(length()?),
+            "border-bottom-width" => next.border_widths.bottom = Some(length()?),
+            "border-left-width" => next.border_widths.left = Some(length()?),
+            "border-radius" => {
+                let radius = Some(length()?);
+                next.corner_radii.top_left = radius;
+                next.corner_radii.top_right = radius;
+                next.corner_radii.bottom_left = radius;
+                next.corner_radii.bottom_right = radius;
+            }
+            "border-top-left-radius" => next.corner_radii.top_left = Some(length()?),
+            "border-top-right-radius" => next.corner_radii.top_right = Some(length()?),
+            "border-bottom-left-radius" => next.corner_radii.bottom_left = Some(length()?),
+            "border-bottom-right-radius" => next.corner_radii.bottom_right = Some(length()?),
+            "top" | "right" | "bottom" | "left" => {
+                let length = Some(if value == "auto" {
+                    Length::Auto
+                } else {
+                    length()?.into()
+                });
+                match property {
+                    "top" => next.inset.top = length,
+                    "right" => next.inset.right = length,
+                    "bottom" => next.inset.bottom = length,
+                    _ => next.inset.left = length,
+                }
+            }
             "color" => next.text.color = Some(color()?),
             "background-color" => next.background = Some(color()?.into()),
             "border-color" => next.border_color = Some(color()?),
@@ -222,9 +296,14 @@ pub(super) fn refinement(
             }
             "row-gap" => next.gap.height = Some(length()?.into()),
             "column-gap" => next.gap.width = Some(length()?.into()),
+            "gap" => {
+                let gap = Some(DefiniteLength::from(length()?));
+                next.gap.width = gap;
+                next.gap.height = gap;
+            }
             _ => {
                 return Err(rejected(
-                    "unsupported property; use colors, px/rem sizes/spacing, opacity or typography",
+                    "unsupported property; see the Elements editable-style coverage",
                 ));
             }
         }
@@ -233,6 +312,59 @@ pub(super) fn refinement(
         }
     }
     Ok(style)
+}
+
+#[cfg(feature = "gpui")]
+fn keyword<T: serde::de::DeserializeOwned>(value: &str) -> Result<T, InspectionError> {
+    if value.split('-').any(str::is_empty)
+        || !value.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+    {
+        return Err(rejected("expected a supported CSS keyword"));
+    }
+    let variant = if value == "nowrap" {
+        "NoWrap".into()
+    } else {
+        value
+            .split('-')
+            .map(|part| {
+                let mut chars = part.chars();
+                chars.next().map_or(String::new(), |first| {
+                    first.to_ascii_uppercase().to_string() + chars.as_str()
+                })
+            })
+            .collect::<String>()
+    };
+    serde_json::from_value(serde_json::Value::String(variant))
+        .map_err(|_| rejected("keyword is not supported by this GPUI property"))
+}
+
+#[cfg(feature = "gpui")]
+fn grid(value: &str) -> Result<gpui::GridTemplate, InspectionError> {
+    let compact: String = value.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let (count, track) = compact
+        .strip_prefix("repeat(")
+        .and_then(|s| s.strip_suffix(')'))
+        .and_then(|s| s.split_once(','))
+        .ok_or_else(|| {
+            rejected("grid template must be repeat(N, minmax(0|min-content|max-content, 1fr))")
+        })?;
+    let repeat: u16 = count
+        .parse()
+        .map_err(|_| rejected("invalid grid repeat count"))?;
+    if !(1..=256).contains(&repeat) {
+        return Err(rejected("grid repeat count must be 1–256"));
+    }
+    let min_size = match track {
+        "minmax(0,1fr)" => gpui::GridTemplateMinSize::Zero,
+        "minmax(min-content,1fr)" => gpui::GridTemplateMinSize::MinContent,
+        "minmax(max-content,1fr)" => gpui::GridTemplateMinSize::MaxContent,
+        _ => {
+            return Err(rejected(
+                "GPUI supports equal fractional grid tracks with 0, min-content or max-content minima",
+            ));
+        }
+    };
+    Ok(gpui::GridTemplate { repeat, min_size })
 }
 
 #[cfg(all(test, feature = "gpui"))]
@@ -252,6 +384,14 @@ mod tests {
             ("color", "url(secret)"),
             ("font-family", "x; color:red"),
             ("unsupported", "10px"),
+            ("display", "inline-flex"),
+            ("flex-direction", "column--reverse"),
+            ("flex-grow", "NaN"),
+            ("flex-shrink", "-1"),
+            ("overflow", "auto"),
+            ("border-width", "-2px"),
+            ("grid-template-columns", "repeat(257, minmax(0, 1fr))"),
+            ("grid-template-columns", "repeat(2, 50px)"),
         ] {
             assert!(
                 validate(&[declaration(property, value)]).is_err(),
@@ -269,7 +409,14 @@ mod tests {
         assert!(
             validate(&[
                 declaration("margin-left", "-2rem"),
-                declaration("color", "#11223344")
+                declaration("color", "#11223344"),
+                declaration("top", "-2px"),
+                declaration("grid-template-rows", "repeat(3, minmax(min-content, 1fr))"),
+                declaration("flex-wrap", "nowrap"),
+                declaration("align-items", "flex-start"),
+                declaration("justify-content", "space-between"),
+                declaration("border-style", "dashed"),
+                declaration("border-radius", "0.5rem")
             ])
             .is_ok()
         );
