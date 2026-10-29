@@ -1,4 +1,22 @@
 //! Bounded structured diagnostics, independent of authoritative application state.
+//!
+//! This crate owns record retention, tracing context and nonblocking output. It has
+//! no router, HTTP client or UI dependency. The `rake` facade re-exports these types
+//! through `rake::diagnostics`.
+//!
+//! ```
+//! use rake_diagnostics::Collector;
+//! use tracing_subscriber::prelude::*;
+//!
+//! let collector = Collector::new(128);
+//! let subscriber = tracing_subscriber::registry().with(collector.layer());
+//! tracing::subscriber::with_default(subscriber, || {
+//!     tracing::info!(task = "export", "started");
+//! });
+//! let snapshot = collector.snapshot_after(0, Some("event"));
+//! assert_eq!(snapshot.records.len(), 1);
+//! assert_eq!(snapshot.records[0].fields["task"], "export");
+//! ```
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -96,6 +114,16 @@ impl Collector {
 
     /// Copies retained records without draining the collector.
     pub fn snapshot(&self) -> Snapshot {
+        self.snapshot_after(0, None)
+    }
+
+    /// Copies matching records after an exclusive sequence cursor, in sequence order.
+    ///
+    /// `None` selects all kinds; `Some("span")` selects both span-open and span-close
+    /// records. Other kinds match exactly. Filtering precedes cloning, so incremental
+    /// polling copies only the selected records. Loss counters always cover the
+    /// collector's entire lifetime, even when this snapshot contains no records.
+    pub fn snapshot_after(&self, after: u64, kind: Option<&str>) -> Snapshot {
         let buffer = self
             .0
             .buffer
@@ -103,7 +131,21 @@ impl Collector {
             .unwrap_or_else(|error| error.into_inner());
 
         Snapshot {
-            records: buffer.records.iter().cloned().collect(),
+            records: buffer
+                .records
+                .iter()
+                .filter(|record| {
+                    record.sequence > after
+                        && kind.is_none_or(|kind| {
+                            if kind == "span" {
+                                record.kind == "span_open" || record.kind == "span_close"
+                            } else {
+                                record.kind == kind
+                            }
+                        })
+                })
+                .cloned()
+                .collect(),
             dropped: self.0.dropped.load(Ordering::Relaxed),
             output_dropped: self.0.output_dropped.load(Ordering::Relaxed),
         }
@@ -114,7 +156,9 @@ impl Collector {
         CollectorLayer(self.clone())
     }
 
-    pub(crate) fn record(
+    /// Records an owned event using this collector's current tracing context.
+    /// Writer contention or capacity overflow is counted rather than blocking producers.
+    pub fn record(
         &self,
         level: &str,
         target: &str,
@@ -125,11 +169,13 @@ impl Collector {
         self.record_context(self.context(), level, target, kind, spans, fields, None);
     }
 
-    pub(crate) fn context(&self) -> CapturedContext {
+    /// Captures this collector's current tracing metadata for later asynchronous work.
+    pub fn context(&self) -> CapturedContext {
         self.span_context(&tracing::Span::current())
     }
 
-    pub(crate) fn span_context(&self, span: &tracing::Span) -> CapturedContext {
+    /// Captures metadata from a span on a registry-backed subscriber carrying this layer.
+    pub fn span_context(&self, span: &tracing::Span) -> CapturedContext {
         span.with_subscriber(|(id, dispatch)| {
             dispatch
                 .downcast_ref::<Registry>()
@@ -141,7 +187,9 @@ impl Collector {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn record_context(
+    /// Records an event with context captured by this collector, overlaid by explicit fields.
+    /// Empty `spans` keeps the captured span path; `duration_us` is optional elapsed wall time.
+    pub fn record_context(
         &self,
         mut context: CapturedContext,
         level: &str,
@@ -227,8 +275,8 @@ impl Visit for Fields {
 pub struct CollectorLayer(Collector);
 
 /// Owned causal metadata captured before asynchronous work changes context.
-#[derive(Clone, Default)]
-pub(crate) struct CapturedContext {
+#[derive(Clone, Debug, Default)]
+pub struct CapturedContext {
     spans: Vec<String>,
     fields: BTreeMap<String, Value>,
     span_id: Option<u64>,
@@ -408,7 +456,7 @@ pub enum SubscriberMode {
 /// Runner diagnostic configuration. No development control endpoint is installed.
 #[derive(Clone, Default)]
 pub struct DiagnosticsConfig {
-    pub(crate) collector: Collector,
+    collector: Collector,
     mode: SubscriberMode,
 }
 
@@ -423,6 +471,11 @@ impl DiagnosticsConfig {
         self.collector = collector;
 
         self
+    }
+
+    /// Returns a shared collector handle for composing application services.
+    pub fn shared_collector(&self) -> Collector {
+        self.collector.clone()
     }
 
     /// Selects subscriber ownership.

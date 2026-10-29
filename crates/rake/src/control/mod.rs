@@ -412,22 +412,9 @@ impl<R: Route> RuntimeClient<R> {
                     .expect("decision serialization"),
             )),
             Query::Events { cursor } => Ok(Reply::Event(event(self.router.snapshot(), cursor))),
-            Query::Diagnostics { after, kind } => {
-                let mut snapshot = self.router.diagnostics();
-
-                snapshot.records.retain(|record| {
-                    record.sequence > after
-                        && kind.as_ref().is_none_or(|kind| {
-                            if kind == "span" {
-                                record.kind == "span_open" || record.kind == "span_close"
-                            } else {
-                                record.kind == *kind
-                            }
-                        })
-                });
-
-                Ok(Reply::Diagnostics(snapshot))
-            }
+            Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
+                self.router.diagnostics(after, kind.as_deref()),
+            )),
         }
     }
 }

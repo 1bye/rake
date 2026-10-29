@@ -707,8 +707,12 @@ impl<R: Route> Router<R> {
         self.0.state.borrow().results.get(&id).cloned()
     }
 
-    pub(crate) fn diagnostics(&self) -> crate::diagnostics::Snapshot {
-        self.0.collector.snapshot()
+    pub(crate) fn diagnostics(
+        &self,
+        after: u64,
+        kind: Option<&str>,
+    ) -> crate::diagnostics::Snapshot {
+        self.0.collector.snapshot_after(after, kind)
     }
 
     pub(crate) fn cancel_task(&self, id: crate::tasks::TaskId) -> Result<bool, TaskError> {

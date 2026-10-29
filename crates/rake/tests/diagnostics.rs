@@ -6,6 +6,22 @@
 use rake::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
 use tracing_subscriber::prelude::*;
 
+#[test]
+fn facade_reexports_the_standalone_collector_without_a_wrapper() {
+    let collector: rake_diagnostics::Collector = Collector::new(2);
+
+    let config: rake_diagnostics::DiagnosticsConfig = DiagnosticsConfig::new()
+        .collector(collector.clone())
+        .subscriber(SubscriberMode::Host);
+
+    config.install().expect("host-owned subscriber");
+    collector.record("INFO", "facade", "event", Vec::new(), Default::default());
+    let snapshot = config.shared_collector().snapshot_after(0, None);
+
+    assert_eq!(snapshot.records.len(), 1);
+    assert_eq!(snapshot.records[0].target, "facade");
+}
+
 #[rake::instrument(skip_all)]
 async fn suspended() {
     futures::future::pending::<()>().await;

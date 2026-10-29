@@ -20,19 +20,19 @@ gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-ha
 palette = { version = "0.7.7", optional = true }
 unicode-segmentation = { version = "1.13.3", optional = true }
 rake-macros = { path = "../rake-macros" }
+rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = "1.2.3"
 tracing.workspace = true
 futures.workspace = true
 thiserror.workspace = true
-tracing-subscriber = { version = "0.3", features = ["registry"] }
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "stream"] }
 url = "2.5"
 percent-encoding = "2"
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 event-listener = "5.4"
-web-time = "1"
+web-time.workspace = true
 gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false, optional = true }
 gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", features = ["font-kit", "wayland", "x11"], optional = true }
 
@@ -56,6 +56,7 @@ raw-window-handle = { version = "0.6", optional = true }
 
 [dev-dependencies]
 futures.workspace = true
+tracing-subscriber.workspace = true
 trybuild = "1"
 
 [[test]]

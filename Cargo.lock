@@ -4539,6 +4539,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "palette",
  "percent-encoding",
+ "rake-diagnostics",
  "rake-macros",
  "raw-window-handle",
  "reqwest",
@@ -4569,6 +4570,19 @@ dependencies = [
  "tungstenite",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "rake-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]

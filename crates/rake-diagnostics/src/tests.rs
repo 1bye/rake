@@ -20,8 +20,8 @@ fn a_full_output_queue_reports_loss_and_keeps_collecting() {
         });
 
     tracing::subscriber::with_default(subscriber, || {
-        crate::info!("first");
-        crate::info!("second");
+        tracing::info!("first");
+        tracing::info!("second");
     });
     let snapshot = collector.snapshot();
 

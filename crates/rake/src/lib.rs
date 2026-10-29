@@ -6,7 +6,9 @@
 extern crate self as rake;
 
 pub mod control;
-pub mod diagnostics;
+
+pub use rake_diagnostics as diagnostics;
+
 pub mod http;
 pub mod inspection;
 pub mod quit;

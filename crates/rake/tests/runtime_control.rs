@@ -60,6 +60,67 @@ fn query(client: &RuntimeClient<Destination>, query: Query) -> Reply {
     request(client, None, Message::Query(query)).unwrap()
 }
 
+#[test]
+fn diagnostic_queries_preserve_cursor_kind_and_lifetime_loss_semantics() {
+    let (router, client, mut pool) = harness(RouterConfig::default());
+
+    open(&client, "diagnostic-fixture");
+    router
+        .app()
+        .tasks()
+        .spawn("fixture", async { Ok(()) })
+        .unwrap();
+    pool.run_until_stalled();
+
+    let Reply::Diagnostics(all) = query(
+        &client,
+        Query::Diagnostics {
+            after: 0,
+            kind: None,
+        },
+    ) else {
+        panic!("diagnostic snapshot expected")
+    };
+
+    assert!(all.records.iter().any(|record| record.kind == "work"));
+    let after = all.records[0].sequence;
+
+    let Reply::Diagnostics(operations) = query(
+        &client,
+        Query::Diagnostics {
+            after,
+            kind: Some("operation".into()),
+        },
+    ) else {
+        panic!("filtered diagnostic snapshot expected")
+    };
+
+    assert!(!operations.records.is_empty());
+    assert!(
+        operations
+            .records
+            .iter()
+            .all(|record| { record.sequence > after && record.kind == "operation" })
+    );
+    assert_eq!(operations.dropped, all.dropped);
+    assert_eq!(operations.output_dropped, all.output_dropped);
+
+    let Reply::Diagnostics(idle) = query(
+        &client,
+        Query::Diagnostics {
+            after: all.records.last().unwrap().sequence,
+            kind: None,
+        },
+    ) else {
+        panic!("idle diagnostic snapshot expected")
+    };
+
+    assert!(idle.records.is_empty());
+    assert_eq!(idle.dropped, all.dropped);
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
 fn submitted(reply: Reply) -> OperationId {
     let Reply::Submitted { operation_id } = reply else {
         panic!("expected submission")

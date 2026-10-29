@@ -60,6 +60,30 @@ with search, pinned notes, an editor, autosave and crash recovery. Run
 `cargo run -p rake-notes`. Its [typed service composition](docs/services.md) keeps
 GUI edits, CLI commands and lifecycle guards on the same notebook instance.
 
+## Workspace
+
+`rake` is the application facade. It owns routing, task lifetimes, runtime control,
+HTTP and GPUI host integration. Existing `rake::diagnostics` imports re-export the
+same types from `rake-diagnostics`.
+
+- `rake-diagnostics` owns bounded records, tracing context, snapshots and native/Web
+  output. It can be built and tested without GPUI, the HTTP stack or `rake-macros`.
+- `rake-macros` generates application, route, command and view syntax through the facade.
+- `rake-cli` provides terminal control and the CDP development adapter.
+
+The dependency direction is `rake-cli -> rake -> rake-diagnostics` and
+`rake -> rake-macros`. Router and task state stay together because their entry,
+window, cancellation and reload invariants share one local runtime owner.
+
+Inspector polling uses `Collector::snapshot_after` to filter by cursor and kind
+before cloning owned records. The initial snapshot still copies the entire selected
+buffer; incremental and idle polls copy only new matching records. Loss counters
+remain lifetime totals. Run the focused release benchmark with:
+
+```sh
+cargo bench -p rake-diagnostics --bench diagnostics_snapshot --locked
+```
+
 ## Run
 
 The project pins Rust 1.95.0 and GPUI CE source revision
@@ -125,6 +149,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo check -p rake --no-default-features --locked
+cargo check -p rake-diagnostics --lib --target wasm32-unknown-unknown --locked
 cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --test guarded_quit --locked
 cargo build -p rake-cli --locked
 python3 scripts/test-dev-bridge.py

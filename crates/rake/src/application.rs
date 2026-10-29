@@ -202,8 +202,8 @@ impl<R: Route> App<R> {
         }
 
         Ok(Services::new(
-            HttpClient::with_collector(self.http.clone(), self.diagnostics.collector.clone())?,
-            self.diagnostics.collector.clone(),
+            HttpClient::with_collector(self.http.clone(), self.diagnostics.shared_collector())?,
+            self.diagnostics.shared_collector(),
             self.services.clone(),
         ))
     }
