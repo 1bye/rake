@@ -22,10 +22,21 @@ use rake::prelude::*;
 // App::new("example.notes").routes(Views).control(ControlConfig::FromEnvironment)
 ```
 
-The current runner adapter requires `App::routes`; configuring control or commands
-on a root-only `App::root` returns `ControlRequiresRouter` before host startup.
-Headless hosts can construct a `Router<NoRoute>`, register handlers and drive it
-without a GUI.
+`App::root(...).control(ControlConfig::FromEnvironment)` opts a standalone root into
+inspection using the same native environment flag or authenticated Web metadata.
+It advertises only Info, Schema, diagnostics and element tree/lookup/picking queries,
+plus transient highlight, picker and registered focus/scroll actions. It creates
+no router workspace, application operations or retry-key registry. Unsupported
+requests return `ControlError::Unsupported`; clients must use the advertised
+capabilities. The HTML inspector opens Elements for these hosts and omits queries
+for absent workspace state. Native root disposal removes its discovery files and
+socket; Web disposal aborts its authenticated bridge and outstanding I/O.
+
+Registering application commands on `App::root` still returns
+`ControlRequiresRouter` before startup. Use `App::routes` for managed application
+commands, guards, tabs and checkpointed restoration. Headless hosts can construct a
+`Router<NoRoute>`, register handlers and drive it without a GUI. All hosts remain
+disabled by default, in debug and release builds.
 
 Build and run the terminal client locally:
 

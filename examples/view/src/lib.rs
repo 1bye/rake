@@ -399,19 +399,21 @@ impl Render for Counter {
 
 /// Configures the same macro-authored view on native and browser hosts.
 pub fn application() -> App {
-    App::new("com.example.rake.view").root(|_, window, cx| {
-        cx.bind_keys([
-            KeyBinding::new("secondary-i", Increment, Some("Counter")),
-            KeyBinding::new("escape", Reset, Some("Counter")),
-            KeyBinding::new("h", ToggleHistory, Some("Counter")),
-            KeyBinding::new("r", ReverseHistory, Some("Counter")),
-            KeyBinding::new("l", ToggleLocked, Some("Counter")),
-            KeyBinding::new("t", ToggleTheme, Some("Counter")),
-            KeyBinding::new("b", BumpRow, Some("HistoryItem")),
-        ]);
+    App::new("com.example.rake.view")
+        .control(rake::control::ControlConfig::FromEnvironment)
+        .root(|_, window, cx| {
+            cx.bind_keys([
+                KeyBinding::new("secondary-i", Increment, Some("Counter")),
+                KeyBinding::new("escape", Reset, Some("Counter")),
+                KeyBinding::new("h", ToggleHistory, Some("Counter")),
+                KeyBinding::new("r", ReverseHistory, Some("Counter")),
+                KeyBinding::new("l", ToggleLocked, Some("Counter")),
+                KeyBinding::new("t", ToggleTheme, Some("Counter")),
+                KeyBinding::new("b", BumpRow, Some("HistoryItem")),
+            ]);
 
-        cx.new(|cx| Counter::new(window, cx)).into()
-    })
+            cx.new(|cx| Counter::new(window, cx)).into()
+        })
 }
 
 #[rake::app]

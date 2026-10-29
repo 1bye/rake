@@ -61,7 +61,7 @@ needed; it may contain unsaved development data and large build artifacts.
 
 ## Shared runtime boundary
 
-Routed applications opt in with `ControlConfig::FromEnvironment`. Native dev sets
+Routed and standalone root applications opt in with `ControlConfig::FromEnvironment`. Native dev sets
 `RAKE_DEV_CONTROL=1` and a private control directory; Web uses the authenticated
 same-origin development bridge. Ordinary builds enable neither adapter by default.
 Root-only applications cannot checkpoint a router workspace; native dev keeps an
@@ -183,6 +183,9 @@ checkpoint for a later build or explicit restart. The page displays build/reload
 failures and reconnects to the broker independently of application diagnostics.
 Static production builds have no bridge or reload polling.
 
-Web control requires the routed runner. A root-only page can load the first build,
-but subsequent coordinated reload requires a runtime bridge. The initial adapter
-uses full-page replacement; controlled Wasm module swapping is not implemented.
+Standalone `App::root` pages can also expose inspection through the authenticated
+Web bridge. Their published-build reload uses full-page replacement with fresh
+local state; no router checkpoint or `restored_from` lineage is invented. Select
+the new runtime explicitly in an attached inspector. Routed pages retain the
+checkpointed restoration behavior above. Controlled Wasm module swapping is not
+implemented.

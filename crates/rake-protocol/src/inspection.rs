@@ -188,7 +188,7 @@ pub struct Element {
     pub resolved: Option<ResolvedStyle>,
     /// Whether a metadata field exceeded its capture limit.
     pub metadata_truncated: bool,
-    /// Presented route owner; None for the workspace shell.
+    /// Presented route owner; None for an application shell or standalone root.
     pub tab_id: Option<TabId>,
     /// Presented route entry, never a hidden retained history entry.
     pub entry_id: Option<EntryId>,

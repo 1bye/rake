@@ -253,15 +253,24 @@ async function refresh() {
     }
     if (runtime && runtime === model.runtime) {
       if (!info) {
-        const metadata = await Promise.all([query('info'), query('routes'), query('commands')]);
+        const metadata = (await query('info')).value;
         if (runtime !== model.runtime) return;
-        [info, routes, commands] = metadata.map(reply => reply.value);
+        const descriptors = await Promise.all(['routes', 'commands'].map(name => metadata.queries.includes(name) ? query(name, {}, runtime) : {value: []}));
+        if (runtime !== model.runtime) return;
+        info = metadata;
+        [routes, commands] = descriptors.map(reply => reply.value);
+        if (!info.queries.includes('events') && info.queries.includes('inspect_tree') && panel === 'Workspace') switchPanel('Elements');
       }
-      const event = await query('events', {cursor: model.cursor}, runtime);
-      if (runtime !== model.runtime) return;
-      model.event(event.value);
-      const diagnostics = await query('diagnostics', {after: model.after, kind: null}, runtime);
-      model.diagnostics(diagnostics.value, runtime);
+      if (info.queries.includes('events')) {
+        const event = await query('events', {cursor: model.cursor}, runtime);
+        if (runtime !== model.runtime) return;
+        model.event(event.value);
+      }
+      if (info.queries.includes('diagnostics')) {
+        const diagnostics = await query('diagnostics', {after: model.after, kind: null}, runtime);
+        if (runtime !== model.runtime) return;
+        model.diagnostics(diagnostics.value, runtime);
+      }
       if (selectedOperation != null && (panel === 'Operations' || receipt?.envelope.runtime_id === runtime)) {
         const selected = selectedOperation;
         try {
@@ -298,7 +307,7 @@ async function refresh() {
 
 function workspace() {
   const snapshot = model.snapshot;
-  if (!snapshot) return empty('No workspace snapshot yet. The inspector stays available while the application starts or restarts.');
+  if (!snapshot) return empty(info && !info.queries.includes('events') ? 'This standalone host exposes Elements and diagnostics. Router workspace controls are unavailable.' : 'No workspace snapshot yet. The inspector stays available while the application starts or restarts.');
   const hosts = snapshot.windows || [{id: snapshot.window_id, selected: snapshot.selected}];
   const selectedTabs = new Set(hosts.map(host => host.selected));
   const currentTab = snapshot.tabs.find(tab => selectedTabs.has(tab.id)) || snapshot.tabs[0];
@@ -579,7 +588,7 @@ function elementsPanel() {
     control.dataset.focus = 'element:' + element.id;
     control.setAttribute('aria-label', 'Inspect ' + element.id);
     control.setAttribute('aria-pressed', String(selectedElement === element.id));
-    control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
+    control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Application shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
     control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
     const kind = element.view?.tag || elementName(element.kind);
     control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
@@ -653,7 +662,7 @@ function elementsPanel() {
         for (const reason of boxes.unavailable || []) detail.append(el('p', reason, 'hint'));
       } else detail.append(el('p', 'Resolved box geometry unavailable for this boundary/runtime.', 'hint'));
     } else {
-      detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Authored tag', selected.view?.tag], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Workspace shell' : 'entry-' + selected.entry_id]]));
+      detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Authored tag', selected.view?.tag], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Application shell' : 'entry-' + selected.entry_id]]));
       for (const style of selected.view?.style_sources || []) detail.append(card(`${style.scope} · ${style.attribute}`, el('pre', style.expression), el('p', `${style.source.file}:${style.source.line}:${style.source.column}`, 'hint')));
       if (selected.view) detail.append(el('p', 'Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures.', 'hint'));
     }

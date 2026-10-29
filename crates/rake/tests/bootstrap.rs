@@ -16,7 +16,7 @@ fn invalid_apps_fail_before_starting_the_host() {
         App::new("com.example.control")
             .control(rake::control::ControlConfig::FromEnvironment)
             .run(),
-        Err(AppError::ControlRequiresRouter)
+        Err(AppError::MissingRoot)
     ));
     assert!(matches!(
         App::new("com.example.app").run(),
@@ -41,4 +41,22 @@ fn automatic_subscriber_conflicts_are_reported() {
         conflict,
         Err(DiagnosticsError::SubscriberAlreadyInstalled)
     ));
+}
+
+#[rake::data(schema)]
+#[derive(rake::Command)]
+#[command(id = "standalone.unsupported")]
+struct RootCommand;
+
+#[test]
+fn root_inspection_does_not_enable_registered_application_commands() {
+    let app = App::new("com.example.root")
+        .root(|_, _, cx| {
+            use rake::gpui::AppContext;
+            cx.new(|_| rake::gpui::Empty).into()
+        })
+        .control(rake::control::ControlConfig::FromEnvironment)
+        .command::<RootCommand, _, _>(|_, _| async { Ok(()) })
+        .unwrap();
+    assert!(matches!(app.run(), Err(AppError::ControlRequiresRouter)));
 }

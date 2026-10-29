@@ -14,7 +14,7 @@ use futures::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 
-use super::{MAX_MESSAGE_BYTES, RuntimeClient};
+use super::{HostClient, MAX_MESSAGE_BYTES, RuntimeClient, RuntimeInfo};
 use crate::router::Route;
 
 pub use rake_client::local::{
@@ -35,8 +35,20 @@ impl LocalServer {
         application_id: &str,
         path: &Path,
     ) -> io::Result<Self> {
+        Self::bind_host(&HostClient::new(client.clone()), application_id, path)
+    }
+
+    pub(crate) fn bind_host(
+        client: &HostClient,
+        application_id: &str,
+        path: &Path,
+    ) -> io::Result<Self> {
+        Self::bind_info(client.info(), application_id, path)
+    }
+
+    fn bind_info(info: RuntimeInfo, application_id: &str, path: &Path) -> io::Result<Self> {
         prepare_directory(path)?;
-        let stem = client.info().runtime_id.to_string();
+        let stem = info.runtime_id.to_string();
         let socket = path.join(format!("{stem}.sock"));
         let manifest = path.join(format!("{stem}.json"));
         let listener = Async::<UnixListener>::bind(&socket)?;
@@ -51,7 +63,7 @@ impl LocalServer {
         let instance = Instance {
             application_id: application_id.into(),
             pid: std::process::id(),
-            info: client.info(),
+            info,
             endpoint: Endpoint::Local {
                 path: server.socket.clone(),
             },
@@ -72,6 +84,10 @@ impl LocalServer {
     /// Drives a bounded set of connections on the caller's local event loop.
     /// Each connection has a five-second I/O deadline and submits one owned message.
     pub async fn run<R: Route>(&self, client: RuntimeClient<R>) -> io::Result<()> {
+        self.run_host(HostClient::new(client)).await
+    }
+
+    pub(crate) async fn run_host(&self, client: HostClient) -> io::Result<()> {
         let mut connections = FuturesUnordered::new();
 
         loop {
@@ -103,7 +119,7 @@ impl LocalServer {
 }
 
 // Framed input is bounded before allocating or decoding it.
-async fn serve_one<R: Route>(stream: Async<UnixStream>, client: RuntimeClient<R>) {
+async fn serve_one(stream: Async<UnixStream>, client: HostClient) {
     let work = async move {
         let mut reader = BufReader::new(stream);
         let mut bytes = Vec::new();

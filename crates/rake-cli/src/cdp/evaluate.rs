@@ -35,6 +35,14 @@ pub(super) fn parse(expression: &str) -> Result<(String, Value), Error> {
 }
 
 pub(super) fn names(instance: &Instance) -> Result<Vec<String>, Error> {
+    if !instance
+        .info
+        .queries
+        .iter()
+        .any(|query| query == "commands")
+    {
+        return Ok(Vec::new());
+    }
     let reply = crate::terminal::query(instance, Query::Commands {}, super::TIMEOUT)
         .map_err(|e| Error::new(-32000, e.to_string()))?;
 
@@ -132,6 +140,30 @@ fn delivery_error(message: impl std::fmt::Display, key: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_only_hosts_offer_no_typed_command_completion_or_evaluation() {
+        let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
+            rake::router::RouterConfig::default(),
+        );
+        let mut info = router.client().info();
+        info.queries = vec!["info".into(), "inspect_tree".into()];
+        let instance = Instance {
+            application_id: "standalone".into(),
+            pid: 0,
+            info,
+            endpoint: rake_client::local::Endpoint::Local {
+                path: "/no/inspection-socket".into(),
+            },
+        };
+        assert!(names(&instance).unwrap().is_empty());
+        assert!(
+            validate(&instance, "app.command(null)")
+                .unwrap_err()
+                .message
+                .contains("Unregistered command")
+        );
+    }
 
     #[test]
     fn accepts_only_one_command_and_json_arguments() {

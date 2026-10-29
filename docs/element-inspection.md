@@ -2,12 +2,15 @@
 
 The Elements panel, CLI and Rust client read the same bounded, owned snapshots.
 They never hold UI entities, read source files, or evaluate arbitrary Rust/JavaScript.
-The routed application runner attaches capture when configured with
+Both routed and standalone `App::root` runners attach capture when configured with
 `ControlConfig::FromEnvironment` and enabled by `RAKE_DEV_CONTROL=1` on native
 or valid authenticated development metadata on Web. Disabled and headless hosts
 report `unavailable`. An attached host reports `waiting` until its first prepaint.
-Standalone `App::root` applications currently have no development control host;
-automatic wrappers alone do not create one.
+A standalone host captures the application-owned root and its instrumented
+children, without creating a router, tabs, entries or an operation dispatcher.
+The same picker, highlight, focus, scroll and source actions are available when
+registered by the captured elements. Closing the root cancels its driver, leases
+and endpoint; old clients receive `RuntimeShutdown` or disconnect.
 
 `rake::view!` automatically instruments its rendered nodes, component/entity mounts,
 and ordinary text/expression children. Inline paragraph runs share their paragraph's

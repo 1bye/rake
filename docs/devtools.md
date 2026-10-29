@@ -53,6 +53,13 @@ absent Origin or `devtools://devtools`, and authenticates WebSockets with a rand
 session path. It limits connections, message sizes, event retention and I/O time.
 Treat discovery URLs as private development credentials. Sessions detach when a
 runtime disappears or changes identity. Unsupported CDP methods return `-32601`.
+Standalone `App::root` hosts support the same Elements, Console diagnostic, Network
+and trace inspection paths when explicitly enabled with `ControlConfig::FromEnvironment`.
+They advertise no routing/application commands; typed command completion is empty.
+The HTML inspector opens Elements without requesting router state. The `rake-view`
+example opts into this development policy, so `rake dev --target desktop --package
+rake-view --cdp` can inspect its automatic macro-authored tree.
+
 Synthetic frame/context metadata supports Chrome's frontend; it represents no
 browser DOM, JavaScript debugger, CPU profiler or heap profiler.
 

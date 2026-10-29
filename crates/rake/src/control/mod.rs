@@ -16,6 +16,11 @@
 //! ```
 
 mod commands;
+mod host;
+#[cfg(feature = "gpui")]
+pub(crate) mod standalone;
+
+pub(crate) use host::HostClient;
 
 pub use commands::*;
 
@@ -547,12 +552,21 @@ pub(crate) async fn run_host<R: Route>(
     client: RuntimeClient<R>,
     application_id: String,
 ) {
+    run_host_client(config, HostClient::new(client), application_id).await;
+}
+
+#[cfg(feature = "gpui")]
+pub(crate) async fn run_host_client(
+    config: ControlConfig,
+    client: HostClient,
+    application_id: String,
+) {
     if matches!(config, ControlConfig::FromEnvironment) {
         #[cfg(unix)]
         if std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1") {
-            match local::LocalServer::bind(&client, &application_id, &local::directory()) {
+            match local::LocalServer::bind_host(&client, &application_id, &local::directory()) {
                 Ok(server) => {
-                    if let Err(error) = server.run(client).await {
+                    if let Err(error) = server.run_host(client).await {
                         crate::error!(%error, "Development control stopped");
                     }
                 }
@@ -563,7 +577,7 @@ pub(crate) async fn run_host<R: Route>(
         #[cfg(target_family = "wasm")]
         match WebBridgeConfig::from_document() {
             Ok(Some(config)) => match WebBridge::new(config) {
-                Ok(bridge) => bridge.run(client, &application_id).await,
+                Ok(bridge) => bridge.run_host(client, &application_id).await,
                 Err(error) => crate::error!(%error, "Development bridge could not start"),
             },
             Ok(None) => {}

@@ -1072,7 +1072,7 @@ impl Render for ElementsView {
                             {property("Capture ID", element.id.clone(), colors)}
                             {property("Semantic ID", element.semantic_id.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
                             {property("Parent", element.parent.clone().unwrap_or_else(|| "Inspection root".into()), colors)}
-                            {property("Entry", element.entry_id.map_or_else(|| "Workspace shell".into(), |id| id.to_string()), colors)}
+                            {property("Entry", element.entry_id.map_or_else(|| "Application shell".into(), |id| id.to_string()), colors)}
                             <p class="px-3 py-2 text-[10px] text-muted">"Source identifies the inspection boundary."</p>
                         }
                         if element.metadata_truncated { <p class="px-3 py-2 text-property">"Some metadata exceeded capture limits."</p> }

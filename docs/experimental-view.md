@@ -783,7 +783,7 @@ conditional branches or methods hidden inside arbitrary style closures. Inline
 paragraph tags are text runs: their style source metadata belongs to the paragraph,
 with no invented per-run layout boxes. Actual text content is not captured.
 
-Capture remains opt-in through the existing development host, and count/byte limits
+Capture remains opt-in through the routed or standalone `App::root` development host, and count/byte limits
 still apply. Without an inspection host, wrappers do not sample or serialize styles.
 Embedded third-party component internals and reused cached GPUI subtrees remain
 opaque unless they execute their own instrumented rendering. See

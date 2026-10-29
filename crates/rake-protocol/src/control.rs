@@ -424,6 +424,12 @@ pub enum Reply {
 /// Structured protocol errors; transport failures are reported separately as I/O errors.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum ControlError {
+    /// This host does not implement the requested operation; consult RuntimeInfo capabilities.
+    #[error("this host does not support {operation}")]
+    Unsupported {
+        /// Unsupported command/query category.
+        operation: String,
+    },
     /// Inspection availability or exact capture lookup failure.
     #[error(transparent)]
     Inspection(#[from] crate::inspection::InspectionError),

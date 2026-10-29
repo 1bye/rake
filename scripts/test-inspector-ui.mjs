@@ -43,7 +43,7 @@ globalThis.setTimeout = (callback, delay) => { const timer = {callback, delay}; 
 globalThis.clearTimeout = timer => { timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 const information = {element_interaction: true, runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab', 'NewWindow'],
-  queries: ['inspect_tree', 'inspect_element'],
+  queries: ['info', 'routes', 'commands', 'events', 'diagnostics', 'inspect_tree', 'inspect_element', 'inspect_pick'],
   commands: ['quit', 'close_window', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
 const fields = {task_id: 'task-5', tab_id: 'tab-7', entry_id: 'entry-8', operation_id: 'op-9', request_id: 10};
 const diagnostics = [
@@ -70,6 +70,8 @@ const sourceRequests = [];
 let staleElement = false;
 let pickerMode = false, pickedBoundary = null, pickSequence = 0;
 const envelopes = [];
+const observedQueries = [];
+let standaloneMode = false;
 let advertised = [{application_id: 'test', info: information, transport: 'local'}];
 let loseReply = false;
 let expireOperation = false;
@@ -95,6 +97,8 @@ globalThis.fetch = async (url, options) => {
       else result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
     } else {
       const query = envelope.message.value;
+      observedQueries.push(query.type);
+      if (standaloneMode) assert.ok(information.queries.includes(query.type), `unsupported standalone query: ${query.type}`);
       const replies = {inspect_pick: {mode: pickerMode, generation: elementCapture.capture, hovered: null, picked: pickedBoundary, pick_sequence: pickSequence}, inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
         commands: [{id: 'test.echo', capability: 'Headless', arguments: {type: 'object', required: ['message'], properties: {message: {type: 'string'}}}, result: {type: 'string'}},
           {id: 'test.unit', capability: 'RequiresWindow', arguments: {type: 'null'}, result: {type: 'null'}},
@@ -312,6 +316,21 @@ assert.equal(all(ids.content).filter(item => item.dataset.focus?.startsWith('wor
 await find('button', 'Next').click(); await settle();
 assert.ok(find('button', 'Inspect tab-1050'));
 await panel('Reload'); assert.match(ids.content.textContent, /watching/);
+const routedQueries = [...information.queries], routedCommands = [...information.commands];
+await panel('Workspace');
+standaloneMode = true;
+information.queries = ['info', 'schema', 'diagnostics', 'inspect_tree', 'inspect_element', 'inspect_pick'];
+information.commands = ['navigate_element', 'highlight_element', 'inspect_mode'];
+observedQueries.length = 0;
+await ids.runtime.listeners.change(); await settle();
+assert.equal(ids.title.textContent, 'Elements');
+assert.ok(!observedQueries.some(name => ['events', 'routes', 'commands'].includes(name)));
+await panel('Workspace');
+assert.match(ids.content.textContent, /Router workspace controls are unavailable/);
+standaloneMode = false;
+information.queries = routedQueries; information.commands = routedCommands;
+await ids.runtime.listeners.change(); await settle();
+await panel('Reload');
 const successor = '3da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 advertised = [{application_id: 'test', info: {...information, runtime_id: successor}}];
 await panel('Reload');
