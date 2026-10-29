@@ -97,7 +97,8 @@ impl RouteViews<Destination> for AppRoutes {
             })
             .map_err(|error| MountError(error.to_string()))?;
 
-        let view = cx.new(|_| Screen {
+        let view = cx.new(|cx| Screen {
+            navigation_focus: cx.focus_handle(),
             title,
             page: page.clone(),
             edits,
@@ -156,6 +157,7 @@ impl RouteViews<Destination> for AppRoutes {
 }
 
 struct Screen {
+    navigation_focus: rake::gpui::FocusHandle,
     title: String,
     page: PageContext<Destination>,
     edits: Rc<Cell<u32>>,
@@ -237,6 +239,7 @@ impl Render for Screen {
             .child(
                 div()
                     .id("command-echo")
+                    .track_focus(&self.navigation_focus)
                     .px_3()
                     .py_2()
                     .bg(rgb(0x365849))
@@ -264,7 +267,8 @@ impl Render for Screen {
                             .err();
                         cx.notify();
                     }))
-                    .inspect("routing.command-echo"),
+                    .inspect("routing.command-echo")
+                    .focus_handle(&self.navigation_focus),
             )
             .child(format!("Draft edits: {}", self.edits.get()))
             .child(format!(

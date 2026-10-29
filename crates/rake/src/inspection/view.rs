@@ -41,6 +41,8 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         style: None,
         root: None,
         owner: None,
+        focus: None,
+        scroll: None,
     }
 }
 
@@ -52,9 +54,23 @@ pub struct Inspected<E: gpui::Element> {
     style: Option<gpui::StyleRefinement>,
     root: Option<(Store, u64, WindowId)>,
     owner: Option<(TabId, EntryId)>,
+    focus: Option<gpui::FocusHandle>,
+    scroll: Option<gpui::ScrollHandle>,
 }
 
 impl<E: gpui::Element> Inspected<E> {
+    /// Registers the same handle passed to GPUI's `track_focus`, without changing focusability.
+    pub fn focus_handle(mut self, handle: &gpui::FocusHandle) -> Self {
+        self.focus = Some(handle.clone());
+        self
+    }
+
+    /// Registers the same handle passed to `track_scroll` so inspected descendants can be revealed.
+    pub fn scroll_handle(mut self, handle: &gpui::ScrollHandle) -> Self {
+        self.scroll = Some(handle.clone());
+        self
+    }
+
     /// Supplies a descriptive identity. Duplicates are allowed; lookup uses capture IDs.
     pub fn semantic_id(mut self, id: impl Into<String>) -> Self {
         self.semantic_id = Some(id.into());
@@ -83,6 +99,61 @@ struct Capture {
     owners: Vec<Option<(TabId, EntryId)>>,
     bytes: usize,
     candidates: Vec<BoundaryKey>,
+    scrolls: Vec<gpui::ScrollHandle>,
+    navigation: Vec<NavigationTarget>,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct NavigationTarget {
+    pub focus: Option<gpui::FocusHandle>,
+    scrolls: Vec<gpui::ScrollHandle>,
+}
+
+impl NavigationTarget {
+    pub fn reveal(&self, layout: Layout) {
+        let mut bounds = Bounds {
+            origin: gpui::point(gpui::px(layout.x), gpui::px(layout.y)),
+            size: gpui::size(gpui::px(layout.width), gpui::px(layout.height)),
+        };
+        for scroll in self.scrolls.iter().rev() {
+            let viewport = scroll.bounds();
+            let delta = gpui::point(
+                reveal_delta(
+                    bounds.left(),
+                    bounds.right(),
+                    viewport.left(),
+                    viewport.right(),
+                ),
+                reveal_delta(
+                    bounds.top(),
+                    bounds.bottom(),
+                    viewport.top(),
+                    viewport.bottom(),
+                ),
+            );
+            let old = scroll.offset();
+            let max = scroll.max_offset();
+            let offset = gpui::point(
+                (old.x - delta.x).clamp(-max.x, gpui::px(0.)),
+                (old.y - delta.y).clamp(-max.y, gpui::px(0.)),
+            );
+            scroll.set_offset(offset);
+            bounds.origin += offset - old;
+        }
+    }
+}
+
+fn reveal_delta(
+    start: Pixels,
+    end: Pixels,
+    viewport_start: Pixels,
+    viewport_end: Pixels,
+) -> Pixels {
+    if start < viewport_start || end - start > viewport_end - viewport_start {
+        start - viewport_start
+    } else {
+        (end - viewport_end).max(gpui::px(0.))
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -192,6 +263,12 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some((store, _, host)) = &self.root
+            && let Some(focus) = store.take_focus(*host)
+        {
+            window.activate_window();
+            window.focus(&focus, cx);
+        }
         self.inner.request_layout(id, inspector_id, window, cx)
     }
 
@@ -217,6 +294,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 owners: Vec::new(),
                 bytes: 0,
                 candidates: Vec::new(),
+                scrolls: Vec::new(),
+                navigation: Vec::new(),
             })
         });
 
@@ -267,6 +346,23 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     capture.snapshot.elements.len()
                 ),
                 stable_id: None,
+                navigation: super::Navigation {
+                    focus: self.focus.is_some(),
+                    focused: self
+                        .focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    scroll_into_view: !capture.scrolls.is_empty()
+                        || (valid && {
+                            let visible = bounds
+                                .intersect(&window.content_mask().bounds)
+                                .intersect(&Bounds {
+                                    origin: gpui::point(gpui::px(0.), gpui::px(0.)),
+                                    size: window.viewport_size(),
+                                });
+                            visible == bounds
+                        }),
+                },
                 parent: capture.parents.last().cloned().flatten(),
                 kind,
                 semantic_id,
@@ -315,11 +411,18 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     source: self.source,
                     owner,
                 });
+                capture.navigation.push(NavigationTarget {
+                    focus: self.focus.clone(),
+                    scrolls: capture.scrolls.clone(),
+                });
             }
             let parent = retained.or_else(|| capture.parents.last().cloned().flatten());
 
             capture.parents.push(parent);
             capture.owners.push(owner);
+            if let Some(scroll) = &self.scroll {
+                capture.scrolls.push(scroll.clone());
+            }
         }
 
         let result = self
@@ -329,6 +432,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
             capture.parents.pop();
             capture.owners.pop();
+            if self.scroll.is_some() {
+                capture.scrolls.pop();
+            }
         }
 
         if let Some(previous) = previous {
@@ -337,13 +443,19 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
                 let identities = completed.identify(store, *host);
                 store.publish(*host, completed.snapshot);
-                store
-                    .0
-                    .borrow_mut()
+                let mut state = store.0.borrow_mut();
+                let host = state
                     .windows
                     .get_mut(host)
-                    .expect("published inspection host")
-                    .identities = identities;
+                    .expect("published inspection host");
+                host.identities = identities;
+                host.navigation = host
+                    .snapshot
+                    .elements
+                    .iter()
+                    .zip(completed.navigation)
+                    .map(|(element, target)| (element.id.clone(), target))
+                    .collect();
             }
         }
 
@@ -381,6 +493,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 owners: Vec::new(),
                 bytes: 0,
                 candidates: Vec::new(),
+                scrolls: Vec::new(),
+                navigation: Vec::new(),
             }))
         });
 
@@ -742,6 +856,96 @@ mod tests {
     use gpui::{Context, InputEvent as _, Render, prelude::*};
     use std::cell::Cell;
     use std::rc::Rc;
+
+    struct NavigationView {
+        store: Store,
+        focus: gpui::FocusHandle,
+        scroll: gpui::ScrollHandle,
+    }
+
+    impl Render for NavigationView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div()
+                .id("scroll")
+                .w(gpui::px(200.))
+                .h(gpui::px(100.))
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .child(gpui::div().h(gpui::px(300.)).w_full())
+                .child(
+                    gpui::div()
+                        .id("target")
+                        .track_focus(&self.focus)
+                        .w(gpui::px(80.))
+                        .h(gpui::px(30.))
+                        .inspect("target")
+                        .focus_handle(&self.focus),
+                )
+                .inspect("scroller")
+                .scroll_handle(&self.scroll)
+                .root(self.store.clone(), 0, WindowId(1))
+        }
+    }
+
+    #[test]
+    fn navigation_reveals_clipped_boundaries_and_focuses_the_real_handle() {
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (view, cx) = app.add_window_view(|_, cx| NavigationView {
+            store: store.clone(),
+            focus: cx.focus_handle(),
+            scroll: gpui::ScrollHandle::new(),
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            })
+        };
+        let target = || {
+            let snapshot = store.snapshot();
+            let element = snapshot
+                .elements
+                .iter()
+                .find(|e| e.semantic_id.as_deref() == Some("target"))
+                .unwrap()
+                .clone();
+            (snapshot.capture, element)
+        };
+        draw(cx);
+        let (generation, before) = target();
+        assert!(before.navigation.focus);
+        assert!(before.navigation.scroll_into_view);
+        assert!(before.layout.unwrap().y >= 300.);
+        store
+            .navigate(
+                &before.id,
+                &generation,
+                super::super::NavigationAction::ScrollIntoView,
+            )
+            .unwrap();
+        draw(cx);
+        let (generation, visible) = target();
+        assert!(visible.layout.unwrap().y + visible.layout.unwrap().height <= 100.);
+        assert!(matches!(
+            store.navigate(&before.id, "old", super::super::NavigationAction::Focus),
+            Err(super::super::InspectionError::StaleGeneration)
+        ));
+        store
+            .navigate(
+                &visible.id,
+                &generation,
+                super::super::NavigationAction::Focus,
+            )
+            .unwrap();
+        draw(cx);
+        cx.update(|window, cx| assert!(view.read(cx).focus.is_focused(window)));
+        assert!(target().1.navigation.focused);
+        assert!(
+            store.element(&visible.id).is_ok(),
+            "focus does not activate an application action"
+        );
+    }
 
     struct IdentityView {
         store: Store,

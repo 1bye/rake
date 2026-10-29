@@ -1,10 +1,11 @@
-"""Authenticated inspector access to existing runtime transports, without host commands."""
+"""Authenticated runtime inspection and explicit workspace-confined Rust source opening."""
 
 import json
 import os
 from pathlib import Path
 import socket
 import stat
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -75,6 +76,23 @@ class Inspector:
         return values
 
     def handle(self, action, body):
+        if action == "inspect_source":
+            runtime, element = body.get("runtime_id"), body.get("id")
+            manifest = self.manifest(runtime)
+            if manifest["endpoint"]["type"] == "local" and not self.allow_native:
+                raise BridgeError(403, "Web application origins cannot open native runtime source")
+            if not isinstance(element, str) or not 1 <= len(element.encode()) <= 256 or not element.startswith("element-") or not all(c.isascii() and (c.isalnum() or c == "-") for c in element):
+                raise BridgeError(400, "invalid exact element ID")
+            try:
+                result = subprocess.run([os.environ.get("RAKE_CLI", "rake"), "ctl", "--instance", runtime,
+                    "inspect", "source", element, "--json"],
+                    env={**os.environ, "RAKE_CONTROL_DIR": str(self.directory)},
+                    capture_output=True, timeout=10, check=False)
+                if result.returncode:
+                    raise BridgeError(400, result.stderr.decode(errors="replace")[:2048] or "Cannot open source")
+                return json.loads(result.stdout[:MAX_BYTES])
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                raise BridgeError(502, "Source opener unavailable; check RAKE_CLI and RAKE_SOURCE_ROOT") from error
         if action == "inspect_cdp":
             if not self.cdp_url:
                 return []

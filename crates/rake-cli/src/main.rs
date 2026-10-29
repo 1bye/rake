@@ -5,6 +5,8 @@ mod cdp;
 #[cfg(unix)]
 mod project;
 #[cfg(unix)]
+mod source;
+#[cfg(unix)]
 mod terminal;
 
 fn main() {

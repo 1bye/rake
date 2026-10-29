@@ -187,7 +187,7 @@ impl Connection {
         reply.map_err(|error| error.to_string())
     }
 
-    /// Renews or clears development-only inspection leases; application mutations are rejected.
+    /// Executes development inspection controls; application mutations are rejected.
     pub async fn control(
         &self,
         runtime: RuntimeId,
@@ -196,7 +196,9 @@ impl Connection {
     ) -> Result<(), String> {
         if !matches!(
             command,
-            Command::HighlightElement { .. } | Command::InspectMode { .. }
+            Command::HighlightElement { .. }
+                | Command::InspectMode { .. }
+                | Command::NavigateElement { .. }
         ) {
             return Err("This Inspector only supports development inspection controls.".into());
         }
@@ -220,6 +222,23 @@ impl Connection {
             Reply::Acknowledged => Ok(()),
             _ => Err("Unexpected inspection control response.".into()),
         }
+    }
+
+    /// Opens one captured Rust construction site through the authenticated local host.
+    pub async fn open_source(
+        &self,
+        runtime: RuntimeId,
+        id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
+        let _: serde_json::Value = self
+            .post(
+                "inspect_source",
+                &serde_json::json!({"runtime_id":runtime,"id":id}),
+                cancellation,
+            )
+            .await?;
+        Ok(())
     }
 
     async fn post<T: Serialize, U: DeserializeOwned>(

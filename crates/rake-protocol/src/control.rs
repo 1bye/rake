@@ -23,7 +23,7 @@ pub struct Request {
     pub protocol: u32,
     /// Prevents stale IDs from accidentally targeting a restarted application.
     pub runtime_id: RuntimeId,
-    /// Caller-generated key, 1–128 bytes; required except for transient inspection leases.
+    /// Caller-generated key, 1–128 bytes; required except for transient inspection controls.
     pub key: Option<String>,
     /// Shared command or diagnostic query.
     pub message: Message,
@@ -38,16 +38,25 @@ pub struct Request {
     deny_unknown_fields
 )]
 pub enum Message {
-    /// Application actions, decision responses or leased development inspection controls.
+    /// Application actions, decision responses or transient development inspection controls.
     Command(Command),
     /// Owned state/schema/diagnostic inspection.
     Query(Query),
 }
 
-/// Shared runtime commands; leased inspection controls never mutate router state.
+/// Shared runtime commands; transient inspection controls never mutate router state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Navigate to an exact presented boundary; no application operation is retained.
+    NavigateElement {
+        /// Exact capture element identity.
+        id: String,
+        /// Exact capture generation; stale requests never retarget.
+        generation: String,
+        /// Supported focus or scroll action.
+        action: crate::inspection::NavigationAction,
+    },
     /// Highlight a capture boundary for a two-second development lease; no operation is retained.
     HighlightElement {
         /// Exact capture ID, or None to clear all window highlights.
@@ -173,6 +182,7 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "navigate_element",
             "highlight_element",
             "inspect_mode",
             "close_window",

@@ -611,6 +611,18 @@ function elementsPanel() {
     const layout = selected.layout, source = selected.source;
     detail.append(append(el('div', null, 'element-identity'), el('span', selected.kind, 'syntax-tag'), el('p', selected.semantic_id ?? 'Semantic ID not supplied', 'syntax-value'),
       el('p', selected.id, 'muted'), el('p', source ? `${source.file}:${source.line}:${source.column}` : 'Source location unavailable.', 'muted')));
+    const navigate = action => async () => {
+      try { await inspectionControl({type: 'navigate_element', id: selected.id, generation: elements.capture, action}); }
+      catch (error) { showError(error); }
+    };
+    detail.append(row(
+      button('Scroll into view', navigate('scroll_into_view'), replaced || !connected || !selected.navigation?.scroll_into_view),
+      button('Focus element', navigate('focus'), replaced || !connected || !selected.navigation?.focus),
+      button('Open Rust source', async () => {
+        try { await rpc('inspect_source', {runtime_id: model.runtime, id: selected.id}); }
+        catch (error) { showError(error); }
+      }, replaced || !connected || !source)
+    ));
     if (elementTab === 'Styles' || elementTab === 'Computed') {
       const values = elementTab === 'Computed' ? selected.resolved?.properties : selected.styles;
       if (values) {

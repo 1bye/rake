@@ -71,7 +71,8 @@ bytes rather than measured compressed network traffic.
 
 Console shows structured tracing events through Log and Runtime, with inline
 previews and read-only JSON property expansion. Object retention is limited to
-128 objects and 1 MiB per connection; evicted IDs return an error. Loss warnings
+128 structured objects and 1 MiB per connection, plus 128 bounded navigation node
+handles; evicted IDs return an error. Loss warnings
 report collector drops, output drops, sequence gaps and outbound queue overflow.
 With `--session`, supervisor process text appears as `[stdout]`/`[stderr]` using
 its own observation clock and without inferred runtime ownership. Structured
@@ -137,21 +138,36 @@ uncertain delivery error names the key and is never resent automatically. Use
 `rake ctl` to observe or explicitly retry with the identical payload and key;
 evaluating again submits a new mutation. Eager/side-effect-free evaluation is
 rejected. Registry names and non-persisting compile checks read `Query::Commands`.
-JavaScript evaluation, persisted scripts, autocomplete via JavaScript calls and
-`Runtime.callFunctionOn` remain unavailable.
+JavaScript evaluation, persisted scripts, and autocomplete via JavaScript calls
+remain unavailable. `Runtime.callFunctionOn` recognizes only Chrome's zero-argument
+focus/scroll helpers on retained node objects; it never evaluates JavaScript.
+
+Elements Find (`Cmd/Ctrl+F`) searches captured names and IDs, including collapsed
+branches; `#id` matches an exact semantic ID. Its context menu can focus registered
+elements and scroll through registered containers. Both Rake frontends expose the
+same actions plus **Open Rust source**. In Chrome's Console, use
+`rake.openSource("routing.command-echo")` (or a retained numeric CDP node ID) to
+open the construction site using the system default editor. This explicit host
+action is restricted to existing Rust files inside `RAKE_SOURCE_ROOT` (default:
+the adapter/inspector host's current directory). No source contents are returned;
+line/column remain metadata when the default editor cannot accept a location.
+See [navigation and handle registration](element-inspection.md#elements-navigation).
 
 Supported CDP methods are the domain enable/disable methods for Network, Log,
 Runtime, DOM, CSS and Overlay; Inspector.enable; Page.enable/disable,
-Page.getResourceTree/getFrameTree; Runtime.runIfWaitingForDebugger,
+Page.getResourceTree/getFrameTree/bringToFront; Runtime.runIfWaitingForDebugger,
 Runtime.evaluate, Runtime.compileScript (without persistence),
 Runtime.globalLexicalScopeNames, Runtime.getProperties,
 Runtime.releaseObject/releaseObjectGroup; DOM.getDocument, DOM.requestChildNodes,
-DOM.describeNode, DOM.getAttributes, DOM.getBoxModel,
+DOM.describeNode, DOM.getAttributes, DOM.getBoxModel, DOM.performSearch,
+DOM.getSearchResults/discardSearchResults, DOM.focus/scrollIntoViewIfNeeded,
+DOM.resolveNode/requestNode, Runtime.callFunctionOn (navigation only),
 DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
 CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
 Network.getResponseBody/getRequestPostData return descriptive unavailable errors.
 Overlay.highlightNode/setInspectMode require advertised runtime interaction support. Every unlisted method returns `-32601`,
-including Debugger, Profiler, Tracing, CSS/DOM edits and JavaScript function calls.
+including Debugger, Profiler, Tracing, CSS/DOM edits and other JavaScript function calls.
+The adapter also accepts the explicit extension `Rake.openSource { nodeId }`.
 
 ## Rake application preview
 

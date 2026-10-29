@@ -181,6 +181,71 @@ roughly 100–250 ms of hover/selection lag and can be slower through the Web br
 a push channel is not implemented. A new geometry/metadata capture invalidates
 old IDs. No headers, bodies, source contents or uninstrumented text are captured.
 
+## Elements navigation
+
+Both Rake inspectors search captured names and semantic/opaque IDs. Chrome's
+Elements Find (`Cmd/Ctrl+F`) supports case-insensitive name/ID substrings and an
+exact semantic ID with `#id`. Results include collapsed descendants and reveal
+their ancestor path without replacing known nodes. Searches are bounded to eight
+retained result sets; removed nodes and runtime replacement invalidate results.
+XPath and arbitrary browser selectors are not evaluated.
+
+**Scroll into view** and **Focus element** use `NavigateElement { id, generation,
+action }`, through the same authenticated protocol on native and Web. These
+development controls have no retained application operation or retry key. A stale
+generation never retargets. Focus applies the boundary's real handle on the next
+frame and activates its native window; it does not click the element.
+
+GPUI's pinned public API does not expose existing Div focus/scroll handles. Register
+the same handles already used by the app after adding an inspection boundary:
+
+```rust,no_run
+use rake::gpui::{self, prelude::*};
+use rake::inspection::InspectElement;
+# fn panel(focus: &gpui::FocusHandle, scroll: &gpui::ScrollHandle) -> impl IntoElement {
+gpui::div().id("viewport").overflow_y_scroll().track_scroll(scroll)
+    .child(gpui::div().id("save").track_focus(focus)
+        .inspect("document.save").focus_handle(focus))
+    .inspect("document.viewport").scroll_handle(scroll)
+# }
+```
+
+Registered scroll ancestors reveal a target from the innermost viewport outward,
+with clamped offsets and minimal movement. Uninstrumented intermediate elements
+are fine, but unregistered scroll containers cannot be controlled. Already fully
+visible boundaries can acknowledge scrolling without a handle. `navigation`
+metadata advertises support per boundary; unsupported focus or reveal returns
+`NavigationUnavailable`, and Rake's buttons are disabled. Virtualized items absent
+from the bounded capture cannot be found or mounted through navigation.
+`navigation.focused` reports whether the registered handle currently owns keyboard focus.
+
+```sh
+rake ctl inspect focus element-3-21
+rake ctl inspect scroll element-3-21
+rake ctl inspect source element-3-21
+```
+
+The friendly CLI resolves the current generation for focus/scroll unless supplied
+explicitly. Source opening is a separate host action: **Open Rust source** in
+either Rake inspector, or `rake.openSource("document.save")` in Chrome's Console
+(also accepts a retained numeric CDP node ID). Chrome's existing Elements context
+menu supports focus/scroll through narrowly recognized native navigation helpers;
+arbitrary `Runtime.callFunctionOn` JavaScript remains rejected. Chrome has no
+standard external Rust-editor action; the Console helper does not add a custom
+context-menu item or fork the frontend.
+
+Source opening queries the exact capture's construction site and invokes the
+system file association (`open` on macOS, `xdg-open` on Linux), without a shell.
+Only existing `.rs` files whose canonical paths stay inside `RAKE_SOURCE_ROOT`
+(default: the CLI/inspector host's current directory) are admitted. Set that variable
+on the host when launching outside the source workspace. `rake dev` supplies the
+Cargo workspace root unless the variable was set explicitly. Client requests supply
+element IDs, never paths or commands. No source contents are served or captured.
+The system default editor may open only the file; line/column are returned as
+metadata because file associations have no portable location-jump convention.
+Compiler-remapped or missing source paths fail explicitly. Standalone Python hosts
+must set `RAKE_CLI` to the built CLI; `rake dev`/`rake inspect` configure it already.
+
 For Web inspection, keep the application in a visible tab/window while using
 DevTools (separate windows worked in Chrome 156). A hidden or suspended application
 tab cannot service broker requests or renew inspection leases reliably. Suspension

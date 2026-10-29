@@ -64,7 +64,8 @@ const snapshot = {runtime_id: runtime, window_id: 1, revision: 2, selected: 7,
   operations: [[9, 'AwaitingDecision']], decisions: [{id: 12, operation_id: 9, entry_id: 8, message: 'Save changed entry?', choices: [{id: 'save', label: 'Save'}, {id: 'discard', label: 'Discard'}]}]};
 let elementCapture = {status: 'captured', capture: '1', router_revision: 2, omitted: 3, coverage: 'Inspection boundaries; opaque GPUI children unavailable.', elements: [
   {id: 'element-1-0', parent: null, semantic_id: '<script>screen</script>', kind: 'gpui::Div', tab_id: 7, entry_id: 8,
-    layout: {x: 10, y: 20, width: 300, height: 50}, source: {file: 'src/example.rs', line: 12, column: 3}, styles: {display: 'Flex'}, metadata_truncated: false}]};
+    layout: {x: 10, y: 20, width: 300, height: 50}, navigation: {focus: true, scroll_into_view: true}, source: {file: 'src/example.rs', line: 12, column: 3}, styles: {display: 'Flex'}, metadata_truncated: false}]};
+const sourceRequests = [];
 let staleElement = false;
 let pickerMode = false, pickedBoundary = null, pickSequence = 0;
 const envelopes = [];
@@ -79,6 +80,7 @@ globalThis.fetch = async (url, options) => {
   else if (url.endsWith('inspect_cdp')) result = [{id: runtime, devtoolsFrontendUrl: `devtools://devtools/bundled/devtools_app.html?ws=127.0.0.1:9229/${'a'.repeat(32)}/${runtime}`}];
   else if (url.endsWith('development')) result = {phase: 'watching', published: 1};
   else if (url.endsWith('inspect_output')) result = {records: [], dropped: 0};
+  else if (url.endsWith('inspect_source')) { sourceRequests.push(body); result = {path: '/workspace/src/example.rs', line: 12, column: 3}; }
   else {
     const envelope = body.request;
     assert.equal(envelope.runtime_id, runtime);
@@ -88,7 +90,7 @@ globalThis.fetch = async (url, options) => {
       if (envelope.message.value.type === 'inspect_mode') {
         pickerMode = envelope.message.value.enabled;
         result = {Ok: {type: 'acknowledged'}};
-      } else if (envelope.message.value.type === 'highlight_element') result = {Ok: {type: 'acknowledged'}};
+      } else if (['highlight_element', 'navigate_element'].includes(envelope.message.value.type)) result = {Ok: {type: 'acknowledged'}};
       else result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
     } else {
       const query = envelope.message.value;
@@ -256,6 +258,13 @@ await find('button', 'Inspect element-1-0').click(); await settle();
 assert.match(ids.content.textContent, /src\/example.rs:12:3/);
 assert.match(ids.content.textContent, /width 300/);
 assert.match(ids.content.textContent, /Flex/);
+await find('button', 'Focus element').click(); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'navigate_element', id: 'element-1-0', generation: '1', action: 'focus'});
+assert.equal(envelopes.at(-1).key, null);
+await find('button', 'Scroll into view').click(); await settle();
+assert.equal(envelopes.at(-1).message.value.action, 'scroll_into_view');
+await find('button', 'Open Rust source').click(); await settle();
+assert.deepEqual(sourceRequests.at(-1), {runtime_id: runtime, id: 'element-1-0'});
 elementCapture.elements[0].resolved = {properties: {background: '#365849'}, hovered: true};
 await panel('Elements');
 await find('button', 'Computed').click(); await settle();
@@ -268,6 +277,8 @@ assert.equal(find('button', 'Inspect element-1-0').attributes['aria-pressed'], '
 await find('button', 'Styles').click(); await settle();
 elementCapture = {...elementCapture, capture: '2', elements: [{...elementCapture.elements[0], id: 'element-2-0', styles: null, source: null, layout: null}]};
 await panel('Elements'); assert.match(ids.content.textContent, /Details are frozen/);
+assert.equal(find('button', 'Open Rust source').disabled, true);
+assert.equal(find('button', 'Focus element').disabled, true);
 staleElement = true;
 await find('button', 'Inspect element-2-0').click(); await settle();
 assert.match(ids.content.textContent, /NotRetained/);

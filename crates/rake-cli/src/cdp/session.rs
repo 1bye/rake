@@ -111,7 +111,25 @@ impl Session {
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "expression required"))?;
 
-                let value = super::evaluate::execute(&self.instance, expression)?;
+                let value = if let Some(argument) = expression
+                    .trim()
+                    .trim_end_matches(';')
+                    .trim()
+                    .strip_prefix("rake.openSource(")
+                    .and_then(|value| value.strip_suffix(')'))
+                {
+                    let selector = serde_json::from_str(argument).map_err(|_| {
+                        Error::new(
+                            -32602,
+                            "openSource requires one JSON node ID or semantic ID",
+                        )
+                    })?;
+                    self.refresh_dom()?;
+                    crate::source::open(self.dom.source(&selector)?)
+                        .map_err(|error| Error::new(-32000, error.to_string()))?
+                } else {
+                    super::evaluate::execute(&self.instance, expression)?
+                };
 
                 let remote = if request.params["returnByValue"] == true {
                     json!({"type":"object","value":value})
@@ -173,12 +191,55 @@ impl Session {
                 Ok(json!({"root":self.dom.document(&request.params)?}))
             }
             "DOM.requestChildNodes" => {
-                for params in self.dom.request_children(&request.params)? {
-                    self.event(Event::new("DOM.setChildNodes", params));
-                }
+                let events = self.dom.request_children(&request.params)?;
+                self.child_events(events)?;
 
                 Ok(json!({}))
             }
+            "DOM.performSearch" => {
+                self.refresh_dom()?;
+                let query = request.params["query"]
+                    .as_str()
+                    .ok_or_else(|| Error::new(-32602, "query required"))?;
+                self.dom.search(query)
+            }
+            "DOM.getSearchResults" => {
+                self.refresh_dom()?;
+                let (result, events) = self.dom.search_results(&request.params)?;
+                self.child_events(events)?;
+                Ok(result)
+            }
+            "DOM.discardSearchResults" => self.dom.discard_search(&request.params),
+            "DOM.focus" | "DOM.scrollIntoViewIfNeeded" => {
+                // Map the retained CDP identity to the latest exact runtime capture.
+                self.refresh_dom()?;
+                self.control(self.dom.navigation_command(method, &request.params)?)?;
+                Ok(json!({}))
+            }
+            "Rake.openSource" => {
+                self.refresh_dom()?;
+                crate::source::open(self.dom.source(&request.params["nodeId"])?)
+                    .map_err(|error| Error::new(-32000, error.to_string()))
+            }
+            "DOM.resolveNode" => {
+                self.refresh_dom()?;
+                self.dom.resolve_node(&request.params)
+            }
+            "DOM.requestNode" => {
+                let object = request.params["objectId"]
+                    .as_str()
+                    .ok_or_else(|| Error::new(-32602, "objectId required"))?;
+                let node = self.dom.object_node(object)?;
+                let (_, events) = self.dom.push_nodes(&json!({"backendNodeIds":[node]}))?;
+                self.child_events(events)?;
+                Ok(json!({"nodeId":node}))
+            }
+            "Runtime.callFunctionOn" => {
+                self.refresh_dom()?;
+                self.control(self.dom.call_navigation(&request.params)?)?;
+                Ok(json!({"result":{"type":"undefined"}}))
+            }
+            "Page.bringToFront" => Ok(json!({})), // Focus navigation activates the actual target window.
             "DOM.getBoxModel"
             | "DOM.describeNode"
             | "DOM.getAttributes"
@@ -261,9 +322,7 @@ impl Session {
             "DOM.pushNodesByBackendIdsToFrontend" => {
                 let (result, events) = self.dom.push_nodes(&request.params)?;
 
-                for params in events {
-                    self.event(Event::new("DOM.setChildNodes", params));
-                }
+                self.child_events(events)?;
 
                 Ok(result)
             }
@@ -276,16 +335,24 @@ impl Session {
                     return Ok(json!({"result":[]}));
                 }
 
+                if id.starts_with("rake-node-") {
+                    return self.dom.node_properties(id);
+                }
+
                 self.objects.properties(id)
             }
             "Runtime.releaseObject" => {
                 if let Some(id) = request.params["objectId"].as_str() {
                     self.objects.release(id);
+                    self.dom.release_node_object(id);
                 }
 
                 Ok(json!({}))
             }
             "Runtime.releaseObjectGroup" => {
+                if let Some(group) = request.params["objectGroup"].as_str() {
+                    self.dom.release_node_group(group);
+                }
                 self.objects.clear();
 
                 Ok(json!({}))
@@ -471,9 +538,7 @@ impl Session {
                     && let Some(node) = self.dom.node_id(id)
                     && let Some(events) = self.dom.reveal_node(node)?
                 {
-                    for params in events {
-                        self.event(Event::new("DOM.setChildNodes", params));
-                    }
+                    self.child_events(events)?;
 
                     self.event(Event::new(
                         "Overlay.nodeHighlightRequested",
@@ -518,6 +583,39 @@ impl Session {
             socket.send(Message::text(serde_json::to_string(&event)?))?;
         }
 
+        Ok(())
+    }
+
+    fn child_events(&mut self, events: Vec<Value>) -> std::result::Result<(), Error> {
+        let events = events
+            .into_iter()
+            .map(|params| Event::new("DOM.setChildNodes", params))
+            .collect::<Vec<_>>();
+        let bytes = events
+            .iter()
+            .try_fold(0usize, |sum, event| {
+                serde_json::to_vec(event)
+                    .ok()
+                    .and_then(|bytes| sum.checked_add(bytes.len()))
+            })
+            .unwrap_or(usize::MAX);
+        if self.outbound.len() + events.len() > QUEUE_LIMIT
+            || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
+        {
+            self.dropped = self.dropped.saturating_add(self.outbound.len() as u64);
+            self.outbound.clear();
+            self.outbound_bytes = 0;
+            self.dom.reset_delivery();
+            self.tracked_style_node = None;
+            self.event(Event::new("DOM.documentUpdated", json!({})));
+            return Err(Error::new(
+                -32000,
+                "Tree delivery exceeded the queue budget; request the document and repeat navigation",
+            ));
+        }
+        for event in events {
+            self.event(event);
+        }
         Ok(())
     }
 
@@ -775,6 +873,20 @@ mod tests {
         ));
         assert!(session.outbound.is_empty());
         assert_eq!(session.dropped, 3);
+
+        for _ in 0..QUEUE_LIMIT {
+            session.event(Event::new("Log.entryAdded", json!({})));
+        }
+        assert!(
+            session
+                .child_events(vec![json!({"parentId":1,"nodes":[]})])
+                .is_err()
+        );
+        assert_eq!(session.outbound.len(), 1);
+        assert_eq!(
+            session.outbound[0].0.method, "DOM.documentUpdated",
+            "ancestor paths must never be partially delivered"
+        );
     }
 
     fn fixture(
@@ -1008,6 +1120,57 @@ mod tests {
             .unwrap();
 
         assert!(text["text"].as_str().unwrap().contains("0.5"));
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn search_and_chrome_focus_helper_cross_the_runtime_protocol_without_evaluation() {
+        let mut snapshot = capture("navigation");
+        snapshot.elements[0].semantic_id = Some("save".into());
+        snapshot.elements[0].navigation.focus = true;
+        let (instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(snapshot.clone()),
+                RuntimeMessage::Command(Command::NavigateElement {
+                    id,
+                    generation,
+                    action,
+                }) => {
+                    assert_eq!(id, "element-navigation-0");
+                    assert_eq!(generation, "navigation");
+                    assert_eq!(action, rake_protocol::inspection::NavigationAction::Focus);
+                    assert!(request.key.is_none());
+                    Reply::Acknowledged
+                }
+                _ => panic!("Unexpected navigation request"),
+            },
+            6,
+        );
+        let mut session = Session::new(instance, None);
+        let call = |method: &str, params| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        session.handle(&call("DOM.getDocument", json!({}))).unwrap();
+        let search = session
+            .handle(&call("DOM.performSearch", json!({"query":"#save"})))
+            .unwrap();
+        let result = session
+            .handle(&call(
+                "DOM.getSearchResults",
+                json!({"searchId":search["searchId"],"fromIndex":0,"toIndex":1}),
+            ))
+            .unwrap();
+        let object = session
+            .handle(&call(
+                "DOM.resolveNode",
+                json!({"nodeId":result["nodeIds"][0]}),
+            ))
+            .unwrap();
+        let result = session.handle(&call("Runtime.callFunctionOn", json!({"objectId":object["object"]["objectId"],"functionDeclaration":"function focusInPage(){ this.focus(); }"}))).unwrap();
+        assert_eq!(result["result"]["type"], "undefined");
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }

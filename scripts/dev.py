@@ -288,7 +288,8 @@ class Supervisor:
         waiting = self.session / "waiting"
         waiting.mkdir()
         (waiting / "index.html").write_text("<!doctype html><html><head><title>Rake development</title></head><body>Waiting for the first successful build…</body></html>")
-        env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control)}
+        env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control),
+               "RAKE_SOURCE_ROOT": os.environ.get("RAKE_SOURCE_ROOT", str(self.project.root))}
         cdp_url = None
         if self.project.args.cdp:
             executable = os.environ.get("RAKE_CLI") or shutil.which("rake")

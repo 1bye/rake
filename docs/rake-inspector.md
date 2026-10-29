@@ -111,6 +111,12 @@ inspection controls, including clipping and automatic input restoration. Trees a
 runtime capture limit of 256 boundaries. Filter editing is single-line and bounded
 to 1 KiB. The frontend inherits the experimental status of `view!`.
 
+Selected current boundaries offer **Scroll into view**, **Focus element**, and
+**Open Rust source**. Navigation uses registered application handles; unavailable
+actions and replaced captures are disabled. Source opens through the authenticated
+host using the system default editor and the workspace restriction described in
+[Elements navigation](element-inspection.md#elements-navigation).
+
 ```sh
 cargo test -p rake-inspector --no-default-features --locked
 cargo clippy -p rake-inspector --all-targets --locked -- -D warnings

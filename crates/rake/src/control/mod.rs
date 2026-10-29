@@ -164,10 +164,12 @@ impl<R: Route> RuntimeClient<R> {
         match request.message {
             Message::Query(query) => self.query(query),
             Message::Command(command) => {
-                // Renewable development leases must not fill the lifetime mutation-key registry.
+                // Transient inspection controls must not fill the lifetime mutation-key registry.
                 if matches!(
                     command,
-                    Command::HighlightElement { .. } | Command::InspectMode { .. }
+                    Command::HighlightElement { .. }
+                        | Command::InspectMode { .. }
+                        | Command::NavigateElement { .. }
                 ) {
                     return self.command(&command);
                 }
@@ -255,6 +257,15 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::NavigateElement {
+                id,
+                generation,
+                action,
+            } => {
+                self.state.inspection.navigate(id, generation, *action)?;
+
+                return Ok(Reply::Acknowledged);
+            }
             Command::HighlightElement { id, generation } => {
                 self.state.inspection.highlight(id.as_deref(), generation)?;
 

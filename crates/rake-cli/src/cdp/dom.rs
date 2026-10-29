@@ -15,6 +15,10 @@ pub(super) struct Dom {
     children_sent: BTreeSet<i32>,
     style_updates: BTreeSet<i32>,
     updates: Vec<Event>,
+    searches: BTreeMap<u64, Vec<i32>>,
+    next_search: u64,
+    node_objects: BTreeMap<u64, (i32, Option<String>)>,
+    next_node_object: u64,
 }
 
 impl Dom {
@@ -235,6 +239,245 @@ impl Dom {
         self.snapshot.as_ref().map(|s| s.capture.as_str())
     }
 
+    pub fn search(&mut self, query: &str) -> Result<Value, Error> {
+        if query.trim().is_empty() || query.len() > 1024 {
+            return Err(Error::new(-32602, "Search must contain 1–1024 bytes"));
+        }
+        let lower = query.to_lowercase();
+        let results = self
+            .snapshot
+            .iter()
+            .flat_map(|s| &s.elements)
+            .filter(|element| {
+                if let Some(id) = query.strip_prefix('#') {
+                    element.semantic_id.as_deref() == Some(id)
+                } else {
+                    [&element.kind, &element.id]
+                        .into_iter()
+                        .chain(element.semantic_id.iter())
+                        .chain(element.stable_id.iter())
+                        .any(|value| value.to_lowercase().contains(&lower))
+                }
+            })
+            .filter_map(|element| self.node_id(&element.id))
+            .collect::<Vec<_>>();
+        self.next_search = self
+            .next_search
+            .checked_add(1)
+            .ok_or_else(|| Error::new(-32000, "Search identity exhausted; reconnect"))?;
+        if self.searches.len() == 8 {
+            self.searches.pop_first();
+        }
+        let count = results.len();
+        self.searches.insert(self.next_search, results);
+        Ok(json!({"searchId":format!("search-{}",self.next_search),"resultCount":count}))
+    }
+
+    pub fn search_results(&mut self, params: &Value) -> Result<(Value, Vec<Value>), Error> {
+        let search = search_id(params)?;
+        let results = self
+            .searches
+            .get(&search)
+            .ok_or_else(|| Error::new(-32000, "Search expired; repeat the search"))?;
+        let from = params["fromIndex"]
+            .as_u64()
+            .and_then(|v| usize::try_from(v).ok());
+        let to = params["toIndex"]
+            .as_u64()
+            .and_then(|v| usize::try_from(v).ok());
+        let (Some(from), Some(to)) = (from, to) else {
+            return Err(Error::new(-32602, "Search range requires integer indices"));
+        };
+        if from >= to || to > results.len() {
+            return Err(Error::new(-32602, "Invalid search result range"));
+        }
+        let ids = results[from..to].to_vec();
+        if ids.iter().any(|id| !self.nodes.contains_key(id)) {
+            return Err(Error::new(
+                -32000,
+                "Search result was removed; repeat the search",
+            ));
+        }
+        self.push_nodes(&json!({"backendNodeIds":ids}))
+    }
+
+    pub fn discard_search(&mut self, params: &Value) -> Result<Value, Error> {
+        self.searches.remove(&search_id(params)?);
+        Ok(json!({}))
+    }
+
+    pub fn navigation_command(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> Result<rake_protocol::control::Command, Error> {
+        let element = self.element(node_id(params)?)?;
+        let action = match method {
+            "DOM.focus" => rake_protocol::inspection::NavigationAction::Focus,
+            "DOM.scrollIntoViewIfNeeded" => {
+                rake_protocol::inspection::NavigationAction::ScrollIntoView
+            }
+            _ => return Err(Error::new(-32601, "Unknown navigation action")),
+        };
+        Ok(rake_protocol::control::Command::NavigateElement {
+            id: element.id.clone(),
+            generation: self.generation().unwrap_or_default().into(),
+            action,
+        })
+    }
+
+    pub fn resolve_node(&mut self, params: &Value) -> Result<Value, Error> {
+        let id = node_id(params)?;
+        let element = self.element(id)?;
+        let name = rake_protocol::inspection::display_name(&element.kind).to_owned();
+        let description = format!(
+            "{}{}",
+            name,
+            element
+                .semantic_id
+                .as_ref()
+                .map_or_else(String::new, |id| format!("#{id}"))
+        );
+        let group = params["objectGroup"].as_str().map(str::to_owned);
+        if group.as_ref().is_some_and(|group| group.len() > 128) {
+            return Err(Error::new(-32602, "Object group exceeds 128 bytes"));
+        }
+        self.next_node_object = self
+            .next_node_object
+            .checked_add(1)
+            .ok_or_else(|| Error::new(-32000, "Node object identity exhausted; reconnect"))?;
+        if self.node_objects.len() == 128 {
+            self.node_objects.pop_first();
+        }
+        self.node_objects.insert(self.next_node_object, (id, group));
+        Ok(
+            json!({"object":{"type":"object","subtype":"node","className":name,"description":description,"objectId":format!("rake-node-{}",self.next_node_object)}}),
+        )
+    }
+
+    pub fn object_node(&self, id: &str) -> Result<i32, Error> {
+        let node = id
+            .strip_prefix("rake-node-")
+            .and_then(|id| id.parse::<u64>().ok())
+            .and_then(|id| self.node_objects.get(&id))
+            .map(|(node, _)| *node)
+            .ok_or_else(|| Error::new(-32000, "Node object expired or unavailable"))?;
+        self.element(node)?;
+        Ok(node)
+    }
+
+    pub fn release_node_object(&mut self, id: &str) {
+        if let Some(id) = id
+            .strip_prefix("rake-node-")
+            .and_then(|id| id.parse::<u64>().ok())
+        {
+            self.node_objects.remove(&id);
+        }
+    }
+
+    pub fn release_node_group(&mut self, group: &str) {
+        self.node_objects
+            .retain(|_, (_, owner)| owner.as_deref() != Some(group));
+    }
+
+    pub fn call_navigation(
+        &self,
+        params: &Value,
+    ) -> Result<rake_protocol::control::Command, Error> {
+        if params["throwOnSideEffect"] == true
+            || params
+                .get("executionContextId")
+                .is_some_and(|id| id.as_u64() != Some(1))
+            || (!params["arguments"].is_null()
+                && params["arguments"]
+                    .as_array()
+                    .is_none_or(|args| !args.is_empty()))
+        {
+            return Err(Error::new(
+                -32602,
+                "Navigation requires the current context and no arguments/side-effect restriction",
+            ));
+        }
+        let object = params["objectId"]
+            .as_str()
+            .ok_or_else(|| Error::new(-32602, "objectId required"))?;
+        let node = self.object_node(object)?;
+        let function = params["functionDeclaration"]
+            .as_str()
+            .ok_or_else(|| Error::new(-32602, "functionDeclaration required"))?;
+        let function = function
+            .chars()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect::<String>();
+        let body = function
+            .strip_prefix("function")
+            .and_then(|function| function.split_once('{'))
+            .filter(|(signature, _)| {
+                signature.strip_suffix("()").is_some_and(|name| {
+                    name.chars().enumerate().all(|(index, character)| {
+                        character.is_ascii_alphabetic()
+                            || matches!(character, '_' | '$')
+                            || (index > 0 && character.is_ascii_digit())
+                    })
+                })
+            })
+            .and_then(|(_, body)| body.strip_suffix('}'))
+            .map(|body| body.trim_end_matches(';'));
+        let method = match body {
+            Some("this.focus()") => "DOM.focus",
+            Some("this.scrollIntoViewIfNeeded(true)" | "this.scrollIntoViewIfNeeded(!0)") => {
+                "DOM.scrollIntoViewIfNeeded"
+            }
+            _ => {
+                return Err(Error::new(
+                    -32601,
+                    "Only Chrome's focus/scroll navigation helpers are supported; JavaScript is never evaluated",
+                ));
+            }
+        };
+        self.navigation_command(method, &json!({"nodeId":node}))
+    }
+
+    pub fn node_properties(&self, object: &str) -> Result<Value, Error> {
+        let element = self.element(self.object_node(object)?)?;
+        Ok(json!({"result":[
+            {"name":"nodeName","value":{"type":"string","value":rake_protocol::inspection::display_name(&element.kind)},"configurable":false,"enumerable":true},
+            {"name":"id","value":{"type":"string","value":element.semantic_id.as_deref().unwrap_or_default()},"configurable":false,"enumerable":true}
+        ]}))
+    }
+
+    pub fn source(
+        &self,
+        selector: &Value,
+    ) -> Result<&rake_protocol::inspection::SourceLocation, Error> {
+        let element = if let Some(id) = selector.as_i64().and_then(|id| i32::try_from(id).ok()) {
+            self.element(id)?
+        } else if let Some(name) = selector.as_str() {
+            let mut matches = self.nodes.values().filter(|element| {
+                element.semantic_id.as_deref() == Some(name) || element.id == name
+            });
+            let element = matches
+                .next()
+                .ok_or_else(|| Error::new(-32000, "Source target not found"))?;
+            if matches.next().is_some() {
+                return Err(Error::new(
+                    -32602,
+                    "Source target is ambiguous; use a node ID",
+                ));
+            }
+            element
+        } else {
+            return Err(Error::new(
+                -32602,
+                "Expected a node ID or exact semantic ID",
+            ));
+        };
+        element
+            .source
+            .as_ref()
+            .ok_or_else(|| Error::new(-32000, "Source location unavailable"))
+    }
+
     pub fn take_style_updates(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.style_updates)
             .into_iter()
@@ -315,6 +558,8 @@ impl Dom {
         self.children_sent.clear();
         self.style_updates.clear();
         self.updates.clear();
+        self.searches.clear();
+        self.node_objects.clear();
     }
 
     fn element(&self, id: i32) -> Result<&Element, Error> {
@@ -646,6 +891,14 @@ fn visual_style(element: &Element) -> Option<&Value> {
         .or(element.styles.as_ref())
 }
 
+fn search_id(params: &Value) -> Result<u64, Error> {
+    params["searchId"]
+        .as_str()
+        .and_then(|id| id.strip_prefix("search-"))
+        .and_then(|id| id.parse().ok())
+        .ok_or_else(|| Error::new(-32602, "Invalid searchId"))
+}
+
 fn attributes(element: &Element) -> Vec<String> {
     let mut attrs = Vec::new();
 
@@ -850,6 +1103,101 @@ mod tests {
         dom.update(stable_capture("1", &[("root", None)])).unwrap();
         assert_ne!(dom.node_id("1-root"), Some(root));
         assert!(dom.element(root).is_err());
+    }
+
+    #[test]
+    fn name_and_id_search_reveals_collapsed_ancestors_and_rejects_expired_results() {
+        let mut dom = Dom::default();
+        let tree = [
+            ("root", None),
+            ("panel", Some("root")),
+            ("save", Some("panel")),
+        ];
+        dom.update(stable_capture("1", &tree)).unwrap();
+        dom.document(&json!({})).unwrap();
+        let save = dom.node_id("1-save").unwrap();
+        let search = dom.search("#save").unwrap();
+        assert_eq!(search["resultCount"], 1);
+        let params = json!({"searchId":search["searchId"],"fromIndex":0,"toIndex":1});
+        let (result, paths) = dom.search_results(&params).unwrap();
+        assert_eq!(result["nodeIds"], json!([save]));
+        assert_eq!(paths.len(), 2);
+        assert!(
+            dom.search_results(&params).unwrap().1.is_empty(),
+            "search reveal must preserve existing nodes"
+        );
+        assert_eq!(dom.search("dIv").unwrap()["resultCount"], 3);
+        assert_eq!(dom.search("SAV").unwrap()["resultCount"], 1);
+        assert!(
+            dom.search_results(&json!({"searchId":search["searchId"],"fromIndex":1,"toIndex":0}))
+                .is_err()
+        );
+        dom.update(stable_capture("2", &tree[..2])).unwrap();
+        assert!(dom.search_results(&params).is_err());
+        dom.discard_search(&params).unwrap();
+        assert!(dom.search_results(&params).is_err());
+        assert!(dom.search("").is_err());
+        assert!(dom.search(&"x".repeat(1025)).is_err());
+        for _ in 0..20 {
+            dom.search("root").unwrap();
+        }
+        assert_eq!(dom.searches.len(), 8);
+        dom.clear();
+        assert!(dom.searches.is_empty());
+    }
+
+    #[test]
+    fn chrome_node_helpers_only_dispatch_navigation_and_respect_object_lifetimes() {
+        use rake_protocol::{control::Command, inspection::NavigationAction};
+        let mut dom = Dom::default();
+        dom.update(stable_capture("1", &[("root", None)])).unwrap();
+        let node = dom.node_id("1-root").unwrap();
+        let object = dom
+            .resolve_node(&json!({"nodeId":node,"objectGroup":"navigation"}))
+            .unwrap();
+        let id = object["object"]["objectId"].as_str().unwrap();
+        for function in [
+            "function focusInPage() { this.focus(); }",
+            "function f(){this.focus()}",
+        ] {
+            assert_eq!(
+                dom.call_navigation(&json!({"objectId":id,"functionDeclaration":function}))
+                    .unwrap(),
+                Command::NavigateElement {
+                    id: "1-root".into(),
+                    generation: "1".into(),
+                    action: NavigationAction::Focus,
+                }
+            );
+        }
+        let scroll = json!({"objectId":id,"functionDeclaration":"function s(){this.scrollIntoViewIfNeeded(!0)}"});
+        assert!(matches!(
+            dom.call_navigation(&scroll).unwrap(),
+            Command::NavigateElement {
+                action: NavigationAction::ScrollIntoView,
+                ..
+            }
+        ));
+        for function in [
+            "function(){this.focus();alert(1)}",
+            "function(){return this.focus()}",
+            "()=>this.focus()",
+        ] {
+            assert!(
+                dom.call_navigation(&json!({"objectId":id,"functionDeclaration":function}))
+                    .is_err()
+            );
+        }
+        dom.update(stable_capture("2", &[("root", None)])).unwrap();
+        assert!(
+            matches!(dom.call_navigation(&scroll).unwrap(), Command::NavigateElement { generation, .. } if generation == "2")
+        );
+        dom.release_node_group("navigation");
+        assert!(dom.call_navigation(&scroll).is_err());
+        let object = dom.resolve_node(&json!({"nodeId":node})).unwrap();
+        let id = object["object"]["objectId"].as_str().unwrap();
+        dom.release_node_object(id);
+        assert!(dom.object_node(id).is_err());
     }
 
     fn capture(id: &str) -> Snapshot {

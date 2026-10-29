@@ -44,6 +44,10 @@ struct WindowState {
     snapshot: Rc<Snapshot>,
     #[cfg(feature = "gpui")]
     identities: Vec<view::BoundaryIdentity>,
+    #[cfg(feature = "gpui")]
+    navigation: BTreeMap<String, view::NavigationTarget>,
+    #[cfg(feature = "gpui")]
+    pending_focus: Option<(String, gpui::FocusHandle)>,
     highlight: Option<(Element, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     pointer: Option<(f32, f32)>,
@@ -80,6 +84,76 @@ impl Default for Store {
 }
 
 impl Store {
+    pub(crate) fn navigate(
+        &self,
+        id: &str,
+        generation: &str,
+        action: NavigationAction,
+    ) -> Result<(), InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+        let host = state
+            .windows
+            .values_mut()
+            .find(|host| host.snapshot.capture == generation)
+            .ok_or(InspectionError::StaleGeneration)?;
+        let element = host
+            .snapshot
+            .elements
+            .iter()
+            .find(|element| element.id == id)
+            .ok_or(InspectionError::NotRetained)?;
+        let supported = match action {
+            NavigationAction::Focus => element.navigation.focus,
+            NavigationAction::ScrollIntoView => element.navigation.scroll_into_view,
+        };
+        if !supported {
+            return Err(InspectionError::NavigationUnavailable);
+        }
+
+        #[cfg(feature = "gpui")]
+        {
+            let target = host
+                .navigation
+                .get(id)
+                .ok_or(InspectionError::NavigationUnavailable)?;
+            match action {
+                NavigationAction::Focus => {
+                    host.pending_focus = Some((
+                        id.into(),
+                        target
+                            .focus
+                            .clone()
+                            .ok_or(InspectionError::NavigationUnavailable)?,
+                    ));
+                }
+                NavigationAction::ScrollIntoView => {
+                    target.reveal(
+                        element
+                            .layout
+                            .ok_or(InspectionError::NavigationUnavailable)?,
+                    );
+                }
+            }
+            state.changed.notify(usize::MAX);
+            Ok(())
+        }
+        #[cfg(not(feature = "gpui"))]
+        Err(InspectionError::NavigationUnavailable)
+    }
+
+    #[cfg(feature = "gpui")]
+    fn take_focus(&self, window: WindowId) -> Option<gpui::FocusHandle> {
+        let mut state = self.0.borrow_mut();
+        let host = state.windows.get_mut(&window)?;
+        let (id, focus) = host.pending_focus.take()?;
+        host.snapshot
+            .elements
+            .iter()
+            .any(|element| element.id == id)
+            .then_some(focus)
+    }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
         let state = self.0.borrow();
 
@@ -287,6 +361,9 @@ impl Store {
                             )
                             && element.kind == old.kind
                             && element.stable_id == old.stable_id
+                            && element.navigation.focus == old.navigation.focus
+                            && element.navigation.scroll_into_view
+                                == old.navigation.scroll_into_view
                             && element.semantic_id == old.semantic_id
                             && element.source == old.source
                             && element.layout == old.layout
@@ -312,6 +389,10 @@ impl Store {
             snapshot: Rc::clone(&snapshot),
             #[cfg(feature = "gpui")]
             identities: Vec::new(),
+            #[cfg(feature = "gpui")]
+            navigation: BTreeMap::new(),
+            #[cfg(feature = "gpui")]
+            pending_focus: None,
             highlight: None,
             pointer: None,
             #[cfg(feature = "gpui")]

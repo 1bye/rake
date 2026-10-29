@@ -6,6 +6,8 @@ use rake::router::RuntimeId;
 
 /// Owned connection results, published through Rake's managed activity lifecycle.
 pub enum Update {
+    /// Completion of an explicit development navigation/source action.
+    Navigation(u64, RuntimeId, Result<(), String>),
     /// Discovery results for the current connection epoch.
     Instances(u64, Result<Vec<Instance>, String>),
     /// Picker observations, deduplicated by sequence and scoped to the exact capture.
@@ -40,6 +42,8 @@ pub struct Inspector {
     /// Whether this frontend is renewing the target's input-capture lease.
     pub picking: bool,
     pub(crate) mode_pending: Option<bool>,
+    pub(crate) navigation_pending: Option<rake::control::Command>,
+    pub(crate) source_pending: Option<String>,
     pub(crate) hover: Option<(String, String)>,
     pick_sequence: u64,
     pending_pick: Option<rake::inspection::Pick>,
@@ -75,6 +79,8 @@ impl Inspector {
         self.tree = None;
         self.picking = false;
         self.mode_pending = None;
+        self.navigation_pending = None;
+        self.source_pending = None;
         self.hover = None;
         self.pick_sequence = 0;
         self.pending_pick = None;
@@ -117,6 +123,12 @@ impl Inspector {
     /// Applies a publication only when its connection/runtime/selection is still current.
     pub fn apply(&mut self, update: Update) {
         match update {
+            Update::Navigation(epoch, runtime, result)
+                if epoch == self.epoch && Some(runtime) == self.runtime && !self.disconnected =>
+            {
+                self.lookup_error = result.err();
+                self.refresh = true;
+            }
             Update::Pick(epoch, runtime, result)
                 if epoch == self.epoch && Some(runtime) == self.runtime && !self.disconnected =>
             {

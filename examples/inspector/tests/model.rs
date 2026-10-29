@@ -46,6 +46,7 @@ fn element(id: &str) -> Element {
         styles: None,
         resolved: None,
         stable_id: None,
+        navigation: Default::default(),
         metadata_truncated: false,
         tab_id: None,
         entry_id: None,

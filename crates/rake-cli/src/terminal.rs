@@ -21,6 +21,7 @@ rake inspect pick [--instance UUID|application-id]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   inspect tree | inspect element ELEMENT_ID | inspect pick | inspect mode on|off [--lease-ms MS]
+  inspect focus|scroll ELEMENT_ID [--generation CAPTURE] | inspect source ELEMENT_ID
   info | schema | snapshot | events [--follow]
   quit [--jobs wait|cancel] | quit status
   reload status | reload checkpoint APPLICATION_ID
@@ -176,6 +177,21 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
             generation: option(&mut args, "--generation")?.unwrap_or_default(),
         }),
         ("inspect", "pick") => Message::Query(Query::InspectPick {}),
+        ("inspect", "focus" | "scroll") => {
+            let generation = option(&mut args, "--generation")?.unwrap_or_default();
+            if args.len() != 1 {
+                return Err("inspect focus|scroll requires one exact element ID".into());
+            }
+            Message::Command(Command::NavigateElement {
+                id: args.remove(0),
+                generation,
+                action: if action == "focus" {
+                    rake_protocol::inspection::NavigationAction::Focus
+                } else {
+                    rake_protocol::inspection::NavigationAction::ScrollIntoView
+                },
+            })
+        }
         ("inspect", "mode") if !args.is_empty() => {
             let enabled = match args.remove(0).as_str() {
                 "on" => true,
@@ -483,6 +499,15 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         option(&mut args, "--request-key")?.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let friendly_highlight = args.first().is_some_and(|arg| arg == "highlight");
+    let friendly_navigation = args.first().is_some_and(|arg| arg == "inspect")
+        && args
+            .get(1)
+            .is_some_and(|arg| matches!(arg.as_str(), "focus" | "scroll"));
+    let source = args.first().is_some_and(|arg| arg == "inspect")
+        && args.get(1).is_some_and(|arg| arg == "source");
+    if source {
+        args[1] = "element".into();
+    }
     let (mut message, follow) = parse_message(args)?;
 
     let candidates: Vec<_> = instances
@@ -521,6 +546,19 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         *generation = tree.capture;
     }
 
+    if let Message::Command(Command::NavigateElement { id, generation, .. }) = &mut message
+        && generation.is_empty()
+        && friendly_navigation
+    {
+        let Reply::Elements(tree) = query(instance, Query::InspectTree {}, timeout)? else {
+            return Err("Unexpected inspection reply".into());
+        };
+        if !tree.elements.iter().any(|element| element.id == *id) {
+            return Err("Element is stale; refresh inspect tree".into());
+        }
+        *generation = tree.capture;
+    }
+
     let request = Request {
         protocol: PROTOCOL_VERSION,
         runtime_id: instance.info.runtime_id,
@@ -532,6 +570,17 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         if matches!(message, Message::Command(_)) { format!("{error}; request key {key}; retry the identical payload and key if the response was lost") }
         else { error.to_string() }
     })?;
+
+    if source {
+        let Reply::Element(element) = reply else {
+            return Err("Unexpected source lookup reply".into());
+        };
+        let location = element
+            .source
+            .as_ref()
+            .ok_or("Source location unavailable")?;
+        return print(&crate::source::open(location)?, compact);
+    }
 
     let deadline = Instant::now() + timeout;
 
@@ -725,6 +774,11 @@ mod tests {
         };
 
         let commands = vec![
+            Command::NavigateElement {
+                id: "element-1-0".into(),
+                generation: "1".into(),
+                action: rake_protocol::inspection::NavigationAction::Focus,
+            },
             Command::HighlightElement {
                 id: None,
                 generation: String::new(),

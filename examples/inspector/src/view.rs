@@ -251,6 +251,22 @@ impl RouteViews<Destination> for Views {
                         }
 
                         if let Some(runtime) = target {
+                            let (navigation, source) = {
+                                let mut model = observed.borrow_mut();
+                                (model.navigation_pending.take(), model.source_pending.take())
+                            };
+                            if let Some(command) = navigation {
+                                let result = connection
+                                    .control(runtime, command, run.cancellation())
+                                    .await;
+                                run.publish(Update::Navigation(epoch, runtime, result))?;
+                            }
+                            if let Some(id) = source {
+                                let result = connection
+                                    .open_source(runtime, &id, run.cancellation())
+                                    .await;
+                                run.publish(Update::Navigation(epoch, runtime, result))?;
+                            }
                             if let Some(enabled) = pending {
                                 let result = connection
                                     .control(
@@ -424,6 +440,19 @@ fn source_label(element: &rake::inspection::Element) -> String {
 }
 
 impl ElementsView {
+    fn navigate(&self, action: rake::inspection::NavigationAction) {
+        let mut model = self.model.borrow_mut();
+        if let (Some(id), Some(tree)) = (&model.selected, &model.tree)
+            && tree.elements.iter().any(|element| &element.id == id)
+        {
+            model.navigation_pending = Some(Command::NavigateElement {
+                id: id.clone(),
+                generation: tree.capture.clone(),
+                action,
+            });
+        }
+    }
+
     fn detail_button(&self, tab: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
             <button id={format!("detail-{tab}")} class={if self.detail_tab == tab { "px-3 h-full border-accent hover:bg-hover text-accent border-b-[2px]" } else { "px-3 h-full border-accent hover:bg-hover text-muted border-b-0" }} style={control}
@@ -947,6 +976,14 @@ impl Render for ElementsView {
                     for tab in ["Styles", "Computed", "Layout", "Source"] {
                         <div id={format!("tab-container-{tab}")} class="h-full">{self.detail_button(tab, cx)}</div>
                     }
+                </div>
+                <div class="flex flex-row flex-wrap gap-1 px-2 py-1 border-b-1 border-line">
+                    <button id="scroll-target" disabled={!can_reveal || !selected.is_some_and(|e| e.navigation.scroll_into_view)} class="px-2 py-1 hover:bg-field" style={control}
+                        on:click={cx.listener(|this, _, _, cx| { this.navigate(rake::inspection::NavigationAction::ScrollIntoView); cx.notify(); })}>"Scroll into view"</button>
+                    <button id="focus-target" disabled={!can_reveal || !selected.is_some_and(|e| e.navigation.focus)} class="px-2 py-1 hover:bg-field" style={control}
+                        on:click={cx.listener(|this, _, _, cx| { this.navigate(rake::inspection::NavigationAction::Focus); cx.notify(); })}>"Focus element"</button>
+                    <button id="open-rust-source" disabled={!can_reveal || selected.is_none_or(|e| e.source.is_none())} class="px-2 py-1 hover:bg-field" style={control}
+                        on:click={cx.listener(|this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone(); cx.notify(); })}>"Open Rust source"</button>
                 </div>
                 if current_tab == "Styles" || current_tab == "Computed" {
                     <div class="flex flex-row items-center gap-2 px-2 h-[31px] shrink-0 border-b-1 border-line">

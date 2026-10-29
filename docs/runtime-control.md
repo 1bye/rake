@@ -157,6 +157,10 @@ already performed by an application handler.
 Application/router mutations require a 1–128 byte request key. Transient
 development-only `highlight_element` and `inspect_mode` commands instead use
 bounded leases, return acknowledgements, and retain no operation or key entry.
+`navigate_element` is also a transient development control: exact ID/generation
+plus `action: focus|scroll_into_view`. It returns an acknowledgement without a
+retry-key/operation entry; clients never replay it automatically after uncertain
+delivery. Unsupported handles and stale captures return typed inspection errors.
 See [highlight and picking](element-inspection.md#development-highlight-and-picking). The CLI generates one and includes
 it in its submission/result output, or in an uncertain-response error. Supply
 `--request-key KEY` to retry explicitly. An identical request returns its original

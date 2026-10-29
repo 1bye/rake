@@ -47,6 +47,28 @@ pub struct ResolvedStyle {
     pub hovered: bool,
 }
 
+/// Development navigation supported by one presented inspection boundary.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Navigation {
+    /// The boundary registered its real GPUI focus handle.
+    pub focus: bool,
+    /// Whether that registered handle currently owns keyboard focus.
+    #[serde(default)]
+    pub focused: bool,
+    /// Registered scroll ancestors can reveal it, or it is already fully visible.
+    pub scroll_into_view: bool,
+}
+
+/// One explicit navigation action; never an application command or arbitrary evaluation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NavigationAction {
+    /// Focus the registered target and activate its native window.
+    Focus,
+    /// Reveal the boundary through its registered scroll ancestors.
+    ScrollIntoView,
+}
+
 /// One boundary in prepaint traversal order. Semantic IDs may repeat in a tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Element {
@@ -56,6 +78,9 @@ pub struct Element {
     /// Absent for ambiguous repeated boundaries and older runtimes. Never a control ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stable_id: Option<String>,
+    /// Explicit supported navigation; older runtimes report neither action.
+    #[serde(default)]
+    pub navigation: Navigation,
     /// Nearest retained inspected ancestor; uninstrumented intermediates are omitted.
     pub parent: Option<String>,
     /// Rust element type, without a promise of a stable wire spelling.
@@ -159,6 +184,9 @@ pub enum InspectionError {
     /// Inspect-mode leases must be finite and at most two seconds.
     #[error("inspection lease must be 1–2000 milliseconds")]
     InvalidLease,
+    /// The boundary has no registered handle for the requested action.
+    #[error("navigation is unavailable for this boundary; register its focus/scroll handles")]
+    NavigationUnavailable,
 }
 
 /// Bounded picker status. Clients deduplicate clicks using `pick_sequence`.
