@@ -497,7 +497,7 @@ impl ElementsView {
         rake::view! {
             <button id={format!("detail-{tab}")} class={if self.detail_tab == tab { "px-3 h-full border-accent hover:bg-hover text-accent border-b-[2px]" } else { "px-3 h-full border-accent hover:bg-hover text-muted border-b-0" }} style={control}
                 on:click={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
-        }.inspect(format!("inspector.tab.{tab}"))
+        }.inspect_with(|| format!("inspector.tab.{tab}"))
     }
 
     fn select(&mut self, id: &str, reveal: bool, window: &mut Window, cx: &mut Context<Self>) {

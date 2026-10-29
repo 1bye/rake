@@ -2,8 +2,13 @@
 //!
 //! Default builds include the pinned GPUI native/browser adapters. Disable default
 //! features for HTTP, data and diagnostics consumers that do not need a UI.
+//! Inspection and temporary style editing require the opt-in `devtools` feature;
+//! ordinary native and WASM builds omit their instrumentation and retained state.
 
 extern crate self as rake;
+
+#[path = "inspection/macros.rs"]
+mod inspection_macros;
 
 pub mod control;
 
@@ -11,6 +16,10 @@ pub use rake_diagnostics as diagnostics;
 
 pub use rake_http as http;
 
+#[cfg(feature = "devtools")]
+pub mod inspection;
+#[cfg(not(feature = "devtools"))]
+#[path = "inspection/disabled.rs"]
 pub mod inspection;
 pub mod quit;
 pub mod reload;
@@ -37,8 +46,8 @@ pub use gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
 #[cfg(feature = "experimental-view")]
 /// Builds GPUI views from experimental HTML-like markup.
-/// Rendered nodes automatically expose bounded development inspection and authored style sources.
-/// Built-in roots preserve common GPUI builder traits; `into_inner()` extracts the original value.
+/// With `devtools`, nodes expose bounded inspection and authored style sources.
+/// Without it, inspection wrappers and source descriptors are removed at expansion.
 ///
 /// ```
 /// let rows = ["One", "Two"];
@@ -248,7 +257,8 @@ pub mod prelude {
 
 #[doc(hidden)]
 pub mod __private {
-    #[cfg(feature = "experimental-view")]
+    pub use crate::__rake_inspection as inspection;
+    #[cfg(all(feature = "experimental-view", feature = "devtools"))]
     pub use crate::inspection::authored::{
         Definition as ViewDefinition, HandlerSite as ViewHandlerSite, StyleSite as ViewStyleSite,
         child as view_inspect_child, component as view_inspect_component,

@@ -55,10 +55,10 @@ impl Element {
             let #heading_text = #content.finish();
             #label
             let mut #siblings = #rake::__private::ViewChildren::default();
-            #rake::__private::view_inspect_child(
-                &mut #siblings, &mut #node, #heading_text,
+            #rake::__private::inspection!(#heading_text, |__rake_text| #rake::__private::view_inspect_child(
+                &mut #siblings, &mut #node, __rake_text,
                 #rake::gpui::ElementId::from(("rake::view:paragraph-text", #index)), #definition
-            );
+            ), |__rake_text| #siblings.push(&mut #node, __rake_text));
             #node
         }))
     }

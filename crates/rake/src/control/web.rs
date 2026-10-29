@@ -191,6 +191,7 @@ impl WebBridge {
         self.run_host(HostClient::new(client), application_id).await;
     }
 
+    #[cfg(feature = "devtools")]
     pub(super) async fn reload_standalone(
         &self,
         runtime: crate::router::RuntimeId,

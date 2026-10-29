@@ -6,6 +6,10 @@ UI workflows. Current Chrome verification is recorded in [DevTools status](devto
 
 The Elements panel, CLI and Rust client read the same bounded, owned snapshots.
 They never hold UI entities, read source files, or evaluate arbitrary Rust/JavaScript.
+Capture and temporary editing require the opt-in `rake/devtools` Cargo feature.
+Without it, generated instrumentation and the capture/edit backend are compiled
+out; the manual builders are identities and queries report unavailable. Use
+`inspect_with` for lazy dynamic identities. See [build configuration](devtools.md#connection).
 Both routed and standalone `App::root` runners attach capture when configured with
 `ControlConfig::FromEnvironment` and enabled by `RAKE_DEV_CONTROL=1` on native
 or valid authenticated development metadata on Web. Disabled and headless hosts
@@ -177,7 +181,7 @@ node scripts/test-inspector-ui.mjs
 The explicit display integration requires a macOS GUI session:
 
 ```sh
-cargo build -p rake-routing -p rake-cli
+cargo build -p rake-routing -p rake-cli --features rake/devtools
 python3 scripts/test-elements.py
 ```
 

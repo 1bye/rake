@@ -102,7 +102,7 @@ Run the focused release measurements with:
 ```sh
 cargo bench -p rake-diagnostics --bench diagnostics_snapshot --locked
 cargo bench -p rake --no-default-features --bench control_queries --locked
-cargo test -p rake --no-default-features --release --lib publish_benchmark --locked -- --ignored --nocapture
+cargo test -p rake --no-default-features --features devtools --release --lib publish_benchmark --locked -- --ignored --nocapture
 ```
 
 On the local synthetic fixture (128 tabs, 640 history entries and 256 tasks), median

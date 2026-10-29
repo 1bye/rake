@@ -445,7 +445,7 @@ fn resolved_metadata_is_bounded_without_losing_boundaries() {
 
 /// Manual CPU/allocation benchmark; synthetic metadata, no GPU rendering.
 #[test]
-#[ignore = "manual benchmark: cargo test -p rake --no-default-features --release --lib publish_benchmark -- --ignored --nocapture"]
+#[ignore = "manual benchmark: cargo test -p rake --no-default-features --features devtools --release --lib publish_benchmark -- --ignored --nocapture"]
 fn publish_benchmark() {
     use std::hint::black_box;
     use std::time::Instant;

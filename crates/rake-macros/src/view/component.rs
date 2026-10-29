@@ -53,9 +53,10 @@ impl Element {
         let defaults = self.defaults.as_ref().map(|value| quote!(..#value));
 
         if self.self_closing {
-            return Ok(
-                quote!(#rake::__private::view_inspect_component(#path { #fields #defaults }, #definition, #key)),
-            );
+            return Ok(quote!(#rake::__private::inspection!(
+                #path { #fields #defaults },
+                |__rake_component| #rake::__private::view_inspect_component(__rake_component, #definition, #key)
+            )));
         }
         let children = format_ident!(
             "__rake_component_children_{index}",
@@ -70,7 +71,7 @@ impl Element {
         let body = expand_children_into(&self.children, &children, &siblings, rake, next)?;
 
         // Rust evaluates explicit properties before the children field, exactly once.
-        Ok(quote!(#rake::__private::view_inspect_component(#path {
+        let component = quote!(#path {
             #fields
             children: {
                 let mut #children = #rake::__private::ViewComponentChildren::default();
@@ -79,6 +80,10 @@ impl Element {
                 #children.into_vec()
             },
             #defaults
-        }, #definition, #key)))
+        });
+        Ok(quote!(#rake::__private::inspection!(
+            #component,
+            |__rake_component| #rake::__private::view_inspect_component(__rake_component, #definition, #key)
+        )))
     }
 }

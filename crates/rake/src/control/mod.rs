@@ -17,7 +17,7 @@
 
 mod commands;
 mod host;
-#[cfg(feature = "gpui")]
+#[cfg(all(feature = "gpui", feature = "devtools"))]
 pub(crate) mod standalone;
 
 pub(crate) use host::HostClient;
@@ -377,7 +377,7 @@ impl<R: Route> RuntimeClient<R> {
         Ok(Reply::Submitted { operation_id: id })
     }
 
-    #[cfg(feature = "gpui")]
+    #[cfg(all(feature = "gpui", feature = "devtools"))]
     pub(crate) fn inspection(&self) -> crate::inspection::Store {
         self.state.inspection.clone()
     }
@@ -540,28 +540,39 @@ pub enum ControlConfig {
     #[default]
     Disabled,
     /// Native requires `RAKE_DEV_CONTROL=1`; Web requires injected same-origin metadata.
+    /// Element inspection additionally requires the opt-in `devtools` Cargo feature.
     FromEnvironment,
 }
 
 #[cfg(feature = "gpui")]
 impl ControlConfig {
+    #[cfg(any(feature = "devtools", test))]
     pub(crate) fn inspection_enabled(self) -> bool {
-        if !matches!(self, Self::FromEnvironment) {
-            return false;
-        }
-
-        #[cfg(unix)]
+        #[cfg(not(feature = "devtools"))]
         {
-            std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            WebBridgeConfig::from_document().is_ok_and(|config| config.is_some())
-        }
-
-        #[cfg(not(any(unix, target_family = "wasm")))]
-        {
+            let _ = self;
             false
+        }
+
+        #[cfg(feature = "devtools")]
+        {
+            if !matches!(self, Self::FromEnvironment) {
+                return false;
+            }
+
+            #[cfg(unix)]
+            {
+                std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                WebBridgeConfig::from_document().is_ok_and(|config| config.is_some())
+            }
+
+            #[cfg(not(any(unix, target_family = "wasm")))]
+            {
+                false
+            }
         }
     }
 }
@@ -612,6 +623,7 @@ pub(crate) async fn run_host_client(
 }
 
 #[cfg(test)]
+#[cfg(feature = "devtools")]
 mod inspection_control_tests {
     //! Covers: leased commands bypass operation/key retention while preserving runtime validation.
     //! Real: shared client dispatcher and inspection store. Doubles: an empty captured host.

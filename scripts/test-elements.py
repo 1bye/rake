@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Covers: presented GPUI tree, layout/styles/source/semantics, ownership and stale IDs.
 Real: native routing app, GPU/window, Unix runtime control, CLI and inspector HTTP proxy.
-Doubles: none. Requires: macOS GUI session, cargo build -p rake-routing -p rake-cli.
+Doubles: none. Requires: macOS GUI session, cargo build -p rake-routing -p rake-cli --features rake/devtools.
 This is an explicit display test; headless/CI suites do not substitute a fake tree.
 """
 import json

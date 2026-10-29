@@ -685,10 +685,11 @@ impl Element {
             *next += 1;
             let element = self.expand_entity(rake)?;
             let definition = self.inspection_definition(rake, index);
-            return Ok(
-                quote!(#rake::__private::view_inspect_component(#element, #definition,
-                |entity| Some(#rake::gpui::ElementId::View(entity.entity_id())))),
-            );
+            return Ok(quote!(#rake::__private::inspection!(
+                #element,
+                |__rake_entity| #rake::__private::view_inspect_component(__rake_entity, #definition,
+                |entity| Some(#rake::gpui::ElementId::View(entity.entity_id())))
+            )));
         }
 
         if self.is_component() {
@@ -1262,9 +1263,9 @@ fn expand_text_child(
         "Expression"
     };
     let definition = inspection::definition(tag, source, index, TokenStream::new(), rake);
-    quote_spanned!(source=> #rake::__private::view_inspect_child(
-        &mut #siblings, &mut #parent, #value, #rake::gpui::ElementId::from(("rake::view:child", #index)), #definition
-    );)
+    quote_spanned!(source=> #rake::__private::inspection!(#value, |__rake_child| #rake::__private::view_inspect_child(
+        &mut #siblings, &mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index)), #definition
+    ), |__rake_child| #siblings.push_child(&mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index))));)
 }
 
 mod classes;

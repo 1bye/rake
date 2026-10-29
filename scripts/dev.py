@@ -191,13 +191,26 @@ class Project:
                         digest.update(b"deleted-during-scan")
         return digest.digest()
 
+    def build_features(self):
+        features = [self.args.features] if self.args.features else []
+        # Development builds opt in; ordinary cargo/release builds remain clean.
+        if self.args.command == "dev":
+            if "devtools" in self.package["features"]:
+                features.append("devtools")
+            else:
+                for dependency in self.package["dependencies"]:
+                    if dependency["name"] == "rake" and dependency["kind"] is None:
+                        features.append((dependency["rename"] or "rake") + "/devtools")
+        return ",".join(features)
+
     def build(self, processes, output):
         output.mkdir(parents=True)
         artifacts = []
         command = ["cargo", "build", "--locked", "--message-format=json-render-diagnostics",
                    "--manifest-path", self.package["manifest_path"], "--package", self.package["name"]]
-        if self.args.features:
-            command += ["--features", self.args.features]
+        features = self.build_features()
+        if features:
+            command += ["--features", features]
         if self.args.release:
             command += ["--release"]
         command += ["--bin", self.target["name"]] if self.args.target == "desktop" else ["--lib", "--target", "wasm32-unknown-unknown"]

@@ -1,6 +1,6 @@
 // Covers: native view! text/styles/accessibility through the actual CDP adapter.
 // Real: GPUI window/GPU, private Unix control, CLI, TCP and WebSocket. Doubles: none.
-// Requires: macOS GUI, Node 22+, cargo build -p rake-cli -p rake-view.
+// Requires: macOS GUI, Node 22+, cargo build -p rake-cli -p rake-view --features rake/devtools.
 // This verifies live protocol behavior; it does not automate Chrome's UI.
 import assert from 'node:assert/strict';
 import {spawn, execFileSync} from 'node:child_process';

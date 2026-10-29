@@ -69,7 +69,7 @@ fn headless_queries_report_coverage_without_inventing_a_tree() {
     );
 }
 
-#[cfg(feature = "gpui")]
+#[cfg(all(feature = "gpui", feature = "devtools"))]
 #[test]
 fn manual_handler_metadata_is_available_through_the_public_builder_api() {
     use rake::gpui::{InteractiveElement as _, StatefulInteractiveElement as _};

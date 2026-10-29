@@ -251,5 +251,7 @@ fn nested_markup_slots_accept_component_roots() {
     };
 
     assert_eq!(card.children.len(), 1);
-    let _: AnyElement = card.into_inner().header;
+    #[cfg(feature = "devtools")]
+    let card = card.into_inner();
+    let _: AnyElement = card.header;
 }

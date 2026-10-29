@@ -103,15 +103,16 @@ impl Element {
     ) -> TokenStream {
         let definition = self.inspection_definition(rake, index);
         let named = self.attribute("id").is_some();
-        let mut output = quote_spanned!(self.tag.span()=> #rake::__private::view_inspect(#output, #definition, #named));
+        let node = syn::Ident::new("__rake_inspection_element", Span::mixed_site());
+        let mut inspected = quote_spanned!(self.tag.span()=> #rake::__private::view_inspect(#node, #definition, #named));
         for (attribute, method) in [("focus", "focus_handle"), ("scroll", "scroll_handle")] {
             if let Some(value) = self.attribute(attribute) {
                 let value = value.expression().expect("validated handle");
                 let method = syn::Ident::new(method, value.span());
-                output.extend(quote!(.#method(#value)));
+                inspected.extend(quote!(.#method(#value)));
             }
         }
-        output
+        quote!(#rake::__private::inspection!(#output, |#node| #inspected))
     }
 }
 

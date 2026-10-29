@@ -589,7 +589,7 @@ impl NotesView {
                         .on_click(cx.listener(move |this, _, window, cx| { let _ = this.notebook.select(id);
 
                             this.sync(window, cx); cx.notify(); }))
-                        .inspect(format!("notes.note.{id}"))
+                        .inspect_with(|| format!("notes.note.{id}"))
                 })))
     }
 }

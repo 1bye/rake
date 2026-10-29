@@ -20,6 +20,11 @@ mod provenance;
 
 /// Adds a named inspection boundary to a styled GPUI element. Call after styling.
 pub trait InspectElement: IntoElement + Styled {
+    /// Constructs a semantic identity only in builds with inspection compiled in.
+    #[track_caller]
+    fn inspect_with(self, name: impl FnOnce() -> String) -> Inspected<Self::Element> {
+        self.inspect(name())
+    }
     /// Captures authored styles, construction site and an optional semantic identity.
     /// This does not change the element's GPUI ID or make hidden history visible.
     #[track_caller]

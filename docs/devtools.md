@@ -18,6 +18,38 @@ use the CDP URL for supported workflows. Python 3.11+ is required by the supervi
 
 ## Connection
 
+Inspection is an opt-in Cargo feature, disabled by default:
+
+```toml
+[features]
+devtools = ["rake/devtools"]
+```
+
+`rake dev` enables that application feature automatically, or enables the direct
+Rake dependency's `devtools` feature (including renamed dependencies). `rake build`,
+`rake bundle` and ordinary Cargo builds do not enable it automatically. For manual
+development builds, use `cargo build --features devtools`. Runtime capture still
+requires `ControlConfig::FromEnvironment` and development connection metadata.
+
+Without `rake/devtools`, automatic `view!` inspection wrappers, source descriptors,
+capture/edit/recording state, standalone inspection hosts and inspection wakeups
+are compiled out on native and WASM. Native text accessibility, focus, scrolling
+and ordinary GPUI styles remain available. Inspection queries report unavailable;
+runtime metadata cannot activate code that was compiled out. The protocol types
+and unavailable-query responses remain for compatibility.
+
+Manual `inspect` builders return their original element unchanged in that build.
+Use `.inspect_with(|| format!("row-{id}"))` for dynamic names, so Rust does not
+evaluate inspection-only allocations in production. Ordinary method arguments
+are always evaluated by Rust, including arguments to no-op methods. Automatic
+macro expansion removes the metadata expressions entirely. With inspection off,
+`view!` returns the original component/element types; `into_inner()` is needed only
+for wrappers in feature-enabled builds.
+
+Cargo features are additive across dependencies. Production builds must omit
+`devtools` throughout the graph; `--release` alone does not disable an explicitly
+enabled feature. Inspect the graph with `cargo tree -e features -i rake`.
+
 `rake cdp --session /tmp/rake-dev-EXAMPLE --no-open` starts a separate Rust
 adapter for opted-in runtimes. It prints the actual OS-assigned port and stock
 `devtools://devtools/bundled/devtools_app.html?ws=…` URLs. Paste a URL into Chrome,

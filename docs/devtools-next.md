@@ -9,6 +9,10 @@ identities; picking and geometry; live styles and temporary edits; frame recordi
 and captured accessibility/handler metadata. Each has a separate commit. Coverage
 is limited to captured GPUI boundaries and the engine facts exposed by GPUI.
 
+Inspection is compiled only with the opt-in `rake/devtools` feature; `rake dev`
+enables it automatically. Production build configuration is documented in
+[devtools.md](devtools.md#connection).
+
 ## Elements coverage checklist
 
 | Workflow | Supported behavior | Verification |
@@ -48,11 +52,11 @@ is compilation, not browser/GPU execution.
 
 ```sh
 cargo test -p rake-cli --offline
-cargo test -p rake --features view-test-support --lib inspection --offline
+cargo test -p rake --features view-test-support,devtools --lib inspection --offline
 cargo clippy -p rake-cli -p rake --all-targets --features rake/view-test-support --offline -- -D warnings
 cargo test -p rake --no-default-features --lib --offline
 cargo check -p rake -p rake-view --lib --target wasm32-unknown-unknown --features rake/experimental-view --offline
-cargo build -p rake-cli -p rake-view --offline
+cargo build -p rake-cli -p rake-view --features rake/devtools --offline
 node scripts/test-elements-cdp.mjs
 ```
 

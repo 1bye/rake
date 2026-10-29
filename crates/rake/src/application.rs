@@ -18,6 +18,7 @@ use std::rc::Rc;
 
 type Root = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
 
+#[cfg(feature = "devtools")]
 mod standalone;
 
 #[cfg(target_family = "wasm")]
@@ -303,11 +304,20 @@ impl<R: Route> App<R> {
             })
         } else {
             let mount = self.root.take().ok_or(AppError::MissingRoot)?;
+            #[cfg(feature = "devtools")]
             let control = self.control;
+            #[cfg(feature = "devtools")]
             let application_id = self.id.clone();
             Box::new(move |services, window, cx| {
-                let content = mount(services.clone(), window, cx);
-                standalone::mount(content, &services, control, application_id, cx)
+                #[cfg(feature = "devtools")]
+                {
+                    let content = mount(services.clone(), window, cx);
+                    standalone::mount(content, &services, control, application_id, cx)
+                }
+                #[cfg(not(feature = "devtools"))]
+                {
+                    mount(services, window, cx)
+                }
             })
         };
 
