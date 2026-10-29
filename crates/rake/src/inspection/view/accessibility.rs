@@ -115,6 +115,21 @@ pub(super) fn names(snapshot: &mut Snapshot) {
             children[*parent].push(i);
         }
     }
+    let mut hidden = vec![false; snapshot.elements.len()];
+    for i in 0..snapshot.elements.len() {
+        hidden[i] |= snapshot.elements[i]
+            .accessibility
+            .as_ref()
+            .is_some_and(|a| a.hidden);
+        if hidden[i] {
+            if let Some(a11y) = &mut snapshot.elements[i].accessibility {
+                a11y.hidden = true;
+            }
+            for &child in &children[i] {
+                hidden[child] = true;
+            }
+        }
+    }
     let mut contents = vec![String::new(); snapshot.elements.len()];
     let mut clipped = vec![false; snapshot.elements.len()];
     for i in (0..snapshot.elements.len()).rev() {

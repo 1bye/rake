@@ -893,8 +893,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
-                accessibility::order(&mut completed.snapshot);
                 accessibility::names(&mut completed.snapshot);
+                accessibility::order(&mut completed.snapshot);
                 bound_resolved_styles(&mut completed.snapshot);
                 store.publish(*host, completed.snapshot);
             }

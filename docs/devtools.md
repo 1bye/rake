@@ -169,7 +169,7 @@ JavaScript evaluation, persisted scripts, and autocomplete via JavaScript calls
 remain unavailable. `Runtime.callFunctionOn` recognizes only Chrome's zero-argument
 focus/scroll helpers on retained node objects; it never evaluates JavaScript.
 
-Elements Find (`Cmd/Ctrl+F`) searches captured names and IDs, including collapsed
+Elements Find (`Cmd/Ctrl+F`) searches captured names, IDs and text, including collapsed
 branches; `#id` matches an exact semantic ID. Its context menu can focus registered
 elements and scroll through registered containers. Both Rake frontends expose the
 same actions plus **Open Rust source**. In Chrome's Console, use
@@ -186,7 +186,7 @@ Page.getResourceTree/getFrameTree/bringToFront; Runtime.runIfWaitingForDebugger,
 Runtime.evaluate, Runtime.compileScript (without persistence),
 Runtime.globalLexicalScopeNames, Runtime.getProperties,
 Runtime.releaseObject/releaseObjectGroup; DOM.getDocument, DOM.requestChildNodes,
-DOM.describeNode, DOM.getAttributes, DOM.getBoxModel, DOM.performSearch,
+DOM.describeNode, DOM.getAttributes, DOM.getOuterHTML, DOM.getBoxModel, DOM.performSearch,
 DOM.getSearchResults/discardSearchResults, DOM.focus/scrollIntoViewIfNeeded,
 DOM.resolveNode/requestNode, Runtime.callFunctionOn (navigation only),
 DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
@@ -197,7 +197,11 @@ including Debugger, Profiler, DOM edits and other JavaScript function calls.
 CSS edits are restricted to temporary DevTools base override sheets; authored styles remain read-only.
 Accessibility.enable/disable, getRootAXNode/getFullAXTree/getPartialAXTree/
 getChildAXNodes/getAXNodeAndAncestors, Tracing.start/end and IO.read/close are also
-supported. The adapter also accepts the explicit extension `Rake.openSource { nodeId }`.
+supported. `Rake.openSource { nodeId, target? }` accepts captured construction/style/handler sites.
+Both Rake frontends expose per-attribute/handler source buttons, copy text/markup/path,
+branch actions and keyboard context menus. Chrome Copy element receives escaped
+synthetic markup. See the [Elements coverage checklist](devtools-next.md#elements-coverage-checklist)
+for verification evidence and remaining GPUI boundaries.
 
 ## Rake application preview
 

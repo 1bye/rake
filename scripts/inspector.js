@@ -12,6 +12,7 @@ const elementCollapsed = new Set();
 let elementMenu = null;
 let elements = null, selectedElement = null, elementDetail = null, elementError = null;
 let rendered = null, workspaceFocus = null, elementTab = 'Styles', resizing = false;
+let pointerHeld = false, pointerReleaseTimer = null;
 const paneSizes = new Map(), scrollPositions = new Map();
 let awaitingSuccessor = null;
 let picking = false, pickSequence = 0, hoveredBoundary = null, highlightSent = false, inspectionBusy = false;
@@ -747,6 +748,8 @@ function elementsPanel() {
     return line;
   })), 100, false);
   tree.firstChild.setAttribute('role', 'tree'); tree.firstChild.setAttribute('aria-label', 'Element tree');
+  const treeActions = row(button('Expand all', () => elementTreeAction('expand-all')), button('Collapse all', () => elementTreeAction('collapse-all')), button('Element actions', () => openElementMenu(selectedElement), !selectedElement));
+  treeActions.classList.add('element-tree-actions');
   const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), button(picking ? 'Cancel picking' : 'Pick element in app', async () => {
       if (picking) stopInspection();
       else {
@@ -754,9 +757,8 @@ function elementsPanel() {
         catch (error) { showError(error); }
       }
       render(true);
-    }, !info?.element_interaction), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), tree,
+    }, !info?.element_interaction), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), treeActions, tree,
     details('Inspection coverage', elements.coverage, 'inspection-coverage'));
-  master.append(row(button('Expand all', () => elementTreeAction('expand-all')), button('Collapse all', () => elementTreeAction('collapse-all')), button('Element actions', () => openElementMenu(selectedElement), !selectedElement)));
   if (elementMenu) {
     const menu = el('div', null, 'element-menu'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Element actions');
     menu.style.left = Math.max(0, Math.min(elementMenu.x, (globalThis.innerWidth || 800) - 240)) + 'px';
@@ -927,8 +929,11 @@ function render(force = false) {
   $('loss-summary').textContent = `${model.diagnosticsRecords.length} records · ${model.dropped + model.outputDropped + model.evicted + output.dropped} drops`;
   $('export').hidden = !['Console', 'Requests', 'Traces'].includes(panel);
   $('export').disabled = !model.runtime;
-  if (resizing || (!force && document.activeElement?.closest('form'))) return;
-  const signature = JSON.stringify([panel, model.runtime, model.cursor, model.after, connected, mutating,
+  if (resizing || (panel === 'Elements' && pointerHeld) || (!force && document.activeElement?.closest('form'))) return;
+  // Unrelated log traffic must not replace pressed/focused Elements controls mid-click.
+  const signature = JSON.stringify(panel === 'Elements'
+    ? [panel, model.runtime, connected, mutating, info, receipt, operation, elements, selectedElement, elementDetail, elementError, elementTab, picking, elementMenu, [...elementCollapsed]]
+    : [panel, model.runtime, model.cursor, model.after, connected, mutating,
     receipt, operation, development, frameState, frameRecords.at(-1)?.sequence, recordingFrames, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
   if (!force && signature === rendered) return;
   rendered = signature;
@@ -980,3 +985,10 @@ if (typeof window !== 'undefined') window.addEventListener('pagehide', () => {
 render(true); loop(); inspectionLoop();
 
 document.addEventListener?.('pointerdown', event => { if (elementMenu && !event.target.closest('.element-menu')) { elementMenu = null; render(true); } });
+document.addEventListener?.('pointerdown', () => { clearTimeout(pointerReleaseTimer); pointerHeld = true; }, true);
+// Keep the pressed node through click dispatch, even when mouseup and click use separate tasks.
+document.addEventListener?.('pointerup', () => { pointerReleaseTimer = setTimeout(() => { pointerHeld = false; render(); }, 250); }, true);
+document.addEventListener?.('click', () => { clearTimeout(pointerReleaseTimer); pointerHeld = false; setTimeout(() => render(), 0); }, true);
+document.addEventListener?.('contextmenu', () => { clearTimeout(pointerReleaseTimer); pointerHeld = false; }, true);
+document.addEventListener?.('pointercancel', () => { pointerHeld = false; render(); }, true);
+if (typeof window !== 'undefined') window.addEventListener('blur', () => { pointerHeld = false; render(); });

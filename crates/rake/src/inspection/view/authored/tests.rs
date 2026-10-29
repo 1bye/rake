@@ -463,6 +463,15 @@ fn rendered_text_covers_containers_and_inline_runs_with_stable_live_updates() {
         .unwrap();
     assert_eq!(name.name.as_deref(), Some("Open document 0"));
     assert_eq!(name.name_source.as_deref(), Some("contents"));
+    let hidden = first
+        .elements
+        .iter()
+        .find(|e| e.text.as_deref() == Some("Ignore me"))
+        .unwrap();
+    assert!(
+        hidden.accessibility.as_ref().unwrap().hidden,
+        "hidden ancestors also hide captured text from AX and tab order"
+    );
     let states = &named(&first, "check-state")
         .accessibility
         .as_ref()

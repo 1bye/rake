@@ -200,8 +200,8 @@ impl Session {
                             "openSource requires a JSON node/semantic ID or {nodeId,target}",
                         )
                     })?;
-                    self.refresh_dom()?;
-                    crate::source::open(self.dom.source(&selector)?)
+                    let location = self.source_location(&selector)?;
+                    crate::source::open(&location)
                         .map_err(|error| Error::new(-32000, error.to_string()))?
                 } else {
                     super::evaluate::execute(&self.instance, expression)?
@@ -297,8 +297,8 @@ impl Session {
                 Ok(json!({}))
             }
             "Rake.openSource" => {
-                self.refresh_dom()?;
-                crate::source::open(self.dom.source(&request.params)?)
+                let location = self.source_location(&request.params)?;
+                crate::source::open(&location)
                     .map_err(|error| Error::new(-32000, error.to_string()))
             }
             "DOM.resolveNode" => {
@@ -993,6 +993,16 @@ impl Session {
         Ok(frames.more)
     }
 
+    fn source_location(
+        &mut self,
+        selector: &Value,
+    ) -> std::result::Result<rake_protocol::inspection::SourceLocation, Error> {
+        self.refresh_dom()?;
+        let node = self.dom.source_node(selector)?;
+        self.load_details(node)?;
+        self.dom.source(selector).cloned()
+    }
+
     fn load_details(&mut self, node: i32) -> std::result::Result<(), Error> {
         if !self
             .instance
@@ -1411,6 +1421,55 @@ mod tests {
                 ))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn source_targets_load_exact_details_omitted_from_the_paged_index() {
+        let mut snapshot = capture("source");
+        snapshot.elements[0].semantic_id = Some("root".into());
+        snapshot.elements[0].view = Some(serde_json::from_value(json!({"tag":"div","style_sources":[{"scope":"div","attribute":"class","expression":"p-2","source":{"file":"src/view.rs","line":20,"column":4}}]})).unwrap());
+        snapshot.elements[0].handlers = vec![serde_json::from_value(json!({"name":"click","origin":"view","source":{"file":"src/view.rs","line":21,"column":7}})).unwrap()];
+        let (mut instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTreePage { .. }) => {
+                    let mut page = snapshot.clone();
+                    page.elements[0]
+                        .view
+                        .as_mut()
+                        .unwrap()
+                        .style_sources
+                        .clear();
+                    page.elements[0].handlers.clear();
+                    Reply::ElementPage(rake_protocol::inspection::TreePage {
+                        total: page.elements.len(),
+                        snapshot: page,
+                        next: None,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectElement { id }) => Reply::Element(
+                    snapshot
+                        .elements
+                        .iter()
+                        .find(|e| e.id == id)
+                        .unwrap()
+                        .clone(),
+                ),
+                _ => panic!("unexpected source request"),
+            },
+            4,
+        );
+        instance.info.queries.push("inspect_tree_page".into());
+        let mut session = Session::new(instance, None);
+        let style = session
+            .source_location(&json!({"nodeId":"root","target":{"kind":"style","index":0}}))
+            .unwrap();
+        let handler = session
+            .source_location(&json!({"nodeId":"root","target":{"kind":"handler","index":0}}))
+            .unwrap();
+        assert_eq!((style.line, style.column), (20, 4));
+        assert_eq!((handler.line, handler.column), (21, 7));
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

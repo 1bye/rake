@@ -528,14 +528,22 @@ impl Dom {
             .transpose()
             .map_err(|_| Error::new(-32602, "Invalid captured source target"))?
             .unwrap_or_default();
+        let id = self.source_node(selector)?;
+        self.element(id)?
+            .source_location(&target)
+            .ok_or_else(|| Error::new(-32000, "Captured source location unavailable"))
+    }
+
+    pub fn source_node(&self, selector: &Value) -> Result<i32, Error> {
         let selector = selector.get("nodeId").unwrap_or(selector);
-        let element = if let Some(id) = selector.as_i64().and_then(|id| i32::try_from(id).ok()) {
-            self.element(id)?
+        if let Some(id) = selector.as_i64().and_then(|id| i32::try_from(id).ok()) {
+            self.element(id)?;
+            Ok(id)
         } else if let Some(name) = selector.as_str() {
-            let mut matches = self.nodes.values().filter(|element| {
+            let mut matches = self.nodes.iter().filter(|(_, element)| {
                 element.semantic_id.as_deref() == Some(name) || element.id == name
             });
-            let element = matches
+            let (&id, _) = matches
                 .next()
                 .ok_or_else(|| Error::new(-32000, "Source target not found"))?;
             if matches.next().is_some() {
@@ -544,16 +552,13 @@ impl Dom {
                     "Source target is ambiguous; use a node ID",
                 ));
             }
-            element
+            Ok(id)
         } else {
-            return Err(Error::new(
+            Err(Error::new(
                 -32602,
                 "Expected a node ID or exact semantic ID",
-            ));
-        };
-        element
-            .source_location(&target)
-            .ok_or_else(|| Error::new(-32000, "Captured source location unavailable"))
+            ))
+        }
     }
 
     pub fn outer_html(&self, params: &Value) -> Result<Value, Error> {

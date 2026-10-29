@@ -649,12 +649,22 @@ fn hit_test(snapshot: &Snapshot, x: f32, y: f32) -> Option<&Element> {
         .elements
         .iter()
         .any(|element| element.paint_order.is_some());
+    let mut hidden = std::collections::BTreeSet::new();
     snapshot
         .elements
         .iter()
         .enumerate()
-        .filter(|(_, element)| {
-            (!painted || element.paint_order.is_some())
+        .filter(|&(_, element)| {
+            let invisible = element.accessibility.as_ref().is_some_and(|a| a.hidden)
+                || element
+                    .parent
+                    .as_deref()
+                    .is_some_and(|parent| hidden.contains(parent));
+            if invisible {
+                hidden.insert(element.id.as_str());
+            }
+            !invisible
+                && (!painted || element.paint_order.is_some())
                 && element
                     .layout
                     .zip(element.content_mask)

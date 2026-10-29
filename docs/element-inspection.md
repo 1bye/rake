@@ -342,7 +342,7 @@ rules may override them; Computed always reflects the actual result. Supported
 values include hex/transparent colors, px/rem dimensions and spacing, auto dimensions,
 opacity, font size/weight and a literal font family. Layout edits also support display
 (block/flex/grid/none), visibility, relative/absolute positioning and px/rem/auto insets,
-flex direction/wrap/basis/grow/shrink, alignment, gap, and visible/hidden/scroll overflow.
+flex direction/wrap/basis/grow/shrink, alignment, gap, and visible/clip/hidden/scroll overflow.
 Borders support solid/dashed styles, colors, per-edge or uniform widths, and per-corner
 or uniform radii. Grid templates use `repeat(N, minmax(0|min-content|max-content, 1fr))`
 with 1–256 equal tracks, matching GPUI’s public grid representation. Unsupported CSS
@@ -420,3 +420,8 @@ is the synthetic inspection tree, not Rust source. Paths describe root-relative
 node names, sibling ordinals and quoted semantic IDs; they are not executable CSS
 or XPath selectors. Invalid/cyclic graphs and oversized copies fail explicitly
 instead of returning partial output. Markup also bounds JSON-escaped wire size.
+
+The picker excludes captured hidden branches, including descendants without their
+own style reader. Disabled visible controls remain inspectable. The HTTP inspector
+keeps its tree action toolbar visible while scrolling and defers tree replacement
+through click dispatch; unrelated diagnostic traffic does not rebuild the tree.

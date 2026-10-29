@@ -232,6 +232,34 @@ fn picking_respects_nesting_clipping_order_and_uninstrumented_gaps() {
 }
 
 #[test]
+fn picking_excludes_hidden_branches_but_keeps_disabled_controls_inspectable() {
+    let store = Store::default();
+    let mut snapshot = store.begin(1);
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 100.,
+        height: 100.,
+    };
+    snapshot.elements = vec![
+        boundary("outer", None, bounds, bounds),
+        boundary("hidden", Some("outer"), bounds, bounds),
+        boundary("text", Some("hidden"), bounds, bounds),
+    ];
+    snapshot.elements[1].accessibility = Some(Box::new(
+        serde_json::from_value(
+            serde_json::json!({"hidden":true,"disabled":false,"focusable":false,"actions":[]}),
+        )
+        .unwrap(),
+    ));
+    assert_eq!(hit_test(&snapshot, 10., 10.).unwrap().id, "outer");
+    let a11y = snapshot.elements[1].accessibility.as_mut().unwrap();
+    a11y.hidden = false;
+    a11y.disabled = true;
+    assert_eq!(hit_test(&snapshot, 10., 10.).unwrap().id, "text");
+}
+
+#[test]
 fn leases_stale_generations_and_click_sequences_are_bounded() {
     let store = Store::default();
     let window = WindowId(1);

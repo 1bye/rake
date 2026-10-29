@@ -35,14 +35,15 @@ Object.defineProperty(globalThis, 'navigator', {value: {clipboard: {async writeT
 const ids = Object.fromEntries([...readFileSync(new URL('./inspector.html', import.meta.url), 'utf8').matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, new Element()]));
 globalThis.Node = Element;
 globalThis.document = {getElementById: id => ids[id], createElement: tag => new Element(tag),
-  createElementNS: (_namespace, tag) => new Element(tag), createTextNode: value => ({textContent: value}), activeElement: null};
+  createElementNS: (_namespace, tag) => new Element(tag), createTextNode: value => ({textContent: value}), activeElement: null,
+  listeners: {}, addEventListener(name, callback) { (this.listeners[name] ??= []).push(callback); }};
 globalThis.location = {search: '', hash: '#__rake_control=' + 'x'.repeat(40), pathname: '/__rake/inspector'};
 const storage = new Map();
 globalThis.sessionStorage = {setItem: (key, value) => storage.set(key, value), getItem: key => storage.get(key)};
 globalThis.history = {state: null, replaceState: (_state, _title, url) => assert.equal(url, '/__rake/inspector')};
 const timers = [];
 globalThis.setTimeout = (callback, delay) => { const timer = {callback, delay}; timers.push(timer); return timer; };
-globalThis.clearTimeout = timer => { timer.cancelled = true; };
+globalThis.clearTimeout = timer => { if (timer) timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 const information = {element_interaction: true, runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab', 'NewWindow'],
   queries: ['frames', 'info', 'routes', 'commands', 'events', 'diagnostics', 'inspect_tree', 'inspect_element', 'inspect_pick'],
@@ -251,6 +252,24 @@ assert.equal(envelopes.at(-1).message.value.lease_ms, 5000);
 await find('button', 'Stop frame recording').click(); await settle();
 assert.equal(envelopes.at(-1).message.value.enabled, false);
 await panel('Elements'); assert.match(ids.content.textContent, /3 omitted/);
+const stableTreeControl = find('button', 'Inspect element-1-0');
+diagnostics.push({sequence: 6, elapsed_us: 50, kind: 'event', level: 'INFO', fields: {message: 'Unrelated logging must not replace Elements controls'}});
+await timers.filter(timer => timer.delay === 750).at(-1).callback(); await settle();
+assert.equal(find('button', 'Inspect element-1-0'), stableTreeControl, 'unrelated diagnostics must not remount the Elements tree during interaction');
+const previousCapture = elementCapture;
+for (const listener of document.listeners.pointerdown) listener({target: stableTreeControl});
+elementCapture = {...elementCapture, capture:'pointer-refresh'};
+await timers.filter(timer => timer.delay === 750).at(-1).callback(); await settle();
+assert.equal(find('button', 'Inspect element-1-0'), stableTreeControl, 'a fresh capture must not replace a pressed control before click dispatch');
+for (const listener of document.listeners.pointerup) listener({target: stableTreeControl});
+await timers.filter(timer => timer.delay === 750).at(-1).callback(); await settle();
+assert.equal(find('button', 'Inspect element-1-0'), stableTreeControl, 'mouseup must not detach the target before a later click task');
+for (const listener of document.listeners.click) listener({target: stableTreeControl});
+await timers.filter(timer => timer.delay === 0).at(-1).callback(); await settle();
+assert.notEqual(find('button', 'Inspect element-1-0'), stableTreeControl, 'deferred rendering resumes after pointer release');
+elementCapture = previousCapture;
+await panel('Elements');
+
 elementCapture.elements.push({id: 'text-leaf', parent: 'element-1-0', kind: 'Text', text: 'Hello <script>世界</script> 🌍'});
 await panel('Elements');
 assert.equal(find('button', 'Inspect text-leaf').textContent, '"Hello <script>世界</script> 🌍"');
