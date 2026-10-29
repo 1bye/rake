@@ -1,6 +1,6 @@
-//! Read-only DOM/CSS projection of one bounded Rake capture. Node IDs never alias captures.
+//! Incremental DOM/CSS projection. Presentation identities survive consecutive captures.
 
-use super::wire::Error;
+use super::wire::{Error, Event};
 use rake_protocol::inspection::{Element, Snapshot};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,62 +14,221 @@ pub(super) struct Dom {
     sent: BTreeSet<i32>,
     children_sent: BTreeSet<i32>,
     style_updates: BTreeSet<i32>,
+    updates: Vec<Event>,
 }
 
 impl Dom {
     pub fn update(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
-        if self
-            .snapshot
-            .as_ref()
-            .is_some_and(|old| old.capture == snapshot.capture && old.status == snapshot.status)
-        {
-            for (&id, element) in &mut self.nodes {
-                if let Some(current) = snapshot
+        let reset = self.snapshot.as_ref().is_some_and(|old| {
+            old.status != snapshot.status
+                || (old.capture != snapshot.capture
+                    && !old
+                        .elements
+                        .iter()
+                        .chain(&snapshot.elements)
+                        .any(|e| e.stable_id.is_some()))
+        });
+        let old_children: BTreeMap<_, _> = std::iter::once(1)
+            .chain(self.nodes.keys().copied())
+            .map(|id| (id, self.children(id)))
+            .collect();
+        let expanded = self.children_sent.clone();
+        let mut nodes = BTreeMap::new();
+        let mut used = BTreeSet::new();
+
+        for element in &snapshot.elements {
+            let stable = element.stable_id.as_ref().filter(|stable| {
+                snapshot
                     .elements
                     .iter()
-                    .find(|current| current.id == element.id)
+                    .filter(|e| e.stable_id.as_ref() == Some(stable))
+                    .count()
+                    == 1
+                    && self
+                        .nodes
+                        .values()
+                        .filter(|e| e.stable_id.as_ref() == Some(stable))
+                        .count()
+                        <= 1
+            });
+            let existing = (!reset)
+                .then(|| {
+                    self.nodes.iter().find(|(id, old)| {
+                        !used.contains(*id)
+                            && old.kind == element.kind
+                            && old.tab_id == element.tab_id
+                            && old.entry_id == element.entry_id
+                            && (old.id == element.id
+                                || stable
+                                    .is_some_and(|stable| old.stable_id.as_ref() == Some(stable)))
+                    })
+                })
+                .flatten();
+            let id = if let Some((&id, old)) = existing {
+                if (old.styles != element.styles
+                    || old.resolved != element.resolved
+                    || old.layout != element.layout
+                    || old.parent != element.parent)
+                    && self.sent.contains(&id)
                 {
-                    if (current.styles != element.styles || current.resolved != element.resolved)
-                        && self.sent.contains(&id)
-                    {
-                        self.style_updates.insert(id);
-                    }
-
-                    *element = current.clone();
+                    self.style_updates.insert(id);
                 }
-            }
-
-            self.snapshot = Some(snapshot);
-
-            return Ok(false);
+                id
+            } else {
+                self.allocate()?
+            };
+            used.insert(id);
+            nodes.insert(id, element.clone());
         }
 
-        let changed = self.snapshot.is_some();
+        let old_nodes = std::mem::replace(&mut self.nodes, nodes);
+        let old_snapshot = self.snapshot.replace(snapshot);
+        let previous_omitted = self.omitted_id;
+        if self.snapshot.as_ref().is_some_and(|s| s.omitted > 0)
+            && old_snapshot.as_ref().is_none_or(|s| s.omitted == 0)
+        {
+            self.omitted_id = self.allocate()?;
+        }
 
-        self.nodes.clear();
+        if reset {
+            self.reset_delivery();
+            return Ok(true);
+        }
+
+        // Remove only changed edges. LCS keeps unaffected sibling objects in Chrome.
+        let parents = std::iter::once(1)
+            .chain(
+                old_snapshot
+                    .iter()
+                    .flat_map(|s| &s.elements)
+                    .filter_map(|element| {
+                        old_nodes
+                            .iter()
+                            .find(|(_, old)| old.id == element.id)
+                            .map(|(&id, _)| id)
+                    }),
+            )
+            .collect::<Vec<_>>();
+        for parent in parents {
+            if !self.sent.contains(&parent) || !self.children_sent.contains(&parent) {
+                continue;
+            }
+            let before = &old_children[&parent];
+            let after = self.children(parent);
+            let retained = common_subsequence(before, &after);
+            for &child in before {
+                if !retained.contains(&child) && self.sent.contains(&child) {
+                    self.updates.push(Event::new(
+                        "DOM.childNodeRemoved",
+                        json!({"parentNodeId":parent,"nodeId":child}),
+                    ));
+                    self.forget(child, &old_children);
+                }
+            }
+        }
+
+        let parents = std::iter::once(1)
+            .chain(
+                self.snapshot
+                    .iter()
+                    .flat_map(|s| &s.elements)
+                    .filter_map(|element| self.node_id(&element.id)),
+            )
+            .collect::<Vec<_>>();
+        for parent in parents {
+            if !self.sent.contains(&parent) {
+                continue;
+            }
+            let children = self.children(parent);
+            if self.children_sent.contains(&parent) {
+                let mut previous = 0;
+                for child in children {
+                    if !self.sent.contains(&child) {
+                        let node = self.inserted_node(child, &expanded);
+                        self.remember(&node);
+                        self.updates.push(Event::new(
+                            "DOM.childNodeInserted",
+                            json!({"parentNodeId":parent,"previousNodeId":previous,"node":node}),
+                        ));
+                    }
+                    previous = child;
+                }
+            } else if old_children.get(&parent) != Some(&children) {
+                self.updates.push(Event::new(
+                    "DOM.childNodeCountUpdated",
+                    json!({"nodeId":parent,"childNodeCount":children.len()}),
+                ));
+            }
+        }
+
+        for (&id, element) in &self.nodes {
+            if self.sent.contains(&id)
+                && let Some(old) = old_nodes.get(&id)
+                && old.semantic_id != element.semantic_id
+            {
+                self.updates.push(match &element.semantic_id {
+                    Some(value) => Event::new(
+                        "DOM.attributeModified",
+                        json!({"nodeId":id,"name":"id","value":value}),
+                    ),
+                    None => Event::new("DOM.attributeRemoved", json!({"nodeId":id,"name":"id"})),
+                });
+            }
+        }
+        if self.omitted_id == previous_omitted
+            && self.sent.contains(&self.omitted_id)
+            && let (Some(old), Some(current)) = (&old_snapshot, &self.snapshot)
+            && old.omitted != current.omitted
+            && current.omitted > 0
+        {
+            self.updates.push(Event::new("DOM.characterDataModified", json!({"nodeId":self.omitted_id,"characterData":format!("{} elements omitted", current.omitted)})));
+        }
+        self.style_updates
+            .retain(|id| self.nodes.contains_key(id) && self.sent.contains(id));
+
+        Ok(false)
+    }
+
+    fn allocate(&mut self) -> Result<i32, Error> {
+        let id = self.next.max(2);
+        self.next = id
+            .checked_add(1)
+            .ok_or_else(|| Error::new(-32000, "CDP node identity exhausted; reconnect"))?;
+        Ok(id)
+    }
+
+    pub fn reset_delivery(&mut self) {
         self.sent.clear();
         self.children_sent.clear();
         self.style_updates.clear();
-        self.next = self.next.max(2);
+        self.updates.clear();
+    }
 
-        for element in &snapshot.elements {
-            let id = self.next;
+    pub fn take_updates(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.updates)
+    }
 
-            self.next = self
-                .next
-                .checked_add(1)
-                .ok_or_else(|| Error::new(-32000, "CDP node identity exhausted; reconnect"))?;
-            self.nodes.insert(id, element.clone());
+    fn forget(&mut self, id: i32, old_children: &BTreeMap<i32, Vec<i32>>) {
+        self.sent.remove(&id);
+        self.children_sent.remove(&id);
+        if let Some(children) = old_children.get(&id) {
+            for &child in children {
+                self.forget(child, old_children);
+            }
         }
+    }
 
-        self.omitted_id = self.next;
-        self.next = self
-            .next
-            .checked_add(1)
-            .ok_or_else(|| Error::new(-32000, "CDP node identity exhausted"))?;
-        self.snapshot = Some(snapshot);
-
-        Ok(changed)
+    fn inserted_node(&self, id: i32, expanded: &BTreeSet<i32>) -> Value {
+        let mut node = self.node(id, 0);
+        if expanded.contains(&id) {
+            node["children"] = json!(
+                self.children(id)
+                    .into_iter()
+                    .map(|child| self.inserted_node(child, expanded))
+                    .collect::<Vec<_>>()
+            );
+        }
+        node
     }
 
     pub fn generation(&self) -> Option<&str> {
@@ -155,6 +314,7 @@ impl Dom {
         self.sent.clear();
         self.children_sent.clear();
         self.style_updates.clear();
+        self.updates.clear();
     }
 
     fn element(&self, id: i32) -> Result<&Element, Error> {
@@ -171,20 +331,20 @@ impl Dom {
         let parent = self.nodes.get(&id).map(|element| element.id.as_str());
 
         let mut children: Vec<_> = self
-            .nodes
+            .snapshot
             .iter()
-            .filter_map(|(&child_id, element)| {
-                let belongs = if id == 1 {
+            .flat_map(|snapshot| &snapshot.elements)
+            .filter(|element| {
+                if id == 1 {
                     element
                         .parent
                         .as_deref()
                         .is_none_or(|parent| self.node_id(parent).is_none())
                 } else {
                     element.parent.as_deref() == parent
-                };
-
-                belongs.then_some(child_id)
+                }
             })
+            .filter_map(|element| self.node_id(&element.id))
             .collect();
 
         if id == 1 && self.snapshot.as_ref().is_some_and(|s| s.omitted > 0) {
@@ -450,6 +610,34 @@ impl Dom {
     }
 }
 
+// Capture size is bounded to 256 nodes; the table avoids replacing shifted siblings.
+fn common_subsequence(before: &[i32], after: &[i32]) -> BTreeSet<i32> {
+    let mut lengths = vec![vec![0; after.len() + 1]; before.len() + 1];
+    for i in (0..before.len()).rev() {
+        for j in (0..after.len()).rev() {
+            lengths[i][j] = if before[i] == after[j] {
+                1 + lengths[i + 1][j + 1]
+            } else {
+                lengths[i + 1][j].max(lengths[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut common = BTreeSet::new();
+    while i < before.len() && j < after.len() {
+        if before[i] == after[j] {
+            common.insert(before[i]);
+            i += 1;
+            j += 1;
+        } else if lengths[i + 1][j] > lengths[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    common
+}
+
 fn visual_style(element: &Element) -> Option<&Value> {
     element
         .resolved
@@ -495,6 +683,174 @@ fn depth(params: &Value, default: i64) -> Result<usize, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stable_capture(generation: &str, tree: &[(&str, Option<&str>)]) -> Snapshot {
+        serde_json::from_value(json!({"status":"captured","capture":generation,"router_revision":0,"omitted":0,"coverage":"test",
+            "elements":tree.iter().map(|(name,parent)| json!({
+                "id":format!("{generation}-{name}"),"stable_id":name,
+                "parent":parent.map(|name| format!("{generation}-{name}")),"kind":"Div",
+                "semantic_id":name,"layout":{"x":0.,"y":0.,"width":10.,"height":10.},"metadata_truncated":false
+            })).collect::<Vec<_>>()
+        })).unwrap()
+    }
+
+    #[test]
+    fn geometry_and_metadata_updates_keep_nodes_and_expansion_across_captures() {
+        let tree = [("root", None), ("child", Some("root"))];
+        let mut dom = Dom::default();
+        dom.update(stable_capture("1", &tree)).unwrap();
+        dom.document(&json!({"depth":-1})).unwrap();
+        let root = dom.node_id("1-root").unwrap();
+        let child = dom.node_id("1-child").unwrap();
+        let mut changed = stable_capture("2", &tree);
+        changed.elements[1].layout.as_mut().unwrap().width = 42.;
+        changed.elements[1].semantic_id = Some("renamed".into());
+
+        assert!(!dom.update(changed).unwrap());
+        assert_eq!(dom.node_id("2-root"), Some(root));
+        assert_eq!(dom.node_id("2-child"), Some(child));
+        assert!(
+            dom.request_children(&json!({"nodeId":root,"depth":-1}))
+                .unwrap()
+                .is_empty()
+        );
+        let events = dom.take_updates();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].method, "DOM.attributeModified");
+        assert_eq!(
+            events[0].params,
+            json!({"nodeId":child,"name":"id","value":"renamed"})
+        );
+        assert_eq!(
+            dom.handle("DOM.getBoxModel", &json!({"nodeId":child}))
+                .unwrap()["model"]["width"],
+            42.
+        );
+        assert!(dom.take_style_updates().contains(&child));
+        assert_eq!(
+            dom.overlay_command("Overlay.highlightNode", &json!({"nodeId":child}))
+                .unwrap(),
+            rake_protocol::control::Command::HighlightElement {
+                id: Some("2-child".into()),
+                generation: "2".into()
+            }
+        );
+    }
+
+    #[test]
+    fn structural_events_replay_to_the_new_order_without_replacing_unchanged_subtrees() {
+        let mut dom = Dom::default();
+        let before = [
+            ("root", None),
+            ("a", Some("root")),
+            ("b", Some("root")),
+            ("leaf", Some("b")),
+            ("c", Some("root")),
+        ];
+        dom.update(stable_capture("1", &before)).unwrap();
+        dom.document(&json!({"depth":-1})).unwrap();
+        let root = dom.node_id("1-root").unwrap();
+        let b = dom.node_id("1-b").unwrap();
+        let leaf = dom.node_id("1-leaf").unwrap();
+        let mut frontend: BTreeMap<_, _> = std::iter::once(1)
+            .chain(dom.nodes.keys().copied())
+            .map(|id| (id, dom.children(id)))
+            .collect();
+
+        let after = [
+            ("root", None),
+            ("c", Some("root")),
+            ("b", Some("root")),
+            ("leaf", Some("b")),
+            ("new", Some("root")),
+        ];
+        assert!(!dom.update(stable_capture("2", &after)).unwrap());
+        let events = dom.take_updates();
+        for event in &events {
+            let parent = event.params["parentNodeId"].as_i64().unwrap() as i32;
+            let siblings = frontend.get_mut(&parent).unwrap();
+            match event.method.as_str() {
+                "DOM.childNodeRemoved" => {
+                    let id = event.params["nodeId"].as_i64().unwrap() as i32;
+                    let index = siblings.iter().position(|child| *child == id).unwrap();
+                    siblings.remove(index);
+                    assert_ne!(id, b, "unchanged selected subtree stays attached");
+                }
+                "DOM.childNodeInserted" => {
+                    let previous = event.params["previousNodeId"].as_i64().unwrap() as i32;
+                    let index = if previous == 0 {
+                        0
+                    } else {
+                        siblings
+                            .iter()
+                            .position(|child| *child == previous)
+                            .unwrap()
+                            + 1
+                    };
+                    let id = event.params["node"]["nodeId"].as_i64().unwrap() as i32;
+                    assert!(!siblings.contains(&id));
+                    siblings.insert(index, id);
+                }
+                _ => panic!("unexpected mutation: {}", event.method),
+            }
+        }
+        assert_eq!(frontend[&root], dom.children(root));
+        assert_eq!(dom.node_id("2-b"), Some(b));
+        assert_eq!(dom.node_id("2-leaf"), Some(leaf));
+        assert_eq!(frontend[&b], vec![leaf]);
+        assert!(
+            dom.request_children(&json!({"nodeId":b}))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(dom.node_id("1-a").is_none());
+    }
+
+    #[test]
+    fn collapsed_branches_receive_counts_then_expand_the_current_capture() {
+        let mut dom = Dom::default();
+        dom.update(stable_capture("1", &[("root", None), ("a", Some("root"))]))
+            .unwrap();
+        dom.document(&json!({})).unwrap();
+        let root = dom.node_id("1-root").unwrap();
+        dom.update(stable_capture(
+            "2",
+            &[("root", None), ("a", Some("root")), ("b", Some("root"))],
+        ))
+        .unwrap();
+        let events = dom.take_updates();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].method, "DOM.childNodeCountUpdated");
+        assert_eq!(events[0].params, json!({"nodeId":root,"childNodeCount":2}));
+        let children = dom.request_children(&json!({"nodeId":root})).unwrap();
+        assert_eq!(children[0]["nodes"].as_array().unwrap().len(), 2);
+        assert!(dom.take_updates().is_empty());
+    }
+
+    #[test]
+    fn removed_boundaries_are_never_resurrected_and_runtime_reset_invalidates_every_node() {
+        let mut dom = Dom::default();
+        dom.update(stable_capture(
+            "1",
+            &[("root", None), ("child", Some("root"))],
+        ))
+        .unwrap();
+        dom.document(&json!({"depth":-1})).unwrap();
+        let child = dom.node_id("1-child").unwrap();
+        dom.update(stable_capture("2", &[("root", None)])).unwrap();
+        assert!(dom.element(child).is_err());
+        dom.update(stable_capture(
+            "3",
+            &[("root", None), ("child", Some("root"))],
+        ))
+        .unwrap();
+        assert_ne!(dom.node_id("3-child"), Some(child));
+        let root = dom.node_id("3-root").unwrap();
+        dom.clear();
+        dom.update(stable_capture("1", &[("root", None)])).unwrap();
+        assert_ne!(dom.node_id("1-root"), Some(root));
+        assert!(dom.element(root).is_err());
+    }
 
     fn capture(id: &str) -> Snapshot {
         serde_json::from_value(json!({"status":"captured","capture":id,"router_revision":1,"omitted":2,"coverage":"test","elements":[

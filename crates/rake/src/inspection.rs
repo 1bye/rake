@@ -29,6 +29,8 @@ struct State {
     latest: Rc<Snapshot>,
     #[cfg(any(feature = "gpui", test))]
     next_capture: u64,
+    #[cfg(feature = "gpui")]
+    next_boundary: u64,
     windows: BTreeMap<WindowId, WindowState>,
     mode_until: Option<Instant>,
     pick: Pick,
@@ -40,6 +42,8 @@ struct State {
 
 struct WindowState {
     snapshot: Rc<Snapshot>,
+    #[cfg(feature = "gpui")]
+    identities: Vec<view::BoundaryIdentity>,
     highlight: Option<(Element, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     pointer: Option<(f32, f32)>,
@@ -62,6 +66,8 @@ impl Default for Store {
             }),
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
+            #[cfg(feature = "gpui")]
+            next_boundary: 0,
             windows: BTreeMap::new(),
             mode_until: None,
             pick: Pick::default(),
@@ -280,6 +286,7 @@ impl Store {
                                 &host.snapshot.capture,
                             )
                             && element.kind == old.kind
+                            && element.stable_id == old.stable_id
                             && element.semantic_id == old.semantic_id
                             && element.source == old.source
                             && element.layout == old.layout
@@ -303,6 +310,8 @@ impl Store {
 
         let host = state.windows.entry(window).or_insert_with(|| WindowState {
             snapshot: Rc::clone(&snapshot),
+            #[cfg(feature = "gpui")]
+            identities: Vec::new(),
             highlight: None,
             pointer: None,
             #[cfg(feature = "gpui")]
@@ -312,7 +321,15 @@ impl Store {
         });
 
         if host.snapshot.capture != snapshot.capture {
-            host.highlight = None;
+            host.highlight = host.highlight.as_ref().and_then(|(highlight, until)| {
+                highlight.stable_id.as_ref().and_then(|stable| {
+                    snapshot
+                        .elements
+                        .iter()
+                        .find(|element| element.stable_id.as_ref() == Some(stable))
+                        .map(|element| (element.clone(), *until))
+                })
+            });
         }
 
         host.snapshot = Rc::clone(&snapshot);
@@ -436,7 +453,8 @@ fn bound_resolved_styles(snapshot: &mut Snapshot) {
 // Leaves room for envelope, coverage and JSON separators below the wire limit.
 #[cfg(any(feature = "gpui", test))]
 fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Option<String> {
-    let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len());
+    // Presentation identities are assigned after traversal; reserve their maximum wire size.
+    let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len()) + 64;
 
     if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_SNAPSHOT_BYTES - 4096 {
         snapshot.omitted += 1;

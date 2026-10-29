@@ -94,9 +94,16 @@ PATH` can reuse the same running adapter.
 Elements projects captured boundaries into a synthetic document, with semantic IDs,
 authored styles and measured width/height. Source locations stay in Rake inspection
 details rather than repeated `data-source` attributes in Chrome's tree. Omitted
-boundaries appear as a comment. Capture changes invalidate node IDs and send documentUpdated;
-rapid redraws can reset Chrome's selection. Tree expansion loads only the requested
-levels. Picking delivers missing ancestor paths without replacing nodes Chrome
+boundaries appear as a comment. Optional runtime presentation identities keep CDP
+node/backend IDs stable across captures. Geometry changes refresh styles and box
+values; structural and attribute changes send targeted DOM events, preserving
+unaffected selection and expansion. Reordered edges use remove/insert events with
+the moved subtree's delivered expansion. Removal expires an identity; reappearance
+does not reuse its old CDP node ID. Ambiguous repeated construction sites need
+distinct GPUI IDs to remain stable. A full document refresh is reserved for runtime
+replacement, availability changes, legacy captures without identities, or a mutation
+batch that cannot fit atomically in the bounded outbound queue. Tree expansion loads
+only the requested levels. Picking delivers missing ancestor paths without replacing nodes Chrome
 already knows, so expansion and selection do not require enabling the picker.
 Solid sRGB colors, typography, borders, spacing, overflow and layout refinements
 are translated to CSS values, with captured ancestor declarations shown as inherited

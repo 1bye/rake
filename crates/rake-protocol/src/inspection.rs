@@ -52,6 +52,10 @@ pub struct ResolvedStyle {
 pub struct Element {
     /// Opaque identity scoped to the runtime and this capture; never a semantic selector.
     pub id: String,
+    /// Opaque presentation identity across consecutive captures of the same boundary.
+    /// Absent for ambiguous repeated boundaries and older runtimes. Never a control ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_id: Option<String>,
     /// Nearest retained inspected ancestor; uninstrumented intermediates are omitted.
     pub parent: Option<String>,
     /// Rust element type, without a promise of a stable wire spelling.
@@ -120,7 +124,7 @@ pub enum Status {
     Captured,
 }
 
-/// Latest completed tree. Replacing a capture invalidates every previous element ID.
+/// Latest completed tree. Capture IDs expire on replacement; presentation identities may persist.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
     /// Explicit availability.

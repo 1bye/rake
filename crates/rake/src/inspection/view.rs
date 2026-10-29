@@ -82,6 +82,82 @@ struct Capture {
     parents: Vec<Option<String>>,
     owners: Vec<Option<(TabId, EntryId)>>,
     bytes: usize,
+    candidates: Vec<BoundaryKey>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct BoundaryKey {
+    gpui_id: Option<GlobalElementId>,
+    kind: &'static str,
+    source: &'static Location<'static>,
+    owner: Option<(TabId, EntryId)>,
+}
+
+#[derive(Clone)]
+pub(super) struct BoundaryIdentity {
+    key: BoundaryKey,
+    parent: Option<String>,
+    id: String,
+}
+
+impl Capture {
+    fn identify(&mut self, store: &Store, window: WindowId) -> Vec<BoundaryIdentity> {
+        let mut state = store.0.borrow_mut();
+        let old = state
+            .windows
+            .get(&window)
+            .map(|host| host.identities.as_slice())
+            .unwrap_or_default();
+        let mut next = state.next_boundary;
+        let mut identities = Vec::new();
+
+        for (index, key) in self.candidates.iter().enumerate() {
+            let element = &self.snapshot.elements[index];
+            let parent = element.parent.as_ref().and_then(|parent| {
+                self.snapshot.elements[..index]
+                    .iter()
+                    .find(|e| &e.id == parent)
+            });
+
+            // Repeated unkeyed construction sites cannot be matched safely after reordering.
+            if parent.is_some_and(|parent| parent.stable_id.is_none())
+                || self
+                    .candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, candidate)| {
+                        *candidate == key && self.snapshot.elements[*other].parent == element.parent
+                    })
+                    .count()
+                    != 1
+            {
+                continue;
+            }
+
+            let parent = parent.and_then(|parent| parent.stable_id.clone());
+            let id = old
+                .iter()
+                .find(|old| old.key == *key && old.parent == parent)
+                .map(|old| old.id.clone())
+                .unwrap_or_else(|| {
+                    next = next
+                        .checked_add(1)
+                        .expect("inspection boundary identity overflow");
+                    format!("boundary-{next}")
+                });
+
+            self.snapshot.elements[index].stable_id = Some(id.clone());
+            identities.push(BoundaryIdentity {
+                key: key.clone(),
+                parent,
+                id,
+            });
+        }
+
+        state.next_boundary = next;
+
+        identities
+    }
 }
 
 #[derive(Default)]
@@ -140,6 +216,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 parents: Vec::new(),
                 owners: Vec::new(),
                 bytes: 0,
+                candidates: Vec::new(),
             })
         });
 
@@ -189,6 +266,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     capture.snapshot.capture,
                     capture.snapshot.elements.len()
                 ),
+                stable_id: None,
                 parent: capture.parents.last().cloned().flatten(),
                 kind,
                 semantic_id,
@@ -230,6 +308,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let retained = retain(&mut capture.snapshot, element, &mut capture.bytes);
 
             retained_index = retained.as_ref().map(|_| index);
+            if retained.is_some() {
+                capture.candidates.push(BoundaryKey {
+                    gpui_id: id.cloned(),
+                    kind: std::any::type_name::<E>(),
+                    source: self.source,
+                    owner,
+                });
+            }
             let parent = retained.or_else(|| capture.parents.last().cloned().flatten());
 
             capture.parents.push(parent);
@@ -248,8 +334,16 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(previous) = previous {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
-            if let (Some((store, _, host)), Some(completed)) = (&self.root, completed) {
+            if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
+                let identities = completed.identify(store, *host);
                 store.publish(*host, completed.snapshot);
+                store
+                    .0
+                    .borrow_mut()
+                    .windows
+                    .get_mut(host)
+                    .expect("published inspection host")
+                    .identities = identities;
             }
         }
 
@@ -286,6 +380,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 parents: Vec::new(),
                 owners: Vec::new(),
                 bytes: 0,
+                candidates: Vec::new(),
             }))
         });
 
@@ -647,6 +742,115 @@ mod tests {
     use gpui::{Context, InputEvent as _, Render, prelude::*};
     use std::cell::Cell;
     use std::rc::Rc;
+
+    struct IdentityView {
+        store: Store,
+        order: Vec<usize>,
+        width: f32,
+    }
+
+    impl Render for IdentityView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div()
+                .children(self.order.iter().map(|&item| {
+                    gpui::div()
+                        .id(("item", item))
+                        .w(gpui::px(self.width))
+                        .h(gpui::px(20.))
+                        .inspect(format!("item-{item}"))
+                }))
+                .children((0..2).map(|_| gpui::div().inspect("ambiguous")))
+                .inspect("root")
+                .root(self.store.clone(), 0, WindowId(1))
+        }
+    }
+
+    #[test]
+    fn presentation_identities_follow_keyed_items_resize_and_consecutive_lifetimes() {
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (view, cx) = app.add_window_view(|_, _| IdentityView {
+            store: store.clone(),
+            order: vec![1, 2],
+            width: 20.,
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            })
+        };
+        let identity = |name: &str| {
+            store
+                .snapshot()
+                .elements
+                .into_iter()
+                .find(|element| element.semantic_id.as_deref() == Some(name))
+                .unwrap()
+        };
+        draw(cx);
+        let one = identity("item-1");
+        let two = identity("item-2");
+        let root = identity("root");
+        assert!(one.stable_id.is_some());
+        assert_ne!(one.stable_id, two.stable_id);
+        assert!(
+            store
+                .snapshot()
+                .elements
+                .iter()
+                .filter(|e| e.semantic_id.as_deref() == Some("ambiguous"))
+                .all(|e| e.stable_id.is_none())
+        );
+
+        store
+            .highlight(Some(&one.id), &store.snapshot().capture)
+            .unwrap();
+
+        view.update(cx, |view, cx| {
+            view.order = vec![2, 3, 1];
+            view.width = 42.;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(identity("item-1").stable_id, one.stable_id);
+        assert_eq!(identity("item-2").stable_id, two.stable_id);
+        assert_eq!(identity("root").stable_id, root.stable_id);
+        assert_ne!(
+            identity("item-1").id,
+            one.id,
+            "control IDs remain capture scoped"
+        );
+        assert_eq!(identity("item-1").layout.unwrap().width, 42.);
+        assert_eq!(
+            store.0.borrow().windows[&WindowId(1)]
+                .highlight
+                .as_ref()
+                .unwrap()
+                .0
+                .layout
+                .unwrap()
+                .width,
+            42.
+        );
+
+        view.update(cx, |view, cx| {
+            view.order = vec![2];
+            cx.notify();
+        });
+        draw(cx);
+        view.update(cx, |view, cx| {
+            view.order = vec![1, 2];
+            cx.notify();
+        });
+        draw(cx);
+        assert_ne!(
+            identity("item-1").stable_id,
+            one.stable_id,
+            "unmounted boundaries must expire"
+        );
+        assert_eq!(identity("item-2").stable_id, two.stable_id);
+    }
 
     #[test]
     fn length_resolution_preserves_literal_font_names_and_percentages() {

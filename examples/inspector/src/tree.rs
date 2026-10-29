@@ -298,6 +298,7 @@ mod tests {
             content_mask: None,
             styles: None,
             resolved: None,
+            stable_id: None,
             metadata_truncated: false,
             tab_id: None,
             entry_id: None,

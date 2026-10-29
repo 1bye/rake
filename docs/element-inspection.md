@@ -56,6 +56,28 @@ select a new node. Capture IDs are strings to avoid JavaScript numeric precision
 loss. The panel keeps selected details frozen when their capture is replaced;
 it never silently selects a new element with the same semantic ID.
 
+`stable_id` is a separate optional presentation identity used by Chrome DevTools.
+It follows a boundary across consecutive captures, including geometry/style
+changes and keyed sibling reorders. It is scoped by the mounted window, inspected
+parent, Rust type, construction site, route owner, and GPUI state identity when
+available. Semantic labels and traversal indexes are not matching keys. Repeated
+boundaries from the same construction site need distinct GPUI `.id(...)` values;
+ambiguous siblings and their descendants omit `stable_id`. Removal, omission by
+capture limits, window detach, or a changed parent/route owner ends that identity.
+An element returning after an absent capture receives a new identity. Older
+runtimes omit this field. It never replaces the exact capture ID or generation
+required by control requests. Leased highlights follow a retained presentation
+identity to its updated bounds without accepting stale control requests.
+
+Chrome maps these identities to stable CDP node/backend IDs and sends incremental
+child insertion/removal, attribute, omitted-count, and collapsed child-count events.
+Unchanged nodes and expanded branches remain attached across captures. Reordered
+edges use remove/insert events; delivered expansion is included when reinserting
+a moved subtree. Chrome may recreate the moved subtree's frontend objects.
+Runtime replacement, availability changes, legacy captures without identities,
+or an oversized outbound mutation batch trigger a full document refresh.
+Rake's own inspector continues to freeze replaced exact-capture selections.
+
 Tree and overlay labels use short type names such as `Div` and `TabBar`, omitting
 module paths, generic arguments and GPUI's `Stateful`/`ViewElement` wrappers.
 The captured `kind` and Rake's element details retain the complete Rust type.

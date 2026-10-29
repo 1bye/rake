@@ -32,7 +32,7 @@ struct Session {
     dom: super::dom::Dom,
     picking: bool,
     interaction_used: bool,
-    highlight: Option<(String, String)>,
+    highlight: Option<i32>,
     last_hover: Option<(String, String)>,
     last_pick_sequence: u64,
     tracked_style_node: Option<i32>,
@@ -235,8 +235,8 @@ impl Session {
                 self.domains.insert("Overlay".into());
 
                 match command {
-                    Command::HighlightElement { id, generation } => {
-                        self.highlight = id.map(|id| (id, generation))
+                    Command::HighlightElement { id, .. } => {
+                        self.highlight = id.and_then(|id| self.dom.node_id(&id))
                     }
                     Command::InspectMode { enabled, .. } => {
                         self.picking = enabled;
@@ -331,11 +331,11 @@ impl Session {
             _ => return Err("runtime identity changed".into()),
         }
 
-        self.poll_overlay().map_err(|error| error.message)?;
-
         if self.domains.contains("DOM") {
             self.refresh_dom().map_err(|e| e.message)?;
         }
+
+        self.poll_overlay().map_err(|error| error.message)?;
 
         let Reply::Diagnostics(snapshot) = query(
             &self.instance,
@@ -499,20 +499,14 @@ impl Session {
             }
         }
 
-        if let Some((id, generation)) = &self.highlight {
-            if self.dom.generation() == Some(generation.as_str()) {
-                if self
-                    .control(Command::HighlightElement {
-                        id: Some(id.clone()),
-                        generation: generation.clone(),
-                    })
-                    .is_err()
-                {
-                    self.highlight = None;
-                }
-            } else {
-                self.highlight = None;
-            }
+        if let Some(id) = self.highlight
+            && self
+                .dom
+                .overlay_command("Overlay.highlightNode", &json!({"nodeId":id}))
+                .and_then(|command| self.control(command))
+                .is_err()
+        {
+            self.highlight = None;
         }
 
         Ok(())
@@ -535,9 +529,40 @@ impl Session {
             return Err(Error::new(-32000, "Unexpected inspection reply"));
         };
 
-        if self.dom.update(snapshot)? && self.domains.contains("DOM") {
+        let mut reset = self.dom.update(snapshot)?;
+        let updates = self.dom.take_updates();
+        let bytes = updates
+            .iter()
+            .try_fold(0usize, |sum, event| {
+                serde_json::to_vec(event)
+                    .ok()
+                    .and_then(|bytes| sum.checked_add(bytes.len()))
+            })
+            .unwrap_or(usize::MAX);
+
+        // A partial mutation batch would leave Chrome permanently out of sync.
+        if !updates.is_empty()
+            && (self.outbound.len() + updates.len() + 3 > QUEUE_LIMIT
+                || self
+                    .outbound_bytes
+                    .saturating_add(bytes)
+                    .saturating_add(1024)
+                    > 1024 * 1024)
+        {
+            self.dropped = self.dropped.saturating_add(self.outbound.len() as u64);
+            self.outbound.clear();
+            self.outbound_bytes = 0;
+            self.dom.reset_delivery();
+            reset = true;
+        }
+
+        if reset && self.domains.contains("DOM") {
             self.tracked_style_node = None;
             self.event(Event::new("DOM.documentUpdated", json!({})));
+        } else if self.domains.contains("DOM") {
+            for event in updates {
+                self.event(event);
+            }
         }
 
         let changed = self.dom.take_style_updates();
@@ -983,6 +1008,108 @@ mod tests {
             .unwrap();
 
         assert!(text["text"].as_str().unwrap().contains("0.5"));
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn incremental_capture_updates_preserve_tracking_and_renew_highlights_with_current_control_ids()
+    {
+        let mut initial = capture("1");
+        initial.elements[0].stable_id = Some("root".into());
+        initial.elements[0].layout = Some(rake_protocol::inspection::Layout {
+            x: 0.,
+            y: 0.,
+            width: 10.,
+            height: 10.,
+        });
+        let mut next = capture("2");
+        next.elements[0].stable_id = Some("root".into());
+        next.elements[0].layout = Some(rake_protocol::inspection::Layout {
+            x: 0.,
+            y: 0.,
+            width: 42.,
+            height: 10.,
+        });
+        let mut child = next.elements[0].clone();
+        child.id = "element-2-1".into();
+        child.stable_id = Some("child".into());
+        child.parent = Some("element-2-0".into());
+        next.elements.push(child);
+        let (instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(next.clone()),
+                RuntimeMessage::Command(Command::HighlightElement { id, generation }) => {
+                    assert_eq!(id.as_deref(), Some("element-2-0"));
+                    assert_eq!(generation, "2");
+                    Reply::Acknowledged
+                }
+                _ => panic!("unexpected runtime request"),
+            },
+            2,
+        );
+        let mut session = Session::new(instance, None);
+        session.dom.update(initial).unwrap();
+        session.dom.document(&json!({"depth":-1})).unwrap();
+        let root = session.dom.node_id("element-1-0").unwrap();
+        session.domains.extend(["DOM".into(), "CSS".into()]);
+        session.tracked_style_node = Some(root);
+        session.highlight = Some(root);
+
+        session.refresh_dom().unwrap();
+        let events = session
+            .outbound
+            .iter()
+            .map(|(event, _)| event.method.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                "DOM.childNodeInserted",
+                "CSS.styleSheetChanged",
+                "CSS.computedStyleUpdated"
+            ]
+        );
+        assert_eq!(session.dom.node_id("element-2-0"), Some(root));
+        assert_eq!(session.tracked_style_node, Some(root));
+        session.poll_overlay().unwrap();
+        assert_eq!(session.highlight, Some(root));
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn oversized_mutation_batches_resynchronize_instead_of_dropping_part_of_the_tree() {
+        let mut initial = capture("1");
+        initial.elements[0].stable_id = Some("root".into());
+        let mut next = capture("2");
+        next.elements[0].stable_id = Some("root".into());
+        let mut child = next.elements[0].clone();
+        child.id = "element-2-1".into();
+        child.stable_id = Some("child".into());
+        child.parent = Some("element-2-0".into());
+        next.elements.push(child);
+        let (instance, worker, path) = fixture(move |_| Reply::Elements(next.clone()), 1);
+        let mut session = Session::new(instance, None);
+        session.dom.update(initial).unwrap();
+        session.dom.document(&json!({"depth":-1})).unwrap();
+        session.domains.insert("DOM".into());
+        for _ in 0..QUEUE_LIMIT {
+            session.event(Event::new("Log.entryAdded", json!({})));
+        }
+
+        session.refresh_dom().unwrap();
+        assert_eq!(session.outbound.len(), 1);
+        assert_eq!(session.outbound[0].0.method, "DOM.documentUpdated");
+        assert_eq!(session.dropped, QUEUE_LIMIT as u64);
+        let document = session.dom.document(&json!({"depth":-1})).unwrap();
+        assert_eq!(
+            document["children"][0]["children"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }

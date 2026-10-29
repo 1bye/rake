@@ -259,6 +259,7 @@ impl<R: Route> RenderOnce for TabBar<R> {
                 let id = tab.id;
 
                 div()
+                    .id(ElementId::NamedInteger("rake.tab".into(), id.value()))
                     .flex()
                     .gap_1()
                     .items_center()
@@ -710,6 +711,7 @@ impl<R: Route> Render for Workspace<R> {
 
             decision_area = decision_area.child(
                 div()
+                    .id(format!("rake.decision.{}", decision.id))
                     .flex()
                     .gap_3()
                     .p_3()
