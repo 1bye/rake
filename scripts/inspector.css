@@ -216,3 +216,9 @@ svg text { fill: var(--ink); font: 11px var(--mono); }
   #panels button[aria-selected="true"], .tree-row[aria-pressed="true"] { outline: 1px solid Highlight; color: Highlight; }
   .split-handle { border-color: CanvasText; }
 }
+
+.element-tree-line { display: flex; padding-left: calc(4px + var(--depth, 0) * 14px); }
+.element-tree-line .tree-row { padding-left: 4px; min-width: 0; }
+.element-disclosure { width: 18px; flex-shrink: 0; padding: 0; border: 0; background: transparent; }
+.element-menu { position: fixed; z-index: 100; width: 230px; max-height: 320px; overflow: auto; padding: 4px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 4px 16px #0005; display: flex; flex-direction: column; }
+.element-menu button { text-align: left; border: 0; border-radius: 0; }

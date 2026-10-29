@@ -23,6 +23,19 @@ struct Views;
 
 struct Broker(Result<ConnectionConfig, String>);
 
+const TREE_ACTIONS: &[(&str, &str)] = &[
+    ("copy-path", "Copy inspection path"),
+    ("copy-text", "Copy text"),
+    ("copy-markup", "Copy markup"),
+    ("expand-branch", "Expand subtree"),
+    ("collapse-branch", "Collapse subtree"),
+    ("expand-all", "Expand all"),
+    ("collapse-all", "Collapse all"),
+    ("focus", "Focus element"),
+    ("scroll", "Scroll into view"),
+    ("source", "Open Rust source"),
+];
+
 struct ElementsView {
     model: Rc<RefCell<Inspector>>,
     config_error: Option<String>,
@@ -45,6 +58,9 @@ struct ElementsView {
     focus: FocusHandle,
     divider: FocusHandle,
     show_targets: bool,
+    context_menu: Option<Point<Pixels>>,
+    context_index: usize,
+    context_focus: FocusHandle,
     detail_tab: &'static str,
     split: f32,
     dragging: bool,
@@ -168,6 +184,9 @@ impl RouteViews<Destination> for Views {
                 focus: cx.focus_handle(),
                 divider: cx.focus_handle(),
                 show_targets: false,
+                context_menu: None,
+                context_index: 0,
+                context_focus: cx.focus_handle().tab_stop(false),
                 detail_tab: "Styles",
                 split: 0.55,
                 dragging: false,
@@ -682,6 +701,7 @@ impl ElementsView {
         model.disconnected = false;
         model.select_runtime(Some(runtime));
         self.show_targets = false;
+        self.context_menu = None;
 
         for scroll in [
             &self.tree_scroll,
@@ -715,7 +735,60 @@ impl ElementsView {
         let key = &event.keystroke.key;
         let modifiers = event.keystroke.modifiers;
 
-        if key == "f" && (modifiers.platform || modifiers.control) {
+        if key == "escape" && self.context_menu.is_some() {
+            self.context_menu = None;
+            window.focus(&self.tree_focus, cx);
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.context_menu.is_some() {
+            match key.as_str() {
+                "up" => {
+                    self.context_index = self
+                        .context_index
+                        .checked_sub(1)
+                        .unwrap_or(TREE_ACTIONS.len() - 1)
+                }
+                "down" => self.context_index = (self.context_index + 1) % TREE_ACTIONS.len(),
+                "home" => self.context_index = 0,
+                "end" => self.context_index = TREE_ACTIONS.len() - 1,
+                "enter" | "space" => {
+                    self.tree_action(TREE_ACTIONS[self.context_index].0, window, cx)
+                }
+                "tab" => self.context_menu = None,
+                _ => return,
+            }
+            for _ in 0..TREE_ACTIONS.len() {
+                if self.tree_action_enabled(TREE_ACTIONS[self.context_index].0) {
+                    break;
+                }
+                self.context_index = (self.context_index
+                    + if matches!(key.as_str(), "up" | "end") {
+                        TREE_ACTIONS.len() - 1
+                    } else {
+                        1
+                    })
+                    % TREE_ACTIONS.len();
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if key == "c"
+            && (modifiers.platform || modifiers.control)
+            && self.tree_focus.is_focused(window)
+        {
+            self.tree_action("copy-markup", window, cx);
+            window.prevent_default();
+            cx.stop_propagation();
+        } else if key == "contextmenu" || (key == "f10" && modifiers.shift) {
+            self.open_tree_menu(point(px(12.), px(36.)), window, cx);
+            window.prevent_default();
+            cx.stop_propagation();
+        } else if key == "f" && (modifiers.platform || modifiers.control) {
             self.show_find = true;
             self.filter.update(cx, |input, cx| input.focus(window, cx));
             window.prevent_default();
@@ -735,6 +808,117 @@ impl ElementsView {
             window.prevent_default();
             cx.stop_propagation();
         }
+    }
+
+    fn tree_action_enabled(&self, action: &str) -> bool {
+        let model = self.model.borrow();
+        let Some(tree) = &model.tree else {
+            return false;
+        };
+        if matches!(action, "expand-all" | "collapse-all") {
+            return true;
+        }
+        let Some(element) = tree
+            .elements
+            .iter()
+            .find(|e| Some(e.id.as_str()) == model.selected.as_deref())
+        else {
+            return false;
+        };
+        match action {
+            "focus" => element.navigation.focus && !model.disconnected,
+            "scroll" => element.navigation.scroll_into_view && !model.disconnected,
+            "source" => element.source.is_some() && !model.disconnected,
+            _ => true,
+        }
+    }
+
+    fn open_tree_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(point(
+            position
+                .x
+                .max(px(0.))
+                .min((window.viewport_size().width - px(230.)).max(px(0.))),
+            position
+                .y
+                .max(px(0.))
+                .min((window.viewport_size().height - px(300.)).max(px(0.))),
+        ));
+        self.context_index = 0;
+        window.focus(&self.context_focus, cx);
+        cx.notify();
+    }
+
+    fn tree_action(&mut self, action: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        if !self.tree_action_enabled(action) {
+            window.focus(&self.tree_focus, cx);
+            cx.notify();
+            return;
+        }
+        if action == "focus" {
+            self.navigate(rake::inspection::NavigationAction::Focus);
+        } else if action == "scroll" {
+            self.navigate(rake::inspection::NavigationAction::ScrollIntoView);
+        } else if action == "source" {
+            let mut model = self.model.borrow_mut();
+            model.source_pending = model
+                .selected
+                .clone()
+                .map(|id| (id, rake::inspection::SourceTarget::Boundary {}));
+        } else {
+            let mut model = self.model.borrow_mut();
+            if let Some(capture) = &model.tree {
+                let selected = model.selected.as_deref();
+                if action.starts_with("copy-") {
+                    let value = selected.and_then(|id| match action {
+                        "copy-path" => rake::inspection::tree::path(&capture.elements, id),
+                        "copy-text" => rake::inspection::tree::text(&capture.elements, id),
+                        _ => rake::inspection::tree::markup(&capture.elements, id),
+                    });
+                    if let Some(value) = value {
+                        cx.write_to_clipboard(ClipboardItem::new_string(value));
+                    } else {
+                        model.lookup_error = Some(
+                            "Copy unavailable for a stale, invalid or oversized subtree.".into(),
+                        );
+                    }
+                } else if action == "expand-all" {
+                    self.collapsed.clear();
+                } else {
+                    let targets: Vec<_> = if action == "collapse-all" {
+                        capture.elements.iter().collect()
+                    } else {
+                        selected
+                            .and_then(|id| rake::inspection::tree::subtree(&capture.elements, id))
+                            .unwrap_or_default()
+                    };
+                    for element in targets {
+                        if action == "expand-branch" {
+                            self.collapsed.remove(&element.id);
+                        } else {
+                            self.collapsed.insert(element.id.clone());
+                        }
+                    }
+                    if action == "collapse-all"
+                        && let Some(root) = selected.and_then(|id| {
+                            tree::ancestors(&capture.elements, id)
+                                .first()
+                                .map(|e| e.id.clone())
+                        })
+                    {
+                        model.select_element(&root);
+                    }
+                }
+            }
+        }
+        window.focus(&self.tree_focus, cx);
+        cx.notify();
     }
 
     fn tree_row(
@@ -770,6 +954,7 @@ impl ElementsView {
             <div id={format!("line-{}-{}", row.index, row.closing)} aria-label={format!("Inspect {}{}", element.semantic_id.as_deref().unwrap_or(&element.id), if row.closing { " (closing tag)" } else { "" })}
                 class="flex flex-row items-center min-w-0 shrink-0 pl-[4px] border-l-2"
                 style={|s| s.h(px(tree::ROW_HEIGHT)).min_w_full().border_color(if opening_selected && tree_active { colors.focus } else { rgba(0) }).bg(background).hover(|s| s.bg(if selected { background } else { colors.hover })).when(!row.closing, |s| s.role(gpui::accesskit::Role::TreeItem).aria_level(row.depth + 1).aria_selected(opening_selected).when(row.branch, |s| s.aria_expanded(!row.collapsed)).when(opening_selected, |s| s.aria_active_descendant()))}
+                on:right-mouse-down={ { let id = element.id.clone(); cx.listener(move |this, event: &MouseDownEvent, window, cx| { this.select(&id, false, window, cx); this.open_tree_menu(event.position, window, cx); window.prevent_default(); cx.stop_propagation(); }) } }
                 on:hover={cx.listener(move |this, hovered: &bool, _, _| {
                     let mut model=this.model.borrow_mut();
                     if *hovered {
@@ -1031,6 +1216,8 @@ impl Render for ElementsView {
                         on:click={cx.listener(|this, _, _, cx| { this.navigate(rake::inspection::NavigationAction::ScrollIntoView); cx.notify(); })}>"Scroll into view"</button>
                     <button id="focus-target" disabled={!can_reveal || !selected.is_some_and(|e| e.navigation.focus)} class="px-2 py-1 hover:bg-field" style={control}
                         on:click={cx.listener(|this, _, _, cx| { this.navigate(rake::inspection::NavigationAction::Focus); cx.notify(); })}>"Focus element"</button>
+                    <button id="element-actions-toggle" class="px-2 py-1 hover:bg-field" style={control}
+                        on:click={cx.listener(|this, _, window, cx| this.open_tree_menu(point(px(12.), px(36.)), window, cx))}>"Element actions"</button>
                     <button id="open-rust-source" disabled={!can_reveal || selected.is_none_or(|e| e.source.is_none())} class="px-2 py-1 hover:bg-field" style={control}
                         on:click={cx.listener(|this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Boundary {})); cx.notify(); })}>"Open Rust source"</button>
                 </div>
@@ -1226,6 +1413,20 @@ impl Render for ElementsView {
                     <span>{status}</span>
                     <button id="disconnect" class="h-full px-[5px] hover:text-ink" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
                 </div>
+                if let Some(position) = self.context_menu {
+                    <div id="element-actions-menu" role={gpui::accesskit::Role::Menu} aria-label="Element actions" focus={&self.context_focus}
+                        class="absolute flex flex-col p-1 w-[230px] max-h-[300px] overflow-y-scroll bg-background border border-line shadow-lg"
+                        style={|s| s.left(position.x).top(position.y).occlude()}
+                        on:mouse-down-out={cx.listener(|this, _, _, cx| { this.context_menu = None; cx.notify(); })}>
+                        for (index, (action, label)) in TREE_ACTIONS.iter().enumerate() {
+                            <button id={format!("tree-action-{action}")} role={gpui::accesskit::Role::MenuItem} tabindex={-1}
+                                disabled={ !self.tree_action_enabled(action) }
+                                class={if index == self.context_index { "px-3 py-1 justify-start bg-field" } else { "px-3 py-1 justify-start hover:bg-field" }} style={control}
+                                on:hover={cx.listener(move |this, hovered: &bool, _, cx| { if *hovered { this.context_index = index; cx.notify(); } })}
+                                on:click={cx.listener(move |this, _, window, cx| this.tree_action(action, window, cx))}>{(*label).to_owned()}</button>
+                        }
+                    </div>
+                }
                 if self.show_targets {
                     <section id="target-menu" class="flex flex-col p-1 border absolute top-[32px] right-[6px] w-[490px] max-w-[100%] max-h-[220px] overflow-y-scroll bg-background border-line shadow-lg">
                         for instance in &model.instances {

@@ -1,4 +1,4 @@
-import {InspectorState, commandArguments, elementName, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
+import {InspectorState, commandArguments, elementName, elementSubtree, elementPath, elementText, elementMarkup, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
 
 const $ = id => document.getElementById(id);
 const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Frames', 'Elements', 'Reload'];
@@ -8,6 +8,8 @@ let filter = {}, search = '', page = 0, paused = false, polling = false, mutatin
 let receipt = null, operation = null, selectedOperation = null, output = {records: [], dropped: 0}, level = 'ALL', source = 'Structured', taskOwner = 'All';
 const expanded = new Set(), drafts = new Map();
 let frameState = null, frameRecords = [], frameAfter = 0, recordingFrames = false;
+const elementCollapsed = new Set();
+let elementMenu = null;
 let elements = null, selectedElement = null, elementDetail = null, elementError = null;
 let rendered = null, workspaceFocus = null, elementTab = 'Styles', resizing = false;
 const paneSizes = new Map(), scrollPositions = new Map();
@@ -88,8 +90,8 @@ function table(headers, rows) {
   table.append(body);
   return append(el('div', null, 'table-wrap'), table);
 }
-function paged(items, renderer, size = 100) {
-  const matched = items.filter(item => !search || JSON.stringify(item).toLowerCase().includes(search.toLowerCase()));
+function paged(items, renderer, size = 100, filterBySearch = true) {
+  const matched = items.filter(item => !filterBySearch || !search || JSON.stringify(item).toLowerCase().includes(search.toLowerCase()));
   page = Math.min(page, Math.max(0, Math.ceil(matched.length / size) - 1));
   const start = page * size;
   const content = renderer(matched.slice(start, start + size));
@@ -168,6 +170,7 @@ function choose(runtime) {
   frameState = null; frameRecords = []; frameAfter = 0; recordingFrames = false;
   awaitingSuccessor = null;
   model.reset(runtime); info = null; routes = []; commands = []; connected = false;
+  elementCollapsed.clear(); elementMenu = null;
   elements = null; selectedElement = null; elementDetail = null; elementError = null;
   selectedOperation = null; operation = null; filter = {}; drafts.clear(); expanded.clear(); scrollPositions.clear(); workspaceFocus = null; elementTab = 'Styles'; page = 0;
   $('runtime').value = runtime || ''; showError(null);
@@ -298,6 +301,12 @@ async function refresh() {
         const tree = await inspectionTree(runtime);
         if (runtime !== model.runtime) return;
         elements = tree;
+        const keys = new Set(tree.elements.map(element => element.stable_id || element.id));
+        for (const key of elementCollapsed) if (!keys.has(key)) elementCollapsed.delete(key);
+        if (elementMenu) {
+          const target = tree.elements.find(node => node.id === elementMenu.id) || (elementMenu.stable && tree.elements.find(node => node.stable_id === elementMenu.stable));
+          if (target) elementMenu.id = target.id; else elementMenu = null;
+        }
         const stable = elementDetail?.stable_id;
         const current = elements.elements.find(element => element.id === selectedElement)
           || (stable && elements.elements.filter(element => element.stable_id === stable).length === 1
@@ -631,6 +640,36 @@ function styleEditor(selected, stale) {
   editor.append(form, row(button('Reset overrides', () => edit({action: 'reset'}), disabled), button('Undo style edit', () => edit({action: 'undo'}), disabled)));
   return editor;
 }
+async function elementTreeAction(action, id = selectedElement) {
+  elementMenu = null;
+  const nodes = elements?.elements || [], node = nodes.find(node => node.id === id);
+  try {
+    if (action.startsWith('copy-')) {
+      const value = action === 'copy-path' ? elementPath(nodes, id) : action === 'copy-text' ? elementText(nodes, id) : elementMarkup(nodes, id);
+      if (value == null) throw new Error('Copy unavailable for a stale, invalid or oversized subtree.');
+      await navigator.clipboard.writeText(value); message('Copied ' + action.slice(5) + '.');
+    } else if (action === 'expand-all') elementCollapsed.clear();
+    else if (action === 'collapse-all' || action.endsWith('-branch')) {
+      const targets = action === 'collapse-all' ? nodes : (elementSubtree(nodes, id) || []).filter(([, closing]) => !closing).map(([node]) => node);
+      for (const target of targets) action === 'expand-branch' ? elementCollapsed.delete(target.stable_id || target.id) : elementCollapsed.add(target.stable_id || target.id);
+      if (action === 'collapse-all' && node) {
+        let root = node; const seen = new Set();
+        while (root.parent && !seen.has(root.id)) { seen.add(root.id); const parent = nodes.find(n => n.id === root.parent); if (!parent) break; root = parent; }
+        await inspectElement(root.id);
+      }
+    } else if (node && (action === 'focus' || action === 'scroll')) {
+      await inspectionControl({type: 'navigate_element', id, generation: elements.capture, action: action === 'focus' ? 'focus' : 'scroll_into_view'});
+    } else if (node && action === 'source') await rpc('inspect_source', {runtime_id: model.runtime, id});
+  } catch (error) { showError(error); }
+  render(true);
+}
+function focusElementControl(id) {
+  [...$('content').querySelectorAll('[data-focus]')].find(control => control.dataset.focus === 'element:' + id)?.focus();
+}
+function openElementMenu(id, x = 16, y = 64) {
+  elementMenu = {id, x, y, stable: elements?.elements.find(node => node.id === id)?.stable_id}; render(true);
+  [...$('content').querySelectorAll('[data-focus]')].find(control => control.dataset.focus === 'element-menu:0' && !control.disabled)?.focus();
+}
 function elementsPanel() {
   if (!info?.queries?.includes('inspect_tree')) return empty('This runtime does not expose element inspection.');
   if (!elements) return empty('Waiting for the inspected tree.');
@@ -638,25 +677,76 @@ function elementsPanel() {
   for (const element of elements.elements) depths.set(element.id, element.parent ? (depths.get(element.parent) ?? 0) + 1 : 0);
   const selected = elementDetail;
   const replaced = selectedElement && !elements.elements.some(element => element.id === selectedElement);
-  const tree = paged(elements.elements, items => append(el('div', null, 'element-tree'), ...items.map(element => {
+  const index = new Map(elements.elements.map(node => [node.id, node]));
+  const branches = new Set(elements.elements.map(node => node.parent));
+  const included = new Set();
+  if (search) for (const node of elements.elements.filter(node => JSON.stringify(node).toLowerCase().includes(search.toLowerCase()))) {
+    const seen = new Set(); let current = node;
+    while (current && !seen.has(current.id)) { seen.add(current.id); included.add(current.id); current = index.get(current.parent); }
+  }
+  const visible = elements.elements.filter(node => {
+    if (search) return included.has(node.id);
+    const seen = new Set(); let parent = index.get(node.parent);
+    while (parent) { if (seen.has(parent.id)) return false; seen.add(parent.id); if (elementCollapsed.has(parent.stable_id || parent.id)) return false; parent = index.get(parent.parent); }
+    return true;
+  });
+  const tree = paged(visible, items => append(el('div', null, 'element-tree'), ...items.map(element => {
     const control = button('', () => inspectElement(element.id), !connected, 'tree-row');
+    const line = el('div', null, 'element-tree-line'); line.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
+    const key = element.stable_id || element.id, branch = branches.has(element.id);
+    const toggle = () => {
+      if (elementCollapsed.has(key)) elementCollapsed.delete(key);
+      else {
+        elementCollapsed.add(key);
+        if (selectedElement !== element.id && elementSubtree(elements.elements, element.id)?.some(([node]) => node.id === selectedElement)) inspectElement(element.id);
+      }
+      render(true);
+    };
+    const isExpanded = search || !elementCollapsed.has(key);
+    const disclose = button(branch ? (isExpanded ? '▾' : '▸') : '', toggle, !branch, 'element-disclosure');
+    disclose.tabIndex = -1; disclose.setAttribute('aria-label', (elementCollapsed.has(key) ? 'Expand ' : 'Collapse ') + element.id);
+    if (branch) { control.setAttribute('aria-expanded', String(Boolean(isExpanded))); disclose.setAttribute('aria-expanded', String(Boolean(isExpanded))); }
+    control.setAttribute('role', 'treeitem'); control.setAttribute('aria-level', String((depths.get(element.id) || 0) + 1));
+    control.tabIndex = selectedElement === element.id || (!selectedElement && element === visible[0]) ? 0 : -1;
+    line.append(disclose, control);
+    control.addEventListener('contextmenu', async event => { event.preventDefault(); await inspectElement(element.id); openElementMenu(element.id, event.clientX, event.clientY); });
+    control.addEventListener('keydown', async event => {
+      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) { event.preventDefault(); openElementMenu(element.id); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') { event.preventDefault(); await elementTreeAction('copy-markup', element.id); return; }
+      if (!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const matched = visible;
+      let target = null, position = matched.findIndex(node => node.id === element.id);
+      if (event.key === 'ArrowUp') target = matched[Math.max(0, position - 1)];
+      if (event.key === 'ArrowDown') target = matched[Math.min(matched.length - 1, position + 1)];
+      if (event.key === 'Home') target = matched[0];
+      if (event.key === 'End') target = matched.at(-1);
+      if (event.key === 'ArrowRight') { if (branch && elementCollapsed.has(key)) toggle(); else target = matched.find(node => node.parent === element.id); }
+      if (event.key === 'ArrowLeft') { if (branch && !elementCollapsed.has(key)) toggle(); else target = index.get(element.parent); }
+      if (target) {
+        if (search && !matched.includes(target)) { search = ''; $('search').value = ''; }
+        page = Math.max(0, Math.floor(matched.indexOf(target) / 100)); await inspectElement(target.id); focusElementControl(target.id);
+      }
+    });
     control.addEventListener('pointerenter', () => { if (info?.element_interaction) hoveredBoundary = {id: element.id, generation: elements.capture}; });
     control.addEventListener('pointerleave', () => { if (hoveredBoundary?.id === element.id) hoveredBoundary = null; });
     control.dataset.focus = 'element:' + element.id;
     control.setAttribute('aria-label', 'Inspect ' + element.id);
     control.setAttribute('aria-pressed', String(selectedElement === element.id));
+    control.setAttribute('aria-selected', String(selectedElement === element.id));
     control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Application shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
-    control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
+    control.style.setProperty('--depth', 0);
     const kind = element.view?.tag || elementName(element.kind);
     if (element.text != null) {
       control.append(el('span', JSON.stringify(element.text), 'syntax-value'));
-      return control;
+      return line;
     }
     control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
     if (element.semantic_id != null) control.append(el('span', 'id=', 'syntax-attribute'), el('span', '"' + element.semantic_id + '"', 'syntax-value'));
     control.append(el('span', '>', 'muted'));
-    return control;
-  })));
+    return line;
+  })), 100, false);
+  tree.firstChild.setAttribute('role', 'tree'); tree.firstChild.setAttribute('aria-label', 'Element tree');
   const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), button(picking ? 'Cancel picking' : 'Pick element in app', async () => {
       if (picking) stopInspection();
       else {
@@ -666,6 +756,26 @@ function elementsPanel() {
       render(true);
     }, !info?.element_interaction), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), tree,
     details('Inspection coverage', elements.coverage, 'inspection-coverage'));
+  master.append(row(button('Expand all', () => elementTreeAction('expand-all')), button('Collapse all', () => elementTreeAction('collapse-all')), button('Element actions', () => openElementMenu(selectedElement), !selectedElement)));
+  if (elementMenu) {
+    const menu = el('div', null, 'element-menu'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Element actions');
+    menu.style.left = Math.max(0, Math.min(elementMenu.x, (globalThis.innerWidth || 800) - 240)) + 'px';
+    menu.style.top = Math.max(0, Math.min(elementMenu.y, (globalThis.innerHeight || 600) - 320)) + 'px';
+    const target = index.get(elementMenu.id), controls = [];
+    for (const [action, label] of [['copy-path','Copy inspection path'],['copy-text','Copy text'],['copy-markup','Copy markup'],['expand-branch','Expand subtree'],['collapse-branch','Collapse subtree'],['focus','Focus element'],['scroll','Scroll into view'],['source','Open Rust source']]) {
+      const disabled = !target || (action === 'focus' && !target.navigation?.focus) || (action === 'scroll' && !target.navigation?.scroll_into_view) || (action === 'source' && !target.source);
+      const item = button(label, () => elementTreeAction(action, elementMenu.id), disabled);
+      item.setAttribute('role', 'menuitem'); item.dataset.focus = 'element-menu:' + controls.length; item.tabIndex = controls.length ? -1 : 0; controls.push(item); menu.append(item);
+    }
+    menu.addEventListener('keydown', event => {
+      if (['Escape','Tab'].includes(event.key)) { const id = elementMenu.id; elementMenu = null; render(true); focusElementControl(id); if (event.key === 'Escape') event.preventDefault(); return; }
+      if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
+      event.preventDefault(); const enabled = controls.filter(item => !item.disabled), position = enabled.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length - 1 : (position + (event.key === 'ArrowUp' ? -1 : 1) + enabled.length) % enabled.length;
+      enabled[next]?.focus();
+    });
+    master.append(menu);
+  }
   const detail = el('div');
   const tabs = el('div', null, 'inspector-tabs');
   for (const name of ['Styles', 'Computed', 'Layout', 'Accessibility', 'Events', 'Source']) {
@@ -868,3 +978,5 @@ if (typeof window !== 'undefined') window.addEventListener('pagehide', () => {
   }
 });
 render(true); loop(); inspectionLoop();
+
+document.addEventListener?.('pointerdown', event => { if (elementMenu && !event.target.closest('.element-menu')) { elementMenu = null; render(true); } });

@@ -40,5 +40,5 @@ Each step is a separate commit. Existing coverage and GPUI hook limits remain ex
 1. **Implemented:** broaden temporary editing to flex/grid, alignment, overflow, position and borders; validate against real GPUI layout.
 2. **Implemented:** open captured style attributes and handler registration sites from both frontends and CDP.
 3. **Implemented:** improve accessible names and states, including captured text.
-4. **Pending:** tree navigation and context actions, including copying text/paths and expanding/collapsing branches.
+4. **Implemented:** tree navigation and context actions, including copying text/paths and expanding/collapsing branches.
 5. **Pending:** real Chrome checks, regression suites and a current Elements coverage checklist.

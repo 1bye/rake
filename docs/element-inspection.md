@@ -404,3 +404,19 @@ Console: `rake.openSource({"nodeId":42,"target":{"kind":"handler","index":0}})`.
 Indices refer to captured `view.style_sources` and `handlers`; unavailable indices
 fail explicitly. Omit the target to open the construction site as before. The
 system default opener may ignore line/column; those remain in the receipt.
+
+### Tree and copy actions
+
+Both Rake frontends offer right-click/Shift+F10 element actions, subtree and whole-tree
+expansion/collapse, copy text, escaped synthetic markup and inspection paths. Menus
+support keyboard navigation and Escape. The HTML tree additionally supports arrow
+keys, Home/End and disclosure controls; collapsed state follows stable identities.
+Search reveals matching nodes with their captured ancestry. Copy shortcuts use
+Cmd/Ctrl+C while the tree is focused. Chrome’s Copy element uses `DOM.getOuterHTML`.
+
+Copies contain retained metadata only; clipped text and opaque children cannot be
+reconstructed. Text includes hidden captured descendants, like textContent. Markup
+is the synthetic inspection tree, not Rust source. Paths describe root-relative
+node names, sibling ordinals and quoted semantic IDs; they are not executable CSS
+or XPath selectors. Invalid/cyclic graphs and oversized copies fail explicitly
+instead of returning partial output. Markup also bounds JSON-escaped wire size.

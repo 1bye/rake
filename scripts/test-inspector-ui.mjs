@@ -30,6 +30,8 @@ class Element {
     return this.children.flatMap(child => child instanceof Element ? [...(key in child.dataset ? [child] : []), ...child.querySelectorAll(selector)] : []);
   }
 }
+const copied = [];
+Object.defineProperty(globalThis, 'navigator', {value: {clipboard: {async writeText(value) { copied.push(value); }}}, configurable: true});
 const ids = Object.fromEntries([...readFileSync(new URL('./inspector.html', import.meta.url), 'utf8').matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, new Element()]));
 globalThis.Node = Element;
 globalThis.document = {getElementById: id => ids[id], createElement: tag => new Element(tag),
@@ -252,6 +254,27 @@ await panel('Elements'); assert.match(ids.content.textContent, /3 omitted/);
 elementCapture.elements.push({id: 'text-leaf', parent: 'element-1-0', kind: 'Text', text: 'Hello <script>世界</script> 🌍'});
 await panel('Elements');
 assert.equal(find('button', 'Inspect text-leaf').textContent, '"Hello <script>世界</script> 🌍"');
+await find('button', 'Collapse element-1-0').click(); await settle();
+assert.ok(!all(ids.content).some(node => node.attributes['aria-label'] === 'Inspect text-leaf'));
+await find('button', 'Inspect element-1-0').listeners.keydown({key:'ArrowRight', preventDefault() {}}); await settle();
+assert.ok(find('button', 'Inspect text-leaf'));
+await find('button', 'Inspect element-1-0').listeners.keydown({key:'ArrowDown', preventDefault() {}}); await settle();
+assert.equal(find('button', 'Inspect text-leaf').attributes['aria-selected'], 'true');
+await find('button', 'Inspect text-leaf').listeners.contextmenu({clientX:20, clientY:40, preventDefault() {}}); await settle();
+await find('button', 'Copy text').click(); await settle();
+assert.equal(copied.at(-1), 'Hello <script>世界</script> 🌍');
+await find('button', 'Element actions').click(); await settle();
+await find('button', 'Copy inspection path').click(); await settle();
+assert.ok(copied.at(-1).endsWith('/Text[1]'));
+await find('button', 'Inspect element-1-0').click(); await settle();
+await find('button', 'Element actions').click(); await settle();
+await find('button', 'Copy markup').click(); await settle();
+assert.match(copied.at(-1), /&lt;script&gt;世界&lt;\/script&gt;/);
+await find('button', 'Collapse all').click(); await settle();
+assert.ok(!all(ids.content).some(node => node.attributes['aria-label'] === 'Inspect text-leaf'));
+await find('button', 'Expand all').click(); await settle();
+assert.ok(find('button', 'Inspect text-leaf'));
+
 assert.ok(!all(ids.content).some(node => node.tagName === 'script'));
 elementCapture.elements[1].text = 'Updated text';
 await panel('Elements');

@@ -8,6 +8,8 @@ use serde_json::Value;
 pub mod performance;
 /// Shared presentation of captured style values.
 pub mod styles;
+/// Bounded inspection paths, subtree text and synthetic markup for copy actions.
+pub mod tree;
 pub use performance::{FramePhase, FrameTiming, Frames, NodeTiming};
 
 /// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.

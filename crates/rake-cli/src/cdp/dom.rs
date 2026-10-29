@@ -556,6 +556,22 @@ impl Dom {
             .ok_or_else(|| Error::new(-32000, "Captured source location unavailable"))
     }
 
+    pub fn outer_html(&self, params: &Value) -> Result<Value, Error> {
+        let element = self.element(node_id(params)?)?;
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| Error::new(-32000, "Tree unavailable"))?;
+        let markup = rake_protocol::inspection::tree::markup(&snapshot.elements, &element.id)
+            .ok_or_else(|| {
+                Error::new(
+                    -32000,
+                    "Copied subtree is invalid or exceeds the copy budget",
+                )
+            })?;
+        Ok(json!({"outerHTML":markup}))
+    }
+
     pub fn take_style_updates(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.style_updates)
             .into_iter()
@@ -1317,6 +1333,15 @@ mod tests {
         assert!(text.get("attributes").is_none());
         let id = dom.node_id("1-text").unwrap();
         assert_eq!(dom.search("世 🌍").unwrap()["resultCount"], 1);
+        let copied = dom
+            .outer_html(&json!({"nodeId":dom.node_id("1-p").unwrap()}))
+            .unwrap();
+        assert!(
+            copied["outerHTML"]
+                .as_str()
+                .unwrap()
+                .contains("Hello &lt;script&gt;世 🌍&lt;/script&gt;\n")
+        );
 
         capture = stable_capture("2", &[("p", None), ("text", Some("p"))]);
         capture.elements[1].text = Some(String::new());

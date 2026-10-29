@@ -279,6 +279,10 @@ impl Session {
                     .ok_or_else(|| Error::new(-32602, "query required"))?;
                 self.dom.search(query)
             }
+            "DOM.getOuterHTML" => {
+                self.refresh_dom()?;
+                self.dom.outer_html(&request.params)
+            }
             "DOM.getSearchResults" => {
                 self.refresh_dom()?;
                 let (result, events) = self.dom.search_results(&request.params)?;
