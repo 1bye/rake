@@ -648,6 +648,10 @@ function elementsPanel() {
     control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Application shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
     control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
     const kind = element.view?.tag || elementName(element.kind);
+    if (element.text != null) {
+      control.append(el('span', JSON.stringify(element.text), 'syntax-value'));
+      return control;
+    }
     control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
     if (element.semantic_id != null) control.append(el('span', 'id=', 'syntax-attribute'), el('span', '"' + element.semantic_id + '"', 'syntax-value'));
     control.append(el('span', '>', 'muted'));

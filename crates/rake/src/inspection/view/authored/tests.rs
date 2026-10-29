@@ -56,7 +56,7 @@ fn named<'a>(snapshot: &'a Snapshot, semantic: &str) -> &'a crate::inspection::E
 }
 
 #[test]
-fn automatic_boundaries_capture_styles_sources_and_inline_run_metadata_without_text() {
+fn automatic_boundaries_capture_styles_sources_and_rendered_text() {
     let mut app = gpui::TestAppContext::single();
     let store = Store::default();
     store.attach();
@@ -143,14 +143,14 @@ fn automatic_boundaries_capture_styles_sources_and_inline_run_metadata_without_t
         "unique macro sites and keyed components must be stable"
     );
     let serialized = serde_json::to_string(&snapshot).unwrap();
-    assert!(!serialized.contains("Private text content"));
-    assert!(!serialized.contains("Private inline content"));
+    assert!(serialized.contains("Private text content"));
+    assert!(serialized.contains("Private inline content"));
     assert!(
         snapshot.elements.iter().any(|element| element
             .accessibility
             .as_ref()
             .is_some_and(|a11y| a11y.label.as_deref() == Some("Private label"))),
-        "accessible control names are captured, not raw text runs"
+        "accessible control names remain available"
     );
 }
 
@@ -308,7 +308,7 @@ impl Render for AccessibleFixture {
         crate::view! {
             <section id="accessibility-root" role={gpui::accesskit::Role::Group} aria-label="Tools" focus={&self.scope} tab-navigation={true}>
                 <button id="save" aria-label="Save changes" aria-description="Writes document" disabled={self.disabled} tabindex={3}
-                    on:click={move |_, _, _| clicks.set(clicks.get() + 1)}>"Sensitive body text"</button>
+                    on:click={move |_, _, _| clicks.set(clicks.get() + 1)}>"Rendered body text"</button>
                 <button id="cancel" aria-label="Cancel" tabindex={0}/>
             </section>
         }.root(self.store.clone(), 0, WindowId(1))
@@ -357,9 +357,11 @@ fn accessible_roles_labels_actions_focus_order_and_handler_sites_follow_real_gpu
     assert_eq!(save.handlers[0].origin, "view");
     assert!(save.handlers[0].source.line > 0);
     assert!(
-        !serde_json::to_string(&snapshot)
-            .unwrap()
-            .contains("Sensitive body text")
+        snapshot
+            .elements
+            .iter()
+            .any(|element| element.parent.as_deref() == Some(&save.id)
+                && element.text.as_deref() == Some("Rendered body text"))
     );
     store
         .navigate(
@@ -405,6 +407,111 @@ fn accessible_roles_labels_actions_focus_order_and_handler_sites_follow_real_gpu
 struct ExpressionLabels {
     store: Store,
     calls: Rc<Cell<usize>>,
+}
+
+struct TextContents {
+    store: Store,
+    count: usize,
+}
+
+impl Render for TextContents {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        crate::view! {
+            <section id="text-contents" class="flex flex-col">
+                <h1 id="heading">"Hello "<em>"世界"</em></h1>
+                <p id="paragraph">"Count: "<strong>{self.count.to_string()}</strong><br/>"🌍"</p>
+                <button id="button">"Press me"</button>
+                <span id="label">"Label"</span>
+                {gpui::Text::new_inaccessible("Inaccessible text".into())}
+                {gpui::StyledText::new("Styled text")}
+                {""}
+                {"🌍".repeat(5000)}
+                {gpui::div().id("input").role(gpui::accesskit::Role::TextInput).aria_value("secret input value")}
+            </section>
+        }.root(self.store.clone(), 0, WindowId(1))
+    }
+}
+
+#[test]
+fn rendered_text_covers_containers_and_inline_runs_with_stable_live_updates() {
+    let mut app = gpui::TestAppContext::single();
+    let store = Store::default();
+    store.attach();
+    let (view, cx) = app.add_window_view(|_, _| TextContents {
+        store: store.clone(),
+        count: 0,
+    });
+    let draw = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
+    };
+    draw(cx);
+    let first = store.snapshot();
+    for (parent, value) in [
+        ("heading", "Hello 世界"),
+        ("paragraph", "Count: 0\n🌍"),
+        ("button", "Press me"),
+        ("label", "Label"),
+    ] {
+        let parent = named(&first, parent);
+        assert!(
+            first
+                .elements
+                .iter()
+                .any(|element| element.parent.as_deref() == Some(&parent.id)
+                    && element.text.as_deref() == Some(value)),
+            "missing text {value:?}"
+        );
+    }
+    for value in ["Inaccessible text", "Styled text", ""] {
+        assert!(
+            first
+                .elements
+                .iter()
+                .any(|element| element.text.as_deref() == Some(value)),
+            "missing text {value:?}"
+        );
+    }
+    let clipped = first
+        .elements
+        .iter()
+        .find(|element| {
+            element
+                .text
+                .as_ref()
+                .is_some_and(|text| text.starts_with("🌍🌍"))
+        })
+        .unwrap();
+    assert_eq!(clipped.text.as_ref().unwrap().len(), 16 * 1024);
+    assert!(clipped.metadata_truncated);
+    assert!(
+        !serde_json::to_string(&first)
+            .unwrap()
+            .contains("secret input value")
+    );
+    let text = first
+        .elements
+        .iter()
+        .find(|element| element.text.as_deref() == Some("Count: 0\n🌍"))
+        .unwrap();
+    view.update(cx, |view, cx| {
+        view.count = 1;
+        cx.notify();
+    });
+    draw(cx);
+    let second = store.snapshot();
+    let updated = second
+        .elements
+        .iter()
+        .find(|element| element.text.as_deref() == Some("Count: 1\n🌍"))
+        .unwrap();
+    assert_eq!(updated.stable_id, text.stable_id);
+    assert_ne!(
+        second.capture, first.capture,
+        "paged text captures must stay coherent"
+    );
 }
 
 impl Render for ExpressionLabels {
@@ -488,8 +595,11 @@ fn expression_children_display_text_or_their_element_type_without_changing_ident
             .all(|element| element.source.is_some() && element.stable_id.is_some())
     );
     assert!(
-        !serde_json::to_string(&first).unwrap().contains("private "),
-        "labels must not expose raw text values"
+        children[..5].iter().all(|element| element
+            .text
+            .as_deref()
+            .is_some_and(|text| text.starts_with("private "))),
+        "text values must be retained separately from element names"
     );
     let identities: Vec<_> = children
         .iter()

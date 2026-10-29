@@ -110,7 +110,11 @@ and group states plus inherited text from uninstrumented parents. Defaults are
 included, rem lengths are normalized to pixels, and width/height are measured.
 Other relative layout lengths retain their native units; this is not a browser
 CSS cascade. Custom/opaque boundaries without a resolver omit `resolved`.
-Older runtimes also omit it. Raw text/value contents are excluded; bounded accessibility labels can include control names. Every snapshot
+Older runtimes also omit it. Text boundaries expose rendered content as `text`, including
+empty strings; older runtimes omit it. Content is bounded to a 16 KiB UTF-8 prefix
+with `metadata_truncated` marking clipping. Editable control values are excluded.
+Chrome DevTools receives native text nodes and live character-data updates.
+Bounded accessibility labels can include control names. Every snapshot
 carries this coverage description, even when it has no nodes.
 
 `box_model` separates measured `border` bounds from `padding`, `content`, and

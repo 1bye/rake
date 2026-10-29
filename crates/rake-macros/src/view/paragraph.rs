@@ -34,23 +34,32 @@ impl Element {
         let children = inline_children(&self.children, &content, &style, rake, next)?;
 
         let heading_text = format_ident!("__rake_heading_text_{index}", span = Span::mixed_site());
-
-        let finish =
+        let siblings = format_ident!(
+            "__rake_paragraph_children_{index}",
+            span = Span::mixed_site()
+        );
+        let definition =
+            super::inspection::definition("Text", self.tag.span(), index, TokenStream::new(), rake);
+        let label =
             if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
-                quote!({
-                    let #heading_text = #content.finish();
-                    #node.aria_label(#heading_text.full_text()).child(#heading_text)
-                })
+                quote!(#node = #node.aria_label(#heading_text.full_text());)
             } else {
-                quote!(#node.child(#content.finish()))
+                TokenStream::new()
             };
 
         Ok(quote!({
-            let #node = #builder;
+            let mut #node = #builder;
             let mut #content = #rake::__private::ViewParagraphContent::default();
             let #style = #rake::__private::ViewRunStyle::default();
             #children
-            #finish
+            let #heading_text = #content.finish();
+            #label
+            let mut #siblings = #rake::__private::ViewChildren::default();
+            #rake::__private::view_inspect_child(
+                &mut #siblings, &mut #node, #heading_text,
+                #rake::gpui::ElementId::from(("rake::view:paragraph-text", #index)), #definition
+            );
+            #node
         }))
     }
 }

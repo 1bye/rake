@@ -781,7 +781,10 @@ The Source pane lists authored tags and style-related attributes with file, line
 column and bounded Rust expression spellings. It records declarations, not selected
 conditional branches or methods hidden inside arbitrary style closures. Inline
 paragraph tags are text runs: their style source metadata belongs to the paragraph,
-with no invented per-run layout boxes. Actual text content is not captured.
+with no invented per-run layout boxes. Their composed text appears as a captured
+text child, including inline styling runs, line breaks and dynamic values. Ordinary
+text children in buttons, headings, labels and other containers are captured too.
+Text is bounded to 16 KiB per boundary; editable control values remain excluded.
 
 Capture remains opt-in through the routed or standalone `App::root` development host, and count/byte limits
 still apply. Without an inspection host, wrappers do not sample or serialize styles.

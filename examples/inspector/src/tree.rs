@@ -29,11 +29,12 @@ pub(crate) const ROW_INSET: f32 = 6.;
 pub(crate) fn matches(element: &Element, query: &str) -> bool {
     query.is_empty()
         || format!(
-            "{} {} {} {} {}",
+            "{} {} {} {} {} {}",
             element.display_name(),
             element.id,
             element.kind,
             element.semantic_id.as_deref().unwrap_or(""),
+            element.text.as_deref().unwrap_or(""),
             element
                 .source
                 .as_ref()
@@ -320,6 +321,7 @@ mod tests {
             stable_id: None,
             navigation: Default::default(),
             metadata_truncated: false,
+            text: None,
             paint_order: None,
             style_editable: false,
             style_overrides: Vec::new(),

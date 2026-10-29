@@ -286,7 +286,8 @@ impl Inspector {
             .filter(|element| {
                 query.is_empty()
                     || format!(
-                        "{} {} {} {}",
+                        "{} {} {} {} {}",
+                        element.text.as_deref().unwrap_or(""),
                         element.id,
                         element.kind,
                         element.semantic_id.as_deref().unwrap_or(""),

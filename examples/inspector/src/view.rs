@@ -788,6 +788,9 @@ impl ElementsView {
                     </button>
                 } else { <span class="w-[14px] shrink-0"/> }
                 <span class="flex flex-row h-full justify-start shrink-0 font-code text-[12px] whitespace-nowrap" style={|s| s.line_height(px(tree::ROW_HEIGHT))}>
+                    if let Some(text) = &element.text {
+                        <span class="text-value" class:bg-matched={row.matched}>{serde_json::to_string(text).unwrap_or_default()}</span>
+                    } else {
                     <span class="text-tag">{if row.closing { "</" } else { "<" }}</span>
                     <span class="text-tag">{kind.clone()}</span>
                     if !row.closing {
@@ -806,6 +809,7 @@ impl ElementsView {
                             <span class="px-1 ml-[6px] rounded-[3px] text-[10px] leading-[14px] bg-field text-muted">"flex"</span>
                         }
                     } else { <span class="text-tag">">"</span> }
+                    }
                 </span>
             </div>
         }.into_any_element()

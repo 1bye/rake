@@ -4,8 +4,8 @@
 //! shell and application-supplied inspection boundaries, preserving their nearest
 //! inspected ancestor. Layout is measured by GPUI. Authored refinements and live
 //! resolved styles are separate; opaque custom elements may not expose resolution.
-//! No views, raw text/value contents or source contents are retained. Bounded
-//! accessibility labels/descriptions are inspection metadata.
+//! Rendered text and accessibility metadata are bounded owned strings. Editable
+//! control values, views and source contents are not retained.
 
 mod editing;
 mod recording;
@@ -74,7 +74,7 @@ impl Default for Store {
                 router_revision: 0,
                 elements: Vec::new(),
                 omitted: 0,
-                coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Raw text/value content is not captured; bounded accessibility labels and descriptions include macro-generated control names.".into(),
+                coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Rendered text is captured at text boundaries (16 KiB UTF-8 prefix); editable control values are excluded. Bounded accessibility labels and descriptions include macro-generated control names.".into(),
             }),
             edits: BTreeMap::new(),
             frames: recording::Recording::default(),
@@ -503,6 +503,7 @@ impl Store {
                                 &host.snapshot.capture,
                             )
                             && element.kind == old.kind
+                            && element.text == old.text
                             && element.stable_id == old.stable_id
                             && (match (&element.accessibility, &old.accessibility) {
                                 (Some(a), Some(b)) => a.same_properties(b),

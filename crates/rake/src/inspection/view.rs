@@ -588,7 +588,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 .iter()
                 .all(|value| value.is_finite());
 
-            let a11y = a11y.expect("active capture sampled accessibility");
+            let (a11y, text) = a11y.expect("active capture sampled accessibility");
             let mut handlers = Vec::new();
             #[cfg(feature = "experimental-view")]
             if let Some(definition) = self.definition {
@@ -708,6 +708,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 styles,
                 resolved: None,
                 metadata_truncated: truncated,
+                text,
                 paint_order: None,
                 style_editable: state.1.is_some(),
                 style_overrides: Vec::new(),

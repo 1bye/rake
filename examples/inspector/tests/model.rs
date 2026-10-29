@@ -50,6 +50,7 @@ fn element(id: &str) -> Element {
         stable_id: None,
         navigation: Default::default(),
         metadata_truncated: false,
+        text: None,
         paint_order: None,
         style_editable: false,
         style_overrides: Vec::new(),

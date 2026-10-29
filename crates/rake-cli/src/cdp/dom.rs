@@ -72,6 +72,7 @@ impl Dom {
                         !reset
                             && old.kind == element.kind
                             && old.display_name() == element.display_name()
+                            && old.text.is_some() == element.text.is_some()
                             && old.tab_id == element.tab_id
                             && old.entry_id == element.entry_id
                     })
@@ -210,6 +211,17 @@ impl Dom {
         for (&id, element) in &self.nodes {
             if self.sent.contains(&id)
                 && let Some(old) = old_nodes.get(&id)
+                && old.text != element.text
+                && let Some(text) = &element.text
+            {
+                self.updates.push(Event::new(
+                    "DOM.characterDataModified",
+                    json!({"nodeId":id,"characterData":text}),
+                ));
+            }
+            if self.sent.contains(&id)
+                && element.text.is_none()
+                && let Some(old) = old_nodes.get(&id)
                 && old.semantic_id != element.semantic_id
             {
                 self.updates.push(match &element.semantic_id {
@@ -303,6 +315,7 @@ impl Dom {
                     .into_iter()
                     .chain(element.semantic_id.iter().map(String::as_str))
                     .chain(element.stable_id.iter().map(String::as_str))
+                    .chain(element.text.iter().map(String::as_str))
                     .any(|value| value.to_lowercase().contains(&lower))
                 }
             })
@@ -488,9 +501,12 @@ impl Dom {
     pub fn node_properties(&self, object: &str) -> Result<Value, Error> {
         let element = self.element(self.object_node(object)?)?;
         let mut result = vec![
-            json!({"name":"nodeName","value":{"type":"string","value":element.display_name()},"configurable":false,"enumerable":true}),
+            json!({"name":"nodeName","value":{"type":"string","value":if element.text.is_some() { "#text" } else { element.display_name() }},"configurable":false,"enumerable":true}),
             json!({"name":"id","value":{"type":"string","value":element.semantic_id.as_deref().unwrap_or_default()},"configurable":false,"enumerable":true}),
         ];
+        if let Some(text) = &element.text {
+            result.push(json!({"name":"textContent","value":{"type":"string","value":text},"configurable":false,"enumerable":true}));
+        }
         if let Some(view) = &element.view {
             result.push(json!({"name":"rakeStyleSources","value":{"type":"string","value":serde_json::to_string_pretty(&view.style_sources).unwrap_or_default()},"configurable":false,"enumerable":true}));
         }
@@ -809,13 +825,23 @@ impl Dom {
             let element = &self.nodes[&id];
             let name = element.display_name();
 
-            json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
-                "nodeValue":"","attributes":attributes(element)})
+            if let Some(text) = &element.text {
+                json!({"nodeId":id,"backendNodeId":id,"nodeType":3,"nodeName":"#text","localName":"","nodeValue":text})
+            } else {
+                json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
+                    "nodeValue":"","attributes":attributes(element)})
+            }
         };
 
         node["childNodeCount"] = json!(children.len());
 
-        if depth > 0 || children.is_empty() {
+        // Chrome inlines a sole text child only when it arrives with its parent.
+        let inline_text = children.len() == 1
+            && self
+                .nodes
+                .get(&children[0])
+                .is_some_and(|element| element.text.is_some());
+        if depth > 0 || children.is_empty() || inline_text {
             node["children"] = json!(
                 children
                     .into_iter()
@@ -1113,6 +1139,10 @@ fn search_id(params: &Value) -> Result<u64, Error> {
 fn attributes(element: &Element) -> Vec<String> {
     let mut attrs = Vec::new();
 
+    if element.text.is_some() {
+        return attrs;
+    }
+
     if let Some(id) = &element.semantic_id {
         attrs.extend(["id".into(), id.clone()]);
     }
@@ -1226,6 +1256,47 @@ mod tests {
         assert!(!dom.update(stable_capture("2", &tree)).unwrap());
         assert_eq!(dom.node_id("2-child-3999"), Some(id));
         assert_eq!(dom.search("#child-3999").unwrap()["resultCount"], 1);
+    }
+
+    #[test]
+    fn text_nodes_show_content_and_update_without_replacing_the_selected_node() {
+        let mut capture = stable_capture("1", &[("p", None), ("text", Some("p"))]);
+        capture.elements[1].text = Some("Hello <script>世 🌍</script>\n".into());
+        let mut dom = Dom::default();
+        dom.update(capture.clone()).unwrap();
+        let preview = dom.node(dom.node_id("1-p").unwrap(), 0);
+        assert_eq!(
+            preview["children"][0]["nodeType"], 3,
+            "lazy parent previews include their sole text child"
+        );
+        let document = dom.document(&json!({"depth":-1})).unwrap();
+        let text = &document["children"][0]["children"][0];
+        assert_eq!(text["nodeType"], 3);
+        assert_eq!(text["nodeName"], "#text");
+        assert_eq!(
+            text["nodeValue"],
+            capture.elements[1].text.as_ref().unwrap().as_str()
+        );
+        assert!(text.get("attributes").is_none());
+        let id = dom.node_id("1-text").unwrap();
+        assert_eq!(dom.search("世 🌍").unwrap()["resultCount"], 1);
+
+        capture = stable_capture("2", &[("p", None), ("text", Some("p"))]);
+        capture.elements[1].text = Some(String::new());
+        assert!(!dom.update(capture.clone()).unwrap());
+        assert_eq!(dom.node_id("2-text"), Some(id));
+        let events = dom.take_updates();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].method, "DOM.characterDataModified");
+        assert_eq!(events[0].params, json!({"nodeId":id,"characterData":""}));
+
+        capture.elements[1].text = None;
+        assert!(!dom.update(capture).unwrap());
+        assert_ne!(
+            dom.node_id("2-text"),
+            Some(id),
+            "node type changes replace the node"
+        );
     }
 
     #[test]

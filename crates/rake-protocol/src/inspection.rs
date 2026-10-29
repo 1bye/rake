@@ -176,6 +176,11 @@ pub struct Element {
     pub parent: Option<String>,
     /// Rust element type, without a promise of a stable wire spelling.
     pub kind: String,
+    /// Rendered text for a text boundary, including empty strings; absent for non-text nodes.
+    /// UTF-8 prefixes are bounded to 16 KiB and signal clipping through `metadata_truncated`.
+    /// Editable control values are not sampled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     /// Application-supplied identity, distinct from GPUI state identity.
     pub semantic_id: Option<String>,
     /// Construction site of the boundary, when supplied.

@@ -11,13 +11,25 @@ pub(super) fn capture<E: Element>(
     window: &Window,
     cx: &App,
     truncated: &mut bool,
-) -> Accessibility {
+) -> (Accessibility, Option<String>) {
     let role = inner.a11y_role();
     let mut node = accesskit::Node::new(role.unwrap_or(accesskit::Role::Unknown));
     inner.write_a11y_info(&mut node);
+    let any = inner as &dyn std::any::Any;
+    let text = if let Some(text) = any.downcast_ref::<gpui::SharedString>() {
+        Some(limited(text, 16 * 1024, truncated))
+    } else if let Some(text) = any.downcast_ref::<&'static str>() {
+        Some(limited(text, 16 * 1024, truncated))
+    } else if let Some(text) = any.downcast_ref::<gpui::StyledText>() {
+        Some(limited(&text.layout().text(), 16 * 1024, truncated))
+    } else if node.role() == accesskit::Role::Label || any.is::<gpui::Text>() {
+        node.value().map(|text| limited(text, 16 * 1024, truncated))
+    } else {
+        None
+    };
     let role = (node.role() != accesskit::Role::Unknown).then(|| format!("{:?}", node.role()));
     let focus = focus.and_then(|handle| handle.downgrade().upgrade());
-    Accessibility {
+    let accessibility = Accessibility {
         role,
         label: node.label().map(|label| limited(label, 256, truncated)),
         description: node
@@ -41,7 +53,8 @@ pub(super) fn capture<E: Element>(
             .filter(|action| node.supports_action(*action))
             .map(|action| format!("{action:?}"))
             .collect(),
-    }
+    };
+    (accessibility, text)
 }
 
 pub(super) fn order(snapshot: &mut Snapshot) {
