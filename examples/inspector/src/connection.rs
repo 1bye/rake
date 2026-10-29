@@ -152,6 +152,65 @@ impl Connection {
         Ok(instances)
     }
 
+    /// Loads a bounded lightweight index, pinning every page to one capture.
+    pub async fn tree(
+        &self,
+        runtime: RuntimeId,
+        cancellation: CancellationToken,
+    ) -> Result<rake::inspection::Snapshot, String> {
+        let Reply::Info(info) = self
+            .query(runtime, Query::Info {}, cancellation.clone())
+            .await?
+        else {
+            return Err("Unexpected info reply".into());
+        };
+        if !info.queries.iter().any(|q| q == "inspect_tree_page") {
+            return match self
+                .query(runtime, Query::InspectTree {}, cancellation)
+                .await?
+            {
+                Reply::Elements(tree) => Ok(tree),
+                _ => Err("Unexpected tree reply".into()),
+            };
+        }
+        let mut tree: Option<rake::inspection::Snapshot> = None;
+        let mut offset = 0;
+        loop {
+            let Reply::ElementPage(page) = self
+                .query(
+                    runtime,
+                    Query::InspectTreePage {
+                        generation: tree.as_ref().map(|tree| tree.capture.clone()),
+                        offset,
+                    },
+                    cancellation.clone(),
+                )
+                .await?
+            else {
+                return Err("Unexpected page reply".into());
+            };
+            if page.total > rake::inspection::MAX_ELEMENTS
+                || page.snapshot.elements.len() > rake::inspection::TREE_PAGE_SIZE
+                || tree
+                    .as_ref()
+                    .is_some_and(|tree| tree.capture != page.snapshot.capture)
+            {
+                return Err("Invalid tree page".into());
+            }
+            if let Some(tree) = &mut tree {
+                tree.elements.extend(page.snapshot.elements);
+            } else {
+                tree = Some(page.snapshot);
+            }
+            match page.next {
+                Some(next) if next > offset && next <= page.total => offset = next,
+                Some(_) => return Err("Invalid tree cursor".into()),
+                None => break,
+            }
+        }
+        tree.ok_or_else(|| "Missing tree metadata".into())
+    }
+
     /// Submits a shared owned query to an exact runtime. It never submits mutations.
     pub async fn query(
         &self,
@@ -162,6 +221,7 @@ impl Connection {
         if !matches!(
             query,
             Query::InspectTree {}
+                | Query::InspectTreePage { .. }
                 | Query::InspectElement { .. }
                 | Query::InspectPick {}
                 | Query::Info {}

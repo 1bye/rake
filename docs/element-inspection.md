@@ -148,7 +148,7 @@ boundary and authored metadata are retained. Both Rake frontends provide a
 **Computed** tab and refresh selected details while their exact ID remains live.
 The **Styles** tab retains the authored base refinements.
 
-Capture retains at most 256 nodes and less than 512 KiB of serialized data, leaving
+Capture retains at most 8192 nodes within a 32 MiB serialized metadata budget, leaving
 room in the transport's 1 MiB frame. Omitted inspected nodes are counted. Semantic
 IDs/type names are limited to 256 UTF-8 bytes, source paths to 512, and authored style data
 to 4 KiB per node. Oversized styles are unavailable; shortened/omitted metadata
@@ -219,7 +219,7 @@ not replay a click. Enabling mode once from the CLI expires unless renewed.
 
 Known limits: z-order follows prepaint order, so deferred/absolute surfaces may
 be picked incorrectly. Only instrumented boundaries can be picked, with the same
-256-node cap. Opaque descendants resolve to an inspected ancestor. Polling adds
+8192-node cap. Opaque descendants resolve to an inspected ancestor. Polling adds
 roughly 100–250 ms of hover/selection lag and can be slower through the Web broker;
 a push channel is not implemented. A new geometry/metadata capture invalidates
 old IDs. No headers, bodies, source contents or uninstrumented text are captured.
@@ -293,3 +293,16 @@ For Web inspection, keep the application in a visible tab/window while using
 DevTools (separate windows worked in Chrome 156). A hidden or suspended application
 tab cannot service broker requests or renew inspection leases reliably. Suspension
 expires the picker; it does not keep application input captured indefinitely.
+
+## Larger trees and lazy metadata
+
+`inspect_tree_page` returns a lightweight index in pages of at most 256 nodes.
+The first request uses `generation: null, offset: 0`; subsequent requests pin the
+returned capture and follow `next`. Four captures may be pinned for five seconds,
+so redraws cannot splice generations. Expired pages fail explicitly. Index entries
+omit styles, box models and style expressions; `inspect_element` loads those on
+selection. Each response stays below 512 KiB. The legacy `inspect_tree` remains a
+bounded prefix and counts the undisplayed remainder as omitted. Chrome and both
+Rake inspectors use the paged index when advertised; Chrome delivers branches to
+its frontend lazily. Stable presentation identities preserve selection across
+captures, but removed or ambiguous nodes are never retargeted by name.

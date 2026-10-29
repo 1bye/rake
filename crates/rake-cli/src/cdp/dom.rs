@@ -10,6 +10,8 @@ pub(super) struct Dom {
     snapshot: Option<Snapshot>,
     nodes: BTreeMap<i32, Element>,
     next: i32,
+    control_ids: BTreeMap<String, i32>,
+    child_ids: BTreeMap<i32, Vec<i32>>,
     omitted_id: i32,
     sent: BTreeSet<i32>,
     children_sent: BTreeSet<i32>,
@@ -40,36 +42,44 @@ impl Dom {
         let mut nodes = BTreeMap::new();
         let mut used = BTreeSet::new();
 
+        let mut counts = BTreeMap::new();
         for element in &snapshot.elements {
-            let stable = element.stable_id.as_ref().filter(|stable| {
-                snapshot
-                    .elements
-                    .iter()
-                    .filter(|e| e.stable_id.as_ref() == Some(stable))
-                    .count()
-                    == 1
-                    && self
-                        .nodes
-                        .values()
-                        .filter(|e| e.stable_id.as_ref() == Some(stable))
-                        .count()
-                        <= 1
-            });
-            let existing = (!reset)
-                .then(|| {
-                    self.nodes.iter().find(|(id, old)| {
-                        !used.contains(*id)
+            if let Some(id) = &element.stable_id {
+                *counts.entry(id).or_insert(0usize) += 1;
+            }
+        }
+        let old_ids: BTreeMap<_, _> = self.nodes.iter().map(|(&id, e)| (&e.id, (id, e))).collect();
+        let mut old_stable = BTreeMap::new();
+        for (&id, element) in &self.nodes {
+            if let Some(stable) = &element.stable_id {
+                let entry = old_stable.entry(stable).or_insert(Vec::new());
+                entry.push((id, element));
+            }
+        }
+        // Release borrows before allocating new CDP IDs.
+        let existing: Vec<_> = snapshot
+            .elements
+            .iter()
+            .map(|element| {
+                let candidate = old_ids.get(&element.id).copied().or_else(|| {
+                    let stable = element.stable_id.as_ref()?;
+                    let old = old_stable.get(stable)?;
+                    (counts.get(stable) == Some(&1) && old.len() == 1).then_some(old[0])
+                });
+                candidate
+                    .filter(|(_, old)| {
+                        !reset
                             && old.kind == element.kind
                             && old.display_name() == element.display_name()
                             && old.tab_id == element.tab_id
                             && old.entry_id == element.entry_id
-                            && (old.id == element.id
-                                || stable
-                                    .is_some_and(|stable| old.stable_id.as_ref() == Some(stable)))
                     })
-                })
-                .flatten();
-            let id = if let Some((&id, old)) = existing {
+                    .map(|(id, old)| (id, old.clone()))
+            })
+            .collect();
+        for (element, existing) in snapshot.elements.iter().zip(existing) {
+            let existing = existing.filter(|(id, _)| !used.contains(id));
+            let id = if let Some((id, old)) = existing {
                 if (old.styles != element.styles
                     || old.resolved != element.resolved
                     || old.layout != element.layout
@@ -96,23 +106,44 @@ impl Dom {
             self.omitted_id = self.allocate()?;
         }
 
+        self.control_ids = self
+            .nodes
+            .iter()
+            .map(|(&id, e)| (e.id.clone(), id))
+            .collect();
+        self.child_ids.clear();
+        for element in self.snapshot.iter().flat_map(|s| &s.elements) {
+            let parent = element
+                .parent
+                .as_ref()
+                .and_then(|id| self.control_ids.get(id))
+                .copied()
+                .unwrap_or(1);
+            self.child_ids
+                .entry(parent)
+                .or_default()
+                .push(self.control_ids[&element.id]);
+        }
+        if self.snapshot.as_ref().is_some_and(|s| s.omitted > 0) {
+            self.child_ids.entry(1).or_default().push(self.omitted_id);
+        }
+
         if reset {
             self.reset_delivery();
             return Ok(true);
         }
 
         // Remove only changed edges. LCS keeps unaffected sibling objects in Chrome.
+        let old_ids: BTreeMap<_, _> = old_nodes
+            .iter()
+            .map(|(&id, element)| (&element.id, id))
+            .collect();
         let parents = std::iter::once(1)
             .chain(
                 old_snapshot
                     .iter()
                     .flat_map(|s| &s.elements)
-                    .filter_map(|element| {
-                        old_nodes
-                            .iter()
-                            .find(|(_, old)| old.id == element.id)
-                            .map(|(&id, _)| id)
-                    }),
+                    .filter_map(|element| old_ids.get(&element.id).copied()),
             )
             .collect::<Vec<_>>();
         for parent in parents {
@@ -511,10 +542,7 @@ impl Dom {
     }
 
     pub fn node_id(&self, id: &str) -> Option<i32> {
-        self.nodes
-            .iter()
-            .find(|(_, e)| e.id == id)
-            .map(|(&id, _)| id)
+        self.control_ids.get(id).copied()
     }
 
     pub fn overlay_command(
@@ -564,6 +592,8 @@ impl Dom {
     pub fn clear(&mut self) {
         self.snapshot = None;
         self.nodes.clear();
+        self.control_ids.clear();
+        self.child_ids.clear();
         self.sent.clear();
         self.children_sent.clear();
         self.style_updates.clear();
@@ -579,34 +609,19 @@ impl Dom {
     }
 
     fn children(&self, id: i32) -> Vec<i32> {
-        if id != 1 && !self.nodes.contains_key(&id) {
-            return Vec::new();
+        self.child_ids.get(&id).cloned().unwrap_or_default()
+    }
+
+    pub fn control_id(&self, id: i32) -> Result<&str, Error> {
+        Ok(&self.element(id)?.id)
+    }
+
+    pub fn details(&mut self, id: i32, element: Element) -> Result<(), Error> {
+        if self.element(id)?.id != element.id {
+            return Err(Error::new(-32000, "Inspection capture changed; retry"));
         }
-
-        let parent = self.nodes.get(&id).map(|element| element.id.as_str());
-
-        let mut children: Vec<_> = self
-            .snapshot
-            .iter()
-            .flat_map(|snapshot| &snapshot.elements)
-            .filter(|element| {
-                if id == 1 {
-                    element
-                        .parent
-                        .as_deref()
-                        .is_none_or(|parent| self.node_id(parent).is_none())
-                } else {
-                    element.parent.as_deref() == parent
-                }
-            })
-            .filter_map(|element| self.node_id(&element.id))
-            .collect();
-
-        if id == 1 && self.snapshot.as_ref().is_some_and(|s| s.omitted > 0) {
-            children.push(self.omitted_id);
-        }
-
-        children
+        self.nodes.insert(id, element);
+        Ok(())
     }
 
     fn node(&self, id: i32, depth: usize) -> Value {
@@ -886,30 +901,29 @@ impl Dom {
     }
 }
 
-// Capture size is bounded to 256 nodes; the table avoids replacing shifted siblings.
+// Sibling IDs are unique: LCS is the longest increasing subsequence of old positions.
 fn common_subsequence(before: &[i32], after: &[i32]) -> BTreeSet<i32> {
-    let mut lengths = vec![vec![0; after.len() + 1]; before.len() + 1];
-    for i in (0..before.len()).rev() {
-        for j in (0..after.len()).rev() {
-            lengths[i][j] = if before[i] == after[j] {
-                1 + lengths[i + 1][j + 1]
-            } else {
-                lengths[i + 1][j].max(lengths[i][j + 1])
-            };
+    let positions: BTreeMap<_, _> = before.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    let sequence: Vec<_> = after
+        .iter()
+        .filter_map(|id| positions.get(id).map(|&p| (*id, p)))
+        .collect();
+    let mut tails: Vec<usize> = Vec::new();
+    let mut previous = vec![None; sequence.len()];
+    for (i, &(_, position)) in sequence.iter().enumerate() {
+        let j = tails.partition_point(|&index| sequence[index].1 < position);
+        previous[i] = j.checked_sub(1).map(|j| tails[j]);
+        if j == tails.len() {
+            tails.push(i);
+        } else {
+            tails[j] = i;
         }
     }
-    let (mut i, mut j) = (0, 0);
     let mut common = BTreeSet::new();
-    while i < before.len() && j < after.len() {
-        if before[i] == after[j] {
-            common.insert(before[i]);
-            i += 1;
-            j += 1;
-        } else if lengths[i + 1][j] > lengths[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
+    let mut cursor = tails.last().copied();
+    while let Some(i) = cursor {
+        common.insert(sequence[i].0);
+        cursor = previous[i];
     }
     common
 }
@@ -976,6 +990,22 @@ mod tests {
                 "semantic_id":name,"layout":{"x":0.,"y":0.,"width":10.,"height":10.},"metadata_truncated":false
             })).collect::<Vec<_>>()
         })).unwrap()
+    }
+
+    #[test]
+    fn large_sibling_lists_load_lazily_and_keep_identity_on_reorder() {
+        let names: Vec<_> = (0..4000).map(|i| format!("child-{i}")).collect();
+        let mut tree = vec![("root", None)];
+        tree.extend(names.iter().map(|name| (name.as_str(), Some("root"))));
+        let mut dom = Dom::default();
+        dom.update(stable_capture("1", &tree)).unwrap();
+        let document = dom.document(&json!({"depth":1})).unwrap();
+        assert!(document["children"][0].get("children").is_none());
+        let id = dom.node_id("1-child-3999").unwrap();
+        tree[1..].reverse();
+        assert!(!dom.update(stable_capture("2", &tree)).unwrap());
+        assert_eq!(dom.node_id("2-child-3999"), Some(id));
+        assert_eq!(dom.search("#child-3999").unwrap()["resultCount"], 1);
     }
 
     #[test]

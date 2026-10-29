@@ -29,6 +29,7 @@ pub(crate) struct Store(Rc<RefCell<State>>);
 
 struct State {
     latest: Rc<Snapshot>,
+    pages: BTreeMap<String, (Rc<Snapshot>, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     next_capture: u64,
     #[cfg(feature = "gpui")]
@@ -70,6 +71,7 @@ impl Default for Store {
                 omitted: 0,
                 coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Text content is not captured.".into(),
             }),
+            pages: BTreeMap::new(),
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
             #[cfg(feature = "gpui")]
@@ -156,7 +158,7 @@ impl Store {
             .then_some(focus)
     }
 
-    pub(crate) fn snapshot(&self) -> Snapshot {
+    fn full_snapshot(&self) -> Rc<Snapshot> {
         let state = self.0.borrow();
 
         state
@@ -164,8 +166,117 @@ impl Store {
             .and_then(|id| state.windows.get(&id))
             .map(|host| &host.snapshot)
             .unwrap_or(&state.latest)
-            .as_ref()
             .clone()
+    }
+
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        let full = self.full_snapshot();
+        let mut snapshot = Snapshot {
+            status: full.status,
+            capture: full.capture.clone(),
+            router_revision: full.router_revision,
+            elements: full.elements.iter().take(TREE_PAGE_SIZE).cloned().collect(),
+            omitted: full.omitted + full.elements.len().saturating_sub(TREE_PAGE_SIZE),
+            coverage: full.coverage.clone(),
+        };
+        let mut bytes = 4096;
+        let retained = snapshot
+            .elements
+            .iter()
+            .take(TREE_PAGE_SIZE)
+            .take_while(|e| {
+                bytes += serde_json::to_vec(e).map_or(MAX_SNAPSHOT_BYTES, |v| v.len()) + 1;
+                bytes < MAX_SNAPSHOT_BYTES
+            })
+            .count();
+        snapshot.omitted += snapshot.elements.len() - retained;
+        snapshot.elements.truncate(retained);
+        snapshot
+    }
+
+    pub(crate) fn tree_page(
+        &self,
+        generation: Option<&str>,
+        offset: usize,
+    ) -> Result<TreePage, InspectionError> {
+        let current = self.full_snapshot();
+        let mut state = self.0.borrow_mut();
+        let now = Instant::now();
+        state.pages.retain(|_, (_, until)| *until > now);
+        let full = if let Some(generation) = generation {
+            if generation == current.capture {
+                current
+            } else {
+                state
+                    .pages
+                    .get(generation)
+                    .map(|(capture, _)| capture.clone())
+                    .ok_or(InspectionError::StaleGeneration)?
+            }
+        } else {
+            if !state.pages.contains_key(&current.capture) {
+                if state.pages.len() >= 4 {
+                    let oldest = state
+                        .pages
+                        .iter()
+                        .min_by_key(|(_, (_, until))| *until)
+                        .map(|(id, _)| id.clone());
+                    if let Some(oldest) = oldest {
+                        state.pages.remove(&oldest);
+                    }
+                }
+                state.pages.insert(
+                    current.capture.clone(),
+                    (current.clone(), now + Duration::from_secs(5)),
+                );
+            }
+            current
+        };
+        drop(state);
+        if offset > full.elements.len() {
+            return Err(InspectionError::InvalidPage);
+        }
+        let end = offset
+            .saturating_add(TREE_PAGE_SIZE)
+            .min(full.elements.len());
+        let mut snapshot = Snapshot {
+            elements: Vec::new(),
+            status: full.status,
+            capture: full.capture.clone(),
+            router_revision: full.router_revision,
+            omitted: full.omitted,
+            coverage: full.coverage.clone(),
+        };
+        snapshot.elements = full.elements[offset..end]
+            .iter()
+            .cloned()
+            .map(|mut element| {
+                element.styles = None;
+                element.resolved = None;
+                element.box_model = None;
+                if let Some(view) = &mut element.view {
+                    view.style_sources.clear();
+                }
+                element
+            })
+            .collect();
+        let mut bytes = 4096;
+        let count = snapshot
+            .elements
+            .iter()
+            .take_while(|element| {
+                bytes +=
+                    serde_json::to_vec(element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len()) + 1;
+                bytes < MAX_SNAPSHOT_BYTES
+            })
+            .count();
+        snapshot.elements.truncate(count);
+        let end = offset + count;
+        Ok(TreePage {
+            snapshot,
+            next: (end < full.elements.len()).then_some(end),
+            total: full.elements.len(),
+        })
     }
 
     pub(crate) fn element(&self, id: &str) -> Result<Element, InspectionError> {
@@ -179,6 +290,13 @@ impl Store {
                 .values()
                 .flat_map(|host| &host.snapshot.elements)
                 .chain(&state.latest.elements)
+                .chain(
+                    state
+                        .pages
+                        .values()
+                        .filter(|(_, until)| *until > Instant::now())
+                        .flat_map(|(snapshot, _)| &snapshot.elements),
+                )
                 .find(|element| element.id == id)
                 .cloned()
                 .ok_or(InspectionError::NotRetained),
@@ -514,16 +632,16 @@ fn bound_resolved_styles(snapshot: &mut Snapshot) {
     for element in &mut snapshot.elements {
         let resolved = element.resolved.take();
 
-        base_bytes += serde_json::to_vec(&*element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len());
+        base_bytes += serde_json::to_vec(&*element).map_or(MAX_CAPTURE_BYTES, |bytes| bytes.len());
         element.resolved = resolved;
     }
 
-    let mut remaining = (MAX_SNAPSHOT_BYTES - 4096).saturating_sub(base_bytes);
+    let mut remaining = (MAX_CAPTURE_BYTES - 4096).saturating_sub(base_bytes);
 
     for element in &mut snapshot.elements {
         if let Some(resolved) = &element.resolved {
             let bytes =
-                serde_json::to_vec(resolved).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len()) + 16;
+                serde_json::to_vec(resolved).map_or(MAX_CAPTURE_BYTES, |bytes| bytes.len()) + 16;
 
             if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
                 element.resolved = None;
@@ -539,9 +657,9 @@ fn bound_resolved_styles(snapshot: &mut Snapshot) {
 #[cfg(any(feature = "gpui", test))]
 fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Option<String> {
     // Presentation identities are assigned after traversal; reserve their maximum wire size.
-    let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len()) + 64;
+    let size = serde_json::to_vec(&element).map_or(MAX_CAPTURE_BYTES, |value| value.len()) + 64;
 
-    if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_SNAPSHOT_BYTES - 4096 {
+    if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_CAPTURE_BYTES - 4096 {
         snapshot.omitted += 1;
 
         return None;

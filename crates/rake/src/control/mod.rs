@@ -379,6 +379,11 @@ impl<R: Route> RuntimeClient<R> {
             }
             Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
             Query::InspectPick {} => Ok(Reply::InspectPick(self.state.inspection.pick()?)),
+            Query::InspectTreePage { generation, offset } => Ok(Reply::ElementPage(
+                self.state
+                    .inspection
+                    .tree_page(generation.as_deref(), offset)?,
+            )),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),

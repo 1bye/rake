@@ -118,7 +118,7 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
 
     assert_eq!(snapshot.elements.len(), MAX_ELEMENTS);
     assert_eq!(snapshot.omitted, 10);
-    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_SNAPSHOT_BYTES);
+    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_CAPTURE_BYTES);
     let mut snapshot = store.snapshot();
     let mut bytes = 0;
     let mut element = template;
@@ -131,7 +131,7 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
 
     assert!(snapshot.elements.len() < MAX_ELEMENTS);
     assert!(snapshot.omitted > 0);
-    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_SNAPSHOT_BYTES);
+    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_CAPTURE_BYTES);
 }
 
 fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Element {
@@ -339,7 +339,7 @@ fn resolved_metadata_is_bounded_without_losing_boundaries() {
             .iter()
             .any(|element| element.resolved.is_none() && element.metadata_truncated)
     );
-    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_SNAPSHOT_BYTES);
+    assert!(serde_json::to_vec(&snapshot).unwrap().len() < MAX_CAPTURE_BYTES);
 }
 
 /// Manual CPU/allocation benchmark; synthetic metadata, no GPU rendering.
@@ -461,4 +461,61 @@ fn stable_capture_refreshes_styles_and_owned_snapshots_stay_independent() {
         store.element("element-1-0"),
         Err(InspectionError::NotRetained)
     ));
+}
+
+#[test]
+fn tree_pages_retain_large_indices_and_pin_capture_during_redraw() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut snapshot = store.begin(0);
+    for i in 0..1000 {
+        let mut element = boundary(
+            &format!("element-{}-{i}", snapshot.capture),
+            None,
+            bounds,
+            bounds,
+        );
+        element.styles = Some(serde_json::json!({"color":"red"}));
+        snapshot.elements.push(element);
+    }
+    store.publish(WindowId(1), snapshot);
+    let first = store.tree_page(None, 0).unwrap();
+    assert_eq!(first.total, 1000);
+    assert_eq!(first.next, Some(TREE_PAGE_SIZE));
+    assert!(
+        first
+            .snapshot
+            .elements
+            .iter()
+            .all(|element| element.styles.is_none())
+    );
+    assert_eq!(store.snapshot().elements.len(), TREE_PAGE_SIZE);
+    assert_eq!(store.snapshot().omitted, 1000 - TREE_PAGE_SIZE);
+    let next = store.begin(1);
+    store.publish(WindowId(1), next);
+    let second = store
+        .tree_page(Some(&first.snapshot.capture), TREE_PAGE_SIZE)
+        .unwrap();
+    assert_eq!(second.snapshot.capture, first.snapshot.capture);
+    assert!(
+        store
+            .element(&second.snapshot.elements[0].id)
+            .unwrap()
+            .styles
+            .is_some()
+    );
+    assert!(matches!(
+        store.tree_page(Some("expired"), 0),
+        Err(InspectionError::StaleGeneration)
+    ));
+    assert!(matches!(
+        store.tree_page(Some(&first.snapshot.capture), 1001),
+        Err(InspectionError::InvalidPage)
+    ));
+    assert!(serde_json::to_vec(&first).unwrap().len() < MAX_SNAPSHOT_BYTES);
 }

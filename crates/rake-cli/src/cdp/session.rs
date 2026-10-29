@@ -245,7 +245,16 @@ impl Session {
             | "DOM.getAttributes"
             | "CSS.getInlineStylesForNode"
             | "CSS.getMatchedStylesForNode"
-            | "CSS.getComputedStyleForNode" => self.dom.handle(method, &request.params),
+            | "CSS.getComputedStyleForNode" => {
+                if let Some(node) = request.params["nodeId"]
+                    .as_i64()
+                    .and_then(|id| i32::try_from(id).ok())
+                    && node != 1
+                {
+                    self.load_details(node)?;
+                }
+                self.dom.handle(method, &request.params)
+            }
             "CSS.getStyleSheetText" if request.params["styleSheetId"] == "rake-resolved" => {
                 Ok(json!({"text":self.dom.style_sheet_text()}))
             }
@@ -336,6 +345,8 @@ impl Session {
                 }
 
                 if id.starts_with("rake-node-") {
+                    let node = self.dom.object_node(id)?;
+                    self.load_details(node)?;
                     return self.dom.node_properties(id);
                 }
 
@@ -620,11 +631,57 @@ impl Session {
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
-        let reply = query(&self.instance, Query::InspectTree {}, TIMEOUT)
-            .map_err(|e| Error::new(-32000, e.to_string()))?;
-
-        let Reply::Elements(snapshot) = reply else {
-            return Err(Error::new(-32000, "Unexpected inspection reply"));
+        let snapshot = if self
+            .instance
+            .info
+            .queries
+            .iter()
+            .any(|q| q == "inspect_tree_page")
+        {
+            let mut generation = None;
+            let mut offset = 0;
+            let mut combined: Option<rake_protocol::inspection::Snapshot> = None;
+            loop {
+                let reply = query(
+                    &self.instance,
+                    Query::InspectTreePage {
+                        generation: generation.clone(),
+                        offset,
+                    },
+                    TIMEOUT,
+                )
+                .map_err(|e| Error::new(-32000, e.to_string()))?;
+                let Reply::ElementPage(page) = reply else {
+                    return Err(Error::new(-32000, "Unexpected tree page reply"));
+                };
+                if page.total > rake_protocol::inspection::MAX_ELEMENTS
+                    || page.snapshot.elements.len() > rake_protocol::inspection::TREE_PAGE_SIZE
+                    || generation
+                        .as_ref()
+                        .is_some_and(|id| id != &page.snapshot.capture)
+                {
+                    return Err(Error::new(-32000, "Invalid tree page"));
+                }
+                generation = Some(page.snapshot.capture.clone());
+                if let Some(snapshot) = &mut combined {
+                    snapshot.elements.extend(page.snapshot.elements);
+                } else {
+                    combined = Some(page.snapshot);
+                }
+                match page.next {
+                    Some(next) if next > offset && next <= page.total => offset = next,
+                    Some(_) => return Err(Error::new(-32000, "Invalid tree page cursor")),
+                    None => break,
+                }
+            }
+            combined.expect("first page always supplies metadata")
+        } else {
+            let reply = query(&self.instance, Query::InspectTree {}, TIMEOUT)
+                .map_err(|e| Error::new(-32000, e.to_string()))?;
+            let Reply::Elements(snapshot) = reply else {
+                return Err(Error::new(-32000, "Unexpected inspection reply"));
+            };
+            snapshot
         };
 
         let mut reset = self.dom.update(snapshot)?;
@@ -663,6 +720,11 @@ impl Session {
             }
         }
 
+        if let Some(node) = self.tracked_style_node
+            && self.dom.control_id(node).is_ok()
+        {
+            self.load_details(node)?;
+        }
         let changed = self.dom.take_style_updates();
 
         if !changed.is_empty() && self.domains.contains("CSS") {
@@ -679,6 +741,25 @@ impl Session {
         }
 
         Ok(())
+    }
+
+    fn load_details(&mut self, node: i32) -> std::result::Result<(), Error> {
+        if !self
+            .instance
+            .info
+            .queries
+            .iter()
+            .any(|q| q == "inspect_tree_page")
+        {
+            return Ok(());
+        }
+        let id = self.dom.control_id(node)?.to_owned();
+        let Reply::Element(element) = query(&self.instance, Query::InspectElement { id }, TIMEOUT)
+            .map_err(|e| Error::new(-32000, e.to_string()))?
+        else {
+            return Err(Error::new(-32000, "Unexpected detail reply"));
+        };
+        self.dom.details(node, element)
     }
 
     fn replace(&mut self, instance: Instance) {
@@ -906,6 +987,7 @@ mod tests {
         let mut info = router.client().info();
 
         info.element_interaction = true;
+        info.queries.retain(|query| query != "inspect_tree_page");
         let instance = Instance {
             application_id: "test.overlay".into(),
             pid: 1,
@@ -933,6 +1015,51 @@ mod tests {
         });
 
         (instance, worker, path)
+    }
+
+    #[test]
+    fn paged_index_loads_large_trees_and_fetches_details_only_on_demand() {
+        let mut snapshot = capture("paged");
+        let template = snapshot.elements[0].clone();
+        for i in 1..600 {
+            let mut element = template.clone();
+            element.id = format!("element-paged-{i}");
+            element.stable_id = Some(format!("boundary-{i}"));
+            snapshot.elements.push(element);
+        }
+        let (mut instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTreePage { generation, offset }) => {
+                    assert!(generation.is_none() || generation.as_deref() == Some("paged"));
+                    let end = (offset + 256).min(600);
+                    let mut page = snapshot.clone();
+                    page.elements = snapshot.elements[offset..end].to_vec();
+                    Reply::ElementPage(rake_protocol::inspection::TreePage {
+                        snapshot: page,
+                        total: 600,
+                        next: (end < 600).then_some(end),
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectElement { id }) => Reply::Element(
+                    snapshot
+                        .elements
+                        .iter()
+                        .find(|e| e.id == id)
+                        .unwrap()
+                        .clone(),
+                ),
+                _ => panic!("unexpected paged request"),
+            },
+            4,
+        );
+        instance.info.queries.push("inspect_tree_page".into());
+        let mut session = Session::new(instance, None);
+        session.refresh_dom().unwrap();
+        let node = session.dom.node_id("element-paged-599").unwrap();
+        session.load_details(node).unwrap();
+        assert_eq!(session.dom.search("Div").unwrap()["resultCount"], 600);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

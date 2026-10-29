@@ -848,6 +848,10 @@ mod tests {
             },
             Query::Quit {},
             Query::InspectTree {},
+            Query::InspectTreePage {
+                generation: None,
+                offset: 0,
+            },
             Query::InspectElement {
                 id: "element-1-0".into(),
             },

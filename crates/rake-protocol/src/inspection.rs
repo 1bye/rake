@@ -8,7 +8,11 @@ use serde_json::Value;
 pub mod styles;
 
 /// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.
-pub const MAX_ELEMENTS: usize = 256;
+pub const MAX_ELEMENTS: usize = 8192;
+/// Maximum boundaries in one tree-index response.
+pub const TREE_PAGE_SIZE: usize = 256;
+/// Retained capture budget; transport responses remain independently bounded.
+pub const MAX_CAPTURE_BYTES: usize = 32 * 1024 * 1024;
 /// Maximum serialized snapshot size, below the transport's 1 MiB limit.
 pub const MAX_SNAPSHOT_BYTES: usize = 512 * 1024;
 /// Maximum serialized resolved style per boundary, within the total snapshot budget.
@@ -262,6 +266,17 @@ pub struct Snapshot {
     pub coverage: String,
 }
 
+/// A generation-pinned page of lightweight tree metadata; details use `InspectElement`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TreePage {
+    /// Capture metadata and tree index entries, without styles or source expressions.
+    pub snapshot: Snapshot,
+    /// Next offset in this same capture, or None when complete.
+    pub next: Option<usize>,
+    /// Total retained boundaries, excluding genuinely omitted nodes.
+    pub total: usize,
+}
+
 /// Exact lookup failure. Clients refresh the tree after stale captures.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum InspectionError {
@@ -277,6 +292,9 @@ pub enum InspectionError {
     /// A command referred to a replaced capture generation.
     #[error("inspection generation is stale; refresh the capture")]
     StaleGeneration,
+    /// Invalid tree page offset.
+    #[error("tree page offset is outside the retained capture")]
+    InvalidPage,
     /// Inspect-mode leases must be finite and at most two seconds.
     #[error("inspection lease must be 1–2000 milliseconds")]
     InvalidLease,

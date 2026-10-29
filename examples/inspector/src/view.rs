@@ -382,20 +382,7 @@ impl RouteViews<Destination> for Views {
                                 }
 
                                 if refresh {
-                                    let result = connection
-                                        .query(runtime, Query::InspectTree {}, run.cancellation())
-                                        .await
-                                        .and_then(|reply| match reply {
-                                            Reply::Elements(tree)
-                                                if tree.elements.len()
-                                                    <= rake::inspection::MAX_ELEMENTS =>
-                                            {
-                                                Ok(tree)
-                                            }
-                                            _ => {
-                                                Err("Unexpected or oversized element tree.".into())
-                                            }
-                                        });
+                                    let result = connection.tree(runtime, run.cancellation()).await;
 
                                     run.publish(Update::Tree(epoch, runtime, result))?;
                                 }

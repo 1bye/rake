@@ -285,11 +285,16 @@ async function refresh() {
         }
       }
       if (panel === 'Elements' && info?.queries?.includes('inspect_tree')) {
-        const tree = await query('inspect_tree', {}, runtime);
+        const tree = await inspectionTree(runtime);
         if (runtime !== model.runtime) return;
-        elements = tree.value;
-        const current = elements.elements.find(element => element.id === selectedElement);
-        if (current) elementDetail = current;
+        elements = tree;
+        const stable = elementDetail?.stable_id;
+        const current = elements.elements.find(element => element.id === selectedElement)
+          || (stable && elements.elements.filter(element => element.stable_id === stable).length === 1
+            ? elements.elements.find(element => element.stable_id === stable) : null);
+        if (current) selectedElement = current.id;
+        if (current) elementDetail = info.queries.includes('inspect_tree_page')
+          ? (await query('inspect_element', {id: current.id}, runtime)).value : current;
         if (hoveredBoundary && hoveredBoundary.generation !== elements.capture) hoveredBoundary = null;
       }
       if (!connected) message('Connected to ' + (info?.platform || 'application') + ' runtime.');
@@ -507,6 +512,19 @@ function tracePanel() {
       node.duration == null ? 'No duration observed' : `${(node.duration / 1000).toFixed(3)} ms`, row(badge(!node.opened || node.missingParent ? 'Partial ancestry' : node.closed ? 'Closed' : 'No close observed'),
         related(node.fields, 'Tasks'), related(node.fields, 'Requests'), related(node.fields, 'Console'), details('Span fields', node, `span:${node.id}`))]))));
 }
+async function inspectionTree(runtime) {
+  if (!info?.queries?.includes('inspect_tree_page')) return (await query('inspect_tree', {}, runtime)).value;
+  let tree = null, offset = 0;
+  do {
+    const page = (await query('inspect_tree_page', {generation: tree?.capture ?? null, offset}, runtime)).value;
+    if (page.total > 8192 || page.snapshot.elements.length > 256 || (tree && tree.capture !== page.snapshot.capture)) throw new Error('Invalid tree page');
+    if (tree) tree.elements.push(...page.snapshot.elements); else tree = page.snapshot;
+    if (page.next == null) break;
+    if (page.next <= offset || page.next > page.total) throw new Error('Invalid tree cursor');
+    offset = page.next;
+  } while (true);
+  return tree;
+}
 function inspectionControl(value, runtime = model.runtime) {
   return exchange(request(runtime, {type: 'command', value}));
 }
@@ -530,7 +548,7 @@ async function inspectionLoop() {
           picking = pick.mode;
           if (pick.picked && pick.pick_sequence > pickSequence) {
             pickSequence = pick.pick_sequence;
-            if (elements?.capture !== pick.generation) elements = (await query('inspect_tree', {}, runtime)).value;
+            if (elements?.capture !== pick.generation) elements = await inspectionTree(runtime);
             await inspectElement(pick.picked);
           }
           if (picking) await inspectionControl({type: 'inspect_mode', enabled: true, lease_ms: 1000}, runtime);

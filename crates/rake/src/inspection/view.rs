@@ -212,7 +212,7 @@ fn reveal_delta(
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct BoundaryKey {
     gpui_id: Option<GlobalElementId>,
     kind: &'static str,
@@ -242,34 +242,44 @@ impl Capture {
         let mut next = state.next_boundary;
         let mut identities = Vec::new();
 
+        let old: std::collections::HashMap<_, _> = old
+            .iter()
+            .map(|old| ((&old.key, old.parent.as_deref()), old.id.clone()))
+            .collect();
+        let indices: std::collections::HashMap<_, _> = self
+            .snapshot
+            .elements
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.id.clone(), i))
+            .collect();
+        let mut counts = std::collections::HashMap::new();
+        for (key, element) in self.candidates.iter().zip(&self.snapshot.elements) {
+            *counts
+                .entry((key, element.parent.as_deref()))
+                .or_insert(0usize) += 1;
+        }
+        let unique: Vec<_> = self
+            .candidates
+            .iter()
+            .zip(&self.snapshot.elements)
+            .map(|(key, element)| counts[&(key, element.parent.as_deref())] == 1)
+            .collect();
+
         for (index, key) in self.candidates.iter().enumerate() {
             let element = &self.snapshot.elements[index];
-            let parent = element.parent.as_ref().and_then(|parent| {
-                self.snapshot.elements[..index]
-                    .iter()
-                    .find(|e| &e.id == parent)
-            });
-
-            // Repeated unkeyed construction sites cannot be matched safely after reordering.
-            if parent.is_some_and(|parent| parent.stable_id.is_none())
-                || self
-                    .candidates
-                    .iter()
-                    .enumerate()
-                    .filter(|(other, candidate)| {
-                        *candidate == key && self.snapshot.elements[*other].parent == element.parent
-                    })
-                    .count()
-                    != 1
-            {
+            let parent = element
+                .parent
+                .as_ref()
+                .and_then(|id| indices.get(id))
+                .map(|index| &self.snapshot.elements[*index]);
+            if parent.is_some_and(|parent| parent.stable_id.is_none()) || !unique[index] {
                 continue;
             }
-
             let parent = parent.and_then(|parent| parent.stable_id.clone());
             let id = old
-                .iter()
-                .find(|old| old.key == *key && old.parent == parent)
-                .map(|old| old.id.clone())
+                .get(&(key, parent.as_deref()))
+                .cloned()
                 .unwrap_or_else(|| {
                     next = next
                         .checked_add(1)

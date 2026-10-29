@@ -222,6 +222,13 @@ pub enum Query {
     Quit {},
     /// Latest bounded presented tree, with explicit availability and coverage.
     InspectTree {},
+    /// Lightweight generation-pinned tree index, at most 256 boundaries per response.
+    InspectTreePage {
+        /// None starts at the current capture; subsequent pages must pin it.
+        generation: Option<String>,
+        /// Zero-based index into the retained depth-first tree.
+        offset: usize,
+    },
     /// Exact boundary in the latest completed capture; IDs never select by semantics.
     InspectElement {
         /// Opaque ID returned by InspectTree.
@@ -284,6 +291,7 @@ impl Query {
             "quit",
             "inspect_pick",
             "inspect_tree",
+            "inspect_tree_page",
             "inspect_element",
             "reload",
             "checkpoint",
@@ -389,6 +397,8 @@ pub enum Reply {
     Quit(crate::quit::QuitStatus),
     /// Latest completed bounded element tree.
     Elements(crate::inspection::Snapshot),
+    /// Generation-pinned tree index page.
+    ElementPage(crate::inspection::TreePage),
     /// Exact element metadata from that capture.
     Element(crate::inspection::Element),
     /// Observable reload phase.

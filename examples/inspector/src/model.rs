@@ -212,12 +212,33 @@ impl Inspector {
                             self.hover = None;
                         }
 
-                        if let Some(current) = self
+                        let stable = self
+                            .detail
+                            .as_ref()
+                            .and_then(|element| element.stable_id.as_ref());
+                        let current = self
                             .selected
                             .as_ref()
-                            .and_then(|id| tree.elements.iter().find(|element| &element.id == id))
-                        {
-                            self.detail = Some(current.clone());
+                            .and_then(|id| tree.elements.iter().find(|e| &e.id == id))
+                            .or_else(|| {
+                                stable.and_then(|stable| {
+                                    let mut matches = tree
+                                        .elements
+                                        .iter()
+                                        .filter(|e| e.stable_id.as_ref() == Some(stable));
+                                    let first = matches.next()?;
+                                    matches.next().is_none().then_some(first)
+                                })
+                            });
+                        if let Some(current) = current {
+                            self.selected = Some(current.id.clone());
+                            if current.id != self.detail.as_ref().map_or("", |element| &element.id)
+                            {
+                                self.detail_pending = true;
+                            }
+                            if current.styles.is_some() || current.resolved.is_some() {
+                                self.detail = Some(current.clone());
+                            }
                         }
 
                         self.tree = Some(tree);

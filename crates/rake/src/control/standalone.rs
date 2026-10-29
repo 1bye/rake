@@ -76,6 +76,7 @@ impl super::host::Host for InspectionClient {
                 "schema",
                 "diagnostics",
                 "inspect_tree",
+                "inspect_tree_page",
                 "inspect_element",
                 "inspect_pick",
             ]
@@ -109,6 +110,9 @@ impl super::host::Host for InspectionClient {
             Message::Query(Query::Diagnostics { after, kind }) => Ok(Reply::Diagnostics(
                 self.0.collector.snapshot_after(after, kind.as_deref()),
             )),
+            Message::Query(Query::InspectTreePage { generation, offset }) => Ok(
+                Reply::ElementPage(store.tree_page(generation.as_deref(), offset)?),
+            ),
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
             Message::Query(Query::InspectElement { id }) => Ok(Reply::Element(store.element(&id)?)),
             Message::Query(Query::InspectPick {}) => Ok(Reply::InspectPick(store.pick()?)),
