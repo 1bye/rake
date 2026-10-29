@@ -662,8 +662,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 view: {
                     #[cfg(feature = "experimental-view")]
                     {
-                        self.definition
-                            .map(|definition| definition.capture(&mut truncated))
+                        self.definition.map(|definition| {
+                            definition.capture(std::any::type_name::<E>(), &mut truncated)
+                        })
                     }
                     #[cfg(not(feature = "experimental-view"))]
                     {

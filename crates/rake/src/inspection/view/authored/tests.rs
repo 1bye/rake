@@ -136,7 +136,7 @@ fn automatic_boundaries_capture_styles_sources_and_inline_run_metadata_without_t
         snapshot
             .elements
             .iter()
-            .any(|e| e.view.as_ref().is_some_and(|v| v.tag == "Expression"))
+            .any(|e| e.view.as_ref().is_some_and(|v| v.tag == "Div"))
     );
     assert!(
         snapshot.elements.iter().all(|e| e.stable_id.is_some()),
@@ -240,7 +240,7 @@ fn authored_metadata_is_bounded_without_evaluating_or_dropping_its_boundary() {
         handlers: &[],
     };
     let mut truncated = false;
-    let metadata = definition.capture(&mut truncated);
+    let metadata = definition.capture("gpui::Div", &mut truncated);
     assert!(truncated);
     assert!(!metadata.style_sources.is_empty());
     assert!(metadata.style_sources.len() < sites.len());
@@ -400,4 +400,111 @@ fn accessible_roles_labels_actions_focus_order_and_handler_sites_follow_real_gpu
     assert!(a11y.actions.is_empty());
     assert!(!save.navigation.focus);
     assert_eq!(clicks.get(), 0, "inspection never invokes event handlers");
+}
+
+struct ExpressionLabels {
+    store: Store,
+    calls: Rc<Cell<usize>>,
+}
+
+impl Render for ExpressionLabels {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let borrowed = "private borrowed text";
+        crate::view! {
+            <section id="expression-labels">
+                "private literal text"
+                {borrowed}
+                {{ self.calls.set(self.calls.get() + 1); "private owned text".to_owned() }}
+                {gpui::SharedString::new_static("private shared text")}
+                {gpui::Text::new("explicit-text".into(), gpui::SharedString::new_static("private explicit text"))}
+                {gpui::div().id("concrete-child").size(px(10.))}
+                {Row { id: "expression-component".into() }}
+                {gpui::div().into_any_element()}
+                {crate::inspection::inspect(gpui::div().size(px(10.)))}
+            </section>
+        }.root(self.store.clone(), 0, WindowId(1))
+    }
+}
+
+#[test]
+fn expression_children_display_text_or_their_element_type_without_changing_identity() {
+    let mut app = gpui::TestAppContext::single();
+    let store = Store::default();
+    store.attach();
+    let calls = Rc::new(Cell::new(0));
+    let (_, cx) = app.add_window_view(|_, _| ExpressionLabels {
+        store: store.clone(),
+        calls: calls.clone(),
+    });
+    let before = calls.get();
+    let draw = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
+    };
+    draw(cx);
+    assert_eq!(
+        calls.get(),
+        before + 1,
+        "naming must not re-evaluate the child expression"
+    );
+    let first = store.snapshot();
+    let root = named(&first, "expression-labels");
+    let children: Vec<_> = first
+        .elements
+        .iter()
+        .filter(|element| element.parent.as_deref() == Some(&root.id))
+        .collect();
+    assert_eq!(
+        children
+            .iter()
+            .map(|element| element.display_name())
+            .collect::<Vec<_>>(),
+        [
+            "Text",
+            "Text",
+            "Text",
+            "Text",
+            "Text",
+            "Div",
+            "Row",
+            "AnyElement",
+            "Div",
+        ]
+    );
+    assert!(
+        children
+            .iter()
+            .all(|element| element.view.as_ref().unwrap().tag == element.display_name())
+    );
+    assert!(
+        children[5].kind.contains("Stateful<"),
+        "full Rust type remains available in metadata"
+    );
+    assert!(
+        children
+            .iter()
+            .all(|element| element.source.is_some() && element.stable_id.is_some())
+    );
+    assert!(
+        !serde_json::to_string(&first).unwrap().contains("private "),
+        "labels must not expose raw text values"
+    );
+    let identities: Vec<_> = children
+        .iter()
+        .map(|element| element.stable_id.clone())
+        .collect();
+    draw(cx);
+    let second = store.snapshot();
+    let root = named(&second, "expression-labels");
+    assert_eq!(
+        second
+            .elements
+            .iter()
+            .filter(|element| element.parent.as_deref() == Some(&root.id))
+            .map(|element| element.stable_id.clone())
+            .collect::<Vec<_>>(),
+        identities
+    );
 }

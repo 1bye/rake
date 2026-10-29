@@ -18,6 +18,10 @@ fn display_names_hide_wrappers_paths_and_generic_arguments() {
             "TabBar",
         ),
         ("gpui::ViewElement<gpui::Stateful<app::Button>>", "Button"),
+        (
+            "rake::inspection::Inspected<gpui::Stateful<gpui::Div>>",
+            "Div",
+        ),
         ("app::List<app::Item>", "List"),
         ("Button", "Button"),
         ("", ""),

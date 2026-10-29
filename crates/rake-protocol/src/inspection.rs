@@ -119,7 +119,7 @@ pub struct StyleSource {
 /// Automatic `view!` boundary metadata. Inline paragraph runs share their paragraph's bounds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ViewMetadata {
-    /// Authored tag/component name; `Text` and `Expression` identify child boundaries.
+    /// Authored tag/component name, `Text` for string children, or the shortened child element type.
     pub tag: String,
     /// Authored style attributes in source order, including paragraph inline attributes.
     pub style_sources: Vec<StyleSource>,
@@ -228,7 +228,7 @@ impl Element {
     }
 }
 
-/// Short inspection label without Rust module paths, generic arguments or GPUI wrappers.
+/// Short inspection label without Rust module paths, generic arguments or GPUI/inspection wrappers.
 /// The captured [`Element::kind`] retains the complete Rust type.
 ///
 /// ```
@@ -240,7 +240,7 @@ pub fn display_name(mut kind: &str) -> &str {
     while let Some((wrapper, inner)) = kind.split_once('<') {
         if matches!(
             wrapper.rsplit("::").next(),
-            Some("Stateful" | "ViewElement")
+            Some("Stateful" | "ViewElement" | "Inspected")
         ) && let Some(inner) = inner.strip_suffix('>')
         {
             kind = inner;

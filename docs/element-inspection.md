@@ -13,8 +13,11 @@ registered by the captured elements. Closing the root cancels its driver, leases
 and endpoint; old clients receive `RuntimeShutdown` or disconnect.
 
 `rake::view!` automatically instruments its rendered nodes, component/entity mounts,
-and ordinary text/expression children. Inline paragraph runs share their paragraph's
-boundary and carry style source metadata there. Existing manual root `.inspect(...)`
+and ordinary text/expression children. String values display as `Text`; other
+expression children display their shortened GPUI element type, including unwrapped
+`Stateful`/`ViewElement`/`Inspected` names. Type-erased children display as
+`AnyElement`, since GPUI does not expose their concrete type name. Inline paragraph
+runs share their paragraph's boundary and carry style source metadata there. Existing manual root `.inspect(...)`
 calls rename automatic built-in boundaries without adding duplicates. For GPUI
 builders outside `view!`, add boundaries after configuring a styled element:
 

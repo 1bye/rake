@@ -35,9 +35,14 @@ pub struct Definition {
 }
 
 impl Definition {
-    pub(super) fn capture(&self, truncated: &mut bool) -> ViewMetadata {
+    pub(super) fn capture(&self, kind: &str, truncated: &mut bool) -> ViewMetadata {
+        let tag = if self.tag == "Expression" {
+            crate::inspection::display_name(kind)
+        } else {
+            self.tag
+        };
         let mut metadata = ViewMetadata {
-            tag: limited(self.tag, 256, truncated),
+            tag: limited(tag, 256, truncated),
             style_sources: Vec::new(),
         };
         const MAX_SOURCE_BYTES: usize = 4096;
