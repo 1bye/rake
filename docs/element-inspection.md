@@ -380,3 +380,18 @@ this records metadata only and never installs or invokes a callback. At most 32
 handler sites / 8 KiB per boundary are retained, with explicit metadata truncation.
 The registration site does not locate the body of an opaque callback. Chrome's
 JavaScript Event Listeners/Debugger APIs are not supplied for Rust closures.
+
+### Captured Rust source targets
+
+Source and Events panes open individual authored style attributes and handler
+registration sites using the system default editor. These are captured sites, not
+locations inferred inside arbitrary closures. The host resolves the exact element
+and a typed target, then applies the same workspace-confined Rust-file validation.
+It never accepts a client-supplied path.
+
+CLI: `rake ctl inspect source ELEMENT_ID --style 0` or `--handler 0`.
+CDP: `Rake.openSource { nodeId, target: { kind: "style", index: 0 } }`, or
+Console: `rake.openSource({"nodeId":42,"target":{"kind":"handler","index":0}})`.
+Indices refer to captured `view.style_sources` and `handlers`; unavailable indices
+fail explicitly. Omit the target to open the construction site as before. The
+system default opener may ignore line/column; those remain in the receipt.

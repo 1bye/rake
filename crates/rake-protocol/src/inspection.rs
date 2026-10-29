@@ -103,6 +103,30 @@ pub struct SourceLocation {
     pub column: u32,
 }
 
+/// Selects a captured Rust site; clients cannot supply an arbitrary filesystem path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SourceTarget {
+    /// Boundary construction site.
+    Boundary {},
+    /// Authored style attribute in capture order.
+    Style {
+        /// Zero-based captured attribute index.
+        index: usize,
+    },
+    /// Handler registration in capture order, not an opaque closure body.
+    Handler {
+        /// Zero-based captured handler index.
+        index: usize,
+    },
+}
+
+impl Default for SourceTarget {
+    fn default() -> Self {
+        Self::Boundary {}
+    }
+}
+
 /// An authored style attribute, without evaluating its expression or exposing text content.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StyleSource {
@@ -225,6 +249,19 @@ pub struct Element {
 }
 
 impl Element {
+    /// Looks up a captured site; missing metadata and out-of-range indices return `None`.
+    pub fn source_location(&self, target: &SourceTarget) -> Option<&SourceLocation> {
+        match target {
+            SourceTarget::Boundary {} => self.source.as_ref(),
+            SourceTarget::Style { index } => self
+                .view
+                .as_ref()?
+                .style_sources
+                .get(*index)
+                .map(|site| &site.source),
+            SourceTarget::Handler { index } => self.handlers.get(*index).map(|site| &site.source),
+        }
+    }
     /// Authored view tag when known, otherwise a shortened Rust element name.
     pub fn display_name(&self) -> &str {
         self.view

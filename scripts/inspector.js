@@ -725,7 +725,10 @@ function elementsPanel() {
       } else detail.append(el('p', 'Resolved box geometry unavailable for this boundary/runtime.', 'hint'));
     } else if (elementTab === 'Source') {
       detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Authored tag', selected.view?.tag], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Application shell' : 'entry-' + selected.entry_id]]));
-      for (const style of selected.view?.style_sources || []) detail.append(card(`${style.scope} · ${style.attribute}`, el('pre', style.expression), el('p', `${style.source.file}:${style.source.line}:${style.source.column}`, 'hint')));
+      for (const [index, style] of (selected.view?.style_sources || []).entries()) detail.append(card(`${style.scope} · ${style.attribute}`, el('pre', style.expression),
+        button(`Open style source ${index + 1}: ${style.source.file}:${style.source.line}:${style.source.column}`, async () => {
+          try { await rpc('inspect_source', {runtime_id: model.runtime, id: selected.id, target: {kind: 'style', index}}); } catch (error) { showError(error); }
+        }, replaced || !connected)));
       if (selected.view) detail.append(el('p', 'Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures.', 'hint'));
     }
     if (elementTab === 'Accessibility') {
@@ -737,7 +740,10 @@ function elementsPanel() {
         el('p', 'Order covers inspected handles, sorted by GPUI tab index and paint order. Private tab groups and opaque nodes are unavailable. Labels are explicit GPUI metadata; names derived from text or relationships are not computed.', 'hint'));
     }
     if (elementTab === 'Events') {
-      detail.append(table(['Handler', 'Origin', 'Rust registration site'], (selected.handlers || []).map(handler => [handler.name, handler.origin, `${handler.source.file}:${handler.source.line}:${handler.source.column}`])),
+      detail.append(table(['Handler', 'Origin', 'Rust registration site'], (selected.handlers || []).map((handler, index) => [handler.name, handler.origin,
+        button(`Open handler source ${index + 1}: ${handler.source.file}:${handler.source.line}:${handler.source.column}`, async () => {
+          try { await rpc('inspect_source', {runtime_id: model.runtime, id: selected.id, target: {kind: 'handler', index}}); } catch (error) { showError(error); }
+        }, replaced || !connected)])),
         el('p', 'Macro bindings and explicitly registered metadata. GPUI private listeners, closure bodies and captured state are not enumerated. No handlers are invoked by inspection.', 'hint'));
     }
     detail.append(el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),

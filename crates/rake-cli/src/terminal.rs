@@ -21,7 +21,7 @@ rake inspect pick [--instance UUID|application-id]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   inspect tree | inspect element ELEMENT_ID | inspect pick | inspect mode on|off [--lease-ms MS]
-  inspect focus|scroll ELEMENT_ID [--generation CAPTURE] | inspect source ELEMENT_ID
+  inspect focus|scroll ELEMENT_ID [--generation CAPTURE] | inspect source ELEMENT_ID [--style INDEX|--handler INDEX]
   info | schema | snapshot | events [--follow]
   quit [--jobs wait|cancel] | quit status
   reload status | reload checkpoint APPLICATION_ID
@@ -505,7 +505,20 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
             .is_some_and(|arg| matches!(arg.as_str(), "focus" | "scroll"));
     let source = args.first().is_some_and(|arg| arg == "inspect")
         && args.get(1).is_some_and(|arg| arg == "source");
+    let mut source_target = rake_protocol::inspection::SourceTarget::Boundary {};
     if source {
+        let style = option(&mut args, "--style")?;
+        let handler = option(&mut args, "--handler")?;
+        source_target = match (style, handler) {
+            (Some(_), Some(_)) => return Err("choose either --style or --handler".into()),
+            (Some(index), None) => rake_protocol::inspection::SourceTarget::Style {
+                index: index.parse()?,
+            },
+            (None, Some(index)) => rake_protocol::inspection::SourceTarget::Handler {
+                index: index.parse()?,
+            },
+            _ => rake_protocol::inspection::SourceTarget::Boundary {},
+        };
         args[1] = "element".into();
     }
     let (mut message, follow) = parse_message(args)?;
@@ -576,8 +589,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
             return Err("Unexpected source lookup reply".into());
         };
         let location = element
-            .source
-            .as_ref()
+            .source_location(&source_target)
             .ok_or("Source location unavailable")?;
         return print(&crate::source::open(location)?, compact);
     }

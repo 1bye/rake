@@ -292,10 +292,27 @@ impl Connection {
         id: &str,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
+        self.open_source_target(
+            runtime,
+            id,
+            &rake::inspection::SourceTarget::Boundary {},
+            cancellation,
+        )
+        .await
+    }
+
+    /// Opens a captured style attribute or handler registration through the authenticated host.
+    pub async fn open_source_target(
+        &self,
+        runtime: RuntimeId,
+        id: &str,
+        target: &rake::inspection::SourceTarget,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
         let _: serde_json::Value = self
             .post(
                 "inspect_source",
-                &serde_json::json!({"runtime_id":runtime,"id":id}),
+                &serde_json::json!({"runtime_id":runtime,"id":id,"target":target}),
                 cancellation,
             )
             .await?;

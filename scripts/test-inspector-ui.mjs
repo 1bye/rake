@@ -291,6 +291,8 @@ await find('button', 'Source').click(); await settle();
 assert.match(ids.content.textContent, /section · class/);
 assert.match(ids.content.textContent, /src\/view.rs:42:7/);
 assert.match(ids.content.textContent, /"p-2"/);
+await find('button', 'Open style source 1: src/view.rs:42:7').click(); await settle();
+assert.deepEqual(sourceRequests.at(-1).target, {kind: 'style', index: 0});
 await find('button', 'Styles').click(); await settle();
 information.commands.push('edit_element_style');
 elementCapture.elements[0].style_editable = true;
@@ -330,6 +332,8 @@ assert.match(ids.content.textContent, /Save changes/);
 assert.match(ids.content.textContent, /Known tab stops/);
 await find('button', 'Events').click(); await settle();
 assert.match(ids.content.textContent, /src\/events.rs:18:7/);
+await find('button', 'Open handler source 1: src/events.rs:18:7').click(); await settle();
+assert.deepEqual(sourceRequests.at(-1).target, {kind: 'handler', index: 0});
 assert.match(ids.content.textContent, /click/);
 await find('button', 'Styles').click(); await settle();
 elementCapture.elements[0].box_model = {

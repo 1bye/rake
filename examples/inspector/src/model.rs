@@ -43,7 +43,7 @@ pub struct Inspector {
     pub picking: bool,
     pub(crate) mode_pending: Option<bool>,
     pub(crate) navigation_pending: Option<rake::control::Command>,
-    pub(crate) source_pending: Option<String>,
+    pub(crate) source_pending: Option<(String, rake::inspection::SourceTarget)>,
     pub(crate) hover: Option<(String, String)>,
     pick_sequence: u64,
     pending_pick: Option<rake::inspection::Pick>,

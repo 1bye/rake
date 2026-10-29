@@ -197,7 +197,7 @@ impl Session {
                     let selector = serde_json::from_str(argument).map_err(|_| {
                         Error::new(
                             -32602,
-                            "openSource requires one JSON node ID or semantic ID",
+                            "openSource requires a JSON node/semantic ID or {nodeId,target}",
                         )
                     })?;
                     self.refresh_dom()?;
@@ -294,7 +294,7 @@ impl Session {
             }
             "Rake.openSource" => {
                 self.refresh_dom()?;
-                crate::source::open(self.dom.source(&request.params["nodeId"])?)
+                crate::source::open(self.dom.source(&request.params)?)
                     .map_err(|error| Error::new(-32000, error.to_string()))
             }
             "DOM.resolveNode" => {

@@ -521,6 +521,14 @@ impl Dom {
         &self,
         selector: &Value,
     ) -> Result<&rake_protocol::inspection::SourceLocation, Error> {
+        let target = selector
+            .get("target")
+            .cloned()
+            .map(serde_json::from_value::<rake_protocol::inspection::SourceTarget>)
+            .transpose()
+            .map_err(|_| Error::new(-32602, "Invalid captured source target"))?
+            .unwrap_or_default();
+        let selector = selector.get("nodeId").unwrap_or(selector);
         let element = if let Some(id) = selector.as_i64().and_then(|id| i32::try_from(id).ok()) {
             self.element(id)?
         } else if let Some(name) = selector.as_str() {
@@ -544,9 +552,8 @@ impl Dom {
             ));
         };
         element
-            .source
-            .as_ref()
-            .ok_or_else(|| Error::new(-32000, "Source location unavailable"))
+            .source_location(&target)
+            .ok_or_else(|| Error::new(-32000, "Captured source location unavailable"))
     }
 
     pub fn take_style_updates(&mut self) -> Vec<i32> {
@@ -1591,6 +1598,26 @@ mod tests {
             serde_json::from_str(sources["value"]["value"].as_str().unwrap()).unwrap();
         assert_eq!(sources[0]["source"]["line"], 12);
         assert_eq!(sources[0]["attribute"], "class");
+        let id = root["nodeId"].as_i64().unwrap();
+        assert_eq!(
+            dom.source(&json!({"nodeId":id,"target":{"kind":"style","index":0}}))
+                .unwrap()
+                .line,
+            12
+        );
+        assert_eq!(dom.source(&json!("root")).unwrap().line, 3);
+        assert!(
+            dom.source(&json!({"nodeId":id,"target":{"kind":"style","index":1}}))
+                .is_err()
+        );
+        assert!(
+            dom.source(&json!({"nodeId":id,"target":{"kind":"handler","index":0}}))
+                .is_err()
+        );
+        assert!(
+            dom.source(&json!({"nodeId":id,"target":{"kind":"boundary","file":"/secret.rs"}}))
+                .is_err()
+        );
     }
 
     #[test]

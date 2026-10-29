@@ -163,6 +163,13 @@ class ElementsHosting(unittest.TestCase):
                     with self.assertRaises(BridgeError):
                         host.handle("inspect_source", {"runtime_id": runtime, "id": value})
                 self.assertEqual(opener.call_count, 1)
+                for kind in ["style", "handler"]:
+                    host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "target": {"kind": kind, "index": 0}})
+                    self.assertEqual(opener.call_args.args[0][-3:], ["--" + kind, "0", "--json"])
+                for target in [{"kind":"style","index":-1}, {"kind":"style","index":True}, {"kind":"handler","index":"--help"}, {"kind":"boundary","file":"/secret.rs"}, {"kind":"other"}]:
+                    with self.assertRaises(BridgeError):
+                        host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "target": target})
+                self.assertEqual(opener.call_count, 3)
             bridge.close()
 
     def test_frontend_is_scoped_to_the_dedicated_inspector_origin(self):

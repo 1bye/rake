@@ -83,9 +83,20 @@ class Inspector:
                 raise BridgeError(403, "Web application origins cannot open native runtime source")
             if not isinstance(element, str) or not 1 <= len(element.encode()) <= 256 or not element.startswith("element-") or not all(c.isascii() and (c.isalnum() or c == "-") for c in element):
                 raise BridgeError(400, "invalid exact element ID")
+            target = body.get("target", {"kind": "boundary"})
+            if not isinstance(target, dict) or target.get("kind") not in {"boundary", "style", "handler"}:
+                raise BridgeError(400, "invalid captured source target")
+            arguments = []
+            if target["kind"] == "boundary":
+                if set(target) != {"kind"}: raise BridgeError(400, "invalid boundary source target")
+            else:
+                index = target.get("index")
+                if set(target) != {"kind", "index"} or type(index) is not int or not 0 <= index < 256:
+                    raise BridgeError(400, "invalid captured source index")
+                arguments = ["--" + target["kind"], str(index)]
             try:
                 result = subprocess.run([os.environ.get("RAKE_CLI", "rake"), "ctl", "--instance", runtime,
-                    "inspect", "source", element, "--json"],
+                    "inspect", "source", element, *arguments, "--json"],
                     env={**os.environ, "RAKE_CONTROL_DIR": str(self.directory)},
                     capture_output=True, timeout=10, check=False)
                 if result.returncode:

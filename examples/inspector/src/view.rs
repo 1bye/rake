@@ -282,9 +282,9 @@ impl RouteViews<Destination> for Views {
                                     .await;
                                 run.publish(Update::Navigation(epoch, runtime, result))?;
                             }
-                            if let Some(id) = source {
+                            if let Some((id, target)) = source {
                                 let result = connection
-                                    .open_source(runtime, &id, run.cancellation())
+                                    .open_source_target(runtime, &id, &target, run.cancellation())
                                     .await;
                                 run.publish(Update::Navigation(epoch, runtime, result))?;
                             }
@@ -1032,7 +1032,7 @@ impl Render for ElementsView {
                     <button id="focus-target" disabled={!can_reveal || !selected.is_some_and(|e| e.navigation.focus)} class="px-2 py-1 hover:bg-field" style={control}
                         on:click={cx.listener(|this, _, _, cx| { this.navigate(rake::inspection::NavigationAction::Focus); cx.notify(); })}>"Focus element"</button>
                     <button id="open-rust-source" disabled={!can_reveal || selected.is_none_or(|e| e.source.is_none())} class="px-2 py-1 hover:bg-field" style={control}
-                        on:click={cx.listener(|this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone(); cx.notify(); })}>"Open Rust source"</button>
+                        on:click={cx.listener(|this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Boundary {})); cx.notify(); })}>"Open Rust source"</button>
                 </div>
                 if current_tab == "Styles" || current_tab == "Computed" {
                     <div class="flex flex-row items-center gap-2 px-2 h-[31px] shrink-0 border-b-1 border-line">
@@ -1140,7 +1140,8 @@ impl Render for ElementsView {
                             for (index, handler) in element.handlers.iter().enumerate() {
                                 <div id={format!("handler-{index}")} class="flex flex-col px-3 py-2 border-b-1 border-line font-code text-[11px]">
                                     <p>{format!("{} · {}", handler.name, handler.origin)}</p>
-                                    <p class="text-muted">{format!("{}:{}:{}", handler.source.file, handler.source.line, handler.source.column)}</p>
+                                    <button id={format!("open-handler-source-{index}")} disabled={!can_reveal} class="text-muted" style={control}
+                                        on:click={cx.listener(move |this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Handler { index })); cx.notify(); })}>{format!("{}:{}:{}", handler.source.file, handler.source.line, handler.source.column)}</button>
                                 </div>
                             }
                             if element.handlers.is_empty() { <p class="px-3 py-2 text-muted">"No handler declarations captured."</p> }
@@ -1159,7 +1160,8 @@ impl Render for ElementsView {
                                     <div id={format!("style-source-{index}")} class="px-3 py-2 border-b-1 border-line font-code text-[11px]">
                                         <p>{format!("{} · {}", style.scope, style.attribute)}</p>
                                         <p class="text-muted">{style.expression.clone()}</p>
-                                        <p class="text-muted">{format!("{}:{}:{}", style.source.file, style.source.line, style.source.column)}</p>
+                                        <button id={format!("open-style-source-{index}")} disabled={!can_reveal} class="text-muted" style={control}
+                                            on:click={cx.listener(move |this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Style { index })); cx.notify(); })}>{format!("{}:{}:{}", style.source.file, style.source.line, style.source.column)}</button>
                                     </div>
                                 }
                                 <p class="px-3 py-2 text-[10px] text-muted">"Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures."</p>
