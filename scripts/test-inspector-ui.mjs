@@ -265,11 +265,20 @@ await find('button', 'Scroll into view').click(); await settle();
 assert.equal(envelopes.at(-1).message.value.action, 'scroll_into_view');
 await find('button', 'Open Rust source').click(); await settle();
 assert.deepEqual(sourceRequests.at(-1), {runtime_id: runtime, id: 'element-1-0'});
-elementCapture.elements[0].resolved = {properties: {background: '#365849'}, hovered: true};
+elementCapture.elements[0].box_model = {
+  border: {x: 10, y: 20, width: 300, height: 50}, padding: {x: 12, y: 22, width: 296, height: 46},
+  content: {x: 20, y: 30, width: 280, height: 30}, margin: null, unavailable: ['Margin box needs used auto/percentage margins']
+};
+elementCapture.elements[0].resolved = {properties: {background: '#365849'}, hovered: true,
+  layers: [{origin: 'interaction', properties: {background: '#365849'}}]};
 await panel('Elements');
 await find('button', 'Computed').click(); await settle();
 assert.match(ids.content.textContent, /Resolved GPUI styles · hovered/);
 assert.match(ids.content.textContent, /#365849/);
+assert.match(ids.content.textContent, /Active interaction change/);
+assert.match(ids.content.textContent, /Padding box/);
+assert.match(ids.content.textContent, /280 × 30/);
+assert.match(ids.content.textContent, /Margin box needs used auto/);
 elementCapture.elements[0].resolved = {properties: {background: '#29424b'}, hovered: false};
 await panel('Elements');
 assert.match(ids.content.textContent, /#29424b/);

@@ -296,6 +296,7 @@ mod tests {
             source: None,
             layout: None,
             content_mask: None,
+            box_model: None,
             styles: None,
             resolved: None,
             stable_id: None,

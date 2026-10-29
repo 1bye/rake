@@ -99,7 +99,22 @@ CSS cascade. Custom/opaque boundaries without a resolver omit `resolved`.
 Older runtimes also omit it. Text contents are excluded. Every snapshot
 carries this coverage description, even when it has no nodes.
 
-Each resolved style is bounded to 16 KiB and the remaining total snapshot budget.
+`box_model` separates measured `border` bounds from `padding`, `content`, and
+`margin` boxes, all in unclipped window-local logical pixels. The latter are derived
+from the layout-phase style, using GPUI's device-pixel rounding (including its
+minimum nonzero border stroke). Absolute px/rem edges are supported. Used percentage
+padding, auto/percentage margins and scrollbar metrics are private to GPUI; affected
+boxes are `null` with reasons in `unavailable`. Opaque elements and older runtimes
+omit the model. The visible intersection remains in `content_mask`.
+
+Resolved `layers` partition properties by observed origin: `default`, `inherited`
+text context, `authored` base, `interaction` changes from base, and measured `layout`
+size. This also works through uninspected text ancestors without attributing values
+to the nearest captured parent. GPUI does not expose the individual interaction
+rule, equal-valued overrides, or declaration source locations. The existing `source`
+field remains the inspection boundary construction site. Older runtimes omit layers.
+
+Each resolved style, including provenance layers, is bounded to 16 KiB and the remaining total snapshot budget.
 If it does not fit, `resolved` is omitted and `metadata_truncated` is true; its
 boundary and authored metadata are retained. Both Rake frontends provide a
 **Computed** tab and refresh selected details while their exact ID remains live.

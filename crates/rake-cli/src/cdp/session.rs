@@ -173,7 +173,7 @@ impl Session {
                 }
 
                 if method == "DOM.enable" {
-                    self.warning("Rake layout uses the same bounds for all box quads; separate margin/padding metrics are unavailable. Styles are authored GPUI metadata.".into());
+                    self.warning("Rake exposes measured bounds and absolute-edge box geometry. Auto/percentage edges and opaque elements may lack a complete box model. Style rules show observed GPUI origins, not a browser cascade or individual Rust declaration locations.".into());
                 }
 
                 Ok(json!({}))
@@ -1055,6 +1055,7 @@ mod tests {
         snapshot.elements[0].resolved = Some(rake_protocol::inspection::ResolvedStyle {
             properties: json!({"opacity":1.0}),
             hovered: false,
+            layers: Vec::new(),
         });
         let mut initial = true;
 

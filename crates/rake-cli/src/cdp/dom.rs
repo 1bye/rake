@@ -72,6 +72,7 @@ impl Dom {
                 if (old.styles != element.styles
                     || old.resolved != element.resolved
                     || old.layout != element.layout
+                    || old.box_model != element.box_model
                     || old.parent != element.parent)
                     && self.sent.contains(&id)
                 {
@@ -794,18 +795,34 @@ impl Dom {
         match method {
             "DOM.getAttributes" => Ok(json!({"attributes":attributes(element)})),
             "DOM.getBoxModel" => {
-                let layout = element
-                    .layout
-                    .ok_or_else(|| Error::new(-32000, "Layout is not captured for this node"))?;
-
-                let (x, y, w, h) = (layout.x, layout.y, layout.width, layout.height);
-                let quad = json!([x, y, x + w, y, x + w, y + h, x, y + h]);
-
+                let model = element.box_model.as_ref().ok_or_else(|| {
+                    Error::new(
+                        -32000,
+                        "Resolved box geometry unavailable for this node/runtime",
+                    )
+                })?;
+                let (Some(content), Some(padding), Some(margin)) =
+                    (model.content, model.padding, model.margin)
+                else {
+                    return Err(Error::new(
+                        -32000,
+                        format!("Incomplete box geometry: {}", model.unavailable.join("; ")),
+                    ));
+                };
+                let quad = |layout: rake_protocol::inspection::Layout| {
+                    let (x, y, w, h) = (layout.x, layout.y, layout.width, layout.height);
+                    json!([x, y, x + w, y, x + w, y + h, x, y + h])
+                };
                 Ok(
-                    json!({"model":{"content":quad,"padding":quad,"border":quad,"margin":quad,"width":w,"height":h}}),
+                    json!({"model":{"content":quad(content),"padding":quad(padding),
+                    "border":quad(model.border),"margin":quad(margin),
+                    "width":model.border.width.round() as i32,"height":model.border.height.round() as i32}}),
                 )
             }
-            "CSS.getMatchedStylesForNode" | "CSS.getInlineStylesForNode" => {
+            "CSS.getInlineStylesForNode" => {
+                Ok(json!({"inlineStyle":super::styles::inline(element.styles.as_ref())}))
+            }
+            "CSS.getMatchedStylesForNode" => {
                 let mut inherited = Vec::new();
                 let mut parent = element.parent.as_deref();
                 let mut seen = BTreeSet::new();
@@ -822,9 +839,14 @@ impl Dom {
                     parent = ancestor.parent.as_deref();
                 }
 
-                Ok(
-                    json!({"inlineStyle":super::styles::inline(visual_style(element)),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
-                )
+                let rules = super::styles::matched(element);
+                if rules.is_empty() {
+                    Ok(
+                        json!({"inlineStyle":super::styles::inline(element.styles.as_ref()),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
+                    )
+                } else {
+                    Ok(json!({"matchedCSSRules":rules,"inherited":inherited,"pseudoElements":[]}))
+                }
             }
             "CSS.getComputedStyleForNode" => {
                 let layout = element
@@ -975,9 +997,9 @@ mod tests {
             json!({"nodeId":child,"name":"id","value":"renamed"})
         );
         assert_eq!(
-            dom.handle("DOM.getBoxModel", &json!({"nodeId":child}))
-                .unwrap()["model"]["width"],
-            42.
+            dom.handle("CSS.getComputedStyleForNode", &json!({"nodeId":child}))
+                .unwrap()["computedStyle"][0]["value"],
+            "42px"
         );
         assert!(dom.take_style_updates().contains(&child));
         assert_eq!(
@@ -1208,6 +1230,81 @@ mod tests {
     }
 
     #[test]
+    fn box_quads_and_style_origins_preserve_distinct_geometry_and_authored_values() {
+        use rake_protocol::inspection::{BoxModel, Layout, ResolvedStyle, StyleLayer, StyleOrigin};
+        let mut snapshot = capture("boxes");
+        let element = &mut snapshot.elements[0];
+        let border = element.layout.unwrap();
+        element.box_model = Some(BoxModel {
+            border,
+            padding: Some(Layout {
+                x: 2.,
+                y: 3.,
+                width: 8.,
+                height: 18.,
+            }),
+            content: Some(Layout {
+                x: 3.,
+                y: 4.,
+                width: 6.,
+                height: 16.,
+            }),
+            margin: Some(Layout {
+                x: 0.,
+                y: 1.,
+                width: 12.,
+                height: 22.,
+            }),
+            unavailable: Vec::new(),
+        });
+        element.styles = Some(json!({"opacity":0.5}));
+        element.resolved = Some(ResolvedStyle {
+            properties: json!({"opacity":0.8}),
+            hovered: true,
+            layers: vec![StyleLayer {
+                origin: StyleOrigin::Interaction,
+                properties: json!({"opacity":0.8}),
+            }],
+        });
+        let mut dom = Dom::default();
+        dom.update(snapshot.clone()).unwrap();
+        let id = dom.node_id("boxes-a").unwrap();
+        let params = json!({"nodeId":id});
+        let model = dom.handle("DOM.getBoxModel", &params).unwrap()["model"].clone();
+        assert_eq!(model["content"], json!([3., 4., 9., 4., 9., 20., 3., 20.]));
+        assert_eq!(
+            model["padding"],
+            json!([2., 3., 10., 3., 10., 21., 2., 21.])
+        );
+        assert_eq!(model["border"], json!([1., 2., 11., 2., 11., 22., 1., 22.]));
+        assert_eq!(model["margin"], json!([0., 1., 12., 1., 12., 23., 0., 23.]));
+        let styles = dom.handle("CSS.getMatchedStylesForNode", &params).unwrap();
+        let rules = styles["matchedCSSRules"].as_array().unwrap();
+        assert!(
+            styles.get("inlineStyle").is_none(),
+            "resolved values must not masquerade as inline declarations"
+        );
+        assert_eq!(
+            rules[0]["rule"]["style"]["cssProperties"][0]["value"],
+            "0.5"
+        );
+        assert_eq!(
+            rules[1]["rule"]["style"]["cssProperties"][0]["value"],
+            "0.8"
+        );
+        assert!(
+            rules[1]["rule"]["selectorList"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Active interaction")
+        );
+
+        snapshot.elements[0].box_model.as_mut().unwrap().margin = None;
+        dom.update(snapshot).unwrap();
+        assert!(dom.handle("DOM.getBoxModel", &params).is_err());
+    }
+
+    #[test]
     fn tree_styles_bounds_and_stale_node_ids() {
         let mut dom = Dom::default();
 
@@ -1227,8 +1324,8 @@ mod tests {
         let params = json!({"nodeId":root["nodeId"]});
 
         assert_eq!(
-            dom.handle("DOM.getBoxModel", &params).unwrap()["model"]["content"],
-            json!([1., 2., 11., 2., 11., 22., 1., 22.])
+            dom.handle("DOM.getBoxModel", &params).unwrap_err().code,
+            -32000
         );
         let css = dom.handle("CSS.getMatchedStylesForNode", &params).unwrap();
 
@@ -1358,6 +1455,7 @@ mod tests {
         snapshot.elements[0].resolved = Some(rake_protocol::inspection::ResolvedStyle {
             properties: json!({"background":{"Color":{"tag":"Solid","solid":{"h":0.,"s":1.,"l":0.5,"a":1.}}},"text":{"font_size":"24px"}}),
             hovered: false,
+            layers: Vec::new(),
         });
         let mut dom = Dom::default();
 

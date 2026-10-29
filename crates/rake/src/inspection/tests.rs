@@ -48,6 +48,7 @@ fn identities_expire_without_semantic_retargeting() {
         source: None,
         layout: None,
         content_mask: None,
+        box_model: None,
         styles: None,
         resolved: None,
         stable_id: None,
@@ -93,6 +94,7 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
         source: None,
         layout: None,
         content_mask: None,
+        box_model: None,
         styles: None,
         resolved: None,
         stable_id: None,
@@ -139,6 +141,7 @@ fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Ele
         source: None,
         layout: Some(bounds),
         content_mask: Some(mask),
+        box_model: None,
         styles: None,
         resolved: None,
         stable_id: None,
@@ -313,6 +316,7 @@ fn resolved_metadata_is_bounded_without_losing_boundaries() {
         element.resolved = Some(ResolvedStyle {
             properties: serde_json::json!({"large":"x".repeat(8000)}),
             hovered: false,
+            layers: Vec::new(),
         });
         snapshot.elements.push(element);
     }
@@ -364,6 +368,7 @@ fn publish_benchmark() {
                         width: 400.,
                         height: 1.,
                     }),
+                    box_model: None,
                     content_mask: Some(Layout {
                         x: 0.,
                         y: 0.,

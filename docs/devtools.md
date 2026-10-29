@@ -30,7 +30,7 @@ Successful control receipts collapse into a bottom drawer; uncertain delivery st
 expanded with its exact-request retry. The status bar expands to show retention and
 loss details. Styles show read-only authored GPUI metadata; Computed shows live resolved Div
 styles, including inherited text and real hover/focus states. Layout reports actual
-captured bounds, without inventing computed margins or padding.
+captured border bounds. Box geometry is supplied separately when its used edges can be resolved.
 
 The browser UI belongs to the development host, so it survives application
 crashes, process restarts and full Web page reloads. Runtime selection is explicit
@@ -109,16 +109,28 @@ already knows, so expansion and selection do not require enabling the picker.
 Solid sRGB colors, typography, borders, spacing, overflow and layout refinements
 are translated to CSS values, with captured ancestor declarations shown as inherited
 styles. Unsupported values remain visible under `--gpui-` metadata properties.
-Every box quad uses the captured bounds: separate margin, border and padding
-measurements are unavailable. Chrome Styles and Computed expose the live resolved
-GPUI snapshot when available, with measured width/height and pixel rem lengths.
-Other relative lengths retain their units and unsupported values remain metadata;
-this does not recreate a browser CSS cascade. A read-only virtual style snapshot
-sends CSS change notifications, so hovering the app updates the selected node's
-values without rebuilding the document. Older runtimes and opaque custom boundaries
-fall back to authored styles and measured geometry. Force-pseudo-state controls
-are unavailable; hover reflects the real app pointer. Chrome's inferred CSS hints
-and full box decorations may therefore be incomplete.
+Chrome's box model uses distinct margin, border, padding and content quads in
+window logical pixels, before clipping. Border bounds are measured by GPUI; absolute
+pixel/rem edges use the pinned GPUI engine's device-pixel and border-stroke rounding,
+from the style sampled during request-layout. Content masks remain separate.
+GPUI's public API does not expose used auto/percentage edges or scrollbar metrics:
+those boxes are explicitly unavailable. `DOM.getBoxModel` returns an error when any
+required box is unknown, including on older runtimes and opaque boundaries, instead
+of duplicating the border quad.
+
+Computed exposes the live resolved GPUI snapshot, measured width/height and pixel
+rem lengths. Styles separates read-only synthetic rules labelled **GPUI defaults**,
+**Inherited text context**, **Authored base**, **Active interaction change**, and
+**Measured layout**. The authored base keeps its original declarations, so overridden
+values can be inspected alongside the active result. These are observed GPUI origins,
+not a browser CSS cascade: inherited text can cross uninspected ancestors, and the
+public resolver cannot identify the specific hover/focus/active/drag rule or a
+same-valued override. The Rust source link is the boundary construction site, not
+an individual declaration location. Legacy snapshots show authored styles without
+inventing provenance. Unsupported values remain `--gpui-` metadata properties.
+A read-only virtual style snapshot sends CSS change notifications, so hovering the
+app updates selected values without rebuilding the document. Force-pseudo-state
+controls remain unavailable; hover reflects the real app pointer.
 Highlighting and inspect mode use the leased development inspection controls
 described in [element inspection](element-inspection.md). Chrome tree hover
 highlights the app; its picker selects the clicked instrumented boundary. Rake's own Elements inspector remains available for full

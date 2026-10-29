@@ -1,7 +1,40 @@
 //! Read-only CSS presentation of captured base styles, without inventing a cascade.
 
 use rake_protocol::inspection::styles::color;
+use rake_protocol::inspection::{Element, StyleOrigin};
 use serde_json::{Value, json};
+
+/// Synthetic read-only rules explain observed GPUI origins, not a browser cascade.
+pub(super) fn matched(element: &Element) -> Vec<Value> {
+    let Some(resolved) = &element.resolved else {
+        return Vec::new();
+    };
+    [
+        StyleOrigin::Default,
+        StyleOrigin::Inherited,
+        StyleOrigin::Authored,
+        StyleOrigin::Interaction,
+        StyleOrigin::Layout,
+    ]
+    .into_iter()
+    .filter_map(|origin| {
+        let layer = resolved.layers.iter().find(|layer| layer.origin == origin);
+        let value = if origin == StyleOrigin::Authored {
+            element
+                .styles
+                .as_ref()
+                .or_else(|| layer.map(|layer| &layer.properties))
+        } else {
+            layer.map(|layer| &layer.properties)
+        }?;
+        let selector = format!("[rake-origin=\"{}\"]", origin.label());
+        Some(json!({"rule":{
+            "selectorList":{"selectors":[{"text":selector}],"text":selector},
+            "origin":"regular","style":inline(Some(value))
+        },"matchingSelectors":[0]}))
+    })
+    .collect()
+}
 
 pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
     let mut properties = Vec::new();

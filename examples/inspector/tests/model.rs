@@ -43,6 +43,7 @@ fn element(id: &str) -> Element {
         source: None,
         layout: None,
         content_mask: None,
+        box_model: None,
         styles: None,
         resolved: None,
         stable_id: None,
@@ -222,6 +223,7 @@ fn live_resolved_styles_update_the_selection_without_replacing_its_capture() {
     changed.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
         properties: serde_json::json!({"background":"hover color"}),
         hovered: true,
+        layers: Vec::new(),
     });
     inspector.apply(Update::Tree(epoch, runtime(1), Ok(changed)));
     assert!(!inspector.stale());

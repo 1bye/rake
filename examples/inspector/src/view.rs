@@ -1000,7 +1000,7 @@ impl Render for ElementsView {
                                 <div class="flex flex-row items-center gap-2 px-2 min-h-[30px] font-code text-[11px]">
                                     <span class="min-w-0 text-ink">{format!("{}{} {{", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>
                                     <span class="flex-1"/>
-                                    <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; declaration provenance is unavailable."
+                                    <button id="rule-source" aria-label="Show inspection boundary source" aria-description="Source of the captured inspection boundary; individual declaration source locations are unavailable."
                                         class="shrink-0 text-muted hover:text-ink" style={|s| control(s).underline()}
                                         on:click={cx.listener(|this, _, _, cx| { this.detail_tab = "Source"; cx.notify(); })}>{source_label(element)}</button>
                                 </div>
@@ -1009,7 +1009,14 @@ impl Render for ElementsView {
                                         if style_rows.iter().any(|row| row.group == group && styles::matches(row, &self.style_query)) {
                                             <span class="pl-[24px] pt-[3px] text-muted font-code text-[10px] leading-[19px]">{format!("/* {} */", group.label().to_lowercase())}</span>
                                             for row in style_rows.iter().filter(|row| row.group == group && styles::matches(row, &self.style_query)) {
-                                                <div id={format!("property-row-{}", row.name)}>{self.style_row(row, colors, cx)}</div>
+                                                <div id={format!("property-row-{}", row.name)}>
+                                                    {self.style_row(row, colors, cx)}
+                                                    if current_tab == "Computed" {
+                                                        if let Some(layer) = element.resolved.as_ref().and_then(|resolved| resolved.layers.iter().find(|layer| styles::declarations(&layer.properties).iter().any(|property| property.name == row.name))) {
+                                                            <span class="pl-[24px] text-[10px] text-muted">{layer.origin.label()}</span>
+                                                        }
+                                                    }
+                                                </div>
                                             }
                                         }
                                     </div>
@@ -1018,6 +1025,9 @@ impl Render for ElementsView {
                                 <span class="px-2 font-code">"}"</span>
                             </div>
                             <p class="px-3 py-2 text-[10px] text-muted">{if current_tab == "Computed" { if element.resolved.as_ref().is_some_and(|resolved| resolved.hovered) { "Resolved GPUI styles · hovered · read-only" } else { "Resolved GPUI styles · read-only" } } else { "Authored base refinements · read-only" }}</p>
+                            if current_tab == "Computed" {
+                                <p class="px-3 py-2 text-[10px] text-muted">"Origins describe observed values. Interaction rules with equal values and individual Rust declaration locations are unavailable. Inherited text may pass through uninspected ancestors."</p>
+                            }
                         } else {
                             <div class="px-3 py-2 font-code border-b-1 border-line text-tag">{format!("{}{}", tree::tag(&element.kind), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("#{id}")))}</div>
                         }
@@ -1030,6 +1040,16 @@ impl Render for ElementsView {
                                     <span class="text-[10px] text-muted">"Measured before clipping"</span>
                                 </div>
                             } else { <p class="p-3">"Layout unavailable."</p> }
+                            if let Some(boxes) = &element.box_model {
+                                for (name, bounds) in [("Margin box", boxes.margin), ("Border box", Some(boxes.border)), ("Padding box", boxes.padding), ("Content box", boxes.content), ("Visible intersection", element.content_mask)] {
+                                    <div id={name}>{property(name, bounds.map_or_else(|| "Unavailable".into(), |bounds| format!("x {:.1}, y {:.1} · {:.1} × {:.1}", bounds.x, bounds.y, bounds.width, bounds.height)), colors)}</div>
+                                }
+                                for reason in &boxes.unavailable {
+                                    <p id={reason.clone()} class="px-3 py-1 text-[10px] text-muted">{reason.clone()}</p>
+                                }
+                            } else {
+                                <p class="px-3 py-2 text-muted">"Resolved box geometry unavailable for this boundary/runtime."</p>
+                            }
                         }
                         if current_tab == "Source" {
                             if let Some(source) = &element.source {

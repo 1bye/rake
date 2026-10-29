@@ -27,6 +27,61 @@ pub struct Layout {
     pub height: f32,
 }
 
+/// Unclipped box geometry in window-local logical pixels. Missing boxes are unknown,
+/// never substitutes for the border box. Absolute edges use GPUI's device-pixel rounding.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BoxModel {
+    /// Measured outer border bounds, including element/scroll offsets.
+    pub border: Layout,
+    /// Border bounds inset by resolved border widths.
+    pub padding: Option<Layout>,
+    /// Padding bounds inset by resolved padding; absent for percentage padding.
+    pub content: Option<Layout>,
+    /// Border bounds expanded by resolved margins; absent for auto/percentage margins.
+    pub margin: Option<Layout>,
+    /// Why a box could not be determined through GPUI's public API.
+    pub unavailable: Vec<String>,
+}
+
+/// Observed origin of a resolved value, without claiming Rust declaration locations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StyleOrigin {
+    /// GPUI's element defaults.
+    Default,
+    /// Text supplied by the paint context, possibly through uninspected ancestors.
+    Inherited,
+    /// Explicit base refinement on this element.
+    Authored,
+    /// Current visual value differs from the default plus base refinement.
+    /// GPUI does not expose which hover/focus/active/drag rule supplied it.
+    Interaction,
+    /// Actual measured size, rather than the requested size.
+    Layout,
+}
+
+impl StyleOrigin {
+    /// Human-readable provenance suitable for inspector details.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "GPUI defaults",
+            Self::Inherited => "Inherited text context",
+            Self::Authored => "Authored base",
+            Self::Interaction => "Active interaction change",
+            Self::Layout => "Measured layout",
+        }
+    }
+}
+
+/// A disjoint group of resolved properties sharing an observed origin.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StyleLayer {
+    /// Observed source category; not a browser CSS cascade.
+    pub origin: StyleOrigin,
+    /// Resolved values in the same GPUI shape as [`ResolvedStyle::properties`].
+    pub properties: Value,
+}
+
 /// Construction site of an inspection boundary; no file access is provided.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceLocation {
@@ -45,6 +100,10 @@ pub struct ResolvedStyle {
     pub properties: Value,
     /// Whether GPUI's actual hitbox is hovered in this frame.
     pub hovered: bool,
+    /// Property provenance; absent on older runtimes. Equal-valued interaction
+    /// declarations cannot be distinguished from the base through GPUI's public API.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<StyleLayer>,
 }
 
 /// Development navigation supported by one presented inspection boundary.
@@ -91,6 +150,9 @@ pub struct Element {
     pub source: Option<SourceLocation>,
     /// Actual GPUI layout, or None for invalid/non-finite geometry.
     pub layout: Option<Layout>,
+    /// Resolved box geometry for supported elements; older runtimes omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_model: Option<BoxModel>,
     /// Visible content-mask intersection in window-local logical pixels.
     #[serde(default)]
     pub content_mask: Option<Layout>,

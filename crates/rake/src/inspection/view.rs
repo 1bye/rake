@@ -12,6 +12,9 @@ use gpui::{
 use super::{Element, Layout, Snapshot, SourceLocation, Status, Store};
 use crate::router::{EntryId, TabId, WindowId};
 
+mod geometry;
+mod provenance;
+
 /// Adds a named inspection boundary to a styled GPUI element. Call after styling.
 pub trait InspectElement: IntoElement + Styled {
     /// Captures authored styles, construction site and an optional semantic identity.
@@ -245,7 +248,7 @@ impl<E: gpui::Element> IntoElement for Inspected<E> {
 }
 
 impl<E: gpui::Element> gpui::Element for Inspected<E> {
-    type RequestLayoutState = E::RequestLayoutState;
+    type RequestLayoutState = (E::RequestLayoutState, Option<gpui::Style>);
     type PrepaintState = (E::PrepaintState, Option<gpui::AnyElement>, Option<usize>);
 
     fn id(&self) -> Option<ElementId> {
@@ -269,7 +272,11 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             window.activate_window();
             window.focus(&focus, cx);
         }
-        self.inner.request_layout(id, inspector_id, window, cx)
+        let (layout, state) = self.inner.request_layout(id, inspector_id, window, cx);
+        // Observe after GPUI has initialized focus and cleared stale drag/active state.
+        let style = interactivity(&mut self.inner)
+            .map(|interactive| interactive.compute_style(id, None, window, cx));
+        (layout, (state, style))
     }
 
     fn prepaint(
@@ -372,6 +379,18 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     column: self.source.column(),
                 }),
                 layout: valid.then_some(layout),
+                box_model: valid
+                    .then(|| {
+                        state.1.as_ref().map(|style| {
+                            geometry::capture(
+                                style,
+                                layout,
+                                window.rem_size(),
+                                window.scale_factor(),
+                            )
+                        })
+                    })
+                    .flatten(),
                 content_mask: {
                     let visible =
                         bounds
@@ -427,7 +446,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
         let result = self
             .inner
-            .prepaint(id, inspector_id, bounds, state, window, cx);
+            .prepaint(id, inspector_id, bounds, &mut state.0, window, cx);
 
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
             capture.parents.pop();
@@ -517,8 +536,15 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             listeners(store, *host, window, cx);
         }
 
-        self.inner
-            .paint(id, inspector_id, bounds, state, &mut prepaint.0, window, cx);
+        self.inner.paint(
+            id,
+            inspector_id,
+            bounds,
+            &mut state.0,
+            &mut prepaint.0,
+            window,
+            cx,
+        );
 
         if let Some(previous) = previous {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
@@ -551,6 +577,21 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
     }
 }
 
+fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interactivity> {
+    use gpui::InteractiveElement;
+    use std::any::Any;
+    let inner = inner as &mut dyn Any;
+    if inner.is::<gpui::Div>() {
+        Some(inner.downcast_mut::<gpui::Div>()?.interactivity())
+    } else {
+        Some(
+            inner
+                .downcast_mut::<gpui::Stateful<gpui::Div>>()?
+                .interactivity(),
+        )
+    }
+}
+
 fn resolved_style<E: gpui::Element>(
     inner: &mut E,
     prepaint: &E::PrepaintState,
@@ -559,22 +600,23 @@ fn resolved_style<E: gpui::Element>(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<super::ResolvedStyle> {
-    use gpui::{InteractiveElement, Refineable};
+    use gpui::Refineable;
     use std::any::Any;
     let hitbox = (prepaint as &dyn Any)
         .downcast_ref::<Option<gpui::Hitbox>>()?
         .as_ref();
 
-    let inner = inner as &mut dyn Any;
-
-    let interactive = if inner.is::<gpui::Div>() {
-        inner.downcast_mut::<gpui::Div>()?.interactivity()
-    } else {
-        inner
-            .downcast_mut::<gpui::Stateful<gpui::Div>>()?
-            .interactivity()
-    };
-
+    let authored = (inner as &mut dyn Any)
+        .downcast_mut::<gpui::Div>()
+        .map(|div| div.style().clone())
+        .or_else(|| {
+            (inner as &mut dyn Any)
+                .downcast_mut::<gpui::Stateful<gpui::Div>>()
+                .map(|div| div.style().clone())
+        })?;
+    let mut base = gpui::Style::default();
+    base.refine(&authored);
+    let interactive = interactivity(inner)?;
     let style = interactive.compute_style(id, hitbox, window, cx);
     let mut text = window.text_style();
 
@@ -605,9 +647,17 @@ fn resolved_style<E: gpui::Element>(
     });
     resolve_lengths(&mut properties, window.rem_size().into());
 
+    let layers = provenance::capture(
+        &properties,
+        &serde_json::to_value(authored).ok()?,
+        &serde_json::to_value(base.subtract(&Default::default())).ok()?,
+        &serde_json::to_value(style.subtract(&Default::default())).ok()?,
+    );
+
     Some(super::ResolvedStyle {
         properties,
         hovered: hitbox.is_some_and(|hitbox| hitbox.is_hovered(window)),
+        layers,
     })
 }
 
@@ -1150,6 +1200,22 @@ mod tests {
                 .ends_with("px")
         );
         assert_eq!(resolved.properties["size"]["width"], "100px");
+        let inherited = resolved
+            .layers
+            .iter()
+            .find(|layer| layer.origin == super::super::StyleOrigin::Inherited)
+            .unwrap();
+        assert_eq!(
+            inherited.properties["text"]["color"],
+            resolved.properties["text"]["color"]
+        );
+        assert!(
+            resolved
+                .layers
+                .iter()
+                .any(|layer| layer.origin == super::super::StyleOrigin::Authored
+                    && layer.properties.get("background").is_some())
+        );
         let moving = |cx: &mut gpui::VisualTestContext, x, y| {
             cx.simulate_event(gpui::MouseMoveEvent {
                 position: gpui::point(gpui::px(x), gpui::px(y)),
@@ -1167,6 +1233,9 @@ mod tests {
         let resolved = hovered_button.resolved.as_ref().unwrap();
 
         assert!(resolved.hovered);
+        assert!(resolved.layers.iter().any(|layer| layer.origin
+            == super::super::StyleOrigin::Interaction
+            && layer.properties.get("background").is_some()));
         assert_eq!(
             super::super::styles::color(&resolved.properties["background"])
                 .unwrap()
@@ -1192,6 +1261,54 @@ mod tests {
                 .css(),
             "#29424b"
         );
+    }
+
+    #[test]
+    fn captured_content_box_matches_real_gpui_child_layout() {
+        struct Boxes(Store);
+        impl Render for Boxes {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .size_full()
+                    .p(gpui::px(10.))
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .w(gpui::px(120.))
+                            .h(gpui::px(90.))
+                            .border_2()
+                            .p(gpui::px(8.))
+                            .m(gpui::px(5.))
+                            .child(gpui::div().size_full().inspect("content"))
+                            .inspect("outer"),
+                    )
+                    .inspect("root")
+                    .root(self.0.clone(), 0, WindowId(1))
+            }
+        }
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (_, cx) = app.add_window_view(|_, _| Boxes(store.clone()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let snapshot = store.snapshot();
+        let find = |id| {
+            snapshot
+                .elements
+                .iter()
+                .find(|element| element.semantic_id.as_deref() == Some(id))
+                .unwrap()
+        };
+        let boxes = find("outer").box_model.as_ref().unwrap();
+        assert_eq!(boxes.border, find("outer").layout.unwrap());
+        assert_eq!(boxes.content, find("content").layout);
+        let margin = boxes.margin.unwrap();
+        assert_eq!(margin.x, boxes.border.x - 5.);
+        assert_eq!(margin.width, boxes.border.width + 10.);
     }
 
     #[test]

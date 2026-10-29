@@ -1,4 +1,4 @@
-//! Covers: standalone wire decoding, route codecs and legacy checkpoint defaults.
+//! Covers: standalone wire decoding, route codecs and legacy inspection/checkpoint defaults.
 //! Real: protocol contracts and Serde. Doubles: none. Requires: none.
 
 use rake_protocol::control::{Message, Query, Request};
@@ -38,4 +38,32 @@ fn omitted_window_defaults_keep_legacy_checkpoint_compatibility() {
     .unwrap();
 
     assert_eq!(tab.window_id, "window-1".parse::<WindowId>().unwrap());
+}
+
+#[test]
+fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots() {
+    use rake_protocol::inspection::{Element, StyleOrigin};
+    use serde_json::json;
+    let legacy = json!({"id":"element-1-0","parent":null,"kind":"Div", "metadata_truncated":false,
+        "resolved":{"properties":{"opacity":1.0},"hovered":false}});
+    let element: Element = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(element.box_model.is_none());
+    assert!(element.resolved.unwrap().layers.is_empty());
+
+    let mut current = legacy;
+    current["box_model"] = json!({
+        "border":{"x":1.,"y":2.,"width":100.,"height":40.},
+        "padding":null,"content":null,"margin":null,"unavailable":["Used edges unavailable"]
+    });
+    current["resolved"]["layers"] = json!([{"origin":"default","properties":{"opacity":1.0}}]);
+    let element: Element = serde_json::from_value(current).unwrap();
+    assert_eq!(
+        element.resolved.as_ref().unwrap().layers[0].origin,
+        StyleOrigin::Default
+    );
+    assert!(element.box_model.as_ref().unwrap().content.is_none());
+    assert_eq!(
+        serde_json::from_value::<Element>(serde_json::to_value(&element).unwrap()).unwrap(),
+        element
+    );
 }

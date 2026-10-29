@@ -630,6 +630,15 @@ function elementsPanel() {
         const styles = append(el('div', null, 'style-block'), el('span', heading, 'muted'));
         for (const [property, value] of Object.entries(values)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
         styles.append(el('span', '}', 'muted')); detail.append(styles);
+        if (elementTab === 'Computed') {
+          const labels = {default:'GPUI defaults', inherited:'Inherited text context', authored:'Authored base', interaction:'Active interaction change', layout:'Measured layout'};
+          for (const layer of selected.resolved.layers || []) {
+            const group = append(el('div', null, 'style-block'), el('h3', labels[layer.origin] || layer.origin));
+            for (const [property, value] of Object.entries(layer.properties)) group.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `origin:${selected.id}:${layer.origin}:${property}`)));
+            detail.append(group);
+          }
+          detail.append(el('p', 'Origins describe observed values. Equal-valued interaction declarations and individual Rust declaration locations are unavailable. Inherited text may pass through uninspected ancestors.', 'hint'));
+        }
       } else detail.append(empty(elementTab === 'Computed' ? 'Resolved styles unavailable for this boundary. Rebuild the app if it predates resolved capture.' : 'Style refinements unavailable for this boundary.'));
     }
     if (elementTab !== 'Source') {
@@ -637,6 +646,12 @@ function elementsPanel() {
       if (layout) detail.append(append(el('div', null, 'box-model'), el('span', `x: ${layout.x} · y: ${layout.y}`), el('div', `${layout.width} × ${layout.height}`, 'box-size')),
         el('p', `Layout in window logical pixels: x ${layout.x}, y ${layout.y}, width ${layout.width}, height ${layout.height}. Before clipping.`, 'hint'));
       else detail.append(el('p', 'Layout unavailable.', 'hint'));
+      const boxes = selected.box_model;
+      if (boxes) {
+        const bounds = value => value ? `x ${value.x}, y ${value.y} · ${value.width} × ${value.height}` : 'Unavailable';
+        detail.append(properties([['Margin box', bounds(boxes.margin)], ['Border box', bounds(boxes.border)], ['Padding box', bounds(boxes.padding)], ['Content box', bounds(boxes.content)], ['Visible intersection', bounds(selected.content_mask)]]));
+        for (const reason of boxes.unavailable || []) detail.append(el('p', reason, 'hint'));
+      } else detail.append(el('p', 'Resolved box geometry unavailable for this boundary/runtime.', 'hint'));
     } else detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Workspace shell' : 'entry-' + selected.entry_id]]));
     detail.append(el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
       append(el('div', null, 'pane-actions'), related(selected, 'Tasks'), related(selected, 'Requests')));
