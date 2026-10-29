@@ -191,7 +191,8 @@ DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
 CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
 Network.getResponseBody/getRequestPostData return descriptive unavailable errors.
 Overlay.highlightNode/setInspectMode require advertised runtime interaction support. Every unlisted method returns `-32601`,
-including Debugger, Profiler, Tracing, CSS/DOM edits and other JavaScript function calls.
+including Debugger, Profiler, Tracing, DOM edits and other JavaScript function calls.
+CSS edits are restricted to temporary DevTools base override sheets; authored styles remain read-only.
 The adapter also accepts the explicit extension `Rake.openSource { nodeId }`.
 
 ## Rake application preview

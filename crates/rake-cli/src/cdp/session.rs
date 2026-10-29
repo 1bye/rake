@@ -36,6 +36,7 @@ struct Session {
     last_hover: Option<(String, String)>,
     last_pick_sequence: u64,
     tracked_style_node: Option<i32>,
+    edit_sheets: BTreeSet<i32>,
 }
 
 impl Session {
@@ -58,6 +59,7 @@ impl Session {
             last_hover: None,
             last_pick_sequence: 0,
             tracked_style_node: None,
+            edit_sheets: BTreeSet::new(),
         }
     }
 
@@ -253,7 +255,118 @@ impl Session {
                 {
                     self.load_details(node)?;
                 }
+                if method == "CSS.getMatchedStylesForNode"
+                    && let Some(node) = request.params["nodeId"]
+                        .as_i64()
+                        .and_then(|id| i32::try_from(id).ok())
+                    && self.dom.editable(node)
+                    && self.edit_sheets.insert(node)
+                {
+                    self.event(Event::new("CSS.styleSheetAdded", json!({"header":{
+                        "styleSheetId":format!("rake-edit-{node}"),"frameId":"rake","sourceURL":"rake://devtools/base-overrides",
+                        "origin":"regular","title":"DevTools base overrides","disabled":false,"isInline":true,"isMutable":true,
+                        "isConstructed":false,"startLine":0,"startColumn":0,"length":self.dom.edit_text(node)?.len(),"endLine":0,"endColumn":0
+                    }})));
+                }
                 self.dom.handle(method, &request.params)
+            }
+            "CSS.getStyleSheetText"
+                if request.params["styleSheetId"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("rake-edit-")) =>
+            {
+                let node = edit_node(&request.params["styleSheetId"])?;
+                self.load_details(node)?;
+                Ok(json!({"text":self.dom.edit_text(node)?}))
+            }
+            "CSS.setStyleTexts"
+            | "CSS.setStyleSheetText"
+            | "CSS.setEffectivePropertyValueForNode"
+            | "Rake.resetStyles"
+            | "Rake.undoStyles" => {
+                self.refresh_dom()?;
+                let (node, edit) = if method == "CSS.setEffectivePropertyValueForNode" {
+                    let node = request.params["nodeId"]
+                        .as_i64()
+                        .and_then(|id| i32::try_from(id).ok())
+                        .ok_or_else(|| Error::new(-32602, "nodeId required"))?;
+                    let property = request.params["propertyName"]
+                        .as_str()
+                        .ok_or_else(|| Error::new(-32602, "propertyName required"))?;
+                    let value = request.params["value"]
+                        .as_str()
+                        .ok_or_else(|| Error::new(-32602, "value required"))?;
+                    (
+                        node,
+                        rake_protocol::inspection::StyleEdit::Set {
+                            declaration: rake_protocol::inspection::StyleDeclaration {
+                                property: property.into(),
+                                value: value.into(),
+                                enabled: true,
+                            },
+                        },
+                    )
+                } else if method.starts_with("Rake.") {
+                    let node = request.params["nodeId"]
+                        .as_i64()
+                        .and_then(|id| i32::try_from(id).ok())
+                        .ok_or_else(|| Error::new(-32602, "nodeId required"))?;
+                    (
+                        node,
+                        if method == "Rake.resetStyles" {
+                            rake_protocol::inspection::StyleEdit::Reset
+                        } else {
+                            rake_protocol::inspection::StyleEdit::Undo
+                        },
+                    )
+                } else {
+                    let edit = if method == "CSS.setStyleTexts" {
+                        let edits = request.params["edits"]
+                            .as_array()
+                            .filter(|edits| edits.len() == 1)
+                            .ok_or_else(|| {
+                                Error::new(
+                                    -32602,
+                                    "Exactly one style edit per request is supported",
+                                )
+                            })?;
+                        &edits[0]
+                    } else {
+                        &request.params
+                    };
+                    let node = edit_node(&edit["styleSheetId"])?;
+                    self.load_details(node)?;
+                    let text = edit["text"]
+                        .as_str()
+                        .ok_or_else(|| Error::new(-32602, "text required"))?;
+                    let text = if method == "CSS.setStyleTexts" {
+                        super::editing::replace_range(
+                            &self.dom.edit_text(node)?,
+                            &edit["range"],
+                            text,
+                        )?
+                    } else {
+                        text.into()
+                    };
+                    (
+                        node,
+                        rake_protocol::inspection::StyleEdit::Replace {
+                            declarations: super::editing::parse(&text)?,
+                        },
+                    )
+                };
+                self.control(self.dom.edit_command(node, edit)?)?;
+                self.refresh_dom()?;
+                self.load_details(node)?;
+                self.event(Event::new(
+                    "CSS.styleSheetChanged",
+                    json!({"styleSheetId":format!("rake-edit-{node}")}),
+                ));
+                if method == "CSS.setStyleTexts" {
+                    Ok(json!({"styles":[self.dom.edit_style(node)?]}))
+                } else {
+                    Ok(json!({}))
+                }
             }
             "CSS.getStyleSheetText" if request.params["styleSheetId"] == "rake-resolved" => {
                 Ok(json!({"text":self.dom.style_sheet_text()}))
@@ -775,6 +888,7 @@ impl Session {
         self.objects.clear();
         self.loss = super::console::Loss::default();
         self.dom.clear();
+        self.edit_sheets.clear();
         self.outbound.clear();
         self.outbound_bytes = 0;
         self.dropped = 0;
@@ -826,6 +940,14 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.cleanup();
     }
+}
+
+fn edit_node(value: &Value) -> std::result::Result<i32, Error> {
+    value
+        .as_str()
+        .and_then(|id| id.strip_prefix("rake-edit-"))
+        .and_then(|id| id.parse().ok())
+        .ok_or_else(|| Error::new(-32602, "Only DevTools override sheets are editable"))
 }
 
 fn unix_seconds() -> f64 {
@@ -1015,6 +1137,73 @@ mod tests {
         });
 
         (instance, worker, path)
+    }
+
+    #[test]
+    fn style_edits_cross_runtime_once_and_never_edit_authored_sheets() {
+        let mut snapshot = capture("style-edit");
+        snapshot.elements[0].style_editable = true;
+        let (instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(snapshot.clone()),
+                RuntimeMessage::Command(Command::EditElementStyle {
+                    id,
+                    generation,
+                    edit,
+                }) => {
+                    assert_eq!(id, "element-style-edit-0");
+                    assert_eq!(generation, "style-edit");
+                    assert!(request.key.is_none());
+                    match edit {
+                        rake_protocol::inspection::StyleEdit::Set { declaration } => {
+                            snapshot.elements[0].style_overrides = vec![declaration]
+                        }
+                        rake_protocol::inspection::StyleEdit::Reset => {
+                            snapshot.elements[0].style_overrides.clear()
+                        }
+                        _ => panic!("unexpected edit"),
+                    }
+                    Reply::Acknowledged
+                }
+                _ => panic!("unexpected style request"),
+            },
+            6,
+        );
+        let mut session = Session::new(instance, None);
+        session.dom.update(capture("style-edit")).unwrap();
+        let node = session.dom.node_id("element-style-edit-0").unwrap();
+        let request = |method: &str, params| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        session
+            .handle(&request(
+                "CSS.setEffectivePropertyValueForNode",
+                json!({"nodeId":node,"propertyName":"color","value":"#ff0000"}),
+            ))
+            .unwrap();
+        assert!(
+            session
+                .dom
+                .edit_text(node)
+                .unwrap()
+                .contains("color: #ff0000")
+        );
+        session
+            .handle(&request("Rake.resetStyles", json!({"nodeId":node})))
+            .unwrap();
+        assert_eq!(session.dom.edit_text(node).unwrap(), "");
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            session
+                .handle(&request(
+                    "CSS.setStyleSheetText",
+                    json!({"styleSheetId":"rake-resolved","text":"color: red"})
+                ))
+                .is_err()
+        );
     }
 
     #[test]

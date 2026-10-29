@@ -6,7 +6,7 @@ Five changes, each delivered in a separate commit:
    details on demand, and preserve identities/expansion across incremental updates.
 2. **Implemented for captured boundaries.** Picking and geometry: use observed paint order, validate clipping and offsets,
    and document exact GPUI hook requirements for unavailable used layout metrics.
-3. Live styles: temporary validated overrides for colors, spacing, dimensions and
+3. **Implemented.** Live styles: temporary validated overrides for colors, spacing, dimensions and
    typography, with declaration toggles, reset and undo; never rewrite Rust source.
 4. Frame performance: bounded live recording, frame duration and inspected-node
    layout/prepaint/paint timings linked to Rust source; distinguish CPU wall time

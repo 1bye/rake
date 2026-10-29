@@ -175,6 +175,7 @@ impl<R: Route> RuntimeClient<R> {
                     Command::HighlightElement { .. }
                         | Command::InspectMode { .. }
                         | Command::NavigateElement { .. }
+                        | Command::EditElementStyle { .. }
                 ) {
                     return self.command(&command);
                 }
@@ -262,6 +263,14 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::EditElementStyle {
+                id,
+                generation,
+                edit,
+            } => {
+                self.state.inspection.edit_style(id, generation, edit)?;
+                return Ok(Reply::Acknowledged);
+            }
             Command::NavigateElement {
                 id,
                 generation,

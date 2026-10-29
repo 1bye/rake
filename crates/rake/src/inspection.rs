@@ -6,6 +6,7 @@
 //! resolved styles are separate; opaque custom elements may not expose resolution.
 //! No views, text contents or source contents are retained.
 
+mod editing;
 #[cfg(feature = "gpui")]
 mod view;
 #[cfg(feature = "experimental-view")]
@@ -29,6 +30,7 @@ pub(crate) struct Store(Rc<RefCell<State>>);
 
 struct State {
     latest: Rc<Snapshot>,
+    edits: BTreeMap<String, editing::History>,
     pages: BTreeMap<String, (Rc<Snapshot>, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     next_capture: u64,
@@ -71,6 +73,7 @@ impl Default for Store {
                 omitted: 0,
                 coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Text content is not captured.".into(),
             }),
+            edits: BTreeMap::new(),
             pages: BTreeMap::new(),
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
@@ -254,6 +257,7 @@ impl Store {
                 element.styles = None;
                 element.resolved = None;
                 element.box_model = None;
+                element.style_overrides.clear();
                 if let Some(view) = &mut element.view {
                     view.style_sources.clear();
                 }
@@ -539,6 +543,13 @@ impl Store {
         let pointer = host.pointer;
 
         state.latest = snapshot;
+        let alive: std::collections::BTreeSet<_> = state
+            .windows
+            .values()
+            .flat_map(|host| &host.snapshot.elements)
+            .filter_map(|e| e.stable_id.clone())
+            .collect();
+        state.edits.retain(|stable, _| alive.contains(stable));
 
         if state.mode_active(Instant::now())
             && state.pick_window == Some(window)

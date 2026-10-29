@@ -232,10 +232,7 @@ impl Inspector {
                             });
                         if let Some(current) = current {
                             self.selected = Some(current.id.clone());
-                            if current.id != self.detail.as_ref().map_or("", |element| &element.id)
-                            {
-                                self.detail_pending = true;
-                            }
+                            self.detail_pending = true;
                             if current.styles.is_some() || current.resolved.is_some() {
                                 self.detail = Some(current.clone());
                             }

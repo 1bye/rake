@@ -56,6 +56,8 @@ fn identities_expire_without_semantic_retargeting() {
         navigation: Default::default(),
         metadata_truncated: false,
         paint_order: None,
+        style_editable: false,
+        style_overrides: Vec::new(),
         tab_id: None,
         entry_id: None,
     };
@@ -104,6 +106,8 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
         navigation: Default::default(),
         metadata_truncated: false,
         paint_order: None,
+        style_editable: false,
+        style_overrides: Vec::new(),
         tab_id: None,
         entry_id: None,
     };
@@ -153,6 +157,8 @@ fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Ele
         navigation: Default::default(),
         metadata_truncated: false,
         paint_order: None,
+        style_editable: false,
+        style_overrides: Vec::new(),
         tab_id: None,
         entry_id: None,
     }
@@ -388,6 +394,8 @@ fn publish_benchmark() {
                     navigation: Default::default(),
                     metadata_truncated: false,
                     paint_order: None,
+                    style_editable: false,
+                    style_overrides: Vec::new(),
                     tab_id: None,
                     entry_id: None,
                 });

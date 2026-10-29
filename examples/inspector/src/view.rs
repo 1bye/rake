@@ -29,6 +29,8 @@ struct ElementsView {
     filter: Entity<FilterInput>,
     style_filter: Entity<FilterInput>,
     style_query: String,
+    style_editor: Entity<FilterInput>,
+    style_text: String,
     show_find: bool,
     show_coverage: bool,
     collapsed: BTreeSet<String>,
@@ -120,6 +122,21 @@ impl RouteViews<Destination> for Views {
                 )
             });
 
+            let edit_owner = cx.weak_entity();
+            let style_editor = cx.new(|cx| {
+                FilterInput::new(
+                    "Temporary style declaration",
+                    "color: #ff0000",
+                    move |text, cx| {
+                        let _ = edit_owner.update(cx, |this: &mut ElementsView, cx| {
+                            this.style_text = text;
+                            cx.notify();
+                        });
+                    },
+                    window,
+                    cx,
+                )
+            });
             let tree_focus = cx.focus_handle();
 
             let focus_observers = [
@@ -134,6 +151,8 @@ impl RouteViews<Destination> for Views {
                 filter,
                 style_filter,
                 style_query: String::new(),
+                style_editor,
+                style_text: String::new(),
                 show_find: false,
                 show_coverage: false,
                 collapsed: BTreeSet::new(),
@@ -427,6 +446,19 @@ fn source_label(element: &rake::inspection::Element) -> String {
 }
 
 impl ElementsView {
+    fn edit_style(&self, edit: rake::inspection::StyleEdit) {
+        let mut model = self.model.borrow_mut();
+        if !model.stale()
+            && let (Some(id), Some(tree)) = (model.selected.clone(), &model.tree)
+        {
+            model.navigation_pending = Some(Command::EditElementStyle {
+                id,
+                generation: tree.capture.clone(),
+                edit,
+            });
+        }
+    }
+
     fn navigate(&self, action: rake::inspection::NavigationAction) {
         let mut model = self.model.borrow_mut();
         if let (Some(id), Some(tree)) = (&model.selected, &model.tree)
@@ -983,6 +1015,30 @@ impl Render for ElementsView {
                     if let Some(error) = &model.lookup_error { <p class="px-3 py-1 text-[11px] text-property">{error.clone()}</p> }
                     if let Some(element) = selected {
                         if current_tab == "Styles" || current_tab == "Computed" {
+                            if element.style_editable {
+                                <div id="temporary-overrides" class="flex flex-col gap-1 px-2 py-2 border-b-1 border-line">
+                                    <p>"Temporary base overrides"</p>
+                                    <p class="text-[10px] text-muted">"Interaction styles may override these values. Rust source is unchanged."</p>
+                                    {self.style_editor.clone()}
+                                    <div class="flex flex-row gap-2">
+                                        <button id="apply-style" disabled={stale} style={control} on:click={cx.listener(|this, _, _, cx| {
+                                            if let Some((property, value)) = this.style_text.split_once(':') {
+                                                this.edit_style(rake::inspection::StyleEdit::Set { declaration: rake::inspection::StyleDeclaration {
+                                                    property: property.trim().into(), value: value.trim().trim_end_matches(';').into(), enabled: true,
+                                                }});
+                                            } else { this.model.borrow_mut().lookup_error = Some("Use property: value".into()); }
+                                            cx.notify();
+                                        })}>"Apply"</button>
+                                        <button id="reset-style" disabled={stale} style={control} on:click={cx.listener(|this, _, _, cx| { this.edit_style(rake::inspection::StyleEdit::Reset); cx.notify(); })}>"Reset"</button>
+                                        <button id="undo-style" disabled={stale} style={control} on:click={cx.listener(|this, _, _, cx| { this.edit_style(rake::inspection::StyleEdit::Undo); cx.notify(); })}>"Undo"</button>
+                                    </div>
+                                    for declaration in &element.style_overrides {
+                                        <button id={format!("override-{}", declaration.property)} disabled={stale} style={control} on:click={{ let mut declaration = declaration.clone(); declaration.enabled = !declaration.enabled;
+                                            cx.listener(move |this, _, _, cx| { this.edit_style(rake::inspection::StyleEdit::Set { declaration: declaration.clone() }); cx.notify(); })
+                                        }}>{format!("{} {}: {};", if declaration.enabled { "☑" } else { "☐" }, declaration.property, declaration.value)}</button>
+                                    }
+                                </div>
+                            }
                             <div id="authored-rule" class="flex flex-col border-b-1 border-line pb-[6px]">
                                 <div class="flex flex-row items-center gap-2 px-2 min-h-[30px] font-code text-[11px]">
                                     <span class="min-w-0 text-ink">{format!("{}{} {{", element.display_name().to_owned(), element.semantic_id.as_ref().map_or_else(String::new, |id| format!("[id={}]", serde_json::to_string(id).unwrap_or_default())))}</span>

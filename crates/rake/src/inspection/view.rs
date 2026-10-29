@@ -53,6 +53,7 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         #[cfg(feature = "experimental-view")]
         view_key: None,
         style_reader: None,
+        original_style: None,
     }
 }
 
@@ -71,6 +72,7 @@ pub struct Inspected<E: gpui::Element> {
     #[cfg(feature = "experimental-view")]
     view_key: Option<ElementId>,
     style_reader: Option<fn(&mut E) -> gpui::StyleRefinement>,
+    original_style: Option<gpui::StyleRefinement>,
 }
 
 impl<E: gpui::Element + Styled> Styled for Inspected<E> {
@@ -104,6 +106,23 @@ impl<E: gpui::Element + gpui::StyledImage> gpui::StyledImage for Inspected<E> {
 }
 
 impl<E: gpui::Element> Inspected<E> {
+    fn boundary_key(
+        &self,
+        id: Option<&GlobalElementId>,
+        owner: Option<(TabId, EntryId)>,
+    ) -> BoundaryKey {
+        BoundaryKey {
+            gpui_id: id.cloned(),
+            kind: std::any::type_name::<E>(),
+            source: self.source,
+            owner,
+            #[cfg(feature = "experimental-view")]
+            view_site: self.definition.map(|definition| definition.site),
+            #[cfg(feature = "experimental-view")]
+            view_key: self.view_key.clone(),
+        }
+    }
+
     /// Extracts the underlying GPUI element, removing this boundary only.
     pub fn into_inner(self) -> E {
         self.inner
@@ -310,6 +329,17 @@ impl gpui::Global for ActiveCapture {}
 #[derive(Default)]
 struct CapturingLayout(bool);
 
+#[derive(Clone)]
+struct LayoutContext {
+    store: Store,
+    window: WindowId,
+    parent: Option<String>,
+    owner: Option<(TabId, EntryId)>,
+}
+#[derive(Default)]
+struct LayoutHost(Option<LayoutContext>);
+impl gpui::Global for LayoutHost {}
+
 impl gpui::Global for CapturingLayout {}
 
 impl<E: gpui::Element> IntoElement for Inspected<E> {
@@ -355,8 +385,58 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             )
         });
         let capturing = cx.global::<CapturingLayout>().0;
+        if cx.try_global::<LayoutHost>().is_none() {
+            cx.set_global(LayoutHost::default());
+        }
+        let previous_host = cx.global::<LayoutHost>().0.clone();
+        let context = self
+            .root
+            .as_ref()
+            .map(|(store, _, host)| LayoutContext {
+                store: store.clone(),
+                window: *host,
+                parent: None,
+                owner: None,
+            })
+            .or_else(|| previous_host.clone());
+        let mut child_context = context.clone();
+        if let Some(context) = &context {
+            let owner = self.owner.or(context.owner);
+            let key = self.boundary_key(id, owner);
+            let state = context.store.0.borrow();
+            let stable = state
+                .windows
+                .get(&context.window)
+                .and_then(|host| {
+                    host.identities
+                        .iter()
+                        .find(|identity| identity.key == key && identity.parent == context.parent)
+                })
+                .map(|identity| identity.id.clone());
+            if let Some(child) = &mut child_context {
+                child.parent = stable.clone();
+                child.owner = owner;
+            }
+            if let Some(interactive) = interactivity(&mut self.inner) {
+                if let Some(original) = self.original_style.take() {
+                    *interactive.base_style = original;
+                }
+                self.style = Some(*interactive.base_style.clone());
+                if let Some(edit) = stable.as_ref().and_then(|stable| state.edits.get(stable)) {
+                    self.original_style = Some(*interactive.base_style.clone());
+                    if let Ok(refinement) = super::editing::refinement(&edit.current) {
+                        gpui::Refineable::refine(interactive.base_style.as_mut(), &refinement);
+                    }
+                }
+            }
+        }
+        cx.global_mut::<LayoutHost>().0 = child_context;
         let (layout, state) = self.inner.request_layout(id, inspector_id, window, cx);
-        if capturing && let Some(read) = self.style_reader {
+        cx.global_mut::<LayoutHost>().0 = previous_host;
+        if capturing
+            && self.original_style.is_none()
+            && let Some(read) = self.style_reader
+        {
             self.style = Some(read(&mut self.inner));
         }
         // Observe after GPUI has initialized focus and cleared stale drag/active state.
@@ -521,6 +601,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 resolved: None,
                 metadata_truncated: truncated,
                 paint_order: None,
+                style_editable: state.1.is_some(),
+                style_overrides: Vec::new(),
                 tab_id: owner.map(|owner| owner.0),
                 entry_id: owner.map(|owner| owner.1),
             };
@@ -530,16 +612,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
             retained_index = retained.as_ref().map(|_| index);
             if retained.is_some() {
-                capture.candidates.push(BoundaryKey {
-                    gpui_id: id.cloned(),
-                    kind: std::any::type_name::<E>(),
-                    source: self.source,
-                    owner,
-                    #[cfg(feature = "experimental-view")]
-                    view_site: self.definition.map(|definition| definition.site),
-                    #[cfg(feature = "experimental-view")]
-                    view_key: self.view_key.clone(),
-                });
+                capture.candidates.push(self.boundary_key(id, owner));
                 capture.navigation.push(NavigationTarget {
                     focus: self.focus.clone(),
                     scrolls: capture.scrolls.clone(),
@@ -571,6 +644,21 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
                 let identities = completed.identify(store, *host);
+                for element in &mut completed.snapshot.elements {
+                    element.style_editable &= element.stable_id.is_some();
+                    element.style_overrides = element
+                        .stable_id
+                        .as_ref()
+                        .and_then(|id| {
+                            store
+                                .0
+                                .borrow()
+                                .edits
+                                .get(id)
+                                .map(|edit| edit.current.clone())
+                        })
+                        .unwrap_or_default();
+                }
                 store.publish(*host, completed.snapshot);
                 let mut state = store.0.borrow_mut();
                 let host = state
@@ -631,7 +719,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(index) = prepaint.2
             && cx.global::<ActiveCapture>().0.is_some()
         {
-            let resolved = resolved_style(&mut self.inner, &prepaint.0, id, bounds, window, cx);
+            let resolved = resolved_style(
+                &mut self.inner,
+                (&prepaint.0, self.original_style.as_ref()),
+                id,
+                bounds,
+                window,
+                cx,
+            );
 
             if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut()
                 && let Some(element) = capture.snapshot.elements.get_mut(index)
@@ -744,7 +839,7 @@ fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interacti
 
 fn resolved_style<E: gpui::Element>(
     inner: &mut E,
-    prepaint: &E::PrepaintState,
+    (prepaint, original): (&E::PrepaintState, Option<&gpui::StyleRefinement>),
     id: Option<&GlobalElementId>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
@@ -806,7 +901,7 @@ fn resolved_style<E: gpui::Element>(
 
     let layers = provenance::capture(
         &properties,
-        &serde_json::to_value(authored).ok()?,
+        &serde_json::to_value(original.unwrap_or(&authored)).ok()?,
         &serde_json::to_value(base.subtract(&Default::default())).ok()?,
         &serde_json::to_value(style.subtract(&Default::default())).ok()?,
     );
@@ -1183,6 +1278,99 @@ mod tests {
                 .inspect("root")
                 .root(self.store.clone(), 0, WindowId(1))
         }
+    }
+
+    #[test]
+    fn temporary_styles_change_real_layout_toggle_undo_and_expire_on_removal() {
+        use super::super::{StyleDeclaration, StyleEdit};
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (view, cx) = app.add_window_view(|_, _| IdentityView {
+            store: store.clone(),
+            order: vec![1],
+            width: 20.,
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+        };
+        let target = || {
+            store
+                .snapshot()
+                .elements
+                .into_iter()
+                .find(|e| e.semantic_id.as_deref() == Some("item-1"))
+                .unwrap()
+        };
+        let edit = |edit| {
+            let snapshot = store.snapshot();
+            store.edit_style(&target().id, &snapshot.capture, &edit)
+        };
+        draw(cx);
+        let original = target();
+        assert!(original.style_editable);
+        let declaration = StyleDeclaration {
+            property: "width".into(),
+            value: "54px".into(),
+            enabled: true,
+        };
+        edit(StyleEdit::Set {
+            declaration: declaration.clone(),
+        })
+        .unwrap();
+        draw(cx);
+        assert_eq!(target().layout.unwrap().width, 54.);
+        assert_eq!(
+            target().styles,
+            original.styles,
+            "authored source refinements stay separate"
+        );
+        assert_eq!(
+            target().style_overrides.as_slice(),
+            std::slice::from_ref(&declaration)
+        );
+        edit(StyleEdit::Set {
+            declaration: StyleDeclaration {
+                enabled: false,
+                ..declaration.clone()
+            },
+        })
+        .unwrap();
+        draw(cx);
+        assert_eq!(target().layout.unwrap().width, 20.);
+        edit(StyleEdit::Undo).unwrap();
+        draw(cx);
+        assert_eq!(target().layout.unwrap().width, 54.);
+        edit(StyleEdit::Reset).unwrap();
+        draw(cx);
+        assert_eq!(target().layout.unwrap().width, 20.);
+        edit(StyleEdit::Undo).unwrap();
+        draw(cx);
+        assert_eq!(target().layout.unwrap().width, 54.);
+        assert!(
+            edit(StyleEdit::Set {
+                declaration: StyleDeclaration {
+                    value: "NaNpx".into(),
+                    ..declaration
+                }
+            })
+            .is_err()
+        );
+        let old = target();
+        view.update(cx, |view, cx| {
+            view.order.clear();
+            cx.notify();
+        });
+        draw(cx);
+        assert!(store.0.borrow().edits.is_empty());
+        assert!(
+            store
+                .edit_style(&old.id, &store.snapshot().capture, &StyleEdit::Reset)
+                .is_err()
+        );
     }
 
     #[test]

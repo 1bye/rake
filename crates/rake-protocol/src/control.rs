@@ -48,6 +48,15 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Edits temporary base refinements without changing Rust source or router state.
+    EditElementStyle {
+        /// Exact current boundary.
+        id: String,
+        /// Exact current capture.
+        generation: String,
+        /// Validated transient operation; no automatic delivery retry.
+        edit: crate::inspection::StyleEdit,
+    },
     /// Navigate to an exact presented boundary; no application operation is retained.
     NavigateElement {
         /// Exact capture element identity.
@@ -182,6 +191,7 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "edit_element_style",
             "navigate_element",
             "highlight_element",
             "inspect_mode",

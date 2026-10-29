@@ -68,9 +68,14 @@ impl super::host::Host for InspectionClient {
             .into(),
             element_inspection: status,
             element_interaction: status != Status::Unavailable,
-            commands: ["navigate_element", "highlight_element", "inspect_mode"]
-                .map(str::to_owned)
-                .into(),
+            commands: [
+                "navigate_element",
+                "highlight_element",
+                "inspect_mode",
+                "edit_element_style",
+            ]
+            .map(str::to_owned)
+            .into(),
             queries: [
                 "info",
                 "schema",
@@ -122,6 +127,14 @@ impl super::host::Host for InspectionClient {
             }
             Message::Command(Command::InspectMode { enabled, lease_ms }) => {
                 store.inspect_mode(enabled, lease_ms)?;
+                Ok(Reply::Acknowledged)
+            }
+            Message::Command(Command::EditElementStyle {
+                id,
+                generation,
+                edit,
+            }) => {
+                store.edit_style(&id, &generation, &edit)?;
                 Ok(Reply::Acknowledged)
             }
             Message::Command(Command::NavigateElement {

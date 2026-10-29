@@ -259,6 +259,7 @@ impl Connection {
             Command::HighlightElement { .. }
                 | Command::InspectMode { .. }
                 | Command::NavigateElement { .. }
+                | Command::EditElementStyle { .. }
         ) {
             return Err("This Inspector only supports development inspection controls.".into());
         }

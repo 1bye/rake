@@ -93,7 +93,7 @@ globalThis.fetch = async (url, options) => {
       if (envelope.message.value.type === 'inspect_mode') {
         pickerMode = envelope.message.value.enabled;
         result = {Ok: {type: 'acknowledged'}};
-      } else if (['highlight_element', 'navigate_element'].includes(envelope.message.value.type)) result = {Ok: {type: 'acknowledged'}};
+      } else if (['highlight_element', 'navigate_element', 'edit_element_style'].includes(envelope.message.value.type)) result = {Ok: {type: 'acknowledged'}};
       else result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
     } else {
       const query = envelope.message.value;
@@ -275,6 +275,19 @@ assert.match(ids.content.textContent, /section · class/);
 assert.match(ids.content.textContent, /src\/view.rs:42:7/);
 assert.match(ids.content.textContent, /"p-2"/);
 await find('button', 'Styles').click(); await settle();
+information.commands.push('edit_element_style');
+elementCapture.elements[0].style_editable = true;
+await find('button', 'Inspect element-1-0').click(); await settle();
+const editProperty = all(ids.content).find(node => node.attributes['aria-label'] === 'Override property');
+const editValue = all(ids.content).find(node => node.attributes['aria-label'] === 'Override value');
+editProperty.value = 'color'; editValue.value = '#ff0000';
+find('button', 'Apply override').closest('form').listeners.submit({preventDefault() {}}); await settle();
+assert.deepEqual(envelopes.at(-1).message.value, {type: 'edit_element_style', id: 'element-1-0', generation: '1', edit: {action: 'set', declaration: {property: 'color', value: '#ff0000', enabled: true}}});
+assert.equal(envelopes.at(-1).key, null);
+await find('button', 'Reset overrides').click(); await settle();
+assert.equal(envelopes.at(-1).message.value.edit.action, 'reset');
+await find('button', 'Undo style edit').click(); await settle();
+assert.equal(envelopes.at(-1).message.value.edit.action, 'undo');
 elementCapture.elements[0].box_model = {
   border: {x: 10, y: 20, width: 300, height: 50}, padding: {x: 12, y: 22, width: 296, height: 46},
   content: {x: 20, y: 30, width: 280, height: 30}, margin: null, unavailable: ['Margin box needs used auto/percentage margins']

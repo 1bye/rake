@@ -612,6 +612,31 @@ impl Dom {
         self.child_ids.get(&id).cloned().unwrap_or_default()
     }
 
+    pub fn edit_style(&self, id: i32) -> Result<Value, Error> {
+        Ok(super::editing::style(id, self.element(id)?))
+    }
+    pub fn edit_text(&self, id: i32) -> Result<String, Error> {
+        Ok(super::editing::text(self.element(id)?))
+    }
+    pub fn editable(&self, id: i32) -> bool {
+        self.element(id).is_ok_and(|element| element.style_editable)
+    }
+    pub fn edit_command(
+        &self,
+        id: i32,
+        edit: rake_protocol::inspection::StyleEdit,
+    ) -> Result<rake_protocol::control::Command, Error> {
+        let element = self.element(id)?;
+        if !element.style_editable {
+            return Err(Error::new(-32000, "Boundary is not style editable"));
+        }
+        Ok(rake_protocol::control::Command::EditElementStyle {
+            id: element.id.clone(),
+            generation: self.generation().unwrap_or_default().into(),
+            edit,
+        })
+    }
+
     pub fn control_id(&self, id: i32) -> Result<&str, Error> {
         Ok(&self.element(id)?.id)
     }
@@ -863,7 +888,10 @@ impl Dom {
                     parent = ancestor.parent.as_deref();
                 }
 
-                let rules = super::styles::matched(element);
+                let mut rules = super::styles::matched(element);
+                if element.style_editable {
+                    rules.push(super::editing::rule(id, element));
+                }
                 if rules.is_empty() {
                     Ok(
                         json!({"inlineStyle":super::styles::inline(element.styles.as_ref()),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),

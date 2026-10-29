@@ -30,7 +30,12 @@ fn standalone_capabilities_and_validation_do_not_advertise_or_accept_router_acti
     );
     assert_eq!(
         info.commands,
-        ["navigate_element", "highlight_element", "inspect_mode"]
+        [
+            "navigate_element",
+            "highlight_element",
+            "inspect_mode",
+            "edit_element_style"
+        ]
     );
     assert!(matches!(
         client.request(request(&client, Message::Query(Query::Snapshot {}))),

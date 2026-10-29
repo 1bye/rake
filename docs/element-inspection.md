@@ -320,3 +320,22 @@ Complete picking additionally needs a final-frame ordered hitbox/occlusion strea
 including deferred draws and reused cached subtrees, with stable element ownership.
 The current pinned GPUI public API supplies neither complete hook. These unknown
 boxes and opaque descendants remain explicitly unavailable, rather than guessed.
+
+## Temporary style editing
+
+Both Rake inspectors accept `property: value` overrides, declaration toggles, reset
+and undo. Chrome exposes an editable **DevTools base overrides** rule, with
+`CSS.setStyleTexts`, `CSS.setStyleSheetText` and
+`CSS.setEffectivePropertyValueForNode`; `Rake.resetStyles`/`Rake.undoStyles` take a
+nodeId. Authored rules and Rust source remain read-only. Chrome accepts one sheet
+edit per request, rejecting unsupported batches before any mutation.
+
+Overrides refine the real GPUI base before layout and paint. Private interaction
+rules may override them; Computed always reflects the actual result. Supported
+values are hex/transparent colors, px/rem dimensions and spacing, auto dimensions,
+opacity, font size/weight and a literal font family. Unsupported declarations,
+non-finite values, duplicates and oversized lists fail atomically. There are at
+most 32 declarations and 32 undo steps per edited boundary, across 64 boundaries.
+Edits follow an unambiguous stable presentation identity and expire on removal or
+runtime replacement. Stale capture commands never select another element. Delivery
+is transient and never automatically retried, including undo.

@@ -301,6 +301,8 @@ mod tests {
             navigation: Default::default(),
             metadata_truncated: false,
             paint_order: None,
+            style_editable: false,
+            style_overrides: Vec::new(),
             tab_id: None,
             entry_id: None,
         }

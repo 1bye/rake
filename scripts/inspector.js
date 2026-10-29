@@ -592,6 +592,33 @@ function styleValue(value, key) {
   }
   return el('span', text(value) + ';', 'value');
 }
+function styleEditor(selected, stale) {
+  const editor = el('div', null, 'style-block');
+  const disabled = stale || !connected || !selected.style_editable || !info.commands.includes('edit_element_style');
+  const edit = async value => {
+    try {
+      await inspectionControl({type: 'edit_element_style', id: selected.id, generation: elements.capture, edit: value});
+      await refresh();
+      if (selectedElement) await inspectElement(selectedElement);
+    } catch (error) { showError(error); }
+  };
+  editor.append(el('h3', 'Temporary base overrides'), el('p', 'Interaction styles can override these values. Rust source is unchanged.', 'hint'));
+  for (const declaration of selected.style_overrides || []) {
+    const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = declaration.enabled; toggle.disabled = disabled;
+    toggle.setAttribute('aria-label', 'Enable ' + declaration.property);
+    toggle.addEventListener('change', () => edit({action: 'set', declaration: {...declaration, enabled: toggle.checked}}));
+    editor.append(row(toggle, el('code', `${declaration.property}: ${declaration.value};`)));
+  }
+  const form = el('form'), property = el('input'), value = el('input');
+  property.placeholder = 'padding-left'; property.setAttribute('aria-label', 'Override property'); property.maxLength = 64;
+  value.placeholder = '12px'; value.setAttribute('aria-label', 'Override value'); value.maxLength = 128;
+  property.disabled = value.disabled = disabled;
+  const apply = el('button', 'Apply override'); apply.type = 'submit'; apply.disabled = disabled;
+  form.append(row(label('Property', property), label('Value', value), apply));
+  form.addEventListener('submit', event => { event.preventDefault(); edit({action: 'set', declaration: {property: property.value.trim(), value: value.value.trim(), enabled: true}}); });
+  editor.append(form, row(button('Reset overrides', () => edit({action: 'reset'}), disabled), button('Undo style edit', () => edit({action: 'undo'}), disabled)));
+  return editor;
+}
 function elementsPanel() {
   if (!info?.queries?.includes('inspect_tree')) return empty('This runtime does not expose element inspection.');
   if (!elements) return empty('Waiting for the inspected tree.');
@@ -651,6 +678,7 @@ function elementsPanel() {
       }, replaced || !connected || !source)
     ));
     if (elementTab === 'Styles' || elementTab === 'Computed') {
+      if (selected.style_editable) detail.append(styleEditor(selected, replaced));
       const values = elementTab === 'Computed' ? selected.resolved?.properties : selected.styles;
       if (values) {
         const heading = elementTab === 'Computed' ? `Resolved GPUI styles${selected.resolved.hovered ? ' · hovered' : ''} {` : 'Authored base styles {';

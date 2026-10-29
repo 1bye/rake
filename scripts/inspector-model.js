@@ -22,7 +22,7 @@ export function request(runtime, message, key = null) {
       const value = message.value[name];
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new Error(`Invalid ${name} identity.`);
     }
-    if (!key && !['highlight_element', 'inspect_mode', 'navigate_element'].includes(message.value.type)) throw new Error('Commands require a stable request key.');
+    if (!key && !['highlight_element', 'inspect_mode', 'navigate_element', 'edit_element_style'].includes(message.value.type)) throw new Error('Commands require a stable request key.');
   }
   return {protocol: 1, runtime_id: runtime, key, message};
 }

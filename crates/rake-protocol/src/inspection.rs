@@ -180,6 +180,12 @@ pub struct Element {
     /// Observed boundary paint order in this capture; absent on legacy snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paint_order: Option<usize>,
+    /// Whether this boundary can accept temporary base-style overrides.
+    #[serde(default)]
+    pub style_editable: bool,
+    /// Temporary declarations, including disabled ones; never source edits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub style_overrides: Vec<StyleDeclaration>,
     /// Actual GPUI layout, or None for invalid/non-finite geometry.
     pub layout: Option<Layout>,
     /// Resolved box geometry for supported elements; older runtimes omit it.
@@ -298,6 +304,9 @@ pub enum InspectionError {
     /// Invalid tree page offset.
     #[error("tree page offset is outside the retained capture")]
     InvalidPage,
+    /// Unsupported style property/value, unavailable edit target or exhausted edit budget.
+    #[error("style edit rejected: {0}")]
+    StyleEdit(String),
     /// Inspect-mode leases must be finite and at most two seconds.
     #[error("inspection lease must be 1–2000 milliseconds")]
     InvalidLease,
@@ -319,4 +328,36 @@ pub struct Pick {
     pub picked: Option<String>,
     /// Increases once per click; polling never consumes another client's pick.
     pub pick_sequence: u64,
+}
+
+/// One validated temporary CSS-like declaration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StyleDeclaration {
+    /// Supported longhand property name.
+    pub property: String,
+    /// Supported literal value, without functions, URLs or source evaluation.
+    pub value: String,
+    /// Disabled declarations are retained for toggling back on.
+    pub enabled: bool,
+}
+
+/// Temporary base refinement operations, scoped to a stable boundary lifetime.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StyleEdit {
+    /// Replaces all temporary declarations atomically, at most 32.
+    Replace {
+        /// New declaration list.
+        declarations: Vec<StyleDeclaration>,
+    },
+    /// Adds or replaces one property while preserving the others.
+    Set {
+        /// New declaration.
+        declaration: StyleDeclaration,
+    },
+    /// Clears temporary declarations; can itself be undone.
+    Reset,
+    /// Restores the preceding temporary declaration list (up to 32 edits).
+    Undo,
 }

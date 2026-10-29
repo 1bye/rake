@@ -774,6 +774,11 @@ mod tests {
         };
 
         let commands = vec![
+            Command::EditElementStyle {
+                id: "boundary".into(),
+                generation: "1".into(),
+                edit: rake_protocol::inspection::StyleEdit::Reset,
+            },
             Command::NavigateElement {
                 id: "element-1-0".into(),
                 generation: "1".into(),

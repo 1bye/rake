@@ -2,6 +2,7 @@
 
 mod console;
 mod dom;
+mod editing;
 mod evaluate;
 mod network;
 mod server;
