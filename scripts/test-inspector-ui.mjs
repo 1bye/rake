@@ -43,8 +43,8 @@ globalThis.setTimeout = (callback, delay) => { const timer = {callback, delay}; 
 globalThis.clearTimeout = timer => { timer.cancelled = true; };
 const runtime = '2da9d174-653e-4b5e-80ad-1ab0857e8ec1';
 const information = {element_interaction: true, runtime_id: runtime, platform: 'native', supported_targets: ['CurrentTab', 'NewTab', 'NewWindow'],
-  queries: ['info', 'routes', 'commands', 'events', 'diagnostics', 'inspect_tree', 'inspect_element', 'inspect_pick'],
-  commands: ['quit', 'close_window', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
+  queries: ['frames', 'info', 'routes', 'commands', 'events', 'diagnostics', 'inspect_tree', 'inspect_element', 'inspect_pick'],
+  commands: ['edit_element_style', 'record_frames', 'quit', 'close_window', 'open', 'navigate', 'reveal', 'select', 'close', 'back', 'forward', 'mode', 'cancel_task', 'cancel_operation', 'respond', 'run']};
 const fields = {task_id: 'task-5', tab_id: 'tab-7', entry_id: 'entry-8', operation_id: 'op-9', request_id: 10};
 const diagnostics = [
   {sequence: 1, elapsed_us: 5, kind: 'span_open', span_id: 1, parent_span_id: null, spans: ['task'], fields},
@@ -93,13 +93,13 @@ globalThis.fetch = async (url, options) => {
       if (envelope.message.value.type === 'inspect_mode') {
         pickerMode = envelope.message.value.enabled;
         result = {Ok: {type: 'acknowledged'}};
-      } else if (['highlight_element', 'navigate_element', 'edit_element_style'].includes(envelope.message.value.type)) result = {Ok: {type: 'acknowledged'}};
+      } else if (['highlight_element', 'navigate_element', 'edit_element_style', 'record_frames'].includes(envelope.message.value.type)) result = {Ok: {type: 'acknowledged'}};
       else result = {Ok: {type: 'submitted', value: {operation_id: 9}}};
     } else {
       const query = envelope.message.value;
       observedQueries.push(query.type);
       if (standaloneMode) assert.ok(information.queries.includes(query.type), `unsupported standalone query: ${query.type}`);
-      const replies = {inspect_pick: {mode: pickerMode, generation: elementCapture.capture, hovered: null, picked: pickedBoundary, pick_sequence: pickSequence}, inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
+      const replies = {frames: {recording: false, frames: [], cursor: 0, more: false, dropped: 0, gap: false}, inspect_pick: {mode: pickerMode, generation: elementCapture.capture, hovered: null, picked: pickedBoundary, pick_sequence: pickSequence}, inspect_tree: elementCapture, inspect_element: elementCapture.elements[0], info: information, routes: [{id: 'document', path: '/documents/{id}', params: [{name: 'id', value_type: 'String', required: true}]}],
         commands: [{id: 'test.echo', capability: 'Headless', arguments: {type: 'object', required: ['message'], properties: {message: {type: 'string'}}}, result: {type: 'string'}},
           {id: 'test.unit', capability: 'RequiresWindow', arguments: {type: 'null'}, result: {type: 'null'}},
           {id: 'test.tuple', capability: 'Headless', arguments: {type: 'array', prefixItems: [{type: 'string'}, {type: 'integer', minimum: 0}]}, result: {type: 'array'}}],
@@ -240,6 +240,14 @@ await panel('Requests'); assert.match(ids.content.textContent, /abandoned/);
 assert.match(ids.content.textContent, /localhost\/resource/);
 await panel('Traces'); assert.match(ids.content.textContent, /Closed/);
 assert.ok(all(ids.content).some(node => node.tagName === 'svg'));
+information.queries.push('frames'); information.commands.push('record_frames');
+await panel('Frames');
+assert.match(ids.content.textContent, /Record frames/);
+await find('button', 'Record frames').click(); await settle();
+assert.equal(envelopes.at(-1).message.value.type, 'record_frames');
+assert.equal(envelopes.at(-1).message.value.lease_ms, 5000);
+await find('button', 'Stop frame recording').click(); await settle();
+assert.equal(envelopes.at(-1).message.value.enabled, false);
 await panel('Elements'); assert.match(ids.content.textContent, /3 omitted/);
 await find('button', 'Pick element in app').click(); await settle();
 assert.equal(pickerMode, true);

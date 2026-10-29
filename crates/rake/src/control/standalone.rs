@@ -73,6 +73,7 @@ impl super::host::Host for InspectionClient {
                 "highlight_element",
                 "inspect_mode",
                 "edit_element_style",
+                "record_frames",
             ]
             .map(str::to_owned)
             .into(),
@@ -82,6 +83,7 @@ impl super::host::Host for InspectionClient {
                 "diagnostics",
                 "inspect_tree",
                 "inspect_tree_page",
+                "frames",
                 "inspect_element",
                 "inspect_pick",
             ]
@@ -118,6 +120,7 @@ impl super::host::Host for InspectionClient {
             Message::Query(Query::InspectTreePage { generation, offset }) => Ok(
                 Reply::ElementPage(store.tree_page(generation.as_deref(), offset)?),
             ),
+            Message::Query(Query::Frames { after }) => Ok(Reply::Frames(store.frames(after))),
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
             Message::Query(Query::InspectElement { id }) => Ok(Reply::Element(store.element(&id)?)),
             Message::Query(Query::InspectPick {}) => Ok(Reply::InspectPick(store.pick()?)),
@@ -127,6 +130,10 @@ impl super::host::Host for InspectionClient {
             }
             Message::Command(Command::InspectMode { enabled, lease_ms }) => {
                 store.inspect_mode(enabled, lease_ms)?;
+                Ok(Reply::Acknowledged)
+            }
+            Message::Command(Command::RecordFrames { enabled, lease_ms }) => {
+                store.record_frames(enabled, lease_ms)?;
                 Ok(Reply::Acknowledged)
             }
             Message::Command(Command::EditElementStyle {

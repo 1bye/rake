@@ -8,7 +8,7 @@ Five changes, each delivered in a separate commit:
    and document exact GPUI hook requirements for unavailable used layout metrics.
 3. **Implemented.** Live styles: temporary validated overrides for colors, spacing, dimensions and
    typography, with declaration toggles, reset and undo; never rewrite Rust source.
-4. Frame performance: bounded live recording, frame duration and inspected-node
+4. **Implemented.** Frame performance: bounded live recording, frame duration and inspected-node
    layout/prepaint/paint timings linked to Rust source; distinguish CPU wall time
    from GPU execution and presentation latency.
 5. Accessibility and interaction: roles, accessible names, focus state/order and

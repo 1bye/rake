@@ -7,6 +7,7 @@
 //! No views, text contents or source contents are retained.
 
 mod editing;
+mod recording;
 #[cfg(feature = "gpui")]
 mod view;
 #[cfg(feature = "experimental-view")]
@@ -31,6 +32,7 @@ pub(crate) struct Store(Rc<RefCell<State>>);
 struct State {
     latest: Rc<Snapshot>,
     edits: BTreeMap<String, editing::History>,
+    frames: recording::Recording,
     pages: BTreeMap<String, (Rc<Snapshot>, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     next_capture: u64,
@@ -74,6 +76,7 @@ impl Default for Store {
                 coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Text content is not captured.".into(),
             }),
             edits: BTreeMap::new(),
+            frames: recording::Recording::default(),
             pages: BTreeMap::new(),
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
@@ -431,6 +434,7 @@ impl Store {
         let mut state = self.0.borrow_mut();
 
         state.windows.remove(&window);
+        state.frames.detach(window);
 
         if state.pick_window == Some(window) {
             state.pick_window = None;
@@ -575,6 +579,7 @@ impl State {
     }
 
     fn expire(&mut self, now: Instant) {
+        self.frames.expire(now);
         if self.mode_until.is_some_and(|until| until <= now) {
             self.cancel();
         }

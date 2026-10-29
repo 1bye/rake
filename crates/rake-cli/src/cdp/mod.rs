@@ -4,6 +4,7 @@ mod console;
 mod dom;
 mod editing;
 mod evaluate;
+mod frames;
 mod network;
 mod server;
 mod session;

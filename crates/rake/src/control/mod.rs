@@ -176,6 +176,7 @@ impl<R: Route> RuntimeClient<R> {
                         | Command::InspectMode { .. }
                         | Command::NavigateElement { .. }
                         | Command::EditElementStyle { .. }
+                        | Command::RecordFrames { .. }
                 ) {
                     return self.command(&command);
                 }
@@ -263,6 +264,10 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::RecordFrames { enabled, lease_ms } => {
+                self.state.inspection.record_frames(*enabled, *lease_ms)?;
+                return Ok(Reply::Acknowledged);
+            }
             Command::EditElementStyle {
                 id,
                 generation,
@@ -393,6 +398,7 @@ impl<R: Route> RuntimeClient<R> {
                     .inspection
                     .tree_page(generation.as_deref(), offset)?,
             )),
+            Query::Frames { after } => Ok(Reply::Frames(self.state.inspection.frames(after))),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),

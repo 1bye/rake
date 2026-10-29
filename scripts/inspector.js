@@ -1,12 +1,13 @@
 import {InspectorState, commandArguments, elementName, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
 
 const $ = id => document.getElementById(id);
-const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Elements', 'Reload'];
+const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Frames', 'Elements', 'Reload'];
 const model = new InspectorState();
 let panel = 'Workspace', instances = [], routes = [], commands = [], info = null, development = null;
 let filter = {}, search = '', page = 0, paused = false, polling = false, mutating = false, connected = false;
 let receipt = null, operation = null, selectedOperation = null, output = {records: [], dropped: 0}, level = 'ALL', source = 'Structured', taskOwner = 'All';
 const expanded = new Set(), drafts = new Map();
+let frameState = null, frameRecords = [], frameAfter = 0, recordingFrames = false;
 let elements = null, selectedElement = null, elementDetail = null, elementError = null;
 let rendered = null, workspaceFocus = null, elementTab = 'Styles', resizing = false;
 const paneSizes = new Map(), scrollPositions = new Map();
@@ -163,6 +164,8 @@ function treeRow(name, kind, id, depth, active, onInspect, meta = '') {
 }
 function choose(runtime) {
   stopInspection(); pickSequence = 0;
+  if (recordingFrames && model.runtime) inspectionControl({type: 'record_frames', enabled: false, lease_ms: 0}).catch(() => {});
+  frameState = null; frameRecords = []; frameAfter = 0; recordingFrames = false;
   awaitingSuccessor = null;
   model.reset(runtime); info = null; routes = []; commands = []; connected = false;
   elements = null; selectedElement = null; elementDetail = null; elementError = null;
@@ -283,6 +286,13 @@ async function refresh() {
             selectedOperation = null;
           }
         }
+      }
+      if ((panel === 'Frames' || recordingFrames) && info.queries.includes('frames')) {
+        if (recordingFrames) await inspectionControl({type: 'record_frames', enabled: true, lease_ms: 5000}, runtime);
+        const frames = (await query('frames', {after: frameAfter}, runtime)).value;
+        if (runtime !== model.runtime) return;
+        frameState = frames; frameAfter = frames.cursor;
+        frameRecords.push(...frames.frames); frameRecords = frameRecords.slice(-200);
       }
       if (panel === 'Elements' && info?.queries?.includes('inspect_tree')) {
         const tree = await inspectionTree(runtime);
@@ -718,6 +728,32 @@ function elementsPanel() {
   return splitView(master, detail, 'elements');
 }
 
+function framesPanel() {
+  if (!info?.queries?.includes('frames')) return empty('Frame recording is unavailable for this runtime.');
+  const record = async enabled => {
+    try { await inspectionControl({type: 'record_frames', enabled, lease_ms: enabled ? 5000 : 0}); recordingFrames = enabled; await refresh(); }
+    catch (error) { recordingFrames = false; showError(error); }
+  };
+  const latest = frameRecords.at(-1);
+  const result = append(el('div'), row(button(recordingFrames ? 'Stop frame recording' : 'Record frames', () => record(!recordingFrames), !connected),
+    badge(frameState?.recording ? 'Recording' : 'Stopped')),
+    el('p', 'Window draw and inclusive boundary callback CPU wall times. Nested durations overlap. GPU execution and presentation latency are unavailable.', 'hint'),
+    el('p', `${frameRecords.length} frames shown · ${frameState?.dropped || 0} runtime evictions${frameState?.gap ? ' · recording history gap' : ''}`, 'hint'),
+    table(['Frame', 'Window', 'Draw (ms)', 'Dirty → draw end (ms)', 'Invalidations'], frameRecords.slice(-100).reverse().map(frame =>
+      [frame.sequence, frame.window, (frame.draw_us / 1000).toFixed(3), frame.dirty_to_draw_us == null ? 'Unavailable' : (frame.dirty_to_draw_us / 1000).toFixed(3), frame.invalidations])));
+  if (latest) {
+    result.append(el('h3', 'Latest frame: slowest inclusive callbacks'), table(['Boundary', 'Phase', 'Time (ms)', 'Rust source'], latest.nodes.map(node => [node.name, node.phase, (node.duration_us / 1000).toFixed(3),
+      button(`${node.source.file}:${node.source.line}`, async () => {
+        try {
+          const tree = await inspectionTree(model.runtime), matches = tree.elements.filter(element => node.stable_id && element.stable_id === node.stable_id);
+          if (matches.length !== 1) throw new Error('The recorded boundary is no longer mounted.');
+          await rpc('inspect_source', {runtime_id: model.runtime, id: matches[0].id});
+        } catch (error) { showError(error); }
+      }, !node.stable_id)])), el('p', `${latest.omitted_nodes} callback records omitted. Component rendering inside request-layout is included; this is not an isolated layout-solver measurement.`, 'hint'));
+  }
+  return result;
+}
+
 function reloadPanel() {
   return append(el('div'), card('Supervisor', el('pre', text(development, 12000))),
     model.snapshot ? card('Runtime reload boundary', el('pre', text(model.snapshot.reload, 12000))) : null,
@@ -758,11 +794,11 @@ function render(force = false) {
   $('export').disabled = !model.runtime;
   if (resizing || (!force && document.activeElement?.closest('form'))) return;
   const signature = JSON.stringify([panel, model.runtime, model.cursor, model.after, connected, mutating,
-    receipt, operation, development, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
+    receipt, operation, development, frameState, frameRecords.at(-1)?.sequence, recordingFrames, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
   if (!force && signature === rendered) return;
   rendered = signature;
   const content = ({Workspace: workspace, Routes: routing, Tasks: tasksPanel, Operations: operationsPanel, Decisions: decisionsPanel,
-    Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Elements: elementsPanel, Reload: reloadPanel})[panel]();
+    Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Frames: framesPanel, Elements: elementsPanel, Reload: reloadPanel})[panel]();
   content.classList.add('panel-body');
   if (!content.classList.contains('split-view')) rememberScroll(content, 'panel:' + panel);
   const focused = document.activeElement?.dataset.focus;

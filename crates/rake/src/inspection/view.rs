@@ -54,6 +54,7 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         view_key: None,
         style_reader: None,
         original_style: None,
+        profile: None,
     }
 }
 
@@ -73,6 +74,7 @@ pub struct Inspected<E: gpui::Element> {
     view_key: Option<ElementId>,
     style_reader: Option<fn(&mut E) -> gpui::StyleRefinement>,
     original_style: Option<gpui::StyleRefinement>,
+    profile: Option<super::recording::Target>,
 }
 
 impl<E: gpui::Element + Styled> Styled for Inspected<E> {
@@ -369,6 +371,13 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some((store, _, host)) = &self.root {
+            store
+                .0
+                .borrow_mut()
+                .frames
+                .begin(*host, window.window_handle().window_id());
+        }
         if let Some((store, _, host)) = &self.root
             && let Some(focus) = store.take_focus(*host)
         {
@@ -413,6 +422,23 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                         .find(|identity| identity.key == key && identity.parent == context.parent)
                 })
                 .map(|identity| identity.id.clone());
+            self.profile = state.frames.active().then(|| super::recording::Target {
+                store: context.store.clone(),
+                window: context.window,
+                stable: stable.clone(),
+                name: limited(
+                    self.semantic_id
+                        .as_deref()
+                        .unwrap_or(std::any::type_name::<E>()),
+                    256,
+                    &mut false,
+                ),
+                source: SourceLocation {
+                    file: limited(self.source.file(), 512, &mut false),
+                    line: self.source.line(),
+                    column: self.source.column(),
+                },
+            });
             if let Some(child) = &mut child_context {
                 child.parent = stable.clone();
                 child.owner = owner;
@@ -431,7 +457,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             }
         }
         cx.global_mut::<LayoutHost>().0 = child_context;
+        let timer = self
+            .profile
+            .as_ref()
+            .and_then(|target| target.start(super::FramePhase::Layout));
         let (layout, state) = self.inner.request_layout(id, inspector_id, window, cx);
+        if let Some(timer) = timer {
+            timer.finish();
+        }
         cx.global_mut::<LayoutHost>().0 = previous_host;
         if capturing
             && self.original_style.is_none()
@@ -627,10 +660,17 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             }
         }
 
+        let timer = self
+            .profile
+            .as_ref()
+            .and_then(|target| target.start(super::FramePhase::Prepaint));
         let result = self
             .inner
             .prepaint(id, inspector_id, bounds, &mut state.0, window, cx);
 
+        if let Some(timer) = timer {
+            timer.finish();
+        }
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
             capture.parents.pop();
             capture.owners.pop();
@@ -753,6 +793,10 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             listeners(store, *host, window, cx);
         }
 
+        let timer = self
+            .profile
+            .as_ref()
+            .and_then(|target| target.start(super::FramePhase::Paint));
         self.inner.paint(
             id,
             inspector_id,
@@ -762,6 +806,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             window,
             cx,
         );
+        if let Some(timer) = timer {
+            timer.finish();
+        }
 
         if let Some(previous) = previous {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
@@ -1129,6 +1176,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
     let now = web_time::Instant::now();
     let mut state = store.0.borrow_mut();
     let mode_until = state.mode_until;
+    let recording_until = state.frames.until;
 
     if let Some(host) = state.windows.get_mut(&host) {
         let deadline = host
@@ -1137,6 +1185,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
             .map(|(_, until)| *until)
             .into_iter()
             .chain(mode_until)
+            .chain(recording_until)
             .min();
 
         if let Some(deadline) = deadline.filter(|deadline| {
@@ -1278,6 +1327,51 @@ mod tests {
                 .inspect("root")
                 .root(self.store.clone(), 0, WindowId(1))
         }
+    }
+
+    #[test]
+    fn live_frame_recording_uses_gpui_draws_and_source_attributed_callbacks() {
+        let mut app = gpui::TestAppContext::single();
+        let store = Store::default();
+        store.attach();
+        let (_, cx) = app.add_window_view(|_, _| IdentityView {
+            store: store.clone(),
+            order: vec![1],
+            width: 20.,
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+        };
+        draw(cx);
+        assert!(store.frames(0).frames.is_empty());
+        assert!(store.record_frames(true, 5001).is_err());
+        store.record_frames(true, 5000).unwrap();
+        draw(cx);
+        draw(cx);
+        let frames = store.frames(0);
+        assert!(frames.recording);
+        assert!(!frames.frames.is_empty());
+        let nodes: Vec<_> = frames
+            .frames
+            .iter()
+            .flat_map(|frame| &frame.nodes)
+            .collect();
+        assert!(nodes.iter().any(|node| node.name == "item-1"
+            && node.phase == super::super::FramePhase::Layout
+            && node.stable_id.is_some()));
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.phase == super::super::FramePhase::Paint && node.source.line > 0)
+        );
+        store.record_frames(false, 0).unwrap();
+        let cursor = store.frames(0).cursor;
+        draw(cx);
+        assert!(!store.frames(cursor).recording);
+        assert!(store.frames(cursor).frames.is_empty());
     }
 
     #[test]

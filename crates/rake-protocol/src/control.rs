@@ -48,6 +48,13 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Enables a renewable frame recording lease; disconnect expiry stops measurement.
+    RecordFrames {
+        /// Start/renew recording, or stop without discarding retained frames.
+        enabled: bool,
+        /// Must be 1–5000 milliseconds when enabled.
+        lease_ms: u64,
+    },
     /// Edits temporary base refinements without changing Rust source or router state.
     EditElementStyle {
         /// Exact current boundary.
@@ -191,6 +198,7 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "record_frames",
             "edit_element_style",
             "navigate_element",
             "highlight_element",
@@ -219,6 +227,11 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Retained frame timings after a recording sequence, with loss and continuation metadata.
+    Frames {
+        /// Exclusive recording cursor, zero starts at retained history.
+        after: u64,
+    },
     /// Leased picker status; clients deduplicate retained clicks by pick_sequence.
     InspectPick {},
     /// All logical host identities, independent selections, visibility and close status.
@@ -302,6 +315,7 @@ impl Query {
             "inspect_pick",
             "inspect_tree",
             "inspect_tree_page",
+            "frames",
             "inspect_element",
             "reload",
             "checkpoint",
@@ -407,6 +421,8 @@ pub enum Reply {
     Quit(crate::quit::QuitStatus),
     /// Latest completed bounded element tree.
     Elements(crate::inspection::Snapshot),
+    /// Bounded live frame timings.
+    Frames(crate::inspection::Frames),
     /// Generation-pinned tree index page.
     ElementPage(crate::inspection::TreePage),
     /// Exact element metadata from that capture.

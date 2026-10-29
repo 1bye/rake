@@ -4,8 +4,11 @@ use crate::router::{EntryId, TabId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Live frame recording contracts.
+pub mod performance;
 /// Shared presentation of captured style values.
 pub mod styles;
+pub use performance::{FramePhase, FrameTiming, Frames, NodeTiming};
 
 /// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.
 pub const MAX_ELEMENTS: usize = 8192;
@@ -307,6 +310,12 @@ pub enum InspectionError {
     /// Unsupported style property/value, unavailable edit target or exhausted edit budget.
     #[error("style edit rejected: {0}")]
     StyleEdit(String),
+    /// Frame recording leases must be bounded.
+    #[error("frame recording lease must be 1–5000 milliseconds")]
+    InvalidRecordingLease,
+    /// This runtime has no GPUI frame profiler.
+    #[error("frame recording requires a mounted GPUI inspection host")]
+    RecordingUnavailable,
     /// Inspect-mode leases must be finite and at most two seconds.
     #[error("inspection lease must be 1–2000 milliseconds")]
     InvalidLease,

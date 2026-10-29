@@ -774,6 +774,10 @@ mod tests {
         };
 
         let commands = vec![
+            Command::RecordFrames {
+                enabled: false,
+                lease_ms: 0,
+            },
             Command::EditElementStyle {
                 id: "boundary".into(),
                 generation: "1".into(),
@@ -847,6 +851,7 @@ mod tests {
 
         let queries = vec![
             Query::InspectPick {},
+            Query::Frames { after: 0 },
             Query::Windows {},
             Query::Window {
                 window: "window-1".parse().unwrap(),

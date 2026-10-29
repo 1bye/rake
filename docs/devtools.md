@@ -90,8 +90,10 @@ Chrome trace-event JSON for Perfetto or Performance's Load profile. Synchronous
 nesting uses complete events, overlapping unrelated spans use async begin/end
 IDs, and incomplete captures use flagged instant events. The export is bounded
 to 4 MiB and includes loss/omission counts. Times describe elapsed wall time,
-with a logical thread lane; they are not CPU samples. Live `Tracing.start`/`end`
-remain unsupported pending a verified frame-less Performance recording.
+with a logical thread lane; they are not CPU samples. Live `Tracing.start`/`end` record GPUI frames and source-attributed inspected callback
+wall timings. Both ReportEvents and ReturnAsStream (uncompressed JSON, IO.read/close)
+are supported, with a 4 MiB adapter budget and explicit loss reporting. This does not
+record browser rendering, V8 CPU profiles or GPU execution. See frame recording below.
 
 `rake dev --target desktop --package rake-routing --cdp` starts the adapter under
 the supervisor and prints its discovery URL beside the HTML inspector URL. The
@@ -191,7 +193,7 @@ DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
 CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
 Network.getResponseBody/getRequestPostData return descriptive unavailable errors.
 Overlay.highlightNode/setInspectMode require advertised runtime interaction support. Every unlisted method returns `-32601`,
-including Debugger, Profiler, Tracing, DOM edits and other JavaScript function calls.
+including Debugger, Profiler, DOM edits and other JavaScript function calls.
 CSS edits are restricted to temporary DevTools base override sheets; authored styles remain read-only.
 The adapter also accepts the explicit extension `Rake.openSource { nodeId }`.
 
@@ -276,3 +278,26 @@ A pixel/GPU debugger, CPU profiler and native code loader are outside this
 stage. Native IPC currently requires Unix. Native replacement continues to use
 the external reloader boundary or the explicitly reported checkpointed process
 restart described in [development](development.md).
+
+## Live frame recording
+
+The HTML inspector's **Frames** panel starts/stops a renewable five-second lease.
+`record_frames` and `frames { after }` expose the same runtime data to raw control
+clients. Closing a host or letting the lease expire releases profiling. Recording
+uses GPUI's actual complete Window::draw timings, invalidation counts and optional
+dirty-to-draw-end latency. It retains up to 600 frames / 4 MiB and returns bounded,
+cursor-based pages with gaps, evictions and continuation metadata.
+
+The slowest 64 inspected callback timings per observed frame include stable
+boundary identities and Rust source locations. Their durations are inclusive and
+must not be summed across nested boundaries. Request-layout can include component
+rendering; it is not a separate measurement of GPUI's private layout solver.
+GPU execution, presentation latency and CPU sampling remain unavailable. The GPUI
+frame collector has no public upstream loss counter; gaps in its own process-wide
+buffer cannot be quantified by Rake. Rake reports its own bounded retention loss.
+
+Chrome's Tracing path consumes the same frames; streaming avoids large WebSocket
+responses. The exported profile can be read as Chrome trace-event JSON or in
+Perfetto. Chrome's browser/JavaScript-specific Performance tracks are not supplied.
+The Elements-only native/Web inspector remains focused on Elements; frame controls
+are in the HTML inspector and CDP.
