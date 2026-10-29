@@ -1,19 +1,21 @@
 //! Standalone development-control discovery and transport, without the Rake runtime.
-//! Blocking exchanges have a finite deadline. Call them outside an async UI executor.
+//! Blocking exchanges are native-only and have a finite total deadline.
+//! Call them outside an async UI executor; endpoint metadata remains portable.
 
-use rake_protocol::control::{
-    ControlError, Message, PROTOCOL_VERSION, Query, Reply, Request, RuntimeInfo,
-};
+use rake_protocol::control::{ControlError, RuntimeInfo};
+#[cfg(not(target_family = "wasm"))]
+use rake_protocol::control::{MAX_MESSAGE_BYTES, Message, PROTOCOL_VERSION, Query, Reply, Request};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 #[cfg(unix)]
 pub mod local;
 
 /// A discovered runtime endpoint. Credentials are kept only in owner-readable files.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Endpoint {
     /// Permission-restricted Unix socket.
@@ -28,6 +30,19 @@ pub enum Endpoint {
         /// Random development session credential.
         token: String,
     },
+}
+
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local { path } => formatter.debug_struct("Local").field("path", path).finish(),
+            Self::Web { url, .. } => formatter
+                .debug_struct("Web")
+                .field("url", url)
+                .field("token", &"[REDACTED]")
+                .finish(),
+        }
+    }
 }
 
 /// An advertisement written only while a development endpoint is owned by its host.
@@ -46,7 +61,7 @@ pub struct Instance {
 /// Inspectable discovery, transport and runtime failures.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Local discovery or socket I/O failed.
+    /// Discovery, socket I/O or control-frame validation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
     /// HTTP configuration or exchange failed.
@@ -64,6 +79,10 @@ pub enum Error {
 }
 
 /// Executes one blocking query for the exact advertised runtime.
+///
+/// # Errors
+/// Returns the same transport, framing and runtime failures as [`exchange`].
+#[cfg(not(target_family = "wasm"))]
 pub fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Reply, Error> {
     exchange(
         instance,
@@ -78,7 +97,14 @@ pub fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Rep
 }
 
 /// Exchanges one request with a finite deadline, preserving runtime rejection errors.
-/// Web credentials are sent only to a validated loopback HTTP broker.
+/// Web credentials are sent only to a validated loopback HTTP broker; redirects
+/// are rejected. Responses are limited to the protocol's 1 MiB frame budget.
+///
+/// # Errors
+/// Returns [`Error::InvalidBroker`] for invalid broker URLs, [`Error::Io`] for
+/// socket/framing failures or oversized replies, [`Error::Http`] for HTTP failures
+/// (including timeouts and redirects), and [`Error::Control`] for runtime rejection.
+#[cfg(not(target_family = "wasm"))]
 pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply, Error> {
     let reply = match &instance.endpoint {
         Endpoint::Local { path } => {
@@ -113,13 +139,30 @@ pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Re
                 .map_err(|_| Error::InvalidBroker)?;
 
             futures::executor::block_on(async {
-                rake_http::HttpClient::new(rake_http::HttpConfig::new())?
+                let mut response = rake_http::HttpClient::new(rake_http::HttpConfig::new())?
+                    .without_redirects()?
                     .post(endpoint.as_str())
                     .header("X-Rake-Token", token)
                     .timeout(timeout)
                     .json(&serde_json::json!({"runtime_id": instance.info.runtime_id, "request": request}))
-                    .send_json::<Result<Reply, ControlError>>()
-                    .await
+                    .send().await?.error_for_status()?;
+
+                let mut bytes = Vec::new();
+
+                while let Some(chunk) = response.next_chunk().await? {
+                    if chunk.len() > MAX_MESSAGE_BYTES - bytes.len() {
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "control response too large",
+                        )));
+                    }
+
+                    bytes.extend_from_slice(&chunk);
+                }
+
+                serde_json::from_slice::<Result<Reply, ControlError>>(&bytes)
+                    .map_err(rake_http::Error::Decode)
+                    .map_err(Error::Http)
             })?
         }
     };

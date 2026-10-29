@@ -48,11 +48,13 @@ pub enum QuitPhase {
 
 impl QuitPhase {
     /// Whether an admitted quit is still executing.
+    #[must_use]
     pub fn is_pending(self) -> bool {
         matches!(self, Self::WaitingForJobs | Self::Guarding | Self::Stopping)
     }
 
     /// Whether this phase rejects new navigation.
+    #[must_use]
     pub fn blocks_navigation(self) -> bool {
         self.is_pending() || self == Self::Ready
     }

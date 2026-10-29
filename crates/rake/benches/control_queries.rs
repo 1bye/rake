@@ -1,7 +1,7 @@
 //! Measures targeted query cost with unrelated retained histories and managed work.
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
-use rake::control::{Message, PROTOCOL_VERSION, Query, Request};
+use rake::control::{EventCursor, Message, PROTOCOL_VERSION, Query, Request};
 use rake::router::{OpenOptions, Router, RouterConfig};
 use std::hint::black_box;
 use std::time::Instant;
@@ -64,8 +64,21 @@ fn main() {
     }
 
     let client = router.client();
+    let snapshot = router.snapshot();
+
+    let cursor = EventCursor {
+        runtime_id: snapshot.runtime_id,
+        epoch: 1,
+        revision: snapshot.revision,
+    };
 
     for (name, query) in [
+        (
+            "idle events",
+            Query::Events {
+                cursor: Some(cursor),
+            },
+        ),
         ("windows", Query::Windows {}),
         ("operations", Query::Operations {}),
         ("decisions", Query::Decisions {}),
@@ -96,6 +109,6 @@ fn main() {
         }
 
         samples.sort_by(f64::total_cmp);
-        println!("{name}: {:.1} us", samples[2]);
+        println!("{name}: {:.3} us", samples[2]);
     }
 }

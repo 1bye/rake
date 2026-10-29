@@ -4577,6 +4577,7 @@ dependencies = [
 name = "rake-client"
 version = "0.1.0"
 dependencies = [
+ "async-io",
  "futures",
  "libc",
  "rake-http",

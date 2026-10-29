@@ -145,6 +145,7 @@ pub enum TabMode {
 /// Explicit creation and activation options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[must_use]
 pub struct OpenOptions {
     /// Application host target.
     pub target: OpenTarget,

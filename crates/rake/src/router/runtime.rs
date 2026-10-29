@@ -727,6 +727,10 @@ impl<R: Route> Router<R> {
         })
     }
 
+    pub(crate) fn revision(&self) -> u64 {
+        self.0.state.borrow().revision + self.0.tasks.revision()
+    }
+
     /// Waits for a newer owned snapshot revision without a snapshot/subscription gap.
     pub async fn changed(&self, revision: u64) -> u64 {
         loop {

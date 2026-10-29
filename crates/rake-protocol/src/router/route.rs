@@ -41,6 +41,9 @@ pub struct RouteDescriptor {
 /// Parsing/formatting for domain IDs and ordinary scalar route parameters.
 pub trait RouteParam: Sized {
     /// Parses one decoded string into the domain type.
+    ///
+    /// # Errors
+    /// Returns an application-readable reason when the decoded value is invalid.
     fn parse_param(value: &str) -> Result<Self, String>;
 
     /// Formats one canonical parameter value.
@@ -66,12 +69,20 @@ pub trait Route: Clone + 'static {
     fn encode(&self) -> RouteAddress;
 
     /// Validates an owned address, including missing, unknown and malformed parameters.
+    ///
+    /// # Errors
+    /// Returns [`RouteDecodeError`] for unknown routes, missing/unknown parameters
+    /// or values rejected by their [`RouteParam`] implementation.
     fn decode(address: &RouteAddress) -> Result<Self, RouteDecodeError>;
 
     /// Describes the complete closed route registry.
     fn descriptors() -> &'static [RouteDescriptor];
 
     /// Encodes this destination as an absolute path and optional query string.
+    ///
+    /// # Errors
+    /// Returns [`RouteDecodeError`] for invalid addresses or destinations that do
+    /// not round-trip through the registered URI patterns.
     fn to_uri(&self) -> Result<String, RouteDecodeError> {
         let address = self.encode();
         let uri = address_uri(&address, Self::descriptors())?;
@@ -87,6 +98,10 @@ pub trait Route: Clone + 'static {
     }
 
     /// Decodes a path/query URI using the same contract as the browser adapter.
+    ///
+    /// # Errors
+    /// Returns [`RouteDecodeError`] for malformed or ambiguous URIs, unknown routes
+    /// or parameters that fail destination decoding.
     fn from_uri(uri: &str) -> Result<Self, RouteDecodeError> {
         Self::decode(&uri_address(uri, Self::descriptors())?)
     }
@@ -140,6 +155,10 @@ pub enum RouteDecodeError {
 
 impl RouteAddress {
     /// Checks parameter names and presence against the selected route descriptor.
+    ///
+    /// # Errors
+    /// Returns [`RouteDecodeError`] when supplied parameter names do not match
+    /// the descriptor, or a required parameter is missing.
     pub fn validate(&self, descriptor: &RouteDescriptor) -> Result<(), RouteDecodeError> {
         for key in self.params.keys() {
             if !descriptor.params.iter().any(|param| param.name == key) {
@@ -157,6 +176,10 @@ impl RouteAddress {
     }
 
     /// Parses a required parameter through its domain contract.
+    ///
+    /// # Errors
+    /// Returns [`RouteDecodeError::MissingParameter`] for absent values, or
+    /// [`RouteDecodeError::InvalidParameter`] if parsing fails.
     pub fn parameter<T: RouteParam>(&self, name: &str) -> Result<T, RouteDecodeError> {
         let value = self
             .params
@@ -202,6 +225,10 @@ fn decode_component(value: &str, query: bool) -> Result<String, RouteDecodeError
 }
 
 /// Formats a validated owned address without requiring its Rust destination type.
+///
+/// # Errors
+/// Returns [`RouteDecodeError`] for unknown routes, invalid parameter sets,
+/// or empty/dot-segment path parameters.
 pub fn address_uri(
     address: &RouteAddress,
     descriptors: &[RouteDescriptor],
@@ -257,6 +284,10 @@ pub fn address_uri(
 }
 
 /// Decodes a URI into a schema-validated address. Static paths take precedence.
+///
+/// # Errors
+/// Returns [`RouteDecodeError`] for malformed/ambiguous URIs or a path that
+/// does not match any descriptor.
 pub fn uri_address(
     uri: &str,
     descriptors: &[RouteDescriptor],

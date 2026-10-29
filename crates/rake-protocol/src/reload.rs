@@ -30,6 +30,9 @@ pub trait ReloadState: Serialize + DeserializeOwned {
     const VERSION: u32;
 
     /// Captures owned data. Called synchronously at a quiescent reload boundary.
+    ///
+    /// # Errors
+    /// Returns [`ReloadError::State`] if application data cannot be serialized.
     fn checkpoint(&self) -> Result<Checkpoint, ReloadError> {
         Ok(Checkpoint {
             schema: Self::SCHEMA.into(),
@@ -40,6 +43,10 @@ pub trait ReloadState: Serialize + DeserializeOwned {
     }
 
     /// Validates compatibility before decoding application state.
+    ///
+    /// # Errors
+    /// Returns [`ReloadError::Incompatible`] for a schema/version mismatch, or
+    /// [`ReloadError::State`] if the checkpoint data cannot be decoded.
     fn restore(checkpoint: Checkpoint) -> Result<Self, ReloadError> {
         if checkpoint.schema != Self::SCHEMA || checkpoint.version != Self::VERSION {
             return Err(ReloadError::Incompatible(format!(

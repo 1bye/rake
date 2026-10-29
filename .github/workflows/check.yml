@@ -14,6 +14,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
       - run: cargo test --workspace --locked
       - run: cargo test -p rake --features view-test-support --lib --test view_state --locked
       - run: cargo test -p rake-view --features view-test-support --lib --locked

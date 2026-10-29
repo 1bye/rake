@@ -85,6 +85,7 @@ pub struct Element {
 /// assert_eq!(rake_protocol::inspection::display_name("gpui::Stateful<gpui::Div>"), "Div");
 /// assert_eq!(rake_protocol::inspection::display_name("gpui::ViewElement<app::TabBar<app::Route>>"), "TabBar");
 /// ```
+#[must_use]
 pub fn display_name(mut kind: &str) -> &str {
     while let Some((wrapper, inner)) = kind.split_once('<') {
         if matches!(

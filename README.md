@@ -74,7 +74,9 @@ inspection, theme and overlay imports retain their types through reexports.
 - `rake-protocol` owns route codecs, IDs, snapshots, checkpoint data and versioned
   control messages. It has no UI, HTTP or application-runtime dependency.
 - `rake-client` owns Unix discovery and blocking, deadline-bounded local/Web control
-  exchanges, with inspectable transport and runtime errors. It depends on
+  exchanges on native targets, with inspectable transport and runtime errors.
+  Unix connection/write/read work shares one deadline. Web exchanges reject redirects
+  and cap response bodies at 1 MiB; endpoint debug output redacts credentials. It depends on
   `rake-protocol` and `rake-http`; it does not start an application runtime.
 - `rake-ui` owns GPUI view helpers, themes and overlays. The facade enables it with
   `experimental-view`. Its `test-support` feature enables native frame tests.
@@ -89,7 +91,8 @@ because their entry, window, cancellation and reload invariants share one local 
 Application code can continue depending only on `rake`.
 
 Inspector polling filters diagnostics by cursor/kind and tasks by owner before
-cloning. Targeted control queries copy only their requested data. Window snapshots
+cloning. Unchanged event polls check the revision without constructing a snapshot.
+Targeted control queries copy only their requested data. Window snapshots
 encode only that window's histories. Retained inspection captures share immutable
 storage internally; external snapshots remain independent owned values. Style-only
 redraws keep element identities, while changed boundaries invalidate the generation.
@@ -106,7 +109,9 @@ On the local synthetic fixture (128 tabs, 640 history entries and 256 tasks), me
 query times over five batches changed from 125.0 to 0.4 µs for windows, 137.5 to
 18.2 µs for operations, and 119.2 to 0.9 µs for an empty owner-filtered task result.
 Publishing 256 unchanged inspection boundaries with 512-byte style payloads changed
-from 203.2 to 51.1 µs. These measure CPU work, not end-to-end GPU/frame performance.
+from 203.2 to 51.1 µs. A subsequent unchanged-event polling fast path reduced that
+query from 279.6 to 0.022 µs on the same fixture, excluding serialization and I/O.
+These measure CPU work, not end-to-end GPU/frame performance.
 
 ## Run
 
@@ -170,6 +175,7 @@ provide their own app-shell rewrites and serve the generated assets at `/pkg/`.
 cargo fmt --all --check
 cargo check --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
 cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo check -p rake --no-default-features --locked

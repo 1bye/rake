@@ -706,6 +706,33 @@ fn targeted_queries_match_snapshot_fields_without_encoding_unrelated_routes() {
         .unwrap();
     let snapshot = router.snapshot();
     let client = router.client();
+
+    let current_cursor = EventCursor {
+        runtime_id: snapshot.runtime_id,
+        epoch: 1,
+        revision: snapshot.revision,
+    };
+
+    ENCODED.with(|count| count.set(0));
+
+    let Reply::Event(idle) = client
+        .request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: router.runtime_id(),
+            key: None,
+            message: Message::Query(Query::Events {
+                cursor: Some(current_cursor),
+            }),
+        })
+        .unwrap()
+    else {
+        panic!("event reply")
+    };
+
+    assert_eq!(idle.kind, EventKind::Unchanged);
+    assert_eq!(idle.cursor, current_cursor);
+    assert!(idle.snapshot.is_none());
+    ENCODED.with(|count| assert_eq!(count.get(), 0, "idle polls must not encode routes"));
     let tab_owner = rake::tasks::TaskOwner::Tab(opened.tab_id);
 
     let filtered: Vec<_> = snapshot

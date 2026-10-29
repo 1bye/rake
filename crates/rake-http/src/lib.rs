@@ -62,6 +62,7 @@ pub enum Error {
 
 /// Shared request policy. Cloning copies configuration, not a transport.
 #[derive(Clone, Default)]
+#[must_use]
 pub struct HttpConfig {
     base_url: Option<String>,
     timeout: Option<Duration>,
@@ -103,6 +104,7 @@ pub struct CancellationToken(Arc<Cancellation>);
 
 impl CancellationToken {
     /// Creates an uncancelled token.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -114,6 +116,7 @@ impl CancellationToken {
     }
 
     /// Whether cancellation has been requested.
+    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
     }
@@ -145,11 +148,17 @@ pub struct HttpClient(Arc<Client>);
 
 impl HttpClient {
     /// Creates a standalone client with bounded diagnostics and executor adaptation.
+    ///
+    /// # Errors
+    /// Returns [`Error::Configuration`] for an invalid base URL or transport setup failure.
     pub fn new(config: HttpConfig) -> Result<Self> {
         Self::with_collector(config, Collector::default())
     }
 
     /// Creates a client contributing request lifecycle events to the given collector.
+    ///
+    /// # Errors
+    /// Returns [`Error::Configuration`] for an invalid base URL or transport setup failure.
     pub fn with_collector(config: HttpConfig, collector: Collector) -> Result<Self> {
         let base_url = config.base_url.as_deref().map(parse_url).transpose()?;
 
@@ -166,6 +175,9 @@ impl HttpClient {
     }
 
     /// Builds an equivalent native client that never follows redirects.
+    ///
+    /// # Errors
+    /// Returns [`Error::Configuration`] if the native transport cannot be constructed.
     #[cfg(not(target_family = "wasm"))]
     pub fn without_redirects(&self) -> Result<Self> {
         let transport = reqwest::Client::builder()
@@ -300,6 +312,10 @@ impl Request {
     }
 
     /// Sends the request, returning headers and an unconsumed body, including non-2xx.
+    ///
+    /// # Errors
+    /// Returns configuration/encoding errors before transmission, [`Error::Cancelled`]
+    /// or [`Error::Timeout`] when interrupted, or [`Error::Transport`] if sending fails.
     pub async fn send(self) -> Result<Response> {
         let request = self
             .builder?
@@ -383,6 +399,10 @@ impl Request {
     }
 
     /// Requires a 2xx status and decodes the JSON response body.
+    ///
+    /// # Errors
+    /// Returns the failures from [`Self::send`], [`Error::Status`] for non-2xx
+    /// responses, body-consumption failures, or [`Error::Decode`] for invalid JSON.
     pub async fn send_json<T: DeserializeOwned>(self) -> Result<T> {
         self.send().await?.error_for_status()?.json().await
     }
@@ -405,6 +425,7 @@ pub struct Response {
 
 impl Response {
     /// The received HTTP status code.
+    #[must_use]
     pub fn status(&self) -> u16 {
         self.status
     }
@@ -417,6 +438,9 @@ impl Response {
     }
 
     /// Returns this response for 2xx, or an inspectable status error otherwise.
+    ///
+    /// # Errors
+    /// Returns [`Error::Status`] when the received status is outside 200–299.
     pub fn error_for_status(self) -> Result<Self> {
         if !(200..300).contains(&self.status) {
             return Err(Error::Status {
@@ -429,6 +453,10 @@ impl Response {
 
     /// Reads one chunk. `None` marks completion; errors terminate consumption.
     /// No inspector buffering or body preview is performed.
+    ///
+    /// # Errors
+    /// Returns [`Error::Cancelled`], [`Error::Timeout`] or [`Error::Body`]. After
+    /// any terminal error, subsequent calls return `Ok(None)`.
     pub async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
         if self.lifecycle.finished {
             return Ok(None);
@@ -462,6 +490,9 @@ impl Response {
     }
 
     /// Explicitly buffers the response body into owned bytes.
+    ///
+    /// # Errors
+    /// Returns the cancellation, timeout and body failures from [`Self::next_chunk`].
     pub async fn bytes(mut self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
@@ -473,6 +504,10 @@ impl Response {
     }
 
     /// Reads and decodes JSON. Does not enforce status; use `error_for_status` first.
+    ///
+    /// # Errors
+    /// Returns body-consumption failures or [`Error::Decode`] if the body is not
+    /// valid JSON for `T`. HTTP status validation remains the caller’s responsibility.
     pub async fn json<T: DeserializeOwned>(self) -> Result<T> {
         serde_json::from_slice(&self.bytes().await?).map_err(Error::Decode)
     }

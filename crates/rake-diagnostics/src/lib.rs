@@ -98,6 +98,7 @@ impl Default for Collector {
 
 impl Collector {
     /// Creates a collector. Capacity zero records only loss counts.
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self(Arc::new(Inner {
             buffer: Mutex::new(Buffer {
@@ -113,6 +114,7 @@ impl Collector {
     }
 
     /// Copies retained records without draining the collector.
+    #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot_after(0, None)
     }
@@ -123,6 +125,7 @@ impl Collector {
     /// records. Other kinds match exactly. Filtering precedes cloning, so incremental
     /// polling copies only the selected records. Loss counters always cover the
     /// collector's entire lifetime, even when this snapshot contains no records.
+    #[must_use]
     pub fn snapshot_after(&self, after: u64, kind: Option<&str>) -> Snapshot {
         let buffer = self
             .0
@@ -152,6 +155,7 @@ impl Collector {
     }
 
     /// Supplies a layer for a host-owned tracing subscriber.
+    #[must_use]
     pub fn layer(&self) -> CollectorLayer {
         CollectorLayer(self.clone())
     }
@@ -170,11 +174,13 @@ impl Collector {
     }
 
     /// Captures this collector's current tracing metadata for later asynchronous work.
+    #[must_use]
     pub fn context(&self) -> CapturedContext {
         self.span_context(&tracing::Span::current())
     }
 
     /// Captures metadata from a span on a registry-backed subscriber carrying this layer.
+    #[must_use]
     pub fn span_context(&self, span: &tracing::Span) -> CapturedContext {
         span.with_subscriber(|(id, dispatch)| {
             dispatch
@@ -455,6 +461,7 @@ pub enum SubscriberMode {
 
 /// Runner diagnostic configuration. No development control endpoint is installed.
 #[derive(Clone, Default)]
+#[must_use]
 pub struct DiagnosticsConfig {
     collector: Collector,
     mode: SubscriberMode,
@@ -474,6 +481,7 @@ impl DiagnosticsConfig {
     }
 
     /// Returns a shared collector handle for composing application services.
+    #[must_use]
     pub fn shared_collector(&self) -> Collector {
         self.collector.clone()
     }
@@ -486,6 +494,10 @@ impl DiagnosticsConfig {
     }
 
     /// Installs diagnostics once. Automatic installation returns an error on conflict.
+    ///
+    /// # Errors
+    /// Returns [`DiagnosticsError::SubscriberAlreadyInstalled`] if another subscriber
+    /// is installed, or [`DiagnosticsError::OutputWorker`] if the output worker cannot start.
     pub fn install(&self) -> Result<(), DiagnosticsError> {
         if matches!(self.mode, SubscriberMode::Host) {
             return Ok(());

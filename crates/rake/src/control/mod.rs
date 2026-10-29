@@ -408,7 +408,25 @@ impl<R: Route> RuntimeClient<R> {
                 serde_json::to_value(self.router.decision_snapshots())
                     .expect("decision serialization"),
             )),
-            Query::Events { cursor } => Ok(Reply::Event(event(self.router.snapshot(), cursor))),
+            Query::Events { cursor } => {
+                let current = EventCursor {
+                    runtime_id: self.router.runtime_id(),
+                    epoch: 1,
+                    revision: self.router.revision(),
+                };
+
+                let event = if cursor == Some(current) {
+                    RuntimeEvent {
+                        cursor: current,
+                        kind: EventKind::Unchanged,
+                        snapshot: None,
+                    }
+                } else {
+                    event(self.router.snapshot(), cursor)
+                };
+
+                Ok(Reply::Event(event))
+            }
             Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
                 self.router.diagnostics(after, kind.as_deref()),
             )),

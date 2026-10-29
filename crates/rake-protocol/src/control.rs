@@ -170,6 +170,7 @@ pub enum Command {
 
 impl Command {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
+    #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
             "highlight_element",
@@ -265,6 +266,7 @@ pub enum Query {
 
 impl Query {
     /// Stable tags accepted by Serde, used in discovery and terminal help.
+    #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
             "windows",

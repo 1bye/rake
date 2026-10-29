@@ -17,6 +17,7 @@ pub struct Color {
 
 /// Reads solid sRGB backgrounds or palette HSL colors from captured style JSON.
 /// Unknown fills, color spaces and invalid channel values return `None`.
+#[must_use]
 pub fn color(value: &Value) -> Option<Color> {
     let (value, names, hue_scale) = if value.get("Color").is_some() {
         let color = &value["Color"];
@@ -53,6 +54,7 @@ pub fn color(value: &Value) -> Option<Color> {
 
 impl Color {
     /// Returns an sRGB hex color, preserving alpha when translucent.
+    #[must_use]
     pub fn css(self) -> String {
         let color = self;
         let chroma = (1. - (2. * color.l - 1.).abs()) * color.s;
