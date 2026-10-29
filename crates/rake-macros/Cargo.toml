@@ -13,6 +13,9 @@ proc-macro = true
 [lints]
 workspace = true
 
+[features]
+view = []
+
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"

@@ -12,7 +12,8 @@ use std::rc::Rc;
 
 use gpui::{App, FontWeight, Global, Pixels};
 
-pub(crate) mod apply;
+#[doc(hidden)]
+pub mod apply;
 
 thread_local! {
     static THEMES: RefCell<HashMap<TypeId, Rc<dyn Any>>> = RefCell::default();

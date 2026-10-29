@@ -3,9 +3,9 @@
 use super::wire::{Error, Event, Request, Response};
 use super::{Result, TIMEOUT};
 use crate::terminal::query;
-use rake::control::local::Instance;
+use rake_client::local::Instance;
 
-use rake::control::{
+use rake_protocol::control::{
     Command, Message as RuntimeMessage, PROTOCOL_VERSION, Query, Reply, Request as RuntimeRequest,
 };
 
@@ -590,7 +590,7 @@ impl Session {
     }
 
     fn successor(&self, directory: &std::path::Path) -> Option<Instance> {
-        let instances = rake::control::local::discover(directory).ok()?;
+        let instances = rake_client::local::discover(directory).ok()?;
 
         let mut successors=instances.into_iter().filter(|i|i.application_id==self.instance.application_id && i.info.runtime_id!=self.instance.info.runtime_id)
             .filter(|i|matches!(query(i,Query::Reload {},TIMEOUT),Ok(Reply::Reload(status)) if status.restored_from==Some(self.instance.info.runtime_id)));
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn outbound_retention_is_bounded_by_count_and_bytes() {
-        let router = rake::router::Router::<rake::router::NoRoute>::new(
+        let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
         );
 
@@ -729,7 +729,7 @@ mod tests {
             application_id: "test.queue".into(),
             pid: 1,
             info: router.client().info(),
-            endpoint: rake::control::local::Endpoint::Local {
+            endpoint: rake_client::local::Endpoint::Local {
                 path: "/unused".into(),
             },
         };
@@ -762,7 +762,7 @@ mod tests {
 
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
 
-        let router = rake::router::Router::<rake::router::NoRoute>::new(
+        let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
         );
 
@@ -773,7 +773,7 @@ mod tests {
             application_id: "test.overlay".into(),
             pid: 1,
             info,
-            endpoint: rake::control::local::Endpoint::Local { path: path.clone() },
+            endpoint: rake_client::local::Endpoint::Local { path: path.clone() },
         };
 
         let worker = std::thread::spawn(move || {
@@ -789,7 +789,7 @@ mod tests {
                     .read_line(&mut line)
                     .unwrap();
                 let request: RuntimeRequest = serde_json::from_str(&line).unwrap();
-                let result = Ok::<_, rake::control::ControlError>(reply(request));
+                let result = Ok::<_, rake_protocol::control::ControlError>(reply(request));
 
                 writeln!(socket, "{}", serde_json::to_string(&result).unwrap()).unwrap();
             }
@@ -849,7 +849,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
-    fn capture(generation: &str) -> rake::inspection::Snapshot {
+    fn capture(generation: &str) -> rake_protocol::inspection::Snapshot {
         serde_json::from_value(json!({"status":"captured","capture":generation,"router_revision":0,"elements":[{
             "id":format!("element-{generation}-0"),"kind":"Div","metadata_truncated":false}],"omitted":0,"coverage":"test"})).unwrap()
     }
@@ -915,7 +915,7 @@ mod tests {
     fn live_style_events_invalidate_chrome_without_document_resets() {
         let mut snapshot = capture("live");
 
-        snapshot.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
+        snapshot.elements[0].resolved = Some(rake_protocol::inspection::ResolvedStyle {
             properties: json!({"opacity":1.0}),
             hovered: false,
         });
@@ -992,7 +992,7 @@ mod tests {
         let (instance, worker, path) = fixture(
             |request| match request.message {
                 RuntimeMessage::Query(Query::InspectPick {}) => {
-                    Reply::InspectPick(rake::inspection::Pick {
+                    Reply::InspectPick(rake_protocol::inspection::Pick {
                         mode: false,
                         generation: "2".into(),
                         hovered: Some("element-2-0".into()),

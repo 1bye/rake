@@ -12,189 +12,21 @@ mod view;
 #[cfg(feature = "gpui")]
 pub use view::{InspectElement, Inspected, inspect};
 
-/// Shared presentation of captured style values.
-pub mod styles;
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 use web_time::Instant;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::router::WindowId;
 
-use crate::router::{EntryId, TabId, WindowId};
-
-/// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.
-pub const MAX_ELEMENTS: usize = 256;
-/// Maximum serialized snapshot size, below the transport's 1 MiB limit.
-pub const MAX_SNAPSHOT_BYTES: usize = 512 * 1024;
-/// Maximum serialized resolved style per boundary, within the total snapshot budget.
-pub const MAX_RESOLVED_STYLE_BYTES: usize = 16 * 1024;
-
-/// Window-local logical pixels, after layout and element offsets; not screen pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Layout {
-    /// Horizontal origin.
-    pub x: f32,
-    /// Vertical origin.
-    pub y: f32,
-    /// Laid-out width before clipping.
-    pub width: f32,
-    /// Laid-out height before clipping.
-    pub height: f32,
-}
-
-/// Construction site of an inspection boundary; no file access is provided.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SourceLocation {
-    /// Compiler-supplied source path, possibly relative or remapped.
-    pub file: String,
-    /// One-based line.
-    pub line: u32,
-    /// One-based column.
-    pub column: u32,
-}
-
-/// GPUI's current visual style sampled during paint, including inherited text.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolvedStyle {
-    /// Complete resolved GPUI style; relative layout lengths retain their units.
-    pub properties: Value,
-    /// Whether GPUI's actual hitbox is hovered in this frame.
-    pub hovered: bool,
-}
-
-/// One boundary in prepaint traversal order. Semantic IDs may repeat in a tree.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Element {
-    /// Opaque identity scoped to the runtime and this capture; never a semantic selector.
-    pub id: String,
-    /// Nearest retained inspected ancestor; uninstrumented intermediates are omitted.
-    pub parent: Option<String>,
-    /// Rust element type, without a promise of a stable wire spelling.
-    pub kind: String,
-    /// Application-supplied identity, distinct from GPUI state identity.
-    pub semantic_id: Option<String>,
-    /// Construction site of the boundary, when supplied.
-    pub source: Option<SourceLocation>,
-    /// Actual GPUI layout, or None for invalid/non-finite geometry.
-    pub layout: Option<Layout>,
-    /// Visible content-mask intersection in window-local logical pixels.
-    #[serde(default)]
-    pub content_mask: Option<Layout>,
-    /// Serialized GPUI base style refinement; None for custom unstyled elements.
-    pub styles: Option<Value>,
-    /// Live resolved style for GPUI `Div`/`Stateful<Div>`; absent for opaque/custom elements.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved: Option<ResolvedStyle>,
-    /// Whether a metadata field exceeded its capture limit.
-    pub metadata_truncated: bool,
-    /// Presented route owner; None for the workspace shell.
-    pub tab_id: Option<TabId>,
-    /// Presented route entry, never a hidden retained history entry.
-    pub entry_id: Option<EntryId>,
-}
-
-/// Short inspection label without Rust module paths, generic arguments or GPUI wrappers.
-/// The captured [`Element::kind`] retains the complete Rust type.
-///
-/// ```
-/// assert_eq!(rake::inspection::display_name("gpui::Stateful<gpui::Div>"), "Div");
-/// assert_eq!(rake::inspection::display_name("gpui::ViewElement<app::TabBar<app::Route>>"), "TabBar");
-/// ```
-pub fn display_name(mut kind: &str) -> &str {
-    while let Some((wrapper, inner)) = kind.split_once('<') {
-        if matches!(
-            wrapper.rsplit("::").next(),
-            Some("Stateful" | "ViewElement")
-        ) && let Some(inner) = inner.strip_suffix('>')
-        {
-            kind = inner;
-        } else {
-            break;
-        }
-    }
-
-    kind.split('<')
-        .next()
-        .unwrap_or(kind)
-        .rsplit("::")
-        .next()
-        .unwrap_or(kind)
-}
-
-/// Coverage and availability, independent of whether the current tree is empty.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    /// No mounted inspection host (including headless runtimes).
-    #[default]
-    Unavailable,
-    /// Attached host has not completed a capture yet.
-    Waiting,
-    /// A completed prepaint traversal is available.
-    Captured,
-}
-
-/// Latest completed tree. Replacing a capture invalidates every previous element ID.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Snapshot {
-    /// Explicit availability.
-    pub status: Status,
-    /// Monotonic capture identity, encoded as a string for JavaScript precision.
-    pub capture: String,
-    /// Router revision at the start of the captured render, not a live revision.
-    pub router_revision: u64,
-    /// Captured boundaries in depth-first order.
-    pub elements: Vec<Element>,
-    /// Inspected boundaries omitted by count/byte limits. Opaque descendants are uncounted.
-    pub omitted: usize,
-    /// Human-readable coverage including opaque/cached subtrees and style limitations.
-    pub coverage: String,
-}
-
-/// Exact lookup failure. Clients refresh the tree after stale captures.
-#[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
-pub enum InspectionError {
-    /// No suitable mounted host.
-    #[error("element inspection is unavailable for this runtime")]
-    Unavailable,
-    /// Host is waiting for its first completed capture.
-    #[error("element inspection is waiting for a completed frame")]
-    Waiting,
-    /// ID is invalid, omitted, or belongs to a replaced capture.
-    #[error("element identity is not retained; refresh the inspected tree")]
-    NotRetained,
-    /// A command referred to a replaced capture generation.
-    #[error("inspection generation is stale; refresh the capture")]
-    StaleGeneration,
-    /// Inspect-mode leases must be finite and at most two seconds.
-    #[error("inspection lease must be 1–2000 milliseconds")]
-    InvalidLease,
-}
-
-/// Bounded picker status. Clients deduplicate clicks using `pick_sequence`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Pick {
-    /// Whether the input-capture lease remains active.
-    pub mode: bool,
-    /// Capture identity of the reported hover/pick, not a router revision.
-    pub generation: String,
-    /// Boundary under the latest pointer observation.
-    pub hovered: Option<String>,
-    /// Most recent clicked boundary; retained until the next mode begins.
-    pub picked: Option<String>,
-    /// Increases once per click; polling never consumes another client's pick.
-    pub pick_sequence: u64,
-}
+pub use rake_protocol::inspection::*;
 
 #[derive(Clone)]
 pub(crate) struct Store(Rc<RefCell<State>>);
 
 struct State {
-    latest: Snapshot,
+    latest: Rc<Snapshot>,
     #[cfg(any(feature = "gpui", test))]
     next_capture: u64,
     windows: BTreeMap<WindowId, WindowState>,
@@ -207,7 +39,7 @@ struct State {
 }
 
 struct WindowState {
-    snapshot: Snapshot,
+    snapshot: Rc<Snapshot>,
     highlight: Option<(Element, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     pointer: Option<(f32, f32)>,
@@ -220,14 +52,14 @@ struct WindowState {
 impl Default for Store {
     fn default() -> Self {
         Self(Rc::new(RefCell::new(State {
-            latest: Snapshot {
+            latest: Rc::new(Snapshot {
                 status: Status::Unavailable,
                 capture: "0".into(),
                 router_revision: 0,
                 elements: Vec::new(),
                 omitted: 0,
                 coverage: "Rake inspection boundaries only; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div> styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Text content is not captured.".into(),
-            },
+            }),
             #[cfg(any(feature = "gpui",test))]
             next_capture: 0,
             windows: BTreeMap::new(),
@@ -250,6 +82,7 @@ impl Store {
             .and_then(|id| state.windows.get(&id))
             .map(|host| &host.snapshot)
             .unwrap_or(&state.latest)
+            .as_ref()
             .clone()
     }
 
@@ -422,7 +255,7 @@ impl Store {
 
     #[cfg(feature = "gpui")]
     pub(crate) fn attach(&self) {
-        self.0.borrow_mut().latest.status = Status::Waiting;
+        Rc::make_mut(&mut self.0.borrow_mut().latest).status = Status::Waiting;
     }
 
     #[cfg(any(feature = "gpui", test))]
@@ -430,29 +263,22 @@ impl Store {
         let mut state = self.0.borrow_mut();
 
         if let Some(host) = state.windows.get(&window) {
-            // Overlay-only redraws must not invalidate the node the user is picking.
-            let mut stable = snapshot.clone();
+            // Style-only redraws keep stable identities without copying style payloads.
+            let old = &host.snapshot;
 
-            stable.capture = host.snapshot.capture.clone();
-
-            for (index, element) in stable.elements.iter_mut().enumerate() {
-                element.id = format!("element-{}-{index}", stable.capture);
-
-                if let Some(parent) = &element.parent
-                    && let Some((_, index)) = parent.rsplit_once('-')
-                {
-                    element.parent = Some(format!("element-{}-{index}", stable.capture));
-                }
-            }
-
-            let same_boundaries = stable.elements.len() == host.snapshot.elements.len()
-                && stable
-                    .elements
-                    .iter()
-                    .zip(&host.snapshot.elements)
-                    .all(|(element, old)| {
-                        element.id == old.id
-                            && element.parent == old.parent
+            let same_boundaries = snapshot.elements.len() == old.elements.len()
+                && snapshot.omitted == old.omitted
+                && snapshot.elements.iter().zip(&old.elements).enumerate().all(
+                    |(index, (element, old))| {
+                        old.id
+                            .strip_prefix("element-")
+                            .and_then(|id| id.rsplit_once('-'))
+                            == Some((host.snapshot.capture.as_str(), index.to_string().as_str()))
+                            && same_parent(
+                                element.parent.as_deref(),
+                                old.parent.as_deref(),
+                                &host.snapshot.capture,
+                            )
                             && element.kind == old.kind
                             && element.semantic_id == old.semantic_id
                             && element.source == old.source
@@ -460,15 +286,23 @@ impl Store {
                             && element.content_mask == old.content_mask
                             && element.tab_id == old.tab_id
                             && element.entry_id == old.entry_id
-                    });
+                    },
+                );
 
-            if same_boundaries && stable.omitted == host.snapshot.omitted {
-                snapshot = stable;
+            if same_boundaries {
+                snapshot.capture.clone_from(&old.capture);
+
+                for (element, old) in snapshot.elements.iter_mut().zip(&old.elements) {
+                    element.id.clone_from(&old.id);
+                    element.parent.clone_from(&old.parent);
+                }
             }
         }
 
+        let snapshot = Rc::new(snapshot);
+
         let host = state.windows.entry(window).or_insert_with(|| WindowState {
-            snapshot: snapshot.clone(),
+            snapshot: Rc::clone(&snapshot),
             highlight: None,
             pointer: None,
             #[cfg(feature = "gpui")]
@@ -481,7 +315,7 @@ impl Store {
             host.highlight = None;
         }
 
-        host.snapshot = snapshot.clone();
+        host.snapshot = Rc::clone(&snapshot);
         let pointer = host.pointer;
 
         state.latest = snapshot;
@@ -557,72 +391,78 @@ fn hit_test(snapshot: &Snapshot, x: f32, y: f32) -> Option<&Element> {
         element
             .layout
             .zip(element.content_mask)
-            .is_some_and(|(bounds, mask)| bounds.contains(x, y) && mask.contains(x, y))
+            .is_some_and(|(bounds, mask)| contains(bounds, x, y) && contains(mask, x, y))
     })
 }
 
-impl Layout {
-    #[cfg(any(feature = "gpui", test))]
-    fn contains(self, x: f32, y: f32) -> bool {
-        x >= self.x
-            && y >= self.y
-            && x < self.x + self.width
-            && y < self.y + self.height
-            && self.width > 0.
-            && self.height > 0.
-    }
+#[cfg(any(feature = "gpui", test))]
+fn contains(bounds: Layout, x: f32, y: f32) -> bool {
+    x >= bounds.x
+        && y >= bounds.y
+        && x < bounds.x + bounds.width
+        && y < bounds.y + bounds.height
+        && bounds.width > 0.
+        && bounds.height > 0.
 }
 
-#[cfg(any(feature = "gpui", test))]
-impl Snapshot {
-    #[cfg(feature = "gpui")]
-    fn bound_resolved_styles(&mut self) {
-        let mut base_bytes = 0;
+#[cfg(feature = "gpui")]
+fn bound_resolved_styles(snapshot: &mut Snapshot) {
+    let mut base_bytes = 0;
 
-        for element in &mut self.elements {
-            let resolved = element.resolved.take();
+    for element in &mut snapshot.elements {
+        let resolved = element.resolved.take();
 
-            base_bytes +=
-                serde_json::to_vec(&*element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len());
-            element.resolved = resolved;
-        }
+        base_bytes += serde_json::to_vec(&*element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len());
+        element.resolved = resolved;
+    }
 
-        let mut remaining = (MAX_SNAPSHOT_BYTES - 4096).saturating_sub(base_bytes);
+    let mut remaining = (MAX_SNAPSHOT_BYTES - 4096).saturating_sub(base_bytes);
 
-        for element in &mut self.elements {
-            if let Some(resolved) = &element.resolved {
-                let bytes = serde_json::to_vec(resolved)
-                    .map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len())
-                    + 16;
+    for element in &mut snapshot.elements {
+        if let Some(resolved) = &element.resolved {
+            let bytes =
+                serde_json::to_vec(resolved).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len()) + 16;
 
-                if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
-                    element.resolved = None;
-                    element.metadata_truncated = true;
-                } else {
-                    remaining -= bytes;
-                }
+            if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
+                element.resolved = None;
+                element.metadata_truncated = true;
+            } else {
+                remaining -= bytes;
             }
         }
     }
+}
 
-    // Leaves room for envelope, coverage and JSON separators below the wire limit.
-    fn retain(&mut self, element: Element, bytes: &mut usize) -> Option<String> {
-        let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len());
+// Leaves room for envelope, coverage and JSON separators below the wire limit.
+#[cfg(any(feature = "gpui", test))]
+fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Option<String> {
+    let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len());
 
-        if self.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_SNAPSHOT_BYTES - 4096 {
-            self.omitted += 1;
+    if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_SNAPSHOT_BYTES - 4096 {
+        snapshot.omitted += 1;
 
-            return None;
-        }
-
-        *bytes += size;
-        let id = element.id.clone();
-
-        self.elements.push(element);
-
-        Some(id)
+        return None;
     }
+
+    *bytes += size;
+    let id = element.id.clone();
+
+    snapshot.elements.push(element);
+
+    Some(id)
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(feature = "gpui", test))]
+fn same_parent(parent: Option<&str>, old: Option<&str>, capture: &str) -> bool {
+    match parent.and_then(|parent| parent.rsplit_once('-')) {
+        Some((_, index)) => {
+            old.and_then(|old| old.strip_prefix("element-"))
+                .and_then(|old| old.rsplit_once('-'))
+                == Some((capture, index))
+        }
+        None => parent == old,
+    }
+}

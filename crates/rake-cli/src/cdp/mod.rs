@@ -10,8 +10,8 @@ mod styles;
 mod trace;
 mod wire;
 
-use rake::control::local::{self, Instance};
-use rake::control::{Query, Reply};
+use rake_client::local::{self, Instance};
+use rake_protocol::control::{Query, Reply};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

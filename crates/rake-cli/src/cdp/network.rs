@@ -1,7 +1,7 @@
 //! Pure request-lifecycle translation. Headers, bodies and JS stacks are unavailable.
 
 use super::wire::Event;
-use rake::diagnostics::Record;
+use rake_diagnostics::Record;
 use serde_json::{Value, json};
 
 pub(super) fn translate(record: &Record) -> Vec<Event> {

@@ -9,6 +9,7 @@ use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 
 mod command;
 mod route;
+#[cfg(feature = "view")]
 mod view;
 
 /// Builds a GPUI element tree from experimental HTML-like markup.
@@ -84,6 +85,7 @@ mod view;
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///
 #[proc_macro]
+#[cfg(feature = "view")]
 pub fn view(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as view::View);
     let expanded = facade().and_then(|rake| input.expand_resilient(&rake));
@@ -297,6 +299,7 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Validates app-owned theme field names and requires Clone.
 #[proc_macro_derive(Theme)]
+#[cfg(feature = "view")]
 pub fn derive_theme(input: TokenStream) -> TokenStream {
     view::theme::derive(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(syn::Error::into_compile_error)
@@ -309,6 +312,7 @@ pub fn derive_theme(input: TokenStream) -> TokenStream {
 /// GPUI permits one refinement per interaction kind: do not combine a preset's
 /// hover/focus style with classes setting the same kind on the same element.
 #[proc_macro_attribute]
+#[cfg(feature = "view")]
 pub fn style(attributes: TokenStream, input: TokenStream) -> TokenStream {
     let classes = parse_macro_input!(attributes as syn::LitStr);
     let item = parse_macro_input!(input as syn::ForeignItemFn);

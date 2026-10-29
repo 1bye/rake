@@ -18,7 +18,10 @@ jobs:
       - run: cargo test -p rake --features view-test-support --lib --test view_state --locked
       - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo check -p rake --no-default-features --locked
-      - run: cargo check -p rake-diagnostics --lib --target wasm32-unknown-unknown --locked
+      - run: cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
+      - run: cargo check -p rake-macros --no-default-features --locked
+      - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
+      - run: cargo test -p rake-ui --features test-support --lib --locked
       - run: cargo clippy -p rake --no-default-features --locked -- -D warnings
       - run: cargo build -p rake-cli --locked
       - name: Install matching Wasm bindings tool

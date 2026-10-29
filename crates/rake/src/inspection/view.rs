@@ -227,7 +227,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             };
 
             let index = capture.snapshot.elements.len();
-            let retained = capture.snapshot.retain(element, &mut capture.bytes);
+            let retained = retain(&mut capture.snapshot, element, &mut capture.bytes);
 
             retained_index = retained.as_ref().map(|_| index);
             let parent = retained.or_else(|| capture.parents.last().cloned().flatten());
@@ -272,7 +272,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         cx: &mut App,
     ) {
         let previous = self.root.as_ref().and_then(|(store, _, host)| {
-            let snapshot = store.0.borrow().windows.get(host)?.snapshot.clone();
+            let snapshot = store
+                .0
+                .borrow()
+                .windows
+                .get(host)?
+                .snapshot
+                .as_ref()
+                .clone();
 
             Some(cx.global_mut::<ActiveCapture>().0.replace(Capture {
                 snapshot,
@@ -308,7 +315,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
-                completed.snapshot.bound_resolved_styles();
+                bound_resolved_styles(&mut completed.snapshot);
                 store.publish(*host, completed.snapshot);
             }
         }
@@ -892,3 +899,5 @@ mod tests {
         assert_eq!(clicks.get(), 2);
     }
 }
+
+use super::{bound_resolved_styles, retain};

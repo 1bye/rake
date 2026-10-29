@@ -66,7 +66,7 @@ fn empty_content_constructs_an_empty_accessible_text_element() {
     assert_eq!(node.value(), Some(""));
 }
 
-#[cfg(all(feature = "view-test-support", not(target_family = "wasm")))]
+#[cfg(all(feature = "test-support", not(target_family = "wasm")))]
 mod frames {
     use std::cell::RefCell;
     use std::rc::Rc;

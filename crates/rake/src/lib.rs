@@ -9,7 +9,8 @@ pub mod control;
 
 pub use rake_diagnostics as diagnostics;
 
-pub mod http;
+pub use rake_http as http;
+
 pub mod inspection;
 pub mod quit;
 pub mod reload;
@@ -21,13 +22,13 @@ pub mod tasks;
 mod application;
 
 #[cfg(feature = "experimental-view")]
-mod view;
+use rake_ui::view;
 
 #[cfg(feature = "experimental-view")]
 pub mod overlay;
 
 #[cfg(feature = "experimental-view")]
-pub mod theme;
+pub use rake_ui::theme;
 
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError};

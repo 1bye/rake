@@ -518,13 +518,16 @@ impl<R: Route> Router<R> {
 
     /// Copies state without exposing retained views or mutable histories.
     pub fn snapshot(&self) -> RouterSnapshot {
+        self.snapshot_filtered(None)
+    }
+
+    fn snapshot_filtered(&self, window: Option<WindowId>) -> RouterSnapshot {
         let state = self.0.state.borrow();
+        let window_id = window.unwrap_or(self.0.initial_window.get());
+        let host = state.windows.get(&window_id);
         let mut work = self.0.tasks.snapshot();
 
-        work.host_visibility = state
-            .windows
-            .get(&self.0.initial_window.get())
-            .map_or(HostVisibility::Unknown, |window| window.visibility);
+        work.host_visibility = host.map_or(HostVisibility::Unknown, |host| host.visibility);
         let quit = self.0.quit_status(&work);
 
         RouterSnapshot {
@@ -532,56 +535,40 @@ impl<R: Route> Router<R> {
             reload: self.reload_status(),
             work,
             supported_targets: self.supported_targets(),
-            windows: state
-                .windows
-                .iter()
-                .map(|(id, window)| WindowSnapshot {
-                    id: *id,
-                    selected: window.selected,
-                    closing: window.closing,
-                    visibility: window.visibility,
-                })
-                .collect(),
+            windows: state.window_snapshots(),
             runtime_id: self.0.runtime,
-            window_id: self.0.initial_window.get(),
+            window_id,
             revision: state.revision + self.0.tasks.revision(),
-            selected: state
-                .windows
-                .get(&self.0.initial_window.get())
-                .and_then(|window| window.selected),
-            tabs: state
-                .tabs
-                .iter()
-                .map(|tab| TabSnapshot {
-                    window_id: tab.window,
-                    id: tab.id,
-                    mode: tab.mode,
-                    cursor: tab.cursor,
-                    entries: tab
-                        .entries
-                        .iter()
-                        .map(|entry| EntrySnapshot {
-                            id: entry.id,
-                            destination: entry.destination.encode(),
-                            dirty: entry.dirty.get(),
-                            revision: entry.revision.get(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-            decisions: state
-                .decisions
-                .values()
-                .map(|decision| decision.snapshot.clone())
-                .collect(),
-            operations: state
-                .operations
-                .iter()
-                .map(|(id, status)| (*id, status.clone()))
-                .collect(),
+            selected: host.and_then(|host| host.selected),
+            tabs: state.tab_snapshots(window),
+            decisions: state.decision_snapshots(window),
+            operations: state.operation_snapshots(),
             history_capacity: self.0.config.history_capacity,
             history_error: state.history_error.clone(),
         }
+    }
+
+    pub(crate) fn window_snapshots(&self) -> Vec<WindowSnapshot> {
+        self.0.state.borrow().window_snapshots()
+    }
+
+    pub(crate) fn tab_snapshots(&self) -> Vec<TabSnapshot> {
+        self.0.state.borrow().tab_snapshots(None)
+    }
+
+    pub(crate) fn decision_snapshots(&self) -> Vec<DecisionSnapshot> {
+        self.0.state.borrow().decision_snapshots(None)
+    }
+
+    pub(crate) fn operation_snapshots(&self) -> Vec<(OperationId, OperationState)> {
+        self.0.state.borrow().operation_snapshots()
+    }
+
+    pub(crate) fn task_snapshots(
+        &self,
+        owner: Option<TaskOwner>,
+    ) -> Vec<crate::tasks::TaskSnapshot> {
+        self.0.tasks.task_snapshots(owner)
     }
 
     /// Returns retained operation state or an explicit expiration/unknown error.
@@ -2525,4 +2512,56 @@ async fn execute<R: Route>(
     }
 
     result
+}
+
+impl<R: Route> State<R> {
+    fn window_snapshots(&self) -> Vec<WindowSnapshot> {
+        self.windows
+            .iter()
+            .map(|(id, window)| WindowSnapshot {
+                id: *id,
+                selected: window.selected,
+                closing: window.closing,
+                visibility: window.visibility,
+            })
+            .collect()
+    }
+
+    fn tab_snapshots(&self, window: Option<WindowId>) -> Vec<TabSnapshot> {
+        self.tabs
+            .iter()
+            .filter(|tab| window.is_none_or(|window| tab.window == window))
+            .map(|tab| TabSnapshot {
+                window_id: tab.window,
+                id: tab.id,
+                mode: tab.mode,
+                cursor: tab.cursor,
+                entries: tab
+                    .entries
+                    .iter()
+                    .map(|entry| EntrySnapshot {
+                        id: entry.id,
+                        destination: entry.destination.encode(),
+                        dirty: entry.dirty.get(),
+                        revision: entry.revision.get(),
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn decision_snapshots(&self, window: Option<WindowId>) -> Vec<DecisionSnapshot> {
+        self.decisions
+            .values()
+            .filter(|decision| window.is_none_or(|window| decision.snapshot.window_id == window))
+            .map(|decision| decision.snapshot.clone())
+            .collect()
+    }
+
+    fn operation_snapshots(&self) -> Vec<(OperationId, OperationState)> {
+        self.operations
+            .iter()
+            .map(|(id, status)| (*id, status.clone()))
+            .collect()
+    }
 }

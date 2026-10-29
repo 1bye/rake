@@ -871,13 +871,20 @@ impl WorkRuntime {
         WorkSnapshot {
             revision: state.revision,
             host_visibility: state.visibility,
-            tasks: state
-                .records
-                .values()
-                .map(|record| record.snapshot.clone())
-                .collect(),
+            tasks: self.task_snapshots(None),
             pending_publications: state.publications.len(),
         }
+    }
+
+    pub(crate) fn task_snapshots(&self, owner: Option<TaskOwner>) -> Vec<TaskSnapshot> {
+        self.core
+            .state
+            .borrow()
+            .records
+            .values()
+            .filter(|record| owner.is_none_or(|owner| record.snapshot.owner == owner))
+            .map(|record| record.snapshot.clone())
+            .collect()
     }
 
     pub(crate) fn revision(&self) -> u64 {

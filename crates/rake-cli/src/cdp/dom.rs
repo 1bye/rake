@@ -1,7 +1,7 @@
 //! Read-only DOM/CSS projection of one bounded Rake capture. Node IDs never alias captures.
 
 use super::wire::Error;
-use rake::inspection::{Element, Snapshot};
+use rake_protocol::inspection::{Element, Snapshot};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -109,8 +109,8 @@ impl Dom {
         &self,
         method: &str,
         params: &Value,
-    ) -> Result<rake::control::Command, Error> {
-        use rake::control::Command;
+    ) -> Result<rake_protocol::control::Command, Error> {
+        use rake_protocol::control::Command;
 
         match method {
             "Overlay.highlightNode" => {
@@ -214,7 +214,7 @@ impl Dom {
                 "documentURL":"rake://runtime","baseURL":"rake://runtime"})
         } else {
             let element = &self.nodes[&id];
-            let name = rake::inspection::display_name(&element.kind);
+            let name = rake_protocol::inspection::display_name(&element.kind);
 
             json!({"nodeId":id,"backendNodeId":id,"nodeType":1,"nodeName":name,"localName":name,
                 "nodeValue":"","attributes":attributes(element)})
@@ -486,8 +486,8 @@ fn depth(params: &Value, default: i64) -> Result<usize, Error> {
     };
 
     match depth {
-        -1 => Ok(rake::inspection::MAX_ELEMENTS + 1),
-        0.. => Ok((depth as usize).min(rake::inspection::MAX_ELEMENTS + 1)),
+        -1 => Ok(rake_protocol::inspection::MAX_ELEMENTS + 1),
+        0.. => Ok((depth as usize).min(rake_protocol::inspection::MAX_ELEMENTS + 1)),
         _ => Err(Error::new(-32602, "depth must be -1 or nonnegative")),
     }
 }
@@ -651,7 +651,7 @@ mod tests {
     fn resolved_style_changes_refresh_css_without_replacing_node_ids() {
         let mut snapshot = capture("live");
 
-        snapshot.elements[0].resolved = Some(rake::inspection::ResolvedStyle {
+        snapshot.elements[0].resolved = Some(rake_protocol::inspection::ResolvedStyle {
             properties: json!({"background":{"Color":{"tag":"Solid","solid":{"h":0.,"s":1.,"l":0.5,"a":1.}}},"text":{"font_size":"24px"}}),
             hovered: false,
         });
@@ -696,7 +696,7 @@ mod tests {
 
     #[test]
     fn overlay_commands_use_exact_capture_ids_and_shared_backend_ids() {
-        use rake::control::Command;
+        use rake_protocol::control::Command;
         let mut dom = Dom::default();
 
         dom.update(capture("test")).unwrap();

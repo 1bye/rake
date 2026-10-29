@@ -1,8 +1,8 @@
 //! Explicit typed-command evaluation. One submission, fresh retry key, no automatic resend.
 
 use super::wire::Error;
-use rake::control::local::Instance;
-use rake::control::{Command, Message, PROTOCOL_VERSION, Query, Reply, Request};
+use rake_client::local::Instance;
+use rake_protocol::control::{Command, Message, PROTOCOL_VERSION, Query, Reply, Request};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -91,7 +91,7 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
             super::TIMEOUT,
         ) {
             Ok(Reply::Operation(record)) => {
-                use rake::router::OperationState;
+                use rake_protocol::router::OperationState;
 
                 match record.state {
                     OperationState::Committed => {
@@ -163,7 +163,7 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
 
         listener.set_nonblocking(true).unwrap();
-        let router = rake::router::Router::<rake::router::NoRoute>::new(
+        let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
         );
 
@@ -171,7 +171,7 @@ mod tests {
             application_id: "test.eval".into(),
             pid: std::process::id(),
             info: router.client().info(),
-            endpoint: rake::control::local::Endpoint::Local { path: path.clone() },
+            endpoint: rake_client::local::Endpoint::Local { path: path.clone() },
         };
 
         let (done, finished) = std::sync::mpsc::channel();
@@ -207,7 +207,7 @@ mod tests {
 
                 match request.message {
                     Message::Query(Query::Commands {}) => {
-                        let reply = Ok::<_, rake::control::ControlError>(Reply::Data(
+                        let reply = Ok::<_, rake_protocol::control::ControlError>(Reply::Data(
                             json!([{"id":"test.echo"}]),
                         ));
 

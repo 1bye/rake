@@ -16,7 +16,6 @@
 //! ```
 
 mod commands;
-mod protocol;
 
 pub use commands::*;
 
@@ -25,7 +24,7 @@ pub mod local;
 #[cfg(target_family = "wasm")]
 mod web;
 
-pub use protocol::*;
+pub use rake_protocol::control::*;
 #[cfg(target_family = "wasm")]
 pub use web::{WebBridge, WebBridgeConfig};
 
@@ -356,7 +355,7 @@ impl<R: Route> RuntimeClient<R> {
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
             Query::Windows {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().windows)
+                serde_json::to_value(self.router.window_snapshots())
                     .expect("window snapshots serialize"),
             )),
             Query::Window { window } => {
@@ -387,19 +386,17 @@ impl<R: Route> RuntimeClient<R> {
             )),
             Query::Snapshot {} => Ok(Reply::Snapshot(self.router.snapshot())),
             Query::Tabs {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().tabs).expect("tab serialization"),
+                serde_json::to_value(self.router.tab_snapshots()).expect("tab serialization"),
             )),
             Query::Tasks { owner } => {
-                let mut tasks = self.router.snapshot().work.tasks;
-
-                tasks.retain(|task| owner.is_none_or(|owner| owner == task.owner));
+                let tasks = self.router.task_snapshots(owner);
 
                 Ok(Reply::Data(
                     serde_json::to_value(tasks).expect("task serialization"),
                 ))
             }
             Query::Operations {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().operations)
+                serde_json::to_value(self.router.operation_snapshots())
                     .expect("status serialization"),
             )),
             Query::Operation { operation } => Ok(Reply::Operation(OperationRecord {
@@ -408,7 +405,7 @@ impl<R: Route> RuntimeClient<R> {
                 result: self.router.operation_result(operation),
             })),
             Query::Decisions {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().decisions)
+                serde_json::to_value(self.router.decision_snapshots())
                     .expect("decision serialization"),
             )),
             Query::Events { cursor } => Ok(Reply::Event(event(self.router.snapshot(), cursor))),

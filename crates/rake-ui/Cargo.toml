@@ -1,0 +1,20 @@
+[package]
+name = "rake-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Experimental GPUI view helpers, themes and overlays"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+palette = "0.7.7"
+unicode-segmentation = "1.13.3"
+gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false }
+
+[features]
+test-support = ["gpui/test-support"]

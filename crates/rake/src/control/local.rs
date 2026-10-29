@@ -1,9 +1,9 @@
 //! Unix-domain development transport. Private discovery directories and sockets
 //! restrict access to the current user. No UI state crosses a thread boundary.
 
-use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{self, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,114 +13,13 @@ use futures::future::{Either, select};
 use futures::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
-use serde::{Deserialize, Serialize};
 
-use super::{ControlError, MAX_MESSAGE_BYTES, Reply, Request, RuntimeClient, RuntimeInfo};
+use super::{MAX_MESSAGE_BYTES, RuntimeClient};
 use crate::router::Route;
 
-/// A discovered runtime endpoint. Credentials are kept only in owner-readable files.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Endpoint {
-    /// Permission-restricted Unix socket.
-    Local {
-        /// Socket path.
-        path: PathBuf,
-    },
-    /// Authenticated development broker, addressed by runtime ID.
-    Web {
-        /// Loopback HTTP broker base URL.
-        url: String,
-        /// Random development session credential.
-        token: String,
-    },
-}
-
-/// An advertisement written only while a development endpoint is owned by its host.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Instance {
-    /// Application name supplied by the runner.
-    pub application_id: String,
-    /// Native application or broker process ID.
-    pub pid: u32,
-    /// Version, runtime identity and actual capabilities.
-    pub info: RuntimeInfo,
-    /// Local or browser-initiated broker transport.
-    pub endpoint: Endpoint,
-}
-
-/// Default short socket directory, overridable by `RAKE_CONTROL_DIR`.
-pub fn directory() -> PathBuf {
-    std::env::var_os("RAKE_CONTROL_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            // SAFETY: geteuid has no pointer or threading preconditions.
-            PathBuf::from(format!("/tmp/rake-{}", unsafe { libc::geteuid() }))
-        })
-}
-
-/// Creates or validates an owner-only directory; symlinks and other owners are rejected.
-pub fn prepare_directory(path: &Path) -> io::Result<()> {
-    match DirBuilder::new().mode(0o700).create(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(error),
-    }
-
-    let metadata = fs::symlink_metadata(path)?;
-    // SAFETY: geteuid has no pointer or threading preconditions.
-    let uid = unsafe { libc::geteuid() };
-
-    if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "control directory must be an owned directory with mode 0700",
-        ));
-    }
-
-    Ok(())
-}
-
-/// Reads bounded, owner-only instance advertisements. A crashed host can leave stale
-/// files; clients verify runtime identity by querying the endpoint before using it.
-pub fn discover(path: &Path) -> io::Result<Vec<Instance>> {
-    prepare_directory(path)?;
-    let mut instances = Vec::new();
-
-    for entry in fs::read_dir(path)? {
-        let path = entry?.path();
-
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-
-        let metadata = fs::symlink_metadata(&path)?;
-        // SAFETY: geteuid has no pointer or threading preconditions.
-        let uid = unsafe { libc::geteuid() };
-
-        if !metadata.is_file() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
-            continue;
-        }
-
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&path)?;
-
-        let mut bytes = Vec::new();
-
-        file.take(MAX_MESSAGE_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)?;
-
-        if bytes.len() <= MAX_MESSAGE_BYTES
-            && let Ok(instance) = serde_json::from_slice(&bytes)
-        {
-            instances.push(instance);
-        }
-    }
-
-    Ok(instances)
-}
+pub use rake_client::local::{
+    Endpoint, Instance, directory, discover, exchange, prepare_directory,
+};
 
 /// Owns a listener and its discovery files. Dropping it removes both files.
 pub struct LocalServer {
@@ -266,44 +165,4 @@ impl Drop for LocalServer {
         let _ = fs::remove_file(&self.manifest);
         let _ = fs::remove_file(&self.socket);
     }
-}
-
-/// Blocking terminal-side exchange with a finite I/O deadline. The application-side
-/// server remains local/async. A lost response can be retried using the same key.
-pub fn exchange(
-    path: &Path,
-    request: &Request,
-    timeout: Duration,
-) -> io::Result<Result<Reply, ControlError>> {
-    let mut stream = UnixStream::connect(path)?;
-
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    let mut bytes = serde_json::to_vec(request)?;
-
-    if bytes.len() + 1 > MAX_MESSAGE_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "control request too large",
-        ));
-    }
-
-    bytes.push(b'\n');
-    stream.write_all(&bytes)?;
-    let mut reply = Vec::new();
-
-    std::io::BufRead::read_until(
-        &mut std::io::BufReader::new(stream.take(MAX_MESSAGE_BYTES as u64 + 1)),
-        b'\n',
-        &mut reply,
-    )?;
-
-    if reply.len() > MAX_MESSAGE_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "control response too large",
-        ));
-    }
-
-    Ok(serde_json::from_slice(&reply)?)
 }

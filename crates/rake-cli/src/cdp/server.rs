@@ -1,7 +1,7 @@
 //! Bounded HTTP discovery and authenticated WebSocket sessions on IPv4 loopback.
 
 use super::{Options, Result, discover, session};
-use rake::control::local::Instance;
+use rake_client::local::Instance;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

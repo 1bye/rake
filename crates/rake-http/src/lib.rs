@@ -20,7 +20,7 @@ use tracing::Instrument;
 use url::Url;
 use web_time::Instant;
 
-use crate::diagnostics::Collector;
+use rake_diagnostics::Collector;
 
 /// A portable HTTP result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -165,8 +165,9 @@ impl HttpClient {
         })))
     }
 
-    #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
-    pub(crate) fn without_redirects(&self) -> Result<Self> {
+    /// Builds an equivalent native client that never follows redirects.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn without_redirects(&self) -> Result<Self> {
         let transport = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -530,27 +531,27 @@ async fn compatible<T>(future: impl Future<Output = T>) -> T {
     }
 }
 
-pub(crate) async fn sleep(duration: Duration) {
+/// Waits on the host timer without requiring a particular executor.
+/// Durations beyond the host clock's range remain pending until dropped.
+pub async fn sleep(duration: Duration) {
+    let Some(deadline) = Instant::now().checked_add(duration) else {
+        return futures::future::pending().await;
+    };
+
     #[cfg(not(target_family = "wasm"))]
-    async_io::Timer::after(duration).await;
+    async_io::Timer::at(deadline).await;
 
     #[cfg(target_family = "wasm")]
-    {
-        let deadline = Instant::now().checked_add(duration);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
 
-        loop {
-            let remaining = deadline.map_or(Duration::ZERO, |end| {
-                end.saturating_duration_since(Instant::now())
-            });
-
-            if remaining.is_zero() {
-                break;
-            }
-
-            let milliseconds = remaining.as_millis().clamp(1, i32::MAX as u128) as u32;
-
-            gloo_timers::future::TimeoutFuture::new(milliseconds).await;
+        if remaining.is_zero() {
+            break;
         }
+
+        let milliseconds = remaining.as_millis().clamp(1, i32::MAX as u128) as u32;
+
+        gloo_timers::future::TimeoutFuture::new(milliseconds).await;
     }
 }
 
@@ -566,7 +567,7 @@ struct Lifecycle {
     id: u64,
     collector: Collector,
     finished: bool,
-    context: crate::diagnostics::CapturedContext,
+    context: rake_diagnostics::CapturedContext,
     started: Instant,
     bytes: u64,
     metadata: BTreeMap<String, Value>,
@@ -634,5 +635,13 @@ impl Drop for Lifecycle {
         if !self.finished {
             self.finish("abandoned");
         }
+    }
+}
+
+// Optional facade integration keeps the protocol independent of HTTP.
+#[cfg(feature = "task-errors")]
+impl From<Error> for rake_protocol::tasks::TaskError {
+    fn from(error: Error) -> Self {
+        Self::Failed(error.to_string())
     }
 }

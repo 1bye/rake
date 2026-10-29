@@ -62,27 +62,51 @@ GUI edits, CLI commands and lifecycle guards on the same notebook instance.
 
 ## Workspace
 
-`rake` is the application facade. It owns routing, task lifetimes, runtime control,
-HTTP and GPUI host integration. Existing `rake::diagnostics` imports re-export the
-same types from `rake-diagnostics`.
+`rake` is the application facade. It owns routing, task lifetimes, runtime control
+and GPUI host integration. Existing `rake::http`, `rake::diagnostics`, routing,
+inspection, theme and overlay imports retain their types through reexports.
 
 - `rake-diagnostics` owns bounded records, tracing context, snapshots and native/Web
-  output. It can be built and tested without GPUI, the HTTP stack or `rake-macros`.
-- `rake-macros` generates application, route, command and view syntax through the facade.
-- `rake-cli` provides terminal control and the CDP development adapter.
+  output. It builds independently of GPUI, HTTP and procedural macros.
+- `rake-http` owns HTTP, cancellation and executor-portable timers. Native requests
+  use the caller's executor; browser requests use Fetch. Its optional `task-errors`
+  integration preserves HTTP-to-task error conversion when used through `rake`.
+- `rake-protocol` owns route codecs, IDs, snapshots, checkpoint data and versioned
+  control messages. It has no UI, HTTP or application-runtime dependency.
+- `rake-client` owns Unix discovery and blocking, deadline-bounded local/Web control
+  exchanges, with inspectable transport and runtime errors. It depends on
+  `rake-protocol` and `rake-http`; it does not start an application runtime.
+- `rake-ui` owns GPUI view helpers, themes and overlays. The facade enables it with
+  `experimental-view`. Its `test-support` feature enables native frame tests.
+- `rake-macros` generates facade-aware application, route and command syntax. Its
+  `view` feature compiles the experimental markup/theme/style compiler and is
+  activated by the facade's `experimental-view` feature.
+- `rake-cli` provides terminal control and CDP through `rake-client`,
+  `rake-protocol` and `rake-diagnostics`. Only its test fixtures depend on `rake`.
 
-The dependency direction is `rake-cli -> rake -> rake-diagnostics` and
-`rake -> rake-macros`. Router and task state stay together because their entry,
-window, cancellation and reload invariants share one local runtime owner.
+Runtime adapters depend on these smaller crates. Router and task state stay together
+because their entry, window, cancellation and reload invariants share one local owner.
+Application code can continue depending only on `rake`.
 
-Inspector polling uses `Collector::snapshot_after` to filter by cursor and kind
-before cloning owned records. The initial snapshot still copies the entire selected
-buffer; incremental and idle polls copy only new matching records. Loss counters
-remain lifetime totals. Run the focused release benchmark with:
+Inspector polling filters diagnostics by cursor/kind and tasks by owner before
+cloning. Targeted control queries copy only their requested data. Window snapshots
+encode only that window's histories. Retained inspection captures share immutable
+storage internally; external snapshots remain independent owned values. Style-only
+redraws keep element identities, while changed boundaries invalidate the generation.
+
+Run the focused release measurements with:
 
 ```sh
 cargo bench -p rake-diagnostics --bench diagnostics_snapshot --locked
+cargo bench -p rake --no-default-features --bench control_queries --locked
+cargo test -p rake --no-default-features --release --lib publish_benchmark --locked -- --ignored --nocapture
 ```
+
+On the local synthetic fixture (128 tabs, 640 history entries and 256 tasks), median
+query times over five batches changed from 125.0 to 0.4 µs for windows, 137.5 to
+18.2 µs for operations, and 119.2 to 0.9 µs for an empty owner-filtered task result.
+Publishing 256 unchanged inspection boundaries with 512-byte style payloads changed
+from 203.2 to 51.1 µs. These measure CPU work, not end-to-end GPU/frame performance.
 
 ## Run
 
@@ -149,7 +173,10 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo check -p rake --no-default-features --locked
-cargo check -p rake-diagnostics --lib --target wasm32-unknown-unknown --locked
+cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
+cargo check -p rake-macros --no-default-features --locked
+cargo test -p rake-client -p rake-http -p rake-protocol --locked
+cargo test -p rake-ui --features test-support --lib --locked
 cargo test -p rake --no-default-features --test managed_work --test routing --test runtime_control --test reload --test guarded_quit --locked
 cargo build -p rake-cli --locked
 python3 scripts/test-dev-bridge.py

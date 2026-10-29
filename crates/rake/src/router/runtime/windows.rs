@@ -83,23 +83,11 @@ impl<R: Route> Router<R> {
 
     /// Copies one host's tabs, selection and decisions without changing global state.
     pub fn snapshot_in_window(&self, window: WindowId) -> Result<RouterSnapshot, OperationError> {
-        let mut snapshot = self.snapshot();
+        if !self.0.state.borrow().windows.contains_key(&window) {
+            return Err(OperationError::WindowUnavailable);
+        }
 
-        let host = snapshot
-            .windows
-            .iter()
-            .find(|host| host.id == window)
-            .ok_or(OperationError::WindowUnavailable)?;
-
-        snapshot.work.host_visibility = host.visibility;
-        snapshot.selected = host.selected;
-        snapshot.window_id = window;
-        snapshot.tabs.retain(|tab| tab.window_id == window);
-        snapshot
-            .decisions
-            .retain(|decision| decision.window_id == window);
-
-        Ok(snapshot)
+        Ok(self.snapshot_filtered(Some(window)))
     }
 
     /// Guards every retained entry before disposing this window atomically.

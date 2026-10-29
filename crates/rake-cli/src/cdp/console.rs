@@ -1,7 +1,7 @@
 //! Console formatting and bounded JSON object expansion; no runtime code executes.
 
 use super::wire::{Error, Event};
-use rake::diagnostics::{Record, Snapshot};
+use rake_diagnostics::{Record, Snapshot};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 

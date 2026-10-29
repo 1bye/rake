@@ -1,6 +1,6 @@
 //! Read-only CSS presentation of captured base styles, without inventing a cascade.
 
-use rake::inspection::styles::color;
+use rake_protocol::inspection::styles::color;
 use serde_json::{Value, json};
 
 pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {

@@ -12,13 +12,14 @@ workspace = true
 
 [features]
 default = ["gpui"]
-experimental-view = ["gpui", "dep:unicode-segmentation", "dep:palette"]
-view-test-support = ["experimental-view", "gpui/test-support"]
+experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
+view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
 
 [dependencies]
-palette = { version = "0.7.7", optional = true }
-unicode-segmentation = { version = "1.13.3", optional = true }
+rake-ui = { workspace = true, optional = true }
+rake-http = { workspace = true, features = ["task-errors"] }
+rake-protocol.workspace = true
 rake-macros = { path = "../rake-macros" }
 rake-diagnostics.workspace = true
 serde.workspace = true
@@ -27,27 +28,25 @@ schemars = "1.2.3"
 tracing.workspace = true
 futures.workspace = true
 thiserror.workspace = true
-reqwest = { version = "=0.12.28", default-features = false, features = ["json", "stream"] }
 url = "2.5"
-percent-encoding = "2"
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 event-listener = "5.4"
 web-time.workspace = true
 gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false, optional = true }
 gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", features = ["font-kit", "wayland", "x11"], optional = true }
 
+[target.'cfg(unix)'.dependencies]
+rake-client.workspace = true
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 anyhow = "1"
 libc = "0.2"
-async-compat = "0.2.5"
 async-io = "2.6"
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
-gloo-timers = { version = "0.3", features = ["futures"] }
 web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "Storage"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -62,3 +61,7 @@ trybuild = "1"
 [[test]]
 name = "view_state"
 required-features = ["view-test-support"]
+
+[[bench]]
+name = "control_queries"
+harness = false

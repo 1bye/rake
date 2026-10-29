@@ -1,6 +1,6 @@
 //! Bounded Chrome trace-event export of retained spans, preserving missing observations.
 
-use rake::diagnostics::{Record, Snapshot};
+use rake_diagnostics::{Record, Snapshot};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -141,9 +141,9 @@ pub(super) fn export(options: &super::Options, path: &std::path::Path) -> super:
         return Err("trace export requires exactly one live instance; select --instance".into());
     };
 
-    let rake::control::Reply::Diagnostics(snapshot) = crate::terminal::query(
+    let rake_protocol::control::Reply::Diagnostics(snapshot) = crate::terminal::query(
         instance,
-        rake::control::Query::Diagnostics {
+        rake_protocol::control::Query::Diagnostics {
             after: 0,
             kind: Some("span".into()),
         },
