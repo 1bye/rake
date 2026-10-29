@@ -162,13 +162,10 @@ impl Session {
                 Ok(json!({}))
             }
             "Runtime.evaluate" => {
-                if request.params["throwOnSideEffect"] == true {
-                    return Err(Error::new(
-                        -32000,
-                        "Typed commands mutate state; side-effect-free/eager evaluation is unavailable",
-                    ));
-                }
-
+                let expression = request.params["expression"]
+                    .as_str()
+                    .ok_or_else(|| Error::new(-32602, "expression required"))?;
+                let expression = expression.trim().trim_end_matches(';').trim();
                 if request
                     .params
                     .get("contextId")
@@ -183,9 +180,20 @@ impl Session {
                     ));
                 }
 
-                let expression = request.params["expression"]
-                    .as_str()
-                    .ok_or_else(|| Error::new(-32602, "expression required"))?;
+                if expression == "$0" {
+                    self.refresh_dom()?;
+                    let node = self.dom.inspected_node()?;
+                    let object = self.dom.resolve_node(
+                        &json!({"nodeId":node,"objectGroup":request.params["objectGroup"]}),
+                    )?;
+                    return Ok(json!({"result":object["object"]}));
+                }
+                if request.params["throwOnSideEffect"] == true {
+                    return Err(Error::new(
+                        -32000,
+                        "Typed commands mutate state; side-effect-free/eager evaluation is unavailable",
+                    ));
+                }
 
                 let value = if let Some(argument) = expression
                     .trim()
@@ -194,15 +202,21 @@ impl Session {
                     .strip_prefix("rake.openSource(")
                     .and_then(|value| value.strip_suffix(')'))
                 {
-                    let selector = serde_json::from_str(argument).map_err(|_| {
-                        Error::new(
-                            -32602,
-                            "openSource requires a JSON node/semantic ID or {nodeId,target}",
-                        )
-                    })?;
+                    let selector = self.source_selector(argument)?;
                     let location = self.source_location(&selector)?;
                     crate::source::open(&location)
                         .map_err(|error| Error::new(-32000, error.to_string()))?
+                } else if let Some(method) = match expression {
+                    "rake.resetStyles($0)" => Some("Rake.resetStyles"),
+                    "rake.undoStyles($0)" => Some("Rake.undoStyles"),
+                    _ => None,
+                } {
+                    let node = self.dom.inspected_node()?;
+                    self.handle(&Request {
+                        id: request.id,
+                        method: method.into(),
+                        params: json!({"nodeId":node}),
+                    })?
                 } else {
                     super::evaluate::execute(&self.instance, expression)?
                 };
@@ -290,6 +304,7 @@ impl Session {
                 Ok(result)
             }
             "DOM.discardSearchResults" => self.dom.discard_search(&request.params),
+            "DOM.setInspectedNode" => self.dom.set_inspected_node(&request.params),
             "DOM.focus" | "DOM.scrollIntoViewIfNeeded" => {
                 // Map the retained CDP identity to the latest exact runtime capture.
                 self.refresh_dom()?;
@@ -834,13 +849,13 @@ impl Session {
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
-        let snapshot = if self
+        let paged = self
             .instance
             .info
             .queries
             .iter()
-            .any(|q| q == "inspect_tree_page")
-        {
+            .any(|q| q == "inspect_tree_page");
+        let snapshot = if paged {
             let mut generation = None;
             let mut offset = 0;
             let mut combined: Option<rake_protocol::inspection::Snapshot> = None;
@@ -887,7 +902,11 @@ impl Session {
             snapshot
         };
 
-        let mut reset = self.dom.update(snapshot)?;
+        let mut reset = if paged {
+            self.dom.update_index(snapshot)?
+        } else {
+            self.dom.update(snapshot)?
+        };
         let updates = self.dom.take_updates();
         let bytes = updates
             .iter()
@@ -1001,6 +1020,27 @@ impl Session {
         let node = self.dom.source_node(selector)?;
         self.load_details(node)?;
         self.dom.source(selector).cloned()
+    }
+
+    fn source_selector(&self, argument: &str) -> std::result::Result<Value, Error> {
+        if let Some(rest) = argument.trim().strip_prefix("$0") {
+            let node = self.dom.inspected_node()?;
+            if rest.trim().is_empty() {
+                return Ok(json!(node));
+            }
+            let target = rest
+                .trim()
+                .strip_prefix(',')
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .ok_or_else(|| Error::new(-32602, "Expected a JSON source target after $0"))?;
+            return Ok(json!({"nodeId":node,"target":target}));
+        }
+        serde_json::from_str(argument).map_err(|_| {
+            Error::new(
+                -32602,
+                "openSource requires $0, a JSON node/semantic ID, or {nodeId,target}",
+            )
+        })
     }
 
     fn load_details(&mut self, node: i32) -> std::result::Result<(), Error> {
@@ -1421,6 +1461,57 @@ mod tests {
                 ))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn selected_element_console_handle_validates_context_and_source_targets() {
+        let snapshot = capture("selected");
+        let (instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(snapshot.clone()),
+                _ => panic!("unexpected selected-node request"),
+            },
+            1,
+        );
+        let mut session = Session::new(instance, None);
+        session.dom.update(capture("selected")).unwrap();
+        let node = session.dom.node_id("element-selected-0").unwrap();
+        let call = |method: &str, params| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        session
+            .handle(&call("DOM.setInspectedNode", json!({"nodeId":node})))
+            .unwrap();
+        assert!(
+            session
+                .handle(&call(
+                    "Runtime.evaluate",
+                    json!({"expression":"$0","contextId":99})
+                ))
+                .is_err()
+        );
+        let result = session.handle(&call("Runtime.evaluate", json!({"expression":"$0","contextId":1,"throwOnSideEffect":true,"objectGroup":"console"}))).unwrap();
+        assert_eq!(
+            session
+                .dom
+                .object_node(result["result"]["objectId"].as_str().unwrap())
+                .unwrap(),
+            node
+        );
+        assert_eq!(session.source_selector("$0").unwrap(), json!(node));
+        assert_eq!(
+            session
+                .source_selector("$0 , {\"kind\":\"handler\",\"index\":0}")
+                .unwrap(),
+            json!({"nodeId":node,"target":{"kind":"handler","index":0}})
+        );
+        for invalid in ["$0.id", "$0, other()", "$0; evil()", "$01"] {
+            assert!(session.source_selector(invalid).is_err());
+        }
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

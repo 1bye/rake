@@ -1,5 +1,9 @@
 # Rake Inspector application
 
+Legacy prototype, retained as historical implementation documentation. Stock
+[Chrome DevTools](devtools.md) is the supported frontend; this application is not
+part of the supported DevTools workflow.
+
 `examples/inspector` is an Elements-only Rake application. Its shared native and
 browser UI is authored with the experimental `rake::view!` macro. It has its own
 runtime, typed connection service, routed entry and managed observation activity.

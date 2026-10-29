@@ -22,10 +22,19 @@ pub(super) struct Dom {
     next_search: u64,
     node_objects: BTreeMap<u64, (i32, Option<String>)>,
     next_node_object: u64,
+    inspected_node: Option<i32>,
 }
 
 impl Dom {
     pub fn update(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
+        self.update_capture(snapshot, false)
+    }
+
+    pub fn update_index(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
+        self.update_capture(snapshot, true)
+    }
+
+    fn update_capture(&mut self, snapshot: Snapshot, index_only: bool) -> Result<bool, Error> {
         let reset = self.snapshot.as_ref().is_some_and(|old| {
             old.status != snapshot.status
                 || (old.capture != snapshot.capture
@@ -81,7 +90,16 @@ impl Dom {
             .collect();
         for (element, existing) in snapshot.elements.iter().zip(existing) {
             let existing = existing.filter(|(id, _)| !used.contains(id));
+            let mut element = element.clone();
             let id = if let Some((id, old)) = existing {
+                // A paged index intentionally omits details. Retain the last observed
+                // style until InspectElement refreshes it; absence is not a CSS change.
+                if index_only {
+                    element.styles = old.styles.clone();
+                    element.resolved = old.resolved.clone();
+                    element.box_model = old.box_model.clone();
+                    element.style_overrides = old.style_overrides.clone();
+                }
                 if old.accessibility != element.accessibility {
                     self.accessibility_updates.insert(id);
                 }
@@ -99,7 +117,7 @@ impl Dom {
                 self.allocate()?
             };
             used.insert(id);
-            nodes.insert(id, element.clone());
+            nodes.insert(id, element);
         }
 
         let old_nodes = std::mem::replace(&mut self.nodes, nodes);
@@ -440,6 +458,21 @@ impl Dom {
             .retain(|_, (_, owner)| owner.as_deref() != Some(group));
     }
 
+    pub fn set_inspected_node(&mut self, params: &Value) -> Result<Value, Error> {
+        let id = node_id(params)?;
+        self.element(id)?;
+        self.inspected_node = Some(id);
+        Ok(json!({}))
+    }
+
+    pub fn inspected_node(&self) -> Result<i32, Error> {
+        let id = self
+            .inspected_node
+            .ok_or_else(|| Error::new(-32000, "Select an element first"))?;
+        self.element(id)?;
+        Ok(id)
+    }
+
     pub fn call_navigation(
         &self,
         params: &Value,
@@ -506,6 +539,9 @@ impl Dom {
         ];
         if let Some(text) = &element.text {
             result.push(json!({"name":"textContent","value":{"type":"string","value":text},"configurable":false,"enumerable":true}));
+        }
+        if let Some(source) = &element.source {
+            result.push(json!({"name":"rakeSource","value":{"type":"string","value":serde_json::to_string(source).unwrap_or_default()},"configurable":false,"enumerable":true}));
         }
         if let Some(view) = &element.view {
             result.push(json!({"name":"rakeStyleSources","value":{"type":"string","value":serde_json::to_string_pretty(&view.style_sources).unwrap_or_default()},"configurable":false,"enumerable":true}));
@@ -659,6 +695,7 @@ impl Dom {
         self.updates.clear();
         self.searches.clear();
         self.node_objects.clear();
+        self.inspected_node = None;
     }
 
     fn element(&self, id: i32) -> Result<&Element, Error> {
@@ -824,8 +861,17 @@ impl Dom {
     }
 
     pub fn details(&mut self, id: i32, element: Element) -> Result<(), Error> {
-        if self.element(id)?.id != element.id {
+        let old = self.element(id)?;
+        if old.id != element.id {
             return Err(Error::new(-32000, "Inspection capture changed; retry"));
+        }
+        if (old.styles != element.styles
+            || old.resolved != element.resolved
+            || old.box_model != element.box_model
+            || old.style_overrides != element.style_overrides)
+            && self.sent.contains(&id)
+        {
+            self.style_updates.insert(id);
         }
         self.nodes.insert(id, element);
         Ok(())
@@ -1566,6 +1612,28 @@ mod tests {
     }
 
     #[test]
+    fn chrome_selection_survives_captures_but_expires_with_the_node() {
+        let mut dom = Dom::default();
+        let tree = [("root", None), ("save", Some("root"))];
+        dom.update(stable_capture("1", &tree)).unwrap();
+        let node = dom.node_id("1-save").unwrap();
+        assert!(dom.inspected_node().is_err());
+        dom.set_inspected_node(&json!({"nodeId":node})).unwrap();
+        dom.update(stable_capture("2", &tree)).unwrap();
+        assert_eq!(dom.inspected_node().unwrap(), node);
+        assert_eq!(dom.control_id(node).unwrap(), "2-save");
+        assert!(dom.set_inspected_node(&json!({"nodeId":9999})).is_err());
+        assert_eq!(dom.inspected_node().unwrap(), node);
+        dom.update(stable_capture("3", &tree[..1])).unwrap();
+        assert!(dom.inspected_node().is_err());
+        dom.update(stable_capture("4", &tree)).unwrap();
+        assert!(
+            dom.inspected_node().is_err(),
+            "selection must never retarget a reappearing node"
+        );
+    }
+
+    #[test]
     fn chrome_node_helpers_only_dispatch_navigation_and_respect_object_lifetimes() {
         use rake_protocol::{control::Command, inspection::NavigationAction};
         let mut dom = Dom::default();
@@ -1897,6 +1965,39 @@ mod tests {
             dom.element(root).unwrap().source.is_some(),
             "source metadata remains available to Rake"
         );
+    }
+
+    #[test]
+    fn paged_polling_only_invalidates_styles_when_hydrated_values_change() {
+        let mut snapshot = capture("live");
+        let mut detail = snapshot.elements[0].clone();
+        detail.resolved = Some(rake_protocol::inspection::ResolvedStyle {
+            properties: json!({"text":{"font_size":"24px"}}),
+            hovered: false,
+            layers: Vec::new(),
+        });
+        snapshot.elements[0].styles = None;
+        snapshot.elements[0].resolved = None;
+        snapshot.elements[0].box_model = None;
+        let mut dom = Dom::default();
+        dom.update_index(snapshot.clone()).unwrap();
+        dom.document(&json!({"depth":-1})).unwrap();
+        let id = dom.node_id(&detail.id).unwrap();
+        dom.details(id, detail.clone()).unwrap();
+        dom.take_style_updates();
+
+        // Repeated index/detail polling must not remount Chrome's Styles editor.
+        for _ in 0..3 {
+            dom.update_index(snapshot.clone()).unwrap();
+            dom.details(id, detail.clone()).unwrap();
+            assert!(dom.take_style_updates().is_empty());
+        }
+        detail.resolved.as_mut().unwrap().hovered = true;
+        detail.resolved.as_mut().unwrap().properties["text"]["font_size"] = json!("28px");
+        dom.update_index(snapshot).unwrap();
+        dom.details(id, detail).unwrap();
+        assert_eq!(dom.take_style_updates(), vec![id]);
+        assert!(dom.take_updates().is_empty());
     }
 
     #[test]

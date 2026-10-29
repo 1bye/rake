@@ -82,6 +82,23 @@ try {
   await assert.rejects(call('Rake.openSource',{nodeId:button.nodeId,target:{kind:'style',index:999}}), /source location unavailable/i);
   const computed = async () => (await call('CSS.getComputedStyleForNode',{nodeId:button.nodeId})).computedStyle;
   const before = await computed(), original = before.find(p=>p.name==='width').value;
+  await call('DOM.setInspectedNode',{nodeId:button.nodeId});
+  const selected = await call('Runtime.evaluate',{expression:'$0',contextId:1,objectGroup:'console',throwOnSideEffect:true});
+  assert.equal((await call('DOM.requestNode',{objectId:selected.result.objectId})).nodeId,button.nodeId);
+  await assert.rejects(call('Runtime.evaluate',{expression:'$0',contextId:99}), /context is stale/i);
+  await call('CSS.trackComputedStyleUpdatesForNode',{nodeId:button.nodeId});
+  await call('DOM.getOuterHTML',{nodeId:button.nodeId});
+  events.length = 0;
+  for (let poll = 0; poll < 3; poll++) await call('DOM.getOuterHTML',{nodeId:button.nodeId});
+  assert.ok(!events.some(event=>event.method==='CSS.styleSheetChanged'), 'unchanged paged polls must preserve Chrome style editors');
+  // Chrome previews and commits edits using returned UTF-16 ranges, before a redraw.
+  let edited = await call('CSS.setStyleTexts',{edits:[{styleSheetId:`rake-edit-${button.nodeId}`,range:{startLine:0,startColumn:0,endLine:0,endColumn:0},text:'\n width: 240px;\n'}]});
+  assert.equal(edited.styles[0].cssProperties[0].value,'240px', 'acknowledged edit must be returned immediately');
+  edited = await call('CSS.setStyleTexts',{edits:[{styleSheetId:`rake-edit-${button.nodeId}`,range:edited.styles[0].range,text:'/* width: 240px; */'}]});
+  assert.equal(edited.styles[0].cssProperties[0].disabled,true);
+  edited = await call('CSS.setStyleTexts',{edits:[{styleSheetId:`rake-edit-${button.nodeId}`,range:edited.styles[0].range,text:'width: 240px;'}]});
+  assert.equal(edited.styles[0].cssProperties[0].disabled,false);
+  await call('Runtime.evaluate',{expression:'rake.resetStyles($0)'});
   events.length = 0;
   await call('CSS.setStyleSheetText',{styleSheetId:`rake-edit-${button.nodeId}`,text:'width: 240px; border-width: 2px; border-radius: 8px; overflow: hidden;'});
   await eventually(async () => (await computed()).some(p=>p.name==='width' && p.value==='240px'));
@@ -90,14 +107,14 @@ try {
   assert.equal(changed.find(p=>p.name==='overflow-x').value,'hidden');
   await call('Rake.resetStyles',{nodeId:button.nodeId});
   await eventually(async () => (await computed()).some(p=>p.name==='width' && p.value===original));
-  await call('Rake.undoStyles',{nodeId:button.nodeId});
+  await call('Runtime.evaluate',{expression:'rake.undoStyles($0)'});
   await eventually(async () => (await computed()).some(p=>p.name==='width' && p.value==='240px'));
   const current = flatten((await call('DOM.getDocument',{depth:-1})).root);
   assert.equal(current.find(node=>node.nodeName==='button' && semantic(node,'increment')).nodeId,button.nodeId);
   assert.ok(!events.some(event=>event.method==='DOM.documentUpdated'), 'style edits preserve document identity');
   await call('DOM.focus',{nodeId:button.nodeId});
   await call('Overlay.highlightNode',{nodeId:button.nodeId}); await call('Overlay.hideHighlight');
-  console.log(`Native Elements/CDP passed: ${capture.elements.length} boundaries; lazy text, copy, sources, AX, real layout edits, reset/undo, stable IDs, focus and highlight.`);
+  console.log(`Native Elements/CDP passed: ${capture.elements.length} boundaries; lazy text, copy, sources, AX, Chrome edit/toggle ranges, stable polling, $0, real layout edits, reset/undo, stable IDs, focus and highlight.`);
 } catch (error) {
   console.error(readFileSync(logPath,'utf8')); throw error;
 } finally {

@@ -1,45 +1,22 @@
-# Graphical development tools
+# Chrome DevTools
+
+Stock Chrome DevTools is the supported graphical frontend. Rake's older HTML and
+`rake-inspector` frontends are legacy prototypes; their controls and tests do not
+establish Chrome compatibility. New development targets the CDP adapter.
 
 Build the CLI with `cargo build -p rake-cli`, then run:
 
 ```sh
-target/debug/rake dev --target desktop --package rake-routing
-target/debug/rake dev --target web --package rake-routing --port 8081
-target/debug/rake inspect --session /tmp/rake-dev-EXAMPLE
+target/debug/rake dev --target desktop --package rake-view --cdp --no-open
+target/debug/rake cdp --session /tmp/rake-dev-EXAMPLE --no-open --json
 ```
 
-Native dev opens the inspector. Web dev opens the application; its development
-badge links to Devtools in a separate tab. Open the private launch URL printed
-by the command when using `--no-open`. `rake inspect` connects to existing opt-in
-runtimes in the normal private control directory or the selected session. It
-accepts `--instance UUID|APPLICATION_ID`, `--port`, `--no-open` and `--json`.
-Python 3.11+ is required; the CLI bundles the inspector assets and server helpers.
+The first command builds and runs the example with a CDP adapter; the second
+attaches an adapter to an existing session. Copy its printed `devtoolsFrontendUrl`
+into stock Chrome. The dev supervisor still starts the legacy inspector service;
+use the CDP URL for supported workflows. Python 3.11+ is required by the supervisor.
 
-The inspector follows the compact layout of [Chrome DevTools](https://github.com/ChromeDevTools/devtools-frontend):
-horizontal panel tabs, a target toolbar, dense tables and split inspection panes.
-Workspace separates its window/tab/entry tree from properties and retained history.
-Elements pairs its boundary tree with Styles, Layout and Source; Console keeps
-typed application commands beside its output. This is Rake's own frontend using
-the shared runtime API.
-
-Drag a pane divider or focus it and use Left/Right (Home/End reach its limits).
-Panel tabs support Left/Right and Home/End. Pane sizes and scroll positions survive
-updates and panel switching. Narrow windows stack the panes. The theme button
-switches between dark and light, retaining the choice for that browser session.
-Successful control receipts collapse into a bottom drawer; uncertain delivery stays
-expanded with its exact-request retry. The status bar expands to show retention and
-loss details. Styles show read-only authored GPUI metadata; Computed shows live resolved Div
-styles, including inherited text and real hover/focus states. Layout reports actual
-captured border bounds. Box geometry is supplied separately when its used edges can be resolved.
-
-The browser UI belongs to the development host, so it survives application
-crashes, process restarts and full Web page reloads. Runtime selection is explicit
-when several instances match. A checkpointed successor advertises `restored_from`;
-the inspector follows that exact predecessor, clears all old state and diagnostic
-cursors, and uses the replacement's fresh RuntimeId. Logical tab IDs may survive
-restoration; operation IDs and retry keys never cross runtimes.
-
-## Chrome DevTools
+## Connection
 
 `rake cdp --session /tmp/rake-dev-EXAMPLE --no-open` starts a separate Rust
 adapter for opted-in runtimes. It prints the actual OS-assigned port and stock
@@ -56,7 +33,7 @@ runtime disappears or changes identity. Unsupported CDP methods return `-32601`.
 Standalone `App::root` hosts support the same Elements, Console diagnostic, Network
 and trace inspection paths when explicitly enabled with `ControlConfig::FromEnvironment`.
 They advertise no routing/application commands; typed command completion is empty.
-The HTML inspector opens Elements without requesting router state. The `rake-view`
+The `rake-view`
 example opts into this development policy, so `rake dev --target desktop --package
 rake-view --cdp` can inspect its automatic macro-authored tree.
 
@@ -135,11 +112,11 @@ rem lengths. Styles separates read-only synthetic rules labelled **GPUI defaults
 values can be inspected alongside the active result. These are observed GPUI origins,
 not a browser CSS cascade: inherited text can cross uninspected ancestors, and the
 public resolver cannot identify the specific hover/focus/active/drag rule or a
-same-valued override. The Rust source link opens the boundary construction site.
+same-valued override. Source opening uses the explicit Console helper below.
 Macro-authored
 style attributes additionally carry their own locations and expression spellings:
-Rake's Source pane displays them, and Chrome's node properties expose the read-only
-`rakeStyleSources` JSON string. These declarations are not a claim about which
+Chrome's node properties expose the read-only `rakeSource`, `rakeStyleSources` and
+`rakeHandlers` JSON strings. These declarations are not a claim about which
 conditional branch or private GPUI interaction rule supplied the live value.
 Legacy snapshots show authored styles without
 inventing provenance. Unsupported values remain `--gpui-` metadata properties.
@@ -148,8 +125,21 @@ app updates selected values without rebuilding the document. Force-pseudo-state
 controls remain unavailable; hover reflects the real app pointer.
 Highlighting and inspect mode use the leased development inspection controls
 described in [element inspection](element-inspection.md). Chrome tree hover
-highlights the app; its picker selects the clicked instrumented boundary. Rake's own Elements inspector remains available for full
-capture coverage and stale-selection details.
+highlights the app; its picker selects the clicked instrumented boundary.
+
+Chrome's normal disclosure arrows and **Expand recursively** load captured nodes.
+Cmd/Ctrl+F searches names, semantic IDs (`#increment`) and text, revealing collapsed
+ancestors. Context actions **Scroll into view**, **Focus**, **Copy outerHTML** and
+**Copy selector** operate on the captured tree. **Accessibility** shows captured
+names, roles and states; its **Show accessibility tree** switch retains selection.
+
+Add declarations under **DevTools base overrides** in Styles and use Chrome's
+declaration checkboxes to toggle them. Acknowledged declarations are available
+immediately; resolved values and geometry update after a real GPUI draw. Unchanged
+lightweight tree polls do not invalidate the Styles editor. The Console helpers
+`rake.resetStyles($0)` and `rake.undoStyles($0)` reset/undo the selected boundary's
+temporary overrides. Chrome DOM undo/redo,
+arbitrary new CSS rules and CSS selector editing remain unavailable.
 
 Sessions wait up to five seconds for a unique successor whose `restored_from`
 matches the selected RuntimeId, including when `--instance` originally named that
@@ -173,11 +163,20 @@ Elements Find (`Cmd/Ctrl+F`) searches captured names, IDs and text, including co
 branches; `#id` matches an exact semantic ID. Its context menu can focus registered
 elements and scroll through registered containers. Both Rake frontends expose the
 same actions plus **Open Rust source**. In Chrome's Console, use
+`rake.openSource($0)` for the selected Elements node, or
 `rake.openSource("routing.command-echo")` (or a retained numeric CDP node ID) to
 open the construction site using the system default editor. This explicit host
 action is restricted to existing Rust files inside `RAKE_SOURCE_ROOT` (default:
-the adapter/inspector host's current directory). No source contents are returned;
+the adapter host's current directory). No source contents are returned;
 line/column remain metadata when the default editor cannot accept a location.
+For an attribute or registered handler site, use
+`rake.openSource($0, {"kind":"style","index":0})` or
+`rake.openSource($0, {"kind":"handler","index":0})`. Indices refer to the
+captured `rakeStyleSources`/`rakeHandlers` arrays. `$0` alone returns a retained
+node object with read-only source, style and accessibility metadata; it follows
+stable captures and expires on removal. These exact helpers are adapter commands;
+general JavaScript expressions are unavailable. Keep Chrome's Console paste
+protection enabled and type reviewed commands manually when Chrome blocks pasting.
 See [navigation and handle registration](element-inspection.md#elements-navigation).
 
 Supported CDP methods are the domain enable/disable methods for Network, Log,
@@ -188,7 +187,7 @@ Runtime.globalLexicalScopeNames, Runtime.getProperties,
 Runtime.releaseObject/releaseObjectGroup; DOM.getDocument, DOM.requestChildNodes,
 DOM.describeNode, DOM.getAttributes, DOM.getOuterHTML, DOM.getBoxModel, DOM.performSearch,
 DOM.getSearchResults/discardSearchResults, DOM.focus/scrollIntoViewIfNeeded,
-DOM.resolveNode/requestNode, Runtime.callFunctionOn (navigation only),
+DOM.resolveNode/requestNode/setInspectedNode, Runtime.callFunctionOn (navigation only),
 DOM.pushNodesByBackendIdsToFrontend; CSS.getMatchedStylesForNode,
 CSS.getInlineStylesForNode, CSS.getComputedStyleForNode; Overlay.hideHighlight.
 Network.getResponseBody/getRequestPostData return descriptive unavailable errors.
@@ -198,19 +197,18 @@ CSS edits are restricted to temporary DevTools base override sheets; authored st
 Accessibility.enable/disable, getRootAXNode/getFullAXTree/getPartialAXTree/
 getChildAXNodes/getAXNodeAndAncestors, Tracing.start/end and IO.read/close are also
 supported. `Rake.openSource { nodeId, target? }` accepts captured construction/style/handler sites.
-Both Rake frontends expose per-attribute/handler source buttons, copy text/markup/path,
-branch actions and keyboard context menus. Chrome Copy element receives escaped
+Chrome Copy element receives escaped
 synthetic markup. See the [Elements coverage checklist](devtools-next.md#elements-coverage-checklist)
 for verification evidence and remaining GPUI boundaries.
 
-## Rake application preview
+## Legacy inspector prototypes
 
-An [Elements-only Inspector built with Rake](rake-inspector.md) is also available
+An [Elements-only Inspector built with Rake](rake-inspector.md) remains in the repository
 for native and Web: `rake inspect --elements --target desktop|web`. It uses the
-experimental `view!` macro and the same runtime queries. This preview is built
-from the Rake workspace; the multi-panel frontend described here stays available.
+experimental `view!` macro and the same runtime queries. Both this preview and the
+multi-panel HTML frontend below are unsupported historical prototypes.
 
-## Panels
+### Historical HTML panels
 
 | Panel | Inspection and actions |
 | --- | --- |
@@ -287,7 +285,7 @@ restart described in [development](development.md).
 
 ## Live frame recording
 
-The HTML inspector's **Frames** panel starts/stops a renewable five-second lease.
+CDP `Tracing.start`/`Tracing.end` starts/stops a renewable five-second recording lease.
 `record_frames` and `frames { after }` expose the same runtime data to raw control
 clients. Closing a host or letting the lease expire releases profiling. Recording
 uses GPUI's actual complete Window::draw timings, invalidation counts and optional
@@ -305,13 +303,10 @@ buffer cannot be quantified by Rake. Rake reports its own bounded retention loss
 Chrome's Tracing path consumes the same frames; streaming avoids large WebSocket
 responses. The exported profile can be read as Chrome trace-event JSON or in
 Perfetto. Chrome's browser/JavaScript-specific Performance tracks are not supplied.
-The Elements-only native/Web inspector remains focused on Elements; frame controls
-are in the HTML inspector and CDP.
 
 Accessibility inspects captured GPUI metadata through Chrome's Accessibility pane;
 `rakeAccessibility` and `rakeHandlers` in node Properties retain native focus facts
-and Rust binding sites. Rake's **Accessibility** and **Events** tabs show the same
-metadata. Complete OS accessibility trees, relationship-derived names, private focus
+and Rust binding sites. Complete OS accessibility trees, relationship-derived names, private focus
 groups and arbitrary GPUI listener enumeration remain outside current coverage.
 
 Empty frame callback lists indicate unavailable attribution, including cached draws

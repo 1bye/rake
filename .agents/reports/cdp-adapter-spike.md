@@ -1,5 +1,8 @@
 # CDP adapter spike — Phase 0
 
+Historical spike report. Current frontend scope and verification evidence are in
+[DevTools status](../../docs/devtools-next.md); stock Chrome is now the supported UI.
+
 Gate: **PASS**, 2026-10-28. Chrome 156.0.8078.48 on macOS, bundled frontend
 Chromium revision `d0c02bfad08ec92a6ffcf989e53cd995e6381a4c`.
 Protocol reference: ChromeDevTools/devtools-protocol commit

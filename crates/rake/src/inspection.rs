@@ -294,21 +294,33 @@ impl Store {
         match state.latest.status {
             Status::Unavailable => Err(InspectionError::Unavailable),
             Status::Waiting => Err(InspectionError::Waiting),
-            Status::Captured => state
-                .windows
-                .values()
-                .flat_map(|host| &host.snapshot.elements)
-                .chain(&state.latest.elements)
-                .chain(
-                    state
-                        .pages
-                        .values()
-                        .filter(|(_, until)| *until > Instant::now())
-                        .flat_map(|(snapshot, _)| &snapshot.elements),
-                )
-                .find(|element| element.id == id)
-                .cloned()
-                .ok_or(InspectionError::NotRetained),
+            Status::Captured => {
+                let mut element = state
+                    .windows
+                    .values()
+                    .flat_map(|host| &host.snapshot.elements)
+                    .chain(&state.latest.elements)
+                    .chain(
+                        state
+                            .pages
+                            .values()
+                            .filter(|(_, until)| *until > Instant::now())
+                            .flat_map(|(snapshot, _)| &snapshot.elements),
+                    )
+                    .find(|element| element.id == id)
+                    .cloned()
+                    .ok_or(InspectionError::NotRetained)?;
+                // An edit is acknowledged before the next draw. Its declaration
+                // state is current even while resolved values await that draw.
+                if let Some(history) = element
+                    .stable_id
+                    .as_ref()
+                    .and_then(|id| state.edits.get(id))
+                {
+                    element.style_overrides.clone_from(&history.current);
+                }
+                Ok(element)
+            }
         }
     }
 

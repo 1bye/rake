@@ -177,6 +177,57 @@ fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Ele
     }
 }
 
+#[cfg(feature = "gpui")]
+#[test]
+fn acknowledged_style_edits_are_visible_before_the_next_draw() {
+    let store = Store::default();
+    let mut snapshot = store.begin(1);
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 100.,
+        height: 20.,
+    };
+    let mut element = boundary("button", None, bounds, bounds);
+    element.stable_id = Some("stable-button".into());
+    element.style_editable = true;
+    snapshot.elements.push(element);
+    let generation = snapshot.capture.clone();
+    store.publish(WindowId(1), snapshot);
+    let declaration = StyleDeclaration {
+        property: "width".into(),
+        value: "240px".into(),
+        enabled: true,
+    };
+
+    store
+        .edit_style(
+            "button",
+            &generation,
+            &StyleEdit::Set {
+                declaration: declaration.clone(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.element("button").unwrap().style_overrides,
+        vec![declaration.clone()]
+    );
+    // Geometry still represents the last real draw, rather than an inferred result.
+    assert_eq!(store.element("button").unwrap().layout, Some(bounds));
+    store
+        .edit_style("button", &generation, &StyleEdit::Reset)
+        .unwrap();
+    assert!(store.element("button").unwrap().style_overrides.is_empty());
+    store
+        .edit_style("button", &generation, &StyleEdit::Undo)
+        .unwrap();
+    assert_eq!(
+        store.element("button").unwrap().style_overrides,
+        vec![declaration]
+    );
+}
+
 #[test]
 fn picking_respects_nesting_clipping_order_and_uninstrumented_gaps() {
     let store = Store::default();
