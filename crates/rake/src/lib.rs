@@ -250,9 +250,9 @@ pub mod prelude {
 pub mod __private {
     #[cfg(feature = "experimental-view")]
     pub use crate::inspection::authored::{
-        Definition as ViewDefinition, StyleSite as ViewStyleSite, child as view_inspect_child,
-        component as view_inspect_component, component_key as view_component_key,
-        styled as view_inspect,
+        Definition as ViewDefinition, HandlerSite as ViewHandlerSite, StyleSite as ViewStyleSite,
+        child as view_inspect_child, component as view_inspect_component,
+        component_key as view_component_key, styled as view_inspect,
     };
     #[cfg(feature = "experimental-view")]
     pub use crate::theme::apply::{

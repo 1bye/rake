@@ -53,6 +53,8 @@ fn element(id: &str) -> Element {
         paint_order: None,
         style_editable: false,
         style_overrides: Vec::new(),
+        accessibility: None,
+        handlers: Vec::new(),
         tab_id: None,
         entry_id: None,
     }

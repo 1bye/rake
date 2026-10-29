@@ -60,6 +60,8 @@ pub enum StyleOrigin {
     Inherited,
     /// Explicit base refinement on this element.
     Authored,
+    /// Temporary DevTools base declaration differs from the authored refinement.
+    Override,
     /// Current visual value differs from the default plus base refinement.
     /// GPUI does not expose which hover/focus/active/drag rule supplied it.
     Interaction,
@@ -74,6 +76,7 @@ impl StyleOrigin {
             Self::Default => "GPUI defaults",
             Self::Inherited => "Inherited text context",
             Self::Authored => "Authored base",
+            Self::Override => "DevTools base override",
             Self::Interaction => "Active interaction change",
             Self::Layout => "Measured layout",
         }
@@ -90,7 +93,7 @@ pub struct StyleLayer {
 }
 
 /// Construction site of an inspection boundary; no file access is provided.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceLocation {
     /// Compiler-supplied source path, possibly relative or remapped.
     pub file: String,
@@ -189,6 +192,12 @@ pub struct Element {
     /// Temporary declarations, including disabled ones; never source edits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub style_overrides: Vec<StyleDeclaration>,
+    /// Captured GPUI accessibility metadata, separate from the platform accessibility tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accessibility: Option<Box<Accessibility>>,
+    /// Declared macro handlers or explicit registration metadata; opaque closures are not enumerated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handlers: Vec<EventHandler>,
     /// Actual GPUI layout, or None for invalid/non-finite geometry.
     pub layout: Option<Layout>,
     /// Resolved box geometry for supported elements; older runtimes omit it.
@@ -369,4 +378,59 @@ pub enum StyleEdit {
     Reset,
     /// Restores the preceding temporary declaration list (up to 32 edits).
     Undo,
+}
+
+/// Metadata written by the real element's GPUI accessibility implementation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Accessibility {
+    /// AccessKit role spelling; None for a non-semantic inspection boundary.
+    pub role: Option<String>,
+    /// GPUI label, including macro-generated control names; no name is inferred by the inspector.
+    pub label: Option<String>,
+    /// Explicit accessible description; text/value/password content is not collected.
+    pub description: Option<String>,
+    /// Whether GPUI marks this node disabled.
+    pub disabled: bool,
+    /// Hidden via accessibility metadata or sampled display/visibility.
+    pub hidden: bool,
+    /// GPUI exposes a focus action, excluding disabled nodes.
+    pub focusable: bool,
+    /// Actual keyboard focus, when its handle is registered.
+    pub focused: Option<bool>,
+    /// Whether this registered handle contains the current focus.
+    pub contains_focus: Option<bool>,
+    /// Current registered focus handle's tab index, otherwise unknown.
+    pub tab_index: Option<isize>,
+    /// Current registered handle's tab-stop flag, otherwise unknown.
+    pub tab_stop: Option<bool>,
+    /// Order among captured known tab stops; excludes opaque nodes and private tab groups.
+    pub captured_tab_order: Option<usize>,
+    /// Actions the real GPUI node advertises; no callback evaluation is supported.
+    pub actions: Vec<String>,
+}
+
+impl Accessibility {
+    /// Compares structural facts independently of live focus and derived captured tab order.
+    pub fn same_properties(&self, other: &Self) -> bool {
+        self.role == other.role
+            && self.label == other.label
+            && self.description == other.description
+            && self.disabled == other.disabled
+            && self.hidden == other.hidden
+            && self.focusable == other.focusable
+            && self.tab_index == other.tab_index
+            && self.tab_stop == other.tab_stop
+            && self.actions == other.actions
+    }
+}
+
+/// Read-only source metadata for a handler declaration, without closures or captured state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventHandler {
+    /// Event name or typed GPUI action path.
+    pub name: String,
+    /// `view` for macro-authored bindings, `registered` for manual metadata.
+    pub origin: String,
+    /// Attribute/registration site; never an inferred callback implementation location.
+    pub source: SourceLocation,
 }

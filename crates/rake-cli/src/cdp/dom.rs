@@ -16,6 +16,7 @@ pub(super) struct Dom {
     sent: BTreeSet<i32>,
     children_sent: BTreeSet<i32>,
     style_updates: BTreeSet<i32>,
+    accessibility_updates: BTreeSet<i32>,
     updates: Vec<Event>,
     searches: BTreeMap<u64, Vec<i32>>,
     next_search: u64,
@@ -80,6 +81,9 @@ impl Dom {
         for (element, existing) in snapshot.elements.iter().zip(existing) {
             let existing = existing.filter(|(id, _)| !used.contains(id));
             let id = if let Some((id, old)) = existing {
+                if old.accessibility != element.accessibility {
+                    self.accessibility_updates.insert(id);
+                }
                 if (old.styles != element.styles
                     || old.resolved != element.resolved
                     || old.layout != element.layout
@@ -128,6 +132,11 @@ impl Dom {
             self.child_ids.entry(1).or_default().push(self.omitted_id);
         }
 
+        for (&parent, children) in &old_children {
+            if self.children(parent) != *children {
+                self.accessibility_updates.insert(parent);
+            }
+        }
         if reset {
             self.reset_delivery();
             return Ok(true);
@@ -238,6 +247,7 @@ impl Dom {
         self.sent.clear();
         self.children_sent.clear();
         self.style_updates.clear();
+        self.accessibility_updates.clear();
         self.updates.clear();
     }
 
@@ -484,6 +494,10 @@ impl Dom {
         if let Some(view) = &element.view {
             result.push(json!({"name":"rakeStyleSources","value":{"type":"string","value":serde_json::to_string_pretty(&view.style_sources).unwrap_or_default()},"configurable":false,"enumerable":true}));
         }
+        if let Some(a11y) = &element.accessibility {
+            result.push(json!({"name":"rakeAccessibility","value":{"type":"string","value":serde_json::to_string_pretty(a11y).unwrap_or_default()},"configurable":false,"enumerable":true}));
+        }
+        result.push(json!({"name":"rakeHandlers","value":{"type":"string","value":serde_json::to_string_pretty(&element.handlers).unwrap_or_default()},"configurable":false,"enumerable":true}));
         Ok(json!({"result":result}))
     }
 
@@ -597,6 +611,7 @@ impl Dom {
         self.sent.clear();
         self.children_sent.clear();
         self.style_updates.clear();
+        self.accessibility_updates.clear();
         self.updates.clear();
         self.searches.clear();
         self.node_objects.clear();
@@ -610,6 +625,129 @@ impl Dom {
 
     fn children(&self, id: i32) -> Vec<i32> {
         self.child_ids.get(&id).cloned().unwrap_or_default()
+    }
+
+    fn ax_node(&self, id: i32) -> Value {
+        let element = self.nodes.get(&id);
+        let parent = element.map(|element| {
+            element
+                .parent
+                .as_deref()
+                .and_then(|id| self.node_id(id))
+                .unwrap_or(1)
+        });
+        super::accessibility::node(
+            id,
+            element,
+            parent,
+            self.children(id)
+                .into_iter()
+                .filter(|child| self.nodes.contains_key(child))
+                .collect(),
+        )
+    }
+
+    pub fn take_accessibility_updates(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.accessibility_updates)
+            .into_iter()
+            .filter(|id| *id == 1 || self.nodes.contains_key(id))
+            .map(|id| self.ax_node(id))
+            .collect()
+    }
+
+    pub fn accessibility(&self, method: &str, params: &Value) -> Result<Value, Error> {
+        if self
+            .snapshot
+            .as_ref()
+            .is_none_or(|snapshot| snapshot.status != rake_protocol::inspection::Status::Captured)
+        {
+            return Err(Error::new(
+                -32000,
+                "Accessibility is waiting for a captured inspection host",
+            ));
+        }
+        let target = || -> Result<i32, Error> {
+            if let Some(id) = params["objectId"].as_str() {
+                self.object_node(id)
+            } else {
+                node_id(params)
+            }
+        };
+        if method == "Accessibility.getRootAXNode" {
+            return Ok(json!({"node":self.ax_node(1)}));
+        }
+        let mut ids = BTreeSet::new();
+        match method {
+            "Accessibility.getFullAXTree" => {
+                let depth = depth(params, 128)?.min(128);
+                let mut pending = vec![(1, 0)];
+                while let Some((id, level)) = pending.pop() {
+                    if !ids.insert(id) {
+                        continue;
+                    }
+                    if level < depth {
+                        pending.extend(
+                            self.children(id)
+                                .into_iter()
+                                .filter(|child| self.nodes.contains_key(child))
+                                .map(|child| (child, level + 1)),
+                        );
+                    }
+                }
+            }
+            "Accessibility.getChildAXNodes" => {
+                let id = params["id"]
+                    .as_str()
+                    .and_then(|id| id.strip_prefix("ax-"))
+                    .and_then(|id| id.parse().ok())
+                    .ok_or_else(|| Error::new(-32602, "AX node id required"))?;
+                if id != 1 {
+                    self.element(id)?;
+                }
+                ids.extend(
+                    self.children(id)
+                        .into_iter()
+                        .filter(|id| self.nodes.contains_key(id)),
+                );
+            }
+            "Accessibility.getPartialAXTree" | "Accessibility.getAXNodeAndAncestors" => {
+                let target = target()?;
+                if target != 1 {
+                    self.element(target)?;
+                }
+                ids.insert(target);
+                if params["fetchRelatives"] != false {
+                    let mut id = target;
+                    while let Some(parent) = self.nodes.get(&id).map(|e| {
+                        e.parent
+                            .as_deref()
+                            .and_then(|id| self.node_id(id))
+                            .unwrap_or(1)
+                    }) {
+                        if !ids.insert(parent) {
+                            break;
+                        }
+                        id = parent;
+                    }
+                    if method == "Accessibility.getPartialAXTree" {
+                        ids.extend(
+                            self.children(target)
+                                .into_iter()
+                                .filter(|id| self.nodes.contains_key(id)),
+                        );
+                    }
+                }
+            }
+            _ => return Err(Error::new(-32601, "Unsupported accessibility method")),
+        }
+        let value = json!({"nodes":ids.into_iter().map(|id| self.ax_node(id)).collect::<Vec<_>>()});
+        if serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len()) > 512 * 1024 {
+            return Err(Error::new(
+                -32000,
+                "Accessibility response exceeds budget; request the root and individual children",
+            ));
+        }
+        Ok(value)
     }
 
     pub fn edit_style(&self, id: i32) -> Result<Value, Error> {
@@ -1018,6 +1156,60 @@ mod tests {
                 "semantic_id":name,"layout":{"x":0.,"y":0.,"width":10.,"height":10.},"metadata_truncated":false
             })).collect::<Vec<_>>()
         })).unwrap()
+    }
+
+    #[test]
+    fn accessibility_projection_exposes_real_labels_and_updates_without_losing_dom_identity() {
+        let mut capture = stable_capture("1", &[("root", None), ("button", Some("root"))]);
+        capture.elements[1].accessibility =
+            Some(Box::new(rake_protocol::inspection::Accessibility {
+                role: Some("Button".into()),
+                label: Some("Save".into()),
+                description: None,
+                disabled: false,
+                hidden: false,
+                focusable: true,
+                focused: Some(false),
+                contains_focus: Some(false),
+                tab_index: Some(0),
+                tab_stop: Some(true),
+                captured_tab_order: Some(1),
+                actions: vec!["Click".into(), "Focus".into()],
+            }));
+        let mut dom = Dom::default();
+        dom.update(capture.clone()).unwrap();
+        let button = dom.node_id("1-button").unwrap();
+        let tree = dom
+            .accessibility(
+                "Accessibility.getPartialAXTree",
+                &json!({"backendNodeId":button}),
+            )
+            .unwrap();
+        let node = tree["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["backendDOMNodeId"] == button)
+            .unwrap();
+        assert_eq!(node["role"]["value"], "button");
+        assert_eq!(node["name"]["value"], "Save");
+        assert_eq!(node["ignored"], false);
+        let root = dom
+            .accessibility("Accessibility.getRootAXNode", &json!({}))
+            .unwrap();
+        assert_eq!(root["node"]["role"]["value"], "application");
+        dom.take_accessibility_updates();
+        capture.elements[1].accessibility.as_mut().unwrap().focused = Some(true);
+        dom.update(capture).unwrap();
+        assert_eq!(dom.node_id("1-button"), Some(button));
+        assert_eq!(
+            dom.take_accessibility_updates()[0]["nodeId"],
+            format!("ax-{button}")
+        );
+        assert!(
+            dom.accessibility("Accessibility.getChildAXNodes", &json!({"id":"stale"}))
+                .is_err()
+        );
     }
 
     #[test]

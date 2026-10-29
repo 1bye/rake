@@ -3,6 +3,26 @@
 use rake::inspection::Element;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) fn preserve_collapsed(
+    old: &BTreeMap<String, String>,
+    elements: &[Element],
+    collapsed: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut identities: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for element in elements {
+        if let Some(stable) = &element.stable_id {
+            identities.entry(stable).or_default().push(&element.id);
+        }
+    }
+    collapsed
+        .iter()
+        .filter_map(|id| old.get(id))
+        .filter_map(|stable| identities.get(stable.as_str()))
+        .filter(|ids| ids.len() == 1)
+        .map(|ids| ids[0].to_owned())
+        .collect()
+}
+
 pub(crate) const ROW_HEIGHT: f32 = 20.;
 pub(crate) const ROW_INSET: f32 = 6.;
 
@@ -303,9 +323,29 @@ mod tests {
             paint_order: None,
             style_editable: false,
             style_overrides: Vec::new(),
+            accessibility: None,
+            handlers: Vec::new(),
             tab_id: None,
             entry_id: None,
         }
+    }
+
+    #[test]
+    fn collapsed_branches_follow_stable_identities_and_expire_on_removal() {
+        let old = BTreeMap::from([
+            ("old-root".into(), "root".into()),
+            ("old-gone".into(), "gone".into()),
+        ]);
+        let mut root = element("new-root", None);
+        root.stable_id = Some("root".into());
+        let collapsed = BTreeSet::from(["old-root".into(), "old-gone".into()]);
+        assert_eq!(
+            preserve_collapsed(&old, std::slice::from_ref(&root), &collapsed),
+            BTreeSet::from(["new-root".into()])
+        );
+        let mut duplicate = root.clone();
+        duplicate.id = "ambiguous".into();
+        assert!(preserve_collapsed(&old, &[root, duplicate], &collapsed).is_empty());
     }
 
     #[test]

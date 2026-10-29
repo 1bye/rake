@@ -13,6 +13,7 @@ pub(super) fn matched(element: &Element) -> Vec<Value> {
         StyleOrigin::Default,
         StyleOrigin::Inherited,
         StyleOrigin::Authored,
+        StyleOrigin::Override,
         StyleOrigin::Interaction,
         StyleOrigin::Layout,
     ]

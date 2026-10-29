@@ -107,7 +107,7 @@ and group states plus inherited text from uninstrumented parents. Defaults are
 included, rem lengths are normalized to pixels, and width/height are measured.
 Other relative layout lengths retain their native units; this is not a browser
 CSS cascade. Custom/opaque boundaries without a resolver omit `resolved`.
-Older runtimes also omit it. Text contents are excluded. Every snapshot
+Older runtimes also omit it. Raw text/value contents are excluded; bounded accessibility labels can include control names. Every snapshot
 carries this coverage description, even when it has no nodes.
 
 `box_model` separates measured `border` bounds from `padding`, `content`, and
@@ -148,8 +148,8 @@ boundary and authored metadata are retained. Both Rake frontends provide a
 **Computed** tab and refresh selected details while their exact ID remains live.
 The **Styles** tab retains the authored base refinements.
 
-Capture retains at most 8192 nodes within a 32 MiB serialized metadata budget, leaving
-room in the transport's 1 MiB frame. Omitted inspected nodes are counted. Semantic
+Capture retains at most 8192 nodes within a 32 MiB serialized metadata budget.
+Paged responses stay below 512 KiB, within the transport's 1 MiB frame. Omitted inspected nodes are counted. Semantic
 IDs/type names are limited to 256 UTF-8 bytes, source paths to 512, and authored style data
 to 4 KiB per node. Oversized styles are unavailable; shortened/omitted metadata
 sets `metadata_truncated`. Non-finite geometry is unavailable. A snapshot replaces
@@ -339,3 +339,31 @@ most 32 declarations and 32 undo steps per edited boundary, across 64 boundaries
 Edits follow an unambiguous stable presentation identity and expire on removal or
 runtime replacement. Stale capture commands never select another element. Delivery
 is transient and never automatically retried, including undo.
+
+## Accessibility and interaction metadata
+
+Both Rake Elements frontends expose **Accessibility** and **Events** tabs. Chrome
+supports Accessibility root/full/partial/child/ancestor queries and node updates;
+its Properties pane also exposes read-only `rakeAccessibility` and `rakeHandlers`
+JSON strings. This projects inspected GPUI boundaries, not the complete platform
+accessibility tree. Opaque nodes and synthetic accessibility descendants are not
+enumerated. Full-tree responses are bounded; use root/child queries for larger trees.
+
+Roles, labels, descriptions, disabled/hidden state and supported actions come from
+the element's real accessibility writer. Labels include macro-generated control
+names, so accessible names may contain visible button text. Labels/descriptions are
+bounded to 256/512 UTF-8 bytes. Raw text values, editable values, passwords, listener
+closures and captured state are not retained. Relationship-derived accessible names
+are not computed. Unknown names/focus facts remain unavailable.
+
+Registered focus handles report actual focus, containment, tab index and tab-stop
+state. Macro buttons register their real internal handles automatically. Captured
+order sorts known tab stops by GPUI tab index then observed paint order; private
+focus groups and opaque tab stops prevent claiming complete application focus order.
+
+Macro-authored `on:*` bindings include event/action names and attribute locations.
+Manual builders can call `.inspect_handler("click")` after registering a listener;
+this records metadata only and never installs or invokes a callback. At most 32
+handler sites / 8 KiB per boundary are retained, with explicit metadata truncation.
+The registration site does not locate the body of an opaque callback. Chrome's
+JavaScript Event Listeners/Debugger APIs are not supplied for Rust closures.

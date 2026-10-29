@@ -17,6 +17,8 @@ use tungstenite::{Message, WebSocket};
 
 const INTERVAL: Duration = Duration::from_millis(250);
 const QUEUE_LIMIT: usize = 256;
+// Browser proxies must preserve the future cursor exactly when reading the high-water mark.
+const FRAME_HIGH_WATER_CURSOR: u64 = (1 << 53) - 1;
 
 struct Session {
     instance: Instance,
@@ -89,6 +91,22 @@ impl Session {
         let method = request.method.as_str();
 
         match method {
+            "Accessibility.enable" => {
+                self.domains.insert("Accessibility".into());
+                Ok(json!({}))
+            }
+            "Accessibility.disable" => {
+                self.domains.remove("Accessibility");
+                Ok(json!({}))
+            }
+            "Accessibility.getRootAXNode"
+            | "Accessibility.getFullAXTree"
+            | "Accessibility.getPartialAXTree"
+            | "Accessibility.getChildAXNodes"
+            | "Accessibility.getAXNodeAndAncestors" => {
+                self.refresh_dom()?;
+                self.dom.accessibility(method, &request.params)
+            }
             "Tracing.start" => {
                 if !self
                     .instance
@@ -107,9 +125,14 @@ impl Session {
                     self.frame_trace.active = false;
                     return Err(error);
                 }
-                let Reply::Frames(baseline) =
-                    query(&self.instance, Query::Frames { after: u64::MAX }, TIMEOUT)
-                        .map_err(|error| Error::new(-32000, error.to_string()))?
+                let Reply::Frames(baseline) = query(
+                    &self.instance,
+                    Query::Frames {
+                        after: FRAME_HIGH_WATER_CURSOR,
+                    },
+                    TIMEOUT,
+                )
+                .map_err(|error| Error::new(-32000, error.to_string()))?
                 else {
                     return Err(Error::new(-32000, "Unexpected frame baseline"));
                 };
@@ -573,7 +596,7 @@ impl Session {
             _ => return Err("runtime identity changed".into()),
         }
 
-        if self.domains.contains("DOM") {
+        if self.domains.contains("DOM") || self.domains.contains("Accessibility") {
             self.refresh_dom().map_err(|e| e.message)?;
         }
 
@@ -900,6 +923,26 @@ impl Session {
             && self.dom.control_id(node).is_ok()
         {
             self.load_details(node)?;
+        }
+        let accessibility = self.dom.take_accessibility_updates();
+        if self.domains.contains("Accessibility") {
+            let bytes = serde_json::to_vec(&accessibility).map_or(usize::MAX, |value| value.len());
+            if reset || bytes > 256 * 1024 {
+                if let Ok(root) = self
+                    .dom
+                    .accessibility("Accessibility.getRootAXNode", &json!({}))
+                {
+                    self.event(Event::new(
+                        "Accessibility.loadComplete",
+                        json!({"root":root["node"]}),
+                    ));
+                }
+            } else if !accessibility.is_empty() {
+                self.event(Event::new(
+                    "Accessibility.nodesUpdated",
+                    json!({"nodes":accessibility}),
+                ));
+            }
         }
         let changed = self.dom.take_style_updates();
 
@@ -1251,7 +1294,11 @@ mod tests {
                         } else {
                             Vec::new()
                         },
-                        cursor: if after == u64::MAX { 0 } else { 1 },
+                        cursor: if after == FRAME_HIGH_WATER_CURSOR {
+                            0
+                        } else {
+                            1
+                        },
                         more: false,
                         gap: false,
                         dropped: 0,

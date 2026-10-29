@@ -296,6 +296,33 @@ await find('button', 'Reset overrides').click(); await settle();
 assert.equal(envelopes.at(-1).message.value.edit.action, 'reset');
 await find('button', 'Undo style edit').click(); await settle();
 assert.equal(envelopes.at(-1).message.value.edit.action, 'undo');
+elementCapture.elements[0].stable_id = 'editor-target';
+await find('button', 'Inspect element-1-0').click(); await settle();
+const oldEditor = find('button', 'Apply override').closest('form');
+const oldProperty = all(oldEditor).find(node => node.attributes['aria-label'] === 'Override property');
+const oldValue = all(oldEditor).find(node => node.attributes['aria-label'] === 'Override value');
+oldProperty.value = 'width'; oldValue.value = '42px';
+elementCapture = {...elementCapture, capture: 'editing-2', elements: [{...elementCapture.elements[0], id: 'element-editing-2-0'}]};
+await panel('Elements');
+oldEditor.listeners.submit({preventDefault() {}}); await settle();
+assert.equal(envelopes.at(-1).message.value.id, 'element-editing-2-0');
+assert.equal(envelopes.at(-1).message.value.generation, 'editing-2');
+elementCapture = {...elementCapture, capture: '1', elements: [{...elementCapture.elements[0], id: 'element-1-0', stable_id: undefined}]};
+await panel('Elements');
+const editsBeforeRemoval = envelopes.length;
+oldEditor.listeners.submit({preventDefault() {}}); await settle();
+assert.equal(envelopes.length, editsBeforeRemoval, 'a removed stable boundary cannot retarget a similarly named element');
+await find('button', 'Inspect element-1-0').click(); await settle();
+elementCapture.elements[0].accessibility = {role: 'Button', label: 'Save changes', description: 'Writes document', disabled: false, hidden: false, focusable: true, focused: false, contains_focus: false, tab_index: 3, tab_stop: true, captured_tab_order: 1, actions: ['Click', 'Focus']};
+elementCapture.elements[0].handlers = [{name: 'click', origin: 'view', source: {file: 'src/events.rs', line: 18, column: 7}}];
+await find('button', 'Inspect element-1-0').click(); await settle();
+await find('button', 'Accessibility').click(); await settle();
+assert.match(ids.content.textContent, /Save changes/);
+assert.match(ids.content.textContent, /Known tab stops/);
+await find('button', 'Events').click(); await settle();
+assert.match(ids.content.textContent, /src\/events.rs:18:7/);
+assert.match(ids.content.textContent, /click/);
+await find('button', 'Styles').click(); await settle();
 elementCapture.elements[0].box_model = {
   border: {x: 10, y: 20, width: 300, height: 50}, padding: {x: 12, y: 22, width: 296, height: 46},
   content: {x: 20, y: 30, width: 280, height: 30}, margin: null, unavailable: ['Margin box needs used auto/percentage margins']

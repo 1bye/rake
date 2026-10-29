@@ -9,11 +9,13 @@ pub(super) fn capture(
     authored: &Value,
     base: &Value,
     live: &Value,
+    override_refinement: Option<&Value>,
 ) -> Vec<StyleLayer> {
     let mut layers = [
         StyleOrigin::Default,
         StyleOrigin::Inherited,
         StyleOrigin::Authored,
+        StyleOrigin::Override,
         StyleOrigin::Interaction,
         StyleOrigin::Layout,
     ]
@@ -44,6 +46,11 @@ pub(super) fn capture(
                 StyleOrigin::Layout
             } else if at(base, name, field) != at(live, name, field) {
                 StyleOrigin::Interaction
+            } else if override_refinement.is_some_and(|refinement| {
+                !at(refinement, name, field).is_null()
+                    && at(refinement, name, field) != at(authored, name, field)
+            }) {
+                StyleOrigin::Override
             } else if !at(authored, name, field).is_null() {
                 StyleOrigin::Authored
             } else if name == "text" && at(live, name, field).is_null() {
@@ -99,7 +106,7 @@ mod tests {
         let base = json!({"opacity":0.8, "text":{"font_size":"1rem"}, "background":null});
         let live = json!({"opacity":0.8, "text":{"font_size":"1rem"}, "background":"hover"});
         let resolved = json!({"opacity":0.8, "text":{"font_size":"16px", "color":"parent"}, "background":"hover", "display":"Flex", "size":{"width":"80px"}});
-        let layers = capture(&resolved, &authored, &base, &live);
+        let layers = capture(&resolved, &authored, &base, &live, None);
         let get = |origin| {
             &layers
                 .iter()

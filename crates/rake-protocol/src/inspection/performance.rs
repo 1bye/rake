@@ -49,8 +49,9 @@ pub struct FrameTiming {
     /// Invalidations coalesced into this draw.
     pub invalidations: u64,
     /// Slowest callbacks, bounded to 64 entries. Durations overlap for nested nodes.
+    /// Empty when callback attribution is unavailable (cached/unobserved/evicted metadata).
     pub nodes: Vec<NodeTiming>,
-    /// Callback records omitted by the per-frame limit.
+    /// Known callback records omitted by the per-frame limit; unobserved work is not estimated.
     pub omitted_nodes: usize,
 }
 

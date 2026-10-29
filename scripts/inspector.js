@@ -607,7 +607,9 @@ function styleEditor(selected, stale) {
   const disabled = stale || !connected || !selected.style_editable || !info.commands.includes('edit_element_style');
   const edit = async value => {
     try {
-      await inspectionControl({type: 'edit_element_style', id: selected.id, generation: elements.capture, edit: value});
+      const matches = elements.elements.filter(element => selected.stable_id ? element.stable_id === selected.stable_id : element.id === selected.id);
+      if (matches.length !== 1) throw new Error('The edited boundary is no longer mounted.');
+      await inspectionControl({type: 'edit_element_style', id: matches[0].id, generation: elements.capture, edit: value});
       await refresh();
       if (selectedElement) await inspectElement(selectedElement);
     } catch (error) { showError(error); }
@@ -662,7 +664,7 @@ function elementsPanel() {
     details('Inspection coverage', elements.coverage, 'inspection-coverage'));
   const detail = el('div');
   const tabs = el('div', null, 'inspector-tabs');
-  for (const name of ['Styles', 'Computed', 'Layout', 'Source']) {
+  for (const name of ['Styles', 'Computed', 'Layout', 'Accessibility', 'Events', 'Source']) {
     const control = button(name, () => { elementTab = name; render(true); });
     control.dataset.focus = 'element-tab:' + name;
     control.setAttribute('aria-pressed', String(elementTab === name)); tabs.append(control);
@@ -696,7 +698,7 @@ function elementsPanel() {
         for (const [property, value] of Object.entries(values)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
         styles.append(el('span', '}', 'muted')); detail.append(styles);
         if (elementTab === 'Computed') {
-          const labels = {default:'GPUI defaults', inherited:'Inherited text context', authored:'Authored base', interaction:'Active interaction change', layout:'Measured layout'};
+          const labels = {default:'GPUI defaults', inherited:'Inherited text context', authored:'Authored base', override:'DevTools base override', interaction:'Active interaction change', layout:'Measured layout'};
           for (const layer of selected.resolved.layers || []) {
             const group = append(el('div', null, 'style-block'), el('h3', labels[layer.origin] || layer.origin));
             for (const [property, value] of Object.entries(layer.properties)) group.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `origin:${selected.id}:${layer.origin}:${property}`)));
@@ -706,7 +708,7 @@ function elementsPanel() {
         }
       } else detail.append(empty(elementTab === 'Computed' ? 'Resolved styles unavailable for this boundary. Rebuild the app if it predates resolved capture.' : 'Style refinements unavailable for this boundary.'));
     }
-    if (elementTab !== 'Source') {
+    if (['Styles', 'Computed', 'Layout'].includes(elementTab)) {
       detail.append(el('h3', 'Layout', 'pane-heading'));
       if (layout) detail.append(append(el('div', null, 'box-model'), el('span', `x: ${layout.x} · y: ${layout.y}`), el('div', `${layout.width} × ${layout.height}`, 'box-size')),
         el('p', `Layout in window logical pixels: x ${layout.x}, y ${layout.y}, width ${layout.width}, height ${layout.height}. Before clipping.`, 'hint'));
@@ -717,10 +719,22 @@ function elementsPanel() {
         detail.append(properties([['Margin box', bounds(boxes.margin)], ['Border box', bounds(boxes.border)], ['Padding box', bounds(boxes.padding)], ['Content box', bounds(boxes.content)], ['Visible intersection', bounds(selected.content_mask)]]));
         for (const reason of boxes.unavailable || []) detail.append(el('p', reason, 'hint'));
       } else detail.append(el('p', 'Resolved box geometry unavailable for this boundary/runtime.', 'hint'));
-    } else {
+    } else if (elementTab === 'Source') {
       detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Authored tag', selected.view?.tag], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Application shell' : 'entry-' + selected.entry_id]]));
       for (const style of selected.view?.style_sources || []) detail.append(card(`${style.scope} · ${style.attribute}`, el('pre', style.expression), el('p', `${style.source.file}:${style.source.line}:${style.source.column}`, 'hint')));
       if (selected.view) detail.append(el('p', 'Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures.', 'hint'));
+    }
+    if (elementTab === 'Accessibility') {
+      const a11y = selected.accessibility;
+      if (!a11y) detail.append(empty('Accessibility metadata unavailable for this boundary/runtime.'));
+      else detail.append(properties([['GPUI role', a11y.role ?? 'No semantic role'], ['Explicit accessible label', a11y.label], ['Description', a11y.description], ['Disabled', a11y.disabled], ['Hidden', a11y.hidden], ['Focusable', a11y.focusable], ['Focused', a11y.focused], ['Contains focus', a11y.contains_focus], ['Tab index', a11y.tab_index], ['Tab stop', a11y.tab_stop], ['Captured tab order', a11y.captured_tab_order], ['Actions', a11y.actions.join(', ')]]));
+      const stops = elements.elements.filter(element => element.accessibility?.captured_tab_order != null).sort((a,b) => a.accessibility.captured_tab_order - b.accessibility.captured_tab_order);
+      detail.append(el('h3', 'Known tab stops'), table(['Order', 'Element', 'Tab index'], stops.map(element => [element.accessibility.captured_tab_order, button(element.semantic_id || element.view?.tag || elementName(element.kind), () => inspectElement(element.id)), element.accessibility.tab_index])),
+        el('p', 'Order covers inspected handles, sorted by GPUI tab index and paint order. Private tab groups and opaque nodes are unavailable. Labels are explicit GPUI metadata; names derived from text or relationships are not computed.', 'hint'));
+    }
+    if (elementTab === 'Events') {
+      detail.append(table(['Handler', 'Origin', 'Rust registration site'], (selected.handlers || []).map(handler => [handler.name, handler.origin, `${handler.source.file}:${handler.source.line}:${handler.source.column}`])),
+        el('p', 'Macro bindings and explicitly registered metadata. GPUI private listeners, closure bodies and captured state are not enumerated. No handlers are invoked by inspection.', 'hint'));
     }
     detail.append(el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
       append(el('div', null, 'pane-actions'), related(selected, 'Tasks'), related(selected, 'Requests')));
@@ -742,6 +756,7 @@ function framesPanel() {
     table(['Frame', 'Window', 'Draw (ms)', 'Dirty → draw end (ms)', 'Invalidations'], frameRecords.slice(-100).reverse().map(frame =>
       [frame.sequence, frame.window, (frame.draw_us / 1000).toFixed(3), frame.dirty_to_draw_us == null ? 'Unavailable' : (frame.dirty_to_draw_us / 1000).toFixed(3), frame.invalidations])));
   if (latest) {
+    if (!latest.nodes.length) result.append(el('p', 'Callback attribution is unavailable for this frame (cached, unobserved or evicted metadata).', 'hint'));
     result.append(el('h3', 'Latest frame: slowest inclusive callbacks'), table(['Boundary', 'Phase', 'Time (ms)', 'Rust source'], latest.nodes.map(node => [node.name, node.phase, (node.duration_us / 1000).toFixed(3),
       button(`${node.source.file}:${node.source.line}`, async () => {
         try {

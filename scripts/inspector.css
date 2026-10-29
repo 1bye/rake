@@ -160,7 +160,7 @@ form button { margin-right: 4px; }
 .syntax-attribute { color: var(--ink); }
 .syntax-value { color: var(--value); }
 .syntax-number { color: var(--number); }
-.inspector-tabs { display: flex; min-height: 29px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.inspector-tabs { display: flex; flex-wrap: wrap; min-height: 29px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .inspector-tabs button { border: 0; border-radius: 0; background: transparent; font-size: 11px; padding: 4px 10px; }
 .inspector-tabs button[aria-pressed="true"] { color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
 .element-identity { padding: 10px 12px; font: 11px var(--mono); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }

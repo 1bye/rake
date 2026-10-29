@@ -17,6 +17,7 @@ const MAX_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(feature = "gpui")]
 const MAX_NODE_TIMINGS: usize = 64;
 
+#[cfg_attr(not(feature = "gpui"), derive(Default))]
 pub(super) struct Recording {
     pub until: Option<Instant>,
     #[cfg(feature = "gpui")]
@@ -36,6 +37,7 @@ pub(super) struct Recording {
     pending: VecDeque<Pending>,
 }
 
+#[cfg(feature = "gpui")]
 impl Default for Recording {
     fn default() -> Self {
         Self {
@@ -185,6 +187,7 @@ impl Recording {
             }
             self.pending.push_back(Pending {
                 window,
+                start: Instant::now(),
                 nodes: Vec::new(),
                 observed: 0,
             });
@@ -219,6 +222,20 @@ impl Recording {
     }
 
     #[cfg(feature = "gpui")]
+    fn take_pending(&mut self, window: WindowId, start: Instant, end: Instant) -> Option<Pending> {
+        let pending = self
+            .pending
+            .iter()
+            .position(|pending| {
+                pending.window == window && pending.start >= start && pending.start <= end
+            })
+            .and_then(|index| self.pending.remove(index));
+        self.pending
+            .retain(|pending| pending.window != window || pending.start > end);
+        pending
+    }
+
+    #[cfg(feature = "gpui")]
     fn collect(&mut self) {
         let Some(collector) = &mut self.collector else {
             return;
@@ -232,19 +249,13 @@ impl Recording {
             else {
                 continue;
             };
-            let pending = self
-                .pending
-                .iter()
-                .position(|pending| pending.window == window)
-                .and_then(|index| self.pending.remove(index));
+            let pending = self.take_pending(window, timing.draw_start, timing.draw_end);
             let (mut nodes, observed) =
                 pending.map_or((Vec::new(), 0), |pending| (pending.nodes, pending.observed));
             nodes.sort_by_key(|node| std::cmp::Reverse(node.duration_us));
             self.sequence = self.sequence.saturating_add(1);
             let duration = micros(timing.draw_duration());
-            let elapsed = micros(self.epoch.elapsed())
-                .saturating_sub(micros(timing.draw_end.elapsed()))
-                .saturating_sub(duration);
+            let elapsed = micros(timing.draw_start.saturating_duration_since(self.epoch));
             self.push(FrameTiming {
                 sequence: self.sequence,
                 window,
@@ -282,6 +293,7 @@ impl Recording {
 #[cfg(feature = "gpui")]
 struct Pending {
     window: WindowId,
+    start: Instant,
     nodes: Vec<NodeTiming>,
     observed: usize,
 }
@@ -370,6 +382,53 @@ impl Drop for FrameTraceGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "gpui")]
+    #[test]
+    fn recording_lease_expires_without_another_window_draw() {
+        let store = Store::default();
+        store.attach();
+        store.record_frames(true, 1).unwrap();
+        futures::executor::block_on(store.listen());
+        let state = store.0.borrow();
+        assert!(state.frames.until.is_none());
+        assert!(state.frames.guard.is_none());
+    }
+
+    #[cfg(feature = "gpui")]
+    #[test]
+    fn evicted_callback_metadata_never_attaches_to_a_different_frame() {
+        let mut recording = Recording::default();
+        let next = Instant::now() + Duration::from_millis(20);
+        recording.pending.push_back(Pending {
+            window: WindowId(1),
+            start: next,
+            nodes: Vec::new(),
+            observed: 3,
+        });
+        assert!(
+            recording
+                .take_pending(
+                    WindowId(1),
+                    next - Duration::from_millis(20),
+                    next - Duration::from_millis(10)
+                )
+                .is_none()
+        );
+        assert_eq!(recording.pending.len(), 1);
+        assert_eq!(
+            recording
+                .take_pending(
+                    WindowId(1),
+                    next - Duration::from_millis(1),
+                    next + Duration::from_millis(1)
+                )
+                .unwrap()
+                .observed,
+            3
+        );
+        assert!(recording.pending.is_empty());
+    }
+
     #[test]
     fn frame_pages_are_bounded_and_report_eviction_and_lease_expiry() {
         let store = Store::default();

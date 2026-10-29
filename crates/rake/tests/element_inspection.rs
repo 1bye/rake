@@ -68,3 +68,16 @@ fn headless_queries_report_coverage_without_inventing_a_tree() {
         .is_err()
     );
 }
+
+#[cfg(feature = "gpui")]
+#[test]
+fn manual_handler_metadata_is_available_through_the_public_builder_api() {
+    use rake::gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
+    use rake::inspection::InspectElement as _;
+    let element = rake::gpui::div()
+        .id("save")
+        .on_click(|_, _, _| {})
+        .inspect("save")
+        .inspect_handler("click");
+    assert!(rake::gpui::Element::id(&element.into_inner()).is_some());
+}

@@ -12,6 +12,7 @@ use gpui::{
 use super::{Element, Layout, Snapshot, SourceLocation, Status, Store};
 use crate::router::{EntryId, TabId, WindowId};
 
+mod accessibility;
 #[cfg(feature = "experimental-view")]
 pub(crate) mod authored;
 mod geometry;
@@ -55,6 +56,8 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         style_reader: None,
         original_style: None,
         profile: None,
+        handlers: Vec::new(),
+        handlers_truncated: false,
     }
 }
 
@@ -75,6 +78,8 @@ pub struct Inspected<E: gpui::Element> {
     style_reader: Option<fn(&mut E) -> gpui::StyleRefinement>,
     original_style: Option<gpui::StyleRefinement>,
     profile: Option<super::recording::Target>,
+    handlers: Vec<(&'static Location<'static>, String)>,
+    handlers_truncated: bool,
 }
 
 impl<E: gpui::Element + Styled> Styled for Inspected<E> {
@@ -133,6 +138,18 @@ impl<E: gpui::Element> Inspected<E> {
     /// Renames this boundary without inserting a duplicate inspection wrapper.
     pub fn inspect(mut self, semantic_id: impl Into<String>) -> Self {
         self.semantic_id = Some(semantic_id.into());
+        self
+    }
+
+    /// Declares an already registered handler for inspection; does not install a listener.
+    /// At most 32 declarations are retained, with bounded names and source metadata.
+    #[track_caller]
+    pub fn inspect_handler(mut self, event: impl Into<String>) -> Self {
+        if self.handlers.len() < 32 {
+            self.handlers.push((Location::caller(), event.into()));
+        } else {
+            self.handlers_truncated = true;
+        }
         self
     }
 
@@ -465,6 +482,13 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(timer) = timer {
             timer.finish();
         }
+        #[cfg(feature = "experimental-view")]
+        if capturing
+            && let Some(button) =
+                (&self.inner as &dyn std::any::Any).downcast_ref::<rake_ui::view::Button>()
+        {
+            self.focus = button.inspection_focus().cloned();
+        }
         cx.global_mut::<LayoutHost>().0 = previous_host;
         if capturing
             && self.original_style.is_none()
@@ -514,13 +538,24 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         });
 
         let mut retained_index = None;
+        let mut a11y_truncated = false;
+        let a11y = cx.global::<ActiveCapture>().0.is_some().then(|| {
+            accessibility::capture(
+                &self.inner,
+                self.focus.as_ref(),
+                state.1.as_ref(),
+                window,
+                cx,
+                &mut a11y_truncated,
+            )
+        });
 
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
             let owner = self
                 .owner
                 .or_else(|| capture.owners.last().copied().flatten());
 
-            let mut truncated = false;
+            let mut truncated = a11y_truncated || self.handlers_truncated;
 
             let semantic_id = self
                 .semantic_id
@@ -553,6 +588,45 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 .iter()
                 .all(|value| value.is_finite());
 
+            let a11y = a11y.expect("active capture sampled accessibility");
+            let mut handlers = Vec::new();
+            #[cfg(feature = "experimental-view")]
+            if let Some(definition) = self.definition {
+                for handler in definition.handlers.iter().take(32) {
+                    handlers.push(super::EventHandler {
+                        name: limited(handler.name, 128, &mut truncated),
+                        origin: "view".into(),
+                        source: SourceLocation {
+                            file: limited(handler.source.file(), 512, &mut truncated),
+                            line: handler.source.line(),
+                            column: handler.source.column(),
+                        },
+                    });
+                }
+                truncated |= definition.handlers.len() > 32;
+            }
+            for (source, name) in &self.handlers {
+                handlers.push(super::EventHandler {
+                    name: limited(name, 128, &mut truncated),
+                    origin: "registered".into(),
+                    source: SourceLocation {
+                        file: limited(source.file(), 512, &mut truncated),
+                        line: source.line(),
+                        column: source.column(),
+                    },
+                });
+            }
+            let mut bytes = 0;
+            let count = handlers
+                .iter()
+                .take(32)
+                .take_while(|handler| {
+                    bytes += serde_json::to_vec(handler).map_or(8192, |value| value.len());
+                    bytes <= 8192
+                })
+                .count();
+            truncated |= count < handlers.len();
+            handlers.truncate(count);
             let element = Element {
                 id: format!(
                     "element-{}-{}",
@@ -561,7 +635,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 ),
                 stable_id: None,
                 navigation: super::Navigation {
-                    focus: self.focus.is_some(),
+                    focus: self.focus.is_some() && !a11y.disabled,
                     focused: self
                         .focus
                         .as_ref()
@@ -636,6 +710,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 paint_order: None,
                 style_editable: state.1.is_some(),
                 style_overrides: Vec::new(),
+                accessibility: Some(Box::new(a11y)),
+                handlers,
                 tab_id: owner.map(|owner| owner.0),
                 entry_id: owner.map(|owner| owner.1),
             };
@@ -814,6 +890,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
+                accessibility::order(&mut completed.snapshot);
                 bound_resolved_styles(&mut completed.snapshot);
                 store.publish(*host, completed.snapshot);
             }
@@ -951,6 +1028,9 @@ fn resolved_style<E: gpui::Element>(
         &serde_json::to_value(original.unwrap_or(&authored)).ok()?,
         &serde_json::to_value(base.subtract(&Default::default())).ok()?,
         &serde_json::to_value(style.subtract(&Default::default())).ok()?,
+        original
+            .and_then(|_| serde_json::to_value(&authored).ok())
+            .as_ref(),
     );
 
     Some(super::ResolvedStyle {
@@ -1452,6 +1532,25 @@ mod tests {
                 }
             })
             .is_err()
+        );
+        edit(StyleEdit::Set {
+            declaration: StyleDeclaration {
+                property: "background-color".into(),
+                value: "#ff00ff".into(),
+                enabled: true,
+            },
+        })
+        .unwrap();
+        draw(cx);
+        assert!(
+            target()
+                .resolved
+                .as_ref()
+                .unwrap()
+                .layers
+                .iter()
+                .any(|layer| layer.origin == super::super::StyleOrigin::Override
+                    && !layer.properties["background"].is_null())
         );
         let old = target();
         view.update(cx, |view, cx| {

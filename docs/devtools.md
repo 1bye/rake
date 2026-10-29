@@ -130,7 +130,7 @@ of duplicating the border quad.
 
 Computed exposes the live resolved GPUI snapshot, measured width/height and pixel
 rem lengths. Styles separates read-only synthetic rules labelled **GPUI defaults**,
-**Inherited text context**, **Authored base**, **Active interaction change**, and
+**Inherited text context**, **Authored base**, **DevTools base override**, **Active interaction change**, and
 **Measured layout**. The authored base keeps its original declarations, so overridden
 values can be inspected alongside the active result. These are observed GPUI origins,
 not a browser CSS cascade: inherited text can cross uninspected ancestors, and the
@@ -195,7 +195,9 @@ Network.getResponseBody/getRequestPostData return descriptive unavailable errors
 Overlay.highlightNode/setInspectMode require advertised runtime interaction support. Every unlisted method returns `-32601`,
 including Debugger, Profiler, DOM edits and other JavaScript function calls.
 CSS edits are restricted to temporary DevTools base override sheets; authored styles remain read-only.
-The adapter also accepts the explicit extension `Rake.openSource { nodeId }`.
+Accessibility.enable/disable, getRootAXNode/getFullAXTree/getPartialAXTree/
+getChildAXNodes/getAXNodeAndAncestors, Tracing.start/end and IO.read/close are also
+supported. The adapter also accepts the explicit extension `Rake.openSource { nodeId }`.
 
 ## Rake application preview
 
@@ -301,3 +303,14 @@ responses. The exported profile can be read as Chrome trace-event JSON or in
 Perfetto. Chrome's browser/JavaScript-specific Performance tracks are not supplied.
 The Elements-only native/Web inspector remains focused on Elements; frame controls
 are in the HTML inspector and CDP.
+
+Accessibility inspects captured GPUI metadata through Chrome's Accessibility pane;
+`rakeAccessibility` and `rakeHandlers` in node Properties retain native focus facts
+and Rust binding sites. Rake's **Accessibility** and **Events** tabs show the same
+metadata. Complete OS accessibility trees, relationship-derived names, private focus
+groups and arbitrary GPUI listener enumeration remain outside current coverage.
+
+Empty frame callback lists indicate unavailable attribution, including cached draws
+or evicted pending metadata; omission counts cover known observations only. Pending
+callbacks match the actual draw's time interval and cannot attach to a later frame.
+Recording adds instrumentation overhead.

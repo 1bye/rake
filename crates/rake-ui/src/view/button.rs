@@ -59,6 +59,14 @@ pub struct Button {
     tabindex: isize,
 }
 
+impl Button {
+    /// Current real focus handle for development inspection, after request-layout.
+    #[doc(hidden)]
+    pub fn inspection_focus(&self) -> Option<&FocusHandle> {
+        self.focus.as_ref()
+    }
+}
+
 struct ButtonFocus(FocusHandle);
 
 // GPUI exposes fluent focus configuration but no mutable Interactivity setter.

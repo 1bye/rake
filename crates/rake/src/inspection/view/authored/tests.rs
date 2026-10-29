@@ -142,10 +142,15 @@ fn automatic_boundaries_capture_styles_sources_and_inline_run_metadata_without_t
         snapshot.elements.iter().all(|e| e.stable_id.is_some()),
         "unique macro sites and keyed components must be stable"
     );
+    let serialized = serde_json::to_string(&snapshot).unwrap();
+    assert!(!serialized.contains("Private text content"));
+    assert!(!serialized.contains("Private inline content"));
     assert!(
-        !serde_json::to_string(&snapshot)
-            .unwrap()
-            .contains("Private")
+        snapshot.elements.iter().any(|element| element
+            .accessibility
+            .as_ref()
+            .is_some_and(|a11y| a11y.label.as_deref() == Some("Private label"))),
+        "accessible control names are captured, not raw text runs"
     );
 }
 
@@ -232,6 +237,7 @@ fn authored_metadata_is_bounded_without_evaluating_or_dropping_its_boundary() {
         site: "test",
         source,
         styles: sites,
+        handlers: &[],
     };
     let mut truncated = false;
     let metadata = definition.capture(&mut truncated);
@@ -287,4 +293,111 @@ fn component_properties_do_not_require_clone_debug_or_gpui_key_conversion() {
         element.view_key.is_none(),
         "unknown application key types must remain ambiguous"
     );
+}
+
+struct AccessibleFixture {
+    store: Store,
+    scope: gpui::FocusHandle,
+    disabled: bool,
+    clicks: Rc<Cell<usize>>,
+}
+
+impl Render for AccessibleFixture {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let clicks = self.clicks.clone();
+        crate::view! {
+            <section id="accessibility-root" role={gpui::accesskit::Role::Group} aria-label="Tools" focus={&self.scope} tab-navigation={true}>
+                <button id="save" aria-label="Save changes" aria-description="Writes document" disabled={self.disabled} tabindex={3}
+                    on:click={move |_, _, _| clicks.set(clicks.get() + 1)}>"Sensitive body text"</button>
+                <button id="cancel" aria-label="Cancel" tabindex={0}/>
+            </section>
+        }.root(self.store.clone(), 0, WindowId(1))
+    }
+}
+
+#[test]
+fn accessible_roles_labels_actions_focus_order_and_handler_sites_follow_real_gpui_state() {
+    let mut app = gpui::TestAppContext::single();
+    let store = Store::default();
+    store.attach();
+    let clicks = Rc::new(Cell::new(0));
+    let (view, cx) = app.add_window_view(|_, cx| AccessibleFixture {
+        store: store.clone(),
+        scope: cx.focus_handle().tab_stop(false),
+        disabled: false,
+        clicks: clicks.clone(),
+    });
+    let draw = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
+    };
+    draw(cx);
+    let snapshot = store.snapshot();
+    let save = named(&snapshot, "save");
+    let a11y = save.accessibility.as_ref().unwrap();
+    assert_eq!(a11y.role.as_deref(), Some("Button"));
+    assert_eq!(a11y.label.as_deref(), Some("Save changes"));
+    assert_eq!(a11y.description.as_deref(), Some("Writes document"));
+    assert_eq!(a11y.tab_index, Some(3));
+    assert_eq!(a11y.tab_stop, Some(true));
+    assert_eq!(a11y.captured_tab_order, Some(2));
+    assert_eq!(
+        named(&snapshot, "cancel")
+            .accessibility
+            .as_ref()
+            .unwrap()
+            .captured_tab_order,
+        Some(1)
+    );
+    assert!(save.navigation.focus);
+    assert!(a11y.actions.iter().any(|action| action == "Click"));
+    assert_eq!(save.handlers[0].name, "click");
+    assert_eq!(save.handlers[0].origin, "view");
+    assert!(save.handlers[0].source.line > 0);
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("Sensitive body text")
+    );
+    store
+        .navigate(
+            &save.id,
+            &snapshot.capture,
+            crate::inspection::NavigationAction::Focus,
+        )
+        .unwrap();
+    draw(cx);
+    let focused = store.snapshot();
+    assert_eq!(
+        named(&focused, "save")
+            .accessibility
+            .as_ref()
+            .unwrap()
+            .focused,
+        Some(true)
+    );
+    assert_eq!(
+        named(&focused, "accessibility-root")
+            .accessibility
+            .as_ref()
+            .unwrap()
+            .contains_focus,
+        Some(true)
+    );
+    view.update(cx, |view, cx| {
+        view.disabled = true;
+        cx.notify();
+    });
+    draw(cx);
+    let disabled = store.snapshot();
+    let save = named(&disabled, "save");
+    let a11y = save.accessibility.as_ref().unwrap();
+    assert!(a11y.disabled);
+    assert!(!a11y.focusable);
+    assert_eq!(a11y.tab_stop, Some(false));
+    assert!(a11y.actions.is_empty());
+    assert!(!save.navigation.focus);
+    assert_eq!(clicks.get(), 0, "inspection never invokes event handlers");
 }

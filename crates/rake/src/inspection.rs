@@ -4,7 +4,8 @@
 //! shell and application-supplied inspection boundaries, preserving their nearest
 //! inspected ancestor. Layout is measured by GPUI. Authored refinements and live
 //! resolved styles are separate; opaque custom elements may not expose resolution.
-//! No views, text contents or source contents are retained.
+//! No views, raw text/value contents or source contents are retained. Bounded
+//! accessibility labels/descriptions are inspection metadata.
 
 mod editing;
 mod recording;
@@ -73,7 +74,7 @@ impl Default for Store {
                 router_revision: 0,
                 elements: Vec::new(),
                 omitted: 0,
-                coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Text content is not captured.".into(),
+                coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Raw text/value content is not captured; bounded accessibility labels and descriptions include macro-generated control names.".into(),
             }),
             edits: BTreeMap::new(),
             frames: recording::Recording::default(),
@@ -261,6 +262,7 @@ impl Store {
                 element.resolved = None;
                 element.box_model = None;
                 element.style_overrides.clear();
+                element.handlers.clear();
                 if let Some(view) = &mut element.view {
                     view.style_sources.clear();
                 }
@@ -350,8 +352,21 @@ impl Store {
     }
 
     #[cfg(feature = "gpui")]
-    pub(crate) fn listen(&self) -> event_listener::EventListener {
-        self.0.borrow().changed.listen()
+    pub(crate) fn listen(&self) -> impl std::future::Future<Output = ()> + use<> {
+        let state = self.0.borrow();
+        let changed = state.changed.listen();
+        let deadline = state.frames.until;
+        let store = self.clone();
+        async move {
+            if let Some(deadline) = deadline {
+                let timer = crate::tasks::sleep(deadline.saturating_duration_since(Instant::now()));
+                futures::future::select(Box::pin(changed), Box::pin(timer)).await;
+                // Lease cleanup must run even when a hidden window never draws again.
+                store.0.borrow_mut().expire(Instant::now());
+            } else {
+                changed.await;
+            }
+        }
     }
 
     fn available(&self) -> Result<(), InspectionError> {
@@ -489,6 +504,12 @@ impl Store {
                             )
                             && element.kind == old.kind
                             && element.stable_id == old.stable_id
+                            && (match (&element.accessibility, &old.accessibility) {
+                                (Some(a), Some(b)) => a.same_properties(b),
+                                (None, None) => true,
+                                _ => false,
+                            })
+                            && element.handlers == old.handlers
                             && element.navigation.focus == old.navigation.focus
                             && element.navigation.scroll_into_view
                                 == old.navigation.scroll_into_view

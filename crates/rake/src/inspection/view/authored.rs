@@ -20,11 +20,18 @@ pub struct StyleSite {
 }
 
 #[doc(hidden)]
+pub struct HandlerSite {
+    pub name: &'static str,
+    pub source: &'static Location<'static>,
+}
+
+#[doc(hidden)]
 pub struct Definition {
     pub tag: &'static str,
     pub site: &'static str,
     pub source: &'static Location<'static>,
     pub styles: &'static [StyleSite],
+    pub handlers: &'static [HandlerSite],
 }
 
 impl Definition {

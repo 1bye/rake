@@ -34,6 +34,7 @@ struct ElementsView {
     show_find: bool,
     show_coverage: bool,
     collapsed: BTreeSet<String>,
+    collapse_identities: std::collections::BTreeMap<String, String>,
     capture: Option<(RuntimeId, String)>,
     breadcrumbs: Vec<(String, String)>,
     breadcrumb_scroll: ScrollHandle,
@@ -156,6 +157,7 @@ impl RouteViews<Destination> for Views {
                 show_find: false,
                 show_coverage: false,
                 collapsed: BTreeSet::new(),
+                collapse_identities: Default::default(),
                 capture: None,
                 breadcrumbs: Vec::new(),
                 breadcrumb_scroll: ScrollHandle::new(),
@@ -855,7 +857,31 @@ impl Render for ElementsView {
             .zip(model.tree.as_ref().map(|tree| tree.capture.clone()));
 
         if capture != self.capture {
-            self.collapsed.clear();
+            self.collapsed = if capture.as_ref().map(|capture| capture.0)
+                == self.capture.as_ref().map(|capture| capture.0)
+            {
+                tree::preserve_collapsed(
+                    &self.collapse_identities,
+                    model
+                        .tree
+                        .as_ref()
+                        .map_or(&[], |tree| tree.elements.as_slice()),
+                    &self.collapsed,
+                )
+            } else {
+                BTreeSet::new()
+            };
+            self.collapse_identities = model
+                .tree
+                .iter()
+                .flat_map(|tree| &tree.elements)
+                .filter_map(|element| {
+                    element
+                        .stable_id
+                        .as_ref()
+                        .map(|stable| (element.id.clone(), stable.clone()))
+                })
+                .collect();
             self.capture = capture;
         }
 
@@ -991,9 +1017,9 @@ impl Render for ElementsView {
 
         let details = rake::view! {
             <section id="element-details" class="flex flex-col flex-1 min-w-0 min-h-0" aria-label="Element details">
-                <div class="flex flex-row h-[29px] shrink-0 bg-bar border-b-1 border-line">
-                    for tab in ["Styles", "Computed", "Layout", "Source"] {
-                        <div id={format!("tab-container-{tab}")} class="h-full">{self.detail_button(tab, cx)}</div>
+                <div class="flex flex-row flex-wrap min-h-[29px] shrink-0 bg-bar border-b-1 border-line">
+                    for tab in ["Styles", "Computed", "Layout", "Accessibility", "Events", "Source"] {
+                        <div id={format!("tab-container-{tab}")} class="h-[29px]">{self.detail_button(tab, cx)}</div>
                     }
                 </div>
                 <div class="flex flex-row flex-wrap gap-1 px-2 py-1 border-b-1 border-line">
@@ -1093,6 +1119,28 @@ impl Render for ElementsView {
                             } else {
                                 <p class="px-3 py-2 text-muted">"Resolved box geometry unavailable for this boundary/runtime."</p>
                             }
+                        }
+                        if current_tab == "Accessibility" {
+                            if let Some(a11y) = &element.accessibility {
+                                {property("GPUI role", a11y.role.clone().unwrap_or_else(|| "No semantic role".into()), colors)}
+                                {property("Explicit label", a11y.label.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
+                                {property("Description", a11y.description.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
+                                {property("State", format!("disabled: {} · hidden: {} · focusable: {}", a11y.disabled, a11y.hidden, a11y.focusable), colors)}
+                                {property("Focus", format!("focused: {:?} · contains: {:?}", a11y.focused, a11y.contains_focus), colors)}
+                                {property("Tab navigation", format!("index: {:?} · stop: {:?} · captured order: {:?}", a11y.tab_index, a11y.tab_stop, a11y.captured_tab_order), colors)}
+                                {property("Actions", a11y.actions.join(", "), colors)}
+                            } else { <p class="px-3 py-2 text-muted">"Accessibility metadata unavailable."</p> }
+                            <p class="px-3 py-2 text-[10px] text-muted">"Tab order covers captured handles only; private tab groups and opaque nodes are unavailable. Names are explicit GPUI labels; text and relationship-derived names are not computed."</p>
+                        }
+                        if current_tab == "Events" {
+                            for (index, handler) in element.handlers.iter().enumerate() {
+                                <div id={format!("handler-{index}")} class="flex flex-col px-3 py-2 border-b-1 border-line font-code text-[11px]">
+                                    <p>{format!("{} · {}", handler.name, handler.origin)}</p>
+                                    <p class="text-muted">{format!("{}:{}:{}", handler.source.file, handler.source.line, handler.source.column)}</p>
+                                </div>
+                            }
+                            if element.handlers.is_empty() { <p class="px-3 py-2 text-muted">"No handler declarations captured."</p> }
+                            <p class="px-3 py-2 text-[10px] text-muted">"Macro bindings and explicitly registered metadata; private listeners and closure state are not enumerated. Inspection never invokes handlers."</p>
                         }
                         if current_tab == "Source" {
                             if let Some(source) = &element.source {

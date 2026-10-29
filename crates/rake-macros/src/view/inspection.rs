@@ -13,12 +13,24 @@ pub(super) fn definition(
     styles: TokenStream,
     rake: &TokenStream,
 ) -> TokenStream {
+    definition_with_handlers(tag, span, index, styles, TokenStream::new(), rake)
+}
+
+fn definition_with_handlers(
+    tag: &str,
+    span: Span,
+    index: usize,
+    styles: TokenStream,
+    handlers: TokenStream,
+    rake: &TokenStream,
+) -> TokenStream {
     quote_spanned!(span=> {
         const DEFINITION: #rake::__private::ViewDefinition = #rake::__private::ViewDefinition {
             tag: #tag,
             site: concat!(file!(), ":", line!(), ":", column!(), ":", #index),
             source: ::std::panic::Location::caller(),
             styles: &[#styles],
+            handlers: &[#handlers],
         };
         &DEFINITION
     })
@@ -31,7 +43,34 @@ impl Element {
         if self.resolved.composes_text() {
             inline_sources(&self.children, rake, &mut styles);
         }
-        definition(&self.display_name, self.tag.span(), index, styles, rake)
+        let mut handlers = TokenStream::new();
+        for attribute in &self.attributes {
+            if !self.is_component() && super::events::is_event(&attribute.name) {
+                let name = super::events::LEGACY
+                    .iter()
+                    .find(|(legacy, _)| *legacy == attribute.name)
+                    .map(|(_, canonical)| *canonical)
+                    .unwrap_or_else(|| {
+                        attribute
+                            .name
+                            .strip_prefix("on:")
+                            .unwrap_or(&attribute.name)
+                    });
+                handlers.extend(
+                    quote_spanned!(attribute.span=> #rake::__private::ViewHandlerSite {
+                    name: #name, source: ::std::panic::Location::caller(),
+                },),
+                );
+            }
+        }
+        definition_with_handlers(
+            &self.display_name,
+            self.tag.span(),
+            index,
+            styles,
+            handlers,
+            rake,
+        )
     }
 
     fn style_sources(&self, rake: &TokenStream, output: &mut TokenStream) {
