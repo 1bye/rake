@@ -28,10 +28,55 @@ pub(super) fn capture<E: Element>(
         None
     };
     let role = (node.role() != accesskit::Role::Unknown).then(|| format!("{:?}", node.role()));
+    let label = node.label().map(|label| limited(label, 256, truncated));
+    let (name, name_source) = if let Some(label) = &label {
+        (Some(label.clone()), Some("label".into()))
+    } else if node.role() == accesskit::Role::Label {
+        (
+            text.as_ref().map(|text| limited(text, 256, truncated)),
+            text.as_ref().map(|_| "text".into()),
+        )
+    } else {
+        (None, None)
+    };
+    let mut states = serde_json::Map::new();
+    for (name, value) in [
+        ("expanded", node.is_expanded()),
+        ("selected", node.is_selected()),
+    ] {
+        if let Some(value) = value {
+            states.insert(name.into(), value.into());
+        }
+    }
+    for (name, value) in [
+        ("required", node.is_required()),
+        ("readonly", node.is_read_only()),
+        ("busy", node.is_busy()),
+        ("multiselectable", node.is_multiselectable()),
+    ] {
+        states.insert(name.into(), value.into());
+    }
+    if let Some(value) = node.toggled() {
+        states.insert(
+            if node.role() == accesskit::Role::Button {
+                "pressed"
+            } else {
+                "checked"
+            }
+            .into(),
+            format!("{value:?}").to_lowercase().into(),
+        );
+    }
+    if let Some(value) = node.invalid() {
+        states.insert("invalid".into(), format!("{value:?}").to_lowercase().into());
+    }
     let focus = focus.and_then(|handle| handle.downgrade().upgrade());
     let accessibility = Accessibility {
         role,
-        label: node.label().map(|label| limited(label, 256, truncated)),
+        label,
+        name,
+        name_source,
+        states,
         description: node
             .description()
             .map(|label| limited(label, 512, truncated)),
@@ -55,6 +100,77 @@ pub(super) fn capture<E: Element>(
             .collect(),
     };
     (accessibility, text)
+}
+
+pub(super) fn names(snapshot: &mut Snapshot) {
+    let indices: std::collections::BTreeMap<_, _> = snapshot
+        .elements
+        .iter()
+        .enumerate()
+        .map(|(i, element)| (element.id.as_str(), i))
+        .collect();
+    let mut children = vec![Vec::new(); snapshot.elements.len()];
+    for (i, element) in snapshot.elements.iter().enumerate() {
+        if let Some(parent) = element.parent.as_deref().and_then(|id| indices.get(id)) {
+            children[*parent].push(i);
+        }
+    }
+    let mut contents = vec![String::new(); snapshot.elements.len()];
+    let mut clipped = vec![false; snapshot.elements.len()];
+    for i in (0..snapshot.elements.len()).rev() {
+        let element = &snapshot.elements[i];
+        if element.accessibility.as_ref().is_some_and(|a| a.hidden) {
+            continue;
+        }
+        if let Some(label) = element
+            .accessibility
+            .as_ref()
+            .and_then(|a| a.label.as_ref())
+            .or(element.text.as_ref())
+        {
+            contents[i] = limited(
+                &label.split_whitespace().collect::<Vec<_>>().join(" "),
+                256,
+                &mut clipped[i],
+            );
+        } else {
+            for &child in &children[i] {
+                if contents[child].is_empty() {
+                    continue;
+                }
+                let joined = format!(
+                    "{}{}{}",
+                    contents[i],
+                    if contents[i].is_empty() { "" } else { " " },
+                    contents[child]
+                );
+                contents[i] = limited(&joined, 256, &mut clipped[i]);
+                clipped[i] |= clipped[child];
+            }
+        }
+        let element = &mut snapshot.elements[i];
+        if let Some(a11y) = &mut element.accessibility
+            && a11y.label.is_none()
+            && element.text.is_none()
+            && matches!(
+                a11y.role.as_deref(),
+                Some(
+                    "Button"
+                        | "Link"
+                        | "Heading"
+                        | "CheckBox"
+                        | "RadioButton"
+                        | "Switch"
+                        | "MenuItem"
+                        | "Tab"
+                )
+            )
+        {
+            a11y.name = (!contents[i].is_empty()).then(|| contents[i].clone());
+            a11y.name_source = a11y.name.as_ref().map(|_| "contents".into());
+            element.metadata_truncated |= clipped[i];
+        }
+    }
 }
 
 pub(super) fn order(snapshot: &mut Snapshot) {

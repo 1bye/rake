@@ -429,6 +429,15 @@ pub struct Accessibility {
     pub role: Option<String>,
     /// GPUI label, including macro-generated control names; no name is inferred by the inspector.
     pub label: Option<String>,
+    /// Bounded accessible name from an explicit label, text, or captured descendants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `label`, `text`, or `contents`; absent on older runtimes or unknown names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_source: Option<String>,
+    /// Actual AccessKit states; never editable text or password values.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub states: serde_json::Map<String, Value>,
     /// Explicit accessible description; text/value/password content is not collected.
     pub description: Option<String>,
     /// Whether GPUI marks this node disabled.
@@ -456,6 +465,9 @@ impl Accessibility {
     pub fn same_properties(&self, other: &Self) -> bool {
         self.role == other.role
             && self.label == other.label
+            && self.name == other.name
+            && self.name_source == other.name_source
+            && self.states == other.states
             && self.description == other.description
             && self.disabled == other.disabled
             && self.hidden == other.hidden

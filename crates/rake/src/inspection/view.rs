@@ -761,6 +761,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
+                accessibility::names(&mut completed.snapshot);
                 let identities = completed.identify(store, *host);
                 for element in &mut completed.snapshot.elements {
                     element.style_editable &= element.stable_id.is_some();
@@ -893,6 +894,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
                 accessibility::order(&mut completed.snapshot);
+                accessibility::names(&mut completed.snapshot);
                 bound_resolved_styles(&mut completed.snapshot);
                 store.publish(*host, completed.snapshot);
             }

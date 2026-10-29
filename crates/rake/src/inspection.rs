@@ -706,7 +706,19 @@ fn bound_resolved_styles(snapshot: &mut Snapshot) {
 #[cfg(any(feature = "gpui", test))]
 fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Option<String> {
     // Presentation identities are assigned after traversal; reserve their maximum wire size.
-    let size = serde_json::to_vec(&element).map_or(MAX_CAPTURE_BYTES, |value| value.len()) + 64;
+    // Reserve the worst-case escaped name derived after descendants have been captured.
+    let name_reserve = if element
+        .accessibility
+        .as_ref()
+        .is_some_and(|a| a.role.is_some() && a.name.is_none())
+    {
+        2048
+    } else {
+        0
+    };
+    let size = serde_json::to_vec(&element).map_or(MAX_CAPTURE_BYTES, |value| value.len())
+        + 64
+        + name_reserve;
 
     if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_CAPTURE_BYTES - 4096 {
         snapshot.omitted += 1;

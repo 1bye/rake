@@ -365,9 +365,18 @@ enumerated. Full-tree responses are bounded; use root/child queries for larger t
 Roles, labels, descriptions, disabled/hidden state and supported actions come from
 the element's real accessibility writer. Labels include macro-generated control
 names, so accessible names may contain visible button text. Labels/descriptions are
-bounded to 256/512 UTF-8 bytes. Raw text values, editable values, passwords, listener
-closures and captured state are not retained. Relationship-derived accessible names
-are not computed. Unknown names/focus facts remain unavailable.
+bounded to 256/512 UTF-8 bytes. Editable values, passwords, listener closures and captured state are not retained.
+Rendered text is captured separately. Accessible `name` prioritizes explicit labels
+(including explicit empty labels), then a text boundary’s own content, then captured
+visible descendant text for controls supporting names from content. `name_source`
+reports `label`, `text`, or `contents`. Names are UTF-8 prefixes bounded to 256 bytes.
+Hidden branches are excluded. Opaque descendants, relationships and synthetic AX
+children prevent claiming the complete platform accessible-name algorithm.
+
+Captured states include selected/expanded when applicable, checked/pressed tri-state,
+required, readonly, busy, multiselectable and invalid. Chrome maps text roles to
+StaticText and sends name/state changes without replacing the corresponding DOM node.
+Unknown names/focus facts remain unavailable.
 
 Registered focus handles report actual focus, containment, tab index and tab-stop
 state. Macro buttons register their real internal handles automatically. Captured

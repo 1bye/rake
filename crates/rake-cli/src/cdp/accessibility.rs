@@ -25,6 +25,10 @@ pub(super) fn node(
                 "List" => "list",
                 "ListItem" => "listitem",
                 "Paragraph" => "paragraph",
+                "Label" => "StaticText",
+                "Switch" => "switch",
+                "Tab" => "tab",
+                "MenuItem" => "menuitem",
                 "Image" => "image",
                 "GenericContainer" => "generic",
                 other => other,
@@ -43,8 +47,18 @@ pub(super) fn node(
         if let Some(focused) = a11y.focused {
             properties.push(json!({"name":"focused","value":{"type":"boolean","value":focused}}));
         }
+        for (name, value) in &a11y.states {
+            let kind = if matches!(name.as_str(), "checked" | "pressed") {
+                "tristate"
+            } else if value.is_boolean() {
+                "boolean"
+            } else {
+                "token"
+            };
+            properties.push(json!({"name":name,"value":{"type":kind,"value":value}}));
+        }
         result["properties"] = json!(properties);
-        if let Some(label) = &a11y.label {
+        if let Some(label) = a11y.name.as_ref().or(a11y.label.as_ref()) {
             result["name"] = json!({"type":"string","value":label});
         }
         if let Some(description) = &a11y.description {

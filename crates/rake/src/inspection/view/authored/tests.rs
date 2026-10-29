@@ -422,6 +422,14 @@ impl Render for TextContents {
                 <p id="paragraph">"Count: "<strong>{self.count.to_string()}</strong><br/>"🌍"</p>
                 <button id="button">"Press me"</button>
                 <span id="label">"Label"</span>
+                <div id="content-name" role={gpui::accesskit::Role::Button}>
+                    <span>"Open"</span><span>{format!("document {}", self.count)}</span>
+                    <span style={|mut s| { s.style().visibility = Some(gpui::Visibility::Hidden); s }}>"Ignore me"</span>
+                </div>
+                <div id="check-state" role={gpui::accesskit::Role::CheckBox}
+                    style={|s| s.aria_toggled(gpui::accesskit::Toggled::Mixed).aria_selected(self.count > 0).aria_expanded(self.count == 0)}>
+                    "Enable feature"
+                </div>
                 {gpui::Text::new_inaccessible("Inaccessible text".into())}
                 {gpui::StyledText::new("Styled text")}
                 {""}
@@ -449,6 +457,26 @@ fn rendered_text_covers_containers_and_inline_runs_with_stable_live_updates() {
     };
     draw(cx);
     let first = store.snapshot();
+    let name = named(&first, "content-name")
+        .accessibility
+        .as_ref()
+        .unwrap();
+    assert_eq!(name.name.as_deref(), Some("Open document 0"));
+    assert_eq!(name.name_source.as_deref(), Some("contents"));
+    let states = &named(&first, "check-state")
+        .accessibility
+        .as_ref()
+        .unwrap()
+        .states;
+    assert_eq!(states["checked"], "mixed");
+    assert_eq!(states["selected"], false);
+    assert_eq!(states["expanded"], true);
+    draw(cx);
+    assert_eq!(
+        store.snapshot().capture,
+        first.capture,
+        "derived names must not churn captures"
+    );
     for (parent, value) in [
         ("heading", "Hello 世界"),
         ("paragraph", "Count: 0\n🌍"),
@@ -502,6 +530,23 @@ fn rendered_text_covers_containers_and_inline_runs_with_stable_live_updates() {
     });
     draw(cx);
     let second = store.snapshot();
+    assert_eq!(
+        named(&second, "content-name")
+            .accessibility
+            .as_ref()
+            .unwrap()
+            .name
+            .as_deref(),
+        Some("Open document 1")
+    );
+    assert_eq!(
+        named(&second, "check-state")
+            .accessibility
+            .as_ref()
+            .unwrap()
+            .states["selected"],
+        true
+    );
     let updated = second
         .elements
         .iter()

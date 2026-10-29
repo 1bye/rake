@@ -1202,6 +1202,9 @@ mod tests {
             Some(Box::new(rake_protocol::inspection::Accessibility {
                 role: Some("Button".into()),
                 label: Some("Save".into()),
+                name: None,
+                name_source: None,
+                states: Default::default(),
                 description: None,
                 disabled: false,
                 hidden: false,
@@ -1237,8 +1240,35 @@ mod tests {
         assert_eq!(root["node"]["role"]["value"], "application");
         dom.take_accessibility_updates();
         capture.elements[1].accessibility.as_mut().unwrap().focused = Some(true);
+        let a11y = capture.elements[1].accessibility.as_mut().unwrap();
+        a11y.name = Some("Save document".into());
+        a11y.name_source = Some("contents".into());
+        a11y.states.insert("pressed".into(), "mixed".into());
+        a11y.states.insert("expanded".into(), false.into());
         dom.update(capture).unwrap();
         assert_eq!(dom.node_id("1-button"), Some(button));
+        let tree = dom
+            .accessibility(
+                "Accessibility.getPartialAXTree",
+                &json!({"backendNodeId":button}),
+            )
+            .unwrap();
+        let node = tree["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["backendDOMNodeId"] == button)
+            .unwrap();
+        assert_eq!(node["name"]["value"], "Save document");
+        assert!(
+            node["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "pressed"
+                    && p["value"]["type"] == "tristate"
+                    && p["value"]["value"] == "mixed")
+        );
         assert_eq!(
             dom.take_accessibility_updates()[0]["nodeId"],
             format!("ax-{button}")

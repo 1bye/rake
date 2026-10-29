@@ -734,10 +734,10 @@ function elementsPanel() {
     if (elementTab === 'Accessibility') {
       const a11y = selected.accessibility;
       if (!a11y) detail.append(empty('Accessibility metadata unavailable for this boundary/runtime.'));
-      else detail.append(properties([['GPUI role', a11y.role ?? 'No semantic role'], ['Explicit accessible label', a11y.label], ['Description', a11y.description], ['Disabled', a11y.disabled], ['Hidden', a11y.hidden], ['Focusable', a11y.focusable], ['Focused', a11y.focused], ['Contains focus', a11y.contains_focus], ['Tab index', a11y.tab_index], ['Tab stop', a11y.tab_stop], ['Captured tab order', a11y.captured_tab_order], ['Actions', a11y.actions.join(', ')]]));
+      else detail.append(properties([['GPUI role', a11y.role ?? 'No semantic role'], ['Accessible name', a11y.name ?? a11y.label], ['Name source', a11y.name_source], ['Captured states', JSON.stringify(a11y.states ?? {})], ['Explicit accessible label', a11y.label], ['Description', a11y.description], ['Disabled', a11y.disabled], ['Hidden', a11y.hidden], ['Focusable', a11y.focusable], ['Focused', a11y.focused], ['Contains focus', a11y.contains_focus], ['Tab index', a11y.tab_index], ['Tab stop', a11y.tab_stop], ['Captured tab order', a11y.captured_tab_order], ['Actions', a11y.actions.join(', ')]]));
       const stops = elements.elements.filter(element => element.accessibility?.captured_tab_order != null).sort((a,b) => a.accessibility.captured_tab_order - b.accessibility.captured_tab_order);
       detail.append(el('h3', 'Known tab stops'), table(['Order', 'Element', 'Tab index'], stops.map(element => [element.accessibility.captured_tab_order, button(element.semantic_id || element.view?.tag || elementName(element.kind), () => inspectElement(element.id)), element.accessibility.tab_index])),
-        el('p', 'Order covers inspected handles, sorted by GPUI tab index and paint order. Private tab groups and opaque nodes are unavailable. Labels are explicit GPUI metadata; names derived from text or relationships are not computed.', 'hint'));
+        el('p', 'Order covers inspected handles, sorted by GPUI tab index and paint order. Private tab groups and opaque nodes are unavailable. Names use explicit labels or captured text. Relationship-derived names and opaque descendants remain unavailable.', 'hint'));
     }
     if (elementTab === 'Events') {
       detail.append(table(['Handler', 'Origin', 'Rust registration site'], (selected.handlers || []).map((handler, index) => [handler.name, handler.origin,

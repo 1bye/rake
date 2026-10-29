@@ -1127,6 +1127,9 @@ impl Render for ElementsView {
                         if current_tab == "Accessibility" {
                             if let Some(a11y) = &element.accessibility {
                                 {property("GPUI role", a11y.role.clone().unwrap_or_else(|| "No semantic role".into()), colors)}
+                                {property("Accessible name", a11y.name.clone().or_else(|| a11y.label.clone()).unwrap_or_else(|| "Unavailable".into()), colors)}
+                                {property("Name source", a11y.name_source.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
+                                {property("Captured states", serde_json::to_string(&a11y.states).unwrap_or_default(), colors)}
                                 {property("Explicit label", a11y.label.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
                                 {property("Description", a11y.description.clone().unwrap_or_else(|| "Unavailable".into()), colors)}
                                 {property("State", format!("disabled: {} · hidden: {} · focusable: {}", a11y.disabled, a11y.hidden, a11y.focusable), colors)}
@@ -1134,7 +1137,7 @@ impl Render for ElementsView {
                                 {property("Tab navigation", format!("index: {:?} · stop: {:?} · captured order: {:?}", a11y.tab_index, a11y.tab_stop, a11y.captured_tab_order), colors)}
                                 {property("Actions", a11y.actions.join(", "), colors)}
                             } else { <p class="px-3 py-2 text-muted">"Accessibility metadata unavailable."</p> }
-                            <p class="px-3 py-2 text-[10px] text-muted">"Tab order covers captured handles only; private tab groups and opaque nodes are unavailable. Names are explicit GPUI labels; text and relationship-derived names are not computed."</p>
+                            <p class="px-3 py-2 text-[10px] text-muted">"Tab order covers captured handles only; private tab groups and opaque nodes are unavailable. Names use explicit labels or captured text. Relationship-derived names and opaque descendants remain unavailable."</p>
                         }
                         if current_tab == "Events" {
                             for (index, handler) in element.handlers.iter().enumerate() {
