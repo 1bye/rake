@@ -4,7 +4,7 @@ Five changes, each delivered in a separate commit:
 
 1. **Implemented.** Larger trees: retain a bounded larger capture, page the tree index, load element
    details on demand, and preserve identities/expansion across incremental updates.
-2. Picking and geometry: use observed paint order, validate clipping and offsets,
+2. **Implemented for captured boundaries.** Picking and geometry: use observed paint order, validate clipping and offsets,
    and document exact GPUI hook requirements for unavailable used layout metrics.
 3. Live styles: temporary validated overrides for colors, spacing, dimensions and
    typography, with declaration toggles, reset and undo; never rewrite Rust source.

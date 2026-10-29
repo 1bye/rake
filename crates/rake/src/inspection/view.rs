@@ -154,6 +154,7 @@ struct Capture {
     parents: Vec<Option<String>>,
     owners: Vec<Option<(TabId, EntryId)>>,
     bytes: usize,
+    next_paint: usize,
     candidates: Vec<BoundaryKey>,
     scrolls: Vec<gpui::ScrollHandle>,
     navigation: Vec<NavigationTarget>,
@@ -392,6 +393,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 parents: Vec::new(),
                 owners: Vec::new(),
                 bytes: 0,
+                next_paint: 0,
                 candidates: Vec::new(),
                 scrolls: Vec::new(),
                 navigation: Vec::new(),
@@ -518,6 +520,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 styles,
                 resolved: None,
                 metadata_truncated: truncated,
+                paint_order: None,
                 tab_id: owner.map(|owner| owner.0),
                 entry_id: owner.map(|owner| owner.1),
             };
@@ -618,6 +621,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 parents: Vec::new(),
                 owners: Vec::new(),
                 bytes: 0,
+                next_paint: 0,
                 candidates: Vec::new(),
                 scrolls: Vec::new(),
                 navigation: Vec::new(),
@@ -629,12 +633,23 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         {
             let resolved = resolved_style(&mut self.inner, &prepaint.0, id, bounds, window, cx);
 
-            if let Some(element) = cx
-                .global_mut::<ActiveCapture>()
-                .0
-                .as_mut()
-                .and_then(|capture| capture.snapshot.elements.get_mut(index))
+            if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut()
+                && let Some(element) = capture.snapshot.elements.get_mut(index)
             {
+                element.paint_order = Some(capture.next_paint);
+                capture.next_paint += 1;
+                let visible = bounds
+                    .intersect(&window.content_mask().bounds)
+                    .intersect(&Bounds {
+                        origin: gpui::point(gpui::px(0.), gpui::px(0.)),
+                        size: window.viewport_size(),
+                    });
+                element.content_mask = Some(Layout {
+                    x: visible.origin.x.into(),
+                    y: visible.origin.y.into(),
+                    width: visible.size.width.into(),
+                    height: visible.size.height.into(),
+                });
                 element.resolved = resolved;
             }
         }
@@ -663,7 +678,27 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         }
 
         if let Some(overlay) = &mut prepaint.1 {
-            overlay.paint(window, cx);
+            let mask = self
+                .root
+                .as_ref()
+                .and_then(|(store, _, host)| {
+                    store
+                        .0
+                        .borrow()
+                        .windows
+                        .get(host)?
+                        .highlight
+                        .as_ref()?
+                        .0
+                        .content_mask
+                })
+                .map(|mask| gpui::ContentMask {
+                    bounds: Bounds {
+                        origin: gpui::point(gpui::px(mask.x), gpui::px(mask.y)),
+                        size: gpui::size(gpui::px(mask.width), gpui::px(mask.height)),
+                    },
+                });
+            window.with_content_mask(mask, |window| overlay.paint(window, cx));
         }
     }
 
@@ -854,6 +889,7 @@ fn overlay(
     state.expire(web_time::Instant::now());
     let (element, _) = state.windows.get(&host)?.highlight.as_ref()?;
     let layout = element.layout?;
+    let mask = element.content_mask?;
 
     let label = format!(
         "{} {} · {}×{}",
@@ -890,7 +926,15 @@ fn overlay(
         cx,
     );
     // Root layout ignores positional styles; place the overlay in window coordinates.
-    element.prepaint_at(point(px(layout.x), px(layout.y)), window, cx);
+    window.with_content_mask(
+        Some(gpui::ContentMask {
+            bounds: Bounds {
+                origin: point(px(mask.x), px(mask.y)),
+                size: gpui::size(px(mask.width), px(mask.height)),
+            },
+        }),
+        |window| element.prepaint_at(point(px(layout.x), px(layout.y)), window, cx),
+    );
 
     Some(element)
 }

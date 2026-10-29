@@ -55,6 +55,7 @@ fn identities_expire_without_semantic_retargeting() {
         stable_id: None,
         navigation: Default::default(),
         metadata_truncated: false,
+        paint_order: None,
         tab_id: None,
         entry_id: None,
     };
@@ -102,6 +103,7 @@ fn count_and_byte_limits_report_loss_and_fit_the_transport() {
         stable_id: None,
         navigation: Default::default(),
         metadata_truncated: false,
+        paint_order: None,
         tab_id: None,
         entry_id: None,
     };
@@ -150,6 +152,7 @@ fn boundary(id: &str, parent: Option<&str>, bounds: Layout, mask: Layout) -> Ele
         stable_id: None,
         navigation: Default::default(),
         metadata_truncated: false,
+        paint_order: None,
         tab_id: None,
         entry_id: None,
     }
@@ -384,6 +387,7 @@ fn publish_benchmark() {
                     stable_id: None,
                     navigation: Default::default(),
                     metadata_truncated: false,
+                    paint_order: None,
                     tab_id: None,
                     entry_id: None,
                 });
@@ -518,4 +522,27 @@ fn tree_pages_retain_large_indices_and_pin_capture_during_redraw() {
         Err(InspectionError::InvalidPage)
     ));
     assert!(serde_json::to_vec(&first).unwrap().len() < MAX_SNAPSHOT_BYTES);
+}
+
+#[test]
+fn picking_uses_paint_order_excludes_unpainted_and_respects_visible_mask() {
+    let store = Store::default();
+    let full = Layout {
+        x: 10.,
+        y: 20.,
+        width: 100.,
+        height: 100.,
+    };
+    let clip = Layout { width: 20., ..full };
+    let mut snapshot = store.begin(0);
+    let mut front = boundary("front", None, full, clip);
+    front.paint_order = Some(3);
+    let mut back = boundary("back", None, full, full);
+    back.paint_order = Some(1);
+    let hidden = boundary("not-painted", None, full, full);
+    snapshot.elements = vec![front, back, hidden];
+    assert_eq!(hit_test(&snapshot, 15., 25.).unwrap().id, "front");
+    assert_eq!(hit_test(&snapshot, 50., 25.).unwrap().id, "back");
+    assert!(hit_test(&snapshot, f32::NAN, 25.).is_none());
+    assert!(hit_test(&snapshot, 10., 120.).is_none());
 }

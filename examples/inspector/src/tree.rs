@@ -300,6 +300,7 @@ mod tests {
             stable_id: None,
             navigation: Default::default(),
             metadata_truncated: false,
+            paint_order: None,
             tab_id: None,
             entry_id: None,
         }

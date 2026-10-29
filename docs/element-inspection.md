@@ -217,7 +217,7 @@ The CLI obtains a generation from the current tree unless `--generation` is
 explicitly supplied. Repeating `inspect pick` shows the same sequence and does
 not replay a click. Enabling mode once from the CLI expires unless renewed.
 
-Known limits: z-order follows prepaint order, so deferred/absolute surfaces may
+Known limits: picking follows observed boundary paint order, with traversal order for legacy captures. Opaque/cached or deferred surfaces outside the host capture may
 be picked incorrectly. Only instrumented boundaries can be picked, with the same
 8192-node cap. Opaque descendants resolve to an inspected ancestor. Polling adds
 roughly 100–250 ms of hover/selection lag and can be slower through the Web broker;
@@ -306,3 +306,17 @@ bounded prefix and counts the undisplayed remainder as omitted. Chrome and both
 Rake inspectors use the paged index when advertised; Chrome delivers branches to
 its frontend lazily. Stable presentation identities preserve selection across
 captures, but removed or ambiguous nodes are never retargeted by name.
+
+## Geometry hook requirements
+
+Picking uses observed paint order for captured boundaries and the paint-time mask
+intersected with the window viewport. Unpainted boundaries are excluded when paint
+order is available. Highlight geometry uses the same clip as the target.
+
+Complete geometry needs GPUI to expose the used layout result for a LayoutId:
+resolved margin, padding, border and scrollbar insets, together with its containing
+block and device rounding. Inferring these from requested CSS-like values is unsafe.
+Complete picking additionally needs a final-frame ordered hitbox/occlusion stream,
+including deferred draws and reused cached subtrees, with stable element ownership.
+The current pinned GPUI public API supplies neither complete hook. These unknown
+boxes and opaque descendants remain explicitly unavailable, rather than guessed.

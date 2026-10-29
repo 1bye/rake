@@ -177,6 +177,9 @@ pub struct Element {
     /// Macro-authored source metadata; absent for manual boundaries and older runtimes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewMetadata>,
+    /// Observed boundary paint order in this capture; absent on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paint_order: Option<usize>,
     /// Actual GPUI layout, or None for invalid/non-finite geometry.
     pub layout: Option<Layout>,
     /// Resolved box geometry for supported elements; older runtimes omit it.

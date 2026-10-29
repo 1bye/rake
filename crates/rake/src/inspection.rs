@@ -607,12 +607,23 @@ impl State {
 
 #[cfg(any(feature = "gpui", test))]
 fn hit_test(snapshot: &Snapshot, x: f32, y: f32) -> Option<&Element> {
-    snapshot.elements.iter().rev().find(|element| {
-        element
-            .layout
-            .zip(element.content_mask)
-            .is_some_and(|(bounds, mask)| contains(bounds, x, y) && contains(mask, x, y))
-    })
+    let painted = snapshot
+        .elements
+        .iter()
+        .any(|element| element.paint_order.is_some());
+    snapshot
+        .elements
+        .iter()
+        .enumerate()
+        .filter(|(_, element)| {
+            (!painted || element.paint_order.is_some())
+                && element
+                    .layout
+                    .zip(element.content_mask)
+                    .is_some_and(|(bounds, mask)| contains(bounds, x, y) && contains(mask, x, y))
+        })
+        .max_by_key(|(index, element)| element.paint_order.unwrap_or(*index))
+        .map(|(_, element)| element)
 }
 
 #[cfg(any(feature = "gpui", test))]
