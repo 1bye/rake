@@ -40,7 +40,7 @@ def icon(directory):
         + struct.pack('<BBBBHHII', 32, 32, 0, 0, 1, 32, len(png), 22) + png)
 
 
-def probe(engine, build_dir):
+def probe(engine, build_dir, identity=None, profile=None, application=None, artifacts=None):
     target = next(line.split(': ', 1)[1] for line in run(['rustc', '-vV']).splitlines() if line.startswith('host: '))
     run(['cargo', 'build', '--locked', '--manifest-path', MANIFEST, '--features', engine,
          '--target-dir', build_dir], cwd=ROOT)
@@ -73,10 +73,12 @@ def probe(engine, build_dir):
                                  ('fixture-helper', 'fn main(){print!("packaged helper");}')]:
                 if sys.platform == 'darwin' and name == 'fixture':
                     source = '#[link(name="FixtureRuntime",kind="framework")] unsafe extern "C"{fn adoption_value()->u32;}' + source.replace('fn main(){', 'fn main(){assert_eq!(unsafe{adoption_value()},42);')
-                path = root / f'{name}.rs' 
+                path = root / f'{name}.rs'
                 path.write_text(source)
                 flags = ['-L', f'framework={root}', '-C', 'link-arg=-Wl,-rpath,@executable_path/../Frameworks'] if sys.platform == 'darwin' and name == 'fixture' else []
                 run(['rustc', '--edition', '2024', path, *flags, '-o', root / 'bin' / (name + ('.exe' if sys.platform == 'win32' else ''))])
+            if application:
+                shutil.copyfile(application, root / 'bin' / ('fixture.exe' if sys.platform == 'win32' else 'fixture'))
             before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (root / 'bin').iterdir()}
             # Windows engines may look for an ICO independently of the PNG list.
             (root / 'bin/icons').mkdir()
@@ -96,27 +98,46 @@ def probe(engine, build_dir):
                 info = plistlib.loads((relocated / 'Contents/Info.plist').read_bytes())
                 assert info['RakeAdoptionProbe'] == 'custom metadata'
                 framework = relocated / 'Contents/Frameworks/FixtureRuntime.framework'
+                signing = ['codesign', '--force', '--sign', identity or '-']
+                if identity: signing += ['--timestamp', '--options', 'runtime']
                 for signable in [framework / 'Versions/A/FixtureRuntime', framework,
                                  relocated / 'Contents/MacOS/fixture-helper', relocated]:
-                    run(['codesign', '--force', '--sign', '-', signable])
+                    run([*signing, signable])
                 run(['codesign', '--verify', '--deep', '--strict', relocated])
+                if profile:
+                    archive = root / 'notarization.zip'
+                    run(['ditto', '-c', '-k', '--keepParent', relocated, archive])
+                    submission = json.loads(run(['xcrun', 'notarytool', 'submit', archive,
+                        '--keychain-profile', profile, '--wait', '--output-format', 'json']))
+                    if submission.get('status') != 'Accepted':
+                        raise RuntimeError(f'Notarization status: {submission.get("status")}; submission {submission.get("id")}')
+                    run(['xcrun', 'stapler', 'staple', relocated])
+                    run(['xcrun', 'stapler', 'validate', relocated])
+                    verified += ['Developer ID signing', 'Apple notarization', 'stapled ticket']
                 resource = next(relocated.rglob('message.txt'))
                 binary = relocated / 'Contents/MacOS/fixture'
                 helper = relocated / 'Contents/MacOS/fixture-helper'
-                assert run([binary, resource], cwd='/') == 'packaged resource'
+                if not application:
+                    assert run([binary, resource], cwd='/') == 'packaged resource'
+                if artifacts:
+                    destination = artifacts / f'{engine}.app'
+                    shutil.copytree(relocated, destination, symlinks=True)
                 assert run([helper], cwd='/') == 'packaged helper'
-                verified += ['relocated binary runs', 'resource included', 'helper runs', 'framework relocation', 'framework symlinks', 'custom plist', 'external ad-hoc signing verification']
+                verified += [('application packaged for UI validation' if application else 'relocated binary runs'), 'resource included', 'helper runs', 'framework relocation', 'framework symlinks', 'custom plist', 'external signature verification']
             elif sys.platform == 'linux':
                 extracted = root / 'extracted'
                 run(['dpkg-deb', '--extract', next(p for p in paths if p.suffix == '.deb'), extracted])
                 resource = next(extracted.rglob('message.txt'))
                 binary = next(p for p in extracted.rglob('fixture') if p.is_file())
                 helper = next(p for p in extracted.rglob('fixture-helper') if p.is_file())
-                assert run([binary, resource], cwd='/') == 'packaged resource'
+                if not application:
+                    assert run([binary, resource], cwd='/') == 'packaged resource'
+                if artifacts:
+                    shutil.copytree(extracted, artifacts / engine, symlinks=True)
                 assert run([helper], cwd='/') == 'packaged helper'
                 verified += ['extracted binary runs', 'resource included', 'helper runs']
             results.append({'engine': engine, 'target': target, 'format': package_format, 'verified': verified,
-                            'pending': ['native installation/upgrade', 'Developer ID/notarization', 'non-macOS library relocation', 'cancellation', 'update handoff']})
+                            'pending': ['native installation/upgrade', 'non-macOS library relocation', 'cancellation', 'update handoff'] + ([] if profile else ['Developer ID/notarization'])})
     return results
 
 
@@ -124,11 +145,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', choices=['tauri-bundler', 'cargo-packager', 'both'], default='both')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--sign-identity', help='Explicit local Developer ID certificate identity')
+    parser.add_argument('--notary-profile', help='Existing notarytool Keychain profile; submits a tiny fixture to Apple')
+    parser.add_argument('--application-binary', type=Path)
+    parser.add_argument('--artifact-directory', type=Path)
     args = parser.parse_args()
+    if args.artifact_directory:
+        args.artifact_directory.mkdir(parents=True, exist_ok=True)
+    if args.notary_profile and (not args.sign_identity or sys.platform != 'darwin'):
+        parser.error('--notary-profile requires macOS and --sign-identity')
     engines = ['tauri-bundler', 'cargo-packager'] if args.engine == 'both' else [args.engine]
     results = []
     for engine in engines:
-        results.extend(probe(engine, ROOT / 'tests/distribution-adoption/target'))
+        results.extend(probe(engine, ROOT / 'tests/distribution-adoption/target', args.sign_identity, args.notary_profile, args.application_binary, args.artifact_directory))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(results, indent=2) + '\n')
     print(json.dumps(results, indent=2))

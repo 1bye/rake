@@ -8,7 +8,10 @@ custom plist, a relocated linked framework, framework symlinks, and strict
 external ad-hoc signature verification. Developer ID identity and the local
 1git-bruno notarization profile are available; a read-only history request
 validated the profile. No credentials are serialized in project configuration.
-Full signing/notarization, cancellation and updater handoff gates remain open.
+The fixture now passed Developer ID signing, Apple notarization and stapled-ticket
+validation using the existing local profile. The current rake-foundation binary
+was also packaged, relocated and launched through the native UI; the Rake window
+rendered its Load JSON control. Cancellation and updater handoff remain open.
 
 P1: added portable raw configuration, validated package plans, generated schema,
 read-only Cargo package selection and CLI --plan/--schema. Public-consumer tests

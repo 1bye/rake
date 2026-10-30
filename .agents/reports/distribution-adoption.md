@@ -44,3 +44,14 @@ Additional local macOS probes pass custom plist, relocated linked framework,
 internal framework symlinks, and external inside-out ad-hoc signing followed by
 strict signature verification for both engines. This does not establish
 Developer ID signing, notarization, or the SDK restart handoff.
+
+## Credentialed macOS and real application check
+
+On 2026-10-30, the tauri-bundler fixture passed Developer ID signing, Apple
+notarization, staple and ticket validation with the existing local identity and
+Keychain profile. Framework internal relative symlinks survived relocation.
+A separately built rake-foundation application was packaged and relocated, then
+launched through native app control. Its Rake window and Load JSON control
+rendered. This GUI check used an ad-hoc signature; the credentialed check used
+the smaller linked-framework fixture. Neither check establishes Windows installs
+or updater handoff. No signing credentials were exported or checked in.
