@@ -12,7 +12,7 @@ struct Desktop {
     rendered: bool,
 }
 impl Render for Desktop {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if cfg!(feature = "native-acceptance") && !self.rendered {
             self.rendered = true;
             println!("RAKE_NATIVE_RENDER");
@@ -22,6 +22,8 @@ impl Render for Desktop {
                 println!("RAKE_NATIVE_FRAME:{}", welcome.trim());
                 cx.quit();
             });
+            // The pinned GPUI queues callbacks without requesting another frame.
+            window.defer(cx, |window, _| window.refresh());
         }
         rake::view! {
             <div class="flex flex-col items-center justify-center size-full gap-4 bg-surface text-ink">
