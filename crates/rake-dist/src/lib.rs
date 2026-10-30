@@ -2,6 +2,13 @@
 //!
 //! Native execution is separate from the portable plan returned here.
 
+mod engine;
+mod execution;
+mod files;
+mod process;
+pub use execution::{Artifact, BundleRequest, Distribution, bundle, execute_worker, host_target};
+pub use process::Worker;
+
 pub use rake_dist_core::{Config, Format, Plan, Platform};
 use serde::Deserialize;
 use std::{path::Path, process::Command};
@@ -10,6 +17,9 @@ use std::{path::Path, process::Command};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Native execution or output ownership failed.
+    #[error("distribution: {0}")]
+    Execution(String),
     /// Cargo could not be started.
     #[error("cannot run cargo metadata")]
     Io(#[from] std::io::Error),
@@ -39,6 +49,10 @@ struct Package {
     name: String,
     version: String,
     metadata: serde_json::Value,
+    #[serde(default)]
+    manifest_path: std::path::PathBuf,
+    #[serde(default)]
+    targets: Vec<CargoTarget>,
 }
 
 /// Loads a locked/offline Cargo package and validates its portable plan.
@@ -128,4 +142,10 @@ pub fn plan_metadata_with(
 /// Returns the versioned configuration schema for editors and external callers.
 pub fn configuration_schema() -> serde_json::Value {
     schemars::schema_for!(Config).to_value()
+}
+
+#[derive(Deserialize)]
+struct CargoTarget {
+    name: String,
+    kind: Vec<String>,
 }

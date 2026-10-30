@@ -15,21 +15,47 @@ fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
 
-    if arguments.first().is_some_and(|command| command == "bundle")
-        && arguments.iter().any(|argument| argument == "--plan")
+    if arguments
+        .first()
+        .is_some_and(|command| command == "__distribution-worker")
     {
-        if let Err(error) = distribution::run(&arguments[1..]) {
-            if json {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({"error": {"message": error.to_string()}})
-                );
-            } else {
-                eprintln!("rake: {error}");
-            }
+        let result = arguments
+            .get(1)
+            .ok_or("worker request missing")
+            .map_err(Into::into)
+            .and_then(|path| {
+                distribution::worker(
+                    std::path::Path::new(path),
+                    std::path::Path::new(arguments.get(2).ok_or("worker workspace missing")?),
+                )
+            });
+        if let Err(error) = result {
+            eprintln!("rake worker: {error}");
             std::process::exit(1);
         }
         return;
+    }
+    if arguments.first().is_some_and(|command| command == "bundle")
+        && distribution::handles(&arguments[1..])
+        && !arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--target" && pair[1] == "web")
+    {
+        match distribution::run(&arguments[1..]) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                if json {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"error": {"message": error.to_string()}})
+                    );
+                } else {
+                    eprintln!("rake: {error}");
+                }
+                std::process::exit(1);
+            }
+        }
     }
 
     #[cfg(unix)]

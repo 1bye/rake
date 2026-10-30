@@ -3,7 +3,38 @@
 use rake_dist::Platform;
 use std::path::PathBuf;
 
-pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn handles(arguments: &[String]) -> bool {
+    if arguments.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--native" | "--plan" | "--schema" | "--platform" | "--target-triple" | "--format"
+        )
+    }) {
+        return true;
+    }
+    let value = |flag: &str| {
+        arguments
+            .windows(2)
+            .find(|pair| pair[0] == flag)
+            .map(|pair| pair[1].as_str())
+    };
+    let platform = match std::env::consts::OS {
+        "macos" => Platform::Macos,
+        "windows" => Platform::Windows,
+        _ => Platform::Linux,
+    };
+    let target = rake_dist::host_target().ok();
+    rake_dist::plan_with(
+        std::path::Path::new(value("--manifest-path").unwrap_or("Cargo.toml")),
+        value("--package").or_else(|| value("-p")),
+        platform,
+        target.as_deref(),
+        None,
+    )
+    .is_ok_and(|plan| !plan.is_legacy())
+}
+
+pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
     if arguments.iter().any(|arg| arg == "--schema") {
         if arguments
             .iter()
@@ -15,8 +46,18 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
             "{}",
             serde_json::to_string_pretty(&rake_dist::configuration_schema())?
         );
-        return Ok(());
+        return Ok(true);
     }
+    let planning = arguments.iter().any(|arg| arg == "--plan");
+    let explicit = arguments.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--native" | "--format" | "--platform" | "--target-triple"
+        )
+    });
+    let mut output = PathBuf::from("dist");
+    let mut binary = None;
+    let mut release = true;
     let mut manifest = PathBuf::from("Cargo.toml");
     let mut package = None;
     let mut platform = std::env::consts::OS;
@@ -25,7 +66,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
     let mut args = arguments.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
-            "--plan" | "--json" => {}
+            "--plan" | "--json" | "--native" => {}
+            "--release" => release = true,
+            "--debug" => release = false,
+            "--output" => output = args.next().ok_or("--output requires a value")?.into(),
+            "--bin" => binary = Some(args.next().ok_or("--bin requires a value")?.clone()),
             "--manifest-path" => {
                 manifest = args
                     .next()
@@ -75,11 +120,40 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
             Some(&formats)
         },
     )?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(
-            &serde_json::json!({"plan": plan, "native_validation": "pending"})
-        )?
-    );
+    if planning {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({"plan": plan, "native_validation": "pending"})
+            )?
+        );
+    } else if plan.is_legacy() && !explicit {
+        return Ok(false);
+    } else {
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = cancelled.clone();
+        ctrlc::set_handler(move || flag.store(true, std::sync::atomic::Ordering::Release))?;
+        let request = rake_dist::BundleRequest {
+            manifest,
+            package: package.map(str::to_owned),
+            platform,
+            target: target.map(str::to_owned),
+            formats,
+            output,
+            binary,
+            release,
+        };
+        let result = rake_dist::bundle(&request, &std::env::current_exe()?, &cancelled)?;
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    }
+    Ok(true)
+}
+
+pub(crate) fn worker(
+    path: &std::path::Path,
+    workspace: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let request: rake_dist::BundleRequest = serde_json::from_slice(&std::fs::read(path)?)?;
+    rake_dist::execute_worker(&request, workspace)?;
     Ok(())
 }

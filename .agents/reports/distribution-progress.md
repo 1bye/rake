@@ -25,8 +25,20 @@ numeric bounds and require explicit mappings where monotonicity is not automatic
 Nine core, two metadata and three CLI consumer tests pass; focused strict Clippy
 and rustdoc pass. The broader CLI tests require local sockets outside the sandbox.
 
-P2-P9: not implemented. Do not retire the established packaging path or claim
-production native release/update support based on the planner or adoption probes.
+P2: implemented the portable schema-1/explicit-native CLI dispatch, pinned private
+engine adapter, Cargo JSON build discovery, staged resource/helper copies,
+process-group/Windows Job ownership, deadline/cancellation, per-output locking,
+input confinement, inventories and owned transactional directory replacement.
+Local CLI end-to-end test packages a real tiny Cargo executable, reads its
+resource after relocation, runs it from another directory and refuses an unowned
+output without deleting its files. A descendant-held file lock proves cancellation
+kills the worker's child. Security tests reject escaping symlinks and protect
+unowned output. Focused tests, strict Clippy and rustdoc pass on macOS. New native
+executor runs on Windows/Linux remain queued for one consolidated CI run.
+Existing legacy/native Python and Web dispatch remain in place during migration.
+
+P3-P9: in progress. Native platform/update acceptance remains required; archive
+assembly and portable tests do not establish installation or upgrade support.
 
 CI runs (only one full matrix and one Windows-only retry):
 - https://github.com/1bye/rake/actions/runs/41057984993

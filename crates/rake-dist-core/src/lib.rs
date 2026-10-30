@@ -527,7 +527,7 @@ impl Config {
             self.linux.flatpak.manifest.as_ref(),
         ];
         for path in paths.into_iter().flatten() {
-            relative(path)?;
+            validate_relative_path(path)?;
         }
         let mut names = std::collections::BTreeSet::new();
         for sidecar in &self.sidecars {
@@ -535,25 +535,25 @@ impl Config {
             if !names.insert(&sidecar.name) {
                 return Err(Error::Duplicate(sidecar.name.clone()));
             }
-            relative(&sidecar.path)?;
+            validate_relative_path(&sidecar.path)?;
         }
         for runtime in &self.runtimes {
             component_name(&runtime.name)?;
             if !names.insert(&runtime.name) {
                 return Err(Error::Duplicate(runtime.name.clone()));
             }
-            relative(&runtime.source)?;
+            validate_relative_path(&runtime.source)?;
         }
         let mut destinations = std::collections::BTreeSet::new();
         for resource in &self.resources {
-            relative(&resource.from)?;
-            relative(&resource.to)?;
+            validate_relative_path(&resource.from)?;
+            validate_relative_path(&resource.to)?;
             if !destinations.insert(&resource.to) {
                 return Err(Error::Duplicate(resource.to.display().to_string()));
             }
         }
         for path in self.updates.public_keys.values() {
-            relative(path)?;
+            validate_relative_path(path)?;
         }
         if self.updates.enabled {
             component_name(self.updates.channel.as_deref().unwrap_or("stable"))?;
@@ -658,7 +658,10 @@ impl Config {
     }
 }
 
-fn relative(path: &std::path::Path) -> Result<(), Error> {
+/// Validates a portable relative path without accessing the filesystem.
+/// # Errors
+/// Rejects absolute paths, Windows prefixes and parent traversal on every host.
+pub fn validate_relative_path(path: &std::path::Path) -> Result<(), Error> {
     let text = path.to_str().ok_or_else(|| Error::Path(path.into()))?;
     if text.is_empty()
         || text.contains(['\\', ':'])
