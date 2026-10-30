@@ -779,7 +779,6 @@ fn build(
         .args([
             "build",
             "--locked",
-            "--offline",
             "--message-format=json-render-diagnostics",
             "--manifest-path",
         ])
