@@ -287,7 +287,10 @@ fn events(
                             node.source.file, node.source.line, node.source.column
                         )
                     ]),
-                    json!(["Source URL", url]),
+                    json!([
+                        "Source URL",
+                        format!("{url}:{}:{}", node.source.line, node.source.column)
+                    ]),
                     json!([
                         "Measurement",
                         "inclusive wall time; overlaps descendant callbacks"
@@ -610,6 +613,21 @@ mod tests {
             "http://127.0.0.1/token/runtime/source/frame/1/0/view.rs"
         );
         assert_eq!(event["dur"], 300);
+        let callback_track = canonical_events
+            .iter()
+            .find(|event| event["ph"] == "b" && event["name"] == "GPUI paint / button")
+            .unwrap();
+        let detail: Value =
+            serde_json::from_str(callback_track["args"]["detail"].as_str().unwrap()).unwrap();
+        assert!(
+            detail["devtools"]["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row[0] == "Source URL"
+                    && row[1]
+                        == "http://127.0.0.1/token/runtime/source/workspace/src/view.rs:12:4")
+        );
     }
 
     #[test]

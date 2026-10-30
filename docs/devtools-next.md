@@ -111,3 +111,10 @@ The five Network steps, capture limits and verification evidence are recorded in
 The five Performance steps, native regression fixture, stock Chrome verification
 and remaining engine boundaries are recorded in
 [the Performance checklist](devtools-performance.md).
+
+## Sources coverage
+
+The five Sources steps, source access limits, native regression fixture and stock
+Chrome verification are recorded in [the Sources checklist](devtools-sources.md).
+This provides read-only Rust browsing and navigation; Rust debugging still
+requires a native debugger.

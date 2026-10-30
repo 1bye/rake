@@ -41,7 +41,39 @@ Console diagnostic links, Network Rust initiators and Performance callback links
 use the same canonical file URL when the source is available in the workspace.
 Frame/diagnostic sequence URLs remain a compatibility fallback, rather than file
 identities in the Sources navigator. Native line/column metadata stays attached
-to each call site. Elements node properties additionally expose `rakeSourceURL`;
+to each call site. Elements node properties additionally expose `rakeSourceURL`
+and a clickable `rakeSourceLocation` with line and column;
 `rake.source($0)` returns the captured URL and location, and accepts the existing
 style/handler source selectors. `rake.openSource` uses the system default editor.
 The adapter continues to reject arbitrary evaluation and executable script editing.
+
+The catalog has a 256 KiB metadata budget as well as the file count limit.
+`rake.sources()` / `Rake.getSources` expose admitted files, runtime identity and
+whether that budget omitted files. Source documents publish in batches of 16 and
+are republished after outbound event loss. Newly captured files use
+`Page.documentOpened`, which stock Chrome needs to add their document resources.
+Replacement clears the old catalog, aliases and streams before admitting the new
+runtime's sources. Stream handles never retarget a later file. Expired URLs fail
+instead of silently reading the replacement runtime's file.
+Publication waits for Chrome's initial resource tree; replacement explicitly
+detaches old source documents so stale entries disappear from Quick Open.
+
+For a native regression run, build `rake-cli` and run
+`node scripts/test-sources-cdp.mjs` on a macOS GUI host with Node 22 or newer.
+This exercises real GPUI captures, source HTTP/CDP reads, confinement, search,
+cross-tab links, streams, checkpointed replacement and session grant expiry.
+Its HTTP responses come from an owned loopback fixture. It does not automate
+Chrome. `--serve` leaves an example running and accepts `work`, `log`, `restart`
+and `quit` on stdin for separate manual Chrome checks.
+
+Verified in stock Chrome 156.0.8078.74 on 2026-10-30: Sources navigator, Quick Open
+with a line suffix, within-file search, global content search, read-only contents,
+and Console/Network links to the corresponding Rust file and line. This includes
+a Console file captured after DevTools connected, the Performance callback link
+at `performance_fixture.rs:137:14`, and Quick Open after checkpointed replacement:
+one current `lib.rs` entry, loading at line 597 without reconnecting. The final
+native regression, all 81 CLI unit tests, formatting and warning-free CLI Clippy
+checks passed. Rust resources are plain text;
+Rust syntax highlighting, breakpoints, stepping, local variables and source edits
+remain outside this adapter's coverage. The system editor association was reused,
+without a new UI verification of external editor line navigation.

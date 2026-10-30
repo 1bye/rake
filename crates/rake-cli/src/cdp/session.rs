@@ -37,6 +37,7 @@ struct Session {
     objects: super::console::Objects,
     sources: super::sources::Sources,
     source_base: Option<String>,
+    source_tree_loaded: bool,
     loss: super::console::Loss,
     process_output: super::console::ProcessOutput,
     dom: super::dom::Dom,
@@ -71,6 +72,7 @@ impl Session {
             objects: super::console::Objects::default(),
             sources: super::sources::Sources::default(),
             source_base: None,
+            source_tree_loaded: false,
             loss: super::console::Loss::default(),
             process_output: super::console::ProcessOutput::new(output),
             dom: super::dom::Dom::default(),
@@ -88,6 +90,7 @@ impl Session {
     }
 
     fn event(&mut self, event: Event) {
+        let previous_dropped = self.dropped;
         let bytes = serde_json::to_vec(&event)
             .map(|bytes| bytes.len())
             .unwrap_or(usize::MAX);
@@ -100,6 +103,9 @@ impl Session {
         } else {
             self.outbound_bytes += bytes;
             self.outbound.push_back((event, bytes));
+        }
+        if previous_dropped == 0 && self.dropped > 0 {
+            self.sources.republish();
         }
     }
 
@@ -251,7 +257,9 @@ impl Session {
                     )?;
                     return Ok(json!({"result":object["object"]}));
                 }
-                let read_only = if expression == "rake.help()" {
+                let read_only = if expression == "rake.sources()" {
+                    Some(self.sources.status())
+                } else if expression == "rake.help()" {
                     Some(super::evaluate::help())
                 } else if expression == "rake.commands()" {
                     Some(super::evaluate::registry(&self.instance)?)
@@ -507,6 +515,7 @@ impl Session {
                 self.control(self.dom.navigation_command(method, &request.params)?)?;
                 Ok(json!({}))
             }
+            "Rake.getSources" => Ok(self.sources.status()),
             "Rake.getSourceLocation" => {
                 let location = self.source_location(&request.params)?;
                 Ok(self.source_descriptor(&location))
@@ -759,6 +768,9 @@ impl Session {
                         if let Some(url) = source.get("url") {
                             properties["result"].as_array_mut().expect("node properties array").push(json!({"name":"rakeSourceURL","value":{"type":"string","value":url},"configurable":false,"enumerable":true}));
                         }
+                        if let Some(location) = source.get("location") {
+                            properties["result"].as_array_mut().expect("node properties array").push(json!({"name":"rakeSourceLocation","value":{"type":"string","value":location},"configurable":false,"enumerable":true}));
+                        }
                     }
                     return Ok(properties);
                 }
@@ -828,6 +840,7 @@ impl Session {
             }
             "Page.disable" => {
                 self.domains.remove("Page");
+                self.source_tree_loaded = false;
                 Ok(json!({}))
             }
             "Page.getResourceTree" => {
@@ -840,11 +853,20 @@ impl Session {
                 {
                     self.refresh_dom()?;
                 }
+                self.source_tree_loaded = true;
                 Ok(
                     json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources(),"childFrames":self.sources.documents()}}),
                 )
             }
-            "Page.searchInResource" => self.sources.search(&request.params),
+            "Page.searchInResource" => {
+                let result = self
+                    .source_content(&request.params)
+                    .and_then(|text| super::sources::search(&text, &request.params));
+                if let Err(error) = &result {
+                    self.warning(format!("Rust source search failed: {}", error.message));
+                }
+                result
+            }
             "Page.getResourceContent" => {
                 Ok(json!({"content":self.source_content(&request.params)?,"base64Encoded":false}))
             }
@@ -867,9 +889,9 @@ impl Session {
                 self.sources.close(&request.params);
                 Ok(json!({}))
             }
-            "Page.getFrameTree" => {
-                Ok(json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string())}}))
-            }
+            "Page.getFrameTree" => Ok(
+                json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"childFrames":self.sources.frames()}}),
+            ),
             _ => Err(Error::new(
                 -32601,
                 format!("Unsupported CDP method: {method}"),
@@ -995,7 +1017,11 @@ impl Session {
     }
 
     fn publish_sources(&mut self) {
-        if self.domains.contains("Page") {
+        if self.domains.contains("Page")
+            && self.source_tree_loaded
+            && self.outbound.len() + 32 < QUEUE_LIMIT
+            && self.outbound_bytes < 512 * 1024
+        {
             for event in self.sources.events() {
                 self.event(event);
             }
@@ -1007,7 +1033,16 @@ impl Session {
         if let Some(url) = self.sources.admit(location) {
             value["url"] = json!(url);
             value["lineNumber"] = json!(location.line.saturating_sub(1));
-            value["columnNumber"] = json!(location.column.saturating_sub(1));
+            value["columnNumber"] = json!(
+                self.sources
+                    .column_number(location)
+                    .unwrap_or(location.column.saturating_sub(1) as usize)
+            );
+            value["location"] = json!(format!(
+                "{url}:{}:{}",
+                location.line,
+                value["columnNumber"].as_u64().unwrap_or(0) + 1
+            ));
             self.publish_sources();
         }
         value
@@ -1086,11 +1121,7 @@ impl Session {
             }
         }
 
-        if self.domains.contains("Page") {
-            for event in self.sources.events() {
-                self.event(event);
-            }
-        }
+        self.publish_sources();
         let console = self.domains.contains("Log") || self.domains.contains("Runtime");
         let network = self.domains.contains("Network");
         if !console && !network {
@@ -1343,6 +1374,7 @@ impl Session {
             self.dropped = self.dropped.saturating_add(self.outbound.len() as u64);
             self.outbound.clear();
             self.outbound_bytes = 0;
+            self.sources.republish();
             self.dom.reset_delivery();
             self.tracked_style_node = None;
             self.event(Event::new("DOM.documentUpdated", json!({})));
@@ -1416,11 +1448,7 @@ impl Session {
                 self.sources.admit(source);
             }
         }
-        if self.domains.contains("Page") {
-            for event in self.sources.events() {
-                self.event(event);
-            }
-        }
+        self.publish_sources();
         let mut reset = if paged {
             self.dom.update_index(snapshot)?
         } else {
@@ -1705,6 +1733,7 @@ impl Session {
         self.last_pick_sequence = 0;
         self.tracked_style_node = None;
         let old = self.instance.info.runtime_id;
+        let old_sources = self.sources.frames();
 
         self.instance = instance;
         self.cursor = 0;
@@ -1724,6 +1753,14 @@ impl Session {
             .retain(|(event, _)| event.method.starts_with("Tracing."));
         self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
         self.dropped = 0;
+        if self.domains.contains("Page") && self.source_tree_loaded {
+            for document in old_sources {
+                self.event(Event::new(
+                    "Page.frameDetached",
+                    json!({"frameId":document["frame"]["id"],"reason":"remove"}),
+                ));
+            }
+        }
         self.event(Event::new("Page.frameNavigated", json!({"frame": {"id":"rake","loaderId":self.instance.info.runtime_id.to_string(),
             "url":"rake://runtime","domainAndRegistry":"","securityOrigin":"rake://runtime","mimeType":"text/plain",
             "secureContextType":"Secure","crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]}, "type":"Navigation"})));
@@ -2238,6 +2275,12 @@ mod tests {
         session.domains.insert("Page".into());
         let mut record: rake_diagnostics::Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"source":{"file":"src/cdp/session.rs","line":2},"fields":{}})).unwrap();
         let first = session.source_link(&record).unwrap();
+        assert!(
+            session.outbound.is_empty(),
+            "wait for Chrome's root resource tree"
+        );
+        session.source_tree_loaded = true;
+        session.publish_sources();
         record.sequence = 9;
         record.source.as_mut().unwrap().line = 20;
         assert_eq!(session.source_link(&record).unwrap(), first);
@@ -2254,6 +2297,25 @@ mod tests {
         assert_eq!(descriptor["url"], first);
         assert_eq!(descriptor["lineNumber"], 19);
         assert_eq!(descriptor["columnNumber"], 2);
+        session.event(Event::new(
+            "oversized",
+            json!({"text":"x".repeat(1024*1024)}),
+        ));
+        assert_eq!(
+            session.sources.events().len(),
+            2,
+            "dropped output schedules source documents for resynchronization"
+        );
+        let mut successor = session.instance.clone();
+        successor.info.runtime_id = rake_protocol::router::RuntimeId(uuid::Uuid::new_v4());
+        session.replace(successor);
+        assert!(
+            session
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method == "Page.frameDetached"
+                    && event.params["frameId"] == format!("rake-source:{first}"))
+        );
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }

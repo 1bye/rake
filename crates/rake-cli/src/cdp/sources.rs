@@ -59,6 +59,8 @@ pub(super) struct Sources {
     catalog: Arc<Catalog>,
     file_urls: BTreeMap<String, String>,
     pending: BTreeSet<String>,
+    metadata_bytes: usize,
+    omitted: bool,
 }
 
 impl Sources {
@@ -76,11 +78,18 @@ impl Sources {
             || self.file_urls.len() >= 128
             || location.file.len() > 4096
         {
+            self.omitted = true;
             return None;
         }
         let prefix = self.prefix.as_ref()?;
         let path = crate::source::relative(location).ok()?;
         let url = file_url(prefix, &path)?;
+        let bytes = url.len() * 3 + path.len() * 2 + location.file.len() + 512;
+        if self.metadata_bytes.saturating_add(bytes) > 256 * 1024 {
+            self.omitted = true;
+            return None;
+        }
+        self.metadata_bytes += bytes;
         self.file_urls.insert(location.file.clone(), url.clone());
         let mut catalog = self.catalog.lock().ok()?;
         if !catalog.contains_key(&url) {
@@ -97,16 +106,46 @@ impl Sources {
         Some(url)
     }
 
-    pub fn documents(&mut self) -> Vec<Value> {
-        self.pending.clear();
+    pub fn frames(&self) -> Vec<Value> {
         let urls: Vec<_> = self
             .catalog
             .lock()
             .map(|catalog| catalog.keys().cloned().collect())
             .unwrap_or_default();
         urls.iter()
-            .map(|url| json!({"frame":self.document(url),"resources":[]}))
+            .map(|url| json!({"frame":self.document(url)}))
             .collect()
+    }
+
+    pub fn documents(&mut self) -> Vec<Value> {
+        self.pending.clear();
+        self.frames()
+            .into_iter()
+            .map(|mut document| {
+                document["resources"] = json!([]);
+                document
+            })
+            .collect()
+    }
+
+    pub fn status(&self) -> Value {
+        let files: Vec<_> = self
+            .catalog
+            .lock()
+            .map(|catalog| {
+                catalog
+                    .iter()
+                    .map(|(url, site)| json!({"url":url,"file":site.file}))
+                    .collect()
+            })
+            .unwrap_or_default();
+        json!({"runtimeId":self.runtime,"files":files,"omitted":self.omitted,"fileLimit":128,"metadataBytes":self.metadata_bytes,"metadataLimitBytes":256*1024})
+    }
+
+    pub fn republish(&mut self) {
+        if let Ok(catalog) = self.catalog.lock() {
+            self.pending.extend(catalog.keys().cloned());
+        }
     }
 
     fn document(&self, url: &str) -> Value {
@@ -117,15 +156,18 @@ impl Sources {
             .ok()
             .and_then(|catalog| catalog.get(url).map(|site| site.file.clone()))
             .unwrap_or_else(|| "Unavailable source".into());
-        json!({"id":format!("rake-source:{url}"),"parentId":"rake","loaderId":self.runtime,
+        json!({"id":format!("rake-source:{url}"),"parentId":"rake","loaderId":format!("rake-source:{}:{url}",self.runtime),
             "name":format!("Rust: {}",path),"url":url,"securityOrigin":"rake://source",
             "domainAndRegistry":"","mimeType":"text/plain","secureContextType":"Secure",
             "crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]})
     }
 
     pub fn events(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.pending)
-            .into_iter()
+        let urls: Vec<_> = self.pending.iter().take(16).cloned().collect();
+        for url in &urls {
+            self.pending.remove(url);
+        }
+        urls.into_iter()
             .flat_map(|url| {
                 let frame = self.document(&url);
                 [
@@ -133,10 +175,7 @@ impl Sources {
                         "Page.frameAttached",
                         json!({"frameId":frame["id"],"parentFrameId":"rake"}),
                     ),
-                    Event::new(
-                        "Page.frameNavigated",
-                        json!({"frame":frame,"type":"Navigation"}),
-                    ),
+                    Event::new("Page.documentOpened", json!({"frame":frame})),
                 ]
             })
             .collect()
@@ -209,12 +248,26 @@ impl Sources {
     }
 
     pub fn content(&self, params: &Value) -> Result<String, Error> {
-        let location = self.location(params["url"].as_str().unwrap_or_default())?;
+        let url = params["url"].as_str().unwrap_or_default();
+        if let Some(frame) = params.get("frameId")
+            && frame != "rake"
+            && frame.as_str() != Some(format!("rake-source:{url}").as_str())
+        {
+            return Err(Error::new(
+                -32602,
+                "Source frame is stale or does not match the resource",
+            ));
+        }
+        let location = self.location(url)?;
         crate::source::read(&location).map_err(|error| Error::new(-32000, error.to_string()))
     }
 
-    pub fn search(&self, params: &Value) -> Result<Value, Error> {
-        search(&self.content(params)?, params)
+    pub fn column_number(&self, site: &SourceLocation) -> Option<usize> {
+        let text = crate::source::read(site).ok()?;
+        let line = text.split('\n').nth(site.line.checked_sub(1)? as usize)?;
+        let column = site.column.checked_sub(1)? as usize;
+        (line.chars().count() >= column)
+            .then(|| line.chars().take(column).map(char::len_utf16).sum())
     }
 
     pub fn site(&self, params: &Value) -> Result<SourceLocation, Error> {
@@ -226,6 +279,7 @@ impl Sources {
             .split('\n')
             .nth(line)
             .ok_or_else(|| Error::new(-32602, "Source line is outside the file"))?;
+        let line_text = line_text.strip_suffix('\r').unwrap_or(line_text);
         let mut units = 0;
         let mut chars = 0;
         for character in line_text.chars() {
@@ -305,6 +359,8 @@ impl Sources {
             catalog.clear();
         }
         self.file_urls.clear();
+        self.metadata_bytes = 0;
+        self.omitted = false;
         self.pending.clear();
         self.streams.clear();
     }
@@ -323,7 +379,7 @@ fn coordinate(params: &Value, key: &str) -> Result<usize, Error> {
         .ok_or_else(|| Error::new(-32602, format!("{key} must be a nonnegative integer")))
 }
 
-fn search(text: &str, params: &Value) -> Result<Value, Error> {
+pub(super) fn search(text: &str, params: &Value) -> Result<Value, Error> {
     let query = params["query"]
         .as_str()
         .filter(|query| !query.is_empty() && query.len() <= 4096)
@@ -374,6 +430,43 @@ fn file_url(prefix: &str, path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_limits_and_incremental_delivery_are_explicit() {
+        let mut sources = Sources::default();
+        sources.bind("http://localhost/token", "runtime");
+        sources.metadata_bytes = 256 * 1024 - 1;
+        assert!(
+            sources
+                .admit(&SourceLocation {
+                    file: "src/cdp/sources.rs".into(),
+                    line: 1,
+                    column: 1
+                })
+                .is_none()
+        );
+        assert_eq!(sources.status()["omitted"], true);
+        assert!(sources.frames().is_empty());
+        sources.clear();
+        for index in 0..40 {
+            let url = format!("http://localhost/token/runtime/source/workspace/{index}.rs");
+            sources.catalog.lock().unwrap().insert(
+                url.clone(),
+                SourceLocation {
+                    file: "src/cdp/sources.rs".into(),
+                    line: 1,
+                    column: 1,
+                },
+            );
+            sources.pending.insert(url);
+        }
+        assert_eq!(sources.events().len(), 32);
+        assert_eq!(sources.events().len(), 32);
+        assert_eq!(sources.events().len(), 16);
+        assert!(sources.events().is_empty());
+        sources.republish();
+        assert_eq!(sources.events().len(), 32);
+    }
 
     #[test]
     fn search_preserves_line_numbers_and_rejects_partial_results() {
@@ -476,6 +569,11 @@ mod tests {
         let events = sources.events();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].method, "Page.frameAttached");
+        assert_eq!(
+            events[1].method, "Page.documentOpened",
+            "stock Chrome needs a document resource for late files"
+        );
+        assert_ne!(events[1].params["frame"]["loaderId"], "runtime-a");
         assert_eq!(events[1].params["frame"]["url"], first);
         assert!(sources.events().is_empty());
         assert!(sources.resources().is_empty());

@@ -383,3 +383,6 @@ capture, origins, timing and Chrome workflows.
 See the [Performance checklist](devtools-performance.md) for live Record/Stop,
 frame and callback analysis, calibrated command/task/span/HTTP tracks, Rust source
 links, bounded trace export and stock Chrome verification.
+
+See the [Sources checklist](devtools-sources.md) for captured Rust files,
+read-only browsing, search, shared source links and runtime-scoped access.
