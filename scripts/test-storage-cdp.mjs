@@ -4,7 +4,7 @@
 // This script never automates Chrome. --serve supports manual Chrome verification.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {mkdtempSync,mkdirSync,rmSync} from 'node:fs';
+import {copyFileSync,mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -17,6 +17,24 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const session=mkdtempSync(join(process.platform==='darwin'?'/tmp':tmpdir(),'rake-storage-'));
 mkdirSync(join(session,'control'),{mode:0o700});
 const serve=process.argv.includes('--serve'),children=[],events=[],pending=new Map();
+let executable=join(root,'target/debug/examples/storage');
+if(serve&&process.platform==='darwin'){
+  const contents=join(session,'Rake Storage.app','Contents');
+  mkdirSync(join(contents,'MacOS'),{recursive:true,mode:0o700});
+  copyFileSync(executable,join(contents,'MacOS','storage'));
+  writeFileSync(join(contents,'Info.plist'),`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>storage</string>
+<key>CFBundleIdentifier</key><string>com.example.rake.storage</string>
+<key>CFBundleName</key><string>Rake Storage</string>
+<key>CFBundleDisplayName</key><string>Rake Storage</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>`);
+  executable=join(contents,'MacOS','storage');
+}
 let socket,sequence=0,frontend,discovery,stderr='';
 function launch(binary,args){
   const child=spawn(binary,args,{cwd:root,stdio:['ignore','pipe','pipe']});children.push(child);
@@ -33,7 +51,7 @@ async function eventually(check){
 }
 async function start(){
   let ready=false;events.length=0;frontend=undefined;discovery=undefined;
-  const app=launch(join(root,'target/debug/examples/storage'),['--data',join(session,'data'),'--control',join(session,'control')]);
+  const app=launch(executable,['--data',join(session,'data'),'--control',join(session,'control'),...(serve?[]:['--headless'])]);
   createInterface({input:app.stdout}).on('line',line=>{try{if(JSON.parse(line).event==='storage_ready')ready=true;}catch{}});
   await eventually(()=>ready);
   const cdp=launch(join(root,'target/debug/rake'),['cdp','--session',session,'--no-open','--json']);
@@ -74,6 +92,7 @@ try{
   if(serve){
     console.log('Storage example ready. stdin: light | dark | read | quit');
     await new Promise(resolve=>{const input=createInterface({input:process.stdin});let work=Promise.resolve();
+      for(const child of children)child.once('exit',resolve);
       input.on('line',line=>{work=work.then(async()=>{if(line==='quit'){input.close();resolve();}else if(['light','dark','read'].includes(line))console.log(JSON.stringify(await app(line==='read'?undefined:line)));}).catch(console.error);});
       process.once('SIGINT',resolve);process.once('SIGTERM',resolve);
     });

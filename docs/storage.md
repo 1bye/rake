@@ -135,12 +135,13 @@ let app = {
 ```
 
 The runnable Unix storage example includes a cached file-backed preference store,
-a read-only session store and a typed `test.storage` application command. It runs
-without GPUI/GPU initialization:
+a read-only session store and a typed `test.storage` application command. Default
+GPUI builds show a window with live settings and light/dark theme buttons. The
+automated script explicitly uses `--headless` to avoid GPU initialization:
 
 ```sh
 cargo build -p rake-cli --offline
-cargo build -p rake --no-default-features --features devtools --example storage --offline
+cargo build -p rake --features devtools --example storage --offline
 node scripts/test-storage-cdp.mjs
 node scripts/test-storage-cdp.mjs --serve
 ```
@@ -153,6 +154,8 @@ per-row read-only affordance here: rejected edits restore the actual backend
 value through a storage event and report the reason in Console. No browser
 security guard is bypassed. Console accepts `test.storage({"theme":"light"})`
 or `test.storage({})` to change/read the same typed store.
+The window's refresh task is explicit demo code, not storage instrumentation.
+Build with `--no-default-features --features devtools` for a headless-only example.
 
 ## Verification
 
