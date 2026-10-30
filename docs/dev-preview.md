@@ -76,7 +76,8 @@ permission change.
 ## Annotation workspace
 
 The native window is centered on black and fits the available viewport. A floating,
-borderless toolbar switches between **Interact** (`V`) and **Annotate** (`C`). The
+borderless toolbar toggles **Annotate** (`C`); clicking it again, `V` or Escape
+returns to normal application interaction. The
 compact top-right HUD shows live connection state, displayed FPS and reconnect;
 its tooltip retains codec, dimensions and native backdrop details.
 
@@ -88,11 +89,16 @@ macro-authored style source metadata, plus bounded source ancestry from the exac
 returns to Interact. Scrolling works in either mode. Picking opaque/cached content
 resolves to an inspected ancestor.
 
-The toolbar's annotation badge opens a popover on hover, focus or click. Hover or
+Hover or focus the toolbar's comments badge to see saved annotations. Hover or
 focus a note to outline its element. Clicking a note/pin edits it; the remove
-button deletes it. **Copy annotations** uses the same plain-text format as a direct element copy,
-with each comment above its bracketed reference. Hovering a note also supports
-`Cmd/Ctrl+C` for copying just that note. No notes are sent to an agent automatically.
+button deletes it. Clicking the badge copies all comments in the same plain-text
+format as a direct element copy, with each comment above its bracketed reference.
+Only after copying succeeds, a small popover offers **Keep comments** and
+**Clear comments**. Clear removes the copied notes; notes added or edited after
+the copy are kept. Keep, Escape or clicking outside dismisses the question without
+clearing. Failed copies leave all notes intact. An empty badge cannot copy.
+Hovering a note also supports `Cmd/Ctrl+C` for copying just that note.
+No notes are sent to an agent automatically.
 
 The picker follows [React Grab's copy workflow](https://github.com/aidenybai/react-grab#readme):
 hover an element and press `Cmd/Ctrl+C` to copy its source reference, including from

@@ -85,3 +85,22 @@ assert.match(formatReference({...element,text:'&'.repeat(200)}), /(?:&amp;)+\.\.
 assert.doesNotMatch(formatReference({...contextElement,view:{tag:'button',style_sources:[{scope:'button',attribute:'class',expression:'dangerous_rust()'}]}}), /class=/);
 assert.equal(formatReference({...element,source:{file:'src/view.rs',line:0,column:0}}), '[<button id="save" /> in button (at src/view.rs)]');
 console.log('Grab output regressions passed: shared bracketed references, comments, source stacks, escaping and bounded previews');
+
+
+const clearing = new Annotations(storage); clearing.activate('clear-runtime','window');
+const firstCopied = clearing.save('First copied', element, 'one');
+const secondCopied = clearing.save('Second copied', element, 'one');
+const copiedBatch = clearing.items.slice();
+const clipboardOutput = formatAnnotations(copiedBatch);
+clearing.save('Updated after copy', element, 'one', firstCopied.id);
+clearing.save('Created after copy', element, 'one');
+clearing.clear(copiedBatch);
+assert.deepEqual(clearing.items.map(note=>note.comment),['Updated after copy','Created after copy']);
+assert.match(clipboardOutput,/First copied/); assert.match(clipboardOutput,/Second copied/);
+assert.ok(!clearing.items.some(note=>note.id===secondCopied.id));
+const afterClear = new Annotations(storage); afterClear.activate('clear-runtime','window');
+assert.deepEqual(afterClear.items,clearing.items);
+clearing.clear(clearing.items.slice()); assert.equal(clearing.items.length,0);
+clearing.activate('another-runtime','window'); clearing.save('Other runtime',element,'one');
+clearing.clear(copiedBatch); assert.equal(clearing.items.length,1);
+console.log('Copy/clear regressions passed: clear persists, copied output remains intact, later edits/new notes and other runtimes survive');

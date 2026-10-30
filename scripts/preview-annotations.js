@@ -108,6 +108,11 @@ export class Annotations {
     return next;
   }
   remove(id) { this.items = this.items.filter(note => note.id !== id); this.persist(); }
+  clear(copied) {
+    // An edit replaces the note object; keep edits/new notes made after copying.
+    const batch = new Set(copied);
+    this.items = this.items.filter(note => !batch.has(note)); this.persist();
+  }
   persist() {
     this.warning = null;
     try { this.storage.setItem(this.key, JSON.stringify(this.items)); }

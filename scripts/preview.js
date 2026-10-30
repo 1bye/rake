@@ -15,7 +15,7 @@ $('picker-copy-key').textContent = copyKey;
 let current, selected, selectedGeneration, editingID, hoveredID, anchor, selecting = false, channel, nextID = 0, paintedEpoch;
 let video, codec = typeof VideoDecoder === 'function' ? 'h264' : 'jpeg';
 let latest, paintScheduled = false, draws = 0, fps = 0, lastRate = performance.now(), lastPaint = 0;
-let noticeTimer, menuTimer, menuOpen = false, menuPinned = false, resolveTimer, resolving = false, nextResolve = 0;
+let noticeTimer, menuTimer, menuOpen = false, copiedBatch = null, copyingComments = false, resolveTimer, resolving = false, nextResolve = 0;
 const pending = new Map();
 let pointer, picked, pickedPoint, pickedGeneration, pickTimer, pickController, lastPick = 0, pickVersion = 0, copyBusy = false, overlayScheduled = false, copyVersion = 0, commentVersion = 0, copyController;
 let wheel = new Wheel(), wheelPoint, wheelEnd = false, wheelTimer, inputScheduled = false, hover;
@@ -204,17 +204,35 @@ async function commentAtPointer() {
   } catch (failure) { error(failure.message); }
 }
 function setMenu(open) {
-  clearTimeout(menuTimer); menuOpen = open;
+  clearTimeout(menuTimer); menuOpen = open && !copiedBatch && !copyingComments; open = menuOpen;
   if (open) { cancelPick(); $('picker-label').hidden = true; }
-  if (!open) { menuPinned = false; hoveredID = null; }
+  if (!open) hoveredID = null;
   $('annotations-panel').hidden = !open; $('annotations-menu').classList.toggle('open', open);
-  $('annotations-toggle').setAttribute('aria-expanded', String(open));
+  $('annotations-toggle').setAttribute('aria-expanded', String(open || !!copiedBatch));
   drawOverlays(); if (open) queueResolution();
 }
+function dismissCopiedPrompt() {
+  copiedBatch = null; $('clear-prompt').hidden = true; setMenu(false);
+}
+async function copyComments() {
+  if (copyingComments || !notes.items.length) return;
+  const batch = {key:notes.key, items:notes.items.slice()};
+  dismissCopiedPrompt(); copyingComments = true; $('annotations-toggle').disabled = true;
+  try {
+    await navigator.clipboard.writeText(formatAnnotations(batch.items));
+    if (notes.key !== batch.key) return;
+    copiedBatch = batch;
+    $('copied-message').textContent = batch.items.length === 1 ? 'Comment copied' : `${batch.items.length} comments copied`;
+    $('clear-prompt').hidden = false; $('annotations-toggle').setAttribute('aria-expanded', 'true');
+    $('keep-comments').focus();
+  } catch (failure) { error(failure.message); }
+  finally { copyingComments = false; $('annotations-toggle').disabled = !notes.items.length; }
+}
+
 function renderNotes() {
   $('annotation-count').textContent = $('list-count').textContent = notes.items.length;
   $('annotations-toggle').classList.toggle('has-notes', notes.items.length > 0);
-  $('annotation-empty').hidden = notes.items.length > 0; $('copy').disabled = !notes.items.length;
+  $('annotation-empty').hidden = notes.items.length > 0; $('annotations-toggle').disabled = copyingComments || !notes.items.length;
   const retained = new Set(notes.items.map(note => targetKey(note.element, note.generation)));
   if (selected) retained.add(targetKey(selected, selectedGeneration));
   for (const key of geometries.keys()) if (!retained.has(key)) geometries.delete(key);
@@ -341,7 +359,7 @@ function receiveState(next) {
   if (changed || current?.window.generation !== next.window.generation) cancelPick();
   current = next;
   if (notes.activate(next.runtime_id, next.window.window)) {
-    closeComposer(); geometries.clear(); renderNotes();
+    dismissCopiedPrompt(); closeComposer(); geometries.clear(); renderNotes();
   }
   if (changed) {
     cancelCopy(); commentVersion++; pointer = null; paintedEpoch = null; wheel = new Wheel(); wheelPoint = hover = null;
@@ -415,11 +433,10 @@ function scheduleInput() {
 function mode(value) {
   selecting = value; hover = null; cancelPick(); cancelCopy(); commentVersion++;
   document.body.classList.toggle('selecting', value); $('mode-hint').hidden = !value || !$('composer').hidden;
-  $('select').setAttribute('aria-pressed', String(value)); $('interact').setAttribute('aria-pressed', String(!value));
+  $('select').setAttribute('aria-pressed', String(value));
   if (value) queuePick(); else drawOverlays();
 }
-$('select').onclick = () => mode(true);
-$('interact').onclick = () => { mode(false); closeComposer(); };
+$('select').onclick = () => { const next = !selecting; if (!next) closeComposer(); mode(next); };
 $('reconnect').onclick = () => { void request('preview_restart').catch(failure => error(failure.message)); };
 $('cancel').onclick = () => { closeComposer(); $('select').focus(); };
 $('copy-context').onclick = () => { void copyContext(); };
@@ -433,11 +450,18 @@ $('composer').onsubmit = event => {
 };
 $('comment').onkeydown = event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); $('composer').requestSubmit(); } };
 $('annotations-menu').onmouseenter = () => setMenu(true);
-$('annotations-menu').onmouseleave = () => { if (!menuPinned) menuTimer = setTimeout(() => setMenu(false), 160); };
+$('annotations-menu').onmouseleave = () => { menuTimer = setTimeout(() => setMenu(false), 160); };
 $('annotations-menu').onfocusin = () => setMenu(true);
-$('annotations-menu').onfocusout = event => { if (!event.currentTarget.contains(event.relatedTarget) && !menuPinned) setMenu(false); };
-$('annotations-toggle').onclick = () => { if (menuPinned) setMenu(false); else { menuPinned = true; setMenu(true); } };
-document.addEventListener('pointerdown', event => { if (!$('annotations-menu').contains(event.target)) setMenu(false); });
+$('annotations-menu').onfocusout = event => { if (!event.currentTarget.contains(event.relatedTarget)) { dismissCopiedPrompt(); } };
+$('annotations-toggle').onclick = () => { void copyComments(); };
+$('keep-comments').onclick = () => { dismissCopiedPrompt(); $('select').focus(); };
+$('clear-comments').onclick = () => {
+  const batch = copiedBatch;
+  if (batch?.key === notes.key) { notes.clear(batch.items); renderNotes(); }
+  dismissCopiedPrompt(); $('select').focus();
+  if (notes.warning) error(notes.warning);
+};
+document.addEventListener('pointerdown', event => { if (!$('annotations-menu').contains(event.target)) dismissCopiedPrompt(); });
 // Embedded browsers may route their native Copy command straight to this event.
 // Leave selected DOM text and editable fields to the browser's ordinary copy flow.
 document.addEventListener('copy', event => {
@@ -451,7 +475,7 @@ document.addEventListener('copy', event => {
 });
 document.addEventListener('focusin', event => { if (event.target.closest?.('input,textarea,[contenteditable=true]')) cancelCopy(); });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') { closeComposer(); setMenu(false); mode(false); $('interact').focus(); return; }
+  if (event.key === 'Escape') { if (copiedBatch) { dismissCopiedPrompt(); $('select').focus(); return; } closeComposer(); setMenu(false); mode(false); $('select').focus(); return; }
   if (event.target.closest('input,textarea,[contenteditable=true]') || event.isComposing) return;
   if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c') {
     if (window.getSelection()?.toString()) return;
@@ -490,10 +514,7 @@ screen.addEventListener('mousemove', event => {
   } else if (!selecting) { hover = position; scheduleInput(); }
 });
 screen.addEventListener('mouseleave', () => { hover = pointer = null; cancelPick(); drawOverlays(); });
-$('copy').onclick = async () => {
-  try { await navigator.clipboard.writeText(formatAnnotations(notes.items)); status('Annotations copied · paste them into your agent'); }
-  catch (failure) { error(failure.message); }
-};
+
 new ResizeObserver(() => { drawOverlays(); positionComposer(); }).observe(screen);
 new ResizeObserver(positionComposer).observe($('composer'));
 window.addEventListener('resize', () => { pointer = null; cancelPick(); fitWindow(); });
