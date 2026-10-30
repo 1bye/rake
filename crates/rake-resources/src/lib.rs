@@ -1,4 +1,8 @@
 //! Resolves installed resources and private helpers independently of the working directory.
+#[cfg(any(unix, windows))]
+mod process;
+#[cfg(any(unix, windows))]
+pub use process::HelperProcess;
 use rake_dist_core::{Installation, validate_relative_path};
 use std::{
     fs,
@@ -113,6 +117,20 @@ impl Resources {
         )
     }
 
+    /// Starts a configured private helper and owns its whole process tree.
+    /// Dropping the returned owner cancels/reaps it, including on task cancellation.
+    /// # Errors
+    /// Returns unknown helper, confined-path or native process creation errors.
+    #[cfg(any(unix, windows))]
+    pub fn spawn_helper<I, S>(&self, name: &str, args: I) -> Result<HelperProcess, Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let mut command = std::process::Command::new(self.helper(name)?);
+        command.args(args);
+        Ok(HelperProcess::spawn(command)?)
+    }
     /// Resolves a macOS framework under Contents/Frameworks.
     /// # Errors
     /// Returns errors for missing frameworks or paths escaping the bundle.

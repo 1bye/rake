@@ -135,3 +135,10 @@ components and trust evidence. Tool presence does not imply these native gates
 passed. Existing legacy bundle JSON and the Web pipeline continue through their
 current compatibility path while native parity is completed. Native Python
 packaging retirement is gated on that parity; the Web implementation remains.
+
+`resources.spawn_helper("ffmpeg", ["-version"])?` returns an owned
+`rake::resources::HelperProcess`. Its drop/cancel path terminates and reaps the
+native process group or Windows Job, including inherited descendants. Keep this
+owner with the registered application task. For GStreamer, prepare the command
+with `gstreamer_command` and pass it to `HelperProcess::spawn`. Blocking waits
+belong on an owned background worker; piped output must be drained concurrently.

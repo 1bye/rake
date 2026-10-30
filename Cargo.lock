@@ -6217,6 +6217,8 @@ dependencies = [
 name = "rake-resources"
 version = "0.1.0"
 dependencies = [
+ "command-group",
+ "fs2",
  "rake-dist-core",
  "serde_json",
  "tempfile",

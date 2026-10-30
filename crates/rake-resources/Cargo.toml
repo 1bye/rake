@@ -14,5 +14,9 @@ rake-dist-core = { path = "../rake-dist-core" }
 serde_json.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(any(unix, windows))'.dependencies]
+command-group = {version="5.0.1",default-features=false}
+
 [dev-dependencies]
+fs2 = "0.4"
 tempfile = "3"

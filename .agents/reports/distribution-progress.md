@@ -308,3 +308,12 @@ fresh runner. Source compile features and the Flatpak policy stay SDK-owned.
 Local Linux package tests and strict dist/Linux/example Clippy pass. The actual
 Arch/Flatpak native gates remain pending the single consolidated Linux checkpoint,
 which also exercises signed APT/RPM repositories and real AppImage HTTPS updates.
+
+P4 helper lifetime follow-up: rake-resources now exposes HelperProcess and a
+confined spawn_helper convenience. A concrete owner retains its Unix process
+group/Windows Job and terminates/reaps it on cancel/drop. Stdio handles can move
+to readers without detaching the owner. A real child/grandchild regression proves
+that dropping the owner releases the descendant's file lock. Resource tests,
+strict Clippy/rustdoc and the explicit no-default-features Wasm facade check pass.
+Native process dependencies are target-gated out of Wasm; existing router/web
+dead-code warnings remain unchanged.
