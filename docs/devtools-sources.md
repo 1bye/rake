@@ -36,3 +36,12 @@ Chrome's Go to line operates on the loaded text. `Rake.getSourceLocation` and
 source URL. CDP coordinates are zero-based, with UTF-16 columns; invalid lines,
 columns and split surrogate pairs are rejected. The system default editor opens
 the file; its association determines whether line navigation is available.
+
+Console diagnostic links, Network Rust initiators and Performance callback links
+use the same canonical file URL when the source is available in the workspace.
+Frame/diagnostic sequence URLs remain a compatibility fallback, rather than file
+identities in the Sources navigator. Native line/column metadata stays attached
+to each call site. Elements node properties additionally expose `rakeSourceURL`;
+`rake.source($0)` returns the captured URL and location, and accepts the existing
+style/handler source selectors. `rake.openSource` uses the system default editor.
+The adapter continues to reject arbitrary evaluation and executable script editing.

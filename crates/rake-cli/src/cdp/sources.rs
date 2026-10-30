@@ -157,6 +157,9 @@ impl Sources {
                 line: source.line,
                 column: 1,
             });
+            if self.prefix.is_some() {
+                return;
+            }
             let url = super::console::source_url(source);
             if self.locations.len() < 128 || self.locations.contains_key(&url) {
                 self.locations.insert(

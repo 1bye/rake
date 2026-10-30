@@ -20,6 +20,7 @@ pub(super) struct Trace {
     started: Option<std::time::Instant>,
     analysis: Analysis,
     pub source_prefix: Option<String>,
+    pub source_urls: std::collections::BTreeMap<String, String>,
     pub causal: super::causal::Causal,
 }
 
@@ -99,7 +100,11 @@ impl Trace {
         self.cursor = self.cursor.max(frames.cursor);
         let frames = &fresh;
         self.analysis.observe(frames);
-        self.push(events(frames, self.source_prefix.as_deref()));
+        self.push(events(
+            frames,
+            self.source_prefix.as_deref(),
+            &self.source_urls,
+        ));
         self.report()
     }
 
@@ -200,7 +205,11 @@ impl Trace {
     }
 }
 
-fn events(frames: &Frames, prefix: Option<&str>) -> Vec<Value> {
+fn events(
+    frames: &Frames,
+    prefix: Option<&str>,
+    urls: &std::collections::BTreeMap<String, String>,
+) -> Vec<Value> {
     let mut events = Vec::new();
     for frame in &frames.frames {
         events.push(json!({"name":"thread_name","ph":"M","pid":1,"tid":frame.window.0,"args":{"name":if frame.window.0 == 1 { "CrRendererMain".to_owned() } else { format!("GPUI window {} (logical)",frame.window.0) }}}));
@@ -251,7 +260,10 @@ fn events(frames: &Frames, prefix: Option<&str>) -> Vec<Value> {
         }
         for (index, node) in frame.nodes.iter().enumerate() {
             let phase = phase(node.phase);
-            let url = source_url(prefix, frame.sequence, index, node);
+            let url = urls
+                .get(&node.source.file)
+                .cloned()
+                .unwrap_or_else(|| source_url(prefix, frame.sequence, index, node));
             let name = format!("{phase} / {}", node.name);
             events.push(json!({"name":name,"cat":"rake.callbacks","ph":"X","pid":1,"tid":frame.window.0,"ts":node.elapsed_us,"dur":node.duration_us,
                 "args":{"data":{"boundary":node.name,"stableId":node.stable_id,"url":url,"lineNumber":node.source.line.saturating_sub(1),"columnNumber":node.source.column.saturating_sub(1),"inclusive":true,
@@ -560,7 +572,11 @@ mod tests {
         });
         frame.sequence = 2;
         frame.nodes[0].duration_us = 100;
-        trace.collect(&Frames {
+        trace.source_urls.insert(
+            "src/view.rs".into(),
+            "http://127.0.0.1/token/runtime/source/workspace/src/view.rs".into(),
+        );
+        let canonical_events = trace.collect(&Frames {
             clock: None,
             recording: true,
             frames: vec![frame],
@@ -569,6 +585,13 @@ mod tests {
             gap: false,
             dropped: 0,
         });
+        assert_eq!(
+            canonical_events
+                .iter()
+                .find(|event| event["cat"] == "rake.callbacks")
+                .unwrap()["args"]["data"]["url"],
+            "http://127.0.0.1/token/runtime/source/workspace/src/view.rs"
+        );
         let summary = trace.summary();
         let hotspot = &summary["hotspots"][0];
         assert_eq!(hotspot["stableId"], "stable-button");

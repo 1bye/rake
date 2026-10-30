@@ -311,6 +311,13 @@ impl Session {
                         })?;
                         super::evaluate::observation(&self.instance, &token)?
                     } else if let Some(argument) = expression
+                        .strip_prefix("rake.source(")
+                        .and_then(|value| value.strip_suffix(')'))
+                    {
+                        let selector = self.source_selector(argument)?;
+                        let location = self.source_location(&selector)?;
+                        self.source_descriptor(&location)
+                    } else if let Some(argument) = expression
                         .trim()
                         .trim_end_matches(';')
                         .trim()
@@ -390,6 +397,11 @@ impl Session {
                         serde_json::from_str::<String>(argument).map_err(|_| {
                             Error::new(-32602, "Command name must be a JSON string")
                         })?;
+                    } else if let Some(argument) = expression
+                        .strip_prefix("rake.source(")
+                        .and_then(|value| value.strip_suffix(')'))
+                    {
+                        self.source_selector(argument)?;
                     } else if let Some(argument) = expression
                         .trim()
                         .strip_prefix("rake.operation(")
@@ -496,8 +508,8 @@ impl Session {
                 Ok(json!({}))
             }
             "Rake.getSourceLocation" => {
-                Ok(serde_json::to_value(self.source_location(&request.params)?)
-                    .expect("source location serialization"))
+                let location = self.source_location(&request.params)?;
+                Ok(self.source_descriptor(&location))
             }
             "Rake.openSource" => {
                 let location = self.source_location(&request.params)?;
@@ -741,7 +753,14 @@ impl Session {
                 if id.starts_with("rake-node-") {
                     let node = self.dom.object_node(id)?;
                     self.load_details(node)?;
-                    return self.dom.node_properties(id);
+                    let mut properties = self.dom.node_properties(id)?;
+                    if let Ok(location) = self.dom.source(&json!(node)).cloned() {
+                        let source = self.source_descriptor(&location);
+                        if let Some(url) = source.get("url") {
+                            properties["result"].as_array_mut().expect("node properties array").push(json!({"name":"rakeSourceURL","value":{"type":"string","value":url},"configurable":false,"enumerable":true}));
+                        }
+                    }
+                    return Ok(properties);
                 }
 
                 self.objects.properties(id)
@@ -938,6 +957,17 @@ impl Session {
     }
 
     fn source_link(&mut self, record: &rake_diagnostics::Record) -> Option<String> {
+        if let Some(source) = &record.source {
+            let site = rake_protocol::inspection::SourceLocation {
+                file: source.file.clone(),
+                line: source.line,
+                column: 1,
+            };
+            if let Some(url) = self.sources.admit(&site) {
+                self.publish_sources();
+                return Some(url);
+            }
+        }
         if let (Some(base), Some(source)) = (&self.source_base, &record.source) {
             let filename = std::path::Path::new(&source.file)
                 .file_name()
@@ -962,6 +992,25 @@ impl Session {
         } else {
             None
         }
+    }
+
+    fn publish_sources(&mut self) {
+        if self.domains.contains("Page") {
+            for event in self.sources.events() {
+                self.event(event);
+            }
+        }
+    }
+
+    fn source_descriptor(&mut self, location: &rake_protocol::inspection::SourceLocation) -> Value {
+        let mut value = serde_json::to_value(location).expect("source location serialization");
+        if let Some(url) = self.sources.admit(location) {
+            value["url"] = json!(url);
+            value["lineNumber"] = json!(location.line.saturating_sub(1));
+            value["columnNumber"] = json!(location.column.saturating_sub(1));
+            self.publish_sources();
+        }
+        value
     }
 
     fn clear_console(&mut self) {
@@ -1572,6 +1621,11 @@ impl Session {
                     node,
                 );
                 self.sources.capture(url, node.source.clone());
+                if let Some(url) = self.sources.admit(&node.source) {
+                    self.frame_trace
+                        .source_urls
+                        .insert(node.source.file.clone(), url);
+                }
             }
         }
         let events = self.frame_trace.collect(&frames);
@@ -1629,6 +1683,18 @@ impl Session {
         else {
             return Err(Error::new(-32000, "Unexpected detail reply"));
         };
+        if let Some(source) = &element.source {
+            self.sources.admit(source);
+        }
+        if let Some(view) = &element.view {
+            for style in &view.style_sources {
+                self.sources.admit(&style.source);
+            }
+        }
+        for handler in &element.handlers {
+            self.sources.admit(&handler.source);
+        }
+        self.publish_sources();
         self.dom.details(node, element)
     }
 
@@ -2156,6 +2222,40 @@ mod tests {
         });
 
         (instance, worker, path)
+    }
+
+    #[test]
+    fn source_links_share_a_file_identity_across_captured_sites() {
+        let info = rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default())
+            .client()
+            .info();
+        let (instance, worker, path) =
+            fixture(|_| panic!("source catalog needs no runtime command"), 0);
+        let mut session = Session::new(instance, None);
+        session
+            .sources
+            .bind("http://localhost/token", &info.runtime_id.to_string());
+        session.domains.insert("Page".into());
+        let mut record: rake_diagnostics::Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"source":{"file":"src/cdp/session.rs","line":2},"fields":{}})).unwrap();
+        let first = session.source_link(&record).unwrap();
+        record.sequence = 9;
+        record.source.as_mut().unwrap().line = 20;
+        assert_eq!(session.source_link(&record).unwrap(), first);
+        assert_eq!(
+            session.outbound.len(),
+            2,
+            "one source document, not one per diagnostic"
+        );
+        let descriptor = session.source_descriptor(&rake_protocol::inspection::SourceLocation {
+            file: "src/cdp/session.rs".into(),
+            line: 20,
+            column: 3,
+        });
+        assert_eq!(descriptor["url"], first);
+        assert_eq!(descriptor["lineNumber"], 19);
+        assert_eq!(descriptor["columnNumber"], 2);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
