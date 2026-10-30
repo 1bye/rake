@@ -93,6 +93,9 @@ jobs:
         if: always() && runner.os == 'Windows'
         timeout-minutes: 3
         run: dotnet tool install --global vpk --version 1.2.161
+      - name: Inspect pinned Velopack CLI console output
+        if: always() && runner.os == 'Windows'
+        run: vpk --help
       - name: Velopack native install, upgrade and uninstall
         if: always() && runner.os == 'Windows'
         timeout-minutes: 8

@@ -224,15 +224,7 @@ pub fn package_velopack(
     executable: &str,
     channel: &str,
 ) -> Result<Vec<PathBuf>, Error> {
-    let tool = run(Command::new("vpk").arg("--help"))?;
-    if !tool
-        .lines()
-        .any(|line| line.trim().starts_with("Velopack CLI 1.2.161,"))
-    {
-        return Err(Error::Tool(
-            "vpk 1.2.161 is required; install the pinned dotnet tool".into(),
-        ));
-    }
+    verify_velopack_tool()?;
     run(Command::new("vpk")
         .args([
             "--skip-updates",
@@ -315,4 +307,61 @@ mod tests {
             .is_err()
         );
     }
+}
+
+fn pinned_vpk_help(value: &str) -> bool {
+    let mut plain = String::new();
+    let mut escape = false;
+    for character in value.chars() {
+        if character == '\u{1b}' {
+            escape = true;
+            continue;
+        }
+        if escape {
+            if character.is_ascii_alphabetic() {
+                escape = false;
+            }
+            continue;
+        }
+        plain.push(character);
+    }
+    plain.split_whitespace().any(|word| {
+        word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.') == "1.2.161"
+    })
+}
+#[cfg(test)]
+mod vpk_tests {
+    #[test]
+    fn pinned_version_accepts_ansi_console_help_but_not_another_release() {
+        assert!(super::pinned_vpk_help(
+            "Velopack CLI 1.2.161, for distributing applications."
+        ));
+        assert!(super::pinned_vpk_help(
+            "\u{1b}[32mVelopack CLI\u{1b}[0m \u{1b}[1m1.2.161\u{1b}[0m"
+        ));
+        assert!(!super::pinned_vpk_help("Velopack CLI 11.2.161"));
+        assert!(!super::pinned_vpk_help("Velopack CLI 1.2.1610"));
+    }
+}
+
+/// Checks the pinned native tool before starting an expensive application build.
+/// # Errors
+/// Returns missing tool, unsuccessful help or an unexpected installed version.
+pub fn verify_velopack_tool() -> Result<(), Error> {
+    let help = Command::new("vpk").arg("--help").output()?;
+    let tool = format!(
+        "{} {}",
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr)
+    );
+    if !help.status.success() {
+        return Err(Error::Tool(tool));
+    }
+    if !pinned_vpk_help(&tool) {
+        return Err(Error::Tool(format!(
+            "vpk 1.2.161 is required; observed help: {}",
+            tool.chars().take(500).collect::<String>()
+        )));
+    }
+    Ok(())
 }

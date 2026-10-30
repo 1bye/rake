@@ -2,6 +2,7 @@
 mod packages;
 pub use packages::{
     Msix, certificate_subject, msix_manifest, package_msix, package_velopack, preflight, sign,
+    verify_velopack_tool,
 };
 
 use std::{
