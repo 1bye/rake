@@ -105,7 +105,8 @@ impl<R: Route> App<R> {
     }
 
     /// Shows the default routing tab/quit controls. Disable for an application-owned
-    /// shell; shared guard decisions, errors, lifecycle and quit shortcuts remain active.
+    /// shell with a transparent routing root; shared guard decisions, errors, lifecycle
+    /// and quit shortcuts remain active.
     pub fn workspace_chrome(mut self, visible: bool) -> Self {
         self.workspace_chrome = visible;
 

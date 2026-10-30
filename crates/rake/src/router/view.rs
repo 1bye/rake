@@ -813,16 +813,16 @@ impl<R: Route> Render for Workspace<R> {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x18232b))
-            .text_color(rgb(0xf0f4e8))
             .when(self.chrome, |root| {
-                root.child(
-                    crate::inspection::inspect(
-                        TabBar::new(self.router.clone()).in_window(self.window),
+                root.bg(rgb(0x18232b))
+                    .text_color(rgb(0xf0f4e8))
+                    .child(
+                        crate::inspection::inspect(
+                            TabBar::new(self.router.clone()).in_window(self.window),
+                        )
+                        .semantic_id("rake.tabs"),
                     )
-                    .semantic_id("rake.tabs"),
-                )
-                .child(quit_controls)
+                    .child(quit_controls)
             })
             .child(decision_area.inspect("rake.decisions"))
             .children(failure)
