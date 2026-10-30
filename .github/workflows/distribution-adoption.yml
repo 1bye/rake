@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update]
+        options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update, linux-final]
         default: acceptance
       fixture_run:
         type: string
@@ -42,13 +42,13 @@ jobs:
           name: adoption-${{ matrix.os }}
           path: adoption-results.json
   acceptance:
-    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update'
+    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final'
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-latest","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak') && 45 || 30 }}
+    timeout-minutes: ${{ (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final') && 45 || 30 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -58,20 +58,20 @@ jobs:
         with:
           cache-on-failure: true
       - name: Install deep Linux prerequisites
-        if: runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak')
+        if: runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')
         run: |
           sudo apt-get update
           sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder xvfb xauth openbox libfuse2
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build CLI for deep Linux acceptance
-        if: inputs.mode == 'linux-deep' || inputs.mode == 'flatpak'
+        if: inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final'
         run: cargo build -p rake-cli --locked
       - name: Signed Linux repository install and upgrade
         if: runner.os == 'Linux' && inputs.mode == 'linux-deep'
         timeout-minutes: 10
         run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install --repositories
       - name: Signed AppImage HTTPS publication and native update
-        if: always() && runner.os == 'Linux' && inputs.mode == 'linux-deep'
+        if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
         timeout-minutes: 8
         run: python3 scripts/test-distribution-appimage.py --cli target/debug/rake
       - uses: actions/download-artifact@v4
@@ -81,12 +81,18 @@ jobs:
           path: target/distribution-native-flatpak
           run-id: ${{ inputs.fixture_run }}
           github-token: ${{ github.token }}
+      - name: Linux legacy bundle and native metadata consumers
+        if: runner.os == 'Linux' && inputs.mode == 'linux-final'
+        timeout-minutes: 3
+        run: |
+          cargo test -p rake-cli --test distribution_commands --test distribution_bundle --locked
+          python3 scripts/test-bundle.py BundleTests.test_real_native_bundle_is_signed_relocatable_and_preserves_previous_output_on_failure BundleTests.test_native_build_delegates_to_rust_and_preserves_installed_layout BundleTests.test_native_output_cannot_overlap_an_asset_input
       - name: Arch repository and Flatpak sandbox GPU render
-        if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak')
+        if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')
         timeout-minutes: 30
-        run: python3 scripts/test-distribution-linux-formats.py --cli target/debug/rake ${{ inputs.mode == 'flatpak' && '--only flatpak' || '' }} ${{ inputs.fixture_run != '' && '--reuse-flatpak' || '' }}
+        run: python3 scripts/test-distribution-linux-formats.py --cli target/debug/rake ${{ (inputs.mode == 'flatpak' || inputs.mode == 'linux-final') && '--only flatpak' || '' }} ${{ inputs.fixture_run != '' && '--reuse-flatpak' || '' }}
       - uses: actions/upload-artifact@v4
-        if: always() && runner.os == 'Linux' && (inputs.mode == 'flatpak' || inputs.mode == 'linux-deep')
+        if: always() && runner.os == 'Linux' && (inputs.mode == 'flatpak' || inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
         with:
           name: native-flatpak
           path: target/distribution-native-flatpak/
@@ -148,10 +154,22 @@ jobs:
         if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
         timeout-minutes: 12
         run: python scripts/test-distribution-velopack-update.py --cli target/debug/rake.exe
-      - name: Conventional Windows installers and installed native UI
+      - name: Managed metadata and localized PRI SDK acceptance
         if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
-        timeout-minutes: 15
-        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe
+        timeout-minutes: 3
+        run: cargo test -p rake-dist-windows --features native-tests --test sdk sdk_validates_and_unpacks_a_real_managed_package --locked
+      - name: NSIS lifecycle and OS registrations
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 4
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only nsis
+      - name: MSI lifecycle and OS registrations
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 4
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only msi
+      - name: Installed Windows native UI
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 8
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only gpui
       - name: Verify Velopack startup precedes the app factory
         if: always() && runner.os == 'Windows'
         shell: pwsh
