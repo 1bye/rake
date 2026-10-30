@@ -87,12 +87,7 @@ sudo -u builder env PATH=/opt/rust/bin:/usr/bin CARGO_HOME=/cargo CARGO_PROFILE_
     print(run(*command))
 
 
-def flatpak(cli, repository, root, reuse=False):
-    assert not run('flatpak', 'list', '--user', '--app', '--columns=application').strip(), 'use an isolated Flatpak test user'
-    run('flatpak', 'remote-add', '--user', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo')
-    run('flatpak', 'install', '--user', '-y', '--noninteractive', 'flathub', 'org.freedesktop.Platform//25.08', 'org.freedesktop.Sdk//25.08')
-    runtime = run('flatpak', 'info', '--user', '--show-commit', 'org.freedesktop.Platform/x86_64/25.08').strip()
-    sdk = run('flatpak', 'info', '--user', '--show-commit', 'org.freedesktop.Sdk/x86_64/25.08').strip()
+def flatpak_ui(cli, repository, root, runtime, sdk, reuse=False):
     manifest = repository / 'examples/distribution/Cargo.toml'
     original = manifest.read_text()
     output = repository / 'target/distribution-native-flatpak'
@@ -139,6 +134,116 @@ flatpak run --user --no-documents-portal --no-a11y-bus --env=LIBGL_ALWAYS_SOFTWA
         print('Flatpak pinned SDK source build, sandbox GPUI render and installed resource passed')
     finally:
         run('flatpak', 'uninstall', '--user', '-y', '--noninteractive', identifier)
+
+
+def flatpak_repository(cli, repository, root, runtime, sdk):
+    manifest = repository / 'examples/distribution/Cargo.toml'
+    lock = repository / 'Cargo.lock'
+    fixture = manifest.parent / 'native-repository.rs'
+    assert not fixture.exists(), 'refuse to replace an existing source file'
+    original, original_lock = manifest.read_bytes(), lock.read_bytes()
+    home = root / 'flatpak-gpg'
+    home.mkdir(mode=0o700)
+    previous_home = os.environ.get('GNUPGHOME')
+    os.environ['GNUPGHOME'] = str(home)
+    identifier = 'dev.rake.RepositorySmoke'
+    remote = f'rake-repository-{os.getpid()}'
+    installed = False
+    try:
+        run('gpg', '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', '--quick-generate-key', 'Rake Flatpak acceptance', 'rsa2048', 'sign', '1d')
+        fingerprint = next(line.split(':')[9] for line in run('gpg', '--batch', '--with-colons', '--list-keys').splitlines() if line.startswith('fpr:'))
+        fixture.write_text(r"""fn main(){
+let r=rake_resources::resources!().unwrap();
+let data=std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap());std::fs::create_dir_all(&data).unwrap();
+let state=data.join("rake-test-state");if state.exists(){assert_eq!(std::fs::read_to_string(&state).unwrap(),"preserve me");}else{std::fs::write(&state,"preserve me").unwrap();}
+println!("{}:{}",env!("CARGO_PKG_VERSION"),std::fs::read_to_string(r.path("welcome.txt").unwrap()).unwrap().trim());
+}""")
+        for version in ('1.0.0', '1.0.1'):
+            manifest.write_text(f"""[package]
+name="rake-distribution-example"
+version="{version}"
+edition.workspace=true
+rust-version.workspace=true
+license.workspace=true
+publish=false
+autobins=false
+[[bin]]
+name="rake-repository-smoke"
+path="native-repository.rs"
+[dependencies]
+rake-resources={{path="../../crates/rake-resources"}}
+[build-dependencies]
+rake-build={{path="../../crates/rake-build"}}
+[package.metadata.rake.bundle]
+schema_version=1
+identifier="{identifier}"
+resources=[{{from="assets/welcome.txt",to="welcome.txt"}}]
+[package.metadata.rake.bundle.linux]
+formats=["flatpak"]
+[package.metadata.rake.bundle.linux.flatpak]
+runtime_commit="{runtime}"
+sdk_commit="{sdk}"
+finish_args=[]
+[package.metadata.rake.bundle.release]
+gpg_key="{fingerprint}"
+[package.metadata.rake.bundle.release.publisher]
+kind="directory"
+path={json.dumps(str(root / 'flatpak-published'))}
+public_url="https://flatpak.example.test"
+[package.metadata.rake.bundle.release.required]
+x86_64-unknown-linux-gnu=["flatpak"]
+[package.metadata.rake.bundle.release.repositories]
+x86_64-unknown-linux-gnu=["flatpak"]
+""")
+            run('cargo', 'generate-lockfile', '--offline', '--manifest-path', manifest)
+            output = root / f'flatpak-{version}'
+            run(cli, 'bundle', '--native', '--package', 'rake-distribution-example', '--bin', 'rake-repository-smoke', '--manifest-path', manifest, '--output', output, '--json')
+            run(cli, 'release', '--package', 'rake-distribution-example', '--manifest-path', manifest, '--from', output, '--json')
+            published = root / 'flatpak-published/stable/x86_64-unknown-linux-gnu/flatpak'
+            if version == '1.0.0':
+                reference = (published / 'rake-flatpak.flatpakref').read_text()
+                assert f'Name={identifier}' in reference and 'GPGKey=' in reference and 'Branch=master' in reference
+                run('flatpak', 'remote-add', '--user', '--gpg-import', published / 'public-key.asc', remote, (published / 'repo').as_uri())
+                run('flatpak', 'install', '--user', '-y', '--noninteractive', remote, f'{identifier}//master')
+                installed = True
+            else:
+                run('flatpak', 'update', '--user', '-y', '--noninteractive', identifier)
+            result = run('dbus-run-session', '--', 'flatpak', 'run', '--user', '--no-documents-portal', '--no-a11y-bus', identifier)
+            assert result.startswith(f'{version}:This resource is included'), result
+        print('Flatpak signed repository/ref enrollment, fresh N install, N+1 discovery/upgrade and preserved app data passed', flush=True)
+    finally:
+        try:
+            if installed:
+                run('flatpak', 'uninstall', '--user', '-y', '--noninteractive', '--delete-data', identifier)
+                run('flatpak', 'remote-delete', '--user', '--force', remote)
+        finally:
+            manifest.write_bytes(original)
+            lock.write_bytes(original_lock)
+            fixture.unlink(missing_ok=True)
+            if previous_home is None:
+                os.environ.pop('GNUPGHOME', None)
+            else:
+                os.environ['GNUPGHOME'] = previous_home
+
+
+def flatpak(cli, repository, root, reuse=False):
+    assert not run('flatpak', 'list', '--user', '--app', '--columns=application').strip(), 'use an isolated Flatpak test user'
+    run('flatpak', 'remote-add', '--user', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo')
+    run('flatpak', 'install', '--user', '-y', '--noninteractive', 'flathub', 'org.freedesktop.Platform//25.08', 'org.freedesktop.Sdk//25.08')
+    runtime = run('flatpak', 'info', '--user', '--show-commit', 'org.freedesktop.Platform/x86_64/25.08').strip()
+    sdk = run('flatpak', 'info', '--user', '--show-commit', 'org.freedesktop.Sdk/x86_64/25.08').strip()
+    failures = []
+    actions = [('native UI', lambda: flatpak_ui(cli, repository, root, runtime, sdk, reuse))]
+    if not reuse:
+        actions.append(('signed repository', lambda: flatpak_repository(cli, repository, root, runtime, sdk)))
+    for name, action in actions:
+        try:
+            action()
+        except Exception as error:
+            failures.append(f'{name}: {error}')
+            print(f'Flatpak {name} failed: {error}', flush=True)
+    if failures:
+        raise AssertionError('\n'.join(failures))
 
 
 def main():
