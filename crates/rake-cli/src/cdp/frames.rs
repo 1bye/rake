@@ -16,6 +16,9 @@ pub(super) struct Trace {
     bytes: usize,
     stream: Option<(String, usize)>,
     initial_dropped: Option<u64>,
+    generation: u64,
+    handle: String,
+    started: Option<std::time::Instant>,
 }
 
 impl Trace {
@@ -35,48 +38,76 @@ impl Trace {
                 "Only uncompressed JSON frame traces are supported",
             ));
         }
+        let generation = self.generation + 1;
         *self = Self {
+            generation,
+            handle: format!("rake-frames-{generation}"),
+            started: Some(std::time::Instant::now()),
             active: true,
             stream_mode: mode == "ReturnAsStream",
             ..Self::default()
         };
+        self.push(vec![
+            json!({"name":"process_name","ph":"M","pid":1,"tid":1,"args":{"name":"Rake GPUI (observed wall time)"}}),
+            json!({"name":"thread_name","ph":"M","pid":1,"tid":1,"args":{"name":"CrRendererMain"}}),
+            json!({"name":"TracingStartedInBrowser","cat":"disabled-by-default-devtools.timeline","ph":"I","s":"t","pid":1,"tid":1,"ts":0,
+                "args":{"data":{"persistentIds":true,"frames":[{"frame":"rake","processId":1,"url":"rake://runtime","name":"Rake GPUI"}]}}}),
+            json!({"name":"Rake recording started","cat":"rake.recording","ph":"i","s":"g","pid":1,"tid":1,"ts":0}),
+        ]);
         Ok(())
     }
 
-    pub fn collect(&mut self, frames: &Frames) -> Vec<Value> {
-        let baseline = *self.initial_dropped.get_or_insert(frames.dropped);
-        self.loss |= frames.gap || frames.dropped > baseline;
-        self.cursor = frames.cursor;
-        let events = events(frames);
-        if !self.stream_mode {
-            return events;
-        }
+    fn push(&mut self, events: Vec<Value>) {
         for event in events {
             let bytes = serde_json::to_vec(&event).map_or(MAX_TRACE_BYTES, |bytes| bytes.len()) + 1;
-            if self.bytes + bytes < MAX_TRACE_BYTES - 1024 {
+            if self.bytes + bytes < MAX_TRACE_BYTES - 4096 {
                 self.bytes += bytes;
                 self.events.push(event);
             } else {
                 self.loss = true;
             }
         }
-        Vec::new()
+    }
+
+    pub fn report(&mut self) -> Vec<Value> {
+        if self.stream_mode {
+            Vec::new()
+        } else {
+            self.bytes = 0;
+            std::mem::take(&mut self.events)
+        }
+    }
+
+    pub fn has_stream(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    pub fn collect(&mut self, frames: &Frames) -> Vec<Value> {
+        let baseline = *self.initial_dropped.get_or_insert(frames.dropped);
+        self.loss |= frames.gap || frames.dropped > baseline;
+        self.cursor = frames.cursor;
+        self.push(events(frames));
+        self.report()
     }
 
     pub fn end(&mut self) -> Value {
         self.active = false;
+        let elapsed = self
+            .started
+            .map_or(0, |start| start.elapsed().as_micros() as u64);
+        self.push(vec![json!({"name":"Rake recording stopped","cat":"rake.recording","ph":"i","s":"g","pid":1,"tid":1,"ts":elapsed})]);
         if self.stream_mode {
             let document = json!({"traceEvents":std::mem::take(&mut self.events),"displayTimeUnit":"ms",
                 "metadata":{"clock":"recording monotonic microseconds","measurement":"GPUI draw and inclusive boundary CPU wall time; no GPU execution or CPU samples","dataLossOccurred":self.loss}});
             self.stream = Some((document.to_string(), 0));
-            json!({"dataLossOccurred":self.loss,"stream":"rake-frames","traceFormat":"json","streamCompression":"none"})
+            json!({"dataLossOccurred":self.loss,"stream":self.handle,"traceFormat":"json","streamCompression":"none"})
         } else {
             json!({"dataLossOccurred":self.loss})
         }
     }
 
     pub fn read(&mut self, params: &Value) -> Result<Value, Error> {
-        if params["handle"] != "rake-frames" {
+        if params["handle"] != self.handle {
             return Err(Error::new(-32602, "Unknown trace stream"));
         }
         let (text, cursor) = self
@@ -112,15 +143,19 @@ impl Trace {
         Ok(json!({"base64Encoded":false,"data":data,"eof":end == text.len()}))
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&mut self, params: &Value) -> Result<(), Error> {
+        if params["handle"] != self.handle {
+            return Err(Error::new(-32000, "Trace stream expired"));
+        }
         self.stream = None;
+        Ok(())
     }
 }
 
 fn events(frames: &Frames) -> Vec<Value> {
     let mut events = Vec::new();
     for frame in &frames.frames {
-        events.push(json!({"name":"thread_name","ph":"M","pid":1,"tid":frame.window.0,"args":{"name":format!("GPUI window {}",frame.window.0)}}));
+        events.push(json!({"name":"thread_name","ph":"M","pid":1,"tid":frame.window.0,"args":{"name":if frame.window.0 == 1 { "CrRendererMain".to_owned() } else { format!("GPUI window {} (logical)",frame.window.0) }}}));
         events.push(json!({"name":"RunTask","cat":"devtools.timeline","ph":"X","pid":1,"tid":frame.window.0,
             "ts":frame.elapsed_us,"dur":frame.draw_us,"args":{"data":{"kind":"GPUI window draw","frame":frame.sequence,"invalidations":frame.invalidations,"dirtyToDrawUs":frame.dirty_to_draw_us,"omittedNodeTimings":frame.omitted_nodes}}}));
         for node in &frame.nodes {
@@ -140,6 +175,33 @@ fn events(frames: &Frames) -> Vec<Value> {
 mod tests {
     use super::*;
     #[test]
+    fn empty_recordings_are_loadable_and_handles_never_retarget() {
+        let mut trace = Trace::default();
+        trace
+            .begin(&json!({"transferMode":"ReturnAsStream"}))
+            .unwrap();
+        assert!(trace.begin(&json!({})).is_err());
+        let first = trace.end()["stream"].clone();
+        let data = trace.read(&json!({"handle":first})).unwrap();
+        let document: Value = serde_json::from_str(data["data"].as_str().unwrap()).unwrap();
+        assert!(
+            document["traceEvents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["name"] == "TracingStartedInBrowser")
+        );
+        trace
+            .begin(&json!({"transferMode":"ReturnAsStream"}))
+            .unwrap();
+        let second = trace.end()["stream"].clone();
+        assert_ne!(first, second);
+        assert!(trace.read(&json!({"handle":first})).is_err());
+        assert!(trace.close(&json!({"handle":first})).is_err());
+        assert!(trace.read(&json!({"handle":second})).is_ok());
+    }
+
+    #[test]
     fn streams_valid_trace_json_with_bounded_reads_and_explicit_close() {
         let mut trace = Trace::default();
         trace
@@ -154,12 +216,11 @@ mod tests {
             dropped: 1,
         };
         assert!(trace.collect(&frames).is_empty());
-        assert_eq!(trace.end()["stream"], "rake-frames");
+        let handle = trace.end()["stream"].as_str().unwrap().to_owned();
+        assert!(handle.starts_with("rake-frames-"));
         let mut data = String::new();
         loop {
-            let read = trace
-                .read(&json!({"handle":"rake-frames","size":7}))
-                .unwrap();
+            let read = trace.read(&json!({"handle":handle,"size":7})).unwrap();
             data.push_str(read["data"].as_str().unwrap());
             if read["eof"] == true {
                 break;
@@ -167,7 +228,7 @@ mod tests {
         }
         let value: Value = serde_json::from_str(&data).unwrap();
         assert_eq!(value["metadata"]["dataLossOccurred"], true);
-        trace.close();
-        assert!(trace.read(&json!({"handle":"rake-frames"})).is_err());
+        trace.close(&json!({"handle":handle})).unwrap();
+        assert!(trace.read(&json!({"handle":handle})).is_err());
     }
 }

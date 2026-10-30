@@ -48,6 +48,7 @@ struct Session {
     tracked_style_node: Option<i32>,
     edit_sheets: BTreeSet<i32>,
     frame_trace: super::frames::Trace,
+    detached: Option<String>,
 }
 
 impl Session {
@@ -80,6 +81,7 @@ impl Session {
             tracked_style_node: None,
             edit_sheets: BTreeSet::new(),
             frame_trace: super::frames::Trace::default(),
+            detached: None,
         }
     }
 
@@ -123,6 +125,9 @@ impl Session {
                 self.refresh_dom()?;
                 self.dom.accessibility(method, &request.params)
             }
+            "Tracing.getCategories" => Ok(
+                json!({"categories":["devtools.timeline","rake.frames","rake.callbacks","rake.causal"]}),
+            ),
             "Tracing.start" => {
                 if !self
                     .instance
@@ -141,35 +146,38 @@ impl Session {
                     self.frame_trace.active = false;
                     return Err(error);
                 }
-                let Reply::Frames(baseline) = query(
+                let baseline = query(
                     &self.instance,
                     Query::Frames {
                         after: FRAME_HIGH_WATER_CURSOR,
                     },
                     TIMEOUT,
-                )
-                .map_err(|error| Error::new(-32000, error.to_string()))?
-                else {
-                    return Err(Error::new(-32000, "Unexpected frame baseline"));
-                };
-                self.frame_trace.cursor = baseline.cursor;
+                );
+                match baseline {
+                    Ok(Reply::Frames(baseline)) => self.frame_trace.cursor = baseline.cursor,
+                    other => {
+                        let _ = self.control(Command::RecordFrames {
+                            enabled: false,
+                            lease_ms: 0,
+                        });
+                        self.frame_trace.active = false;
+                        return Err(Error::new(
+                            -32000,
+                            format!("Frame baseline unavailable: {other:?}"),
+                        ));
+                    }
+                }
                 Ok(json!({}))
             }
             "Tracing.end" => {
                 if !self.frame_trace.active {
-                    return Err(Error::new(-32000, "Frame tracing is not active"));
+                    return if self.frame_trace.has_stream() {
+                        Ok(json!({}))
+                    } else {
+                        Err(Error::new(-32000, "Frame tracing is not active"))
+                    };
                 }
-                self.control(Command::RecordFrames {
-                    enabled: false,
-                    lease_ms: 0,
-                })?;
-                for _ in 0..32 {
-                    if !self.poll_frames(false)? {
-                        break;
-                    }
-                }
-                let complete = self.frame_trace.end();
-                self.event(Event::new("Tracing.tracingComplete", complete));
+                self.finish_trace(None);
                 Ok(json!({}))
             }
             "IO.read"
@@ -179,8 +187,12 @@ impl Session {
             {
                 self.frame_trace.read(&request.params)
             }
-            "IO.close" if request.params["handle"] == "rake-frames" => {
-                self.frame_trace.close();
+            "IO.close"
+                if request.params["handle"]
+                    .as_str()
+                    .is_some_and(|handle| handle.starts_with("rake-frames-")) =>
+            {
+                self.frame_trace.close(&request.params)?;
                 Ok(json!({}))
             }
             "Runtime.evaluate" => {
@@ -1082,8 +1094,6 @@ impl Session {
             });
             self.frame_trace.active = false;
         }
-        self.frame_trace.close();
-
         if self.interaction_used {
             let _ = self.control(Command::InspectMode {
                 enabled: false,
@@ -1349,6 +1359,46 @@ impl Session {
         Ok(())
     }
 
+    fn finish_trace(&mut self, reason: Option<&str>) {
+        if !self.frame_trace.active {
+            return;
+        }
+        self.frame_trace.loss |= reason.is_some();
+        if self
+            .control(Command::RecordFrames {
+                enabled: false,
+                lease_ms: 0,
+            })
+            .is_err()
+        {
+            self.frame_trace.loss = true;
+        } else {
+            for _ in 0..32 {
+                match self.poll_frames(false) {
+                    Ok(false) => break,
+                    Ok(true) => {}
+                    Err(_) => {
+                        self.frame_trace.loss = true;
+                        break;
+                    }
+                }
+            }
+        }
+        let mut complete = self.frame_trace.end();
+        let report = self.frame_trace.report();
+        self.trace_events(report);
+        complete["dataLossOccurred"] = json!(self.frame_trace.loss);
+        self.event(Event::new("Tracing.tracingComplete", complete));
+    }
+
+    fn trace_events(&mut self, events: Vec<Value>) {
+        for chunk in events.chunks(128) {
+            let before = self.dropped;
+            self.event(Event::new("Tracing.dataCollected", json!({"value":chunk})));
+            self.frame_trace.loss |= self.dropped != before;
+        }
+    }
+
     fn poll_frames(&mut self, renew: bool) -> std::result::Result<bool, Error> {
         if renew {
             self.control(Command::RecordFrames {
@@ -1368,11 +1418,7 @@ impl Session {
             return Err(Error::new(-32000, "Unexpected frames reply"));
         };
         let events = self.frame_trace.collect(&frames);
-        if !events.is_empty() {
-            let before = self.dropped;
-            self.event(Event::new("Tracing.dataCollected", json!({"value":events})));
-            self.frame_trace.loss |= self.dropped != before;
-        }
+        self.trace_events(events);
         Ok(frames.more)
     }
 
@@ -1427,6 +1473,7 @@ impl Session {
     }
 
     fn replace(&mut self, instance: Instance) {
+        self.finish_trace(Some("runtime replaced"));
         self.cleanup();
         self.last_hover = None;
         self.last_pick_sequence = 0;
@@ -1443,8 +1490,9 @@ impl Session {
         self.loss = super::console::Loss::default();
         self.dom.clear();
         self.edit_sheets.clear();
-        self.outbound.clear();
-        self.outbound_bytes = 0;
+        self.outbound
+            .retain(|(event, _)| event.method.starts_with("Tracing."));
+        self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
         self.dropped = 0;
         self.event(Event::new("Page.frameNavigated", json!({"frame": {"id":"rake","loaderId":self.instance.info.runtime_id.to_string(),
             "url":"rake://runtime","domainAndRegistry":"","securityOrigin":"rake://runtime","mimeType":"text/plain",
@@ -1559,7 +1607,10 @@ pub(super) fn run(
             Err(error) => return Err(error.into()),
         }
 
-        if !session.domains.is_empty() && Instant::now() >= next_poll {
+        if session.detached.is_none()
+            && (!session.domains.is_empty() || session.frame_trace.active)
+            && Instant::now() >= next_poll
+        {
             match session.poll() {
                 Ok(()) => missing_since = None,
                 Err(error) => {
@@ -1569,6 +1620,12 @@ pub(super) fn run(
                     } else if missing_since.get_or_insert_with(Instant::now).elapsed()
                         >= Duration::from_secs(5)
                     {
+                        if session.frame_trace.active {
+                            session.finish_trace(Some("runtime disconnected"));
+                            session.detached = Some(error.to_string());
+                            session.flush(&mut socket)?;
+                            continue;
+                        }
                         session.poll_output(true);
                         let text = format!(
                             "Runtime disconnected: {error}. Retained supervisor output is shown above."
@@ -1604,6 +1661,15 @@ pub(super) fn run(
         }
 
         session.flush(&mut socket)?;
+        if let Some(reason) = &session.detached
+            && !session.frame_trace.has_stream()
+        {
+            socket.send(Message::text(serde_json::to_string(&Event::new(
+                "Inspector.detached",
+                json!({"reason":reason}),
+            ))?))?;
+            return Ok(());
+        }
 
         if session.dropped > 0
             && (session.domains.contains("Log") || session.domains.contains("Runtime"))
@@ -1921,6 +1987,65 @@ mod tests {
     }
 
     #[test]
+    fn baseline_failure_releases_recording_and_dead_stop_returns_a_partial_trace() {
+        for bad_baseline in [true, false] {
+            let (instance, worker, path) = fixture(
+                move |request| match request.message {
+                    RuntimeMessage::Command(Command::RecordFrames { enabled, .. }) => {
+                        if !bad_baseline && !enabled {
+                            Reply::Data(json!("runtime unavailable"))
+                        } else {
+                            Reply::Acknowledged
+                        }
+                    }
+                    RuntimeMessage::Query(Query::Frames { .. }) => {
+                        if bad_baseline {
+                            Reply::Data(json!("unexpected baseline"))
+                        } else {
+                            Reply::Frames(rake_protocol::inspection::Frames {
+                                recording: true,
+                                frames: vec![],
+                                cursor: 0,
+                                more: false,
+                                gap: false,
+                                dropped: 0,
+                            })
+                        }
+                    }
+                    _ => panic!("unexpected request"),
+                },
+                3,
+            );
+            let mut session = Session::new(instance, None);
+            let start = session.handle(&Request {
+                id: 1,
+                method: "Tracing.start".into(),
+                params: json!({"transferMode":"ReturnAsStream"}),
+            });
+            if bad_baseline {
+                assert!(start.is_err());
+                assert!(!session.frame_trace.active);
+            } else {
+                start.unwrap();
+                session
+                    .handle(&Request {
+                        id: 2,
+                        method: "Tracing.end".into(),
+                        params: json!({}),
+                    })
+                    .unwrap();
+                assert_eq!(
+                    session.outbound.back().unwrap().0.params["dataLossOccurred"],
+                    true
+                );
+                assert!(session.frame_trace.has_stream());
+            }
+            worker.join().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
     fn chrome_frame_recording_streams_actual_runtime_samples_and_stops_cleanly() {
         let (instance, worker, path) = fixture(
             |request| match request.message {
@@ -1975,7 +2100,10 @@ mod tests {
             "Tracing.tracingComplete"
         );
         let read = session
-            .handle(&request("IO.read", json!({"handle":"rake-frames"})))
+            .handle(&request(
+                "IO.read",
+                json!({"handle":session.outbound.back().unwrap().0.params["stream"]}),
+            ))
             .unwrap();
         let trace: Value = serde_json::from_str(read["data"].as_str().unwrap()).unwrap();
         assert!(

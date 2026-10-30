@@ -1,0 +1,19 @@
+# Chrome Performance
+
+Performance records observed Rake/GPUI wall time through Chrome's bundled
+frontend. It is not a native CPU sampler or GPU execution profiler. Recording
+requires the opt-in `rake/devtools` feature and a mounted inspection host.
+
+## Recording lifecycle
+
+Record/Stop uses leased runtime capture, with polling independent of other enabled
+CDP domains. A failed baseline releases the capture lease. Empty recordings include
+session metadata and recording boundary markers. Stop completes with explicit loss
+when a runtime disappears; the connection retains the completed stream for Chrome
+to read before detaching. A checkpointed replacement completes the old recording
+with loss instead of mixing identities and clocks into the new runtime.
+
+Each recording has a new stream handle. Starting another recording expires the
+previous stream; old read/close requests cannot retarget or close the new one.
+Disconnecting the client releases its recording lease. Runtime capture also expires
+without renewal, so an ungraceful adapter exit cannot leave it enabled indefinitely.
