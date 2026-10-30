@@ -317,3 +317,18 @@ that dropping the owner releases the descendant's file lock. Resource tests,
 strict Clippy/rustdoc and the explicit no-default-features Wasm facade check pass.
 Native process dependencies are target-gated out of Wasm; existing router/web
 dead-code warnings remain unchanged.
+
+Consolidated Linux checkpoint 41111628107 established: generated signed APT and
+RPM repositories support fresh N installation and native N+1 discovery/upgrade;
+Arch makepkg/install/upgrade/uninstall and its signed pacman repository pass;
+real AppImage artifacts update over a signed HTTPS publication and relaunch N+1,
+with installed resources and preserved data. Decline/cancel, competing updater
+lock and read-only image rejection also passed through the actual native image.
+Transient trust-enrollment diagnostics were followed by successful signed native
+repository operations; they are not ignored package-manager failures.
+
+Flatpak stopped before SDK compilation at an empty Cargo config source-table
+assignment, which panicked in TOML indexing. Vendor configuration now inserts a
+source table explicitly and preserves unrelated Cargo build options. A portable
+regression covers the fresh-workspace case. The next checkpoint selects only
+Flatpak; the passing repositories/Arch/AppImage gates are not rerun.

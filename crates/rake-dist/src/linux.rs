@@ -324,30 +324,55 @@ fn vendor(manifest: &Path, source: &Path) -> Result<(), Error> {
     if !output.status.success() {
         return Err(Error::Cargo(String::from_utf8_lossy(&output.stderr).into()));
     }
-    let mut vendor: toml::Value = toml::from_str(&String::from_utf8_lossy(&output.stdout))
+    let vendor: toml::Value = toml::from_str(&String::from_utf8_lossy(&output.stdout))
         .map_err(|error| Error::Execution(error.to_string()))?;
-    if let Some(table) = vendor.get_mut("source").and_then(toml::Value::as_table_mut) {
-        for (_, value) in table.iter_mut() {
-            if let Some(directory) = value.get_mut("directory") {
-                *directory = toml::Value::String("vendor".into());
-            }
-        }
-    }
     let directory = source.join(".cargo");
     fs::create_dir_all(&directory)?;
     let config = directory.join("config.toml");
-    let mut existing = if config.exists() {
+    let existing = if config.exists() {
         toml::from_str::<toml::Value>(&fs::read_to_string(&config)?)
             .map_err(|error| Error::Execution(error.to_string()))?
     } else {
         toml::Value::Table(Default::default())
     };
-    if let Some(sources) = vendor.get("source") {
-        existing["source"] = sources.clone();
-    }
+    let existing = vendor_configuration(existing, vendor)?;
     fs::write(
         config,
         toml::to_string(&existing).map_err(|error| Error::Execution(error.to_string()))?,
     )?;
     Ok(())
+}
+
+fn vendor_configuration(
+    mut existing: toml::Value,
+    mut vendor: toml::Value,
+) -> Result<toml::Value, Error> {
+    if let Some(table) = vendor.get_mut("source").and_then(toml::Value::as_table_mut) {
+        for value in table.values_mut() {
+            if let Some(directory) = value.get_mut("directory") {
+                *directory = toml::Value::String("vendor".into());
+            }
+        }
+    }
+    if let Some(sources) = vendor.get("source") {
+        existing
+            .as_table_mut()
+            .ok_or_else(|| Error::Execution("Cargo config must be a table".into()))?
+            .insert("source".into(), sources.clone());
+    }
+    Ok(existing)
+}
+#[cfg(test)]
+mod vendor_tests {
+    #[test]
+    fn vendor_sources_are_inserted_when_the_workspace_has_no_source_table() {
+        let vendor:toml::Value=toml::from_str("[source.crates-io]\nreplace-with='vendored-sources'\n[source.vendored-sources]\ndirectory='/temporary/host/path/vendor'\n").unwrap();
+        let existing: toml::Value = toml::from_str("[build]\njobs=2\n").unwrap();
+        let value = super::vendor_configuration(existing, vendor).unwrap();
+        assert_eq!(value["build"]["jobs"].as_integer(), Some(2));
+        assert_eq!(
+            value["source"]["vendored-sources"]["directory"].as_str(),
+            Some("vendor")
+        );
+    }
 }
