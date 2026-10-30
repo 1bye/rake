@@ -53,7 +53,10 @@ $ErrorActionPreference='Stop'
 Add-AppxPackage -AppInstallerFile $Feed
 $p=Get-AppxPackage -Name $Name
 if($p.Version.ToString() -ne $Version){throw 'wrong managed package version'}
-$settings=Get-AppxPackageAutoUpdateSettings -PackageFullName $p.PackageFullName
+$getter=Get-Command Get-AppxPackageAutoUpdateSettings
+if($getter.Parameters.ContainsKey('PackageFamilyName')){$settings=& $getter -PackageFamilyName $p.PackageFamilyName}
+elseif($getter.Parameters.ContainsKey('PackageFullName')){$settings=& $getter -PackageFullName $p.PackageFullName}
+else{throw ('Unsupported Appx query parameters: '+($getter.Parameters.Keys -join ', '))}
 if(-not $settings.AppInstallerUri){throw ('App Installer association missing: '+($settings|ConvertTo-Json -Depth 8))}
 $state=Join-Path $env:LOCALAPPDATA ('Packages\'+$p.PackageFamilyName+'\LocalState')
 New-Item -ItemType Directory -Force -Path $state | Out-Null
