@@ -103,7 +103,7 @@ impl UpdateService {
         let path = location
             .get_packages_dir()
             .join(&update.info.TargetFullRelease.FileName);
-        verify_package(&path, &update.info.TargetFullRelease)?;
+        verify_cached_package(&path, &update.info.TargetFullRelease)?;
         Ok(StagedVelopack {
             manager,
             info: update.info,
@@ -280,6 +280,15 @@ fn verify_package(path: &Path, asset: &VelopackAsset) -> Result<(), Error> {
     }
     Ok(())
 }
+fn verify_cached_package(path: &Path, asset: &VelopackAsset) -> Result<(), Error> {
+    if let Err(error) = verify_package(path, asset) {
+        // The SDK skips downloads when this exact cache path exists. Remove
+        // rejected bytes so the next explicit attempt can fetch a clean copy.
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
 fn provider(error: ::velopack::Error) -> Error {
     Error::Provider(error.to_string())
 }
@@ -316,7 +325,8 @@ mod tests {
         validate_asset(&binding, &asset).unwrap();
         verify_package(&path, &asset).unwrap();
         fs::write(&path, b"changed").unwrap();
-        assert!(verify_package(&path, &asset).is_err());
+        assert!(verify_cached_package(&path, &asset).is_err());
+        assert!(!path.exists(), "rejected cache permits a clean retry");
         asset.FileName = "../other.nupkg".into();
         assert!(validate_asset(&binding, &asset).is_err());
         asset.FileName = "release.nupkg".into();

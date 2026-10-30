@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [acceptance, comparison, velopack, linux-deep, flatpak]
+        options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update]
         default: acceptance
       platform:
         type: choice
@@ -37,7 +37,7 @@ jobs:
           name: adoption-${{ matrix.os }}
           path: adoption-results.json
   acceptance:
-    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak'
+    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update'
     strategy:
       fail-fast: false
       matrix:
@@ -88,10 +88,10 @@ jobs:
         timeout-minutes: 8
         run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install
       - name: Build and package the real GPUI application with custom manifest
-        if: runner.os == 'Windows' && inputs.mode != 'velopack'
+        if: runner.os == 'Windows' && inputs.mode == 'acceptance'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Build CLI for focused Velopack acceptance
-        if: inputs.mode == 'velopack'
+        if: inputs.mode == 'velopack' || inputs.mode == 'windows-update'
         run: cargo build -p rake-cli --locked
       - name: Create a disposable local Windows signing profile
         timeout-minutes: 2
@@ -108,7 +108,7 @@ jobs:
           Import-Certificate -FilePath $public -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
       - name: Windows SDK signing, installation and upgrade
         timeout-minutes: 5
-        if: always() && runner.os == 'Windows' && inputs.mode != 'velopack'
+        if: always() && runner.os == 'Windows' && inputs.mode == 'acceptance'
         run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --test dll --locked
       - name: Install pinned native Velopack tool
         if: always() && runner.os == 'Windows'
@@ -118,9 +118,17 @@ jobs:
         if: always() && runner.os == 'Windows'
         run: vpk --help
       - name: Velopack native install, upgrade and uninstall
-        if: always() && runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-update'
         timeout-minutes: 8
         run: python scripts/test-distribution-velopack.py --cli target/debug/rake.exe
+      - name: Native private DLL isolation
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 3
+        run: cargo test -p rake-dist-windows --features native-signing-tests --test dll --locked
+      - name: Velopack signed HTTPS feed and guarded SDK restart
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 12
+        run: python scripts/test-distribution-velopack-update.py --cli target/debug/rake.exe
       - name: Verify Velopack startup precedes the app factory
         if: always() && runner.os == 'Windows'
         shell: pwsh
