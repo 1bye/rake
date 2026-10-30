@@ -20,6 +20,7 @@ pub(super) struct Trace {
     handle: String,
     started: Option<std::time::Instant>,
     analysis: Analysis,
+    pub source_prefix: Option<String>,
 }
 
 impl Trace {
@@ -61,7 +62,7 @@ impl Trace {
     fn push(&mut self, events: Vec<Value>) {
         for event in events {
             let bytes = serde_json::to_vec(&event).map_or(MAX_TRACE_BYTES, |bytes| bytes.len()) + 1;
-            if self.bytes + bytes < MAX_TRACE_BYTES - 65536 {
+            if self.bytes + bytes < MAX_TRACE_BYTES - 256 * 1024 {
                 self.bytes += bytes;
                 self.events.push(event);
             } else {
@@ -88,7 +89,7 @@ impl Trace {
         self.loss |= frames.gap || frames.dropped > baseline;
         self.cursor = frames.cursor;
         self.analysis.observe(frames);
-        self.push(events(frames));
+        self.push(events(frames, self.source_prefix.as_deref()));
         self.report()
     }
 
@@ -159,7 +160,7 @@ impl Trace {
     }
 }
 
-fn events(frames: &Frames) -> Vec<Value> {
+fn events(frames: &Frames, prefix: Option<&str>) -> Vec<Value> {
     let mut events = Vec::new();
     for frame in &frames.frames {
         events.push(json!({"name":"thread_name","ph":"M","pid":1,"tid":frame.window.0,"args":{"name":if frame.window.0 == 1 { "CrRendererMain".to_owned() } else { format!("GPUI window {} (logical)",frame.window.0) }}}));
@@ -208,17 +209,82 @@ fn events(frames: &Frames) -> Vec<Value> {
                 ],
             ));
         }
-        for node in &frame.nodes {
-            let phase = match node.phase {
-                rake_protocol::inspection::FramePhase::Layout => "Layout",
-                rake_protocol::inspection::FramePhase::Prepaint => "PrePaint",
-                rake_protocol::inspection::FramePhase::Paint => "Paint",
-            };
-            events.push(json!({"name":phase,"cat":"devtools.timeline","ph":"X","pid":1,"tid":frame.window.0,"ts":node.elapsed_us,"dur":node.duration_us,
-                "args":{"data":{"boundary":node.name,"stableId":node.stable_id,"url":node.source.file,"lineNumber":node.source.line.saturating_sub(1),"columnNumber":node.source.column.saturating_sub(1),"inclusive":true}}}));
+        for (index, node) in frame.nodes.iter().enumerate() {
+            let phase = phase(node.phase);
+            let url = source_url(prefix, frame.sequence, index, node);
+            let name = format!("{phase} / {}", node.name);
+            events.push(json!({"name":name,"cat":"rake.callbacks","ph":"X","pid":1,"tid":frame.window.0,"ts":node.elapsed_us,"dur":node.duration_us,
+                "args":{"data":{"boundary":node.name,"stableId":node.stable_id,"url":url,"lineNumber":node.source.line.saturating_sub(1),"columnNumber":node.source.column.saturating_sub(1),"inclusive":true,
+                    "stackTrace":[{"functionName":format!("Rust construction: {}",node.name),"scriptId":"","url":url,"lineNumber":node.source.line.saturating_sub(1),"columnNumber":node.source.column.saturating_sub(1)}]}}}));
+            events.extend(track(
+                &name,
+                node.elapsed_us,
+                node.duration_us,
+                &format!("Window {} / {phase}", frame.window.0),
+                "tertiary-light",
+                vec![
+                    json!(["Boundary", node.name]),
+                    json!([
+                        "Stable identity",
+                        node.stable_id.as_deref().unwrap_or("unavailable")
+                    ]),
+                    json!([
+                        "Rust source",
+                        format!(
+                            "{}:{}:{}",
+                            node.source.file, node.source.line, node.source.column
+                        )
+                    ]),
+                    json!(["Source URL", url]),
+                    json!([
+                        "Measurement",
+                        "inclusive wall time; overlaps descendant callbacks"
+                    ]),
+                    json!(["Frame", frame.sequence.to_string()]),
+                ],
+            ));
         }
     }
     events
+}
+
+fn phase(phase: rake_protocol::inspection::FramePhase) -> &'static str {
+    match phase {
+        rake_protocol::inspection::FramePhase::Layout => "GPUI request-layout",
+        rake_protocol::inspection::FramePhase::Prepaint => "GPUI prepaint",
+        rake_protocol::inspection::FramePhase::Paint => "GPUI paint",
+    }
+}
+
+pub(super) fn source_url(
+    prefix: Option<&str>,
+    sequence: u64,
+    index: usize,
+    node: &rake_protocol::inspection::NodeTiming,
+) -> String {
+    match prefix {
+        Some(prefix) => {
+            let file = std::path::Path::new(&node.source.file)
+                .file_name()
+                .and_then(|file| file.to_str())
+                .unwrap_or("source.rs");
+            let file: String = file
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            format!("{prefix}/{sequence}/{index}/{file}")
+        }
+        None => super::console::source_url(&rake_diagnostics::Source {
+            file: node.source.file.clone(),
+            line: node.source.line,
+        }),
+    }
 }
 
 // Chrome's extension payload presents native observations without pretending to be browser work.
@@ -243,6 +309,9 @@ pub(super) fn track(
 struct Analysis {
     windows: std::collections::BTreeMap<u64, Draws>,
     omitted_windows: bool,
+    hotspots: std::collections::BTreeMap<String, Hotspot>,
+    hotspot_bytes: usize,
+    omitted_hotspots: bool,
 }
 
 #[derive(Default)]
@@ -255,9 +324,38 @@ struct Draws {
     omitted: u64,
 }
 
+struct Hotspot {
+    node: rake_protocol::inspection::NodeTiming,
+    count: u64,
+    total: u64,
+    max: u64,
+}
+
 impl Analysis {
     fn observe(&mut self, frames: &Frames) {
         for frame in &frames.frames {
+            for node in &frame.nodes {
+                let key =
+                    json!([node.stable_id, node.name, node.source, phase(node.phase)]).to_string();
+                if !self.hotspots.contains_key(&key)
+                    && (self.hotspots.len() >= 128 || self.hotspot_bytes + key.len() + 256 > 65536)
+                {
+                    self.omitted_hotspots = true;
+                    continue;
+                }
+                let hotspot = self.hotspots.entry(key.clone()).or_insert_with(|| {
+                    self.hotspot_bytes += key.len() + 256;
+                    Hotspot {
+                        node: node.clone(),
+                        count: 0,
+                        total: 0,
+                        max: 0,
+                    }
+                });
+                hotspot.count = hotspot.count.saturating_add(1);
+                hotspot.total = hotspot.total.saturating_add(node.duration_us);
+                hotspot.max = hotspot.max.max(node.duration_us);
+            }
             if self.windows.len() == 64 && !self.windows.contains_key(&frame.window.0) {
                 self.omitted_windows = true;
                 continue;
@@ -276,7 +374,11 @@ impl Analysis {
         let windows: Vec<Value> = self.windows.iter().map(|(id,draws)| json!({"windowId":id,"drawCount":draws.count,
             "averageDrawUs":draws.total / draws.count.max(1),"maxDrawUs":draws.max,"slowDrawCount":draws.slow,
             "invalidations":draws.invalidations,"omittedCallbackTimings":draws.omitted})).collect();
-        json!({"windows":windows,"referenceBudgetUs":16667,"omittedWindows":self.omitted_windows})
+        let mut hotspots: Vec<_> = self.hotspots.values().collect();
+        hotspots.sort_by_key(|sample| std::cmp::Reverse(sample.max));
+        let hotspots: Vec<Value> = hotspots.into_iter().map(|sample| json!({"stableId":sample.node.stable_id,"name":sample.node.name,"source":sample.node.source,
+            "phase":phase(sample.node.phase),"sampleCount":sample.count,"averageInclusiveUs":sample.total / sample.count.max(1),"maxInclusiveUs":sample.max,"inclusive":true})).collect();
+        json!({"windows":windows,"referenceBudgetUs":16667,"omittedWindows":self.omitted_windows,"hotspots":hotspots,"omittedHotspots":self.omitted_hotspots})
     }
 
     fn events(&self, end: u64) -> Vec<Value> {
@@ -323,6 +425,63 @@ mod tests {
             nodes: vec![],
             omitted_nodes: 0,
         }
+    }
+
+    #[test]
+    fn callback_hotspots_keep_identity_source_and_inclusive_samples() {
+        use rake_protocol::inspection::{FramePhase, NodeTiming, SourceLocation};
+        let mut frame = sample(1, 100, 500);
+        frame.nodes = vec![NodeTiming {
+            stable_id: Some("stable-button".into()),
+            name: "button".into(),
+            source: SourceLocation {
+                file: "src/view.rs".into(),
+                line: 12,
+                column: 4,
+            },
+            phase: FramePhase::Paint,
+            elapsed_us: 110,
+            duration_us: 300,
+        }];
+        let mut trace = Trace::default();
+        trace.begin(&json!({})).unwrap();
+        trace.source_prefix = Some("http://127.0.0.1/token/runtime/source/frame".into());
+        let events = trace.collect(&Frames {
+            recording: true,
+            frames: vec![frame.clone()],
+            cursor: 1,
+            more: false,
+            gap: false,
+            dropped: 0,
+        });
+        frame.sequence = 2;
+        frame.nodes[0].duration_us = 100;
+        trace.collect(&Frames {
+            recording: true,
+            frames: vec![frame],
+            cursor: 2,
+            more: false,
+            gap: false,
+            dropped: 0,
+        });
+        let summary = trace.summary();
+        let hotspot = &summary["hotspots"][0];
+        assert_eq!(hotspot["stableId"], "stable-button");
+        assert_eq!(hotspot["sampleCount"], 2);
+        assert_eq!(hotspot["averageInclusiveUs"], 200);
+        assert_eq!(hotspot["maxInclusiveUs"], 300);
+        assert_eq!(hotspot["source"]["line"], 12);
+        assert_eq!(hotspot["inclusive"], true);
+        let event = events
+            .iter()
+            .find(|event| event["cat"] == "rake.callbacks")
+            .unwrap();
+        assert_eq!(event["args"]["data"]["stackTrace"][0]["lineNumber"], 11);
+        assert_eq!(
+            event["args"]["data"]["url"],
+            "http://127.0.0.1/token/runtime/source/frame/1/0/view.rs"
+        );
+        assert_eq!(event["dur"], 300);
     }
 
     #[test]

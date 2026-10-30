@@ -155,7 +155,12 @@ impl Session {
                     TIMEOUT,
                 );
                 match baseline {
-                    Ok(Reply::Frames(baseline)) => self.frame_trace.cursor = baseline.cursor,
+                    Ok(Reply::Frames(baseline)) => {
+                        self.frame_trace.cursor = baseline.cursor;
+                        self.frame_trace.source_prefix = self.source_base.as_ref().map(|base| {
+                            format!("{base}/{}/source/frame", self.instance.info.runtime_id)
+                        });
+                    }
                     other => {
                         let _ = self.control(Command::RecordFrames {
                             enabled: false,
@@ -1418,6 +1423,17 @@ impl Session {
         else {
             return Err(Error::new(-32000, "Unexpected frames reply"));
         };
+        for frame in &frames.frames {
+            for (index, node) in frame.nodes.iter().enumerate() {
+                let url = super::frames::source_url(
+                    self.frame_trace.source_prefix.as_deref(),
+                    frame.sequence,
+                    index,
+                    node,
+                );
+                self.sources.capture(url, node.source.clone());
+            }
+        }
         let events = self.frame_trace.collect(&frames);
         self.trace_events(events);
         Ok(frames.more)

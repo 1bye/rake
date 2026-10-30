@@ -46,6 +46,27 @@ fn http_body(stream: &mut TcpStream, status: &str, mime: &str, body: &[u8]) -> s
     stream.write_all(body)
 }
 
+fn frame_source_content(instance: &Instance, tail: &str) -> Result<String> {
+    use rake_protocol::control::{Query, Reply};
+    let mut parts = tail.split('/');
+    let sequence: u64 = parts.next().ok_or("Frame sequence required")?.parse()?;
+    let index: usize = parts.next().ok_or("Callback index required")?.parse()?;
+    let after = sequence.checked_sub(1).ok_or("Invalid frame sequence")?;
+    let Reply::Frames(frames) =
+        crate::terminal::query(instance, Query::Frames { after }, super::TIMEOUT)?
+    else {
+        return Err("Frame source unavailable".into());
+    };
+    let location = frames
+        .frames
+        .iter()
+        .find(|frame| frame.sequence == sequence)
+        .and_then(|frame| frame.nodes.get(index))
+        .map(|node| &node.source)
+        .ok_or("Frame source expired or unavailable")?;
+    crate::source::read(location)
+}
+
 fn source_content(instance: &Instance, sequence: u64) -> Result<String> {
     use rake_protocol::{
         control::{Query, Reply},
@@ -196,12 +217,15 @@ fn connection(
     };
 
     if let Some(source) = source {
-        let sequence = source
-            .split_once('/')
-            .and_then(|(sequence, _)| sequence.parse::<u64>().ok());
-        let content = sequence
-            .ok_or_else(|| "Invalid diagnostic source URL".into())
-            .and_then(|sequence| source_content(&instance, sequence));
+        let content = if let Some(tail) = source.strip_prefix("frame/") {
+            frame_source_content(&instance, tail)
+        } else {
+            source
+                .split_once('/')
+                .and_then(|(sequence, _)| sequence.parse::<u64>().ok())
+                .ok_or_else(|| "Invalid diagnostic source URL".into())
+                .and_then(|sequence| source_content(&instance, sequence))
+        };
         match content {
             Ok(text) => http_body(&mut stream, "200 OK", "text/plain", text.as_bytes())?,
             Err(error) => http(

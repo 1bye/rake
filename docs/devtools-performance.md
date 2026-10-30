@@ -32,3 +32,25 @@ invalidations, over-budget count and omitted callback observations. They are als
 retained in exported metadata and `Rake.getPerformanceSummary`. Summary retention
 is bounded to 64 windows, with an explicit omitted-windows flag. Browser FPS,
 Core Web Vitals and GPU/presentation tracks are not fabricated.
+
+## Element hotspots and Rust sources
+
+Each retained callback appears on a phase-specific custom track and as a native
+callback event in the main timeline. Details include stable boundary identity,
+construction file/line/column and frame sequence. The callback event's source
+presentation carries one real Rust construction location, not a JS stack or a
+sampled Rust backtrace. Callback labels explicitly distinguish request-layout
+(which may include rendering), prepaint and paint from browser engine work.
+
+Hotspot summaries group by stable identity, label, phase and source and expose
+sample count, maximum and average inclusive duration. They retain at most 128
+groups / 64 KiB of grouping metadata and flag omissions. These are summaries of
+retained observations, not all engine callbacks. Do not sum nested callback times
+or treat a group as exclusive CPU time.
+
+Captured source URLs use authenticated loopback endpoints. The server looks up the
+exact runtime, retained frame and callback index, then applies the existing Rust
+workspace confinement and 256 KiB source-file limit. Expired frames/runtimes or
+unknown indices cannot read files. A bounded connection source cache also supports
+Chrome's source-resource reads. Exported metadata keeps the Rust path/location;
+live loopback links depend on the development session and retained source data.

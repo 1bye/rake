@@ -13,6 +13,13 @@ pub(super) struct Sources {
 }
 
 impl Sources {
+    pub fn capture(&mut self, url: String, location: SourceLocation) {
+        if self.locations.len() >= 128 && !self.locations.contains_key(&url) {
+            self.locations.pop_first();
+        }
+        self.locations.insert(url, location);
+    }
+
     pub fn observe(&mut self, record: &rake_diagnostics::Record) {
         if let Some(source) = &record.source {
             let url = super::console::source_url(source);
