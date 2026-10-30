@@ -112,28 +112,50 @@ manager=$!
 trap 'kill "$manager" 2>/dev/null || true' EXIT
 flatpak run --user --no-documents-portal --no-a11y-bus --env=LIBGL_ALWAYS_SOFTWARE=1 dev.rake.desktop-example
 """)
-        log_path = output / 'native-frame.log'
-        with log_path.open('w') as log_file:
-            process = subprocess.Popen(['xvfb-run', '-a', 'dbus-run-session', '--', 'sh', str(launcher), str(root)], stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
-            try:
-                status = process.wait(timeout=60)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-                raise AssertionError('Flatpak UI exceeded 60 seconds:\n' + log_path.read_text())
-            finally:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        log = log_path.read_text()
-        print(log, flush=True)
-        assert status == 0, 'Flatpak process failed'
-        assert 'RAKE_NATIVE_FRAME:' in log, log
-        assert 'This resource is included' in log, log
-        print('Flatpak pinned SDK source build, sandbox GPUI render and installed resource passed')
+        assert_frame(['xvfb-run', '-a', 'dbus-run-session', '--', 'sh', str(launcher), str(root)], output / 'native-frame.log')
+        runtime_dir = root / 'wayland-runtime'
+        runtime_dir.mkdir(mode=0o700)
+        wayland = root / 'flatpak-wayland.sh'
+        wayland.write_text(r"""set -eu
+unset DISPLAY
+export XDG_RUNTIME_DIR="$1"
+export WAYLAND_DISPLAY=rake-wayland
+weston --backend=headless-backend.so --use-pixman --socket="$WAYLAND_DISPLAY" --idle-time=0 --log="$2/weston.log" &
+manager=$!
+trap 'kill "$manager" 2>/dev/null || true' EXIT
+for attempt in $(seq 1 100); do
+    test ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" || break
+    kill -0 "$manager" || { cat "$2/weston.log"; exit 1; }
+    sleep 0.05
+done
+test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+flatpak run --user --no-documents-portal --no-a11y-bus --env=WAYLAND_DISPLAY="$WAYLAND_DISPLAY" --env=LIBGL_ALWAYS_SOFTWARE=1 dev.rake.desktop-example
+""")
+        assert_frame(['dbus-run-session', '--', 'sh', str(wayland), str(runtime_dir), str(output)], output / 'native-wayland-frame.log')
+        print('Flatpak pinned SDK source build, X11/Wayland sandbox GPUI frames and installed resource passed', flush=True)
     finally:
         run('flatpak', 'uninstall', '--user', '-y', '--noninteractive', identifier)
+
+
+def assert_frame(command, log_path):
+    with log_path.open('w') as log_file:
+        process = subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            status = process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise AssertionError('Flatpak UI exceeded 60 seconds:\n' + log_path.read_text())
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    log = log_path.read_text()
+    print(log, flush=True)
+    assert status == 0, 'Flatpak process failed'
+    assert 'RAKE_NATIVE_FRAME:' in log, log
+    assert 'This resource is included' in log, log
 
 
 def flatpak_repository(cli, repository, root, runtime, sdk):
@@ -236,8 +258,7 @@ def flatpak(cli, repository, root, reuse=False):
     sdk = run('flatpak', 'info', '--user', '--show-commit', 'org.freedesktop.Sdk/x86_64/25.08').strip()
     failures = []
     actions = [('native UI', lambda: flatpak_ui(cli, repository, root, runtime, sdk, reuse))]
-    if not reuse:
-        actions.append(('signed repository', lambda: flatpak_repository(cli, repository, root, runtime, sdk)))
+    actions.append(('signed repository', lambda: flatpak_repository(cli, repository, root, runtime, sdk)))
     for name, action in actions:
         try:
             action()
@@ -252,7 +273,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cli', type=pathlib.Path, required=True)
     parser.add_argument('--only', choices=['arch', 'flatpak'])
-    parser.add_argument('--reuse-flatpak', action='store_true', help='reuse an explicitly downloaded, hash-verified native artifact for UI diagnostics')
+    parser.add_argument('--reuse-flatpak', action='store_true', help='reuse an explicitly downloaded, hash-verified GUI artifact; repository fixtures still build from source')
     args = parser.parse_args()
     assert os.uname().sysname == 'Linux' and os.environ.get('GITHUB_ACTIONS') == 'true', 'requires a disposable Linux Actions runner'
     cli = args.cli.resolve()

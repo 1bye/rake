@@ -61,7 +61,7 @@ jobs:
         if: runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')
         run: |
           sudo apt-get update
-          sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder xvfb xauth openbox libfuse2
+          sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder ostree xvfb xauth openbox weston libfuse2
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build CLI for deep Linux acceptance
         if: inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final'
