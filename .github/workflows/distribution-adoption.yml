@@ -6,6 +6,10 @@ on:
         type: choice
         options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update]
         default: acceptance
+      fixture_run:
+        type: string
+        description: Previous Flatpak artifact run to reuse for UI diagnostics
+        default: ""
       platform:
         type: choice
         options: [all, windows, linux, macos]
@@ -15,6 +19,7 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: read
+  actions: read
 jobs:
   native:
     if: inputs.mode == 'comparison'
@@ -56,7 +61,7 @@ jobs:
         if: runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak')
         run: |
           sudo apt-get update
-          sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder xvfb xauth libfuse2
+          sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder xvfb xauth openbox libfuse2
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build CLI for deep Linux acceptance
         if: inputs.mode == 'linux-deep' || inputs.mode == 'flatpak'
@@ -69,10 +74,24 @@ jobs:
         if: always() && runner.os == 'Linux' && inputs.mode == 'linux-deep'
         timeout-minutes: 8
         run: python3 scripts/test-distribution-appimage.py --cli target/debug/rake
+      - uses: actions/download-artifact@v4
+        if: runner.os == 'Linux' && inputs.mode == 'flatpak' && inputs.fixture_run != ''
+        with:
+          name: native-flatpak
+          path: target/distribution-native-flatpak
+          run-id: ${{ inputs.fixture_run }}
+          github-token: ${{ github.token }}
       - name: Arch repository and Flatpak sandbox GPU render
         if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak')
         timeout-minutes: 30
-        run: python3 scripts/test-distribution-linux-formats.py --cli target/debug/rake ${{ inputs.mode == 'flatpak' && '--only flatpak' || '' }}
+        run: python3 scripts/test-distribution-linux-formats.py --cli target/debug/rake ${{ inputs.mode == 'flatpak' && '--only flatpak' || '' }} ${{ inputs.fixture_run != '' && '--reuse-flatpak' || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Linux' && (inputs.mode == 'flatpak' || inputs.mode == 'linux-deep')
+        with:
+          name: native-flatpak
+          path: target/distribution-native-flatpak/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Install Linux packaging prerequisites
         if: runner.os == 'Linux' && inputs.mode == 'acceptance'
         run: sudo apt-get update && sudo apt-get install -y patchelf rpm desktop-file-utils

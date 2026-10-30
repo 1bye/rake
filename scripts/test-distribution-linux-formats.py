@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Remaining Arch and real Flatpak GPUI gates on a disposable Linux runner."""
 import argparse
+import hashlib
+import signal
 import json
 import os
 import pathlib
@@ -85,7 +87,7 @@ sudo -u builder env PATH=/opt/rust/bin:/usr/bin CARGO_HOME=/cargo CARGO_PROFILE_
     print(run(*command))
 
 
-def flatpak(cli, repository, root):
+def flatpak(cli, repository, root, reuse=False):
     assert not run('flatpak', 'list', '--user', '--app', '--columns=application').strip(), 'use an isolated Flatpak test user'
     run('flatpak', 'remote-add', '--user', '--if-not-exists', 'flathub', 'https://dl.flathub.org/repo/flathub.flatpakrepo')
     run('flatpak', 'install', '--user', '-y', '--noninteractive', 'flathub', 'org.freedesktop.Platform//25.08', 'org.freedesktop.Sdk//25.08')
@@ -93,17 +95,45 @@ def flatpak(cli, repository, root):
     sdk = run('flatpak', 'info', '--user', '--show-commit', 'org.freedesktop.Sdk/x86_64/25.08').strip()
     manifest = repository / 'examples/distribution/Cargo.toml'
     original = manifest.read_text()
-    output = root / 'flatpak-output'
-    try:
-        manifest.write_text(original + f'\n[package.metadata.rake.bundle.linux.flatpak]\nruntime_commit="{runtime}"\nsdk_commit="{sdk}"\n')
-        result = json.loads(run(cli, 'bundle', '--native', '--package', 'rake-distribution-example', '--format', 'flatpak', '--features', 'native-acceptance', '--output', output, '--json'))
-    finally:
-        manifest.write_text(original)
+    output = repository / 'target/distribution-native-flatpak'
+    if reuse:
+        result = json.loads((output / 'distribution.json').read_text())
+    else:
+        try:
+            manifest.write_text(original + f'\n[package.metadata.rake.bundle.linux.flatpak]\nruntime_commit="{runtime}"\nsdk_commit="{sdk}"\n')
+            result = json.loads(run(cli, 'bundle', '--native', '--package', 'rake-distribution-example', '--format', 'flatpak', '--features', 'native-acceptance', '--output', output, '--json'))
+        finally:
+            manifest.write_text(original)
     package = next(output / record['path'] for record in result['artifacts'] if record['path'].endswith('.flatpak'))
+    record = next(record for record in result['artifacts'] if record['path'].endswith('.flatpak'))
+    assert hashlib.file_digest(package.open('rb'), 'sha256').hexdigest() == record['sha256'], 'reused Flatpak bytes must match their build record'
     identifier = 'dev.rake.desktop-example'
     run('flatpak', 'install', '--user', '-y', '--noninteractive', package)
     try:
-        log = run('xvfb-run', '-a', 'dbus-run-session', '--', 'flatpak', 'run', '--user', identifier)
+        launcher = root / 'flatpak-launch.sh'
+        launcher.write_text(r"""set -eu
+openbox >"$1/window-manager.log" 2>&1 &
+manager=$!
+trap 'kill "$manager" 2>/dev/null || true' EXIT
+flatpak run --user --no-documents-portal --no-a11y-bus --env=LIBGL_ALWAYS_SOFTWARE=1 dev.rake.desktop-example
+""")
+        log_path = output / 'native-frame.log'
+        with log_path.open('w') as log_file:
+            process = subprocess.Popen(['xvfb-run', '-a', 'dbus-run-session', '--', 'sh', str(launcher), str(root)], stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+            try:
+                status = process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                raise AssertionError('Flatpak UI exceeded 60 seconds:\n' + log_path.read_text())
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        log = log_path.read_text()
+        print(log, flush=True)
+        assert status == 0, 'Flatpak process failed'
         assert 'RAKE_NATIVE_FRAME:' in log, log
         assert 'This resource is included' in log, log
         print('Flatpak pinned SDK source build, sandbox GPUI render and installed resource passed')
@@ -115,6 +145,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cli', type=pathlib.Path, required=True)
     parser.add_argument('--only', choices=['arch', 'flatpak'])
+    parser.add_argument('--reuse-flatpak', action='store_true', help='reuse an explicitly downloaded, hash-verified native artifact for UI diagnostics')
     args = parser.parse_args()
     assert os.uname().sysname == 'Linux' and os.environ.get('GITHUB_ACTIONS') == 'true', 'requires a disposable Linux Actions runner'
     cli = args.cli.resolve()
@@ -123,7 +154,7 @@ def main():
     failures = []
     with tempfile.TemporaryDirectory(prefix='rake-linux-formats-') as directory:
         root = pathlib.Path(directory)
-        for name, action in [('arch', arch), ('flatpak', flatpak)]:
+        for name, action in [('arch', arch), ('flatpak', lambda cli, repository, root: flatpak(cli, repository, root, args.reuse_flatpak))]:
             if args.only and args.only != name:
                 continue
             try:
