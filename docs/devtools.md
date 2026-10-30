@@ -386,3 +386,7 @@ links, bounded trace export and stock Chrome verification.
 
 See the [Sources checklist](devtools-sources.md) for captured Rust files,
 read-only browsing, search, shared source links and runtime-scoped access.
+
+See the [Memory checklist](devtools-memory.md) for opt-in native allocator
+sampling, Rust call sites, sampled live-block comparisons and Chrome export.
+It requires `devtools-memory` and an explicitly installed allocator wrapper.

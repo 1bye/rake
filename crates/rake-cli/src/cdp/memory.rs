@@ -117,7 +117,16 @@ impl Memory {
         let mut bytes = 2048;
         let mut omitted = capture.omitted;
         let mut samples = Vec::new();
-        for sample in &capture.samples {
+        // Preserve the biggest byte contributors when the call-tree budget fills.
+        let mut priority: Vec<_> = capture.samples.iter().collect();
+        priority.sort_by_key(|sample| {
+            (
+                std::cmp::Reverse(sample.estimated_bytes),
+                std::cmp::Reverse(sample.live),
+                sample.ordinal,
+            )
+        });
+        for sample in priority {
             if sample.stack.len() > STACK_DEPTH {
                 return Err(Error::new(-32000, "Native memory stack exceeds its bounds"));
             }
@@ -162,7 +171,10 @@ impl Memory {
                 json!({"size":sample.estimated_bytes,"nodeId":parent,"ordinal":sample.ordinal}),
             );
         }
+        samples.sort_by_key(|sample| sample["ordinal"].as_u64().unwrap_or(0));
         self.metadata = json!({"generation":capture.generation,"recording":capture.recording,"interval":capture.interval,"omitted":omitted,
+            "limits":{"liveSamples":MAX_LIVE_SAMPLES,"freedSamples":MAX_FREED_SAMPLES,"sites":MAX_SITES,"stackDepth":STACK_DEPTH,"treeNodes":768,"stackIdentities":4096,"treeBudgetBytes":384*1024,"snapshotBytes":512*1024},
+            "freedHistoryOmitted":capture.freed_omitted,
             "liveSamples":capture.samples.iter().filter(|s|s.live).count(),"freedSamples":capture.samples.iter().filter(|s|!s.live).count(),
             "sampledLiveBytes":capture.samples.iter().filter(|s|s.live).map(|s|s.size).sum::<u64>(),
             "estimatedLiveBytes":capture.samples.iter().filter(|s|s.live).map(|s|s.estimated_bytes).sum::<u64>(),
@@ -242,13 +254,25 @@ impl Memory {
             ]);
             edges.extend([json!(1), json!(index), json!((index + 1) * 7)]);
         }
-        let text = json!({"snapshot":{"meta":{
+        let header = json!({"meta":{
             "node_fields":["type","name","id","self_size","edge_count","trace_node_id","detachedness"],
             "node_types":[["hidden","array","string","object","code","closure","regexp","number","native","synthetic","concatenated string","sliced string","symbol","bigint"],"string","number","number","number","number","number"],
             "edge_fields":["type","name_or_index","to_node"],"edge_types":[["context","element","property","internal","hidden","shortcut","weak"],"string_or_number","node"],
             "trace_function_info_fields":[],"trace_node_fields":[],"sample_fields":[],"location_fields":[]},
-            "node_count":live.len()+1,"edge_count":live.len(),"trace_function_count":0},
-            "nodes":nodes,"edges":edges,"strings":strings,"trace_function_infos":[],"trace_tree":[],"samples":[],"locations":[],"rake":self.metadata}).to_string();
+            "node_count":live.len()+1,"edge_count":live.len(),"trace_function_count":0});
+        // Chrome streams fields in V8 order and requires strings to be the final array.
+        let text = serde_json::to_string(&HeapFile {
+            snapshot: header,
+            nodes,
+            edges,
+            trace_function_infos: [],
+            trace_tree: [],
+            samples: [],
+            locations: [],
+            rake: &self.metadata,
+            strings,
+        })
+        .map_err(|error| Error::new(-32000, error.to_string()))?;
         if text.len() > 512 * 1024 {
             return Err(Error::new(
                 -32000,
@@ -257,6 +281,20 @@ impl Memory {
         }
         Ok(text)
     }
+}
+
+// Field order is part of Chrome's streaming snapshot format.
+#[derive(serde::Serialize)]
+struct HeapFile<'a> {
+    snapshot: Value,
+    nodes: Vec<Value>,
+    edges: Vec<Value>,
+    trace_function_infos: [Value; 0],
+    trace_tree: [Value; 0],
+    samples: [Value; 0],
+    locations: [Value; 0],
+    rake: &'a Value,
+    strings: Vec<String>,
 }
 
 struct Node {
@@ -283,6 +321,62 @@ mod tests {
     use super::*;
     use rake_protocol::inspection::memory::{Sample, Site};
     #[test]
+    fn large_allocations_survive_a_full_call_tree_budget() {
+        let sites: Vec<_> = (0..256)
+            .map(|index| Site {
+                address: format!("0x{index:x}"),
+                function: if index == 255 {
+                    "large_probe".into()
+                } else {
+                    format!("small_{index}")
+                },
+                file: None,
+                line: None,
+                column: None,
+            })
+            .collect();
+        let frames:Vec<_>=sites.iter().map(|site|json!({"functionName":site.function,"scriptId":"","url":"","lineNumber":-1,"columnNumber":-1})).collect();
+        let mut samples: Vec<_> = (0..512)
+            .map(|index| Sample {
+                ordinal: index + 1,
+                size: 64,
+                estimated_bytes: 32768,
+                live: false,
+                stack: vec![
+                    (index % 255) as u16,
+                    ((index / 255) % 255) as u16,
+                    ((index + 37) % 255) as u16,
+                ],
+            })
+            .collect();
+        samples.push(Sample {
+            ordinal: 1000,
+            size: 8 * 1024 * 1024,
+            estimated_bytes: 8 * 1024 * 1024,
+            live: true,
+            stack: vec![255],
+        });
+        let capture = Snapshot {
+            generation: 1,
+            recording: true,
+            interval: 32768,
+            omitted: 0,
+            freed_omitted: 0,
+            sites,
+            samples,
+        };
+        let profile = Memory::default().profile(&capture, &frames).unwrap();
+        assert!(profile["rake"]["omitted"].as_u64().unwrap() > 0);
+        assert!(
+            profile["head"]["children"][0]["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|node| node["callFrame"]["functionName"] == "large_probe"
+                    && node["selfSize"] == 8 * 1024 * 1024)
+        );
+    }
+    #[test]
     fn heap_projections_preserve_live_identities_for_comparison() {
         let mut memory = Memory::default();
         let mut capture = Snapshot {
@@ -290,6 +384,7 @@ mod tests {
             recording: true,
             interval: 32768,
             omitted: 0,
+            freed_omitted: 0,
             sites: vec![Site {
                 address: "0x42".into(),
                 function: "probe".into(),
@@ -308,8 +403,22 @@ mod tests {
         let frames = vec![
             json!({"functionName":"probe","scriptId":"","url":"http://localhost/probe.rs","lineNumber":1,"columnNumber":0}),
         ];
-        let first: Value =
-            serde_json::from_str(&memory.heap_snapshot(&capture, &frames).unwrap()).unwrap();
+        let text = memory.heap_snapshot(&capture, &frames).unwrap();
+        let mut cursor = 0;
+        for key in [
+            "snapshot",
+            "nodes",
+            "edges",
+            "samples",
+            "locations",
+            "strings",
+        ] {
+            cursor += text[cursor..]
+                .find(&format!("\"{key}\":"))
+                .expect("Chrome streaming field order");
+        }
+        assert!(text.ends_with("]}"), "strings must be the final array");
+        let first: Value = serde_json::from_str(&text).unwrap();
         let second: Value =
             serde_json::from_str(&memory.heap_snapshot(&capture, &frames).unwrap()).unwrap();
         assert_eq!(first["nodes"][9], 247);
@@ -331,6 +440,7 @@ mod tests {
             recording: true,
             interval: 32768,
             omitted: 0,
+            freed_omitted: 0,
             sites: vec![Site {
                 address: "0x42".into(),
                 function: "probe".into(),

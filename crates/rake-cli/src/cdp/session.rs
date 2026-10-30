@@ -133,6 +133,7 @@ impl Session {
             "HeapProfiler.enable" => Ok(json!({})),
             "HeapProfiler.disable" => {
                 self.stop_memory();
+                self.memory = super::memory::Memory::default();
                 Ok(json!({}))
             }
             "Runtime.getIsolateId" => Ok(json!({"id":self.instance.info.runtime_id.to_string()})),
@@ -142,18 +143,33 @@ impl Session {
                 Ok(json!({}))
             }
             "HeapProfiler.getSamplingProfile" | "HeapProfiler.stopSampling" => {
-                let profile = self.memory_profile();
+                let mut profile = self.memory_profile();
                 if method == "HeapProfiler.stopSampling" {
                     self.stop_memory();
+                    if let Ok(profile) = &mut profile {
+                        profile["rake"]["recording"] = json!(false);
+                    }
                 }
                 Ok(json!({"profile":profile?}))
             }
-            "Rake.getMemorySummary" => Ok(self.memory.metadata.clone()),
+            "Rake.getMemorySummary" => Ok(self.memory_status()),
+            "Rake.stopMemory" => {
+                self.stop_memory();
+                self.memory = super::memory::Memory::default();
+                self.event(Event::new("HeapProfiler.resetProfiles", json!({})));
+                Ok(self.memory_status())
+            }
             "HeapProfiler.takeHeapSnapshot" => {
                 if !self.memory.active {
                     self.start_memory(&json!({}))?;
                 }
                 let capture = self.memory_capture(false)?;
+                if !capture.recording {
+                    return Err(Error::new(
+                        -32000,
+                        "Native memory lease expired; use rake.stopMemory() before a new capture",
+                    ));
+                }
                 let frames = self.memory_frames(&capture);
                 let text = self.memory.heap_snapshot(&capture, &frames)?;
                 let mut events = Vec::new();
@@ -326,7 +342,9 @@ impl Session {
                     )?;
                     return Ok(json!({"result":object["object"]}));
                 }
-                let read_only = if expression == "rake.sources()" {
+                let read_only = if expression == "rake.memory()" {
+                    Some(self.memory_status())
+                } else if expression == "rake.sources()" {
                     Some(self.sources.status())
                 } else if expression == "rake.help()" {
                     Some(super::evaluate::help())
@@ -363,7 +381,13 @@ impl Session {
                 }
 
                 let outcome: std::result::Result<Value, Error> = (|| {
-                    let value = if let Some(argument) = expression
+                    let value = if expression == "rake.stopMemory()" {
+                        self.handle(&Request {
+                            id: request.id,
+                            method: "Rake.stopMemory".into(),
+                            params: json!({}),
+                        })?
+                    } else if let Some(argument) = expression
                         .strip_prefix("rake.command(")
                         .and_then(|v| v.strip_suffix(')'))
                     {
@@ -460,6 +484,9 @@ impl Session {
                 if !matches!(
                     expression.trim(),
                     "rake.help()"
+                        | "rake.memory()"
+                        | "rake.stopMemory()"
+                        | "rake.sources()"
                         | "rake.commands()"
                         | "rake.resetText($0)"
                         | "rake.undoText($0)"
@@ -807,7 +834,7 @@ impl Session {
                 Ok(json!({}))
             }
             "Overlay.disable" => {
-                self.cleanup();
+                self.cleanup_overlay();
                 self.domains.remove("Overlay");
 
                 Ok(json!({}))
@@ -1174,6 +1201,7 @@ impl Session {
         {
             if let Err(error) = self.control(self.memory.command(true)) {
                 self.memory.active = false;
+                self.memory.metadata["recording"] = json!(false);
                 self.warning(format!("Native memory capture stopped: {}", error.message));
             } else {
                 self.memory.renewed = Some(Instant::now());
@@ -1335,7 +1363,7 @@ impl Session {
     }
 
     fn memory_capture(
-        &self,
+        &mut self,
         include_freed: bool,
     ) -> std::result::Result<rake_protocol::inspection::memory::Snapshot, Error> {
         let owner = self
@@ -1355,7 +1383,27 @@ impl Session {
         let Reply::Memory(capture) = reply else {
             return Err(Error::new(-32000, "Unexpected memory capture reply"));
         };
+        if !capture.recording {
+            self.memory.active = false;
+        }
         Ok(capture)
+    }
+
+    fn memory_status(&self) -> Value {
+        let mut value = if self.memory.metadata.is_object() {
+            self.memory.metadata.clone()
+        } else {
+            json!({})
+        };
+        value["available"] = json!(
+            self.instance
+                .info
+                .queries
+                .iter()
+                .any(|query| query == "memory")
+        );
+        value["recording"] = json!(self.memory.active);
+        value
     }
 
     fn memory_profile(&mut self) -> std::result::Result<Value, Error> {
@@ -1388,7 +1436,8 @@ impl Session {
     }
 
     fn stop_memory(&mut self) {
-        if self.memory.active {
+        // A start may have reached the runtime even if its acknowledgement was lost.
+        if self.memory.owner.is_some() {
             let _ = self.control(self.memory.command(false));
             self.memory.active = false;
             self.memory.metadata["recording"] = json!(false);
@@ -1424,6 +1473,10 @@ impl Session {
             });
             self.frame_trace.active = false;
         }
+        self.cleanup_overlay();
+    }
+
+    fn cleanup_overlay(&mut self) {
         if self.interaction_used {
             let _ = self.control(Command::InspectMode {
                 enabled: false,
@@ -2125,6 +2178,111 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_snapshots_are_atomic_and_console_preview_never_stops_capture() {
+        let (instance, worker, path) = fixture(
+            |request| match request.message {
+                RuntimeMessage::Command(Command::RecordMemory { .. }) => Reply::Acknowledged,
+                RuntimeMessage::Query(Query::Memory { .. }) => {
+                    Reply::Memory(rake_protocol::inspection::memory::Snapshot {
+                        generation: 1,
+                        recording: true,
+                        interval: 32768,
+                        omitted: 0,
+                        freed_omitted: 0,
+                        sites: vec![rake_protocol::inspection::memory::Site {
+                            address: "0x42".into(),
+                            function: "probe🙂".into(),
+                            file: None,
+                            line: None,
+                            column: None,
+                        }],
+                        samples: vec![rake_protocol::inspection::memory::Sample {
+                            ordinal: 1,
+                            size: 1024,
+                            estimated_bytes: 32768,
+                            live: true,
+                            stack: vec![0],
+                        }],
+                    })
+                }
+                _ => panic!("unexpected memory fixture command"),
+            },
+            4,
+        );
+        let mut session = Session::new(instance, None);
+        session.instance.info.queries.push("memory".into());
+        let call = |method: &str, params: Value| Request {
+            id: 1,
+            method: method.into(),
+            params,
+        };
+        session
+            .handle(&call("HeapProfiler.startSampling", json!({})))
+            .unwrap();
+        session.handle(&call("Overlay.disable", json!({}))).unwrap();
+        assert!(
+            session.memory.active,
+            "Chrome suspends Overlay around snapshots without ending memory tracking"
+        );
+        session
+            .handle(&call(
+                "Runtime.compileScript",
+                json!({"expression":"rake.stopMemory()"}),
+            ))
+            .unwrap();
+        assert!(
+            session
+                .handle(&call(
+                    "Runtime.evaluate",
+                    json!({"expression":"rake.stopMemory()","throwOnSideEffect":true})
+                ))
+                .is_err()
+        );
+        assert!(session.memory.active);
+        for _ in 0..QUEUE_LIMIT {
+            session.event(Event::new("occupied", json!({})));
+        }
+        assert!(
+            session
+                .handle(&call(
+                    "HeapProfiler.takeHeapSnapshot",
+                    json!({"reportProgress":true})
+                ))
+                .is_err()
+        );
+        assert!(
+            !session
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method.starts_with("HeapProfiler."))
+        );
+        session.outbound.clear();
+        session.outbound_bytes = 0;
+        session
+            .handle(&call(
+                "HeapProfiler.takeHeapSnapshot",
+                json!({"reportProgress":true}),
+            ))
+            .unwrap();
+        assert_eq!(
+            session.outbound[0].0.method,
+            "HeapProfiler.reportHeapSnapshotProgress"
+        );
+        let text: String = session
+            .outbound
+            .iter()
+            .filter(|(event, _)| event.method == "HeapProfiler.addHeapSnapshotChunk")
+            .map(|(event, _)| event.params["chunk"].as_str().unwrap())
+            .collect();
+        let snapshot: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(snapshot["snapshot"]["node_count"], 2);
+        session.handle(&call("Rake.stopMemory", json!({}))).unwrap();
+        assert_eq!(session.memory_status()["recording"], false);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn clearing_advances_only_this_connection_and_replacement_expires_handles() {

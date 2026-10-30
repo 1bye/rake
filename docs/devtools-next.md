@@ -118,3 +118,10 @@ The five Sources steps, source access limits, native regression fixture and stoc
 Chrome verification are recorded in [the Sources checklist](devtools-sources.md).
 This provides read-only Rust browsing and navigation; Rust debugging still
 requires a native debugger.
+
+## Memory coverage
+
+The five Memory steps, native allocator setup, bounds, production feature gate
+and stock Chrome verification are recorded in [the Memory checklist](devtools-memory.md).
+Sampling and live-block comparisons are supported; full Rust ownership and GPU
+memory graphs remain unavailable.

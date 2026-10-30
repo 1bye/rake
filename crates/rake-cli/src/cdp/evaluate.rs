@@ -63,6 +63,7 @@ pub(super) fn names(instance: &Instance) -> Result<Vec<String>, Error> {
 pub(super) fn help() -> Value {
     json!({"help":"rake.help()", "commands":"rake.commands()", "command":"rake.command(\"demo.echo\") — argument/result schemas",
         "operation":"rake.operation({\"runtimeId\":\"…\",\"id\":\"op-1\"}) — read a pending outcome without resubmitting",
+        "memory":"rake.memory() — native allocation counts, estimates and capture limits", "stopMemory":"rake.stopMemory() — stop tracking and clear native profiles",
         "sources":"rake.sources() — captured files and catalog limits", "source":"rake.source($0) — captured file URL and location", "openSource":"rake.openSource($0) or rake.openSource({url,lineNumber,columnNumber})","resetStyles":"rake.resetStyles($0)","undoStyles":"rake.undoStyles($0)",
         "resetText":"rake.resetText($0)","undoText":"rake.undoText($0)",
         "evaluation":"Registered commands accept one JSON argument. General JavaScript and Rust evaluation are unavailable."})

@@ -23,7 +23,7 @@ requires non-unwinding, reentrancy-safe hooks. The recorder must never dereferen
 application blocks, allocate recursively in a hook, or block a hook on capture.
 
 The representation retains at most 512 live and 512 recently freed samples,
-24 native frames per allocation and 256 symbolized code addresses per recording.
+24 native frames per allocation and 256 symbolized code addresses per capture.
 Omissions are explicit. Snapshot identities survive repeated captures in one
 generation and expire on a new recording/runtime. Source availability depends on
 native debug information and the existing workspace source confinement.
@@ -43,9 +43,12 @@ renew it. Expired recording tokens cannot silently start a fresh capture.
 wrapped allocator, including zeroed and failed/reallocated blocks. They suppress
 recursive instrumentation, use nonblocking table access and count admission loss.
 Debug information is resolved only when querying, outside the hook/table lock.
-Sampler and query allocations on their own thread are excluded. Freed blocks
-missed through contention can leave stale samples, so a partial capture is not
-evidence of a leak. Native C/C++ allocator calls are not intercepted.
+Sampler and query allocations on their own thread are excluded. A 256-slot atomic
+queue defers contended frees without blocking. Monotonic tickets prevent an old
+free from deleting a newer allocation at the same address. Queue overflow drops
+uncertain observations and reports loss instead of retaining stale live samples.
+Partial captures are not evidence of a leak. Native C/C++ allocator calls are not
+intercepted.
 
 Chrome's **Allocation sampling** uses `HeapProfiler.startSampling`,
 `getSamplingProfile` and `stopSampling`. Call-tree IDs stay stable across polls of
@@ -79,3 +82,69 @@ Snapshot JSON is capped at 512 KiB and streamed in UTF-8-safe chunks. The comple
 event batch must fit the connection's outbound budget before any chunk is sent.
 Replacement emits `HeapProfiler.resetProfiles` so the next runtime cannot be
 compared to stale allocation identities. Exported files remain offline captures.
+
+Chrome's streaming loader requires V8 field order, including a final `strings`
+array. The adapter serializes that order explicitly. Chrome also suspends Overlay
+around each snapshot; this clears picker/highlight state without ending a memory
+recording. Closing the whole session still releases both.
+
+Use `rake.memory()` in Console for capture availability, sampled allocation counts,
+actual sampled bytes, estimated bytes and omissions. `rake.stopMemory()` stops
+background tracking and clears native profiles. Chrome's Stop button ends allocation
+sampling. Instant heap captures keep tracking between snapshots for comparisons;
+use the helper or close DevTools when finished. Clear all profiles only clears
+Chrome's displayed captures. Console eager evaluation and syntax checking cannot
+execute the stop helper.
+
+Symbol-cache and call-tree admission favor the largest estimated allocation
+samples, preserving their Rust call sites under bounded budgets. Each profile
+admits at most 768 tree nodes and a 384 KiB tree budget, with 4096 stable stack
+identities per recording. The summary exposes these limits. Freed-history evictions are reported
+separately as `freedHistoryOmitted`; they count toward partial-capture warnings only
+when freed history was requested. Stack depth and symbol limits can still leave
+unresolved/deeper ancestors unavailable. Missing debug information stays unknown.
+
+## Verification
+
+Build `rake-cli`, then run `node scripts/test-memory-cdp.mjs` on a macOS GUI host
+with Node 22 or newer. The fixture exercises real allocations, source links, stable
+snapshot IDs, release/churn, Chrome's Overlay suspension, competing clients,
+explicit stop, disconnect cleanup and checkpointed replacement. It never controls
+Chrome. `--serve` leaves the example running and accepts `allocate`, `release`,
+`churn`, `restart` and `quit` on stdin; paste its printed DevTools URL into Chrome.
+
+Verified in stock Chrome 156.0.8078.74 on 2026-10-30:
+
+- Allocation sampling Start/Stop, call-tree search for `allocate_probe`, and the
+  source link opening `memory_fixture.rs` at line 23, column 26 in Sources.
+- A sampling profile exported from Chrome and parsed as a native allocation
+  profile. Requested JavaScript heap usage remains explicitly zero.
+- Baseline/retained/released heap snapshots. Comparison showed eight new samples
+  and +8.4 MB, followed by eight deletions and −8.4 MB after release.
+- Heap snapshot export and reopening the exported file in Chrome (2.9 MB of
+  estimated remaining sampled allocations in that capture).
+- Console summary/stop helpers, clearing profiles on stop, and checkpointed
+  replacement clearing old profiles before a new capture without reconnecting.
+
+All 85 CLI unit tests, allocator lifecycle/failure/retention/contention tests, the public native
+allocator consumer, doctests, formatting and warning-free Clippy checks passed.
+Disabled-feature native builds and the supported GPUI/WASM configuration compile;
+WASM does not expose the native allocator. A separate no-GPUI WASM check hits the
+existing `control/web.rs` references to the GPUI-gated reload host; this task does
+not change that configuration. Native execution was verified on macOS, not Linux.
+
+A debug smoke measurement of 50,000 64-byte alloc/free pairs took 1,480 µs through
+System, 2,179 µs with the feature/wrapper installed but dormant, and 26,610 µs while
+recording at a 32 KiB interval. These are one local test run, not application-wide
+performance estimates. Production omits the wrapper entirely; enabled profiling
+has allocation-hook and stack-unwinding overhead.
+
+## Coverage boundary
+
+Chrome's JavaScript labels remain stock UI. **Allocations on timeline**, detached
+DOM elements, JavaScript GC, arbitrary heap-object evaluation, full Rust ownership
+and retainer graphs, complete type/object counts, process RSS, C/C++ allocations,
+custom allocators bypassing the wrapper, and GPU/driver allocations are not exposed.
+Use sampling and heap snapshots for the supported native workflows. Compare only
+captures from the same process and recorder generation. Partial captures and
+sampled growth identify investigation candidates, rather than proving a leak.

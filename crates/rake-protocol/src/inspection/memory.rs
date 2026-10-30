@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub const MAX_LIVE_SAMPLES: usize = 512;
 /// Maximum recently freed samples available for allocation-churn profiles.
 pub const MAX_FREED_SAMPLES: usize = 512;
-/// Maximum symbolized native addresses per recording.
+/// Maximum symbolized native addresses in one capture; the bounded cache can rotate.
 pub const MAX_SITES: usize = 256;
 /// Maximum native frames captured per sampled allocation.
 pub const STACK_DEPTH: usize = 24;
@@ -50,8 +50,11 @@ pub struct Snapshot {
     pub recording: bool,
     /// Poisson allocation sampling interval in requested bytes.
     pub interval: u64,
-    /// Known omissions from contention, recursion or bounded retention.
+    /// Known omissions from contention, symbol limits or relevant bounded retention.
     pub omitted: u64,
+    /// Evicted freed history, relevant only when freed samples are requested.
+    #[serde(default)]
+    pub freed_omitted: u64,
     /// Captured symbols, at most [`MAX_SITES`].
     pub sites: Vec<Site>,
     /// Live and optionally recently freed samples, ordered by ordinal.
