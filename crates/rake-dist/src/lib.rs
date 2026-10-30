@@ -53,6 +53,8 @@ struct Package {
     manifest_path: std::path::PathBuf,
     #[serde(default)]
     targets: Vec<CargoTarget>,
+    #[serde(default)]
+    dependencies: Vec<CargoDependency>,
 }
 
 /// Loads a locked/offline Cargo package and validates its portable plan.
@@ -148,4 +150,10 @@ pub fn configuration_schema() -> serde_json::Value {
 struct CargoTarget {
     name: String,
     kind: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CargoDependency {
+    name: String,
+    kind: Option<String>,
 }

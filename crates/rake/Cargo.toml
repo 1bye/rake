@@ -18,6 +18,7 @@ view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-sup
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
 
 [dependencies]
+rake-resources = { path = "../rake-resources" }
 rake-ui = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }
 rake-protocol.workspace = true

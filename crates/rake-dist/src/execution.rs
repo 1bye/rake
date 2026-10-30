@@ -156,6 +156,13 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         })
         .ok_or(Error::Package)?;
     let root = selected.manifest_path.parent().ok_or(Error::Package)?;
+    if request.platform == Platform::Windows
+        && !selected.dependencies.iter().any(|dependency| {
+            dependency.name == "rake-build" && dependency.kind.as_deref() == Some("build")
+        })
+    {
+        return Err(Error::Execution("Windows resources require [build-dependencies] rake-build and build.rs calling rake_build::build()?".into()));
+    }
     let binaries: Vec<_> = selected
         .targets
         .iter()
@@ -220,13 +227,6 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         .tempdir_in(job_parent)?;
     let result_dir = job.path().join("result");
     fs::create_dir(&result_dir)?;
-    let built = build(
-        &selected.manifest_path,
-        &selected.name,
-        binary,
-        &target,
-        request.release,
-    )?;
     let mut artifacts = Vec::new();
     for (index, item) in plan.packages().iter().enumerate() {
         let stage = job.path().join(format!("package-{index}"));
@@ -237,6 +237,14 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         } else {
             ""
         };
+        let built = build(
+            &selected.manifest_path,
+            &selected.name,
+            binary,
+            &target,
+            request.release,
+            item.format(),
+        )?;
         files::copy(&built, &bin.join(format!("{binary}{suffix}")))?;
         let config = item.config();
         let mut resources = HashMap::new();
@@ -255,26 +263,82 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 resource.to.to_string_lossy().into_owned(),
             );
         }
-        let mut helpers = Vec::new();
+        let mut descriptor = rake_dist_core::Installation {
+            schema_version: 1,
+            identifier: plan.identifier().into(),
+            version: plan.version().into(),
+            target: target.clone(),
+            platform: plan.platform(),
+            format: item.format(),
+            update_owner: item.update_owner(),
+            updates: config.updates.clone(),
+            helpers: Default::default(),
+            runtimes: Default::default(),
+        };
         for helper in &config.sidecars {
             let path = PathBuf::from(helper.path.to_string_lossy().replace("{target}", &target));
-            files::copy(
-                &files::confined(root, &path)?,
-                &bin.join(format!("{}{suffix}", helper.name)),
-            )?;
-            helpers.push(helper.name.clone());
+            let relative = PathBuf::from("rake/helpers").join(format!("{}{suffix}", helper.name));
+            let destination = resource_stage.join(&relative);
+            files::copy(&files::confined(root, &path)?, &destination)?;
+            resources.insert(
+                destination.to_string_lossy().into_owned(),
+                relative.to_string_lossy().into_owned(),
+            );
+            descriptor.helpers.insert(helper.name.clone(), relative);
+        }
+        for (provider, path) in &config.updates.public_keys {
+            rake_dist_core::validate_relative_path(Path::new(provider))?;
+            if Path::new(provider).components().count() != 1 {
+                return Err(Error::Execution("invalid public key provider".into()));
+            }
+            let relative = PathBuf::from("rake/keys").join(format!("{provider}.pub"));
+            let destination = resource_stage.join(&relative);
+            files::copy(&files::confined(root, path)?, &destination)?;
+            resources.insert(
+                destination.to_string_lossy().into_owned(),
+                relative.to_string_lossy().into_owned(),
+            );
+            descriptor
+                .updates
+                .public_keys
+                .insert(provider.clone(), relative);
+        }
+        let descriptor_path = resource_stage.join("rake-installation.json");
+        if descriptor_path.exists() {
+            return Err(Error::Execution(
+                "rake-installation.json is reserved".into(),
+            ));
+        }
+        files::write_json(&descriptor_path, &descriptor)?;
+        resources.insert(
+            descriptor_path.to_string_lossy().into_owned(),
+            "rake-installation.json".into(),
+        );
+        if request.platform == Platform::Windows
+            && let Some(manifest) = &config.windows.manifest
+        {
+            rake_dist_windows::apply_manifest(
+                &bin.join(format!("{binary}{suffix}")),
+                &files::confined(root, manifest)?,
+            )
+            .map_err(|e| Error::Execution(e.to_string()))?;
         }
         if !config.runtimes.is_empty() {
             return Err(Error::Execution(
                 "runtime requests require a component recipe".into(),
             ));
         }
-        let icons = config
+        let source_icon = config
             .icon
             .as_ref()
-            .map(|path| files::confined(root, path).map(|p| vec![p.to_string_lossy().into_owned()]))
-            .transpose()?
-            .unwrap_or_default();
+            .map(|path| files::confined(root, path))
+            .transpose()?;
+        let icon_directory = rake_build::generate_icons(source_icon.as_deref(), &stage)
+            .map_err(|e| Error::Execution(format!("icon generation: {e}")))?;
+        let icons = ["icon.png", "icon.ico"]
+            .into_iter()
+            .map(|name| icon_directory.join(name).to_string_lossy().into_owned())
+            .collect();
         let paths = engine::package(engine::Input {
             plan: &plan,
             index,
@@ -284,7 +348,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             root,
             resources,
             icons,
-            helpers,
+            helpers: Vec::new(),
         })?;
         for path in paths {
             if !fs::canonicalize(&path)?.starts_with(fs::canonicalize(&stage)?) {
@@ -337,6 +401,7 @@ fn build(
     binary: &str,
     target: &str,
     release: bool,
+    format: Format,
 ) -> Result<PathBuf, Error> {
     let mut command = Command::new("cargo");
     command
@@ -349,6 +414,12 @@ fn build(
         ])
         .arg(manifest)
         .args(["--package", package, "--bin", binary, "--target", target]);
+    command.env(
+        "RAKE_DISTRIBUTION_FORMAT",
+        serde_json::to_value(format)?
+            .as_str()
+            .ok_or_else(|| Error::Execution("format serialization".into()))?,
+    );
     if release {
         command.arg("--release");
     }

@@ -22,3 +22,6 @@ command-group = { version = "5.0.1", default-features = false }
 tempfile = "3"
 sha2 = "0.10"
 fs2 = "0.4"
+rake-build = { path = "../rake-build" }
+rake-dist-windows = { path = "../rake-dist-windows" }
+rake-dist-macos = { path = "../rake-dist-macos" }

@@ -55,3 +55,34 @@ SemVer prerelease suffix could otherwise prevent a later upgrade. MSI compares
 three bounded numeric fields; MSIX uses four. Debian/RPM prereleases use `~`.
 Arch prereleases require an explicit mapping verified using `vercmp`. macOS
 prereleases require a monotonic numeric `build_number`.
+
+Schema 1 native bundling now runs in Rust. `rake bundle --format app --debug`
+uses an isolated worker, copies Cargo output, stages inputs, and writes
+`distribution.json`. `--native` opts a legacy configuration into that executor.
+Legacy commands and `--target web` retain their existing implementation.
+
+Add this build script for link-time resources, including Windows icons/version:
+
+```toml
+[build-dependencies]
+rake-build = { path = "../../crates/rake-build" }
+```
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    rake_build::build()
+}
+```
+
+A PNG or SVG icon generates PNG/ICO variants; the Mac engine generates ICNS.
+The SVG renderer accepts vector shapes without external image references.
+Windows custom manifests replace resource #1 on a staged PE after linking;
+start from `crates/rake-build/templates/windows.manifest.xml` to retain GPUI's
+DPI, compatibility and heap settings. `rake-build` adds no competing manifest.
+The SDK's `mt.exe` validates and reads back the embedded resource.
+
+At runtime, `rake::resources!()?` finds the signed installation descriptor and
+resources beside the installed executable, independently of the working directory.
+Use `.path("assets/file.json")?` or `.helper("ffmpeg")?`; helpers remain private
+under the application's resource root. Development builds without a descriptor
+return `ResourceError::Unbundled` through `rake::resources::Error`.

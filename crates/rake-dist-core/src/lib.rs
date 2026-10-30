@@ -2,6 +2,8 @@
 //!
 //! Resolving a plan performs no filesystem, network or native-tool operations.
 
+mod installation;
+pub use installation::Installation;
 mod overrides;
 mod version;
 pub use overrides::{Overrides, UpdateOverrides};
@@ -73,7 +75,7 @@ impl Format {
 }
 
 /// Mechanism responsible for an installed application's updates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

@@ -58,8 +58,24 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                 .macos
                 .info_plist
                 .as_ref()
-                .map(|p| crate::files::confined(root, p).map(tauri_bundler::PlistKind::Path))
+                .filter(|_| plan.platform() == crate::Platform::Macos)
+                .map(|path| {
+                    let path = crate::files::confined(root, path)?;
+                    let value = rake_dist_macos::info_plist(
+                        &path,
+                        plan.identifier(),
+                        binary,
+                        &item.version().version,
+                        config
+                            .build_number
+                            .as_deref()
+                            .unwrap_or(&item.version().version),
+                    )
+                    .map_err(|e| Error::Execution(e.to_string()))?;
+                    Ok::<_, Error>(tauri_bundler::PlistKind::Plist(value))
+                })
                 .transpose()?,
+            bundle_version: config.build_number.clone(),
             minimum_system_version: config.minimum_system_version.clone(),
             ..Default::default()
         },

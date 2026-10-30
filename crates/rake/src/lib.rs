@@ -10,6 +10,9 @@ extern crate self as rake;
 #[path = "inspection/macros.rs"]
 mod inspection_macros;
 
+pub use rake_resources as resources;
+pub use rake_resources::{Resources, resources};
+
 pub mod control;
 
 pub use rake_diagnostics as diagnostics;

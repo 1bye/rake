@@ -10,12 +10,31 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
         fs::remove_dir_all(&root).unwrap();
     }
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("Cargo.toml"), "[workspace]\n[package]\nname='tiny-dist-fixture'\nversion='1.0.0'\nedition='2024'\n[package.metadata.rake.bundle]\nschema_version=1\nidentifier='dev.rake.fixture'\nresources=[{from='message.txt',to='message.txt'}]\n").unwrap();
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let manifest = format!(
+        "[workspace]\n[package]\nname='tiny-dist-fixture'\nversion='1.0.0'\nedition='2024'\n[package.metadata.rake.bundle]\nschema_version=1\nidentifier='dev.rake.fixture'\nresources=[{{from='message.txt',to='message.txt'}}]\n[dependencies]\nrake-resources={{path={:?}}}\n[build-dependencies]\nrake-build={{path={:?}}}\n",
+        repository.join("rake-resources"),
+        repository.join("rake-build")
+    );
+    let manifest = if cfg!(windows) {
+        fs::write(
+            root.join("custom.manifest"),
+            include_str!("../../rake-build/templates/windows.manifest.xml"),
+        )
+        .unwrap();
+        format!("{manifest}\n[package.metadata.rake.bundle.windows]\nmanifest='custom.manifest'\n")
+    } else {
+        manifest
+    };
+    fs::write(root.join("Cargo.toml"), manifest).unwrap();
     fs::write(
-        root.join("src/main.rs"),
-        "fn main(){println!(\"fixture\");}",
+        root.join("build.rs"),
+        "fn main(){rake_build::build().unwrap();}",
     )
     .unwrap();
+    fs::write(root.join("src/main.rs"), r#"fn main(){let resources=rake_resources::resources!().unwrap();print!("{}",std::fs::read_to_string(resources.path("message.txt").unwrap()).unwrap());}"#).unwrap();
     fs::write(root.join("message.txt"), "packaged resource").unwrap();
     assert!(
         Command::new("cargo")
@@ -47,6 +66,10 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
             .arg(root.join("Cargo.toml"))
             .arg("--output")
             .arg(&output)
+            .env(
+                "CARGO_TARGET_DIR",
+                repository.join("../target/distribution-tests"),
+            )
             .output()
             .unwrap()
     };
@@ -72,7 +95,7 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
             .unwrap();
         assert_eq!(
             String::from_utf8(launched.stdout).unwrap().trim(),
-            "fixture"
+            "packaged resource"
         );
     }
     fs::remove_file(output.join(".rake-distribution")).unwrap();

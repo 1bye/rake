@@ -37,7 +37,19 @@ unowned output. Focused tests, strict Clippy and rustdoc pass on macOS. New nati
 executor runs on Windows/Linux remain queued for one consolidated CI run.
 Existing legacy/native Python and Web dispatch remain in place during migration.
 
-P3-P9: in progress. Native platform/update acceptance remains required; archive
+P3: added rake-build, rake-resources and the platform metadata owners. The
+build helper tracks metadata/format changes, rasterizes PNG/SVG icons, and embeds
+Windows icon/version resources without adding a second manifest. Custom Windows
+manifests replace staged resource #1 with SDK validation/readback and retain
+GPUI settings. macOS plist identity conflicts fail instead of changing identity.
+Installation descriptors and public keys are written before signing; private
+helpers and resources resolve after relocation. Local codec, resource-confinement,
+manifest-policy and real consumer packaging tests pass. Strict Clippy/rustdoc pass.
+Native mt.exe/PE behavior remains a Windows acceptance gate in the manual workflow.
+The existing facade no-default-features Wasm check fails in control/web.rs because
+reload::host is GPUI-gated; this unrelated baseline was not changed.
+
+P4-P9: in progress. Native platform/update acceptance remains required; archive
 assembly and portable tests do not establish installation or upgrade support.
 
 CI runs (only one full matrix and one Windows-only retry):

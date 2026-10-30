@@ -1,0 +1,32 @@
+name: Distribution native acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        options: [all, windows, linux]
+        default: all
+concurrency:
+  group: distribution-native-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-latest","ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p rake-dist-core -p rake-dist -p rake-build -p rake-resources -p rake-dist-macos -p rake-dist-windows --locked
+      - run: cargo test -p rake-cli --test distribution_bundle --test distribution_plan --locked
+      - name: Build and package the real GPUI application with custom manifest
+        if: runner.os == 'Windows'
+        run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json

@@ -22,3 +22,9 @@ rake.workspace = true
 [package.metadata.rake.bundle]
 name = "Rake Foundation"
 identifier = "com.example.rake.foundation"
+
+[build-dependencies]
+rake-build = { path = "../../crates/rake-build" }
+
+[package.metadata.rake.bundle.windows]
+manifest = "windows.manifest.xml"
