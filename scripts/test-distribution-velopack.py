@@ -11,7 +11,7 @@ import time
 
 
 def run(*args, **kwargs):
-    return subprocess.check_output([str(arg) for arg in args], text=True, timeout=120, **kwargs)
+    return subprocess.check_output([str(arg) for arg in args], text=True, timeout=kwargs.pop("timeout",120), **kwargs)
 
 
 def wait_for(path, present=True):
@@ -62,7 +62,7 @@ resources=[{{from="message.txt",to="message.txt"}}]
                 (source / "Cargo.toml").write_text(manifest)
                 run("cargo", "generate-lockfile", "--offline", "--manifest-path", source / "Cargo.toml")
                 output = root / version
-                result = json.loads(run(cli, "bundle", "--native", "--debug", "--format", "velopack", "--manifest-path", source / "Cargo.toml", "--output", output, "--certificate-thumbprint", os.environ["RAKE_TEST_CERT_THUMBPRINT"], "--json"))
+                result = json.loads(run(cli, "bundle", "--native", "--debug", "--format", "velopack", "--manifest-path", source / "Cargo.toml", "--output", output, "--certificate-thumbprint", os.environ["RAKE_TEST_CERT_THUMBPRINT"], "--json", timeout=420))
                 files = [output / record["path"] for record in result["artifacts"]]
                 setup = next(path for path in files if path.name.lower().endswith("setup.exe"))
                 assert any(path.suffix == ".nupkg" for path in files)

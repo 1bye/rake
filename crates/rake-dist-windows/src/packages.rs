@@ -224,14 +224,20 @@ pub fn package_velopack(
     executable: &str,
     channel: &str,
 ) -> Result<Vec<PathBuf>, Error> {
-    let tool = run(Command::new("vpk").arg("--version"))?;
-    if !tool.contains("1.2.161") {
+    let tool = run(Command::new("vpk").arg("--help"))?;
+    if !tool
+        .lines()
+        .any(|line| line.trim().starts_with("Velopack CLI 1.2.161,"))
+    {
         return Err(Error::Tool(
             "vpk 1.2.161 is required; install the pinned dotnet tool".into(),
         ));
     }
     run(Command::new("vpk")
         .args([
+            "--skip-updates",
+            "--yes",
+            "--legacyConsole",
             "pack",
             "--packId",
             identifier,
