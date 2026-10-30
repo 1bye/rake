@@ -32,6 +32,30 @@ pub(crate) struct Prepared {
     pub locks: Vec<ComponentLock>,
 }
 
+pub(crate) fn check_lock(
+    resolved: &[ComponentLock],
+    path: &Path,
+    required: bool,
+) -> Result<(), Error> {
+    if required && !resolved.is_empty() && !path.is_file() {
+        return Err(Error::Execution(
+            "--locked-components requires rake-dist.lock for selected native components".into(),
+        ));
+    }
+    if path.exists() {
+        let locked: Vec<ComponentLock> = serde_json::from_slice(&fs::read(path)?)?;
+        for component in resolved {
+            if !locked.contains(component) {
+                return Err(Error::Execution(format!(
+                    "component {} differs from rake-dist.lock",
+                    component.name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn resolve(
     components: &[Component],
     target: &str,
@@ -548,5 +572,30 @@ mod archive_tests {
         )
         .unwrap();
         assert!(other.roots.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    #[test]
+    fn empty_component_plans_need_no_lock_but_selected_inputs_remain_pinned() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("rake-dist.lock");
+        check_lock(&[], &path, true).unwrap();
+        let component = ComponentLock {
+            name: "media".into(),
+            target: "x86_64-unknown-linux-gnu".into(),
+            source_sha256: "1".repeat(64),
+            tree_sha256: "2".repeat(64),
+        };
+        assert!(check_lock(std::slice::from_ref(&component), &path, true).is_err());
+        files::write_json(&path, &vec![component.clone()]).unwrap();
+        check_lock(std::slice::from_ref(&component), &path, true).unwrap();
+        let changed = ComponentLock {
+            tree_sha256: "3".repeat(64),
+            ..component
+        };
+        assert!(check_lock(&[changed], &path, true).is_err());
     }
 }
