@@ -11,6 +11,7 @@ mod files;
 mod linux;
 mod process;
 mod recipes;
+mod sparkle;
 pub use execution::{
     Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, execute_worker, host_target,
 };

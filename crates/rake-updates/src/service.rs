@@ -31,6 +31,8 @@ pub enum Capability {
 #[derive(Debug)]
 pub struct UpdateService {
     pub(crate) binding: UpdateBinding,
+    #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
+    pub(crate) test_sparkle_feed: Option<String>,
 }
 impl UpdateService {
     /// Creates a service from policy captured in the application crate and installed resources.
@@ -43,8 +45,33 @@ impl UpdateService {
             .validate()
             .map_err(|error| Error::Policy(error.to_string()))?;
         matches_installation(&binding, resources.installation())?;
-        Ok(Self { binding })
+        Ok(Self {
+            binding,
+            #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
+            test_sparkle_feed: None,
+        })
     }
+    /// Uses a signed loopback HTTP appcast in explicit native SDK acceptance fixtures.
+    /// Production builds should omit the native-tests feature.
+    /// # Errors
+    /// Rejects non-loopback hosts, credentials and URLs without an explicit port.
+    #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
+    pub fn testing_sparkle_feed(mut self, feed: &str) -> Result<Self, Error> {
+        let url = url::Url::parse(feed).map_err(|error| Error::Policy(error.to_string()))?;
+        if url.scheme() != "http"
+            || url.host_str() != Some("127.0.0.1")
+            || url.port().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(Error::Policy(
+                "native acceptance feed must be HTTP on 127.0.0.1 with an explicit port".into(),
+            ));
+        }
+        self.test_sparkle_feed = Some(url.into());
+        Ok(self)
+    }
+
     /// Returns the application identity and immutable verification policy.
     pub fn binding(&self) -> &UpdateBinding {
         &self.binding
@@ -63,6 +90,9 @@ impl UpdateService {
                 Capability::SelfManaged
             }
             UpdateOwner::Velopack if cfg!(all(windows, feature = "velopack")) => {
+                Capability::SelfManaged
+            }
+            UpdateOwner::Sparkle if cfg!(all(target_os = "macos", feature = "sparkle")) => {
                 Capability::SelfManaged
             }
             other => Capability::ProviderUnavailable(other),
@@ -86,9 +116,20 @@ fn matches_installation(binding: &UpdateBinding, installed: &Installation) -> Re
     Ok(())
 }
 
+/// Determines who owns termination after a successful updater handoff.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RestartDisposition {
+    /// The installer is ready; the application host may now exit.
+    #[default]
+    ExitHost,
+    /// The native SDK must finish its asynchronous termination protocol.
+    ProviderHandlesExit,
+}
+
 /// A pending handoff owned by the application lifecycle; dropping it never installs.
 pub struct RestartHandoff {
     action: Option<Box<dyn FnOnce() -> Result<(), Error>>>,
+    disposition: RestartDisposition,
 }
 impl std::fmt::Debug for RestartHandoff {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -104,8 +145,17 @@ impl RestartHandoff {
     pub fn new(action: impl FnOnce() -> Result<(), Error> + 'static) -> Self {
         Self {
             action: Some(Box::new(action)),
+            disposition: RestartDisposition::ExitHost,
         }
     }
+    #[cfg(all(target_os = "macos", feature = "sparkle"))]
+    pub(crate) fn native_provider(action: impl FnOnce() -> Result<(), Error> + 'static) -> Self {
+        Self {
+            action: Some(Box::new(action)),
+            disposition: RestartDisposition::ProviderHandlesExit,
+        }
+    }
+
     /// Runs the staged provider handoff after the application's guards approve.
     ///
     /// Call from the host's committed-quit boundary, before exiting. `false`
@@ -113,13 +163,14 @@ impl RestartHandoff {
     /// owns saving documents, waiting/cancelling work and stopping its services.
     /// # Errors
     /// Returns guard decline or the native provider's install/restart failure.
-    pub fn commit(mut self, approved: bool) -> Result<(), Error> {
+    pub fn commit(mut self, approved: bool) -> Result<RestartDisposition, Error> {
         if !approved {
             return Err(Error::Declined);
         }
         self.action
             .take()
-            .ok_or_else(|| Error::Policy("handoff already consumed".into()))?()
+            .ok_or_else(|| Error::Policy("handoff already consumed".into()))?()?;
+        Ok(self.disposition)
     }
 }
 

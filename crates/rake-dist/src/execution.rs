@@ -179,7 +179,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             String::from_utf8_lossy(&metadata_output.stderr).into(),
         ));
     }
-    let plan = plan_metadata_with(
+    let mut plan = plan_metadata_with(
         &metadata_output.stdout,
         request.package.as_deref(),
         request.platform,
@@ -188,6 +188,13 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     )?;
     if plan.platform() == Platform::Macos && plan.config().macos.universal {
         target = "universal-apple-darwin".into();
+        plan = plan_metadata_with(
+            &metadata_output.stdout,
+            request.package.as_deref(),
+            request.platform,
+            Some(&target),
+            (!request.formats.is_empty()).then_some(&request.formats),
+        )?;
     }
     let metadata: Metadata = serde_json::from_slice(&metadata_output.stdout)?;
     for item in plan.packages() {
@@ -212,12 +219,16 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         })
         .ok_or(Error::Package)?;
     let root = selected.manifest_path.parent().ok_or(Error::Package)?;
-    if request.platform == Platform::Windows
+    if (request.platform == Platform::Windows
+        || plan
+            .packages()
+            .iter()
+            .any(|item| item.config().updates.enabled))
         && !selected.dependencies.iter().any(|dependency| {
             dependency.name == "rake-build" && dependency.kind.as_deref() == Some("build")
         })
     {
-        return Err(Error::Execution("Windows resources require [build-dependencies] rake-build and build.rs calling rake_build::build()?".into()));
+        return Err(Error::Execution("native resources/updates require [build-dependencies] rake-build and build.rs calling rake_build::build()?".into()));
     }
     let binaries: Vec<_> = selected
         .targets
@@ -293,10 +304,31 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         } else {
             ""
         };
+        let config = item.config();
+        let mut prepared = components::resolve(
+            &config.components,
+            &target,
+            root,
+            &stage.join("components"),
+            &metadata.target_directory.join("rake-component-cache"),
+            request.offline_components,
+        )?;
+        let sdk = crate::sparkle::prepare(
+            item,
+            &target,
+            root,
+            &stage,
+            &metadata.target_directory.join("rake-component-cache"),
+            request.offline_components,
+            &mut prepared,
+        )?;
+        let build_context = crate::sparkle::BuildContext {
+            distribution_target: &target,
+            sparkle_framework: sdk.as_deref(),
+        };
         let build_for = |target| {
             build(
-                &selected.manifest_path,
-                &selected.name,
+                selected,
                 binary,
                 target,
                 request.release,
@@ -306,6 +338,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                     .iter()
                     .find(|dependency| dependency.name == "rake")
                     .map(|dependency| dependency.rename.as_deref().unwrap_or("rake")),
+                &build_context,
             )
         };
         if item.format() != Format::Flatpak {
@@ -333,7 +366,6 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             };
             files::copy(&built, &bin.join(format!("{binary}{suffix}")))?;
         }
-        let config = item.config();
         let mut resources = HashMap::new();
         let resource_stage = stage.join("resources");
         fs::create_dir_all(&resource_stage)?;
@@ -350,14 +382,6 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 resource.to.to_string_lossy().into_owned(),
             );
         }
-        let prepared = components::resolve(
-            &config.components,
-            &target,
-            root,
-            &stage.join("components"),
-            &metadata.target_directory.join("rake-component-cache"),
-            request.offline_components,
-        )?;
         let mut descriptor = rake_dist_core::Installation {
             schema_version: 1,
             identifier: plan.identifier().into(),
@@ -398,7 +422,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             }
             descriptor.helpers.insert(helper.name.clone(), relative);
         }
-        let frameworks = recipes::runtimes(recipes::Input {
+        let mut frameworks = recipes::runtimes(recipes::Input {
             config,
             package: root,
             roots: &prepared.roots,
@@ -407,6 +431,29 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             descriptor: &mut descriptor,
             resources: &mut resources,
         })?;
+        if let Some(sdk) = &sdk {
+            let framework = stage.join("frameworks/Sparkle.framework");
+            files::copy(sdk, &framework)?;
+            frameworks.push(framework);
+            descriptor
+                .frameworks
+                .insert("sparkle".into(), PathBuf::from("Sparkle.framework"));
+            descriptor.native_groups.insert(
+                "rake-sparkle-sdk".into(),
+                vec![PathBuf::from("Frameworks/Sparkle.framework")],
+            );
+            let license = resource_stage.join("rake/licenses/rake-sparkle-sdk/LICENSE");
+            files::copy(
+                &sdk.parent()
+                    .ok_or_else(|| Error::Execution("SDK parent".into()))?
+                    .join("LICENSE"),
+                &license,
+            )?;
+            resources.insert(
+                license.to_string_lossy().into_owned(),
+                "rake/licenses/rake-sparkle-sdk/LICENSE".into(),
+            );
+        }
         for component in config
             .components
             .iter()
@@ -761,14 +808,16 @@ pub(crate) fn native_platform() -> Result<Platform, Error> {
 }
 
 fn build(
-    manifest: &Path,
-    package: &str,
+    selected: &crate::Package,
     binary: &str,
     target: &str,
     release: bool,
     package_plan: &rake_dist_core::PackagePlan,
     facade: Option<&str>,
+    context: &crate::sparkle::BuildContext<'_>,
 ) -> Result<PathBuf, Error> {
+    let manifest = &selected.manifest_path;
+    let package = selected.name.as_str();
     let format = package_plan.format();
     let mut command = Command::new("cargo");
     command.current_dir(
@@ -787,6 +836,8 @@ fn build(
         .args(["--package", package, "--bin", binary, "--target", target]);
     let feature = if format == Format::Velopack {
         Some("updates-velopack")
+    } else if package_plan.update_owner() == rake_dist_core::UpdateOwner::Sparkle {
+        Some("updates-sparkle")
     } else if package_plan.update_owner() == rake_dist_core::UpdateOwner::Appimage {
         Some("updates-appimage")
     } else if package_plan.config().updates.enabled {
@@ -803,6 +854,13 @@ fn build(
         return Err(Error::Execution(
             "Velopack requires the Rake facade's early startup integration".into(),
         ));
+    }
+    command.env("RAKE_DISTRIBUTION_TARGET", context.distribution_target);
+    if let Some(framework) = context.sparkle_framework {
+        command.env("RAKE_SPARKLE_FRAMEWORK", framework);
+    }
+    if let Some(minimum) = &package_plan.config().minimum_system_version {
+        command.env("MACOSX_DEPLOYMENT_TARGET", minimum);
     }
     command.env(
         "RAKE_DISTRIBUTION_FORMAT",

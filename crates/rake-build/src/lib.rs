@@ -26,7 +26,12 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
         .map(|v| serde_json::from_value(serde_json::to_value(v)?))
         .transpose()?
         .unwrap_or_default();
-    for variable in ["TARGET", "RAKE_DISTRIBUTION_FORMAT"] {
+    for variable in [
+        "TARGET",
+        "RAKE_DISTRIBUTION_FORMAT",
+        "RAKE_DISTRIBUTION_TARGET",
+        "RAKE_SPARKLE_FRAMEWORK",
+    ] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
     let platform = match std::env::var("CARGO_CFG_TARGET_OS")?.as_str() {
@@ -41,11 +46,13 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
             .map(|s| serde_json::from_value::<rake_dist_core::Format>(serde_json::Value::String(s)))
             .transpose()?;
         let selected = format.into_iter().collect::<Vec<_>>();
+        let distribution_target =
+            std::env::var("RAKE_DISTRIBUTION_TARGET").unwrap_or(std::env::var("TARGET")?);
         let plan = config.plan_for(
             &std::env::var("CARGO_PKG_NAME")?,
             &std::env::var("CARGO_PKG_VERSION")?,
             platform,
-            Some(&std::env::var("TARGET")?),
+            Some(&distribution_target),
             (!selected.is_empty()).then_some(selected.as_slice()),
         )?;
         let package = plan.packages().first().ok_or("no selected package")?;
@@ -63,7 +70,7 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
             identifier: plan.identifier().into(),
             version: plan.version().into(),
             package_version: package.version().version.clone(),
-            target: std::env::var("TARGET")?,
+            target: distribution_target,
             format: package.format(),
             owner: package.update_owner(),
             channel: package
@@ -80,6 +87,9 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
             "cargo:rustc-env=RAKE_UPDATE_POLICY={}",
             serde_json::to_string(&binding)?
         );
+        if package.update_owner() == rake_dist_core::UpdateOwner::Sparkle {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+        }
         package.config().clone()
     } else {
         config

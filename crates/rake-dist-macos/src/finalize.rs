@@ -66,6 +66,9 @@ fn sign(path: &Path, trust: &TrustOptions, entitlements: Option<&Path>) -> Resul
     }
     if let Some(path) = entitlements {
         command.arg("--entitlements").arg(path);
+    } else {
+        // Sparkle's XPC services require their declared sandbox/network entitlements.
+        command.arg("--preserve-metadata=entitlements");
     }
     run(command.arg(path))?;
     Ok(())

@@ -251,6 +251,12 @@ struct Core<R: Route> {
     update_handoff: RefCell<Option<rake_updates::RestartHandoff>>,
     #[cfg(feature = "updates")]
     update_restart_error: RefCell<Option<String>>,
+    #[cfg(feature = "updates")]
+    update_exit: Cell<rake_updates::RestartDisposition>,
+    #[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
+    native_quit: RefCell<Option<Rc<rake_updates::NativeQuitBridge>>>,
+    #[cfg(all(feature = "updates-sparkle", feature = "gpui", target_os = "macos"))]
+    sparkle: RefCell<Option<rake_updates::Sparkle>>,
     reload: RefCell<crate::reload::ReloadStatus>,
     reload_ui_ready: RefCell<BTreeSet<WindowId>>,
     #[cfg(target_family = "wasm")]
@@ -473,6 +479,12 @@ impl<R: Route> Router<R> {
             update_handoff: RefCell::new(None),
             #[cfg(feature = "updates")]
             update_restart_error: RefCell::new(None),
+            #[cfg(feature = "updates")]
+            update_exit: Cell::new(rake_updates::RestartDisposition::ExitHost),
+            #[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
+            native_quit: RefCell::new(None),
+            #[cfg(all(feature = "updates-sparkle", feature = "gpui", target_os = "macos"))]
+            sparkle: RefCell::new(None),
             has_window: Cell::new(false),
             shutdown: Cell::new(false),
         }))

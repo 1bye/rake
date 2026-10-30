@@ -278,7 +278,7 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
         /// Runs the application on the native host.
         pub fn main() {
             #rake::early_startup!();
-            if let Err(error) = #factory().run() {
+            if let Err(error) = #factory().distribution_policy(option_env!("RAKE_UPDATE_POLICY"),option_env!("RAKE_RESOURCE_DIRECTORY").unwrap_or(env!("CARGO_PKG_NAME"))).run() {
                 eprintln!("Rake startup failed: {error}");
                 ::std::process::exit(1);
             }

@@ -43,7 +43,11 @@ impl UpdateBinding {
             semver::Version::parse(&self.package_version)
                 .map_err(|_| crate::Error::Field("native updater version".into()))?;
         }
-        let platform = Platform::from_target(&self.target)?;
+        let platform = if self.target == "universal-apple-darwin" {
+            Platform::Macos
+        } else {
+            Platform::from_target(&self.target)?
+        };
         if !self.format.supports(platform)
             || (self.owner != UpdateOwner::Disabled
                 && self.owner != self.format.update_owner(platform))

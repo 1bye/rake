@@ -3,9 +3,19 @@
 mod appimage;
 #[cfg(feature = "appimage")]
 pub use appimage::{ImageUpdate, StagedImage};
+#[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
+mod macos_lifecycle;
+#[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
+pub use macos_lifecycle::NativeQuitBridge;
+#[cfg(all(target_os = "macos", feature = "sparkle"))]
+mod sparkle;
+#[cfg(all(target_os = "macos", feature = "sparkle"))]
+pub use sparkle::{Sparkle, SparkleStage, SparkleStatus};
 mod service;
-pub use rake_dist_core::UpdateBinding;
-pub use service::{Capability, DownloadProgress, RestartHandoff, UpdateService};
+pub use rake_dist_core::{UpdateBinding, UpdateOwner};
+pub use service::{
+    Capability, DownloadProgress, RestartDisposition, RestartHandoff, UpdateService,
+};
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 mod signatures;
 #[cfg(any(feature = "appimage", feature = "velopack"))]

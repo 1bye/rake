@@ -306,3 +306,33 @@ fn system_runtime_policy_is_owned_by_each_linux_format() {
             .is_err()
     );
 }
+
+#[test]
+fn sparkle_sdk_baseline_and_universal_policy_are_explicit() {
+    let settings = config(
+        json!({"schema_version":1,"macos":{"universal":true},"updates":{"enabled":true,"base_url":"https://example.org","public_keys":{"sparkle":"key.pub"}}}),
+    );
+    let plan = settings
+        .plan_for(
+            "universal-app",
+            "1.0.0",
+            Platform::Macos,
+            Some("universal-apple-darwin"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        plan.packages()[0]
+            .config()
+            .minimum_system_version
+            .as_deref(),
+        Some("12.0")
+    );
+    let mut too_old = settings;
+    too_old.minimum_system_version = Some("11.0".into());
+    assert!(
+        too_old
+            .plan("universal-app", "1.0.0", Platform::Macos)
+            .is_err()
+    );
+}

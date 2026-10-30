@@ -500,7 +500,14 @@ impl Config {
             base.linux.package_name = Some(package.to_ascii_lowercase().replace('_', "-"));
         }
         if let Some(target) = target {
-            let matches_platform = Platform::from_target(target)? == platform;
+            let matches_platform = if target == "universal-apple-darwin"
+                && platform == Platform::Macos
+                && base.macos.universal
+            {
+                true
+            } else {
+                Platform::from_target(target)? == platform
+            };
             if !matches_platform {
                 return Err(Error::Field(
                     "Rust target triple does not match platform".into(),
@@ -533,6 +540,22 @@ impl Config {
                 }
                 layer.apply(&mut effective, platform);
                 effective.normalize_paths()?;
+            }
+            if platform == Platform::Macos && effective.updates.enabled {
+                if let Some(minimum) = &effective.minimum_system_version {
+                    if minimum
+                        .split('.')
+                        .next()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .is_none_or(|major| major < 12)
+                    {
+                        return Err(Error::Field(
+                            "Sparkle 2.10.1 requires minimum_system_version >= 12.0".into(),
+                        ));
+                    }
+                } else {
+                    effective.minimum_system_version = Some("12.0".into());
+                }
             }
             *effective.formats_mut(platform) = vec![format];
             for name in effective

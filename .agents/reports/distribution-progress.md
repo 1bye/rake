@@ -194,3 +194,28 @@ signing thumbprint before trust setup so cleanup still runs after partial failur
 The manual checkpoint saves dependency caches on failure to avoid rebuilding GPUI
 on each targeted follow-up. These fixes require a native follow-up, not an inferred
 Windows acceptance result.
+
+Windows checkpoint 41099657004 passed real GPUI NSIS packaging, disposable local
+trust setup and the pinned Rust updater startup hook. MSIX unpacking passed;
+signing/install and Velopack fixture stopped at certificate-subject preflight
+because a clean PowerShell process lacked the Cert provider. Subject lookup now
+uses the native .NET CurrentUser My store directly. A consolidated retry remains.
+
+P7 native Sparkle: automatic pinned SDK preparation (2.10.1 with verified SHA-256),
+framework/license staging, signed-feed plist policy, universal policy propagation,
+SDK standard UI and main-thread controller ownership are implemented. An owned
+AppKit delegate proxy defers OS termination and preserves GPUI delegate behavior.
+Routed workspaces join native update requests to the existing dirty/work/window
+quit transaction; cached SDK installations use the same approval path. Native
+continuations are consumed once and controller teardown declines retained replies.
+
+Actual macOS N-to-N+1 GUI acceptance passed: signed feed/payload download,
+dirty-document Cancel preserving N, cached update retry, Save followed by SDK
+automatic relaunch at N+1, persistent user data preservation, and rejection of a
+feed modified without resigning. The N+1 startup marker was observed before UI
+reattachment. The AppKit terminate probe passed deferred cancellation/approval.
+Repeatable fixture preparation and assertions are documented in
+scripts/prepare-distribution-sparkle.py and docs/distribution-native-tests.md.
+Local portable policy (14), updater (7), guarded quit (14), full SDK Clippy and
+native facade updates-sparkle/devtools compilation passed. Linux/Windows N+1
+SDK acceptance and the remaining native format gates are still open.

@@ -80,16 +80,21 @@ impl<R: Route> Router<R> {
         }
         *self.0.update_handoff.borrow_mut() = Some(handoff);
         *self.0.update_restart_error.borrow_mut() = None;
+        self.0
+            .update_exit
+            .set(rake_updates::RestartDisposition::ExitHost);
         Ok(operation)
     }
 
     /// Runs a pending updater after all guards and managed work have completed.
     /// Native Rake workspaces call this before host exit; custom hosts call it there too.
-    /// Returns false when no update handoff was attached.
+    /// Returns the native SDK/host termination disposition, retained across windows.
     /// # Errors
     /// Rejects premature calls and preserves native handoff failures for manual restart.
     #[cfg(feature = "updates")]
-    pub fn complete_update_restart(&self) -> Result<bool, rake_updates::Error> {
+    pub fn complete_update_restart(
+        &self,
+    ) -> Result<rake_updates::RestartDisposition, rake_updates::Error> {
         if self.quit_status().phase != QuitPhase::Ready {
             return Err(rake_updates::Error::Policy(
                 "update restart requires a committed guarded quit".into(),
@@ -99,10 +104,13 @@ impl<R: Route> Router<R> {
             return Err(rake_updates::Error::Provider(error));
         }
         let Some(handoff) = self.0.update_handoff.borrow_mut().take() else {
-            return Ok(false);
+            return Ok(self.0.update_exit.get());
         };
         match handoff.commit(true) {
-            Ok(()) => Ok(true),
+            Ok(disposition) => {
+                self.0.update_exit.set(disposition);
+                Ok(disposition)
+            }
             Err(error) => {
                 *self.0.update_restart_error.borrow_mut() = Some(error.to_string());
                 self.0.notify();
@@ -399,6 +407,13 @@ async fn transition<R: Route>(
 #[cfg(feature = "gpui")]
 impl<R: Route> Router<R> {
     pub(crate) fn install_quit_action(&self, cx: &mut gpui::App) {
+        #[cfg(all(feature = "updates", target_os = "macos"))]
+        if self.0.native_quit.borrow().is_none() {
+            match rake_updates::NativeQuitBridge::new() {
+                Ok(bridge) => *self.0.native_quit.borrow_mut() = Some(Rc::new(bridge)),
+                Err(error) => tracing::error!(%error,"native quit guard could not be installed"),
+            }
+        }
         let core = Rc::downgrade(&self.0);
 
         cx.on_action(move |_: &crate::quit::RequestQuit, _| {
@@ -423,6 +438,159 @@ impl<R: Route> Router<R> {
                 items: vec![gpui::MenuItem::action("Quit", crate::quit::RequestQuit)],
                 disabled: false,
             }]);
+        }
+    }
+}
+
+#[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
+impl<R: Route> Router<R> {
+    pub(crate) fn native_quit_changed(&self) -> futures::future::LocalBoxFuture<'static, ()> {
+        let changed = self
+            .0
+            .native_quit
+            .borrow()
+            .as_ref()
+            .map(|bridge| bridge.changed());
+        async move {
+            if let Some(changed) = changed {
+                changed.await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        }
+        .boxed_local()
+    }
+    pub(crate) async fn changed_with_native_quit(&self, revision: u64) -> u64 {
+        let native = self.native_quit_changed();
+        #[cfg(feature = "updates-sparkle")]
+        let native = async {
+            let changed = self
+                .0
+                .sparkle
+                .borrow()
+                .as_ref()
+                .map(rake_updates::Sparkle::changed);
+            let sparkle = async {
+                if let Some(changed) = changed {
+                    changed.await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
+            let _ = futures::future::select(native, Box::pin(sparkle)).await;
+        }
+        .boxed_local();
+        let _ = futures::future::select(Box::pin(self.changed(revision)), native).await;
+        #[cfg(feature = "updates-sparkle")]
+        self.poll_sparkle();
+        self.poll_native_quit();
+        self.revision()
+    }
+
+    pub(crate) fn poll_native_quit(&self) {
+        let requested = self
+            .0
+            .native_quit
+            .borrow()
+            .as_ref()
+            .is_some_and(|bridge| bridge.take_request());
+        if requested {
+            drop(self.quit(QuitOptions::default()));
+        }
+        if matches!(
+            self.quit_status().phase,
+            QuitPhase::Cancelled | QuitPhase::Blocked
+        ) {
+            self.reply_native_quit(false);
+        }
+    }
+    pub(crate) fn prepare_native_exit(&self, approved: bool) {
+        if let Some(bridge) = self.0.native_quit.borrow().as_ref() {
+            bridge.prepare_exit(approved);
+        }
+    }
+    pub(crate) fn reply_native_quit(&self, approved: bool) {
+        if let Some(bridge) = self.0.native_quit.borrow().as_ref() {
+            bridge.reply(approved);
+        }
+    }
+}
+
+#[cfg(all(feature = "updates-sparkle", feature = "gpui", target_os = "macos"))]
+impl<R: Route> Router<R> {
+    pub(crate) fn install_sparkle(
+        &self,
+        service: &rake_updates::UpdateService,
+    ) -> Result<(), rake_updates::Error> {
+        if service.binding().owner != rake_updates::UpdateOwner::Sparkle {
+            return Ok(());
+        }
+        let quit = self
+            .0
+            .native_quit
+            .borrow()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                rake_updates::Error::Policy("Sparkle requires an active native quit bridge".into())
+            })?;
+        let sparkle = rake_updates::Sparkle::new(service, quit)?;
+        *self.0.sparkle.borrow_mut() = Some(sparkle);
+        Ok(())
+    }
+    /// Opens the configured Sparkle SDK's native update interface.
+    /// # Errors
+    /// Returns an error if no guarded Sparkle controller is active or its lease was lost.
+    pub fn check_for_updates(&self) -> Result<(), rake_updates::Error> {
+        self.0
+            .sparkle
+            .borrow()
+            .as_ref()
+            .ok_or_else(|| {
+                rake_updates::Error::Policy("no guarded Sparkle controller is active".into())
+            })?
+            .check_for_updates()
+    }
+    fn poll_sparkle(&self) {
+        let pending = self
+            .0
+            .sparkle
+            .borrow()
+            .as_ref()
+            .map(rake_updates::Sparkle::take_restart);
+        match pending {
+            Some(Ok(Some(handoff))) => {
+                if let Err(error) = self.quit_for_update(handoff, QuitOptions::default()) {
+                    tracing::error!(%error,"update restart was not admitted");
+                }
+            }
+            Some(Err(error)) => tracing::error!(%error,"native update guard failed"),
+            _ => {}
+        }
+        if self.0.update_exit.get() == rake_updates::RestartDisposition::ProviderHandlesExit {
+            let status = self
+                .0
+                .sparkle
+                .borrow()
+                .as_ref()
+                .map(rake_updates::Sparkle::status);
+            if let Some(status) = status {
+                match status.stage {
+                    rake_updates::SparkleStage::Installing => self
+                        .0
+                        .update_exit
+                        .set(rake_updates::RestartDisposition::ExitHost),
+                    rake_updates::SparkleStage::Failed => {
+                        *self.0.update_restart_error.borrow_mut() = Some(
+                            status
+                                .error
+                                .unwrap_or_else(|| "native installer failed".into()),
+                        );
+                        self.0.notify();
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }

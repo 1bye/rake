@@ -434,6 +434,8 @@ impl<R: Route> Workspace<R> {
 
         let contexts = Rc::new(RefCell::new(BTreeMap::new()));
 
+        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
+        let update_service = services.get::<rake_updates::UpdateService>().ok();
         let router = Router::with_views(
             config,
             services,
@@ -459,6 +461,12 @@ impl<R: Route> Workspace<R> {
             .map_err(|error| MountError(error.to_string()))?;
 
         router.install_quit_action(cx);
+        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
+        if let Some(service) = update_service
+            && let Err(error) = router.install_sparkle(&service)
+        {
+            tracing::error!(%error,"native updater could not start");
+        }
         router.client().set_commands(commands);
 
         #[cfg(feature = "devtools")]
@@ -523,34 +531,37 @@ impl<R: Route> Workspace<R> {
                         let mut revision = u64::MAX;
 
                         loop {
-                            #[cfg(feature = "devtools")]
+                            #[cfg(all(feature="updates",target_os="macos"))]
+                            let changed=Box::pin(observed.changed_with_native_quit(revision));
+                            #[cfg(not(all(feature="updates",target_os="macos")))]
+                            let changed=Box::pin(observed.changed(revision));
+                            #[cfg(feature="devtools")]
                             {
-                                let inspection = observed.client().inspection().listen();
-
-                                if let futures::future::Either::Left((next, _)) =
-                                    futures::future::select(
-                                        Box::pin(observed.changed(revision)),
-                                        Box::pin(inspection),
-                                    )
-                                    .await
-                                {
-                                    revision = next;
-                                }
+                                let inspection=observed.client().inspection().listen();
+                                if let futures::future::Either::Left((next,_))=futures::future::select(changed,Box::pin(inspection)).await {revision=next;}
                             }
-                            #[cfg(not(feature = "devtools"))]
-                            {
-                                revision = observed.changed(revision).await;
-                            }
+                            #[cfg(not(feature="devtools"))]
+                            {revision=changed.await;}
 
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
                                 closing.responses_idle().await;
+                                #[cfg(all(feature="updates",target_os="macos"))]
+                                observed.prepare_native_exit(true);
                                 #[cfg(feature="updates")]
-                                if let Err(error)=observed.complete_update_restart() {
-                                    tracing::error!(%error,"update handoff failed; manual restart required");
-                                    let _=_view.update(cx,|_,cx|cx.notify());
-                                    break;
+                                match observed.complete_update_restart() {
+                                    Ok(rake_updates::RestartDisposition::ProviderHandlesExit)=>continue,
+                                    Ok(rake_updates::RestartDisposition::ExitHost)=>{},
+                                    Err(error)=>{
+                                        #[cfg(target_os="macos")]
+                                        {observed.reply_native_quit(false);observed.prepare_native_exit(true);}
+                                        tracing::error!(%error,"update handoff failed; manual restart required");
+                                        let _=_view.update(cx,|_,cx|cx.notify());
+                                        break;
+                                    }
                                 }
+                                #[cfg(all(feature="updates",target_os="macos"))]
+                                observed.reply_native_quit(true);
                                 cx.update(|cx| cx.quit());
 
                                 break;
@@ -636,7 +647,9 @@ impl<R: Route> Render for Workspace<R> {
             if let Some(error) = self.router.update_restart_error() {
                 return div().size_full().bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8)).p_4()
                     .child(format!("The update could not restart the app: {error}. The app finished shutting down. Restart manually to continue."))
-                    .child(div().id("update-quit-manually").px_3().py_2().cursor_pointer().child("Quit").on_click(|_,_,cx|cx.quit()));
+                    .child(div().id("update-quit-manually").px_3().py_2().cursor_pointer().child("Quit").on_click(|_,_,cx|cx.quit()))
+                    .inspect("rake.update.restart_error")
+                    .root(crate::__rake_inspection!(self.router.client().inspection(),crate::inspection::Store::default()),snapshot.revision,self.window);
             }
             return div()
                 .size_full()
@@ -778,6 +791,8 @@ impl<R: Route> Render for Workspace<R> {
         let cancel_jobs_router = self.router.clone();
         let quit_id = snapshot.quit.operation_id;
 
+        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
+        let update_router = self.router.clone();
         let quit_controls = div()
             .flex()
             .gap_3()
@@ -849,6 +864,21 @@ impl<R: Route> Render for Workspace<R> {
                         .inspect("rake.quit.cancel"),
                 )
             });
+
+        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
+        let quit_controls = quit_controls.child(
+            div()
+                .id("check-for-updates")
+                .px_3()
+                .py_2()
+                .cursor_pointer()
+                .child("Check for updates…")
+                .on_click(move |_, _, _| {
+                    if let Err(error) = update_router.check_for_updates() {
+                        tracing::error!(%error,"could not check for updates");
+                    }
+                }),
+        );
 
         div()
             .size_full()

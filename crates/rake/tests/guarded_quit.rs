@@ -678,9 +678,15 @@ fn update_handoff_waits_for_committed_quit_and_can_fail_without_forcing_exit() {
     assert!(!invoked.get());
     commit(&mut pool, quit);
     assert!(!invoked.get());
-    assert!(router.complete_update_restart().unwrap());
+    assert_eq!(
+        router.complete_update_restart().unwrap(),
+        rake::updates::RestartDisposition::ExitHost
+    );
     assert!(invoked.get());
-    assert!(!router.complete_update_restart().unwrap());
+    assert_eq!(
+        router.complete_update_restart().unwrap(),
+        rake::updates::RestartDisposition::ExitHost
+    );
     let (router, mut pool) = harness();
     let handoff = rake::updates::RestartHandoff::new(|| {
         Err(rake::updates::Error::Provider(
@@ -731,6 +737,9 @@ fn dirty_document_cancellation_discards_the_update_handoff() {
     pool.run_until_stalled();
     respond(&router, "discard");
     commit(&mut pool, quit);
-    assert!(!router.complete_update_restart().unwrap());
+    assert_eq!(
+        router.complete_update_restart().unwrap(),
+        rake::updates::RestartDisposition::ExitHost
+    );
     assert!(!installed.get());
 }

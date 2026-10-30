@@ -12,7 +12,8 @@ workspace = true
 
 [features]
 default = ["gpui"]
-updates = ["dep:rake-updates"]
+updates = ["dep:rake-updates", "rake-updates/native-lifecycle"]
+updates-sparkle = ["updates", "rake-updates/sparkle"]
 updates-appimage = ["updates", "rake-updates/appimage"]
 updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]

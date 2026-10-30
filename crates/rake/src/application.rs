@@ -46,6 +46,8 @@ pub struct App<R: Route = NoRoute> {
     guards: Vec<Guard<R>>,
     control: crate::control::ControlConfig,
     commands: crate::control::Commands,
+    #[cfg(feature = "updates")]
+    distribution: Option<(&'static str, &'static str)>,
 }
 
 impl App<NoRoute> {
@@ -66,11 +68,34 @@ impl App<NoRoute> {
             guards: Vec::new(),
             control: crate::control::ControlConfig::default(),
             commands: crate::control::Commands::new(),
+            #[cfg(feature = "updates")]
+            distribution: None,
         }
     }
 }
 
 impl<R: Route> App<R> {
+    /// Captures the consuming application's build-script update policy and resource layout.
+    /// `#[rake::app]` supplies this automatically; manual entry points can call it too.
+    #[must_use]
+    pub fn distribution_policy(
+        self,
+        policy: Option<&'static str>,
+        resources: &'static str,
+    ) -> Self {
+        #[cfg(feature = "updates")]
+        {
+            let mut app = self;
+            app.distribution = policy.map(|policy| (policy, resources));
+            app
+        }
+        #[cfg(not(feature = "updates"))]
+        {
+            let _ = (policy, resources);
+            self
+        }
+    }
+
     /// Registers the application's typed screen factory. Defaults to the `/` route.
     pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
         App {
@@ -88,6 +113,8 @@ impl<R: Route> App<R> {
             guards: Vec::new(),
             control: self.control,
             commands: self.commands,
+            #[cfg(feature = "updates")]
+            distribution: self.distribution,
         }
     }
 
@@ -224,6 +251,25 @@ impl<R: Route> App<R> {
             return Err(AppError::AlreadyRunning);
         }
 
+        #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+        if self.services.get::<rake_updates::UpdateService>().is_err()
+            && let Some((policy, name)) = self.distribution.take()
+        {
+            match crate::Resources::discover(name) {
+                Ok(resources) => {
+                    let updates = rake_updates::UpdateService::new(policy, &resources)?;
+                    self.services = self.services.with(updates).map_err(|error| {
+                        AppError::Updates(rake_updates::Error::Policy(error.to_string()))
+                    })?;
+                }
+                Err(crate::resources::Error::Unbundled) => {}
+                Err(error) => {
+                    return Err(AppError::Updates(rake_updates::Error::Policy(
+                        error.to_string(),
+                    )));
+                }
+            }
+        }
         let services = self.services()?;
 
         if self.root.is_some() && self.routes.is_some() {
@@ -368,6 +414,10 @@ impl<R: Route> App<R> {
 /// Application bootstrap errors before the host event loop starts.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// Installed update metadata disagrees with the compiled application policy.
+    #[cfg(feature = "updates")]
+    #[error(transparent)]
+    Updates(#[from] rake_updates::Error),
     /// Registered application commands require a typed router operation owner.
     #[error("application commands require App::routes; App::root supports inspection only")]
     ControlRequiresRouter,

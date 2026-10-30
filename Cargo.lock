@@ -6097,6 +6097,7 @@ dependencies = [
 name = "rake-dist-macos"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "plist",
  "rake-dist-core",
  "serde_json",
@@ -6229,8 +6230,11 @@ dependencies = [
 name = "rake-updates"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "ed25519-dalek",
+ "event-listener",
  "fs2",
+ "futures",
  "hex",
  "rake-dist-core",
  "rake-resources",

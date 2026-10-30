@@ -49,3 +49,47 @@ pub fn info_plist(
     }
     Ok(value)
 }
+
+/// Adds guarded Sparkle metadata while rejecting conflicting custom trust settings.
+/// # Errors
+/// Rejects malformed public keys, non-dictionary plists and conflicting updater fields.
+pub fn sparkle_info_plist(
+    mut value: plist::Value,
+    feed: &str,
+    public_key: &str,
+) -> Result<plist::Value, Error> {
+    use base64::Engine as _;
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(public_key.trim())
+        .map_err(|error| Error::Native(error.to_string()))?;
+    if key.len() != 32 {
+        return Err(Error::Identity("SUPublicEDKey"));
+    }
+    let dictionary = value
+        .as_dictionary_mut()
+        .ok_or(Error::Identity("dictionary"))?;
+    for (name, expected) in [
+        ("SUFeedURL", plist::Value::String(feed.into())),
+        (
+            "SUPublicEDKey",
+            plist::Value::String(public_key.trim().into()),
+        ),
+        ("SUAllowsAutomaticUpdates", plist::Value::Boolean(false)),
+        (
+            "SUVerifyUpdateBeforeExtraction",
+            plist::Value::Boolean(true),
+        ),
+        ("SURequireSignedFeed", plist::Value::Boolean(true)),
+    ] {
+        if dictionary.get(name).is_some_and(|value| value != &expected) {
+            return Err(Error::Identity(name));
+        }
+        dictionary.insert(name.into(), expected);
+    }
+    Ok(value)
+}
+
+/// Returns an empty custom plist for generated platform integration metadata.
+pub fn empty_info_plist() -> plist::Value {
+    plist::Value::Dictionary(plist::Dictionary::new())
+}
