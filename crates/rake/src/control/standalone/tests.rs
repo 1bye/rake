@@ -21,7 +21,8 @@ fn standalone_capabilities_and_validation_do_not_advertise_or_accept_router_acti
     assert_eq!(info.element_inspection, Status::Waiting);
     assert!(info.element_interaction);
     assert!(info.supported_targets.is_empty());
-    assert_eq!(info.idempotency_capacity, 0);
+    // Storage edits use their bounded mutation registry even without a router.
+    assert_eq!(info.idempotency_capacity, 256);
     assert!(
         !info
             .queries
@@ -31,6 +32,7 @@ fn standalone_capabilities_and_validation_do_not_advertise_or_accept_router_acti
     assert_eq!(
         info.commands,
         [
+            "edit_storage",
             "navigate_element",
             "highlight_element",
             "inspect_mode",

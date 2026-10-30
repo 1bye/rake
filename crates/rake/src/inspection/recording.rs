@@ -291,7 +291,8 @@ impl Recording {
     #[cfg(any(feature = "gpui", test))]
     fn push(&mut self, frame: FrameTiming) {
         self.sequence = self.sequence.max(frame.sequence);
-        let bytes = serde_json::to_vec(&frame).map_or(MAX_BYTES, |bytes| bytes.len());
+        let bytes = super::budget::size(&frame, MAX_BYTES);
+
         if bytes >= super::MAX_SNAPSHOT_BYTES - 4096 {
             self.dropped += 1;
             return;

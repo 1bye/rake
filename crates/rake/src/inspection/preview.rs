@@ -65,7 +65,13 @@ impl Store {
 
         #[cfg(feature = "gpui")]
         return super::hit_test(&host.snapshot, point.x as f32, point.y as f32)
-            .cloned()
+            .and_then(|picked| {
+                host.snapshot
+                    .elements
+                    .iter()
+                    .position(|element| std::ptr::eq(element, picked))
+            })
+            .map(|index| host.snapshot.element(index))
             .ok_or(InspectionError::NotRetained);
 
         #[cfg(not(feature = "gpui"))]

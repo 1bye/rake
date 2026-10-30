@@ -135,3 +135,20 @@ blur/opaque state and stale-reference rejection. The occluded variant launches a
 separate cover process, verifies WindowServer reports full occlusion, then checks
 that clicks and scrolling update the inspected presentation in both directions. The browser must additionally
 be checked for decoding, viewport mapping, interactions and reconnect behavior.
+
+
+## Inspection performance regression check
+
+`python3 scripts/test-preview-native.py --benchmark` runs the same native fixture
+checks, warms eight small scroll inputs, then records draw durations while submitting
+25 more inputs. It reports the first retained page (up to 20 actual GPUI draws),
+with median, p95 and maximum wall time. Recording is in memory and stops in `finally`.
+A binary path argument allows comparing preserved builds without changing sources.
+
+On the development Mac, the unoptimized debug fixture measured 52.425 ms median /
+57.304 ms p95 before capture optimization and 12.676 ms median / 13.101 ms p95 after
+it (20 draws each, 2026-10-30). This is about 76% less draw time with inspection and
+callback recording enabled. The comparison uses the same GPUI version and fixture;
+it measures native draw wall time, not unique video FPS, GPU completion or a
+universal performance guarantee. Release builds and other trees need their own
+measurements. The benchmark does not require ScreenCaptureKit video capture.

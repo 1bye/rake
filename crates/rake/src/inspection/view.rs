@@ -2,7 +2,7 @@
 
 // shortcut: opaque/cached GPUI descendants need a future public full-tree capture hook.
 
-use std::panic::Location;
+use std::{cell::RefCell, panic::Location, rc::Rc};
 
 use gpui::{
     App, Bounds, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels,
@@ -13,6 +13,10 @@ use super::{Element, Layout, Snapshot, SourceLocation, Status, Store};
 use crate::router::{EntryId, TabId, WindowId};
 
 mod accessibility;
+mod cache;
+
+pub(super) use cache::BoundaryCache;
+
 #[cfg(feature = "experimental-view")]
 pub(crate) mod authored;
 mod geometry;
@@ -65,6 +69,8 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         profile: None,
         handlers: Vec::new(),
         handlers_truncated: false,
+        cache: None,
+        overrides: Vec::new(),
     }
 }
 
@@ -88,6 +94,8 @@ pub struct Inspected<E: gpui::Element> {
     profile: Option<super::recording::Target>,
     handlers: Vec<(&'static Location<'static>, String)>,
     handlers_truncated: bool,
+    cache: Option<Rc<RefCell<BoundaryCache>>>,
+    overrides: Vec<super::StyleDeclaration>,
 }
 
 impl<E: gpui::Element + Styled> Styled for Inspected<E> {
@@ -195,6 +203,11 @@ impl<E: gpui::Element> Inspected<E> {
     }
 }
 
+struct FrameCapture {
+    capture: Capture,
+    identities: BoundaryIndex,
+}
+
 struct Capture {
     snapshot: Snapshot,
     parents: Vec<Option<String>>,
@@ -202,6 +215,8 @@ struct Capture {
     bytes: usize,
     next_paint: usize,
     candidates: Vec<BoundaryKey>,
+    caches: Vec<Rc<RefCell<BoundaryCache>>>,
+    details: Vec<super::snapshot::Details>,
     scrolls: Vec<gpui::ScrollHandle>,
     navigation: Vec<NavigationTarget>,
 }
@@ -260,7 +275,7 @@ fn reveal_delta(
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct BoundaryKey {
+pub(in crate::inspection) struct BoundaryKey {
     gpui_id: Option<GlobalElementId>,
     kind: &'static str,
     source: &'static Location<'static>,
@@ -271,28 +286,16 @@ struct BoundaryKey {
     view_key: Option<ElementId>,
 }
 
-#[derive(Clone)]
-pub(super) struct BoundaryIdentity {
-    key: BoundaryKey,
-    parent: Option<String>,
-    id: String,
-}
+pub(in crate::inspection) type BoundaryIndex =
+    std::collections::HashMap<(BoundaryKey, Option<String>), String>;
 
 impl Capture {
-    fn identify(&mut self, store: &Store, window: WindowId) -> Vec<BoundaryIdentity> {
+    fn identify(&mut self, store: &Store, window: WindowId) -> BoundaryIndex {
         let mut state = store.0.borrow_mut();
-        let old = state
-            .windows
-            .get(&window)
-            .map(|host| host.identities.as_slice())
-            .unwrap_or_default();
+        let old = state.windows.get(&window).map(|host| &host.identities);
         let mut next = state.next_boundary;
-        let mut identities = Vec::new();
+        let mut identities = BoundaryIndex::new();
 
-        let old: std::collections::HashMap<_, _> = old
-            .iter()
-            .map(|old| ((&old.key, old.parent.as_deref()), old.id.clone()))
-            .collect();
         let indices: std::collections::HashMap<_, _> = self
             .snapshot
             .elements
@@ -325,7 +328,7 @@ impl Capture {
             }
             let parent = parent.and_then(|parent| parent.stable_id.clone());
             let id = old
-                .get(&(key, parent.as_deref()))
+                .and_then(|old| old.get(&(key.clone(), parent.clone())))
                 .cloned()
                 .unwrap_or_else(|| {
                     next = next
@@ -335,11 +338,7 @@ impl Capture {
                 });
 
             self.snapshot.elements[index].stable_id = Some(id.clone());
-            identities.push(BoundaryIdentity {
-                key: key.clone(),
-                parent,
-                id,
-            });
+            identities.insert((key.clone(), parent), id);
         }
 
         state.next_boundary = next;
@@ -379,7 +378,12 @@ impl<E: gpui::Element> IntoElement for Inspected<E> {
 
 impl<E: gpui::Element> gpui::Element for Inspected<E> {
     type RequestLayoutState = (E::RequestLayoutState, Option<gpui::Style>);
-    type PrepaintState = (E::PrepaintState, Option<gpui::AnyElement>, Option<usize>);
+    type PrepaintState = (
+        E::PrepaintState,
+        Option<gpui::AnyElement>,
+        Option<usize>,
+        Option<Box<dyn std::any::Any>>,
+    );
 
     fn id(&self) -> Option<ElementId> {
         self.inner.id()
@@ -444,12 +448,27 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let stable = state
                 .windows
                 .get(&context.window)
-                .and_then(|host| {
-                    host.identities
-                        .iter()
-                        .find(|identity| identity.key == key && identity.parent == context.parent)
-                })
-                .map(|identity| identity.id.clone());
+                .and_then(|host| host.identities.get(&(key, context.parent.clone())))
+                .cloned();
+
+            self.overrides = stable
+                .as_ref()
+                .and_then(|stable| state.edits.get(stable))
+                .map(|edit| edit.current.clone())
+                .unwrap_or_default();
+            self.cache = Some(
+                stable
+                    .as_ref()
+                    .and_then(|stable| {
+                        state
+                            .windows
+                            .get(&context.window)?
+                            .caches
+                            .get(stable)
+                            .cloned()
+                    })
+                    .unwrap_or_default(),
+            );
             self.profile = state.frames.active().then(|| super::recording::Target {
                 store: context.store.clone(),
                 window: context.window,
@@ -550,6 +569,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 bytes: 0,
                 next_paint: 0,
                 candidates: Vec::new(),
+                caches: Vec::new(),
+                details: Vec::new(),
                 scrolls: Vec::new(),
                 navigation: Vec::new(),
             })
@@ -584,15 +605,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             let file = limited(self.source.file(), 512, &mut truncated);
 
             let styles = self.style.as_ref().and_then(|style| {
-                let value = serde_json::to_value(style).ok()?;
+                let value = self
+                    .cache
+                    .as_ref()
+                    .and_then(|cache| cache.borrow_mut().authored(style));
 
-                if serde_json::to_vec(&value).ok()?.len() > 4096 {
-                    truncated = true;
+                truncated |= value.is_none();
 
-                    None
-                } else {
-                    Some(value)
-                }
+                value
             });
 
             let layout = Layout {
@@ -639,7 +659,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 .iter()
                 .take(32)
                 .take_while(|handler| {
-                    bytes += serde_json::to_vec(handler).map_or(8192, |value| value.len());
+                    bytes += super::budget::size(handler, 8192);
+
                     bytes <= 8192
                 })
                 .count();
@@ -681,7 +702,11 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     #[cfg(feature = "experimental-view")]
                     {
                         self.definition.map(|definition| {
-                            definition.capture(std::any::type_name::<E>(), &mut truncated)
+                            self.cache
+                                .as_ref()
+                                .expect("captured boundary cache")
+                                .borrow_mut()
+                                .view(definition, std::any::type_name::<E>(), &mut truncated)
                         })
                     }
                     #[cfg(not(feature = "experimental-view"))]
@@ -723,14 +748,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                         .all(|v| v.is_finite())
                         .then_some(mask)
                 },
-                styles,
+                styles: None,
                 resolved: None,
                 metadata_truncated: truncated,
                 text,
                 text_editable: text::editable(&self.inner),
                 paint_order: None,
                 style_editable: state.1.is_some(),
-                style_overrides: Vec::new(),
+                style_overrides: self.overrides.clone(),
                 accessibility: Some(Box::new(a11y)),
                 handlers,
                 tab_id: owner.map(|owner| owner.0),
@@ -738,11 +763,33 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             };
 
             let index = capture.snapshot.elements.len();
-            let retained = retain(&mut capture.snapshot, element, &mut capture.bytes);
+            // Shared style bytes are charged without walking/copying their JSON again.
+            let mut next_bytes = capture.bytes + styles.as_ref().map_or(0, |style| style.bytes);
+
+            let estimated = self
+                .cache
+                .as_ref()
+                .expect("captured boundary cache")
+                .borrow_mut()
+                .element_bytes(&element);
+
+            let retained =
+                retain_with_size(&mut capture.snapshot, element, &mut next_bytes, estimated);
+
+            if retained.is_some() {
+                capture.bytes = next_bytes;
+            }
 
             retained_index = retained.as_ref().map(|_| index);
             if retained.is_some() {
                 capture.candidates.push(self.boundary_key(id, owner));
+                capture.caches.push(self.cache.clone().unwrap_or_default());
+                capture.details.push(super::snapshot::Details {
+                    styles,
+                    resolved: None,
+                    hovered: false,
+                    measured: true,
+                });
                 capture.navigation.push(NavigationTarget {
                     focus: self.focus.clone(),
                     scrolls: capture.scrolls.clone(),
@@ -776,53 +823,44 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             }
         }
 
+        let mut frame = None;
+
         if let Some(previous) = previous {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
-                accessibility::names(&mut completed.snapshot);
                 let identities = completed.identify(store, *host);
                 for element in &mut completed.snapshot.elements {
                     element.style_editable &= element.stable_id.is_some();
                     element.text_editable &= element.stable_id.is_some();
-                    element.style_overrides = element
-                        .stable_id
-                        .as_ref()
-                        .and_then(|id| {
-                            store
-                                .0
-                                .borrow()
-                                .edits
-                                .get(id)
-                                .map(|edit| edit.current.clone())
-                        })
-                        .unwrap_or_default();
+                    if element.stable_id.is_none() {
+                        element.style_overrides.clear();
+                    }
                 }
-                store.publish(*host, completed.snapshot);
-                #[cfg(target_os = "macos")]
-                store.bind_preview(*host, window, cx);
-                let mut state = store.0.borrow_mut();
-                let host = state
-                    .windows
-                    .get_mut(host)
-                    .expect("published inspection host");
-                host.identities = identities;
-                host.navigation = host
-                    .snapshot
-                    .elements
-                    .iter()
-                    .zip(completed.navigation)
-                    .map(|(element, target)| (element.id.clone(), target))
-                    .collect();
+
+                frame = Some(FrameCapture {
+                    capture: completed,
+                    identities,
+                });
             }
         }
 
-        let overlay = self
-            .root
-            .as_ref()
-            .and_then(|(store, _, host)| overlay(store, *host, window, cx));
+        let overlay = self.root.as_ref().and_then(|(store, _, host)| {
+            overlay(
+                store,
+                *host,
+                frame.as_ref().map(|frame| &frame.capture.snapshot),
+                window,
+                cx,
+            )
+        });
 
-        (result, overlay, retained_index)
+        (
+            result,
+            overlay,
+            retained_index,
+            frame.map(|frame| Box::new(frame) as Box<dyn std::any::Any>),
+        )
     }
 
     fn paint(
@@ -835,27 +873,24 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let previous = self.root.as_ref().and_then(|(store, _, host)| {
-            let snapshot = store
-                .0
-                .borrow()
-                .windows
-                .get(host)?
-                .snapshot
-                .as_ref()
-                .clone();
+        let frame = prepaint
+            .3
+            .take()
+            .and_then(|frame| frame.downcast::<FrameCapture>().ok());
 
-            Some(cx.global_mut::<ActiveCapture>().0.replace(Capture {
-                snapshot,
-                parents: Vec::new(),
-                owners: Vec::new(),
-                bytes: 0,
-                next_paint: 0,
-                candidates: Vec::new(),
-                scrolls: Vec::new(),
-                navigation: Vec::new(),
-            }))
-        });
+        let (previous, identities) = if let Some(frame) = frame {
+            let FrameCapture {
+                capture,
+                identities,
+            } = *frame;
+
+            (
+                Some(cx.global_mut::<ActiveCapture>().0.replace(capture)),
+                Some(identities),
+            )
+        } else {
+            (None, None)
+        };
 
         if let Some(index) = prepaint.2
             && cx.global::<ActiveCapture>().0.is_some()
@@ -864,9 +899,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 &mut self.inner,
                 (&prepaint.0, self.original_style.as_ref()),
                 id,
-                bounds,
                 window,
                 cx,
+                self.cache.as_ref(),
             );
 
             if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut()
@@ -886,7 +921,10 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     width: visible.size.width.into(),
                     height: visible.size.height.into(),
                 });
-                element.resolved = resolved;
+                if let Some((resolved, hovered)) = resolved {
+                    capture.details[index].resolved = Some(resolved);
+                    capture.details[index].hovered = hovered;
+                }
             }
         }
 
@@ -917,8 +955,71 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
                 accessibility::names(&mut completed.snapshot);
                 accessibility::order(&mut completed.snapshot);
-                bound_resolved_styles(&mut completed.snapshot);
-                store.publish(*host, completed.snapshot);
+                let mut remaining =
+                    (super::MAX_CAPTURE_BYTES - 4096).saturating_sub(completed.bytes);
+
+                for (element, details) in completed
+                    .snapshot
+                    .elements
+                    .iter_mut()
+                    .zip(&mut completed.details)
+                {
+                    if let Some(resolved) = &details.resolved {
+                        let data_bytes = resolved.bytes + 256;
+                        let bytes = data_bytes + 16;
+
+                        if bytes > remaining || data_bytes > super::MAX_RESOLVED_STYLE_BYTES {
+                            details.resolved = None;
+                            element.metadata_truncated = true;
+                        } else {
+                            remaining -= bytes;
+                        }
+                    }
+                }
+
+                let navigation = completed.navigation;
+
+                let caches = completed
+                    .snapshot
+                    .elements
+                    .iter()
+                    .zip(completed.caches)
+                    .zip(&completed.details)
+                    .filter_map(|((element, cache), details)| {
+                        if details.resolved.is_none() {
+                            cache.borrow_mut().resolved = None;
+                        }
+
+                        Some((element.stable_id.clone()?, cache))
+                    })
+                    .collect();
+
+                store.publish_captured(
+                    *host,
+                    super::snapshot::Captured {
+                        tree: completed.snapshot,
+                        details: completed.details,
+                    },
+                );
+                #[cfg(target_os = "macos")]
+                store.bind_preview(*host, window, cx);
+                let mut state = store.0.borrow_mut();
+
+                let host = state
+                    .windows
+                    .get_mut(host)
+                    .expect("published inspection host");
+
+                host.identities = identities.unwrap_or_default();
+                host.caches = caches;
+                // Publishing can preserve presentation IDs on a style-only redraw.
+                host.navigation = host
+                    .snapshot
+                    .elements
+                    .iter()
+                    .zip(navigation)
+                    .map(|(element, target)| (element.id.clone(), target))
+                    .collect();
             }
         }
 
@@ -991,10 +1092,10 @@ fn resolved_style<E: gpui::Element>(
     inner: &mut E,
     (prepaint, original): (&E::PrepaintState, Option<&gpui::StyleRefinement>),
     id: Option<&GlobalElementId>,
-    bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
-) -> Option<super::ResolvedStyle> {
+    cache: Option<&Rc<RefCell<BoundaryCache>>>,
+) -> Option<(Rc<super::snapshot::Payload<super::ResolvedStyle>>, bool)> {
     use gpui::Refineable;
     use std::any::Any;
     let hitbox = (prepaint as &dyn Any)
@@ -1030,9 +1131,24 @@ fn resolved_style<E: gpui::Element>(
         .to_pixels(font_size.into(), window.rem_size())
         .into();
     text.font_size = font_size.into();
-    let mut properties = serde_json::to_value(style.subtract(&Default::default())).ok()?;
+    let inputs = cache::StyleInputs {
+        authored,
+        original: original.cloned(),
+        base: base.subtract(&Default::default()),
+        live: style.subtract(&Default::default()),
+        text,
+        rem: window.rem_size(),
+    };
 
-    properties["text"] = serde_json::to_value(text.subtract(&Default::default())).ok()?;
+    let hovered = hitbox.is_some_and(|hitbox| hitbox.is_hovered(window));
+
+    if let Some(cached) = cache.and_then(|cache| cache.borrow().resolved(&inputs)) {
+        return Some((cached, hovered));
+    }
+
+    let mut properties = serde_json::to_value(&inputs.live).ok()?;
+
+    properties["text"] = serde_json::to_value(inputs.text.subtract(&Default::default())).ok()?;
 
     if style.background.is_none() {
         properties["background"] = serde_json::Value::Null;
@@ -1044,26 +1160,37 @@ fn resolved_style<E: gpui::Element>(
 
     properties["opacity"] = serde_json::json!(style.opacity.unwrap_or(1.));
     properties["size"] = serde_json::json!({
-        "width":format!("{}px", f32::from(bounds.size.width)),
-        "height":format!("{}px", f32::from(bounds.size.height)),
+        "width":"0px",
+        "height":"0px",
     });
     resolve_lengths(&mut properties, window.rem_size().into());
 
     let layers = provenance::capture(
         &properties,
-        &serde_json::to_value(original.unwrap_or(&authored)).ok()?,
-        &serde_json::to_value(base.subtract(&Default::default())).ok()?,
-        &serde_json::to_value(style.subtract(&Default::default())).ok()?,
-        original
-            .and_then(|_| serde_json::to_value(&authored).ok())
+        &serde_json::to_value(inputs.original.as_ref().unwrap_or(&inputs.authored)).ok()?,
+        &serde_json::to_value(&inputs.base).ok()?,
+        &serde_json::to_value(&inputs.live).ok()?,
+        inputs
+            .original
+            .as_ref()
+            .and_then(|_| serde_json::to_value(&inputs.authored).ok())
             .as_ref(),
     );
 
-    Some(super::ResolvedStyle {
-        properties,
-        hovered: hitbox.is_some_and(|hitbox| hitbox.is_hovered(window)),
-        layers,
-    })
+    let resolved = super::snapshot::Payload::new(
+        super::ResolvedStyle {
+            properties,
+            hovered: false,
+            layers,
+        },
+        super::MAX_RESOLVED_STYLE_BYTES,
+    );
+
+    if let Some(cache) = cache {
+        cache.borrow_mut().store_resolved(inputs, &resolved);
+    }
+
+    Some((resolved, hovered))
 }
 
 fn resolve_lengths(properties: &mut serde_json::Value, rem_size: f32) {
@@ -1128,6 +1255,7 @@ fn limited(value: &str, limit: usize, truncated: &mut bool) -> String {
 fn overlay(
     store: &Store,
     host: WindowId,
+    current: Option<&Snapshot>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<gpui::AnyElement> {
@@ -1135,7 +1263,17 @@ fn overlay(
     let mut state = store.0.borrow_mut();
 
     state.expire(web_time::Instant::now());
-    let (element, _) = state.windows.get(&host)?.highlight.as_ref()?;
+    let (saved, _) = state.windows.get(&host)?.highlight.as_ref()?;
+
+    let element = if let (Some(current), Some(stable)) = (current, &saved.stable_id) {
+        current
+            .elements
+            .iter()
+            .find(|element| element.stable_id.as_ref() == Some(stable))?
+    } else {
+        saved
+    };
+
     let layout = element.layout?;
     let mask = element.content_mask?;
 
@@ -1477,9 +1615,12 @@ mod tests {
             .iter()
             .flat_map(|frame| &frame.nodes)
             .collect();
-        assert!(nodes.iter().any(|node| node.name == "item-1"
-            && node.phase == super::super::FramePhase::Layout
-            && node.stable_id.is_some()));
+        assert!(
+            nodes.iter().any(|node| node.name == "item-1"
+                && node.phase == super::super::FramePhase::Layout
+                && node.stable_id.is_some()),
+            "{nodes:?}"
+        );
         assert!(
             nodes
                 .iter()
@@ -1727,6 +1868,8 @@ mod tests {
         let one = identity("item-1");
         let two = identity("item-2");
         let root = identity("root");
+        let root_style = store.full_snapshot().details[0].resolved.clone().unwrap();
+
         assert!(one.stable_id.is_some());
         assert_ne!(one.stable_id, two.stable_id);
         assert!(
@@ -1750,7 +1893,37 @@ mod tests {
         draw(cx);
         assert_eq!(identity("item-1").stable_id, one.stable_id);
         assert_eq!(identity("item-2").stable_id, two.stable_id);
-        assert_eq!(identity("root").stable_id, root.stable_id);
+        let resized_root = identity("root");
+
+        assert_eq!(resized_root.stable_id, root.stable_id);
+        assert!(
+            Rc::ptr_eq(
+                &root_style,
+                store.full_snapshot().details[0].resolved.as_ref().unwrap(),
+            ),
+            "auto-sized parents share style metadata across child resize/reorder"
+        );
+
+        for element in [&root, &resized_root] {
+            let expected = serde_json::json!({
+                "width": format!("{}px", element.layout.unwrap().width),
+                "height": format!("{}px", element.layout.unwrap().height),
+            });
+
+            let resolved = element.resolved.as_ref().unwrap();
+
+            assert_eq!(resolved.properties["size"], expected);
+            assert_eq!(
+                resolved
+                    .layers
+                    .iter()
+                    .find(|layer| layer.origin == super::super::StyleOrigin::Layout)
+                    .unwrap()
+                    .properties["size"],
+                expected
+            );
+        }
+
         assert_ne!(
             identity("item-1").id,
             one.id,
@@ -2106,4 +2279,4 @@ mod tests {
     }
 }
 
-use super::{bound_resolved_styles, retain};
+use super::retain_with_size;

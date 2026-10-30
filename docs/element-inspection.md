@@ -324,6 +324,27 @@ Rake inspectors use the paged index when advertised; Chrome delivers branches to
 its frontend lazily. Stable presentation identities preserve selection across
 captures, but removed or ambiguous nodes are never retargeted by name.
 
+## Capture cost and cache lifetime
+
+A frame is published once, after paint, by moving the completed capture into the
+window store. Stable-boundary lookups use a hash index. Authored/refined style JSON,
+resolved properties and provenance are shared immutable payloads; lightweight tree
+pages never clone that data. Full owned metadata is materialized when requested.
+
+Each mounted window caches its last style inputs and bounded source metadata per
+unambiguous stable boundary. Changes to authored styles, inherited text, rem size,
+interaction state or temporary overrides invalidate resolved data. Current hover
+and measured size are applied from the requested frame, including layout provenance,
+so moving/resizing a node does not rebuild unchanged style JSON. Removal, ambiguity,
+capture omission and window detach discard the associated caches. Pinned pages
+retain immutable payloads only for their existing bounded lifetime.
+
+Byte admission uses conservative allocation-free JSON counts with an exact counting
+writer near limits. Unchanged metadata reuses its count across coordinate changes.
+Snapshot and transport limits still apply. Native Unix requests decode and encode
+owned protocol messages on the blocking pool; UI dispatch stays on the local thread.
+The existing 32-connection bound and five-second deadline remain in force.
+
 ## Geometry hook requirements
 
 Picking uses observed paint order for captured boundaries and the paint-time mask

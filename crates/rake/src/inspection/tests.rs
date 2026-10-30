@@ -396,7 +396,7 @@ fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
     let first = store.0.borrow().windows[&WindowId(1)]
         .snapshot
         .as_ref()
-        .clone();
+        .owned();
 
     store.publish(WindowId(1), first);
     assert_eq!(store.pick().unwrap().generation, generation);
@@ -652,4 +652,42 @@ fn picking_uses_paint_order_excludes_unpainted_and_respects_visible_mask() {
     assert_eq!(hit_test(&snapshot, 50., 25.).unwrap().id, "back");
     assert!(hit_test(&snapshot, f32::NAN, 25.).is_none());
     assert!(hit_test(&snapshot, 10., 120.).is_none());
+}
+
+#[test]
+fn shared_details_preserve_owned_replies_and_generation_pinned_pages() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut first = store.begin(0);
+    let mut element = boundary("element-1-0", None, bounds, bounds);
+    element.styles = Some(serde_json::json!({"background":"old"}));
+    first.elements.push(element);
+    store.publish(WindowId(1), first);
+    let pinned = store.tree_page(None, 0).unwrap();
+    assert!(pinned.snapshot.elements[0].styles.is_none());
+    let mut reply = store.element("element-1-0").unwrap();
+    reply.styles.as_mut().unwrap()["background"] = "caller mutation".into();
+    assert_eq!(
+        store.element("element-1-0").unwrap().styles.unwrap()["background"],
+        "old"
+    );
+
+    let mut next = store.begin(0);
+    let mut element = boundary("element-2-0", None, Layout { x: 1., ..bounds }, bounds);
+    element.styles = Some(serde_json::json!({"background":"new"}));
+    next.elements.push(element);
+    store.publish(WindowId(1), next);
+    assert_eq!(
+        store.element("element-1-0").unwrap().styles.unwrap()["background"],
+        "old"
+    );
+    assert_eq!(
+        store.element("element-2-0").unwrap().styles.unwrap()["background"],
+        "new"
+    );
 }

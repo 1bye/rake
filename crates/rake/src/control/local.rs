@@ -1,5 +1,6 @@
 //! Unix-domain development transport. Private discovery directories and sockets
-//! restrict access to the current user. No UI state crosses a thread boundary.
+//! restrict access to the current user. Owned protocol frames are decoded/encoded
+//! on the blocking pool; host dispatch and all UI state remain on the local thread.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -153,15 +154,9 @@ async fn serve_one(stream: Async<UnixStream>, client: HostClient) {
         }
 
         let _response = client.begin_response();
-        let reply = client.request_async(serde_json::from_slice(&bytes)?).await;
-        let mut bytes = serde_json::to_vec(&reply)?;
-
-        if bytes.len() + 1 > MAX_MESSAGE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "control response too large",
-            ));
-        }
+        let request = blocking::unblock(move || serde_json::from_slice(&bytes)).await?;
+        let reply = client.request_async(request).await;
+        let mut bytes = blocking::unblock(move || encode_reply(&reply)).await?;
 
         bytes.push(b'\n');
         reader.get_mut().write_all(&bytes).await?;
@@ -176,9 +171,57 @@ async fn serve_one(stream: Async<UnixStream>, client: HostClient) {
     .await;
 }
 
+fn encode_reply(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
+    struct Bounded(Vec<u8>);
+
+    impl Write for Bounded {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.0.len().saturating_add(bytes.len()) >= MAX_MESSAGE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "control response too large",
+                ));
+            }
+
+            self.0.extend_from_slice(bytes);
+
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = Bounded(Vec::new());
+
+    serde_json::to_writer(&mut writer, value)?;
+
+    Ok(writer.0)
+}
+
 impl Drop for LocalServer {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.manifest);
         let _ = fs::remove_file(&self.socket);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_reply_encoding_preserves_json_and_stops_at_the_transport_limit() {
+        let value = serde_json::json!({"text":"\"\\\né🦀", "values":[1,true,null]});
+        let encoded = encode_reply(&value).unwrap();
+
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&encoded).unwrap(),
+            value
+        );
+        assert!(encode_reply(&"x".repeat(MAX_MESSAGE_BYTES - 3)).is_ok());
+        assert!(encode_reply(&"x".repeat(MAX_MESSAGE_BYTES - 2)).is_err());
+        assert!(encode_reply(&"\0".repeat(MAX_MESSAGE_BYTES / 2)).is_err());
     }
 }

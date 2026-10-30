@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import statistics
 import sys
 import tempfile
 import time
@@ -33,6 +34,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', nargs='?', type=Path, default=ROOT / 'target/debug/rake-preview')
     parser.add_argument('--occluded', action='store_true', help='Cover the real native window before injecting input')
+    parser.add_argument('--benchmark', action='store_true', help='Measure warmed native inspection draw time while scrolling')
     args = parser.parse_args()
     if sys.platform != "darwin":
         raise SystemExit("Requires a macOS GUI session; this test does not silently skip")
@@ -45,7 +47,14 @@ def main():
                 stdout=log, stderr=log)
             cover = None
             try:
-                manifest = eventually(lambda: next((json.loads(p.read_bytes()) for p in control.glob('*.json')), None))
+                def discovery():
+                    for path in control.glob('*.json'):
+                        try:
+                            return json.loads(path.read_bytes())
+                        except (FileNotFoundError, json.JSONDecodeError):
+                            # A manifest may still be flushing its initial write.
+                            continue
+                manifest = eventually(discovery)
                 runtime = manifest["info"]["runtime_id"]
                 inspector = Inspector(DevBridge("http://127.0.0.1:0", directory=control), allow_native=True)
                 def request(value, command=False):
@@ -113,6 +122,24 @@ def main():
                 stale["generation"] = "expired"
                 assert "Err" in request({"type": "preview_input", "point": stale, "input": {"type": "click"}}, command=True)
                 assert count() == "Clicks: 4"
+                if args.benchmark:
+                    for _ in range(8):
+                        input_at(live, {'type':'wheel','dx':0,'dy':64,'phase':'moved'})
+                        time.sleep(.02)
+                    request({'type':'record_frames','enabled':True,'lease_ms':5000}, command=True)
+                    try:
+                        for _ in range(25):
+                            input_at(live, {'type':'wheel','dx':0,'dy':64,'phase':'moved'})
+                            time.sleep(.02)
+                    finally:
+                        request({'type':'record_frames','enabled':False,'lease_ms':0}, command=True)
+                    frames = query({'type':'frames','after':0})['frames']
+                    times = sorted(f['draw_us'] / 1000 for f in frames)
+                    assert len(times) >= 15, f'Insufficient native draws for benchmark: {len(times)}'
+                    print(json.dumps({'benchmark':'native-inspection-scroll','draws':len(times),
+                        'median_draw_ms':round(statistics.median(times),3),
+                        'p95_draw_ms':round(times[min(len(times)-1,int(len(times)*.95))],3),
+                        'max_draw_ms':round(max(times),3)}, sort_keys=True))
                 print("Native preview passed: repeated atomic clicks, bidirectional fractional scrolling, exact Rust-source picking, blur/opaque toggle and stale rejection" + (" while fully occluded" if args.occluded else ""))
             except BaseException:
                 log.seek(0)
