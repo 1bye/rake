@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -50,6 +51,67 @@ class PreviewTests(unittest.TestCase):
         request = self.inspector.requests[0]
         self.assertEqual(request["message"]["type"], "query")
         self.assertEqual(request["message"]["value"]["point"], {"window": "window-1", "native_id": 42, "generation": "current", "x": 100, "y": 80})
+
+    def test_annotation_resolution_follows_stable_ids_and_keeps_exact_targets_scoped(self):
+        element = {'id':'element-current-4', 'stable_id':'boundary-7',
+            'layout':{'x':20,'y':30,'width':80,'height':20}, 'content_mask':{'x':0,'y':0,'width':600,'height':400},
+            'styles':{'must':'not be copied'}, 'source':{'file':'private.rs'}}
+        requests = []
+        def request(runtime, query, command=False):
+            requests.append((runtime, query, command))
+            if query['type'] == 'preview': return [self.window]
+            return {'snapshot':{'capture':'current','elements':[element]}, 'next':None}
+        with patch.object(self.preview, 'request', side_effect=request):
+            result = self.preview.handle('preview_resolve', {'reference':'frame','targets':[
+                {'stable_id':'boundary-7'}, {'id':element['id'],'generation':'current'},
+                {'id':element['id'],'generation':'old'}, {'stable_id':'boundary-removed'}]})
+        self.assertEqual(result['generation'], 'current')
+        self.assertEqual(result['elements'][0]['layout'], element['layout'])
+        self.assertEqual(result['elements'][0], result['elements'][1])
+        self.assertEqual(result['elements'][2:], [None, None])
+        self.assertNotIn('styles', result['elements'][0])
+        self.assertNotIn('source', result['elements'][0])
+        self.assertTrue(all(runtime == 'runtime' and not command for runtime, _, command in requests))
+
+    def test_annotation_resolution_pins_pages_and_rejects_other_window_generations(self):
+        queries = []
+        def request(runtime, query, command=False):
+            queries.append(query)
+            if query['type'] == 'preview': return [self.window]
+            if query['offset'] == 0:
+                return {'snapshot':{'capture':'current','elements':[]}, 'next':256}
+            self.assertEqual(query['generation'], 'current')
+            return {'snapshot':{'capture':'current','elements':[{'id':'new','stable_id':'boundary-7'}]}, 'next':None}
+        with patch.object(self.preview, 'request', side_effect=request):
+            result = self.preview.handle('preview_resolve', {'reference':'frame','targets':[{'stable_id':'boundary-7'}]})
+        self.assertEqual(result['elements'][0]['id'], 'new')
+        self.assertEqual(queries[-1]['offset'],256)
+        with patch.object(self.preview, 'request', side_effect=lambda runtime, query: [] if query['type'] == 'preview' else {'snapshot':{'capture':'foreign','elements':[]}}):
+            with self.assertRaises(BridgeError):
+                self.preview.handle('preview_resolve', {'reference':'frame','targets':[{'stable_id':'boundary-7'}]})
+
+    def test_annotation_resolution_rejects_nonadvancing_pages_and_masks_hidden_targets(self):
+        def request(runtime, query, command=False):
+            if query['type'] == 'preview': return [self.window]
+            return {'snapshot':{'capture':'current','elements':[]}, 'next':0}
+        with patch.object(self.preview, 'request', side_effect=request):
+            with self.assertRaises(BridgeError):
+                self.preview.handle('preview_resolve', {'reference':'frame','targets':[{'stable_id':'boundary-7'}]})
+        hidden = {'id':'hidden', 'stable_id':'boundary-7', 'layout':{'x':0,'y':0,'width':100,'height':20}, 'accessibility':{'hidden':True}}
+        with patch.object(self.preview, 'request', side_effect=lambda runtime, query: [self.window] if query['type'] == 'preview' else {'snapshot':{'capture':'current','elements':[hidden]}, 'next':None}):
+            result = self.preview.handle('preview_resolve', {'reference':'frame','targets':[{'stable_id':'boundary-7'}]})
+        self.assertIsNone(result['elements'][0]['layout'])
+
+    def test_invalid_annotation_targets_and_expired_references_never_reach_runtime(self):
+        for targets in [None, [], [None], [{'stable_id':True}], [{'id':'x'}], [{'stable_id':'x','extra':1}], [{'stable_id':'x'}]*34]:
+            with self.subTest(targets=targets), self.assertRaises(BridgeError):
+                self.preview.handle('preview_resolve', {'reference':'frame','targets':targets})
+        with self.assertRaises(BridgeError):
+            self.preview.handle('preview_resolve', {'reference':'foreign','targets':[{'stable_id':'boundary-7'}]})
+        self.preview.references[0] = ('frame', 'runtime', self.window, time.monotonic() - 6)
+        with self.assertRaises(BridgeError):
+            self.preview.handle('preview_resolve', {'reference':'frame','targets':[{'stable_id':'boundary-7'}]})
+        self.assertEqual(self.inspector.requests, [])
 
     def test_click_is_submitted_once_without_a_retry_key(self):
         self.preview.handle("preview_input", {"reference": "frame", "x": 12, "y": 13, "input": {"type": "click"}})
@@ -194,9 +256,12 @@ class PreviewTests(unittest.TestCase):
                     {"Content-Type": "application/json", "X-Rake-Token": token, "Origin": url})
                 with urllib.request.urlopen(request, timeout=3) as response:
                     self.assertIn("Waiting for the native", json.load(response)["error"])
-                with urllib.request.urlopen(url + "/__rake/preview", timeout=3) as response:
-                    self.assertNotIn(token, response.read().decode())
-                    self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+                for asset in ['preview', 'preview.js', 'preview.css', 'preview-stream.js', 'preview-annotations.js']:
+                    with urllib.request.urlopen(url + '/__rake/' + asset, timeout=3) as response:
+                        self.assertNotIn(token, response.read().decode())
+                        self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+                        if asset.endswith('.js'):
+                            self.assertIn('text/javascript', response.headers['Content-Type'])
             finally:
                 process.terminate()
                 process.wait(timeout=5)

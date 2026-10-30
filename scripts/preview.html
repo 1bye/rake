@@ -3,14 +3,38 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rake · Native preview</title><link rel="stylesheet" href="/__rake/preview.css"><script type="module" src="/__rake/preview.js"></script></head>
 <body>
-<header><strong>Rake <span>Native preview</span></strong><nav aria-label="Preview controls">
-<button id="interact" aria-pressed="true">Interact</button><button id="select" aria-pressed="false">Select element</button>
-<button id="copy" disabled>Copy selection</button><button id="reconnect">Reconnect capture</button></nav></header>
-<p id="status" role="status">Connecting to the native application…</p>
+<header class="topbar">
+  <a class="wordmark" href="/__rake/preview" aria-label="Rake preview">rake<span>/</span><span>preview</span></a>
+  <div class="telemetry"><span class="connection" id="connection"><span class="live-dot"></span><span id="connection-label">Connecting</span></span>
+    <span id="fps" title="Displayed video frames per second">— <span>FPS</span></span>
+    <button id="reconnect" class="icon-button" aria-label="Reconnect capture" title="Reconnect capture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg></button>
+  </div>
+</header>
 <main><section class="canvas" aria-label="Live native window"><div id="stage">
-<canvas id="screen" role="img" aria-label="Live native application preview" hidden></canvas><div id="outline" hidden></div>
-</div></section><aside aria-label="Selected element"><h1>Selection</h1>
-<p id="hint">Choose Select element, then click inside the preview. Selection does not activate the app control.</p>
-<pre id="details"></pre></aside></main>
-<footer>macOS native window · clicks and scrolling · Rake inspection boundaries</footer>
+  <canvas id="screen" role="img" aria-label="Live native application preview" hidden></canvas>
+  <div id="pins" aria-label="Annotation pins"></div><div id="outline" hidden><span id="outline-label"></span></div>
+</div></section><div id="empty-state"><span class="loading-dot"></span>Connecting to your app</div></main>
+<p id="status" class="notice" role="status" hidden></p>
+<div class="bottom-controls">
+  <p id="mode-hint" hidden>Click an element to leave a note <kbd>esc</kbd> to exit</p>
+  <nav class="toolbar" aria-label="Preview controls">
+    <button id="interact" class="tool" aria-label="Interact" aria-pressed="true" title="Interact (V)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 3 13 10-7 1-4 6z"/></svg><span class="tooltip">Interact <kbd>V</kbd></span></button>
+    <button id="select" class="tool" aria-label="Annotate element" aria-pressed="false" title="Annotate element (C)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4M12 8v8m-4-4h8"/></svg><span class="tool-label">Annotate</span><span class="tooltip">Pick an element <kbd>C</kbd></span></button>
+    <span class="toolbar-divider"></span>
+    <div class="annotations-menu" id="annotations-menu">
+      <button id="annotations-toggle" class="tool annotation-toggle" aria-label="Annotations" aria-expanded="false" aria-controls="annotations-panel" title="Annotations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.8 7.8 0 0 1-.9 3.5 8 8 0 0 1-7.1 4.3 7.8 7.8 0 0 1-3.5-.9L3 20l1.6-5.5a7.8 7.8 0 0 1-.9-3.5 8 8 0 0 1 4.3-7.1 7.8 7.8 0 0 1 3.5-.9h.5a8 8 0 0 1 8 8z"/></svg><span id="annotation-count" class="count">0</span></button>
+      <section id="annotations-panel" class="popover annotation-panel" aria-label="Saved annotations" hidden>
+        <div class="popover-heading"><h1>Annotations <span id="list-count">0</span></h1><button id="copy" class="icon-button" aria-label="Copy annotations" title="Copy notes with Rust context" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M15 4H6a2 2 0 0 0-2 2v9"/></svg></button></div>
+        <p id="annotation-empty">A little context goes a long way.<br><span>Pick an element and leave a note.</span></p>
+        <ol id="annotation-list"></ol><p class="panel-footnote">Saved in this browser session · hover to preview</p>
+      </section>
+    </div>
+  </nav>
+</div>
+<form id="composer" class="popover composer" role="dialog" aria-label="Annotate element" hidden>
+  <div class="popover-heading"><span class="draft-label"><span id="draft-number" class="note-number">+</span><strong id="draft-title">New annotation</strong></span><button id="cancel" class="icon-button" type="button" aria-label="Cancel annotation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+  <div class="element-context"><span id="element-name"></span><span id="element-source" title="Rust construction site"></span></div>
+  <label class="sr-only" for="comment">Annotation details</label><textarea id="comment" placeholder="What should change here?" maxlength="2000" rows="4" required></textarea>
+  <div class="composer-footer"><span>Rust context attached</span><button id="save" class="save-button" type="submit">Add note <kbd>↵</kbd></button></div>
+</form>
 </body></html>

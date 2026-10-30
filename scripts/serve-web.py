@@ -207,8 +207,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_error(403, "invalid development host")
             return None
         route = self.path.split("?", 1)[0]
-        if preview and route in {"/__rake/preview", "/__rake/preview.js", "/__rake/preview-stream.js", "/__rake/preview.css"}:
-            filename = {"/__rake/preview": "preview.html", "/__rake/preview.js": "preview.js", "/__rake/preview-stream.js": "preview-stream.js", "/__rake/preview.css": "preview.css"}[route]
+        if preview and route in {"/__rake/preview", "/__rake/preview.js", "/__rake/preview-stream.js", "/__rake/preview-annotations.js", "/__rake/preview.css"}:
+            filename = {"/__rake/preview": "preview.html", "/__rake/preview.js": "preview.js", "/__rake/preview-stream.js": "preview-stream.js", "/__rake/preview-annotations.js": "preview-annotations.js", "/__rake/preview.css": "preview.css"}[route]
             encoded = Path(__file__).with_name(filename).read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8" if filename.endswith(".html") else "text/css; charset=utf-8" if filename.endswith(".css") else "text/javascript; charset=utf-8")

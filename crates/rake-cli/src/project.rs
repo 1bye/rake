@@ -42,6 +42,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
                 include_str!("../../../scripts/preview-stream.js"),
             ),
             (
+                "preview-annotations.js",
+                include_str!("../../../scripts/preview-annotations.js"),
+            ),
+            (
                 "preview.swift",
                 include_str!("../../../scripts/preview.swift"),
             ),

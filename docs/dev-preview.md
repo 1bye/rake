@@ -73,14 +73,38 @@ sidebar thumbnail. This changes only that window's collection behavior, not the
 system preference. **Reconnect capture** restarts the helper after a session or
 permission change.
 
-**Select element** reads the deepest inspected boundary using Rake's existing
-clipping and observed paint order, without activating the control. The browser
-outlines its bounds and displays the Rust construction site, semantic identity,
-text and macro-authored style source metadata. **Copy selection** exports that
-context as JSON. Scrolling works in both Interact and Select element modes;
-selection mode changes only click behavior. Opaque/cached descendants resolve
-to an inspected ancestor.
-Comment pins and agent integration are later work.
+## Annotation workspace
+
+The native window is centered on black and fits the available viewport. A floating,
+borderless toolbar switches between **Interact** (`V`) and **Annotate** (`C`). The
+compact top-right HUD shows live connection state, displayed FPS and reconnect;
+its tooltip retains codec, dimensions and native backdrop details.
+
+In Annotate mode, click an element to write a note in the contextual editor.
+Selection reads the deepest inspected boundary without activating the control.
+Notes include the Rust construction site, semantic/stable identities, text and
+macro-authored style source metadata. `Cmd/Ctrl+Enter` saves; Escape cancels and
+returns to Interact. Scrolling works in either mode. Picking opaque/cached content
+resolves to an inspected ancestor.
+
+The toolbar's annotation badge opens a popover on hover, focus or click. Hover or
+focus a note to outline its element. Clicking a note/pin edits it; the remove
+button deletes it. **Copy annotations** exports the comments and captured Rust
+context as JSON for use with an agent. No notes are sent to an agent automatically.
+
+Up to 32 notes, each with 2000 characters, are stored in this tab's browser session,
+scoped to the runtime and native host. Reloading restores them; a runtime/window
+replacement starts a separate set. Storage errors keep notes usable in memory and
+prompt copying them before closing. There is no repository/source modification,
+server persistence or screenshot storage.
+
+Live hover previews resolve stable identities against bounded, pinned tree pages.
+Ambiguous targets only match their original exact capture; removed, hidden or
+clipped targets never highlight a different element by name. Old positions are
+hidden until refreshed. Geometry lookups run only while annotation UI is active,
+at most twice per second, on a separate authenticated HTTP request so they cannot
+queue ahead of clicks/scrolling on the input WebSocket. Resolution copies only IDs
+and geometry, with page/count/deadline bounds, rather than fetching full styles.
 
 ## Coordinates and lifetime
 

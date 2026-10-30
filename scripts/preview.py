@@ -283,6 +283,8 @@ class Preview:
             with self.lock:
                 self._stop()
             return None
+        if action == 'preview_resolve':
+            return self.resolve(body)
         if action not in {'preview_input', 'preview_select'}:
             raise BridgeError(404, 'Unknown preview endpoint')
         x, y = body.get('x'), body.get('y')
@@ -312,3 +314,51 @@ class Preview:
         point['geometry'] = [round(window[r][k] * 64) for r, k in
             [('frame', 'width'), ('frame', 'height'), ('content', 'x'), ('content', 'y'), ('content', 'width'), ('content', 'height')]]
         return self.request(runtime, {'type': 'preview_input', 'point': point, 'input': value}, command=True)
+
+    def resolve(self, body):
+        """Read current geometry for bounded annotation targets, without native mutation."""
+        targets = body.get('targets')
+        if not isinstance(targets, list) or not 1 <= len(targets) <= 33:
+            raise BridgeError(400, 'Expected up to 33 annotation targets')
+        for target in targets:
+            if not isinstance(target, dict):
+                raise BridgeError(400, 'Invalid annotation target')
+            fields = ('stable_id',) if target.get('stable_id') else ('id', 'generation')
+            if set(target) != set(fields) or any(not isinstance(target.get(k), str) or not 1 <= len(target[k]) <= 128 for k in fields):
+                raise BridgeError(400, 'Invalid annotation identity')
+        with self.lock:
+            saved = next((r for r in self.references if r[0] == body.get('reference')), None)
+        if not saved or time.monotonic() - saved[3] > 5:
+            raise BridgeError(409, 'Preview reference expired')
+        _, runtime, window, _ = saved
+        elements = [None] * len(targets)
+        page = self.request(runtime, {'type':'inspect_tree_page', 'generation':None, 'offset':0})
+        generation = page['snapshot']['capture']
+        # Verify the paged index belongs to this exact native host, not another window.
+        windows = self.request(runtime, {'type':'preview'})
+        if not any(w['window'] == window['window'] and w['native_id'] == window['native_id'] and w['generation'] == generation for w in windows):
+            raise BridgeError(409, 'Annotation frame changed')
+        offset = 0
+        deadline = time.monotonic() + 1.5
+        for _ in range(32):
+            if page['snapshot']['capture'] != generation:
+                raise BridgeError(409, 'Annotation capture changed')
+            boundaries = page['snapshot']['elements']
+            stable = {e['stable_id']:e for e in boundaries if e.get('stable_id')}
+            exact = {e['id']:e for e in boundaries}
+            for index, target in enumerate(targets):
+                element = stable.get(target['stable_id']) if 'stable_id' in target else exact.get(target['id']) if generation == target['generation'] else None
+                if element:
+                    elements[index] = {key:element.get(key) for key in ('id', 'stable_id', 'layout', 'content_mask')}
+                    if (element.get('accessibility') or {}).get('hidden'):
+                        elements[index]['layout'] = None
+            following = page.get('next')
+            if all(element is not None for element in elements) or following is None:
+                return {'generation':generation, 'elements':elements}
+            if time.monotonic() > deadline:
+                raise BridgeError(409, 'Annotation lookup timed out')
+            if type(following) is not int or not offset < following < 8192:
+                raise BridgeError(409, 'Invalid annotation page')
+            offset = following
+            page = self.request(runtime, {'type':'inspect_tree_page', 'generation':generation, 'offset':offset})
+        raise BridgeError(409, 'Annotation tree exceeded its page bound')

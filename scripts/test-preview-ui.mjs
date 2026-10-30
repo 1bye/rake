@@ -30,3 +30,39 @@ wheel.add(.5,1);input=wheel.take();assert.equal(input.dx,32);assert.equal(input.
 assert.equal(wheel.take(true).phase,'ended');assert.equal(wheel.take(true),null);
 wheel.add(10000,-10000);input=wheel.take();assert.equal(input.dx,128000);assert.equal(input.dy,-128000);
 console.log('Preview regressions passed: fragmented binary stream, bounded parser, scaled coordinates and fractional scroll phases');
+
+const annotationCode = readFileSync(new URL('./preview-annotations.js', import.meta.url),'utf8');
+const {Annotations, targetKey, visibleBounds, MAX_ANNOTATIONS} = await import('data:text/javascript;base64,' + Buffer.from(annotationCode).toString('base64'));
+const stored = new Map(), storage = {getItem:key => stored.get(key), setItem:(key, value) => stored.set(key, value)};
+const notes = new Annotations(storage);
+notes.activate('runtime-one', 'window-one');
+const element = {id:'element-1-0',stable_id:'boundary-7',kind:'Div',semantic_id:'save',
+  source:{file:'src/view.rs',line:42},view:{tag:'button',style_sources:[]},
+  layout:{x:10,y:20,width:100,height:50},content_mask:{x:20,y:0,width:40,height:100},
+  resolved:{large:'not retained'},styles:{large:'not retained'}};
+const note = notes.save('  More space here 🦀  ', element, 'one');
+assert.equal(note.comment,'More space here 🦀');
+assert.equal(note.element.resolved,undefined);
+assert.equal(note.element.styles,undefined);
+assert.equal(notes.export().annotations[0].element.source.line,42);
+assert.equal(targetKey(element,'one'),targetKey({...element,id:'element-2-4'},'two'));
+assert.notEqual(targetKey({...element,stable_id:null},'one'),targetKey({...element,stable_id:null},'two'));
+assert.deepEqual(visibleBounds(element,window),{x:20,y:20,width:40,height:50});
+assert.equal(visibleBounds({...element,layout:{x:900,y:0,width:10,height:10}},window),null);
+const restored = new Annotations(storage);restored.activate('runtime-one','window-one');
+assert.equal(restored.items[0].comment,note.comment);
+restored.save('Revised',element,'two',note.id);assert.equal(restored.items.length,1);
+assert.equal(restored.items[0].number,1);
+restored.remove(note.id);assert.equal(restored.items.length,0);
+assert.throws(()=>notes.save(' ',element,'one'),/Write a note/);
+assert.throws(()=>notes.save('x'.repeat(2001),element,'one'),/Write a note/);
+for(let i=1;i<MAX_ANNOTATIONS;i++) notes.save('Note '+i,element,'one');
+assert.throws(()=>notes.save('Too many',element,'one'),/up to 32/);
+notes.activate('runtime-two','window-one');assert.equal(notes.items.length,0);
+notes.activate('runtime-one','window-two');assert.equal(notes.items.length,0);
+storage.setItem('rake-preview-annotations:bad:window','[null,{},false]');
+notes.activate('bad','window');assert.equal(notes.items.length,0);
+const unavailable = new Annotations({getItem:()=>{throw Error('disabled')},setItem:()=>{throw Error('quota')}});
+unavailable.activate('runtime','window');unavailable.save('Still usable',element,'one');
+assert.equal(unavailable.items.length,1);assert.match(unavailable.warning,/kept in memory/);
+console.log('Annotation regressions passed: session persistence, runtime/window isolation, stable identity, clipping, context copy, edits and bounds');

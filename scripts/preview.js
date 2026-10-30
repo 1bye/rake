@@ -1,4 +1,5 @@
 import {Packets, position, Wheel} from './preview-stream.js';
+import {Annotations, targetKey, visibleBounds} from './preview-annotations.js';
 const $ = id => document.getElementById(id);
 const prefix = '#__rake_control=';
 if (location.hash.startsWith(prefix)) {
@@ -8,20 +9,172 @@ if (location.hash.startsWith(prefix)) {
 }
 const token = sessionStorage.getItem('rake-dev-control-token');
 const screen = $('screen'), context = screen.getContext('2d', {alpha:false});
-let current, selected, selecting = false, channel, nextID = 0, paintedEpoch;
+const notes = new Annotations(sessionStorage), geometries = new Map(), pins = new Map();
+let current, selected, selectedGeneration, editingID, hoveredID, anchor, selecting = false, channel, nextID = 0, paintedEpoch;
 let video, codec = typeof VideoDecoder === 'function' ? 'h264' : 'jpeg';
-let latest, paintScheduled = false, draws = 0, fps = 0, lastRate = performance.now(), lastPaint = 0, errorUntil = 0;
+let latest, paintScheduled = false, draws = 0, fps = 0, lastRate = performance.now(), lastPaint = 0;
+let noticeTimer, menuTimer, menuOpen = false, menuPinned = false, resolveTimer, resolving = false, nextResolve = 0;
 const pending = new Map();
 let wheel = new Wheel(), wheelPoint, wheelEnd = false, wheelTimer, inputScheduled = false, hover;
-function status(message) { $('status').textContent = message; }
-function error(message) { errorUntil = performance.now() + 3000; status(message); }
-function clearSelection() { selected = null; $('details').textContent = ''; $('copy').disabled = true; $('outline').hidden = true; }
-function drawOutline() {
-  const bounds = selected?.layout, window = current?.window;
-  if (!bounds || !window) { $('outline').hidden = true; return; }
-  const box = screen.getBoundingClientRect(), sx = box.width / window.frame.width, sy = box.height / window.frame.height;
-  $('outline').hidden = false;
-  Object.assign($('outline').style, {left:(window.content.x + bounds.x)*sx+'px',top:(window.content.y + bounds.y)*sy+'px',width:bounds.width*sx+'px',height:bounds.height*sy+'px'});
+function status(message, kind = 'info') {
+  clearTimeout(noticeTimer);
+  $('status').textContent = message; $('status').dataset.kind = kind; $('status').hidden = false;
+  noticeTimer = setTimeout(() => { $('status').hidden = true; }, kind === 'error' ? 6000 : 2600);
+}
+function error(message) { status(message, 'error'); }
+function connection(message, state = 'connecting') {
+  $('connection').dataset.state = state; $('connection-label').textContent = message;
+  if (state !== 'live') {
+    $('fps').firstChild.textContent = '— ';
+    $('empty-state').hidden = !screen.hidden;
+    $('empty-state').lastChild.textContent = message;
+  }
+}
+function nameOf(element) {
+  return element.view?.tag || element.kind?.split('::').pop().replace(/[<>]/g, '') || 'Element';
+}
+function labelOf(element) { return nameOf(element) + (element.semantic_id ? ' #' + element.semantic_id : ''); }
+function sourceOf(element) { return element.source ? element.source.file + ':' + element.source.line : 'Source unavailable'; }
+function geometryFor(element, generation) {
+  if (!current) return null;
+  const resolved = geometries.get(targetKey(element, generation));
+  if (resolved?.generation === current.window.generation) return resolved.element;
+  return generation === current.window.generation ? element : null;
+}
+function stageBounds(element) {
+  const bounds = visibleBounds(element, current?.window);
+  if (!bounds || screen.hidden) return null;
+  const box = screen.getBoundingClientRect(), window = current.window;
+  const sx = box.width / window.frame.width, sy = box.height / window.frame.height;
+  return {left:(window.content.x + bounds.x)*sx, top:(window.content.y + bounds.y)*sy,
+    width:bounds.width*sx, height:bounds.height*sy};
+}
+function drawOverlays() {
+  for (const note of notes.items) {
+    const bounds = stageBounds(geometryFor(note.element, note.generation)), pin = pins.get(note.id);
+    if (!pin) continue;
+    pin.hidden = !bounds;
+    if (bounds) Object.assign(pin.style, {left:bounds.left+'px', top:bounds.top+'px'});
+    pin.classList.toggle('active', hoveredID === note.id);
+  }
+  const note = notes.items.find(note => note.id === hoveredID);
+  const element = note?.element || selected, generation = note?.generation || selectedGeneration;
+  const bounds = element && stageBounds(geometryFor(element, generation));
+  $('outline').hidden = !bounds;
+  if (bounds) {
+    for (const [key, value] of Object.entries(bounds)) $('outline').style[key] = value+'px';
+    $('outline-label').textContent = labelOf(element);
+  }
+  for (const item of $('annotation-list').children) {
+    const annotation = notes.items.find(note => note.id === item.dataset.id);
+    const live = annotation && geometryFor(annotation.element, annotation.generation);
+    item.querySelector('.annotation-location').textContent = !current ? 'App disconnected'
+      : !live ? 'Position unavailable in this frame' : visibleBounds(live, current.window) ? 'Hover to highlight' : 'Outside the visible window';
+  }
+}
+function fitWindow() {
+  if (!current || screen.hidden) return;
+  const margin = innerWidth <= 600 ? 32 : 64;
+  const scale = Math.min(1, Math.max(1, innerWidth - margin) / current.window.frame.width,
+    Math.max(1, innerHeight - 192) / current.window.frame.height);
+  screen.style.width = current.window.frame.width * scale + 'px';
+  drawOverlays(); positionComposer();
+}
+function closeComposer() {
+  selected = null; editingID = null; $('composer').hidden = true; $('comment').value = '';
+  $('mode-hint').hidden = !selecting; drawOverlays();
+}
+function positionComposer() {
+  if ($('composer').hidden) return;
+  const box = $('composer').getBoundingClientRect(), stage = screen.getBoundingClientRect();
+  const bounds = selected && stageBounds(geometryFor(selected, selectedGeneration));
+  const point = anchor || {x:stage.left + (bounds?.left || 0) + (bounds?.width || stage.width)/2,
+    y:stage.top + (bounds?.top || 0) + (bounds?.height || 0)/2};
+  const x = point.x > innerWidth/2 ? point.x - box.width - 18 : point.x + 18;
+  const y = point.y - 36;
+  $('composer').style.left = Math.max(16, Math.min(innerWidth - box.width - 16, x))+'px';
+  $('composer').style.top = Math.max(70, Math.min(innerHeight - box.height - 110, y))+'px';
+}
+function openComposer(element, generation, note, location) {
+  selected = element; selectedGeneration = generation; editingID = note?.id; anchor = location;
+  hoveredID = null; setMenu(false); $('composer').hidden = false; $('mode-hint').hidden = true;
+  $('draft-number').textContent = note?.number || '+';
+  $('draft-title').textContent = note ? 'Edit annotation' : 'New annotation';
+  $('element-name').textContent = labelOf(element);
+  $('element-source').textContent = sourceOf(element); $('element-source').title = sourceOf(element);
+  $('comment').value = note?.comment || ''; $('save').firstChild.textContent = note ? 'Save note ' : 'Add note ';
+  positionComposer(); drawOverlays(); queueResolution(); $('comment').focus();
+}
+function previewNote(id) { hoveredID = id; drawOverlays(); queueResolution(); }
+function setMenu(open) {
+  clearTimeout(menuTimer); menuOpen = open;
+  if (!open) { menuPinned = false; hoveredID = null; }
+  $('annotations-panel').hidden = !open; $('annotations-menu').classList.toggle('open', open);
+  $('annotations-toggle').setAttribute('aria-expanded', String(open));
+  drawOverlays(); if (open) queueResolution();
+}
+function renderNotes() {
+  $('annotation-count').textContent = $('list-count').textContent = notes.items.length;
+  $('annotations-toggle').classList.toggle('has-notes', notes.items.length > 0);
+  $('annotation-empty').hidden = notes.items.length > 0; $('copy').disabled = !notes.items.length;
+  const retained = new Set(notes.items.map(note => targetKey(note.element, note.generation)));
+  if (selected) retained.add(targetKey(selected, selectedGeneration));
+  for (const key of geometries.keys()) if (!retained.has(key)) geometries.delete(key);
+  $('annotation-list').replaceChildren(); $('pins').replaceChildren(); pins.clear();
+  for (const note of notes.items) {
+    const row = document.createElement('li'); row.className = 'annotation-row'; row.dataset.id = note.id;
+    const button = document.createElement('button'); button.className = 'annotation-item'; button.type = 'button';
+    const number = document.createElement('span'); number.className = 'note-number'; number.textContent = note.number;
+    const content = document.createElement('span'); content.className = 'annotation-copy';
+    const comment = document.createElement('span'); comment.className = 'annotation-comment'; comment.textContent = note.comment;
+    const target = document.createElement('span'); target.className = 'annotation-target'; target.textContent = labelOf(note.element); target.title = sourceOf(note.element);
+    const location = document.createElement('span'); location.className = 'annotation-location';
+    content.append(comment, target, location); button.append(number, content);
+    button.onmouseenter = button.onfocus = () => previewNote(note.id);
+    button.onmouseleave = button.onblur = () => previewNote(null);
+    button.onclick = () => openComposer(note.element, note.generation, note);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'icon-button delete-note';
+    remove.setAttribute('aria-label', 'Delete annotation '+note.number); remove.textContent = '×';
+    remove.onclick = () => { notes.remove(note.id); hoveredID = null; renderNotes(); $('annotations-toggle').focus(); if (notes.warning) error(notes.warning); };
+    row.append(button, remove); $('annotation-list').append(row);
+    const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'pin'; pin.textContent = note.number;
+    pin.setAttribute('aria-label', 'Edit annotation '+note.number); pin.onmouseenter = pin.onfocus = () => previewNote(note.id);
+    pin.onmouseleave = pin.onblur = () => previewNote(null); pin.onclick = () => openComposer(note.element, note.generation, note);
+    pins.set(note.id, pin); $('pins').append(pin);
+  }
+  drawOverlays();
+}
+function queueResolution() {
+  if (resolving || resolveTimer || !current || !(menuOpen || hoveredID || selected)) return;
+  const candidates = menuOpen ? [...notes.items] : notes.items.filter(note => note.id === hoveredID);
+  if (selected) candidates.push({element:selected, generation:selectedGeneration});
+  const targets = [...new Map(candidates.map(note => [targetKey(note.element, note.generation), note])).values()]
+    .filter(note => !geometryFor(note.element, note.generation)
+      && geometries.get(targetKey(note.element, note.generation))?.generation !== current.window.generation);
+  if (!targets.length) return;
+  resolveTimer = setTimeout(async () => {
+    resolveTimer = null; if (!current || !(menuOpen || hoveredID || selected)) return;
+    resolving = true; nextResolve = performance.now() + 500;
+    const runtime = current.runtime_id, window = current.window.window;
+    try {
+      // Geometry lookups use HTTP so paged reads never queue ahead of native input.
+      const response = await fetch('/__rake/preview_resolve', {method:'POST',
+        headers:{'Content-Type':'application/json','X-Rake-Token':token || ''}, signal:AbortSignal.timeout(3000),
+        body:JSON.stringify({reference:current.reference, targets:targets.map(note =>
+          note.element.stable_id ? {stable_id:note.element.stable_id} : {id:note.element.id, generation:note.generation})})});
+      if (!response.ok) throw new Error('Annotation frame unavailable');
+      const result = await response.json();
+      if (current?.runtime_id === runtime && current.window.window === window) {
+        result.elements.forEach((element, index) => {
+          const key = targetKey(targets[index].element, targets[index].generation);
+          if (notes.items.some(note => targetKey(note.element, note.generation) === key)
+            || selected && targetKey(selected, selectedGeneration) === key) geometries.set(key, {generation:result.generation, element});
+        });
+        drawOverlays();
+      }
+    } catch { /* A changing capture is retried while the annotation UI is active. */ }
+    finally { resolving = false; }
+  }, Math.max(0, nextResolve - performance.now()));
 }
 function present(frame, epoch) {
   latest?.frame.close(); latest = {frame, epoch};
@@ -34,13 +187,13 @@ function present(frame, epoch) {
     try {
       if (current?.epoch !== next.epoch) return;
       const w = next.frame.displayWidth || next.frame.width, h = next.frame.displayHeight || next.frame.height;
-      if (screen.width !== w || screen.height !== h) { screen.width = w; screen.height = h; }
-      context.drawImage(next.frame, 0, 0, w, h);
-      screen.hidden = false; screen.style.width = current.window.frame.width + 'px';
+      const resized = screen.width !== w || screen.height !== h || screen.hidden;
+      if (resized) { screen.width = w; screen.height = h; }
+      context.drawImage(next.frame, 0, 0, w, h); screen.hidden = false; $('empty-state').hidden = true;
       paintedEpoch = next.epoch; draws++;
       const now = performance.now(); lastPaint = now;
       if (now - lastRate > 1000) { fps = Math.round(draws * 1000 / (now - lastRate)); draws = 0; lastRate = now; }
-      drawOutline();
+      if (resized) fitWindow();
     } finally { next.frame.close(); }
   });
 }
@@ -89,21 +242,27 @@ async function stream(epoch) {
   }
 }
 function receiveState(next) {
-  if (next.error) { current = null; paintedEpoch = null; video?.abort(); status(next.error); return; }
+  if (next.error) { current = null; paintedEpoch = null; video?.abort(); connection('Waiting for app'); $('connection').title = next.error; drawOverlays(); return; }
   const changed = current?.epoch !== next.epoch;
-  if (changed || current?.window.generation !== next.window.generation) clearSelection();
   current = next;
+  if (notes.activate(next.runtime_id, next.window.window)) {
+    closeComposer(); geometries.clear(); renderNotes();
+  }
   if (changed) {
     paintedEpoch = null; wheel = new Wheel(); wheelPoint = hover = null;
     latest?.frame.close(); latest = null;
-    video?.abort(); video = null;
+    video?.abort(); video = null; fitWindow();
   }
   if (!video) void stream(next.epoch);
   if (next.capture_errors?.h264 && codec === 'h264') {
     codec = 'jpeg'; video?.abort(); video = null; void stream(next.epoch);
     error(next.capture_errors.h264 + ' · Using JPEG fallback.');
   }
-  if (performance.now() > errorUntil) status(`Live · ${codec === 'h264' ? 'H.264 hardware video' : 'JPEG fallback'} · ${performance.now() - lastPaint > 1000 ? 0 : fps} displayed FPS · ${Math.round(next.window.content.width)} × ${Math.round(next.window.content.height)} pt · ${next.window.translucent ? 'translucent' : 'opaque'}`);
+  const live = performance.now() - lastPaint < 2000;
+  connection(live ? 'Live' : 'Connecting', live ? 'live' : 'connecting');
+  $('fps').firstChild.textContent = (live ? fps : '—')+' ';
+  $('connection').title = `${codec === 'h264' ? 'H.264 hardware video' : 'JPEG fallback'} · ${Math.round(next.window.content.width)} × ${Math.round(next.window.content.height)} pt · ${next.window.translucent ? 'translucent' : 'opaque'}`;
+  drawOverlays(); queueResolution();
 }
 function request(action, body = {}) {
   if (channel?.readyState !== WebSocket.OPEN || pending.size >= 8 || channel.bufferedAmount > 32768) return Promise.reject(new Error('Input connection busy or unavailable'));
@@ -114,7 +273,7 @@ function request(action, body = {}) {
   });
 }
 function connect() {
-  if (!token) { status('Open the authenticated preview URL printed by rake dev.'); return; }
+  if (!token) { connection('Authentication required', 'error'); error('Open the authenticated preview URL printed by rake dev.'); return; }
   channel = new WebSocket(`ws://${location.host}/__rake/preview_control`, ['rake-preview-v1', 'rake-token.' + token]);
   channel.onmessage = event => {
     const message = JSON.parse(event.data);
@@ -128,7 +287,7 @@ function connect() {
   channel.onclose = () => {
     for (const item of pending.values()) item.reject(new Error('Preview input disconnected'));
     pending.clear(); current = null; paintedEpoch = null; video?.abort(); video = null;
-    status('Reconnecting to the native app…'); setTimeout(connect, 1000);
+    drawOverlays(); connection('Reconnecting'); setTimeout(connect, 1000);
   };
 }
 function point(event) {
@@ -138,14 +297,8 @@ function point(event) {
 }
 async function send(action, position, input) {
   if (!position) return;
-  try {
-    const result = await request(action, {...position, ...(input ? {input} : {})});
-    if (action === 'preview_select') {
-      selected = result;
-      $('details').textContent = JSON.stringify({name:result.view?.tag || result.kind,kind:result.kind,id:result.semantic_id,source:result.source,style_sources:result.view?.style_sources,layout:result.layout,text:result.text}, null, 2);
-      $('copy').disabled = false; drawOutline();
-    }
-  } catch (failure) { error(failure.message); }
+  try { return await request(action, {...position, ...(input ? {input} : {})}); }
+  catch (failure) { error(failure.message); }
 }
 function scheduleInput() {
   if (inputScheduled) return;
@@ -166,13 +319,43 @@ function scheduleInput() {
 }
 function mode(value) {
   selecting = value; hover = null;
-  document.body.classList.toggle('selecting', value);
+  document.body.classList.toggle('selecting', value); $('mode-hint').hidden = !value || !$('composer').hidden;
   $('select').setAttribute('aria-pressed', String(value)); $('interact').setAttribute('aria-pressed', String(!value));
 }
 $('select').onclick = () => mode(true);
-$('interact').onclick = () => mode(false);
+$('interact').onclick = () => { mode(false); closeComposer(); };
 $('reconnect').onclick = () => { void request('preview_restart').catch(failure => error(failure.message)); };
-screen.addEventListener('click', event => { event.preventDefault(); hover = null; void send(selecting ? 'preview_select' : 'preview_input', point(event), selecting ? null : {type:'click'}); });
+$('cancel').onclick = () => { closeComposer(); $('select').focus(); };
+$('composer').onsubmit = event => {
+  event.preventDefault(); if (!selected) return;
+  try {
+    notes.save($('comment').value, selected, selectedGeneration, editingID);
+    closeComposer(); renderNotes(); $('select').focus();
+    status(notes.warning || 'Annotation saved', notes.warning ? 'error' : 'info');
+  } catch (failure) { error(failure.message); }
+};
+$('comment').onkeydown = event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); $('composer').requestSubmit(); } };
+$('annotations-menu').onmouseenter = () => setMenu(true);
+$('annotations-menu').onmouseleave = () => { if (!menuPinned) menuTimer = setTimeout(() => setMenu(false), 160); };
+$('annotations-menu').onfocusin = () => setMenu(true);
+$('annotations-menu').onfocusout = event => { if (!event.currentTarget.contains(event.relatedTarget) && !menuPinned) setMenu(false); };
+$('annotations-toggle').onclick = () => { if (menuPinned) setMenu(false); else { menuPinned = true; setMenu(true); } };
+document.addEventListener('pointerdown', event => { if (!$('annotations-menu').contains(event.target)) setMenu(false); });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { closeComposer(); setMenu(false); mode(false); $('interact').focus(); return; }
+  if (event.metaKey || event.ctrlKey || event.altKey || event.target.closest('input,textarea,[contenteditable=true]')) return;
+  if (event.key.toLowerCase() === 'c') { event.preventDefault(); mode(true); }
+  if (event.key.toLowerCase() === 'v') { event.preventDefault(); mode(false); closeComposer(); }
+});
+screen.addEventListener('click', async event => {
+  event.preventDefault(); hover = null;
+  const position = point(event); if (!position) return;
+  if (!selecting) { void send('preview_input', position, {type:'click'}); return; }
+  if (!$('composer').hidden) { $('comment').focus(); return; }
+  const runtime = current.runtime_id, generation = current.window.generation;
+  const element = await send('preview_select', position);
+  if (element && current?.runtime_id === runtime) openComposer(element, generation, null, {x:event.clientX, y:event.clientY});
+});
 screen.addEventListener('wheel', event => {
   event.preventDefault(); const next = point(event); if (!next) return;
   const multiplier = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? current.window.content.height : 1;
@@ -183,9 +366,11 @@ screen.addEventListener('wheel', event => {
 screen.addEventListener('mousemove', event => { if (!selecting) { hover = point(event); scheduleInput(); } });
 screen.addEventListener('mouseleave', () => { hover = null; });
 $('copy').onclick = async () => {
-  try { await navigator.clipboard.writeText(JSON.stringify({runtime_id:current?.runtime_id,element:selected},null,2)); status('Selection context copied'); }
+  try { await navigator.clipboard.writeText(JSON.stringify(notes.export(), null, 2)); status('Annotations and Rust context copied'); }
   catch (failure) { error(failure.message); }
 };
-new ResizeObserver(drawOutline).observe(screen);
+new ResizeObserver(() => { drawOverlays(); positionComposer(); }).observe(screen);
+new ResizeObserver(positionComposer).observe($('composer'));
+window.addEventListener('resize', fitWindow);
 setInterval(() => { if (channel?.readyState === WebSocket.OPEN && pending.size < 4) void request('preview_state').catch(() => {}); }, 5000);
-connect();
+renderNotes(); connect();
