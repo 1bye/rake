@@ -27,6 +27,12 @@ def sign(key, message):
         path.unlink()
 
 
+class FeedHandler(http.server.SimpleHTTPRequestHandler):
+    # Keep explicitly framed responses alive. HTTP/1.0 connection-delimited
+    # responses otherwise depend on Python/Schannel TLS shutdown behavior.
+    protocol_version = 'HTTP/1.1'
+
+
 class TestFeed:
     def __init__(self, root):
         self.root = pathlib.Path(root)
@@ -46,7 +52,7 @@ class TestFeed:
         public = execute('openssl', 'pkey', '-in', self.key, '-pubout', '-outform', 'DER')
         assert len(public) == 44 and public[:12] == bytes.fromhex('302a300506032b6570032100')
         self.public_key = public[-32:]
-        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(self.site))
+        handler = functools.partial(FeedHandler, directory=str(self.site))
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(self.private / 'server.pem', self.private / 'server.key')
