@@ -253,6 +253,16 @@ fn system(name: &str) -> bool {
         ]
         .contains(&name)
 }
+fn pe_architecture(path: &Path) -> Result<object::Architecture, Error> {
+    let bytes = fs::read(path)?;
+    let file =
+        object::File::parse(bytes.as_slice()).map_err(|error| Error::Tool(error.to_string()))?;
+    if file.format() != object::BinaryFormat::Pe {
+        return Err(Error::Tool("native dependency is not a PE image".into()));
+    }
+    Ok(file.architecture())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,14 +287,4 @@ mod tests {
         assert!(!system("gstcoreelements.dll"));
         assert!(!dll_name("../codec.dll"));
     }
-}
-
-fn pe_architecture(path: &Path) -> Result<object::Architecture, Error> {
-    let bytes = fs::read(path)?;
-    let file =
-        object::File::parse(bytes.as_slice()).map_err(|error| Error::Tool(error.to_string()))?;
-    if file.format() != object::BinaryFormat::Pe {
-        return Err(Error::Tool("native dependency is not a PE image".into()));
-    }
-    Ok(file.architecture())
 }
