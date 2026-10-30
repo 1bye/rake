@@ -25,3 +25,14 @@ Contents are read from the workspace on request, rather than reconstructed from
 the compiled binary. Editing source on disk can therefore precede runtime replacement.
 Source streams retain at most eight files, return UTF-8-safe chunks and reject
 invalid offsets/sizes. Dropping the owning session revokes its file grants.
+
+Chrome's Open file picker uses the captured file catalog. Resource content search
+supports case-sensitive/insensitive text and Rust-regex syntax through
+`Page.searchInResource`, with zero-based line numbers and full matching lines.
+Queries are limited to 4096 bytes. Searches over 1000 matching lines fail explicitly;
+narrow the query or search within the opened file instead of accepting partial results.
+Chrome's Go to line operates on the loaded text. `Rake.getSourceLocation` and
+`Rake.openSource` additionally accept `{url,lineNumber,columnNumber}` for a captured
+source URL. CDP coordinates are zero-based, with UTF-16 columns; invalid lines,
+columns and split surrogate pairs are rejected. The system default editor opens
+the file; its association determines whether line navigation is available.

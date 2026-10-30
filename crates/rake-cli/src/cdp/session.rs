@@ -495,6 +495,10 @@ impl Session {
                 self.control(self.dom.navigation_command(method, &request.params)?)?;
                 Ok(json!({}))
             }
+            "Rake.getSourceLocation" => {
+                Ok(serde_json::to_value(self.source_location(&request.params)?)
+                    .expect("source location serialization"))
+            }
             "Rake.openSource" => {
                 let location = self.source_location(&request.params)?;
                 crate::source::open(&location)
@@ -821,6 +825,7 @@ impl Session {
                     json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources(),"childFrames":self.sources.documents()}}),
                 )
             }
+            "Page.searchInResource" => self.sources.search(&request.params),
             "Page.getResourceContent" => {
                 Ok(json!({"content":self.source_content(&request.params)?,"base64Encoded":false}))
             }
@@ -1578,6 +1583,9 @@ impl Session {
         &mut self,
         selector: &Value,
     ) -> std::result::Result<rake_protocol::inspection::SourceLocation, Error> {
+        if selector.get("url").is_some() {
+            return self.sources.site(selector);
+        }
         self.refresh_dom()?;
         let node = self.dom.source_node(selector)?;
         self.load_details(node)?;

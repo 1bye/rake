@@ -196,16 +196,51 @@ impl Sources {
             .collect()
     }
 
-    pub fn content(&self, params: &Value) -> Result<String, Error> {
-        let url = params["url"].as_str().unwrap_or_default();
-        let location = self
-            .catalog
+    fn location(&self, url: &str) -> Result<SourceLocation, Error> {
+        self.catalog
             .lock()
             .ok()
             .and_then(|catalog| catalog.get(url).cloned())
             .or_else(|| self.locations.get(url).cloned())
-            .ok_or_else(|| Error::new(-32602, "Source URL was not captured in this session"))?;
+            .ok_or_else(|| Error::new(-32602, "Source URL was not captured in this session"))
+    }
+
+    pub fn content(&self, params: &Value) -> Result<String, Error> {
+        let location = self.location(params["url"].as_str().unwrap_or_default())?;
         crate::source::read(&location).map_err(|error| Error::new(-32000, error.to_string()))
+    }
+
+    pub fn search(&self, params: &Value) -> Result<Value, Error> {
+        search(&self.content(params)?, params)
+    }
+
+    pub fn site(&self, params: &Value) -> Result<SourceLocation, Error> {
+        let mut location = self.location(params["url"].as_str().unwrap_or_default())?;
+        let text = self.content(params)?;
+        let line = coordinate(params, "lineNumber")?;
+        let column = coordinate(params, "columnNumber")?;
+        let line_text = text
+            .split('\n')
+            .nth(line)
+            .ok_or_else(|| Error::new(-32602, "Source line is outside the file"))?;
+        let mut units = 0;
+        let mut chars = 0;
+        for character in line_text.chars() {
+            if units == column {
+                break;
+            }
+            units += character.len_utf16();
+            chars += 1;
+        }
+        if units != column {
+            return Err(Error::new(
+                -32602,
+                "Source column is outside the line or splits a UTF-16 character",
+            ));
+        }
+        location.line = (line + 1) as u32;
+        location.column = (chars + 1) as u32;
+        Ok(location)
     }
 
     pub fn stream(&mut self, text: String) -> Result<Value, Error> {
@@ -277,6 +312,51 @@ impl Sources {
     }
 }
 
+fn coordinate(params: &Value, key: &str) -> Result<usize, Error> {
+    params
+        .get(key)
+        .map_or(Some(0), Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| Error::new(-32602, format!("{key} must be a nonnegative integer")))
+}
+
+fn search(text: &str, params: &Value) -> Result<Value, Error> {
+    let query = params["query"]
+        .as_str()
+        .filter(|query| !query.is_empty() && query.len() <= 4096)
+        .ok_or_else(|| Error::new(-32602, "Source query must contain 1–4096 bytes"))?;
+    let flag = |key| {
+        params
+            .get(key)
+            .map_or(Some(false), Value::as_bool)
+            .ok_or_else(|| Error::new(-32602, format!("{key} must be a boolean")))
+    };
+    let pattern = if flag("isRegex")? {
+        query.to_owned()
+    } else {
+        regex::escape(query)
+    };
+    let regex = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!flag("caseSensitive")?)
+        .size_limit(256 * 1024)
+        .build()
+        .map_err(|error| Error::new(-32602, error.to_string()))?;
+    let mut matches = Vec::new();
+    for (line, content) in text.split('\n').enumerate() {
+        let content = content.strip_suffix('\r').unwrap_or(content);
+        if regex.is_match(content) {
+            if matches.len() == 1000 {
+                return Err(Error::new(
+                    -32000,
+                    "Source search exceeds 1000 matching lines; narrow the query or search the opened file",
+                ));
+            }
+            matches.push(json!({"lineNumber":line,"lineContent":content}));
+        }
+    }
+    Ok(json!({"result":matches}))
+}
+
 fn file_url(prefix: &str, path: &str) -> Option<String> {
     let mut url = url::Url::parse(prefix).ok()?;
     {
@@ -291,6 +371,33 @@ fn file_url(prefix: &str, path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_preserves_line_numbers_and_rejects_partial_results() {
+        let text = "first\r\ncafé 🙂\nCafé\n";
+        assert_eq!(
+            search(text, &json!({"query":"CAFÉ"})).unwrap()["result"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            search(text, &json!({"query":"café", "caseSensitive":true})).unwrap()["result"][0]["lineNumber"],
+            1
+        );
+        assert_eq!(
+            search(
+                text,
+                &json!({"query":"^C.*", "isRegex":true,"caseSensitive":true})
+            )
+            .unwrap()["result"][0]["lineNumber"],
+            2
+        );
+        assert!(search(text, &json!({"query":"[", "isRegex":true})).is_err());
+        assert!(search(text, &json!({"query":""})).is_err());
+        assert!(search(&"x\n".repeat(1001), &json!({"query":"x"})).is_err());
+    }
 
     #[test]
     fn source_grants_expire_and_streams_validate_unicode_offsets() {
