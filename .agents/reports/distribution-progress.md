@@ -267,3 +267,18 @@ removed. The focused Windows checkpoint 41106825841 exposed platform-specific
 console help output; successful stdout/stderr are now both inspected and ANSI
 formatting is stripped before checking an exact version token. Native tool checks
 now run before Cargo compilation; another broad native matrix is not needed.
+
+Windows focused checkpoint 41108529192 passed. The native fixture created both
+Velopack versions through the Rust CLI, installed them, executed relocated resource
+reads, verified user data through N-to-N+1 installer upgrade, and uninstalled.
+The early Rust SDK startup hook also passed. This closes native P5 Velopack
+packaging/install acceptance; SDK feed-driven updates and guarded restart remain
+separate P7/P8 tests. Together with checkpoint 41104892784, native Windows MSIX
+signing/install/upgrade and real GPUI NSIS build gates are established.
+
+P8 follow-up: final records now carry the public update policy used by their
+format build. Publication rejects destination/channel/key conflicts with that
+policy. Source manifests and metadata no longer satisfy required native package
+gates; Linux repository input selection excludes recipe/manifest/toolchain files.
+RPM verification uses an isolated public key database instead of changing host
+trust. APT/RPM native repository upgrade acceptance is added to the Linux fixture.

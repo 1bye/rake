@@ -121,6 +121,13 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
             )?;
         }
         Format::Rpm => {
+            let keyring = input.output.join(".rpm-keyring");
+            fs::create_dir(&keyring)?;
+            run(Command::new("rpmkeys")
+                .arg("--dbpath")
+                .arg(&keyring)
+                .arg("--import")
+                .arg(input.output.join("public-key.asc")))?;
             for package in &staged {
                 run(Command::new("rpmsign")
                     .args([
@@ -129,8 +136,13 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
                         "--addsign",
                     ])
                     .arg(package))?;
-                run(Command::new("rpmkeys").arg("--checksig").arg(package))?;
+                run(Command::new("rpmkeys")
+                    .arg("--dbpath")
+                    .arg(&keyring)
+                    .arg("--checksig")
+                    .arg(package))?;
             }
+            fs::remove_dir_all(&keyring)?;
             run(Command::new("createrepo_c").arg(input.output))?;
             let metadata = input.output.join("repodata/repomd.xml");
             sign(input, &metadata, &metadata.with_extension("xml.asc"), false)?;

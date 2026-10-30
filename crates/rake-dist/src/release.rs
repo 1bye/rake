@@ -120,6 +120,48 @@ fn inputs(request: &ReleaseRequest) -> Result<Vec<Input>, Error> {
             if !source.is_file() {
                 return Err(fail("release requires regular-file artifacts"));
             }
+            if request.updates_enabled {
+                let policy = artifact
+                    .update_policy
+                    .as_ref()
+                    .ok_or_else(|| fail("release update policy missing; rebuild the artifact"))?;
+                policy.validate()?;
+                let root = match request
+                    .config
+                    .publisher
+                    .as_ref()
+                    .ok_or_else(|| fail("publisher missing"))?
+                {
+                    Publisher::Github { repository, .. } => {
+                        format!("https://github.com/{repository}/releases/latest/download")
+                    }
+                    Publisher::Directory { public_url, .. }
+                    | Publisher::Https { public_url, .. } => {
+                        public_url.trim_end_matches('/').to_owned()
+                    }
+                };
+                if policy.identifier != request.identifier
+                    || policy.version != distribution.version
+                    || policy.target != distribution.target
+                    || policy.format != artifact.format
+                    || policy.channel != request.channel
+                    || policy
+                        .base_url
+                        .as_deref()
+                        .is_none_or(|value| value.trim_end_matches('/') != root)
+                {
+                    return Err(fail(
+                        "release destination/channel conflicts with compiled artifact update policy",
+                    ));
+                }
+                for (provider, key) in &policy.public_keys {
+                    if request.public_keys.get(provider) != Some(key) {
+                        return Err(fail(
+                            "release signing public key conflicts with compiled artifact policy",
+                        ));
+                    }
+                }
+            }
             let platform = if distribution.target == "universal-apple-darwin" {
                 crate::Platform::Macos
             } else {
@@ -148,7 +190,8 @@ fn inputs(request: &ReleaseRequest) -> Result<Vec<Input>, Error> {
                     "public Windows installers require verified Authenticode",
                 ));
             }
-            if distribution.version == request.version {
+            if distribution.version == request.version && package_payload(artifact.format, &source)
+            {
                 matrix.insert((distribution.target.clone(), artifact.format));
             }
             output.push(Input {
@@ -401,7 +444,9 @@ fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Erro
             let packages = inputs
                 .iter()
                 .filter(|input| {
-                    input.distribution.target == *target && input.artifact.format == *format
+                    input.distribution.target == *target
+                        && input.artifact.format == *format
+                        && package_payload(*format, &input.source)
                 })
                 .map(|input| input.source.clone())
                 .collect::<Vec<_>>();
@@ -1046,6 +1091,7 @@ mod tests {
                 linux: None,
                 build_number: None,
                 native_identity: BTreeMap::new(),
+                update_policy: None,
             }],
         };
         files::write_json(&input.join("distribution.json"), &distribution).unwrap();
@@ -1155,6 +1201,50 @@ mod tests {
         );
         assert!(publish(&request, &AtomicBool::new(true)).is_err());
         assert!(!published.join("stable").exists());
+    }
+    #[test]
+    fn metadata_files_do_not_satisfy_package_gates_and_compiled_policy_is_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = fixture(root.path(), "1.0.0");
+        let manifest = request.distributions[0].join("distribution.json");
+        let mut distribution: Distribution =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        distribution.artifacts[0].format = Format::Flatpak;
+        request
+            .config
+            .required
+            .get_mut("x86_64-unknown-linux-gnu")
+            .unwrap()[0] = Format::Flatpak;
+        files::write_json(&manifest, &distribution).unwrap();
+        assert!(publish(&request, &AtomicBool::new(false)).is_err());
+        assert!(!root.path().join("published").exists());
+        distribution.artifacts[0].format = Format::Tar;
+        request
+            .config
+            .required
+            .get_mut("x86_64-unknown-linux-gnu")
+            .unwrap()[0] = Format::Tar;
+        request.updates_enabled = true;
+        distribution.artifacts[0].update_policy = Some(rake_dist_core::UpdateBinding {
+            schema_version: 1,
+            identifier: request.identifier.clone(),
+            version: request.version.clone(),
+            package_version: request.version.clone(),
+            target: distribution.target.clone(),
+            format: Format::Tar,
+            owner: rake_dist_core::UpdateOwner::External,
+            channel: "beta".into(),
+            base_url: Some("https://other.example.test".into()),
+            public_keys: BTreeMap::new(),
+        });
+        files::write_json(&manifest, &distribution).unwrap();
+        assert!(
+            publish(&request, &AtomicBool::new(false))
+                .unwrap_err()
+                .to_string()
+                .contains("compiled artifact update policy")
+        );
+        assert!(!root.path().join("published").exists());
     }
     #[test]
     fn appinstaller_preserves_actual_native_identity_and_escapes_xml() {
@@ -1275,5 +1365,28 @@ mod signature_tests {
         changed[100] ^= 1;
         assert!(verify_sparkle_feed(&changed, key).is_err());
         assert!(verify_sparkle_feed(feed, &[7; 32]).is_err());
+    }
+}
+
+fn package_payload(format: Format, path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match format {
+        Format::App => false,
+        Format::Dmg => name.ends_with(".dmg"),
+        Format::Zip => name.ends_with(".zip"),
+        Format::Tar => name.ends_with(".tar.gz") || name.ends_with(".tar"),
+        Format::Nsis | Format::Velopack => name.ends_with(".exe"),
+        Format::Msi => name.ends_with(".msi"),
+        Format::Msix => name.ends_with(".msix"),
+        Format::Deb => name.ends_with(".deb"),
+        Format::Rpm => name.ends_with(".rpm"),
+        Format::Arch => name.contains(".pkg.tar."),
+        Format::Appimage => name.ends_with(".appimage"),
+        Format::Flatpak => name.ends_with(".flatpak"),
+        _ => false,
     }
 }

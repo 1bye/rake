@@ -74,6 +74,9 @@ pub struct Artifact {
     /// Public managed package identity needed by native publication metadata.
     #[serde(default)]
     pub native_identity: std::collections::BTreeMap<String, String>,
+    /// Public update policy used by this format's build and signed installation.
+    #[serde(default)]
+    pub update_policy: Option<rake_dist_core::UpdateBinding>,
 }
 
 /// Compatibility evidence from the actual Linux staged executable and libraries.
@@ -789,6 +792,32 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 trust: trust_record,
                 linux: linux_evidence.clone(),
                 build_number: config.build_number.clone(),
+                update_policy: Some(rake_dist_core::UpdateBinding {
+                    schema_version: 1,
+                    identifier: plan.identifier().into(),
+                    version: plan.version().into(),
+                    package_version: item.version().version.clone(),
+                    target: target.clone(),
+                    format: item.format(),
+                    owner: item.update_owner(),
+                    channel: config
+                        .updates
+                        .channel
+                        .clone()
+                        .unwrap_or_else(|| "stable".into()),
+                    base_url: config.updates.base_url.clone(),
+                    public_keys: descriptor
+                        .updates
+                        .public_keys
+                        .iter()
+                        .map(|(provider, path)| {
+                            Ok((
+                                provider.clone(),
+                                fs::read(files::confined(&resource_stage, path)?)?,
+                            ))
+                        })
+                        .collect::<Result<_, Error>>()?,
+                }),
                 native_identity: [
                     ("msix_name", Some(plan.identifier())),
                     ("msix_publisher", config.windows.msix.publisher.as_deref()),
