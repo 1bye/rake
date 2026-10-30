@@ -69,8 +69,13 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
         ));
     }
     fs::write(input.output.join("public-key.asc"), &public)?;
-    let packages = input.output.join("packages");
-    fs::create_dir(&packages)?;
+    let packages = if input.format == Format::Arch {
+        input.output.to_owned()
+    } else {
+        let packages = input.output.join("packages");
+        fs::create_dir(&packages)?;
+        packages
+    };
     let mut staged = Vec::new();
     for source in input.packages {
         if source.is_symlink() || !source.is_file() {
