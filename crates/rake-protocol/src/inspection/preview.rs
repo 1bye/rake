@@ -17,6 +17,9 @@ pub struct Window {
     pub frame: Layout,
     /// GPUI content rectangle within the captured native window.
     pub content: Layout,
+    /// Whether WindowServer considers the window fully covered on this desktop.
+    #[serde(default)]
+    pub occluded: bool,
     /// Whether the native window is nonopaque; this does not prove that blur is enabled.
     pub translucent: bool,
 }

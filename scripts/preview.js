@@ -174,7 +174,7 @@ $('interact').onclick = () => mode(false);
 $('reconnect').onclick = () => { void request('preview_restart').catch(failure => error(failure.message)); };
 screen.addEventListener('click', event => { event.preventDefault(); hover = null; void send(selecting ? 'preview_select' : 'preview_input', point(event), selecting ? null : {type:'click'}); });
 screen.addEventListener('wheel', event => {
-  event.preventDefault(); const next = point(event); if (!next || selecting) return;
+  event.preventDefault(); const next = point(event); if (!next) return;
   const multiplier = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? current.window.content.height : 1;
   wheel.add(event.deltaX * multiplier, event.deltaY * multiplier); wheelPoint = next; wheelEnd = false;
   clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { wheelEnd = true; scheduleInput(); }, 100);

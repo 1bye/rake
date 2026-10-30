@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 default = ["gpui"]
-devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]
+devtools = ["rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
 devtools-memory = ["devtools", "dep:backtrace"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
 view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]

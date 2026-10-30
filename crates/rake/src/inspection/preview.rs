@@ -188,6 +188,7 @@ impl Store {
                     // Injected input bypasses the platform's normal frame scheduling path.
                     // Inactive preview windows must publish the resulting state as well.
                     window.refresh();
+                    native::request_frame(window, cx);
                 })
                 .map_err(|_| InspectionError::NotRetained)?;
 
@@ -280,6 +281,38 @@ pub(super) mod native {
         }
     }
 
+    pub(super) fn request_frame(window: &Window, cx: &gpui::App) {
+        let Ok(handle) = HasWindowHandle::window_handle(window) else {
+            return;
+        };
+
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return;
+        };
+
+        // SAFETY: GPUI owns this borrowed NSView, and this call runs on its UI thread.
+        let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+
+        if view.window().is_none_or(|native| {
+            native
+                .occlusionState()
+                .contains(objc2_app_kit::NSWindowOcclusionState::Visible)
+        }) {
+            return;
+        }
+
+        if let Some(layer) = view.layer() {
+            // GPUI pauses its display link when occluded. Run the layer delegate after
+            // this App update ends, since it re-enters GPUI to draw and present.
+            cx.foreground_executor()
+                .spawn(async move {
+                    layer.setNeedsDisplay();
+                    layer.displayIfNeeded();
+                })
+                .detach();
+        }
+    }
+
     fn keep_on_stage(window: &Window) {
         use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
 
@@ -341,6 +374,9 @@ pub(super) mod native {
                 width: content.size.width as f32,
                 height: content.size.height as f32,
             },
+            occluded: !native
+                .occlusionState()
+                .contains(objc2_app_kit::NSWindowOcclusionState::Visible),
             translucent: !native.isOpaque(),
         };
 
@@ -378,6 +414,7 @@ mod tests {
                 width: 300.,
                 height: 200.,
             },
+            occluded: false,
             translucent: true,
         };
 

@@ -54,7 +54,10 @@ animation frame, fractional motion is retained to 1/64 point, and scroll gesture
 phases reach GPUI without synthetic browser-side momentum. Outstanding input is
 bounded and clicks are never retried. Encoders stop after viewers disconnect;
 resizing or replacement changes a viewport epoch and restarts capture. Input stays
-disabled until video and control agree on the viewport. Stopping the supervisor
+disabled until video and control agree on the viewport. If another window fully
+covers the native app, preview input explicitly requests a native layer redraw:
+GPUI's normal display link pauses while occluded. This runs after the current
+GPUI update to avoid re-entering a borrowed application context. Stopping the supervisor
 terminates its helpers. Keep the real native window open on the active desktop.
 
 **Interact** forwards hover, primary clicks and wheel deltas through the
@@ -74,7 +77,9 @@ permission change.
 clipping and observed paint order, without activating the control. The browser
 outlines its bounds and displays the Rust construction site, semantic identity,
 text and macro-authored style source metadata. **Copy selection** exports that
-context as JSON. Opaque/cached descendants resolve to an inspected ancestor.
+context as JSON. Scrolling works in both Interact and Select element modes;
+selection mode changes only click behavior. Opaque/cached descendants resolve
+to an inspected ancestor.
 Comment pins and agent integration are later work.
 
 ## Coordinates and lifetime
@@ -122,8 +127,11 @@ Native verification (macOS GUI, compiled fixture):
 ```sh
 cargo build -p rake-preview --features devtools --offline
 python3 scripts/test-preview-native.py
+python3 scripts/test-preview-native.py --occluded
 ```
 
 The native regression exercises real click state, scrolling, source picking,
-blur/opaque state and stale-reference rejection. The browser must additionally
+blur/opaque state and stale-reference rejection. The occluded variant launches a
+separate cover process, verifies WindowServer reports full occlusion, then checks
+that clicks and scrolling update the inspected presentation in both directions. The browser must additionally
 be checked for decoding, viewport mapping, interactions and reconnect behavior.

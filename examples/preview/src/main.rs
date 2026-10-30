@@ -3,6 +3,17 @@
 use rake::gpui::prelude::*;
 use rake::gpui::{self, Context, IntoElement, Render, ScrollHandle, Window, WindowOptions};
 
+// Native regression fixture: fully cover the inspected window without hiding it.
+#[cfg(feature = "devtools")]
+struct Cover;
+
+#[cfg(feature = "devtools")]
+impl Render for Cover {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::div().size_full().bg(gpui::rgb(0x182330))
+    }
+}
+
 struct Preview {
     count: usize,
     blurred: bool,
@@ -50,6 +61,21 @@ impl Render for Preview {
 }
 
 fn main() -> Result<(), rake::AppError> {
+    #[cfg(feature = "devtools")]
+    if std::env::var_os("RAKE_PREVIEW_TEST_COVER").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        return rake::App::new("com.example.rake.preview.cover")
+            .window_options(WindowOptions {
+                kind: gpui::WindowKind::Floating,
+                window_bounds: Some(gpui::WindowBounds::Maximized(gpui::Bounds {
+                    origin: gpui::point(gpui::px(60.), gpui::px(80.)),
+                    size: gpui::size(gpui::px(800.), gpui::px(640.)),
+                })),
+                ..Default::default()
+            })
+            .root(|_, _, cx| cx.new(|_| Cover).into())
+            .run();
+    }
+
     rake::App::new("com.example.rake.preview")
         .control(rake::control::ControlConfig::FromEnvironment)
         .window_options(WindowOptions {
