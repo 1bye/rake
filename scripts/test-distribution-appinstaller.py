@@ -36,7 +36,12 @@ def main():
             with TestFeed(root) as feed:
                 ca = root / 'public-ca.cer'
                 run('openssl', 'x509', '-in', feed.ca, '-outform', 'DER', '-out', ca)
-                thumbprint = powershell("$ErrorActionPreference='Stop'; (Import-Certificate -FilePath $args[0] -CertStoreLocation Cert:\\LocalMachine\\Root).Thumbprint", str(ca))
+                thumbprint = powershell(r"""$ErrorActionPreference='Stop'
+$certificate=[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($args[0])
+$store=[System.Security.Cryptography.X509Certificates.X509Store]::new('Root','LocalMachine')
+$store.Open('ReadWrite')
+try{$store.Add($certificate);$certificate.Thumbprint}finally{$store.Close();$certificate.Dispose()}
+""", str(ca))
                 source = root / 'source'
                 (source / 'src').mkdir(parents=True)
                 (source / 'src/main.rs').write_text('fn main(){let r=rake_resources::resources!().unwrap();println!("{}:{}",env!("CARGO_PKG_VERSION"),std::fs::read_to_string(r.path("message.txt").unwrap()).unwrap());}')
@@ -95,7 +100,11 @@ x86_64-pc-windows-msvc=["msix"]
     finally:
         powershell("$ErrorActionPreference='Stop'; Get-AppxPackage -Name $args[0] | Remove-AppxPackage", identifier)
         if thumbprint:
-            powershell("$ErrorActionPreference='Stop'; Remove-Item -LiteralPath ('Cert:\\LocalMachine\\Root\\'+$args[0])", thumbprint)
+            powershell(r"""$ErrorActionPreference='Stop'
+$store=[System.Security.Cryptography.X509Certificates.X509Store]::new('Root','LocalMachine')
+$store.Open('ReadWrite')
+try{$matches=$store.Certificates.Find('FindByThumbprint',$args[0],$false);$store.RemoveRange($matches)}finally{$store.Close()}
+""", thumbprint)
 
 
 if __name__ == '__main__':

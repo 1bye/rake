@@ -31,6 +31,11 @@ class FeedHandler(http.server.SimpleHTTPRequestHandler):
     # Keep explicitly framed responses alive. HTTP/1.0 connection-delimited
     # responses otherwise depend on Python/Schannel TLS shutdown behavior.
     protocol_version = 'HTTP/1.1'
+    extensions_map = {
+        **http.server.SimpleHTTPRequestHandler.extensions_map,
+        '.appinstaller': 'application/appinstaller',
+        '.msix': 'application/msix',
+    }
 
     def do_GET(self):
         if self.path == getattr(self.server, 'truncated_path', None):
