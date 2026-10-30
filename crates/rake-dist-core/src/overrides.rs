@@ -24,6 +24,8 @@ pub struct Overrides {
     pub formats: Option<Vec<Format>>,
     /// Replacement resource mappings.
     pub resources: Option<Vec<Resource>>,
+    /// Dependency entries merged by name; target/format entries replace a whole dependency.
+    pub dependencies: BTreeMap<String, crate::BundledDependency>,
     /// Replacement component source list.
     pub components: Option<Vec<Component>>,
     /// Replacement helper list.
@@ -86,6 +88,7 @@ impl Overrides {
         if let Some(value) = &self.resources {
             config.resources.clone_from(value);
         }
+        config.dependencies.extend(self.dependencies.clone());
         if let Some(value) = &self.components {
             config.components.clone_from(value);
         }

@@ -113,6 +113,31 @@ custom SDK manifest with dependency modules when that SDK does not supply them.
 Use `resources.path("help.txt")`, `resources.helper("ffmpeg")` and
 `resources.runtime("gstreamer")` from `rake::resources!()?`. Paths are confined to
 the installed payload and work independently of the process working directory.
+Bundle a prepared dependency tree in one place. These inputs are packaged into the
+app; end users do not install development SDKs or packagers:
+
+```toml
+[package.metadata.rake.bundle.dependencies.ffmpeg]
+path = "vendor/ffmpeg/{target}"
+executables = { ffmpeg = "bin/ffmpeg{exe}", ffprobe = "bin/ffprobe{exe}" }
+licenses = ["LICENSE"]
+resources = { "ffmpeg/presets" = "share/presets" }
+# Omit for a self-contained executable:
+libraries = { path = "lib" }
+```
+
+`{target}` uses the explicit Rust target, and `{exe}` becomes `.exe` on Windows
+and empty elsewhere. Paths inside the dependency are relative to `path`.
+Resource maps use installed destination = source. Libraries use the existing
+`directory` recipe by default; `recipe = "framework"` or `"gstreamer"`, `plugins`
+and `link_from_app` are available. Helpers keep their declared names; the runtime
+is available as `resources.runtime("ffmpeg-runtime")`. Target and format overrides
+merge dependency entries by name, replacing a whole entry. This convenience
+configuration lowers into the same confined inputs, component lock, native
+closure checks, signing and installed resource descriptor as explicit components.
+Name collisions and traversal fail during planning. The lower-level `components`,
+`sidecars` and `runtimes` remain available for pinned downloads and custom recipes.
+
 Native components have exact target-specific local or HTTPS/SHA-256 sources,
 license files, and a checked-in `rake-dist.lock`. Directory, framework and selected
 GStreamer-plugin recipes share the same input resolver. `--offline-components`

@@ -70,6 +70,9 @@ def main():
         vendor(gst / 'bin/gst-inspect-1.0', root / 'vendor/gst/bin/gst-inspect', root / 'vendor/gst/runtime/lib', gst, copied)
         vendor(gst / 'libexec/gstreamer-1.0/gst-plugin-scanner', root / 'vendor/gst/runtime/libexec/gstreamer-1.0/gst-plugin-scanner', root / 'vendor/gst/runtime/lib', gst, copied)
         vendor(gst / 'lib/gstreamer-1.0/libgstcoreelements.dylib', root / 'vendor/gst/runtime/lib/gstreamer-1.0/libgstcoreelements.dylib', root / 'vendor/gst/runtime/lib', gst, copied)
+        (root / "vendor/ffmpeg/NOTICE").write_text("Acceptance fixture notice")
+        (root / "vendor/ffmpeg/presets").mkdir()
+        (root / "vendor/ffmpeg/presets/test.txt").write_text("bundled resource")
         (root / 'Cargo.toml').write_text(f'''[workspace]
 [package]
 name="media-fixture"
@@ -78,9 +81,16 @@ edition="2024"
 [package.metadata.rake.bundle]
 schema_version=1
 identifier="dev.rake.media.fixture"
-components=[{{name="ffmpeg",target="{target}",source={{type="local",path="vendor/ffmpeg"}}}},{{name="gst",target="{target}",source={{type="local",path="vendor/gst"}}}}]
-sidecars=[{{name="ffmpeg",component="ffmpeg",path="bin/ffmpeg"}},{{name="gst-inspect",component="gst",path="bin/gst-inspect"}}]
-runtimes=[{{name="ffmpeg-libs",recipe="directory",component="ffmpeg",source="runtime"}},{{name="gst",recipe="gstreamer",component="gst",source="runtime",plugins=["coreelements"]}}]
+[package.metadata.rake.bundle.dependencies.ffmpeg]
+path="vendor/ffmpeg"
+executables={{ffmpeg="bin/ffmpeg{{exe}}"}}
+licenses=["NOTICE"]
+resources={{presets="presets"}}
+libraries={{path="runtime"}}
+[package.metadata.rake.bundle.dependencies.gst]
+path="vendor/gst"
+executables={{gst-inspect="bin/gst-inspect{{exe}}"}}
+libraries={{path="runtime",recipe="gstreamer",plugins=["coreelements"]}}
 ''')
         (root / 'src/main.rs').write_text('fn main(){}')
         run(['cargo', 'generate-lockfile', '--offline', '--manifest-path', root / 'Cargo.toml'])
@@ -91,9 +101,11 @@ runtimes=[{{name="ffmpeg-libs",recipe="directory",component="ffmpeg",source="run
         shutil.copytree(app, relocated, symlinks=True)
         run(['codesign', '--verify', '--deep', '--strict', relocated])
         resources = relocated / 'Contents/Resources'
+        assert (resources / 'rake/licenses/ffmpeg/NOTICE').read_text() == 'Acceptance fixture notice'
+        assert (resources / 'presets/test.txt').read_text() == 'bundled resource'
         ffmpeg = resources / 'rake/helpers/ffmpeg'
         run([ffmpeg, '-hide_banner', '-f', 'lavfi', '-i', 'testsrc=size=32x32:rate=1', '-frames:v', '1', '-f', 'null', '-'], cwd='/', env={'PATH': '/usr/bin:/bin', 'HOME': str(root)})
-        runtime = resources / 'rake/runtimes/gst'
+        runtime = resources / 'rake/runtimes/gst-runtime'
         env = {'PATH': '/usr/bin:/bin', 'HOME': str(root), 'GST_PLUGIN_SYSTEM_PATH_1_0': '', 'GST_PLUGIN_PATH_1_0': str(runtime / 'lib/gstreamer-1.0'), 'GST_PLUGIN_SCANNER_1_0': str(runtime / 'libexec/gstreamer-1.0/gst-plugin-scanner'), 'GST_REGISTRY_1_0': str(root / 'registry.bin')}
         inspected = run([resources / 'rake/helpers/gst-inspect', 'fakesink'], cwd='/', env=env)
         if str(runtime) not in inspected:

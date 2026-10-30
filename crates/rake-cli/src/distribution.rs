@@ -43,6 +43,7 @@ pub(crate) fn handles(arguments: &[String]) -> bool {
         !plan.is_legacy()
             || !plan.config().custom_formats.is_empty()
             || !plan.config().component_recipes.is_empty()
+            || !plan.config().dependencies.is_empty()
             || !plan.config().components.is_empty()
             || !plan.config().runtimes.is_empty()
             || !plan.config().sidecars.is_empty()

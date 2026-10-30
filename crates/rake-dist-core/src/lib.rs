@@ -9,6 +9,8 @@ pub use extension::{
 };
 mod desktop;
 pub use desktop::{ApplicationCategory, DesktopMetadata, FileAssociation, LocalizedMetadata};
+mod dependency;
+pub use dependency::{BundledDependency, BundledLibraries};
 mod component;
 pub use component::{Archive, Component, ComponentSource};
 mod release;
@@ -172,6 +174,8 @@ pub struct Config {
     pub windows: WindowsConfig,
     /// Linux overrides.
     pub linux: LinuxConfig,
+    /// Grouped local dependency trees, expanded into the existing deployment recipes.
+    pub dependencies: BTreeMap<String, BundledDependency>,
     /// Pinned native component sources by name and exact target.
     pub components: Vec<Component>,
     /// Mapped resource inputs.
@@ -577,6 +581,8 @@ impl Config {
                 layer.apply(&mut effective, platform);
                 effective.normalize_paths()?;
             }
+            effective.expand_dependencies(platform, target)?;
+            effective.normalize_paths()?;
             if platform == Platform::Macos && effective.updates.enabled {
                 if let Some(minimum) = &effective.minimum_system_version {
                     if minimum
