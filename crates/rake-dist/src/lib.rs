@@ -2,7 +2,7 @@
 //!
 //! Native execution is separate from the portable plan returned here.
 
-pub use rake_dist_core::{Config, Plan, Platform};
+pub use rake_dist_core::{Config, Format, Plan, Platform};
 use serde::Deserialize;
 use std::{path::Path, process::Command};
 
@@ -50,6 +50,20 @@ struct Package {
 /// Returns errors for Cargo execution, ambiguous package selection, malformed
 /// metadata or an invalid distribution configuration.
 pub fn plan(manifest: &Path, package: Option<&str>, platform: Platform) -> Result<Plan, Error> {
+    plan_with(manifest, package, platform, None, None)
+}
+
+/// Loads metadata with explicit target and format selection.
+///
+/// # Errors
+/// Returns Cargo, package-selection or effective-configuration errors.
+pub fn plan_with(
+    manifest: &Path,
+    package: Option<&str>,
+    platform: Platform,
+    target: Option<&str>,
+    formats: Option<&[Format]>,
+) -> Result<Plan, Error> {
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -67,7 +81,7 @@ pub fn plan(manifest: &Path, package: Option<&str>, platform: Platform) -> Resul
             String::from_utf8_lossy(&output.stderr).trim().into(),
         ));
     }
-    plan_metadata(&output.stdout, package, platform)
+    plan_metadata_with(&output.stdout, package, platform, target, formats)
 }
 
 /// Resolves an existing Cargo metadata response without running any tools.
@@ -79,6 +93,20 @@ pub fn plan_metadata(
     metadata: &[u8],
     package: Option<&str>,
     platform: Platform,
+) -> Result<Plan, Error> {
+    plan_metadata_with(metadata, package, platform, None, None)
+}
+
+/// Resolves existing Cargo metadata with target and format overrides.
+///
+/// # Errors
+/// Returns errors for invalid metadata, package selection or effective settings.
+pub fn plan_metadata_with(
+    metadata: &[u8],
+    package: Option<&str>,
+    platform: Platform,
+    target: Option<&str>,
+    formats: Option<&[Format]>,
 ) -> Result<Plan, Error> {
     let metadata: Metadata = serde_json::from_slice(metadata)?;
     let mut candidates = metadata.packages.into_iter().filter(|item| {
@@ -94,7 +122,7 @@ pub fn plan_metadata(
         Some(value) => serde_json::from_value(value.clone())?,
         None => Config::default(),
     };
-    Ok(config.plan(&selected.name, &selected.version, platform)?)
+    Ok(config.plan_for(&selected.name, &selected.version, platform, target, formats)?)
 }
 
 /// Returns the versioned configuration schema for editors and external callers.

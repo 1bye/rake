@@ -18,8 +18,12 @@ read-only Cargo package selection and CLI --plan/--schema. Public-consumer tests
 cover documented TOML examples, legacy defaults, package-manager update ownership,
 path boundaries, update trust settings and Windows version constraints. CLI tests
 exercise structured errors and lockfile preservation. Native availability remains
-explicitly pending. Additional target/format override merging and package-specific
-prerelease mappings still need implementation before the complete P1 gate closes.
+explicitly pending. Target/format partial overrides now replace arrays and merge public-key maps;
+explicit CLI format selection wins. Rust triples must parse and match the OS.
+Native version mappings preserve Debian/RPM prerelease ordering, enforce Windows
+numeric bounds and require explicit mappings where monotonicity is not automatic.
+Nine core, two metadata and three CLI consumer tests pass; focused strict Clippy
+and rustdoc pass. The broader CLI tests require local sockets outside the sandbox.
 
 P2-P9: not implemented. Do not retire the established packaging path or claim
 production native release/update support based on the planner or adoption probes.

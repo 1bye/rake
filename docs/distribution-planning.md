@@ -35,3 +35,23 @@ Its optional `schema` feature enables schema generation for the host-side
 `rake-dist` crate. That crate resolves Cargo package metadata and provides the
 public schema. Native tooling must pass the independent adoption gate before
 being added to this execution path.
+
+Target overrides apply after common/platform settings. Format overrides apply
+next; explicit CLI format selection replaces the requested output list. Arrays
+replace, while update public-key maps merge by provider. A format override cannot
+change the format list. Use `--target-triple` to select a target layer. Rust
+targets are parsed and must match `--platform`.
+
+```toml
+[package.metadata.rake.bundle.target_overrides.x86_64-pc-windows-msvc]
+formats = ["msi"]
+
+[package.metadata.rake.bundle.format_overrides.msi]
+package_version = "1.2.301"
+```
+
+MSI/MSIX prereleases require an explicit numeric `package_version`; dropping a
+SemVer prerelease suffix could otherwise prevent a later upgrade. MSI compares
+three bounded numeric fields; MSIX uses four. Debian/RPM prereleases use `~`.
+Arch prereleases require an explicit mapping verified using `vercmp`. macOS
+prereleases require a monotonic numeric `build_number`.

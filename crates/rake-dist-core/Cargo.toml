@@ -18,6 +18,7 @@ serde.workspace = true
 thiserror.workspace = true
 semver = "1"
 url = "2.5"
+target-lexicon = "0.13"
 
 [dev-dependencies]
 toml = "0.9"

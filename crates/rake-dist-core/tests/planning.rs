@@ -133,3 +133,77 @@ fn documented_configuration_examples_are_consumable() {
         }
     }
 }
+
+#[test]
+fn target_and_format_layers_replace_arrays_and_preserve_unset_update_fields() {
+    let settings = config(
+        json!({"schema_version":1,"sidecars":[{"name":"old","path":"old"}],"updates":{"enabled":true,"base_url":"https://example.com/"},"target_overrides":{"x86_64-unknown-linux-gnu":{"sidecars":[],"formats":["deb","rpm"],"updates":{"channel":"beta"}}},"format_overrides":{"rpm":{"name":"RPM edition","package_version":"9.0~rc1"}}}),
+    );
+    let plan = settings
+        .plan_for(
+            "notes",
+            "1.2.3-beta.1",
+            Platform::Linux,
+            Some("x86_64-unknown-linux-gnu"),
+            None,
+        )
+        .unwrap();
+    assert!(plan.config().sidecars.is_empty());
+    assert_eq!(plan.config().updates.channel.as_deref(), Some("beta"));
+    assert!(plan.config().updates.enabled);
+    assert_eq!(plan.packages()[0].version().version, "1.2.3~beta.1");
+    assert_eq!(plan.packages()[1].version().version, "9.0~rc1");
+    assert_eq!(
+        plan.packages()[1].config().name.as_deref(),
+        Some("RPM edition")
+    );
+    assert_eq!(plan.packages()[0].update_owner(), UpdateOwner::Apt);
+    let selected = settings
+        .plan_for(
+            "notes",
+            "1.2.3",
+            Platform::Linux,
+            Some("x86_64-unknown-linux-gnu"),
+            Some(&[Format::Rpm]),
+        )
+        .unwrap();
+    assert_eq!(selected.packages().len(), 1);
+}
+
+#[test]
+fn restricted_versions_never_silently_drop_prerelease_ordering() {
+    let settings = config(json!({"schema_version":1,"windows":{"formats":["msi"]}}));
+    assert!(
+        settings
+            .plan("notes", "1.0.0-beta.1", Platform::Windows)
+            .is_err()
+    );
+    let explicit = config(
+        json!({"schema_version":1,"package_version":"1.0.42","windows":{"formats":["msi"]}}),
+    );
+    assert_eq!(
+        explicit
+            .plan("notes", "1.0.0-beta.1", Platform::Windows)
+            .unwrap()
+            .packages()[0]
+            .version()
+            .version,
+        "1.0.42"
+    );
+    assert!(
+        config(json!({"schema_version":1,"linux":{"formats":["arch"]}}))
+            .plan("notes", "1.0.0-rc.1", Platform::Linux)
+            .is_err()
+    );
+}
+
+#[test]
+fn target_triples_must_parse_and_agree_with_platform() {
+    for target in ["nonsense", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"] {
+        assert!(
+            Config::default()
+                .plan_for("notes", "1.2.3", Platform::Linux, Some(target), None)
+                .is_err()
+        );
+    }
+}

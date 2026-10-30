@@ -2,11 +2,16 @@
 //!
 //! Resolving a plan performs no filesystem, network or native-tool operations.
 
+mod overrides;
+mod version;
+pub use overrides::{Overrides, UpdateOverrides};
+pub use version::PackageVersion;
+
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
 /// Operating system whose packages are being planned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
@@ -20,7 +25,7 @@ pub enum Platform {
 }
 
 /// Installation format, independent of build target and release channel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
@@ -112,6 +117,12 @@ pub struct Config {
     pub assets: Option<PathBuf>,
     /// Existing numeric bundle build number.
     pub build_number: Option<String>,
+    /// Native package version override for restricted version formats.
+    pub package_version: Option<String>,
+    /// Per-Rust-target partial overrides.
+    pub target_overrides: BTreeMap<String, Overrides>,
+    /// Per-installation-format partial overrides.
+    pub format_overrides: BTreeMap<Format, Overrides>,
     /// Existing macOS deployment declaration.
     pub minimum_system_version: Option<String>,
     /// Existing Web configuration remains owned by the Web pipeline.
@@ -260,9 +271,19 @@ pub struct Updates {
 pub struct PackagePlan {
     format: Format,
     update_owner: UpdateOwner,
+    version: PackageVersion,
+    config: Config,
 }
 
 impl PackagePlan {
+    /// Returns this artifact's native version mapping.
+    pub fn version(&self) -> &PackageVersion {
+        &self.version
+    }
+    /// Returns the effective per-format configuration.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
     /// Returns the requested installation format.
     pub fn format(&self) -> Format {
         self.format
@@ -349,6 +370,126 @@ impl Config {
     /// Returns an error for unsupported schemas, invalid metadata/paths, duplicate
     /// names/formats, missing required public settings or incompatible formats.
     pub fn plan(&self, package: &str, version: &str, platform: Platform) -> Result<Plan, Error> {
+        self.plan_for(package, version, platform, None, None)
+    }
+
+    /// Applies target, format and explicit CLI format selection in that order.
+    ///
+    /// # Errors
+    /// Returns errors for malformed target names, forbidden format-list overrides,
+    /// and invalid effective configuration or native version mappings.
+    pub fn plan_for(
+        &self,
+        package: &str,
+        version: &str,
+        platform: Platform,
+        target: Option<&str>,
+        formats: Option<&[Format]>,
+    ) -> Result<Plan, Error> {
+        let mut base = self.clone();
+        if let Some(target) = target {
+            let triple = target
+                .parse::<target_lexicon::Triple>()
+                .map_err(|_| Error::Field("target triple".into()))?;
+            let matches_platform = match platform {
+                Platform::Macos => matches!(
+                    triple.operating_system,
+                    target_lexicon::OperatingSystem::Darwin(_)
+                        | target_lexicon::OperatingSystem::MacOSX(_)
+                ),
+                Platform::Windows => {
+                    triple.operating_system == target_lexicon::OperatingSystem::Windows
+                }
+                Platform::Linux => {
+                    triple.operating_system == target_lexicon::OperatingSystem::Linux
+                }
+            };
+            if !matches_platform {
+                return Err(Error::Field(
+                    "Rust target triple does not match platform".into(),
+                ));
+            }
+            if let Some(layer) = self.target_overrides.get(target) {
+                layer.apply(&mut base, platform);
+            }
+        } else if !self.target_overrides.is_empty() {
+            return Err(Error::Field(
+                "target overrides require an explicit Rust target triple".into(),
+            ));
+        }
+        if let Some(formats) = formats {
+            *base.formats_mut(platform) = formats.to_vec();
+        }
+        let requested = base.selected_formats(platform);
+        let mut packages = Vec::new();
+        for format in requested {
+            if packages.iter().any(|p: &PackagePlan| p.format == format) {
+                return Err(Error::Duplicate(format!("{format:?}")));
+            }
+            let mut effective = base.clone();
+            if let Some(layer) = self.format_overrides.get(&format) {
+                if layer.formats.is_some() {
+                    return Err(Error::Field(
+                        "format overrides cannot change format lists".into(),
+                    ));
+                }
+                layer.apply(&mut effective, platform);
+            }
+            *effective.formats_mut(platform) = vec![format];
+            let mut validated = effective.plan_effective(package, version, platform)?;
+            packages.append(&mut validated.packages);
+        }
+        let mut result = base;
+        result.target_overrides.clear();
+        result.format_overrides.clear();
+        let name = result.name.clone().unwrap_or_else(|| package.into());
+        let identifier = result
+            .identifier
+            .clone()
+            .unwrap_or_else(|| format!("dev.rake.{}", package.replace('_', "-")));
+        Ok(Plan {
+            name,
+            identifier,
+            version: version.into(),
+            platform,
+            legacy: self.schema_version.is_none(),
+            config: result,
+            packages,
+        })
+    }
+
+    pub(crate) fn formats_mut(&mut self, platform: Platform) -> &mut Vec<Format> {
+        match platform {
+            Platform::Macos => &mut self.macos.formats,
+            Platform::Windows => &mut self.windows.formats,
+            Platform::Linux => &mut self.linux.formats,
+        }
+    }
+
+    fn selected_formats(&self, platform: Platform) -> Vec<Format> {
+        let configured = match platform {
+            Platform::Macos => &self.macos.formats,
+            Platform::Windows => &self.windows.formats,
+            Platform::Linux => &self.linux.formats,
+        };
+        if !configured.is_empty() {
+            return configured.clone();
+        }
+        vec![match (platform, self.schema_version.is_none()) {
+            (Platform::Macos, true) => Format::Zip,
+            (Platform::Macos, false) => Format::Dmg,
+            (Platform::Windows, _) => Format::Nsis,
+            (Platform::Linux, true) => Format::Tar,
+            (Platform::Linux, false) => Format::Appimage,
+        }]
+    }
+
+    fn plan_effective(
+        &self,
+        package: &str,
+        version: &str,
+        platform: Platform,
+    ) -> Result<Plan, Error> {
         if let Some(schema) = self.schema_version
             && schema != 1
         {
@@ -456,20 +597,6 @@ impl Config {
             if packages.iter().any(|p: &PackagePlan| p.format == format) {
                 return Err(Error::Duplicate(format!("{format:?}")));
             }
-            if format == Format::Msi
-                && (parsed_version.major > 255
-                    || parsed_version.minor > 255
-                    || parsed_version.patch > 65535)
-            {
-                return Err(Error::Field("version exceeds MSI limits".into()));
-            }
-            if format == Format::Msix
-                && (parsed_version.major > 65535
-                    || parsed_version.minor > 65535
-                    || parsed_version.patch > 65535)
-            {
-                return Err(Error::Field("version exceeds MSIX limits".into()));
-            }
             let owner = if !self.updates.enabled {
                 UpdateOwner::Disabled
             } else {
@@ -510,6 +637,13 @@ impl Config {
             packages.push(PackagePlan {
                 format,
                 update_owner: owner,
+                version: version::convert(
+                    &parsed_version,
+                    format,
+                    self.package_version.as_deref(),
+                    self.build_number.as_deref(),
+                )?,
+                config: self.clone(),
             });
         }
         Ok(Plan {

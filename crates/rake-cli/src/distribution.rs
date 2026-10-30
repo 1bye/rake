@@ -20,6 +20,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
     let mut manifest = PathBuf::from("Cargo.toml");
     let mut package = None;
     let mut platform = std::env::consts::OS;
+    let mut target = None;
+    let mut formats = Vec::new();
     let mut args = arguments.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -34,6 +36,16 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
                 package = Some(args.next().ok_or("--package requires a value")?.as_str())
             }
             "--platform" => platform = args.next().ok_or("--platform requires a value")?,
+            "--target-triple" => {
+                target = Some(
+                    args.next()
+                        .ok_or("--target-triple requires a value")?
+                        .as_str(),
+                )
+            }
+            "--format" => formats.push(serde_json::from_value::<rake_dist::Format>(
+                serde_json::Value::String(args.next().ok_or("--format requires a value")?.clone()),
+            )?),
             "--target" => {
                 if args.next().is_none_or(|target| target != "desktop") {
                     return Err("native planning requires --target desktop".into());
@@ -52,7 +64,17 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
         "linux" => Platform::Linux,
         _ => return Err(format!("unsupported platform: {platform}").into()),
     };
-    let plan = rake_dist::plan(&manifest, package, platform)?;
+    let plan = rake_dist::plan_with(
+        &manifest,
+        package,
+        platform,
+        target,
+        if formats.is_empty() {
+            None
+        } else {
+            Some(&formats)
+        },
+    )?;
     println!(
         "{}",
         serde_json::to_string_pretty(
