@@ -47,6 +47,9 @@ pub(crate) fn integration(
     let directory = stage.join("linux-metadata");
     fs::create_dir_all(&directory)?;
     let desktop = directory.join(format!("{desktop_id}.desktop"));
+    if config.linux.desktop_entry.is_some() && !config.desktop.is_empty() {
+        return Err(Error::Execution("custom linux.desktop_entry owns its labels and registrations; use either that file or desktop metadata".into()));
+    }
     if let Some(source) = &config.linux.desktop_entry {
         files::copy(&files::confined(root, source)?, &desktop)?;
         let text = fs::read_to_string(&desktop)?;
@@ -61,10 +64,11 @@ pub(crate) fn integration(
     } else {
         fs::write(
             &desktop,
-            rake_dist_linux::desktop_entry(
+            rake_dist_linux::desktop_entry_with_metadata(
                 config.name.as_deref().unwrap_or(plan.name()),
                 binary,
                 desktop_id,
+                &config.desktop,
             )
             .map_err(native)?,
         )?;
@@ -73,16 +77,18 @@ pub(crate) fn integration(
     let text = if let Some(source) = &config.linux.appstream {
         fs::read_to_string(files::confined(root, source)?)?
     } else {
-        rake_dist_linux::appstream(
+        rake_dist_linux::appstream_with_metadata(
             plan.identifier(),
             config.name.as_deref().unwrap_or(plan.name()),
             desktop_id,
             plan.version(),
+            &config.desktop,
         )
+        .map_err(native)?
     };
     rake_dist_linux::validate_appstream(&text, plan.identifier(), desktop_id).map_err(native)?;
     fs::write(&appstream, text)?;
-    Ok(HashMap::from([
+    let mut files = HashMap::from([
         (
             PathBuf::from(format!("usr/share/applications/{desktop_id}.desktop")),
             desktop,
@@ -100,7 +106,19 @@ pub(crate) fn integration(
             )),
             icons.join("icon.png"),
         ),
-    ]))
+    ]);
+    if !config.desktop.file_associations.is_empty() {
+        let mime = directory.join("mime-types.xml");
+        fs::write(
+            &mime,
+            rake_dist_linux::mime_types(desktop_id, &config.desktop).map_err(native)?,
+        )?;
+        files.insert(
+            PathBuf::from(format!("usr/share/mime/packages/{desktop_id}.xml")),
+            mime,
+        );
+    }
+    Ok(files)
 }
 
 pub(crate) fn payload(

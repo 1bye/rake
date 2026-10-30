@@ -5,9 +5,9 @@
 #![cfg(all(windows, feature = "native-tests"))]
 #[cfg(feature = "native-signing-tests")]
 use rake_dist_core::TrustOptions;
-use rake_dist_windows::{Msix, apply_manifest, package_msix};
+use rake_dist_windows::{Msix, apply_manifest, package_msix_with_metadata};
 #[cfg(feature = "native-signing-tests")]
-use rake_dist_windows::{certificate_subject, sign};
+use rake_dist_windows::{certificate_subject, package_msix, sign};
 use std::{fs, path::Path, process::Command};
 
 fn run(command: &mut Command) -> String {
@@ -51,7 +51,25 @@ fn sdk_validates_and_unpacks_a_real_managed_package() {
         name: "Rake SDK Fixture",
         manifest: None,
     };
-    let package = package_msix(&payload, root.path(), &settings).unwrap();
+    let metadata = rake_dist_core::DesktopMetadata {
+        url_schemes: vec!["rake-sdk-test".into()],
+        file_associations: vec![rake_dist_core::FileAssociation {
+            extensions: vec!["rnote".into()],
+            name: Some("Rake Note".into()),
+            description: None,
+            mime_type: Some("application/x-rake-note".into()),
+        }],
+        localizations: [(
+            "fr".into(),
+            rake_dist_core::LocalizedMetadata {
+                name: Some("Notes françaises".into()),
+                description: Some("Documents & notes".into()),
+            },
+        )]
+        .into(),
+        ..Default::default()
+    };
+    let package = package_msix_with_metadata(&payload, root.path(), &settings, &metadata).unwrap();
     let extracted = root.path().join("extracted");
     run(Command::new("makeappx.exe")
         .args(["unpack", "/o", "/p"])
@@ -59,6 +77,11 @@ fn sdk_validates_and_unpacks_a_real_managed_package() {
         .arg("/d")
         .arg(&extracted));
     assert!(extracted.join("AppxManifest.xml").is_file());
+    assert!(extracted.join("resources.pri").is_file());
+    let manifest = fs::read_to_string(extracted.join("AppxManifest.xml")).unwrap();
+    assert!(manifest.contains("windows.protocol"));
+    assert!(manifest.contains("windows.fileTypeAssociation"));
+    assert!(manifest.contains("ms-resource:AppName"));
     assert_eq!(
         run(&mut Command::new(extracted.join("fixture.exe"))),
         "1.0.0"

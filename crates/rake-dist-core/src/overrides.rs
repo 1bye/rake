@@ -8,6 +8,8 @@ use std::{collections::BTreeMap, path::PathBuf};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
 pub struct Overrides {
+    /// Complete desktop metadata override; arrays replace and locale maps merge.
+    pub desktop: Option<DesktopOverrides>,
     /// Display name override.
     pub name: Option<String>,
     /// Icon override.
@@ -32,6 +34,21 @@ pub struct Overrides {
     pub updates: Option<UpdateOverrides>,
 }
 
+/// Partial desktop settings; lists replace only when explicitly present.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct DesktopOverrides {
+    /// Native category override.
+    pub category: Option<crate::ApplicationCategory>,
+    /// Replacement URL schemes.
+    pub url_schemes: Option<Vec<String>>,
+    /// Replacement file associations.
+    pub file_associations: Option<Vec<crate::FileAssociation>>,
+    /// Locale labels merged by locale name.
+    pub localizations: BTreeMap<String, crate::LocalizedMetadata>,
+}
+
 /// Partial public update configuration; unspecified fields retain their values.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -53,6 +70,19 @@ impl Overrides {
             ($($field:ident),*) => { $(if let Some(value) = &self.$field {config.$field = Some(value.clone());})* };
         }
         replace!(name, icon, assets, package_version, build_number);
+        if let Some(value) = &self.desktop {
+            config.desktop.category = value.category.or(config.desktop.category);
+            if let Some(schemes) = &value.url_schemes {
+                config.desktop.url_schemes.clone_from(schemes);
+            }
+            if let Some(associations) = &value.file_associations {
+                config.desktop.file_associations.clone_from(associations);
+            }
+            config
+                .desktop
+                .localizations
+                .extend(value.localizations.clone());
+        }
         if let Some(value) = &self.resources {
             config.resources.clone_from(value);
         }

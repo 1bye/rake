@@ -64,6 +64,9 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
     let settings =
         BundleSettings {
             identifier: Some(plan.identifier().into()),
+            category: config.desktop.category.map(|category|category.native_name().parse()).transpose().map_err(|error|Error::Execution(format!("native category: {error:?}")))?,
+            file_associations: (!config.desktop.file_associations.is_empty()).then(||config.desktop.file_associations.iter().map(|association|serde_json::from_value(serde_json::json!({"ext":association.extensions,"name":association.name,"description":association.description,"mimeType":association.mime_type}))).collect::<Result<_,_>>()).transpose()?,
+            deep_link_protocols: (!config.desktop.url_schemes.is_empty()).then(||serde_json::from_value(serde_json::json!({"schemes":config.desktop.url_schemes})).map(|protocol|vec![protocol])).transpose()?,
             publisher: Some(plan.name().into()),
             icon: (!icons.is_empty()).then_some(icons),
             resources_map: Some(resources),
@@ -88,6 +91,20 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                             .map_err(|error| Error::Execution(error.to_string()))
                         })
                         .transpose()?;
+                    if let Some(dictionary) = value.as_ref().and_then(|value|value.as_dictionary()) {
+                        for (field, enabled) in [("CFBundleURLTypes",!config.desktop.url_schemes.is_empty()),("CFBundleDocumentTypes",!config.desktop.file_associations.is_empty()),("LSApplicationCategoryType",config.desktop.category.is_some())] {
+                            if enabled && dictionary.contains_key(field) {return Err(Error::Execution(format!("{field} is declared by both desktop metadata and the custom plist")));}
+                        }
+                    }
+                    if !config.macos.privacy.is_empty() {
+                        let mut plist = value.unwrap_or_else(rake_dist_macos::empty_info_plist);
+                        let dictionary = plist.as_dictionary_mut().ok_or_else(||Error::Execution("custom plist must be a dictionary".into()))?;
+                        for (key, description) in &config.macos.privacy {
+                            if dictionary.get(key).is_some_and(|value|value.as_string()!=Some(description.as_str())) {return Err(Error::Execution(format!("macos.privacy conflicts with custom plist {key}")));}
+                            dictionary.insert(key.clone(), description.clone().into());
+                        }
+                        value=Some(plist);
+                    }
                     if item.update_owner() == rake_dist_core::UpdateOwner::Sparkle {
                         let path =
                             config.updates.public_keys.get("sparkle").ok_or_else(|| {

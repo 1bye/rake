@@ -187,3 +187,107 @@ else:raise AssertionError(mode)
     );
     assert!(!root.path().join("vendor/info.txt").exists());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn common_metadata_and_localizations_reach_a_real_signed_application() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("src")).unwrap();
+    fs::write(root.path().join("src/main.rs"), "fn main(){}").unwrap();
+    fs::write(
+        root.path().join("Cargo.toml"),
+        r#"[workspace]
+[package]
+name='metadata-consumer'
+version='1.0.0'
+edition='2024'
+[package.metadata.rake.bundle]
+schema_version=1
+identifier='dev.rake.metadata-consumer'
+[package.metadata.rake.bundle.desktop]
+category='developer_tool'
+url_schemes=['rake-metadata']
+file_associations=[{extensions=['rnote'],name='Rake Note',mime_type='application/x-rake-note'}]
+[package.metadata.rake.bundle.desktop.localizations.fr]
+name='Notes françaises'
+[package.metadata.rake.bundle.macos.privacy]
+NSCameraUsageDescription='Capture a document image'
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("cargo")
+            .args(["generate-lockfile", "--offline", "--manifest-path"])
+            .arg(root.path().join("Cargo.toml"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = root.path().join("dist");
+    let result = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args([
+            "bundle",
+            "--native",
+            "--debug",
+            "--format",
+            "app",
+            "--json",
+            "--manifest-path",
+        ])
+        .arg(root.path().join("Cargo.toml"))
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let app = output.join(result["artifacts"][0]["path"].as_str().unwrap());
+    let plist = Command::new("plutil")
+        .args(["-convert", "json", "-o", "-"])
+        .arg(app.join("Contents/Info.plist"))
+        .output()
+        .unwrap();
+    assert!(
+        plist.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plist.stderr)
+    );
+    let plist: serde_json::Value = serde_json::from_slice(&plist.stdout).unwrap();
+    assert_eq!(
+        plist["LSApplicationCategoryType"],
+        "public.app-category.developer-tools"
+    );
+    assert_eq!(
+        plist["NSCameraUsageDescription"],
+        "Capture a document image"
+    );
+    assert_eq!(
+        plist["CFBundleURLTypes"][0]["CFBundleURLSchemes"][0],
+        "rake-metadata"
+    );
+    assert_eq!(
+        plist["CFBundleDocumentTypes"][0]["CFBundleTypeExtensions"][0],
+        "rnote"
+    );
+    let bytes = fs::read(app.join("Contents/Resources/fr.lproj/InfoPlist.strings")).unwrap();
+    let text = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(text.contains("Notes françaises"));
+    assert!(
+        Command::new("codesign")
+            .args(["--verify", "--deep", "--strict"])
+            .arg(app)
+            .status()
+            .unwrap()
+            .success()
+    );
+}

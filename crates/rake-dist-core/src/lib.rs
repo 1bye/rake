@@ -7,6 +7,8 @@ pub use extension::{
     BackendOutput, BackendRequest, ComponentRecipe, CustomFormat, ExtensionError, PackageBackend,
     PreparedComponent, RecipeRequest, Verification, VerifyRequest,
 };
+mod desktop;
+pub use desktop::{ApplicationCategory, DesktopMetadata, FileAssociation, LocalizedMetadata};
 mod component;
 pub use component::{Archive, Component, ComponentSource};
 mod release;
@@ -21,7 +23,7 @@ mod overrides;
 mod trust;
 pub use trust::{TrustOptions, TrustRecord};
 mod version;
-pub use overrides::{Overrides, UpdateOverrides};
+pub use overrides::{DesktopOverrides, Overrides, UpdateOverrides};
 pub use version::PackageVersion;
 
 use serde::{Deserialize, Serialize};
@@ -162,6 +164,8 @@ pub struct Config {
     pub minimum_system_version: Option<String>,
     /// Existing Web configuration remains owned by the Web pipeline.
     pub web: WebConfig,
+    /// Common native desktop registrations and localized labels.
+    pub desktop: DesktopMetadata,
     /// macOS overrides.
     pub macos: MacosConfig,
     /// Windows overrides.
@@ -202,6 +206,8 @@ pub struct WebConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
 pub struct MacosConfig {
+    /// Native usage-description strings, such as NSCameraUsageDescription.
+    pub privacy: BTreeMap<String, String>,
     /// Build and validate Apple Silicon and Intel slices in one application.
     pub universal: bool,
     /// Selected native formats.
@@ -718,6 +724,19 @@ impl Config {
             return Err(Error::Field("windows.system_dlls basenames".into()));
         }
         let mut custom_names = std::collections::BTreeSet::new();
+        self.desktop.validate()?;
+        for (key, value) in &self.macos.privacy {
+            if !key.starts_with("NS")
+                || !key.ends_with("UsageDescription")
+                || !key.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                || value.trim().is_empty()
+                || value.chars().any(char::is_control)
+            {
+                return Err(Error::Field(
+                    "macos.privacy usage-description key/value".into(),
+                ));
+            }
+        }
         for backend in &self.custom_formats {
             component_name(&backend.name)?;
             if !custom_names.insert(&backend.name)
@@ -944,6 +963,18 @@ impl Config {
                         }
                     }
                 }
+            }
+            if platform == Platform::Windows
+                && !self.desktop.localizations.is_empty()
+                && format != Format::Msix
+            {
+                return Err(Error::Field("Windows localized OS display labels require MSIX or a custom installer backend".into()));
+            }
+            if format == Format::Velopack
+                && (!self.desktop.url_schemes.is_empty()
+                    || !self.desktop.file_associations.is_empty())
+            {
+                return Err(Error::Field("Velopack custom protocol/file registrations require application installer callbacks; select NSIS/MSI/MSIX or an explicit backend".into()));
             }
             packages.push(PackagePlan {
                 format,

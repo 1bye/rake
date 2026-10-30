@@ -426,6 +426,40 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         let mut resources = HashMap::new();
         let resource_stage = stage.join("resources");
         fs::create_dir_all(&resource_stage)?;
+        if plan.platform() == Platform::Macos {
+            for (locale, labels) in &config.desktop.localizations {
+                let mut text = String::new();
+                let escape = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
+                if let Some(name) = &labels.name {
+                    text.push_str(&format!(
+                        "\"CFBundleDisplayName\" = \"{}\";\n",
+                        escape(name)
+                    ));
+                }
+                if let Some(description) = &labels.description {
+                    text.push_str(&format!(
+                        "\"CFBundleGetInfoString\" = \"{}\";\n",
+                        escape(description)
+                    ));
+                }
+                let relative = PathBuf::from(format!("{locale}.lproj/InfoPlist.strings"));
+                let destination = resource_stage.join(&relative);
+                fs::create_dir_all(
+                    destination
+                        .parent()
+                        .ok_or_else(|| Error::Execution("localization parent".into()))?,
+                )?;
+                let bytes: Vec<u8> = std::iter::once(0xfeff_u16)
+                    .chain(text.encode_utf16())
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                fs::write(&destination, bytes)?;
+                resources.insert(
+                    destination.to_string_lossy().into_owned(),
+                    relative.to_string_lossy().into_owned(),
+                );
+            }
+        }
         if let Some(assets) = &config.assets {
             let path = resource_stage.join("assets");
             files::copy(&files::confined(root, assets)?, &path)?;
@@ -1266,8 +1300,13 @@ fn windows_package(
                 manifest: custom.as_deref(),
             };
             Ok(vec![
-                rake_dist_windows::package_msix(payload, stage, &settings)
-                    .map_err(|e| Error::Execution(e.to_string()))?,
+                rake_dist_windows::package_msix_with_metadata(
+                    payload,
+                    stage,
+                    &settings,
+                    &config.desktop,
+                )
+                .map_err(|e| Error::Execution(e.to_string()))?,
             ])
         }
         Format::Velopack => {

@@ -73,6 +73,33 @@ deb = ["libc6 (>= 2.39)"]
 rpm = ["glibc >= 2.39"]
 ```
 
+Common desktop integration can be configured without writing native metadata:
+
+```toml
+[package.metadata.rake.bundle.desktop]
+category = "developer_tool"
+url_schemes = ["my-app"]
+file_associations = [{ extensions = ["mynote"], name = "My Note", mime_type = "application/x-my-note" }]
+
+[package.metadata.rake.bundle.desktop.localizations.fr]
+name = "Mes notes"
+description = "Documents et notes"
+
+[package.metadata.rake.bundle.macos.privacy]
+NSCameraUsageDescription = "Capture an image for a document"
+```
+
+Categories, protocols and file types feed macOS bundles, NSIS/MSI registration and
+Linux desktop/MIME metadata. MSIX generates managed protocol/file declarations.
+Localized labels become macOS `InfoPlist.strings`, Linux desktop/AppStream labels,
+and MSIX `resources.pri` through the Windows SDK's `makepri.exe`. Windows localized
+OS labels require MSIX; Velopack protocol/file registration needs application
+installer callbacks or an explicit backend. Planning rejects unsupported automatic
+combinations. Your application handles the resulting native activation events.
+A complete custom native metadata file owns those fields; conflicting common
+registrations are rejected. Privacy-purpose text merges into the macOS plist and
+must match any duplicate custom key.
+
 Identity fields are generated and protected against conflicting overrides.
 Windows manifests replace GPUI's staged resource instead of adding a second linker
 manifest. Linux desktop and AppStream integration is generated from stable app

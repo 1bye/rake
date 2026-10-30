@@ -133,6 +133,25 @@ fn xml(value: &str) -> String {
 /// # Errors
 /// Rejects invalid versions, architectures and conflicting custom identity/executable fields.
 pub fn msix_manifest(settings: &Msix<'_>) -> Result<String, Error> {
+    msix_manifest_with_metadata(settings, &Default::default())
+}
+/// Generates managed protocol/file associations and localized resource references.
+/// # Errors
+/// Rejects invalid native metadata and combining a complete custom manifest with
+/// common metadata. Custom manifests retain ownership of their registrations.
+pub fn msix_manifest_with_metadata(
+    settings: &Msix<'_>,
+    metadata: &rake_dist_core::DesktopMetadata,
+) -> Result<String, Error> {
+    metadata
+        .validate()
+        .map_err(|error| Error::Tool(error.to_string()))?;
+    if settings.manifest.is_some() && !metadata.is_empty() {
+        return Err(Error::Tool(
+            "custom MSIX manifest owns desktop metadata; omit common desktop fields".into(),
+        ));
+    }
+
     if settings.identifier.len() < 3
         || settings.identifier.len() > 50
         || !settings
@@ -186,23 +205,67 @@ pub fn msix_manifest(settings: &Msix<'_>) -> Result<String, Error> {
         }
         return Ok(text);
     }
+    let mut extensions = String::new();
+    for scheme in &metadata.url_schemes {
+        extensions.push_str(&format!("<uap:Extension Category=\"windows.protocol\"><uap:Protocol Name=\"{}\"><uap:DisplayName>{}</uap:DisplayName></uap:Protocol></uap:Extension>",xml(&scheme.to_ascii_lowercase()),xml(settings.name)));
+    }
+    for (index, association) in metadata.file_associations.iter().enumerate() {
+        extensions.push_str(&format!("<uap:Extension Category=\"windows.fileTypeAssociation\"><uap:FileTypeAssociation Name=\"type-{index}\"><uap:DisplayName>{}</uap:DisplayName><uap:SupportedFileTypes>",xml(association.name.as_deref().unwrap_or(&association.extensions[0]))));
+        for extension in &association.extensions {
+            extensions.push_str(&format!(
+                "<uap:FileType{}>.{}</uap:FileType>",
+                association
+                    .mime_type
+                    .as_ref()
+                    .map(|mime| format!(" ContentType=\"{}\"", xml(mime)))
+                    .unwrap_or_default(),
+                xml(&extension.to_ascii_lowercase())
+            ));
+        }
+        extensions.push_str("</uap:SupportedFileTypes></uap:FileTypeAssociation></uap:Extension>");
+    }
+    if !extensions.is_empty() {
+        extensions = format!("<Extensions>{extensions}</Extensions>");
+    }
+    let display_name = if metadata.localizations.is_empty() {
+        settings.name
+    } else {
+        "ms-resource:AppName"
+    };
+    let description = if metadata.localizations.is_empty() {
+        settings.name
+    } else {
+        "ms-resource:AppDescription"
+    };
+    let mut languages = std::collections::BTreeSet::from(["en-US".to_owned()]);
+    languages.extend(metadata.localizations.keys().map(|language| {
+        if language.eq_ignore_ascii_case("en-US") {
+            "en-US".into()
+        } else {
+            language.clone()
+        }
+    }));
+    let resources = languages
+        .into_iter()
+        .map(|language| format!("<Resource Language=\"{}\"/>", xml(&language)))
+        .collect::<String>();
     Ok(format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap rescap">
 <Identity Name="{}" Publisher="{}" Version="{}" ProcessorArchitecture="{architecture}"/>
 <Properties><DisplayName>{}</DisplayName><PublisherDisplayName>{}</PublisherDisplayName><Logo>Assets\StoreLogo.png</Logo></Properties>
-<Resources><Resource Language="en-us"/></Resources>
+<Resources>{resources}</Resources>
 <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0"/></Dependencies>
-<Applications><Application Id="App" Executable="{}" EntryPoint="Windows.FullTrustApplication"><uap:VisualElements DisplayName="{}" Description="{}" BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png"/></Application></Applications>
+<Applications><Application Id="App" Executable="{}" EntryPoint="Windows.FullTrustApplication"><uap:VisualElements DisplayName="{}" Description="{}" BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png"/>{extensions}</Application></Applications>
 <Capabilities><rescap:Capability Name="runFullTrust"/></Capabilities></Package>"#,
         xml(settings.identifier),
         xml(settings.publisher),
         xml(settings.version),
-        xml(settings.name),
+        xml(display_name),
         xml(settings.name),
         xml(settings.executable),
-        xml(settings.name),
-        xml(settings.name)
+        xml(display_name),
+        xml(description)
     ))
 }
 
@@ -210,7 +273,76 @@ pub fn msix_manifest(settings: &Msix<'_>) -> Result<String, Error> {
 /// # Errors
 /// Requires makeappx.exe and the payload's Assets images.
 pub fn package_msix(payload: &Path, output: &Path, settings: &Msix<'_>) -> Result<PathBuf, Error> {
-    fs::write(payload.join("AppxManifest.xml"), msix_manifest(settings)?)?;
+    package_msix_with_metadata(payload, output, settings, &Default::default())
+}
+/// Builds SDK-validated managed packages, including optional localized PRI labels.
+/// # Errors
+/// Returns metadata/SDK failures; localized labels additionally require makepri.exe.
+pub fn package_msix_with_metadata(
+    payload: &Path,
+    output: &Path,
+    settings: &Msix<'_>,
+    metadata: &rake_dist_core::DesktopMetadata,
+) -> Result<PathBuf, Error> {
+    fs::write(
+        payload.join("AppxManifest.xml"),
+        msix_manifest_with_metadata(settings, metadata)?,
+    )?;
+    if !metadata.localizations.is_empty() {
+        let default = rake_dist_core::LocalizedMetadata {
+            name: Some(settings.name.into()),
+            description: Some(settings.name.into()),
+        };
+        let mut languages = std::collections::BTreeMap::from([("en-US".to_owned(), default)]);
+        for (language, labels) in &metadata.localizations {
+            languages.insert(
+                if language.eq_ignore_ascii_case("en-US") {
+                    "en-US".into()
+                } else {
+                    language.clone()
+                },
+                labels.clone(),
+            );
+        }
+        for (language, labels) in languages {
+            let directory = payload.join("Strings").join(language);
+            fs::create_dir_all(&directory)?;
+            fs::write(
+                directory.join("Resources.resw"),
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?><root><data name=\"AppName\" xml:space=\"preserve\"><value>{}</value></data><data name=\"AppDescription\" xml:space=\"preserve\"><value>{}</value></data></root>",
+                    xml(labels.name.as_deref().unwrap_or(settings.name)),
+                    xml(labels.description.as_deref().unwrap_or(settings.name))
+                ),
+            )?;
+        }
+        let work = tempfile::tempdir_in(output)?;
+        let config = work.path().join("priconfig.xml");
+        run(Command::new("makepri.exe")
+            .args(["createconfig", "/cf"])
+            .arg(dunce::simplified(&config))
+            .args(["/dq", "en-US", "/o"]))?;
+        let mut configuration = fs::read_to_string(&config)?;
+        let document = roxmltree::Document::parse(&configuration)
+            .map_err(|error| Error::Tool(error.to_string()))?;
+        if let Some(packaging) = document
+            .descendants()
+            .find(|node| node.has_tag_name("packaging"))
+        {
+            let range = packaging.range();
+            configuration.replace_range(range, "");
+        }
+        fs::write(&config, configuration)?;
+        run(Command::new("makepri.exe")
+            .args(["new", "/pr"])
+            .arg(dunce::simplified(payload))
+            .arg("/cf")
+            .arg(dunce::simplified(&config))
+            .arg("/of")
+            .arg(dunce::simplified(&payload.join("resources.pri")))
+            .args(["/in", settings.identifier, "/o"]))?;
+    }
+
     let package = output.join(format!("{}.msix", settings.identifier));
     run(Command::new("makeappx.exe")
         .args(["pack", "/o", "/d"])
@@ -385,4 +517,57 @@ pub fn verify_velopack_tool() -> Result<(), Error> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod desktop_tests {
+    use super::*;
+    #[test]
+    fn managed_registrations_and_localized_references_are_semantic_xml() {
+        let settings = Msix {
+            identifier: "dev.rake.notes",
+            publisher: "CN=Rake",
+            version: "1.0.0.0",
+            target: "x86_64-pc-windows-msvc",
+            executable: "notes.exe",
+            name: "Rake & Notes",
+            manifest: None,
+        };
+        let metadata = rake_dist_core::DesktopMetadata {
+            url_schemes: vec!["rake-notes".into()],
+            file_associations: vec![rake_dist_core::FileAssociation {
+                extensions: vec!["rnote".into()],
+                name: Some("Note & document".into()),
+                description: None,
+                mime_type: Some("application/x-rake-note".into()),
+            }],
+            localizations: [("fr".into(), Default::default())].into(),
+            ..Default::default()
+        };
+        let xml = msix_manifest_with_metadata(&settings, &metadata).unwrap();
+        let document = roxmltree::Document::parse(&xml).unwrap();
+        assert!(
+            document
+                .descendants()
+                .any(|node| node.has_tag_name("Protocol")
+                    && node.attribute("Name") == Some("rake-notes"))
+        );
+        assert!(
+            document
+                .descendants()
+                .any(|node| node.has_tag_name("FileType") && node.text() == Some(".rnote"))
+        );
+        assert!(
+            document
+                .descendants()
+                .any(|node| node.has_tag_name("Resource")
+                    && node.attribute("Language") == Some("fr"))
+        );
+        assert!(
+            document
+                .descendants()
+                .any(|node| node.has_tag_name("VisualElements")
+                    && node.attribute("DisplayName") == Some("ms-resource:AppName"))
+        );
+    }
 }

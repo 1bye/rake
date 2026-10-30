@@ -3,8 +3,8 @@ mod dll;
 mod packages;
 pub use dll::{DllDeployment, deploy_dlls, pe_imports};
 pub use packages::{
-    Msix, certificate_subject, msix_manifest, package_msix, package_velopack, preflight, sign,
-    verify_velopack_tool,
+    Msix, certificate_subject, msix_manifest, msix_manifest_with_metadata, package_msix,
+    package_msix_with_metadata, package_velopack, preflight, sign, verify_velopack_tool,
 };
 
 use std::{
