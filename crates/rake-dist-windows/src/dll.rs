@@ -188,6 +188,11 @@ fn system(name: &str) -> bool {
     name.starts_with("api-ms-win-")
         || name.starts_with("ext-ms-win-")
         || [
+            // Native Windows ICU ships with the supported Windows 10+ baseline.
+            // https://learn.microsoft.com/windows/win32/intl/international-components-for-unicode--icu-
+            "icu.dll",
+            "icuin.dll",
+            "icuuc.dll",
             "comctl32.dll",
             "shcore.dll",
             "pathcch.dll",
@@ -298,6 +303,9 @@ mod tests {
     fn redistributable_crt_is_not_silently_treated_as_an_os_library() {
         assert!(system("api-ms-win-crt-runtime-l1-1-0.dll"));
         assert!(system("ucrtbase.dll"));
+        assert!(system("icuuc.dll"));
+        assert!(system("icuin.dll"));
+        assert!(!system("icuuc74.dll"));
         assert!(!system("vcruntime140.dll"));
         assert!(!system("gstcoreelements.dll"));
         assert!(!dll_name("../codec.dll"));
