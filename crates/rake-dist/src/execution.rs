@@ -257,7 +257,9 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 && request.package.as_deref().is_none_or(|name| name == p.name)
         })
         .ok_or(Error::Package)?;
-    let root = selected.manifest_path.parent().ok_or(Error::Package)?;
+    let canonical_root =
+        dunce::canonicalize(selected.manifest_path.parent().ok_or(Error::Package)?)?;
+    let root = canonical_root.as_path();
     if (request.platform == Platform::Windows
         || plan
             .packages()
@@ -295,6 +297,15 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         return Err(Error::Execution(
             "output overlaps application source".into(),
         ));
+    }
+    reject_input_overlap(&plan, root, &output, &target)?;
+    if let Some(path) = &request.entitlements {
+        let path = dunce::canonicalize(path)?;
+        if path.starts_with(&output) || output.starts_with(&path) {
+            return Err(Error::Execution(
+                "output overlaps entitlements input".into(),
+            ));
+        }
     }
     let parent = output
         .parent()
@@ -972,6 +983,75 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     Ok(result)
 }
 
+fn reject_input_overlap(
+    plan: &crate::Plan,
+    root: &Path,
+    output: &Path,
+    target: &str,
+) -> Result<(), Error> {
+    for package in plan.packages() {
+        let config = package.config();
+        let mut paths = [
+            &config.assets,
+            &config.icon,
+            &config.macos.info_plist,
+            &config.macos.entitlements,
+            &config.windows.manifest,
+            &config.windows.msix.manifest,
+            &config.linux.desktop_entry,
+            &config.linux.appstream,
+            &config.linux.flatpak.manifest,
+        ]
+        .into_iter()
+        .filter_map(Option::as_ref)
+        .cloned()
+        .collect::<Vec<_>>();
+        paths.extend(
+            config
+                .resources
+                .iter()
+                .map(|resource| resource.from.clone()),
+        );
+        paths.extend(config.updates.public_keys.values().cloned());
+        paths.extend(
+            config
+                .runtimes
+                .iter()
+                .filter(|runtime| !runtime.system && runtime.component.is_none())
+                .map(|runtime| runtime.source.clone()),
+        );
+        paths.extend(
+            config
+                .sidecars
+                .iter()
+                .filter(|helper| helper.component.is_none())
+                .map(|helper| {
+                    PathBuf::from(helper.path.to_string_lossy().replace("{target}", target))
+                }),
+        );
+        paths.extend(
+            config
+                .components
+                .iter()
+                .filter(|component| component.target == target)
+                .filter_map(|component| match &component.source {
+                    rake_dist_core::ComponentSource::Local { path } => Some(path.clone()),
+                    _ => None,
+                }),
+        );
+        for path in paths {
+            let input = files::confined(root, &path)?;
+            if output.starts_with(&input) || input.starts_with(output) {
+                return Err(Error::Execution(format!(
+                    "output overlaps packaging input {}",
+                    input.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn native_platform() -> Result<Platform, Error> {
     match std::env::consts::OS {
         "macos" => Ok(Platform::Macos),
@@ -1206,5 +1286,35 @@ fn windows_package(
         _ => Err(Error::Execution(
             "unsupported dedicated Windows format".into(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::*;
+    #[test]
+    fn packaging_output_cannot_contain_or_be_inside_an_input_tree() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("assets")).unwrap();
+        let config = rake_dist_core::Config {
+            assets: Some("assets".into()),
+            ..Default::default()
+        };
+        let plan = config.plan("app", "1.0.0", Platform::Macos).unwrap();
+        for output in [
+            root.path().to_owned(),
+            root.path().join("assets/distribution"),
+        ] {
+            assert!(
+                reject_input_overlap(&plan, root.path(), &output, "aarch64-apple-darwin").is_err()
+            );
+        }
+        reject_input_overlap(
+            &plan,
+            root.path(),
+            &root.path().join("dist"),
+            "aarch64-apple-darwin",
+        )
+        .unwrap();
     }
 }
