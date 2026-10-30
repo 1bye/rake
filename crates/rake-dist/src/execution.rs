@@ -1295,26 +1295,17 @@ mod overlap_tests {
     #[test]
     fn packaging_output_cannot_contain_or_be_inside_an_input_tree() {
         let root = tempfile::tempdir().unwrap();
-        fs::create_dir(root.path().join("assets")).unwrap();
+        let canonical_root = dunce::canonicalize(root.path()).unwrap();
+        let root = canonical_root.as_path();
+        fs::create_dir(root.join("assets")).unwrap();
         let config = rake_dist_core::Config {
             assets: Some("assets".into()),
             ..Default::default()
         };
         let plan = config.plan("app", "1.0.0", Platform::Macos).unwrap();
-        for output in [
-            root.path().to_owned(),
-            root.path().join("assets/distribution"),
-        ] {
-            assert!(
-                reject_input_overlap(&plan, root.path(), &output, "aarch64-apple-darwin").is_err()
-            );
+        for output in [root.to_owned(), root.join("assets/distribution")] {
+            assert!(reject_input_overlap(&plan, root, &output, "aarch64-apple-darwin").is_err());
         }
-        reject_input_overlap(
-            &plan,
-            root.path(),
-            &root.path().join("dist"),
-            "aarch64-apple-darwin",
-        )
-        .unwrap();
+        reject_input_overlap(&plan, root, &root.join("dist"), "aarch64-apple-darwin").unwrap();
     }
 }
