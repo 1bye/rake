@@ -348,3 +348,11 @@ silently considered OS libraries. Case-insensitive native file inspection is
 preserved. Portable core/dist/Windows tests, strict Clippy and rustdoc pass.
 A real MSVC DLL/helper relocation test is queued with the next consolidated
 Windows SDK gate; this commit does not claim that native test already passed.
+
+Flatpak-only checkpoint 41114061388 reached the pinned SDK source build. The SDK
+builder's default debug-info extraction rewrote the installed Rust compiler's
+shared libraries; eu-strip reported malformed LLVM/compiler ELF files and rustc
+could no longer load LLVM. The toolchain module now explicitly disables stripping
+and debug extraction while retaining final cleanup of build-only tools. This
+matches Flatpak's documented build options. Linux unit/manifest tests and strict
+Clippy pass before the next Flatpak-only retry; no passing Linux gate is rerun.

@@ -86,7 +86,7 @@ pub fn flatpak_manifest(
         "command":binary,"finish-args":config.finish_args,
         "build-options":{"env":{"CARGO_HOME":"/run/build/rake-application/.cargo-home","CARGO_TARGET_DIR":"/run/build/rake-application/target","RAKE_DISTRIBUTION_FORMAT":"flatpak","CARGO_PROFILE_RELEASE_DEBUG":"0","CARGO_INCREMENTAL":"0"}},
         "modules":[
-            {"name":"rake-rust-toolchain","buildsystem":"simple","build-commands":commands,"sources":sources,"cleanup":["*"]},
+            {"name":"rake-rust-toolchain","buildsystem":"simple","build-options":{"strip":false,"no-debuginfo":true},"build-commands":commands,"sources":sources,"cleanup":["*"]},
             {"name":"rake-application","buildsystem":"simple","build-options":{"prepend-path":"/app/.rake-build/rust/bin"},
              "build-commands":[compile,format!("install -Dm755 target/release/{} /app/bin/{}",shell(binary),shell(binary)),"cp -a payload/usr/. /app/"],
              "sources":[{"type":"dir","path":source},{"type":"dir","path":payload,"dest":"payload"}]}
@@ -183,6 +183,11 @@ mod tests {
             &[],
         )
         .unwrap();
+        assert_eq!(manifest["modules"][0]["build-options"]["strip"], false);
+        assert_eq!(
+            manifest["modules"][0]["build-options"]["no-debuginfo"],
+            true
+        );
         assert!(
             manifest["modules"][1]["build-commands"][0]
                 .as_str()
