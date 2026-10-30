@@ -111,7 +111,7 @@ impl super::host::Host for InspectionClient {
             supported_targets: Vec::new(),
             completed_operations: 0,
             pending_operations: 0,
-            idempotency_capacity: 0,
+            idempotency_capacity: crate::storage::devtools::REQUESTS,
         }
     }
 
@@ -213,6 +213,61 @@ impl super::host::Host for InspectionClient {
         build: u64,
     ) -> futures::future::LocalBoxFuture<'a, Result<(), String>> {
         Box::pin(bridge.reload_standalone(self.0.id, build))
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use crate::storage::{
+        MemoryBackend, Store as TypedStore,
+        devtools::{Area, Storage},
+    };
+    use rake_protocol::storage::{Edit, Read};
+
+    #[test]
+    fn standalone_storage_uses_async_dispatch_and_closes_with_its_host() {
+        futures::executor::block_on(async {
+            let store = TypedStore::<String>::new(MemoryBackend::new());
+            let client = InspectionClient::new(Collector::default());
+            client.set_storage(
+                Storage::new()
+                    .read_write("settings", Area::Local, store.clone())
+                    .unwrap(),
+            );
+            let host = client.host();
+            let request = Request {
+                protocol: PROTOCOL_VERSION,
+                runtime_id: host.info().runtime_id,
+                key: Some("write".into()),
+                message: Message::Command(Command::EditStorage {
+                    edit: Edit {
+                        store: "settings".into(),
+                        key: "theme".into(),
+                        value: Some("\"dark\"".into()),
+                    },
+                }),
+            };
+            assert!(matches!(
+                host.request_async(request.clone()).await.unwrap(),
+                Reply::Acknowledged
+            ));
+            assert_eq!(store.get("theme").await.unwrap().as_deref(), Some("dark"));
+            let read = Request {
+                key: None,
+                message: Message::Query(Query::Storage { read: Read::Stores }),
+                ..request.clone()
+            };
+            assert!(matches!(
+                host.request_async(read).await.unwrap(),
+                Reply::Data(_)
+            ));
+            client.close();
+            assert!(matches!(
+                host.request_async(request).await,
+                Err(ControlError::RuntimeShutdown)
+            ));
+        });
     }
 }
 

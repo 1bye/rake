@@ -105,4 +105,25 @@ mod native {
             assert_eq!(fs::read(outside).unwrap(), b"untouched");
         });
     }
+
+    #[test]
+    fn full_file_store_rejects_new_keys_without_changing_existing_data() {
+        block_on(async {
+            let directory = Directory::new();
+            let store = Store::<u8>::new(FileBackend::open(&directory.0).await.unwrap());
+            store.set("initial", &0).await.unwrap();
+            let values: std::collections::BTreeMap<_, _> = (0..4096)
+                .map(|index| (format!("key-{index:04}"), vec![b'0']))
+                .collect();
+            let bytes = serde_json::to_vec(&values).unwrap();
+            let path = directory.0.join("store.json");
+            fs::write(&path, &bytes).unwrap();
+            assert_eq!(store.get("key-0000").await.unwrap(), Some(0));
+            assert!(matches!(
+                store.set("overflow", &1).await,
+                Err(StorageError::Capacity)
+            ));
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        });
+    }
 }

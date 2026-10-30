@@ -73,6 +73,25 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
         ));
         assert_eq!(store.get("theme").await.unwrap().as_deref(), Some("light"));
         store.set("theme", &"app changed".into()).await.unwrap();
+        let ordinary = Message::Command(Command::Run {
+            id: "not-registered".into(),
+            arguments: serde_json::Value::Null,
+        });
+        assert!(matches!(
+            client.request(request(&client, ordinary.clone(), Some("edit-1"))),
+            Err(ControlError::KeyConflict)
+        ));
+        assert!(
+            client
+                .request(request(&client, ordinary, Some("ordinary")))
+                .is_err()
+        );
+        assert!(matches!(
+            client
+                .request_async(request(&client, edit(None), Some("ordinary")))
+                .await,
+            Err(ControlError::KeyConflict)
+        ));
         client.request_async(first).await.unwrap();
         assert_eq!(
             store.get("theme").await.unwrap().as_deref(),
@@ -131,6 +150,13 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
             .await
             .unwrap();
         assert!(store.get("theme").await.unwrap().is_none());
+        router.shutdown();
+        assert!(matches!(
+            client
+                .request_async(request(&client, edit(None), Some("shutdown")))
+                .await,
+            Err(ControlError::RuntimeShutdown)
+        ));
     });
 }
 
@@ -175,5 +201,91 @@ fn large_pages_continue_without_losing_keys() {
             after = Some(next);
         }
         assert_eq!(keys, ["a", "b", "c"]);
+    });
+}
+
+#[test]
+fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
+    use futures::future::LocalBoxFuture;
+    use rake::storage::{Backend, StorageError};
+    use std::{cell::Cell, rc::Rc};
+    struct Pending(Rc<Cell<usize>>);
+    impl Backend for Pending {
+        fn get<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> LocalBoxFuture<'a, Result<Option<Vec<u8>>, StorageError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn set<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a [u8],
+        ) -> LocalBoxFuture<'a, Result<(), StorageError>> {
+            Box::pin(async {
+                self.0.set(self.0.get() + 1);
+                futures::future::pending().await
+            })
+        }
+        fn remove<'a>(&'a self, _: &'a str) -> LocalBoxFuture<'a, Result<(), StorageError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn keys<'a>(
+            &'a self,
+            _: Option<&'a str>,
+            _: usize,
+        ) -> LocalBoxFuture<'a, Result<Vec<String>, StorageError>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+    block_on(async {
+        let writes = Rc::new(Cell::new(0));
+        let registry = Storage::new()
+            .read_write(
+                "preferences",
+                Area::Local,
+                Store::<String>::new(Pending(writes.clone())),
+            )
+            .unwrap();
+        let router = Router::<NoRoute>::with_services(
+            RouterConfig::default(),
+            ServiceRegistry::new().with(registry).unwrap(),
+        );
+        let client = router.client();
+        let request = request(&client, edit(Some("\"dark\"")), Some("pending"));
+        let mut first = Box::pin(client.request_async(request.clone()));
+        assert!(futures::poll!(&mut first).is_pending());
+        assert!(matches!(
+            client.request_async(request.clone()).await,
+            Err(ControlError::Storage { .. })
+        ));
+        assert_eq!(writes.get(), 1);
+        drop(first);
+        assert!(matches!(
+            client.request_async(request).await,
+            Err(ControlError::Storage { .. })
+        ));
+        assert_eq!(writes.get(), 1);
+    });
+}
+
+#[test]
+fn shared_registry_keeps_retry_keys_scoped_to_each_runtime() {
+    block_on(async {
+        let store = Store::<String>::new(MemoryBackend::new());
+        let storage = Storage::new()
+            .read_write("preferences", Area::Local, store.clone())
+            .unwrap();
+        let services = ServiceRegistry::new().with(storage).unwrap();
+        let first = Router::<NoRoute>::with_services(RouterConfig::default(), services.clone());
+        let second = Router::<NoRoute>::with_services(RouterConfig::default(), services);
+        for client in [first.client(), second.client()] {
+            store.set("theme", &"application".into()).await.unwrap();
+            client
+                .request_async(request(&client, edit(Some("\"dark\"")), Some("same-key")))
+                .await
+                .unwrap();
+            assert_eq!(store.get("theme").await.unwrap().as_deref(), Some("dark"));
+        }
     });
 }

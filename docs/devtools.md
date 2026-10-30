@@ -238,7 +238,7 @@ protection enabled and type reviewed commands manually when Chrome blocks pastin
 See [navigation and handle registration](element-inspection.md#elements-navigation).
 
 Supported CDP methods are the domain enable/disable methods for Network, Log,
-Runtime, DOM, CSS and Overlay; Inspector.enable; Page.enable/disable,
+Runtime, DOM, CSS, Overlay and DOMStorage; Inspector.enable; Page.enable/disable,
 Page.getResourceTree/getFrameTree/bringToFront; Runtime.runIfWaitingForDebugger,
 Runtime.evaluate, Runtime.compileScript (without persistence),
 Runtime.globalLexicalScopeNames, Runtime.getProperties,
@@ -256,6 +256,12 @@ CSS edits are restricted to temporary DevTools base override sheets; authored st
 Accessibility.enable/disable, getRootAXNode/getFullAXTree/getPartialAXTree/
 getChildAXNodes/getAXNodeAndAncestors, Tracing.start/end and IO.read/close are also
 supported. `Rake.openSource { nodeId, target? }` accepts captured construction/style/handler sites.
+Application storage supports `Storage.getStorageKey/getStorageKeyForFrame`,
+`DOMStorage.getDOMStorageItems/setDOMStorageItem/removeDOMStorageItem` and storage
+change events for explicitly registered typed stores. `Rake.getStorage` returns
+their catalog. Bulk clear is rejected and Chrome's optimistic table is restored;
+browser cookies, service workers, databases and quotas are not synthesized.
+See [typed storage](storage.md) for registration, production feature gates and limits.
 Chrome Copy element receives escaped
 synthetic markup. See the [Elements coverage checklist](devtools-next.md#elements-coverage-checklist)
 for verification evidence and remaining GPUI boundaries.

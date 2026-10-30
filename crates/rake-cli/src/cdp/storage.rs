@@ -26,6 +26,45 @@ pub(super) struct Storage {
 }
 
 impl Storage {
+    pub(super) fn recover_mutation(&mut self, instance: &Instance, params: &Value) -> Vec<Event> {
+        let Ok(local) = area(params) else {
+            return Vec::new();
+        };
+        let Ok((actual, _)) = self.handle(instance, "DOMStorage.getDOMStorageItems", params) else {
+            return Vec::new();
+        };
+        let Some(key) = params["key"].as_str() else {
+            // Chrome also clears the table optimistically on its Clear All button.
+            return actual["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|entry| {
+                    Event::new(
+                        "DOMStorage.domStorageItemAdded",
+                        json!({"storageId":id(local),"key":entry[0],"newValue":entry[1]}),
+                    )
+                })
+                .collect();
+        };
+        let value = actual["entries"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry[0] == key))
+            .and_then(|entry| entry[1].as_str());
+        // Chrome can retain optimistic cell text when an update equals its
+        // pre-edit cached value. Recreate this projection row from actual data.
+        let mut events = vec![Event::new(
+            "DOMStorage.domStorageItemRemoved",
+            json!({"storageId":id(local),"key":key}),
+        )];
+        if let Some(value) = value {
+            events.push(Event::new(
+                "DOMStorage.domStorageItemAdded",
+                json!({"storageId":id(local),"key":key,"newValue":value}),
+            ));
+        }
+        events
+    }
     pub(super) fn clear(&mut self) {
         self.watched.clear();
     }

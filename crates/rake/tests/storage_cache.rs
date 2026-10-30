@@ -89,6 +89,10 @@ fn hits_lru_byte_budgets_and_shared_invalidation() {
         assert_eq!(store.get("a").await.unwrap().as_deref(), Some("outside"));
         shared.remove("a").await.unwrap();
         assert!(store.get("a").await.unwrap().is_none());
+        let before = backend.reads.get();
+        assert!(store.get("missing").await.unwrap().is_none());
+        assert!(shared.get("missing").await.unwrap().is_none());
+        assert_eq!(backend.reads.get(), before + 1, "absence is cached too");
 
         let tiny =
             Store::<String>::new(backend.clone()).with_cache(CacheConfig::new(2, 1).unwrap());

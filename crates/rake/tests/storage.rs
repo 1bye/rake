@@ -57,6 +57,20 @@ struct Preferences {
     theme: String,
 }
 
+#[cfg(not(feature = "devtools"))]
+#[test]
+fn production_runtime_does_not_advertise_storage_inspection() {
+    let router = rake::router::Router::<rake::router::NoRoute>::new(Default::default());
+    let info = router.client().info();
+    assert!(!info.queries.iter().any(|query| query == "storage"));
+    assert!(
+        !info
+            .commands
+            .iter()
+            .any(|command| command == "edit_storage")
+    );
+}
+
 #[test]
 fn typed_roundtrip_shared_handles_and_failed_conversion() {
     block_on(async {

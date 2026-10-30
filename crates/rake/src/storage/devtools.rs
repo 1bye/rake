@@ -18,7 +18,7 @@ use std::{
 
 const PAGE_BYTES: usize = 384 * 1024;
 const MAX_STORES: usize = 32;
-const REQUESTS: usize = 256;
+pub(crate) const REQUESTS: usize = 256;
 const REQUEST_BYTES: usize = 2 * 1024 * 1024;
 
 trait Inspect {
@@ -239,6 +239,7 @@ impl Storage {
                     .key
                     .filter(|key| !key.is_empty() && key.len() <= 128)
                     .ok_or(ControlError::InvalidRequestKey)?;
+                let key = format!("{}:{key}", request.runtime_id);
                 {
                     let requests = self.requests.borrow();
                     if let Some(saved) = requests.get(&key) {

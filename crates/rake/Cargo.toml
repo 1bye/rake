@@ -69,3 +69,7 @@ required-features = ["view-test-support"]
 [[bench]]
 name = "control_queries"
 harness = false
+
+[[example]]
+name = "storage"
+required-features = ["devtools"]

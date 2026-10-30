@@ -11,6 +11,8 @@ The foundation includes:
   by `#[rake::app]`. A single root view mounts on the host UI event loop.
 - Shared HTTP configuration, native HTTP and browser Fetch, JSON bodies and responses,
   explicit cancellation, total deadlines and incremental body consumption.
+- Typed storage with interchangeable memory/native file backends, optional bounded
+  caching, and explicitly registered, feature-gated Chrome storage inspection.
 - Bounded structured logs, function spans and request lifecycle records. The default
   runner installs an INFO-level subscriber and terminal/browser-console output.
   Embedding hosts can attach `Collector::layer()` to their own subscriber instead.
@@ -49,6 +51,7 @@ See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
 See [graphical devtools](docs/devtools.md) for launch commands, panels and capture limits.
 See [element inspection](docs/element-inspection.md) for instrumentation and coverage.
+See [typed storage](docs/storage.md) for backend contracts, caching and Chrome access.
 The opt-in [`rake::view!` experiment](docs/experimental-view.md) compiles HTML-like
 markup directly into GPUI elements, with utility styles, events, conditions and
 loops. Run `cargo run -p rake-view` for the native example, or build it for Web

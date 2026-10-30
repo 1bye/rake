@@ -1,6 +1,6 @@
 # Typed storage
 
-Implementation plan (one commit per step):
+Implementation sequence (one commit per step):
 
 1. Typed Serde facade, byte backend contract and public consumer tests.
 2. Interchangeable memory and native file backends, with atomic replacement.
@@ -39,7 +39,7 @@ operation running; do not assume cancellation rolls back a write.
 Caching is opt-in: `store.with_cache(CacheConfig::new(128, 1024 * 1024)?)`.
 Cloned store handles share a bounded LRU of encoded bytes (including missing
 keys); decoded values still do not require `Clone`. Budgets count key and value
-bytes, excluding allocator/map overhead. Oversized entries bypass the cache and
+payload bytes, excluding allocator/map/recency bookkeeping. Oversized entries bypass the cache and
 key listings are always fresh. Writes/removals invalidate across clones, including
 failure paths; an older async read cannot repopulate after a newer write.
 
@@ -60,10 +60,13 @@ for routed and standalone roots. Headless hosts can install the same registry in
 `Router::with_services`; local consumers use `RuntimeClient::request_async` for
 storage messages. Native and browser development transports await backend I/O.
 Ordinary synchronous runtime requests remain supported.
+Use the normal [DevTools connection setup](devtools.md#connection); registration
+itself does not open a development listener.
 
 Chrome's Application → Local/Session storage → `rake://runtime` projects entries
 as `registered-name/key` with JSON text values. `DOMStorage` get/set/remove and
-change events are supported; `Storage.getStorageKeyForFrame` identifies the runtime
+change events are supported; `Storage.getStorageKey` and the older
+`Storage.getStorageKeyForFrame` identify the runtime
 frame. Reads/edits use the typed facade and its cache. Invalid JSON/types, unknown
 names and read-only writes fail without replacing data. These edits are persistent
 application writes, not temporary Element overrides. App views still own their
@@ -80,7 +83,9 @@ Persistent edits require retry keys. The registry retains at most 256 edit keys 
 2 MiB of request payload, including failed edits. Matching retries return their
 saved result; changed payloads conflict. An interrupted/pending edit is not repeated
 because filesystem work may already have committed. Reconnect does not reset this
-ledger; a new process/registry does. Bulk clear is deliberately unsupported, since
+ledger; a new process/registry does. Routed hosts also reserve these keys in their
+ordinary application mutation ledger, enforcing its capacity and rejecting key
+reuse across storage and other commands. Bulk clear is deliberately unsupported, since
 registered areas can combine read-only stores and unrelated typed backends.
 
 Without `devtools`, the inspection registry, registration method, store revision
@@ -90,4 +95,86 @@ Normal persistence, optional caching and their normal costs remain.
 
 Registering encrypted storage would expose **decrypted** data. Keep credentials
 in separate unregistered stores, or provide an application-owned redacted view.
+Caching an encrypted backend would also retain decrypted JSON bytes in application
+memory; encryption at rest does not change that. Leave caching disabled for such stores.
 This API does not automatically enumerate files, databases or platform secrets.
+
+## Usage
+
+```rust
+use rake::storage::{CacheConfig, FileBackend, Store};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Preferences {
+    theme: String,
+    tab_width: u8,
+}
+
+// Supply an application-controlled directory; FileBackend creates it privately.
+let preferences = Store::<Preferences>::new(FileBackend::open(directory).await?)
+    .with_cache(CacheConfig::new(128, 1024 * 1024)?);
+
+preferences.set("editor", &Preferences {
+    theme: "dark".into(),
+    tab_width: 4,
+}).await?;
+let loaded = preferences.get("editor").await?;
+```
+
+Inspection registration belongs behind an application feature that forwards to
+`rake/devtools` (for example, `[features] devtools = ["rake/devtools"]`):
+
+```rust
+#[cfg(feature = "devtools")]
+let app = {
+    use rake::storage::devtools::{Area, Storage};
+    let storage = Storage::new()
+        .read_write("preferences", Area::Local, preferences.clone())?;
+    app.devtools_storage(storage)?
+};
+```
+
+The runnable Unix storage example includes a cached file-backed preference store,
+a read-only session store and a typed `test.storage` application command. It runs
+without GPUI/GPU initialization:
+
+```sh
+cargo build -p rake-cli --offline
+cargo build -p rake --no-default-features --features devtools --example storage --offline
+node scripts/test-storage-cdp.mjs
+node scripts/test-storage-cdp.mjs --serve
+```
+
+`--serve` prints a Chrome DevTools URL and accepts `light`, `dark`, `read`, and
+`quit` on stdin. Open Application → Local storage → `rake://runtime`; edit
+`preferences/editor` using JSON such as `{"theme":"dark","tab_width":8}`.
+Session storage exposes the read-only `session/example` key. Chrome has no
+per-row read-only affordance here: rejected edits restore the actual backend
+value through a storage event and report the reason in Console. No browser
+security guard is bypassed. Console accepts `test.storage({"theme":"light"})`
+or `test.storage({})` to change/read the same typed store.
+
+## Verification
+
+The public consumer suites exercise typed round trips without `Clone`, Unicode
+keys, malformed/oversized data, real file reopen/concurrent writers/corrupt-file
+preservation/capacity/private paths, LRU eviction and absence caching, shared and
+external invalidation, delayed reads and cancelled writes. DevTools tests cover
+typed/read-only errors, bounded pages, shutdown/stale identities, retry keys shared
+with ordinary commands, pending/cancelled edits and shared registries across runtimes.
+The standalone host has a separate async storage/teardown test.
+
+The real native/CDP script verifies disk persistence across process restart, typed
+validation, application-to-Chrome change events, writable/read-only permissions,
+discovery compatibility and recovery of rejected optimistic edits. It never drives
+Chrome itself. Stock Chrome 156.0.8078.74's Application panel was additionally
+checked on macOS on 2026-10-30:
+local/session origin discovery, typed JSON display/preview, a successful preference
+edit read back by the application, an application write updating the visible table,
+and invalid/read-only edits restoring the actual stored row.
+
+Native execution is tested on macOS. The supported GPUI/WASM configuration compiles;
+WASM runtime/browser storage execution and Linux/Windows runtime behavior have not
+been verified. Memory storage and the facade are portable; `FileBackend` is native
+only. There is no built-in browser Web Storage, SQLite, Keychain or encryption
+backend in this implementation. The byte backend trait is the extension point.

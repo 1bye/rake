@@ -10,6 +10,24 @@ pub(super) trait Host {
     fn request(&self, request: Request) -> Result<Reply, ControlError>;
 
     #[cfg(feature = "devtools")]
+    fn request_async(
+        &self,
+        request: Request,
+    ) -> futures::future::LocalBoxFuture<'_, Result<Reply, ControlError>> {
+        Box::pin(async move {
+            #[cfg(feature = "devtools")]
+            if crate::storage::devtools::Storage::accepts(&request) {
+                self.request(Request {
+                    message: super::Message::Query(super::Query::Info {}),
+                    ..request.clone()
+                })?;
+                return self.storage().request(request).await;
+            }
+            self.request(request)
+        })
+    }
+
+    #[cfg(feature = "devtools")]
     fn storage(&self) -> crate::storage::devtools::Storage {
         crate::storage::devtools::Storage::new()
     }
@@ -43,20 +61,15 @@ impl HostClient {
     pub(crate) fn info(&self) -> RuntimeInfo {
         self.0.info()
     }
-    pub(crate) fn request(&self, request: Request) -> Result<Reply, ControlError> {
-        self.0.request(request)
-    }
     pub(crate) async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
         #[cfg(feature = "devtools")]
-        if crate::storage::devtools::Storage::accepts(&request) {
-            // Reuse the authoritative host's protocol/runtime/shutdown checks.
-            self.0.request(Request {
-                message: super::Message::Query(super::Query::Info {}),
-                ..request.clone()
-            })?;
-            return self.0.storage().request(request).await;
+        {
+            self.0.request_async(request).await
         }
-        self.request(request)
+        #[cfg(not(feature = "devtools"))]
+        {
+            self.0.request(request)
+        }
     }
 
     #[cfg(any(unix, target_family = "wasm"))]
@@ -81,6 +94,13 @@ impl HostClient {
 }
 
 impl<R: Route> Host for RuntimeClient<R> {
+    #[cfg(feature = "devtools")]
+    fn request_async(
+        &self,
+        request: Request,
+    ) -> futures::future::LocalBoxFuture<'_, Result<Reply, ControlError>> {
+        Box::pin(RuntimeClient::request_async(self, request))
+    }
     #[cfg(feature = "devtools")]
     fn storage(&self) -> crate::storage::devtools::Storage {
         self.services()

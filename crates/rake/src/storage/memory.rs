@@ -6,8 +6,16 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// Volatile storage. Clones share the same map; dropping the last handle frees it.
 /// No persistence, encryption or cross-process sharing is provided.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct MemoryBackend(Rc<RefCell<BTreeMap<String, Vec<u8>>>>);
+
+impl std::fmt::Debug for MemoryBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryBackend")
+            .field("entries", &self.0.borrow().len())
+            .finish_non_exhaustive()
+    }
+}
 
 impl MemoryBackend {
     /// Creates an empty namespace.

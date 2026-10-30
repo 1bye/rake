@@ -70,7 +70,7 @@ fn standalone_root_captures_child_updates_and_navigation_without_a_router() {
     assert_eq!(updated.stable_id, element.stable_id);
     let host = client.host();
     assert!(matches!(
-        host.request(Request {
+        futures::executor::block_on(host.request_async(Request {
             protocol: PROTOCOL_VERSION,
             runtime_id: host.info().runtime_id,
             key: None,
@@ -79,7 +79,7 @@ fn standalone_root_captures_child_updates_and_navigation_without_a_router() {
                 generation: after.capture,
                 action: crate::inspection::NavigationAction::Focus
             })
-        })
+        }))
         .unwrap(),
         Reply::Acknowledged
     ));
@@ -97,12 +97,12 @@ fn standalone_root_captures_child_updates_and_navigation_without_a_router() {
     cx.update(|window, _| window.remove_window());
     cx.run_until_parked();
     assert!(matches!(
-        host.request(Request {
+        futures::executor::block_on(host.request_async(Request {
             protocol: PROTOCOL_VERSION,
             runtime_id: host.info().runtime_id,
             key: None,
             message: Message::Query(crate::control::Query::Info {})
-        }),
+        })),
         Err(crate::control::ControlError::RuntimeShutdown)
     ));
 }

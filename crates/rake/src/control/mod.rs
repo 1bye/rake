@@ -230,7 +230,64 @@ impl<R: Route> RuntimeClient<R> {
     /// Backend I/O runs on the caller's local executor; transports use this path.
     #[cfg(feature = "devtools")]
     pub async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
-        HostClient::new(self.clone()).request_async(request).await
+        use crate::storage::devtools::Storage;
+        if !Storage::accepts(&request) {
+            return self.request(request);
+        }
+        self.request(Request {
+            message: Message::Query(Query::Info {}),
+            ..request.clone()
+        })?;
+        let storage = self
+            .services()
+            .get::<Storage>()
+            .map(|storage| storage.as_ref().clone())
+            .unwrap_or_default();
+        let Message::Command(command) = &request.message else {
+            return storage.request(request).await;
+        };
+        let key = request
+            .key
+            .as_ref()
+            .filter(|key| !key.is_empty() && key.len() <= 128)
+            .ok_or(ControlError::InvalidRequestKey)?
+            .clone();
+        {
+            let requests = self.state.requests.borrow();
+            if let Some(saved) = requests.get(&key) {
+                return if saved.command == *command {
+                    saved.reply.clone()
+                } else {
+                    Err(ControlError::KeyConflict)
+                };
+            }
+            if requests.len() >= self.state.capacity {
+                return Err(ControlError::RequestCapacity);
+            }
+        }
+        let command = command.clone();
+        // Reserve in the same lifetime key space as all other app mutations.
+        // Cancellation retains uncertainty instead of admitting a duplicate write.
+        self.state.requests.borrow_mut().insert(
+            key.clone(),
+            SavedRequest {
+                command: command.clone(),
+                reply: Err(ControlError::Storage {
+                    reason:
+                        "edit pending or response cancelled; inspect storage before another write"
+                            .into(),
+                }),
+            },
+        );
+        let reply = storage.request(request).await;
+        self.state.requests.borrow_mut().insert(
+            key,
+            SavedRequest {
+                command,
+                reply: reply.clone(),
+            },
+        );
+        reply
     }
 
     /// Captures an initial snapshot and revision atomically on the local event loop.

@@ -3,6 +3,22 @@
 //! Cloning a [`Store`] shares its backend. Values need Serde conversion, not `Clone`,
 //! `Send` or `Sync`. Backend futures run on the caller's executor; disk/network
 //! implementations must keep blocking work off the application event loop.
+//!
+//! ```
+//! use rake::storage::{CacheConfig, MemoryBackend, Store};
+//! use serde::{Deserialize, Serialize};
+//! #[derive(Serialize, Deserialize)]
+//! struct Preferences { theme: String }
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! futures::executor::block_on(async {
+//!     let store = Store::<Preferences>::new(MemoryBackend::new())
+//!         .with_cache(CacheConfig::new(64, 256 * 1024)?);
+//!     store.set("editor", &Preferences { theme: "dark".into() }).await?;
+//!     assert_eq!(store.clone().get("editor").await?.unwrap().theme, "dark");
+//!     Ok::<_, rake::storage::StorageError>(())
+//! })?;
+//! # Ok(()) }
+//! ```
 
 use futures::future::LocalBoxFuture;
 use serde::{Serialize, de::DeserializeOwned};

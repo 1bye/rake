@@ -141,7 +141,7 @@ impl Session {
                 self.storage.clear();
                 Ok(json!({}))
             }
-            "Storage.getStorageKeyForFrame" => {
+            "Storage.getStorageKeyForFrame" | "Storage.getStorageKey" => {
                 super::storage::Storage::storage_key(&request.params)
             }
             "Rake.getStorage"
@@ -150,8 +150,30 @@ impl Session {
             | "DOMStorage.removeDOMStorageItem"
             | "DOMStorage.clear" => {
                 let (result, events) =
-                    self.storage
-                        .handle(&self.instance, method, &request.params)?;
+                    match self.storage.handle(&self.instance, method, &request.params) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            if matches!(
+                                method,
+                                "DOMStorage.setDOMStorageItem"
+                                    | "DOMStorage.removeDOMStorageItem"
+                                    | "DOMStorage.clear"
+                            ) {
+                                // Chrome edits its grid optimistically. Restore the actual
+                                // backend value after validation/permission failures.
+                                let events = self
+                                    .storage
+                                    .recover_mutation(&self.instance, &request.params);
+                                if self.domains.contains("DOMStorage") {
+                                    for event in events {
+                                        self.event(event);
+                                    }
+                                }
+                                self.warning(format!("Storage edit rejected: {}", error.message));
+                            }
+                            return Err(error);
+                        }
+                    };
                 if self.domains.contains("DOMStorage") {
                     for event in events {
                         self.event(event);
