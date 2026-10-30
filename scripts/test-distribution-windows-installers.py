@@ -66,6 +66,7 @@ rake-resources={{path={json.dumps(str(repository / 'crates/rake-resources'))}}}
 rake-build={{path={json.dumps(str(repository / 'crates/rake-build'))}}}
 [package.metadata.rake.bundle]
 schema_version=1
+name="Rake Installer {format} {os.getpid()}"
 identifier="dev.rake.installer-{format}-{os.getpid()}"
 resources=[{{from="message.txt",to="message.txt"}}]
 [package.metadata.rake.bundle.desktop]
@@ -78,7 +79,9 @@ file_associations=[{{extensions=["{extension}"],name="RakeInstallerNote",descrip
                     result = json.loads(run(cli, 'bundle', '--native', '--debug', '--format', format, '--manifest-path', source / 'Cargo.toml', '--output', output, '--certificate-thumbprint', os.environ['RAKE_TEST_CERT_THUMBPRINT'], '--json'))
                     last_package = next(output / item['path'] for item in result['artifacts'])
                     if format == 'msi':
-                        msi('/i', last_package, f'INSTALLDIR={installed}')
+                        log = root / f'msi-{version}.log'
+                        msi('/i', last_package, f'INSTALLDIR={installed}', '/l*v', log)
+                        assert executable.exists(), log.read_text(errors='replace')[-16000:]
                     else:
                         run(last_package, '/S', f'/D={installed}')
                     assert run(executable, cwd=root).strip() == f'{version}:installer resource'
