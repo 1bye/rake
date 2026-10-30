@@ -1152,6 +1152,11 @@ fn build(
             return Err(Error::Execution("Cargo message exceeds bound".into()));
         }
         let message: serde_json::Value = serde_json::from_str(&line)?;
+        if message["reason"] == "compiler-message"
+            && let Some(rendered) = message["message"]["rendered"].as_str()
+        {
+            eprint!("{rendered}");
+        }
         if message["reason"] == "compiler-artifact"
             && message["target"]["name"] == binary
             && let Some(path) = message["executable"].as_str()
