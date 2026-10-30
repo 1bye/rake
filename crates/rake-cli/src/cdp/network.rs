@@ -61,7 +61,7 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
     let phase = f.get("phase").and_then(Value::as_str).unwrap_or_default();
     let url = f.get("url").and_then(Value::as_str).unwrap_or_default();
 
-    let (method, params) = match phase {
+    let (method, mut params) = match phase {
         "started" => (
             "Network.requestWillBeSent",
             json!({
@@ -103,6 +103,36 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
         _ => return Vec::new(),
     };
 
+    if phase == "headers_received" {
+        if let Some(duration) = f.get("duration_us").and_then(Value::as_u64) {
+            let start = record.elapsed_us.saturating_sub(duration) as f64 / 1e6;
+            let headers_ms = duration as f64 / 1000.0;
+            params["response"]["timing"] = json!({
+                "requestTime":start,"proxyStart":-1,"proxyEnd":-1,
+                "dnsStart":-1,"dnsEnd":-1,"connectStart":-1,"connectEnd":-1,
+                "sslStart":-1,"sslEnd":-1,"workerStart":-1,"workerReady":-1,
+                "workerFetchStart":-1,"workerRespondWithSettled":-1,
+                "sendStart":-1,"sendEnd":-1,"pushStart":0,"pushEnd":0,
+                "receiveHeadersStart":headers_ms,"receiveHeadersEnd":headers_ms
+            });
+        }
+    }
+    if phase == "started"
+        && let Some(source) = &record.source
+    {
+        let mut context = record.spans.join(" → ");
+        for key in ["command_id", "operation_id", "task_id", "generation_id"] {
+            if let Some(value) = f.get(key) {
+                context.push_str(&format!(" {key}={}", value.as_str().unwrap_or_default()));
+            }
+        }
+        if let Some(id) = record.span_id {
+            context.push_str(&format!(" span={id}"));
+        }
+        params["initiator"] = json!({"type":"script","stack":{"description":"Rust request origin (not a JavaScript stack)",
+            "callFrames":[{"functionName":context.trim(),"scriptId":"","url":super::console::source_url(source),
+            "lineNumber":source.line.saturating_sub(1),"columnNumber":0}]}});
+    }
     vec![Event::new(method, params)]
 }
 
@@ -142,6 +172,34 @@ mod tests {
             );
         }
         assert!(body(Value::Null, false).is_err());
+    }
+
+    #[test]
+    fn timings_and_rust_origin_preserve_real_context() {
+        let mut record: Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":1250000,
+            "source":{"file":"src/fetch.rs","line":17},"span_id":8,
+            "level":"INFO","target":"rake::http","kind":"request","spans":["command.execute","http.request"],"fields":{
+            "request_id":7,"phase":"started","command_id":"demo.fetch","operation_id":"op-3","task_id":"task-2","url":"https://example.test/"}})).unwrap();
+        let event = translate(&record).remove(0);
+        let origin = &event.params["initiator"]["stack"]["callFrames"][0];
+        assert_eq!(origin["lineNumber"], 16);
+        assert!(
+            origin["functionName"]
+                .as_str()
+                .unwrap()
+                .contains("command_id=demo.fetch operation_id=op-3 task_id=task-2")
+        );
+        record
+            .fields
+            .insert("phase".into(), json!("headers_received"));
+        record.fields.insert("duration_us".into(), json!(250000));
+        let event = translate(&record).remove(0);
+        assert_eq!(event.params["response"]["timing"]["requestTime"], 1.0);
+        assert_eq!(
+            event.params["response"]["timing"]["receiveHeadersEnd"],
+            250.0
+        );
+        assert_eq!(event.params["response"]["timing"]["dnsStart"], -1);
     }
 
     #[test]

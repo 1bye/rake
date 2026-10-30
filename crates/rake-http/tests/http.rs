@@ -316,6 +316,15 @@ fn request_body_abandonment_keeps_original_task_context_and_redacted_metadata() 
         .find(|record| record.kind == "request" && record.fields["phase"] == "abandoned")
         .unwrap();
 
+    #[cfg(feature = "devtools")]
+    assert!(
+        request
+            .source
+            .as_ref()
+            .unwrap()
+            .file
+            .ends_with("tests/http.rs")
+    );
     assert_eq!(request.fields["task_id"], "task-1");
     assert_eq!(request.fields["tab_id"], "tab-7");
     assert_eq!(request.fields["method"], "GET");

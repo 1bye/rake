@@ -30,3 +30,17 @@ captures return explicit errors instead of pretending a prefix is a complete bod
 Raw bodies can contain sensitive application data: the development feature is the
 opt-in boundary; unlike credential headers/query parameters, body contents are not
 redacted. The adapter never replays a request to obtain a missing body.
+
+## Timing and origin
+
+The waterfall uses collector-monotonic request, headers, chunk and completion
+observations. Timing includes elapsed time to response headers and application body
+consumption; it is not CPU time or wire transfer timing. DNS, connect, TLS, proxy
+and exact send phases are unavailable and use CDP's unavailable values. Encoded
+wire sizes are not measured; the existing byte counts describe consumed bytes.
+
+Initiator links point at the real Rust request-construction call site. The CDP
+stack presentation carries that Rust location and captured span names, command,
+operation, task and generation IDs when instrumented. It is not a JavaScript or
+Rust backtrace. Links use the same workspace-confined read-only source mechanism
+as Console, and work with Network enabled independently of Console.

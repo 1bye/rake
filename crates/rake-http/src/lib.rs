@@ -197,16 +197,19 @@ impl HttpClient {
     }
 
     /// Begins building a GET request. Network work starts when `send` is polled.
+    #[cfg_attr(feature = "devtools", track_caller)]
     pub fn get(&self, endpoint: &str) -> Request {
         self.request("GET", endpoint)
     }
 
     /// Begins building a POST request.
+    #[cfg_attr(feature = "devtools", track_caller)]
     pub fn post(&self, endpoint: &str) -> Request {
         self.request("POST", endpoint)
     }
 
     /// Builds any valid HTTP method, including PUT, PATCH, DELETE and HEAD.
+    #[cfg_attr(feature = "devtools", track_caller)]
     pub fn request(&self, method: &str, endpoint: &str) -> Request {
         let builder = self.resolve(endpoint).and_then(|url| {
             let method = reqwest::Method::from_bytes(method.as_bytes())
@@ -220,6 +223,8 @@ impl HttpClient {
             builder,
             cancellation: CancellationToken::new(),
             timeout: self.0.timeout,
+            #[cfg(feature = "devtools")]
+            source: std::panic::Location::caller(),
         }
     }
 
@@ -263,6 +268,8 @@ pub struct Request {
     builder: Result<reqwest::RequestBuilder>,
     cancellation: CancellationToken,
     timeout: Option<Duration>,
+    #[cfg(feature = "devtools")]
+    source: &'static std::panic::Location<'static>,
 }
 
 impl Request {
@@ -352,6 +359,13 @@ impl Request {
             lifecycle.context = lifecycle.collector.span_context(&span);
         }
 
+        #[cfg(feature = "devtools")]
+        {
+            lifecycle.context.set_source(rake_diagnostics::Source {
+                file: self.source.file().into(),
+                line: self.source.line(),
+            });
+        }
         #[cfg(feature = "devtools")]
         lifecycle.collector.begin_http(
             lifecycle.id,

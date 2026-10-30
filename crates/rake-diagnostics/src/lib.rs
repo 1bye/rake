@@ -386,6 +386,14 @@ pub struct CapturedContext {
     parent_span_id: Option<u64>,
 }
 
+impl CapturedContext {
+    /// Attaches a real producer call site while preserving causal fields and spans.
+    #[cfg(feature = "devtools")]
+    pub fn set_source(&mut self, source: Source) {
+        self.source = Some(source);
+    }
+}
+
 struct SpanData {
     id: u64,
     parent: Option<u64>,

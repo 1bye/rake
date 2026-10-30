@@ -790,6 +790,33 @@ impl Session {
         }
     }
 
+    fn source_link(&mut self, record: &rake_diagnostics::Record) -> Option<String> {
+        if let (Some(base), Some(source)) = (&self.source_base, &record.source) {
+            let filename = std::path::Path::new(&source.file)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("source.rs");
+            let filename: String = filename
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let url = format!(
+                "{base}/{}/source/{}/{filename}",
+                self.instance.info.runtime_id, record.sequence
+            );
+            self.sources.alias(url.clone(), record);
+            Some(url)
+        } else {
+            None
+        }
+    }
+
     fn clear_console(&mut self) {
         self.objects.release_group("console");
         self.sources.clear();
@@ -899,26 +926,7 @@ impl Session {
                     self.objects
                         .called(record, self.epoch_seconds.unwrap_or_default())
                 };
-                if let (Some(base), Some(source)) = (&self.source_base, &record.source) {
-                    let filename = std::path::Path::new(&source.file)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("source.rs");
-                    let filename: String = filename
-                        .chars()
-                        .map(|c| {
-                            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                                c
-                            } else {
-                                '_'
-                            }
-                        })
-                        .collect();
-                    let url = format!(
-                        "{base}/{}/source/{}/{filename}",
-                        self.instance.info.runtime_id, record.sequence
-                    );
-                    self.sources.alias(url.clone(), record);
+                if let Some(url) = self.source_link(record) {
                     if event.method == "Log.entryAdded" {
                         event.params["entry"]["url"] = json!(url);
                     } else {
@@ -937,8 +945,14 @@ impl Session {
                 if record.sequence <= self.network_cursor {
                     continue;
                 }
+                self.sources.observe(record);
                 for mut event in super::network::translate(record) {
                     if event.method == "Network.requestWillBeSent" {
+                        if record.source.is_some()
+                            && let Some(url) = self.source_link(record)
+                        {
+                            event.params["initiator"]["stack"]["callFrames"][0]["url"] = json!(url);
+                        }
                         event.params["wallTime"] = json!(
                             self.epoch_seconds.unwrap_or_default() + record.elapsed_us as f64 / 1e6
                         );

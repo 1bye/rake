@@ -56,10 +56,7 @@ fn source_content(instance: &Instance, sequence: u64) -> Result<String> {
         .ok_or("Invalid diagnostic sequence")?;
     let Reply::Diagnostics(snapshot) = crate::terminal::query(
         instance,
-        Query::Diagnostics {
-            after,
-            kind: Some("event".into()),
-        },
+        Query::Diagnostics { after, kind: None },
         super::TIMEOUT,
     )?
     else {
