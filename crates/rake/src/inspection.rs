@@ -8,6 +8,8 @@
 //! control values, views and source contents are not retained.
 
 mod editing;
+#[path = "inspection/preview.rs"]
+mod native_preview;
 mod recording;
 mod text_editing;
 #[cfg(feature = "gpui")]
@@ -51,6 +53,8 @@ struct State {
 }
 
 struct WindowState {
+    #[cfg(all(feature = "gpui", target_os = "macos"))]
+    preview: Option<native_preview::native::Target>,
     snapshot: Rc<Snapshot>,
     #[cfg(feature = "gpui")]
     identities: Vec<view::BoundaryIdentity>,
@@ -561,6 +565,8 @@ impl Store {
         let snapshot = Rc::new(snapshot);
 
         let host = state.windows.entry(window).or_insert_with(|| WindowState {
+            #[cfg(all(feature = "gpui", target_os = "macos"))]
+            preview: None,
             snapshot: Rc::clone(&snapshot),
             #[cfg(feature = "gpui")]
             identities: Vec::new(),

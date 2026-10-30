@@ -1,0 +1,20 @@
+[package]
+name = "rake-preview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+devtools = ["rake/devtools"]
+
+[dependencies]
+rake = { workspace = true, features = ["experimental-view"] }
+
+[package.metadata.rake.bundle]
+name = "Rake Preview"
+identifier = "com.example.rake.preview"

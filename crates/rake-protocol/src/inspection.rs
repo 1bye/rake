@@ -8,6 +8,8 @@ use serde_json::Value;
 pub mod memory;
 /// Live frame recording contracts.
 pub mod performance;
+/// Native preview window descriptions and development input.
+pub mod preview;
 /// Shared presentation of captured style values.
 pub mod styles;
 /// Bounded inspection paths, subtree text and synthetic markup for copy actions.

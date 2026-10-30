@@ -50,6 +50,7 @@ See [managed work](docs/managed-work.md) for ownership and host scheduling, and
 [runtime control](docs/runtime-control.md) for CLI setup, shared handlers and bounds.
 See [development and reload](docs/development.md) for `rake dev`, builds and checkpoint integration.
 See [graphical devtools](docs/devtools.md) for launch commands, panels and capture limits.
+See [native browser preview](docs/dev-preview.md) for the macOS `rake dev --preview` prototype.
 See [element inspection](docs/element-inspection.md) for instrumentation and coverage.
 See [typed storage](docs/storage.md) for backend contracts, caching and Chrome access.
 The opt-in [`rake::view!` experiment](docs/experimental-view.md) compiles HTML-like

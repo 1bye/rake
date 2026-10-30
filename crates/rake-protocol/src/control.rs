@@ -48,6 +48,13 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Forward one non-retrying development preview input to an exact native window.
+    PreviewInput {
+        /// Exact window, presentation and content coordinates.
+        point: crate::inspection::preview::Point,
+        /// Atomic pointer operation.
+        input: crate::inspection::preview::Input,
+    },
     /// Edits explicitly registered application storage; requires a retry key.
     EditStorage {
         /// Typed set or remove operation.
@@ -223,6 +230,7 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "preview_input",
             "edit_storage",
             "record_memory",
             "record_frames",
@@ -255,6 +263,13 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Describes inspected windows opted into the macOS development preview.
+    Preview {},
+    /// Hit-tests an exact inspected presentation without activating the element.
+    PreviewElement {
+        /// Exact window, presentation and content coordinates.
+        point: crate::inspection::preview::Point,
+    },
     /// Reads explicitly registered typed application storage.
     Storage {
         /// Catalog or bounded entries page.
@@ -356,6 +371,8 @@ impl Query {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "preview",
+            "preview_element",
             "storage",
             "memory",
             "windows",

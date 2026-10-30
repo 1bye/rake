@@ -32,6 +32,25 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
                 include_str!("../../../scripts/inspector-model.js"),
             ),
             ("dev.py", include_str!("../../../scripts/dev.py")),
+            ("preview.py", include_str!("../../../scripts/preview.py")),
+            (
+                "preview_socket.py",
+                include_str!("../../../scripts/preview_socket.py"),
+            ),
+            (
+                "preview-stream.js",
+                include_str!("../../../scripts/preview-stream.js"),
+            ),
+            (
+                "preview.swift",
+                include_str!("../../../scripts/preview.swift"),
+            ),
+            (
+                "preview.html",
+                include_str!("../../../scripts/preview.html"),
+            ),
+            ("preview.js", include_str!("../../../scripts/preview.js")),
+            ("preview.css", include_str!("../../../scripts/preview.css")),
             (
                 "serve-web.py",
                 include_str!("../../../scripts/serve-web.py"),

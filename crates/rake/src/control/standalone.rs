@@ -78,6 +78,7 @@ impl super::host::Host for InspectionClient {
             element_inspection: status,
             element_interaction: status != Status::Unavailable,
             commands: [
+                "preview_input",
                 "edit_storage",
                 "record_memory",
                 "navigate_element",
@@ -89,9 +90,12 @@ impl super::host::Host for InspectionClient {
             ]
             .into_iter()
             .filter(|name| *name != "record_memory" || super::memory::available())
+            .filter(|name| *name != "preview_input" || self.0.inspection.preview_enabled())
             .map(str::to_owned)
             .collect(),
             queries: [
+                "preview",
+                "preview_element",
                 "storage",
                 "memory",
                 "info",
@@ -106,6 +110,7 @@ impl super::host::Host for InspectionClient {
             ]
             .into_iter()
             .filter(|name| *name != "memory" || super::memory::available())
+            .filter(|name| !name.starts_with("preview") || self.0.inspection.preview_enabled())
             .map(str::to_owned)
             .collect(),
             supported_targets: Vec::new(),
@@ -162,6 +167,17 @@ impl super::host::Host for InspectionClient {
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
             Message::Query(Query::InspectElement { id }) => Ok(Reply::Element(store.element(&id)?)),
             Message::Query(Query::InspectPick {}) => Ok(Reply::InspectPick(store.pick()?)),
+            Message::Query(Query::Preview {}) => Ok(Reply::Data(
+                serde_json::to_value(store.preview_windows()).expect("preview windows serialize"),
+            )),
+            Message::Query(Query::PreviewElement { point }) => {
+                Ok(Reply::Element(store.preview_element(&point)?))
+            }
+            Message::Command(Command::PreviewInput { point, input }) => {
+                store.preview_input(&point, &input)?;
+
+                Ok(Reply::Acknowledged)
+            }
             Message::Command(Command::HighlightElement { id, generation }) => {
                 store.highlight(id.as_deref(), &generation)?;
                 Ok(Reply::Acknowledged)

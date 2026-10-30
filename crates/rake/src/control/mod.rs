@@ -143,12 +143,16 @@ impl<R: Route> RuntimeClient<R> {
                 .iter()
                 .filter(|name| **name != "record_memory" || memory::available())
                 .filter(|name| **name != "edit_storage" || cfg!(feature = "devtools"))
+                .filter(|name| **name != "preview_input" || self.state.inspection.preview_enabled())
                 .map(|name| (*name).into())
                 .collect(),
             queries: Query::names()
                 .iter()
                 .filter(|name| **name != "memory" || memory::available())
                 .filter(|name| **name != "storage" || cfg!(feature = "devtools"))
+                .filter(|name| {
+                    !name.starts_with("preview") || self.state.inspection.preview_enabled()
+                })
                 .map(|name| (*name).into())
                 .collect(),
             supported_targets: self.router.supported_targets(),
@@ -183,7 +187,8 @@ impl<R: Route> RuntimeClient<R> {
                 // Transient inspection controls must not fill the lifetime mutation-key registry.
                 if matches!(
                     command,
-                    Command::HighlightElement { .. }
+                    Command::PreviewInput { .. }
+                        | Command::HighlightElement { .. }
                         | Command::InspectMode { .. }
                         | Command::NavigateElement { .. }
                         | Command::EditElementStyle { .. }
@@ -385,6 +390,11 @@ impl<R: Route> RuntimeClient<R> {
 
                 return Ok(Reply::Acknowledged);
             }
+            Command::PreviewInput { point, input } => {
+                self.state.inspection.preview_input(point, input)?;
+
+                return Ok(Reply::Acknowledged);
+            }
             Command::HighlightElement { id, generation } => {
                 self.state.inspection.highlight(id.as_deref(), generation)?;
 
@@ -497,6 +507,13 @@ impl<R: Route> RuntimeClient<R> {
             }
             Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
             Query::InspectPick {} => Ok(Reply::InspectPick(self.state.inspection.pick()?)),
+            Query::Preview {} => Ok(Reply::Data(
+                serde_json::to_value(self.state.inspection.preview_windows())
+                    .expect("preview windows serialize"),
+            )),
+            Query::PreviewElement { point } => Ok(Reply::Element(
+                self.state.inspection.preview_element(&point)?,
+            )),
             Query::InspectTreePage { generation, offset } => Ok(Reply::ElementPage(
                 self.state
                     .inspection

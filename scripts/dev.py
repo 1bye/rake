@@ -304,6 +304,11 @@ class Supervisor:
         env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control),
                "RAKE_SOURCE_ROOT": os.environ.get("RAKE_SOURCE_ROOT", str(self.project.root))}
         cdp_url = None
+        preview_helper = None
+        if getattr(self.project.args, "preview", False):
+            preview_helper = self.session / "preview-capture"
+            run_output(self.processes, ["xcrun", "swiftc", str(Path(__file__).with_name("preview.swift")),
+                "-module-cache-path", str(self.session / "swift-cache"), "-o", str(preview_helper)])
         if self.project.args.cdp:
             executable = os.environ.get("RAKE_CLI") or shutil.which("rake")
             if not executable:
@@ -322,6 +327,7 @@ class Supervisor:
             "--development-state", str(self.status_path), "--build-root", str(self.builds),
             "--process-output", str(self.session / "output.json"),
             *(["--inspector-only"] if self.project.args.target == "desktop" else []),
+            *(["--preview-helper", str(preview_helper)] if preview_helper else []),
             *(["--cdp-url", cdp_url] if cdp_url else [])],
             env=env, stdout=subprocess.PIPE, text=True)
         # Server writes its private launch URL after binding, before serving requests.
@@ -329,7 +335,7 @@ class Supervisor:
         if not line.startswith("Serving "):
             raise RuntimeError("development server could not start")
         url = line.split(" at ", 1)[1].strip()
-        print(json.dumps({"event": "web_listening" if self.project.args.target == "web" else "inspector_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
+        print(json.dumps({"event": "preview_listening" if preview_helper else "web_listening" if self.project.args.target == "web" else "inspector_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
               f"{line.strip()}\nSession: {self.session}", flush=True)
         self.server.stdout.close()
         if not self.project.args.no_open:
@@ -349,6 +355,8 @@ class Supervisor:
 
     def launch(self, artifact):
         env = {**os.environ, "RAKE_DEV_CONTROL": "1", "RAKE_CONTROL_DIR": str(self.control)}
+        if getattr(self.project.args, "preview", False):
+            env["RAKE_DEV_PREVIEW"] = "1"
         env.setdefault("RUST_BACKTRACE", "1")
         if self.checkpoint.exists():
             env["RAKE_RELOAD_CHECKPOINT"] = str(self.checkpoint)
@@ -557,6 +565,7 @@ def main():
     parser.add_argument("--port", type=int)
     parser.add_argument("--instance", help="Initial inspector runtime UUID or application ID")
     parser.add_argument("--cdp", action="store_true", help="Expose opted-in runtimes to stock Chrome DevTools")
+    parser.add_argument("--preview", action="store_true", help="macOS 14+: stream the native window to a local browser with pointer input and element selection")
     parser.add_argument("--elements", action="store_true", help="Launch the Elements-only Rake Inspector; --target selects desktop or Web")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -567,6 +576,8 @@ def main():
     parser.add_argument("--sign-identity", help="macOS bundle signing identity; default '-' uses ad-hoc signing")
     parser.add_argument("--entitlements", type=Path, help="macOS signing entitlements plist")
     args = parser.parse_args()
+    if args.preview and (args.command != "dev" or args.target != "desktop" or sys.platform != "darwin"):
+        parser.error("--preview requires rake dev --target desktop on macOS 14 or later")
     if args.cdp and args.command != "dev":
         parser.error("--cdp applies to dev")
     if args.elements and args.command != "inspect":

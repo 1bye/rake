@@ -779,6 +779,14 @@ mod tests {
     fn every_advertised_wire_tag_has_a_raw_terminal_path() {
         let tab = "tab-1".parse().unwrap();
         let operation = "op-1".parse().unwrap();
+        let preview_point = rake_protocol::inspection::preview::Point {
+            window: "window-1".parse().unwrap(),
+            native_id: 42,
+            generation: "capture-1".into(),
+            geometry: None,
+            x: 10,
+            y: 20,
+        };
 
         let destination = RouteAddress {
             route: "home".into(),
@@ -786,6 +794,10 @@ mod tests {
         };
 
         let commands = vec![
+            Command::PreviewInput {
+                point: preview_point.clone(),
+                input: rake_protocol::inspection::preview::Input::Click,
+            },
             Command::EditStorage {
                 edit: rake_protocol::storage::Edit {
                     store: "preferences".into(),
@@ -880,6 +892,10 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Preview {},
+            Query::PreviewElement {
+                point: preview_point,
+            },
             Query::Storage {
                 read: rake_protocol::storage::Read::Stores,
             },

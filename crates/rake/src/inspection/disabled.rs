@@ -9,6 +9,26 @@ pub use rake_protocol::inspection::*;
 pub(crate) struct Store {}
 
 impl Store {
+    pub(crate) fn preview_enabled(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn preview_windows(&self) -> Vec<preview::Window> {
+        Vec::new()
+    }
+
+    pub(crate) fn preview_element(&self, _: &preview::Point) -> Result<Element, InspectionError> {
+        Err(InspectionError::Unavailable)
+    }
+
+    pub(crate) fn preview_input(
+        &self,
+        _: &preview::Point,
+        _: &preview::Input,
+    ) -> Result<(), InspectionError> {
+        Err(InspectionError::Unavailable)
+    }
+
     pub(crate) fn edit_text(&self, _: &str, _: &str, _: &TextEdit) -> Result<(), InspectionError> {
         Err(InspectionError::Unavailable)
     }

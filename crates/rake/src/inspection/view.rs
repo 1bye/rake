@@ -799,6 +799,8 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                         .unwrap_or_default();
                 }
                 store.publish(*host, completed.snapshot);
+                #[cfg(target_os = "macos")]
+                store.bind_preview(*host, window, cx);
                 let mut state = store.0.borrow_mut();
                 let host = state
                     .windows
