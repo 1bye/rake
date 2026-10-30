@@ -120,6 +120,7 @@ pub fn sign_app(
             }
             .into(),
         ),
+        timestamped: false,
         notarized: false,
         stapled: false,
     })

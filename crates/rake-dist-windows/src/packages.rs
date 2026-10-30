@@ -87,11 +87,15 @@ pub fn sign(
         command.args(["/tr", timestamp, "/td", "SHA256"]);
     }
     run(command.arg(dunce::simplified(path)))?;
-    run(Command::new("signtool.exe")
-        .args(["verify", "/pa", "/all"])
-        .arg(dunce::simplified(path)))?;
+    let mut verify = Command::new("signtool.exe");
+    verify.args(["verify", "/pa", "/all"]);
+    if timestamp.is_some() {
+        verify.arg("/tw");
+    }
+    run(verify.arg(dunce::simplified(path)))?;
     Ok(TrustRecord {
         signature: Some("authenticode".into()),
+        timestamped: timestamp.is_some(),
         ..Default::default()
     })
 }

@@ -21,6 +21,9 @@ pub struct TrustOptions {
 pub struct TrustRecord {
     /// Verified signature kind; empty for an unsigned development artifact.
     pub signature: Option<String>,
+    /// An RFC 3161 timestamp was requested and native verification accepted it.
+    #[serde(default)]
+    pub timestamped: bool,
     /// Apple accepted this payload for notarization.
     pub notarized: bool,
     /// The artifact's stapled Apple ticket was validated.

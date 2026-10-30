@@ -221,10 +221,11 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                     source.extension().and_then(|value| value.to_str()),
                     Some("exe" | "msi" | "msix")
                 )
-                && artifact.trust.signature.as_deref() != Some("authenticode")
+                && (artifact.trust.signature.as_deref() != Some("authenticode")
+                    || !artifact.trust.timestamped)
             {
                 return Err(fail(
-                    "public Windows installers require verified Authenticode",
+                    "public Windows installers require verified Authenticode and RFC 3161 timestamp",
                 ));
             }
             if distribution.version == request.version && package_payload(artifact.format, &source)
@@ -1230,6 +1231,34 @@ mod tests {
             updates_enabled: false,
             custom_verifiers: BTreeMap::new(),
         }
+    }
+    #[test]
+    fn windows_release_requires_native_timestamp_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = fixture(root.path(), "1.0.0");
+        let directory = &request.distributions[0];
+        let path = directory.join("distribution.json");
+        let mut distribution: Distribution =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        fs::rename(directory.join("app.tar.gz"), directory.join("setup.exe")).unwrap();
+        distribution.target = "x86_64-pc-windows-msvc".into();
+        let artifact = &mut distribution.artifacts[0];
+        artifact.path = "setup.exe".into();
+        artifact.format = Format::Nsis;
+        artifact.trust.signature = Some("authenticode".into());
+        request.config.required =
+            BTreeMap::from([(distribution.target.clone(), vec![Format::Nsis])]);
+        files::write_json(&path, &distribution).unwrap();
+        assert!(
+            inputs(&request)
+                .err()
+                .expect("untimestamped installer rejected")
+                .to_string()
+                .contains("RFC 3161 timestamp")
+        );
+        distribution.artifacts[0].trust.timestamped = true;
+        files::write_json(&path, &distribution).unwrap();
+        assert!(inputs(&request).is_ok());
     }
     #[test]
     fn absent_target_and_corrupted_payload_cannot_advance_channel() {
