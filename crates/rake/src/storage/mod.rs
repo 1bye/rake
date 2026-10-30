@@ -6,7 +6,14 @@
 
 use futures::future::LocalBoxFuture;
 use serde::{Serialize, de::DeserializeOwned};
-use std::{marker::PhantomData, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    marker::PhantomData,
+    rc::Rc,
+};
+
+mod cache;
+pub use cache::CacheConfig;
 
 mod memory;
 pub use memory::MemoryBackend;
@@ -25,6 +32,9 @@ pub const MAX_PAGE_SIZE: usize = 256;
 /// Storage validation, conversion or backend failure.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Both cache budgets must be nonzero.
+    #[error("storage cache requires nonzero entry and byte budgets")]
+    InvalidCacheConfig,
     /// A bounded backend cannot admit another key or value.
     #[error("storage backend capacity reached")]
     Capacity,
@@ -83,14 +93,83 @@ pub trait Backend: 'static {
 
 /// A shared backend with typed JSON conversion. Cloning never requires `T: Clone`.
 pub struct Store<T> {
-    backend: Rc<dyn Backend>,
+    inner: Rc<Inner>,
     value: PhantomData<fn() -> T>,
+}
+
+struct Inner {
+    backend: Rc<dyn Backend>,
+    cache: RefCell<Option<cache::Cache>>,
+    epoch: Cell<u64>,
+    writes: Cell<usize>,
+}
+
+impl Inner {
+    fn invalidate(&self) {
+        self.epoch.set(self.epoch.get().wrapping_add(1));
+        if let Some(cache) = self.cache.borrow_mut().as_mut() {
+            cache.clear();
+        }
+    }
+    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
+        if self.writes.get() == 0 {
+            let cached = self
+                .cache
+                .borrow_mut()
+                .as_mut()
+                .and_then(|cache| cache.get(key));
+            if let Some(value) = cached {
+                return Ok(value);
+            }
+        }
+        let epoch = self.epoch.get();
+        let value = self.backend.get(key).await?;
+        if let Some(value) = &value {
+            validate_value(value)?;
+        }
+        if self.writes.get() == 0
+            && epoch == self.epoch.get()
+            && let Some(cache) = self.cache.borrow_mut().as_mut()
+        {
+            cache.insert(key, value.clone());
+        }
+        Ok(value)
+    }
+}
+
+struct Mutation<'a> {
+    inner: &'a Inner,
+    finished: bool,
+}
+impl<'a> Mutation<'a> {
+    fn new(inner: &'a Inner) -> Self {
+        inner.writes.set(inner.writes.get() + 1);
+        inner.invalidate();
+        Self {
+            inner,
+            finished: false,
+        }
+    }
+    fn finish(mut self) {
+        self.finished = true;
+    }
+}
+impl Drop for Mutation<'_> {
+    fn drop(&mut self) {
+        self.inner.writes.set(self.inner.writes.get() - 1);
+        self.inner.invalidate();
+        // A cancelled backend future can still commit on a worker. Bypass caching
+        // rather than retaining data read before that unknown commit point.
+        if !self.finished {
+            *self.inner.cache.borrow_mut() = None;
+        }
+    }
 }
 
 impl<T> Clone for Store<T> {
     fn clone(&self) -> Self {
         Self {
-            backend: self.backend.clone(),
+            inner: self.inner.clone(),
             value: PhantomData,
         }
     }
@@ -106,15 +185,36 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     /// Owns one backend; no I/O or inspection registration occurs here.
     pub fn new(backend: impl Backend) -> Self {
         Self {
-            backend: Rc::new(backend),
+            inner: Rc::new(Inner {
+                backend: Rc::new(backend),
+                cache: RefCell::new(None),
+                epoch: Cell::new(0),
+                writes: Cell::new(0),
+            }),
             value: PhantomData,
         }
+    }
+
+    /// Enables/replaces the encoded-value LRU shared by all cloned handles.
+    /// Cache invalidation covers writes through these handles only. Call
+    /// [`Self::invalidate`] after independent backend writers; lists are never cached.
+    /// A cancelled mutation disables caching because backend work may still commit.
+    pub fn with_cache(self, config: CacheConfig) -> Self {
+        self.inner.invalidate();
+        *self.inner.cache.borrow_mut() = Some(cache::Cache::new(config));
+        self
+    }
+
+    /// Drops cached values across clones, including cached absence. External
+    /// writers require explicit invalidation after their write has completed.
+    pub fn invalidate(&self) {
+        self.inner.invalidate();
     }
 
     /// Loads and decodes a value. Invalid JSON/type data returns a codec error.
     pub async fn get(&self, key: &str) -> Result<Option<T>, StorageError> {
         validate_key(key)?;
-        self.backend
+        self.inner
             .get(key)
             .await?
             .map(|bytes| {
@@ -130,13 +230,19 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
         validate_key(key)?;
         let bytes = serde_json::to_vec(value)?;
         validate_value(&bytes)?;
-        self.backend.set(key, &bytes).await
+        let mutation = Mutation::new(&self.inner);
+        let result = self.inner.backend.set(key, &bytes).await;
+        mutation.finish();
+        result
     }
 
     /// Deletes a key; deleting a missing key is a success.
     pub async fn remove(&self, key: &str) -> Result<(), StorageError> {
         validate_key(key)?;
-        self.backend.remove(key).await
+        let mutation = Mutation::new(&self.inner);
+        let result = self.inner.backend.remove(key).await;
+        mutation.finish();
+        result
     }
 
     /// Lists keys in exclusive cursor order. A short page ends the traversal;
@@ -153,7 +259,7 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
         if !(1..=MAX_PAGE_SIZE).contains(&limit) {
             return Err(StorageError::InvalidPage);
         }
-        let keys = self.backend.keys(after, limit).await?;
+        let keys = self.inner.backend.keys(after, limit).await?;
         if keys.len() > limit
             || keys
                 .iter()

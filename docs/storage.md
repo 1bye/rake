@@ -35,3 +35,16 @@ implement `Backend`; this release does not supply a cryptographic implementation
 Directory metadata is not fsynced, so atomic replacement is not a power-loss
 durability guarantee. Cancelling a future may leave an already-started file
 operation running; do not assume cancellation rolls back a write.
+
+Caching is opt-in: `store.with_cache(CacheConfig::new(128, 1024 * 1024)?)`.
+Cloned store handles share a bounded LRU of encoded bytes (including missing
+keys); decoded values still do not require `Clone`. Budgets count key and value
+bytes, excluding allocator/map overhead. Oversized entries bypass the cache and
+key listings are always fresh. Writes/removals invalidate across clones, including
+failure paths; an older async read cannot repopulate after a newer write.
+
+Independent writers require `store.invalidate()` after their write completes;
+there is no file watcher or cross-process cache coherence. Cancelling a mutation
+disables caching across its handles because backend work could still commit later.
+Re-enable only after pending backend work is known to have finished. The default
+store has no cache and always reads its backend.
