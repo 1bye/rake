@@ -31,6 +31,11 @@ pub enum Capability {
 #[derive(Debug)]
 pub struct UpdateService {
     pub(crate) binding: UpdateBinding,
+    #[cfg(all(
+        feature = "native-tests",
+        any(feature = "appimage", feature = "velopack")
+    ))]
+    test_tls_root: Option<ureq::tls::Certificate<'static>>,
     #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
     pub(crate) test_sparkle_feed: Option<String>,
 }
@@ -47,6 +52,11 @@ impl UpdateService {
         matches_installation(&binding, resources.installation())?;
         Ok(Self {
             binding,
+            #[cfg(all(
+                feature = "native-tests",
+                any(feature = "appimage", feature = "velopack")
+            ))]
+            test_tls_root: None,
             #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
             test_sparkle_feed: None,
         })
@@ -72,6 +82,42 @@ impl UpdateService {
         Ok(self)
     }
 
+    /// Enrolls one disposable test CA for a loopback HTTPS native acceptance feed.
+    /// Certificate chain and host verification stay enabled. Production builds
+    /// should omit `native-tests`; there is no global certificate-store mutation.
+    /// # Errors
+    /// Rejects non-loopback publication roots, missing explicit ports and bad PEM.
+    #[cfg(all(
+        feature = "native-tests",
+        any(feature = "appimage", feature = "velopack")
+    ))]
+    pub fn testing_loopback_tls(mut self, pem: &[u8]) -> Result<Self, Error> {
+        let url = url::Url::parse(
+            self.binding
+                .base_url
+                .as_deref()
+                .ok_or_else(|| Error::Policy("native test feed root missing".into()))?,
+        )
+        .map_err(|error| Error::Policy(error.to_string()))?;
+        if url.scheme() != "https" || url.host_str() != Some("127.0.0.1") || url.port().is_none() {
+            return Err(Error::Policy(
+                "test CA enrollment requires HTTPS on 127.0.0.1 with an explicit port".into(),
+            ));
+        }
+        self.test_tls_root = Some(
+            ureq::tls::Certificate::from_pem(pem)
+                .map_err(|error| Error::Policy(error.to_string()))?,
+        );
+        Ok(self)
+    }
+    #[cfg(any(feature = "appimage", feature = "velopack"))]
+    pub(crate) fn http_agent(&self) -> ureq::Agent {
+        #[cfg(feature = "native-tests")]
+        if let Some(root) = &self.test_tls_root {
+            return crate::transport::configured_agent(Some(root.clone()));
+        }
+        crate::transport::agent()
+    }
     /// Returns the application identity and immutable verification policy.
     pub fn binding(&self) -> &UpdateBinding {
         &self.binding

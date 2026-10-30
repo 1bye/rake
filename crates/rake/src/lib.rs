@@ -15,6 +15,8 @@ pub use rake_resources::{Resources, resources};
 
 #[cfg(feature = "updates")]
 pub use rake_updates as updates;
+#[cfg(feature = "updates")]
+pub use rake_updates::updates;
 
 /// Runs enabled native updater installer callbacks before constructing the app.
 /// Manual entry points use `early_startup!()`; `#[rake::app]` does so automatically.

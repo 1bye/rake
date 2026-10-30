@@ -127,6 +127,7 @@ impl UpdateService {
         };
         let manager = UpdateManager::new(
             SignedSource {
+                agent: self.http_agent(),
                 binding: self.binding.clone(),
                 cancelled,
                 progress,
@@ -147,6 +148,7 @@ impl UpdateService {
     }
 }
 struct SignedSource {
+    agent: ureq::Agent,
     binding: UpdateBinding,
     cancelled: Arc<AtomicBool>,
     progress: Arc<dyn Fn(DownloadProgress) + Send + Sync>,
@@ -179,8 +181,9 @@ impl UpdateSource for SignedSource {
                 ));
             }
             let url = self.url(&format!("releases.{channel}.json"))?;
-            let bytes = transport::get(&url, 1024 * 1024, &self.cancelled)?;
-            let signature = transport::get(&format!("{url}.sig"), 1024, &self.cancelled)?;
+            let bytes = transport::get(&self.agent, &url, 1024 * 1024, &self.cancelled)?;
+            let signature =
+                transport::get(&self.agent, &format!("{url}.sig"), 1024, &self.cancelled)?;
             let key = self
                 .binding
                 .public_keys
@@ -229,6 +232,7 @@ impl UpdateSource for SignedSource {
             let url = self.url(&asset.FileName)?;
             let mut file = fs::File::create(local_file)?;
             transport::download(
+                &self.agent,
                 &url,
                 asset.Size,
                 &mut file,

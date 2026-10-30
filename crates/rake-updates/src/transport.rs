@@ -9,8 +9,21 @@ use std::{
     time::Duration,
 };
 pub(crate) fn agent() -> ureq::Agent {
+    configured_agent(None)
+}
+pub(crate) fn configured_agent(root: Option<ureq::tls::Certificate<'static>>) -> ureq::Agent {
+    let tls = if let Some(root) = root {
+        ureq::tls::TlsConfig::builder()
+            .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(vec![
+                root,
+            ])))
+            .build()
+    } else {
+        ureq::tls::TlsConfig::default()
+    };
     ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
+            .tls_config(tls)
             .https_only(true)
             .max_redirects(5)
             .timeout_global(Some(Duration::from_secs(300)))
@@ -19,11 +32,16 @@ pub(crate) fn agent() -> ureq::Agent {
             .build(),
     )
 }
-pub(crate) fn get(url: &str, bound: u64, cancelled: &AtomicBool) -> Result<Vec<u8>, Error> {
+pub(crate) fn get(
+    agent: &ureq::Agent,
+    url: &str,
+    bound: u64,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>, Error> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(Error::Cancelled);
     }
-    let mut response = agent()
+    let mut response = agent
         .get(url)
         .call()
         .map_err(|error| Error::Provider(error.to_string()))?;
@@ -42,6 +60,7 @@ pub(crate) fn get(url: &str, bound: u64, cancelled: &AtomicBool) -> Result<Vec<u
     Ok(bytes)
 }
 pub(crate) fn download(
+    agent: &ureq::Agent,
     url: &str,
     total: u64,
     output: &mut impl Write,
@@ -51,7 +70,7 @@ pub(crate) fn download(
     if cancelled.load(Ordering::Relaxed) {
         return Err(Error::Cancelled);
     }
-    let mut response = agent()
+    let mut response = agent
         .get(url)
         .call()
         .map_err(|error| Error::Provider(error.to_string()))?;

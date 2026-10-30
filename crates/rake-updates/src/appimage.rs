@@ -38,6 +38,7 @@ pub struct StagedImage {
     old_hash: String,
     new_hash: String,
     backup: PathBuf,
+    _journal: StagingJournal,
     _lock: fs::File,
 }
 impl StagedImage {
@@ -97,7 +98,7 @@ impl UpdateService {
             "appimage.json",
         )
         .map_err(|error| Error::Policy(error.to_string()))?;
-        let bytes = get(&url, MAX_FEED, cancelled)?;
+        let bytes = get(&self.http_agent(), &url, MAX_FEED, cancelled)?;
         select(&self.binding, &bytes, now()?)
     }
 
@@ -152,10 +153,14 @@ impl UpdateService {
         verify_image(&current, &update.current)?;
         let backup = parent.join(format!(".{name}.rake-previous"));
         recover_backup(&backup, &update.feed, &update.current)?;
+        cleanup_staging(parent, &name, &update.feed)?;
+        let prefix = format!(".{name}.rake-image-");
         let mut staged = tempfile::Builder::new()
-            .prefix(".rake-image-")
+            .prefix(&prefix)
             .tempfile_in(parent)?;
+        let journal = StagingJournal::create(parent, &name, staged.path(), &update.current.sha256)?;
         download(
+            &self.http_agent(),
             &update.release.url,
             update.release.size,
             &mut staged,
@@ -173,6 +178,7 @@ impl UpdateService {
             old_hash: update.current.sha256,
             new_hash: update.release.sha256,
             backup,
+            _journal: journal,
             _lock: lock,
         })
     }
@@ -416,6 +422,13 @@ mod tests {
             staged,
             current: current.clone(),
             backup: root.path().join("backup"),
+            _journal: StagingJournal::create(
+                root.path(),
+                "app.AppImage",
+                &stage_path,
+                &digest(&current).unwrap(),
+            )
+            .unwrap(),
             _lock: fs::File::create(root.path().join("lock")).unwrap(),
         };
         assert!(matches!(
@@ -425,6 +438,89 @@ mod tests {
         assert_eq!(fs::read(&current).unwrap(), b"old image");
         assert_eq!(fs::read(state).unwrap(), b"unsaved content");
         assert!(!stage_path.exists());
+    }
+    #[test]
+    fn staging_process_fixture() {
+        let Some(root) = std::env::var_os("RAKE_STAGING_TEST_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let (_, feed, _) = fixture();
+        let mut staged = tempfile::Builder::new()
+            .prefix(".app.AppImage.rake-image-")
+            .tempfile_in(&root)
+            .unwrap();
+        let _journal = StagingJournal::create(
+            &root,
+            "app.AppImage",
+            staged.path(),
+            &feed.releases[0].sha256,
+        )
+        .unwrap();
+        staged.write_all(b"interrupted download").unwrap();
+        staged.flush().unwrap();
+        println!("RAKE_STAGED_READY");
+        std::io::stdout().flush().unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+    #[test]
+    fn killed_download_is_cleaned_under_the_next_update_lease() {
+        use std::io::BufRead;
+        let root = tempfile::tempdir().unwrap();
+        let (_, feed, _) = fixture();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "appimage::tests::staging_process_fixture",
+                "--nocapture",
+            ])
+            .env("RAKE_STAGING_TEST_ROOT", root.path())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut reader = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut ready = false;
+        for _ in 0..20 {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 {
+                break;
+            }
+            if line.contains("RAKE_STAGED_READY") {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready, "child failed before creating staging journal");
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(
+            root.path()
+                .join(".app.AppImage.rake-staging.json")
+                .is_file()
+        );
+        let valuable = root.path().join("valuable");
+        fs::write(&valuable, "keep").unwrap();
+        cleanup_staging(root.path(), "app.AppImage", &feed).unwrap();
+        assert_eq!(fs::read_to_string(valuable).unwrap(), "keep");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn untrusted_staging_journal_preserves_user_files() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, feed, _) = fixture();
+        let value = StageRecord {
+            schema_version: 1,
+            image: "app.AppImage".into(),
+            staged: "../valuable".into(),
+            installed_hash: feed.releases[0].sha256.clone(),
+        };
+        let journal = root.path().join(".app.AppImage.rake-staging.json");
+        fs::write(&journal, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(cleanup_staging(root.path(), "app.AppImage", &feed).is_err());
+        assert!(journal.exists());
     }
     #[test]
     fn recovery_preserves_unknown_backups_and_accepts_only_signed_history() {
@@ -439,4 +535,102 @@ mod tests {
         recover_backup(&backup, &feed, &current).unwrap();
         assert!(!backup.exists());
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StageRecord {
+    schema_version: u32,
+    image: String,
+    staged: String,
+    installed_hash: String,
+}
+#[derive(Debug)]
+struct StagingJournal {
+    path: PathBuf,
+}
+impl StagingJournal {
+    fn create(
+        parent: &Path,
+        image: &str,
+        staged: &Path,
+        installed_hash: &str,
+    ) -> Result<Self, Error> {
+        let path = parent.join(format!(".{image}.rake-staging.json"));
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        let owner = Self { path };
+        let record = StageRecord {
+            schema_version: 1,
+            image: image.into(),
+            staged: staged
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| Error::Policy("staging filename must be UTF-8".into()))?
+                .into(),
+            installed_hash: installed_hash.into(),
+        };
+        file.write_all(&serde_json::to_vec(&record)?)?;
+        file.sync_all()?;
+        sync_parent(staged)?;
+        Ok(owner)
+    }
+}
+impl Drop for StagingJournal {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+fn cleanup_staging(parent: &Path, image: &str, feed: &UpdateFeed) -> Result<(), Error> {
+    let path = parent.join(format!(".{image}.rake-staging.json"));
+    if !path.try_exists()? {
+        return Ok(());
+    }
+    if path.is_symlink() || !path.is_file() {
+        return Err(Error::Policy(
+            "unexpected AppImage staging journal; preserved".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(&path)?
+        .take(16 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 16 * 1024 {
+        return Err(Error::Policy("staging journal exceeds bound".into()));
+    }
+    let record: StageRecord = serde_json::from_slice(&bytes)?;
+    let relative = Path::new(&record.staged);
+    if record.schema_version != 1
+        || record.image != image
+        || relative.components().count() != 1
+        || !record.staged.starts_with(&format!(".{image}.rake-image-"))
+        || rake_dist_core::validate_relative_path(relative).is_err()
+        || !feed
+            .releases
+            .iter()
+            .any(|release| release.sha256 == record.installed_hash)
+    {
+        return Err(Error::Policy(
+            "untrusted staging journal; preserved for manual recovery".into(),
+        ));
+    }
+    let staged = parent.join(relative);
+    if staged.try_exists()? {
+        if staged.is_symlink() || !staged.is_file() {
+            return Err(Error::Policy("unexpected staging file; preserved".into()));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let owner = fs::metadata(parent)?.uid();
+            if fs::metadata(&path)?.uid() != owner || fs::metadata(&staged)?.uid() != owner {
+                return Err(Error::Policy("staging ownership changed; preserved".into()));
+            }
+        }
+        fs::remove_file(staged)?;
+    }
+    fs::remove_file(&path)?;
+    sync_parent(&path)
 }

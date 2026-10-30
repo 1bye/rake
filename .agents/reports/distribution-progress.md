@@ -282,3 +282,19 @@ policy. Source manifests and metadata no longer satisfy required native package
 gates; Linux repository input selection excludes recipe/manifest/toolchain files.
 RPM verification uses an isolated public key database instead of changing host
 trust. APT/RPM native repository upgrade acceptance is added to the Linux fixture.
+
+P7 interruption follow-up: AppImage sibling staging has an owned, bounded journal.
+A real subprocess is killed after writing partial staging; the next trusted update
+lease removes that recorded partial file while preserving unrelated user files.
+Unknown/escaping journals are preserved with an error. Normal decline/cancellation
+removes both staging and its journal. Ten updater tests pass; strict Clippy and
+rustdoc pass for AppImage/Velopack/native-tests features.
+
+Native acceptance transport can enroll one disposable CA only for an explicit
+127.0.0.1 HTTPS root, behind native-tests. Chain and hostname verification remain
+enabled; production features retain WebPKI trust. The isolated TLS/signing fixture
+passed real HTTPS, hostname verification, untrusted-CA rejection and Ed25519 signing
+without changing system trust or reading production keys. A real AppImage N/N+1
+publication/update fixture is prepared for the consolidated Linux checkpoint.
+The facade now reexports the updates! macro as well as the updates module, and
+its no-default-features/updates-appimage consumer compiles.

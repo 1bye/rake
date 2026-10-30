@@ -17,6 +17,7 @@ appimage = ["dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:fs2", "
 velopack = ["dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
 
 [dependencies]
+serde.workspace = true
 rake-resources = { path = "../rake-resources" }
 rake-dist-core = { path = "../rake-dist-core" }
 thiserror.workspace = true
