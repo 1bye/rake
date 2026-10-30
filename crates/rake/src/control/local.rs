@@ -153,7 +153,7 @@ async fn serve_one(stream: Async<UnixStream>, client: HostClient) {
         }
 
         let _response = client.begin_response();
-        let reply = client.request(serde_json::from_slice(&bytes)?);
+        let reply = client.request_async(serde_json::from_slice(&bytes)?).await;
         let mut bytes = serde_json::to_vec(&reply)?;
 
         if bytes.len() + 1 > MAX_MESSAGE_BYTES {

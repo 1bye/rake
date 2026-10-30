@@ -19,6 +19,9 @@ pub(super) fn mount(
         return content;
     }
     let client = InspectionClient::new(services.diagnostics());
+    if let Ok(storage) = services.get::<crate::storage::devtools::Storage>() {
+        client.set_storage(storage.as_ref().clone());
+    }
     cx.new(|cx| InspectionRoot::new(content, client, control, application_id, cx))
         .into()
 }

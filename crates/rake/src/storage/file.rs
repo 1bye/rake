@@ -64,6 +64,7 @@ impl FileBackend {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(directory.join("store.lock"))?;
             check_file(&lock)?;
             lock.lock()?;

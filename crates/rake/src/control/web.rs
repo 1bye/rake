@@ -250,8 +250,9 @@ impl WebBridge {
                         }
 
                         let _response = client.begin_response();
-                        let result =
-                            client.request(delivery.request.ok_or("missing development request")?);
+                        let result = client
+                            .request_async(delivery.request.ok_or("missing development request")?)
+                            .await;
                         let _: serde_json::Value = self.post("reply", &serde_json::json!({"runtime_id": client.info().runtime_id, "ticket": delivery.ticket, "result": result})).await?;
                     }
                 }

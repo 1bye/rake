@@ -9,6 +9,11 @@ pub(super) trait Host {
     fn info(&self) -> RuntimeInfo;
     fn request(&self, request: Request) -> Result<Reply, ControlError>;
 
+    #[cfg(feature = "devtools")]
+    fn storage(&self) -> crate::storage::devtools::Storage {
+        crate::storage::devtools::Storage::new()
+    }
+
     #[cfg(any(unix, target_family = "wasm"))]
     fn begin_response(&self) -> Option<super::ResponseGuard> {
         None
@@ -41,6 +46,18 @@ impl HostClient {
     pub(crate) fn request(&self, request: Request) -> Result<Reply, ControlError> {
         self.0.request(request)
     }
+    pub(crate) async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
+        #[cfg(feature = "devtools")]
+        if crate::storage::devtools::Storage::accepts(&request) {
+            // Reuse the authoritative host's protocol/runtime/shutdown checks.
+            self.0.request(Request {
+                message: super::Message::Query(super::Query::Info {}),
+                ..request.clone()
+            })?;
+            return self.0.storage().request(request).await;
+        }
+        self.request(request)
+    }
 
     #[cfg(any(unix, target_family = "wasm"))]
     pub(super) fn begin_response(&self) -> Option<super::ResponseGuard> {
@@ -64,6 +81,13 @@ impl HostClient {
 }
 
 impl<R: Route> Host for RuntimeClient<R> {
+    #[cfg(feature = "devtools")]
+    fn storage(&self) -> crate::storage::devtools::Storage {
+        self.services()
+            .get::<crate::storage::devtools::Storage>()
+            .map(|storage| storage.as_ref().clone())
+            .unwrap_or_default()
+    }
     fn info(&self) -> RuntimeInfo {
         self.info()
     }

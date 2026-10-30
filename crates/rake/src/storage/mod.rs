@@ -14,6 +14,8 @@ use std::{
 
 mod cache;
 pub use cache::CacheConfig;
+#[cfg(feature = "devtools")]
+pub mod devtools;
 
 mod memory;
 pub use memory::MemoryBackend;
@@ -32,6 +34,10 @@ pub const MAX_PAGE_SIZE: usize = 256;
 /// Storage validation, conversion or backend failure.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Explicit DevTools registration or page coherence failure.
+    #[cfg(feature = "devtools")]
+    #[error("storage inspection: {0}")]
+    Inspection(String),
     /// Both cache budgets must be nonzero.
     #[error("storage cache requires nonzero entry and byte budgets")]
     InvalidCacheConfig,
@@ -102,11 +108,15 @@ struct Inner {
     cache: RefCell<Option<cache::Cache>>,
     epoch: Cell<u64>,
     writes: Cell<usize>,
+    #[cfg(feature = "devtools")]
+    revision: Cell<u64>,
 }
 
 impl Inner {
     fn invalidate(&self) {
         self.epoch.set(self.epoch.get().wrapping_add(1));
+        #[cfg(feature = "devtools")]
+        self.revision.set(self.revision.get().wrapping_add(1));
         if let Some(cache) = self.cache.borrow_mut().as_mut() {
             cache.clear();
         }
@@ -190,6 +200,8 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
                 cache: RefCell::new(None),
                 epoch: Cell::new(0),
                 writes: Cell::new(0),
+                #[cfg(feature = "devtools")]
+                revision: Cell::new(0),
             }),
             value: PhantomData,
         }

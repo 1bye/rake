@@ -50,6 +50,7 @@ struct Session {
     edit_sheets: BTreeSet<i32>,
     frame_trace: super::frames::Trace,
     memory: super::memory::Memory,
+    storage: super::storage::Storage,
     pending_trace_complete: Option<Value>,
     detached: Option<String>,
 }
@@ -86,6 +87,7 @@ impl Session {
             edit_sheets: BTreeSet::new(),
             frame_trace: super::frames::Trace::default(),
             memory: super::memory::Memory::default(),
+            storage: super::storage::Storage::default(),
             pending_trace_complete: None,
             detached: None,
         }
@@ -130,6 +132,33 @@ impl Session {
         }
 
         match method {
+            "DOMStorage.enable" => {
+                self.domains.insert("DOMStorage".into());
+                Ok(json!({}))
+            }
+            "DOMStorage.disable" => {
+                self.domains.remove("DOMStorage");
+                self.storage.clear();
+                Ok(json!({}))
+            }
+            "Storage.getStorageKeyForFrame" => {
+                super::storage::Storage::storage_key(&request.params)
+            }
+            "Rake.getStorage"
+            | "DOMStorage.getDOMStorageItems"
+            | "DOMStorage.setDOMStorageItem"
+            | "DOMStorage.removeDOMStorageItem"
+            | "DOMStorage.clear" => {
+                let (result, events) =
+                    self.storage
+                        .handle(&self.instance, method, &request.params)?;
+                if self.domains.contains("DOMStorage") {
+                    for event in events {
+                        self.event(event);
+                    }
+                }
+                Ok(result)
+            }
             "HeapProfiler.enable" => Ok(json!({})),
             "HeapProfiler.disable" => {
                 self.stop_memory();
@@ -1186,6 +1215,22 @@ impl Session {
     }
 
     fn poll(&mut self) -> Result<()> {
+        if self.domains.contains("DOMStorage") {
+            match self.storage.poll(&self.instance) {
+                Ok(events) => {
+                    for event in events {
+                        self.event(event);
+                    }
+                }
+                Err(error) => {
+                    self.storage.clear();
+                    self.warning(format!(
+                        "Storage refresh stopped: {}; refresh the storage table to retry",
+                        error.message
+                    ));
+                }
+            }
+        }
         let live = query(&self.instance, Query::Info {}, TIMEOUT);
         // Raw stdout/stderr survive failed IPC; marked diagnostic mirrors are fallback only.
         self.poll_output(live.is_err());
@@ -1972,6 +2017,11 @@ impl Session {
         self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
         self.dropped = 0;
         self.event(Event::new("HeapProfiler.resetProfiles", json!({})));
+        if self.domains.contains("DOMStorage") {
+            for event in self.storage.reset() {
+                self.event(event);
+            }
+        }
         if self.domains.contains("Page") && self.source_tree_loaded {
             for document in old_sources {
                 self.event(Event::new(

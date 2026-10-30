@@ -48,3 +48,46 @@ there is no file watcher or cross-process cache coherence. Cancelling a mutation
 disables caching across its handles because backend work could still commit later.
 Re-enable only after pending backend work is known to have finished. The default
 store has no cache and always reads its backend.
+
+With `rake/devtools`, `storage::devtools::Storage` explicitly registers typed
+handles using `read_only(name, Area::Local, store)` or `read_write(...)`.
+Use `Area::Session` for data intended to last only for the session; this is
+presentation metadata, not a change to backend persistence. Registration snapshots
+share backend/cache handles. Unregistered stores are never inspected.
+
+`App::devtools_storage(registry)?` installs the registry as an application service
+for routed and standalone roots. Headless hosts can install the same registry in
+`Router::with_services`; local consumers use `RuntimeClient::request_async` for
+storage messages. Native and browser development transports await backend I/O.
+Ordinary synchronous runtime requests remain supported.
+
+Chrome's Application → Local/Session storage → `rake://runtime` projects entries
+as `registered-name/key` with JSON text values. `DOMStorage` get/set/remove and
+change events are supported; `Storage.getStorageKeyForFrame` identifies the runtime
+frame. Reads/edits use the typed facade and its cache. Invalid JSON/types, unknown
+names and read-only writes fail without replacing data. These edits are persistent
+application writes, not temporary Element overrides. App views still own their
+normal refresh/notification behavior; DevTools does not force GPUI rerenders.
+
+Catalog polling reads change revisions only. Cloned store writes and explicit
+invalidation trigger bounded value refreshes of watched areas. Independent writers
+still require explicit invalidation. Failed/oversized refreshes stop tracking until
+manual table refresh. Chrome's area projection is limited to 256 rows / 384 KiB;
+native cursor pages are separately available through `Query::Storage`. There is
+no silent truncation. Existing transport/event queue bounds also apply.
+
+Persistent edits require retry keys. The registry retains at most 256 edit keys /
+2 MiB of request payload, including failed edits. Matching retries return their
+saved result; changed payloads conflict. An interrupted/pending edit is not repeated
+because filesystem work may already have committed. Reconnect does not reset this
+ledger; a new process/registry does. Bulk clear is deliberately unsupported, since
+registered areas can combine read-only stores and unrelated typed backends.
+
+Without `devtools`, the inspection registry, registration method, store revision
+field and revision updates are absent at compile time. There is no DevTools-only
+polling, value serialization or inspection snapshot state in production storage.
+Normal persistence, optional caching and their normal costs remain.
+
+Registering encrypted storage would expose **decrypted** data. Keep credentials
+in separate unregistered stores, or provide an application-owned redacted view.
+This API does not automatically enumerate files, databases or platform secrets.

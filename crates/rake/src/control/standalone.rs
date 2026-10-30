@@ -20,6 +20,7 @@ struct State {
     inspection: Store,
     collector: Collector,
     closed: Cell<bool>,
+    storage: std::cell::RefCell<crate::storage::devtools::Storage>,
 }
 
 impl InspectionClient {
@@ -31,11 +32,16 @@ impl InspectionClient {
             inspection,
             collector,
             closed: Cell::new(false),
+            storage: std::cell::RefCell::new(crate::storage::devtools::Storage::new()),
         }))
     }
 
     pub(crate) fn inspection(&self) -> Store {
         self.0.inspection.clone()
+    }
+
+    pub(crate) fn set_storage(&self, storage: crate::storage::devtools::Storage) {
+        *self.0.storage.borrow_mut() = storage;
     }
 
     pub(crate) fn host(&self) -> HostClient {
@@ -51,6 +57,9 @@ impl InspectionClient {
 }
 
 impl super::host::Host for InspectionClient {
+    fn storage(&self) -> crate::storage::devtools::Storage {
+        self.0.storage.borrow().clone()
+    }
     fn info(&self) -> RuntimeInfo {
         let status = if self.0.closed.get() {
             Status::Unavailable
@@ -69,6 +78,7 @@ impl super::host::Host for InspectionClient {
             element_inspection: status,
             element_interaction: status != Status::Unavailable,
             commands: [
+                "edit_storage",
                 "record_memory",
                 "navigate_element",
                 "highlight_element",
@@ -82,6 +92,7 @@ impl super::host::Host for InspectionClient {
             .map(str::to_owned)
             .collect(),
             queries: [
+                "storage",
                 "memory",
                 "info",
                 "schema",

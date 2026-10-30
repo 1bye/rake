@@ -142,11 +142,13 @@ impl<R: Route> RuntimeClient<R> {
             commands: Command::names()
                 .iter()
                 .filter(|name| **name != "record_memory" || memory::available())
+                .filter(|name| **name != "edit_storage" || cfg!(feature = "devtools"))
                 .map(|name| (*name).into())
                 .collect(),
             queries: Query::names()
                 .iter()
                 .filter(|name| **name != "memory" || memory::available())
+                .filter(|name| **name != "storage" || cfg!(feature = "devtools"))
                 .map(|name| (*name).into())
                 .collect(),
             supported_targets: self.router.supported_targets(),
@@ -224,6 +226,13 @@ impl<R: Route> RuntimeClient<R> {
         }
     }
 
+    /// Dispatches async storage inspection as well as ordinary runtime requests.
+    /// Backend I/O runs on the caller's local executor; transports use this path.
+    #[cfg(feature = "devtools")]
+    pub async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
+        HostClient::new(self.clone()).request_async(request).await
+    }
+
     /// Captures an initial snapshot and revision atomically on the local event loop.
     /// `next` checks that revision before awaiting, avoiding a subscription gap.
     pub fn watch(&self) -> RuntimeWatch<R> {
@@ -275,6 +284,13 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::EditStorage { .. } => {
+                return Err(ControlError::Unsupported {
+                    operation:
+                        "async storage dispatch; use request_async or the development transport"
+                            .into(),
+                });
+            }
             Command::RecordMemory {
                 owner,
                 enabled,
@@ -411,6 +427,10 @@ impl<R: Route> RuntimeClient<R> {
 
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
+            Query::Storage { .. } => Err(ControlError::Unsupported {
+                operation: "async storage dispatch; use request_async or the development transport"
+                    .into(),
+            }),
             Query::Windows {} => Ok(Reply::Data(
                 serde_json::to_value(self.router.window_snapshots())
                     .expect("window snapshots serialize"),

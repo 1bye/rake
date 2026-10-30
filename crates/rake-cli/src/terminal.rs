@@ -786,6 +786,13 @@ mod tests {
         };
 
         let commands = vec![
+            Command::EditStorage {
+                edit: rake_protocol::storage::Edit {
+                    store: "preferences".into(),
+                    key: "theme".into(),
+                    value: Some("\"dark\"".into()),
+                },
+            },
             Command::RecordMemory {
                 owner: "test".into(),
                 enabled: false,
@@ -873,6 +880,9 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Storage {
+                read: rake_protocol::storage::Read::Stores,
+            },
             Query::Memory {
                 owner: "test".into(),
                 include_freed: false,

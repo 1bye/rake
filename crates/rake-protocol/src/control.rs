@@ -48,6 +48,11 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Edits explicitly registered application storage; requires a retry key.
+    EditStorage {
+        /// Typed set or remove operation.
+        edit: crate::storage::Edit,
+    },
     /// Starts/renews or stops a process-wide native allocation recording lease.
     RecordMemory {
         /// Unique client recording token, 1–128 bytes; never reused after stop/expiry.
@@ -218,6 +223,7 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "edit_storage",
             "record_memory",
             "record_frames",
             "edit_element_style",
@@ -249,6 +255,11 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Reads explicitly registered typed application storage.
+    Storage {
+        /// Catalog or bounded entries page.
+        read: crate::storage::Read,
+    },
     /// Samples owned by one exact native recording, with bounded symbolization.
     Memory {
         /// Exact recording token supplied to RecordMemory.
@@ -345,6 +356,7 @@ impl Query {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "storage",
             "memory",
             "windows",
             "window",
@@ -500,6 +512,12 @@ pub enum Reply {
 /// Structured protocol errors; transport failures are reported separately as I/O errors.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum ControlError {
+    /// Explicit storage registration, typed validation or backend failure.
+    #[error("storage inspection: {reason}")]
+    Storage {
+        /// Actionable failure without an implicit retry or data reset.
+        reason: String,
+    },
     /// Invalid native recording parameters, unavailable allocator, or owner conflict.
     #[error("memory recording: {reason}")]
     Memory {
