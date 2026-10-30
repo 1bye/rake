@@ -1,0 +1,18 @@
+[package]
+name = "rake-dist"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rake-dist-core = { path = "../rake-dist-core", features = ["schema"] }
+serde_json.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+schemars = "1.2.3"

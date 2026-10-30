@@ -1,0 +1,550 @@
+//! Portable distribution configuration and validated package plans.
+//!
+//! Resolving a plan performs no filesystem, network or native-tool operations.
+
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, path::PathBuf};
+
+/// Operating system whose packages are being planned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum Platform {
+    /// Apple desktop platform.
+    Macos,
+    /// Microsoft desktop platform.
+    Windows,
+    /// Linux desktop platform.
+    Linux,
+}
+
+/// Installation format, independent of build target and release channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum Format {
+    /// macOS application bundle.
+    App,
+    /// macOS disk image.
+    Dmg,
+    /// Native ZIP archive.
+    Zip,
+    /// Legacy Linux directory archive.
+    Tar,
+    /// Windows NSIS installer.
+    Nsis,
+    /// Windows Installer package.
+    Msi,
+    /// Windows managed package.
+    Msix,
+    /// Velopack installer and release family.
+    Velopack,
+    /// Debian-family package.
+    Deb,
+    /// RPM-family package.
+    Rpm,
+    /// Arch package and recipe.
+    Arch,
+    /// Portable Linux application image.
+    Appimage,
+    /// Sandboxed Linux package.
+    Flatpak,
+}
+
+impl Format {
+    /// Returns whether the format belongs to the given platform.
+    pub fn supports(self, platform: Platform) -> bool {
+        match self {
+            Self::App | Self::Dmg => platform == Platform::Macos,
+            Self::Zip => platform == Platform::Macos || platform == Platform::Windows,
+            Self::Nsis | Self::Msi | Self::Msix | Self::Velopack => platform == Platform::Windows,
+            Self::Tar | Self::Deb | Self::Rpm | Self::Arch | Self::Appimage | Self::Flatpak => {
+                platform == Platform::Linux
+            }
+        }
+    }
+}
+
+/// Mechanism responsible for an installed application's updates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum UpdateOwner {
+    /// Checks are disabled by application configuration.
+    Disabled,
+    /// Sparkle owns installation and relaunch.
+    Sparkle,
+    /// Windows App Installer owns updates.
+    AppInstaller,
+    /// Velopack owns its native installation.
+    Velopack,
+    /// The configured APT repository supplies updates.
+    Apt,
+    /// An RPM package manager supplies updates.
+    RpmRepository,
+    /// Pacman supplies updates.
+    Pacman,
+    /// Flatpak supplies updates.
+    Flatpak,
+    /// A validated standalone image adapter supplies updates.
+    Appimage,
+    /// The user or another external tool handles updates.
+    External,
+}
+
+/// Project-provided metadata before target selection or validation.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    /// Missing means the existing legacy bundle contract.
+    pub schema_version: Option<u32>,
+    /// Display name; defaults to the Cargo package name.
+    pub name: Option<String>,
+    /// Stable reverse-domain application identity.
+    pub identifier: Option<String>,
+    /// Source icon relative to the package directory.
+    pub icon: Option<PathBuf>,
+    /// Legacy resource tree relative to the package directory.
+    pub assets: Option<PathBuf>,
+    /// Existing numeric bundle build number.
+    pub build_number: Option<String>,
+    /// Existing macOS deployment declaration.
+    pub minimum_system_version: Option<String>,
+    /// Existing Web configuration remains owned by the Web pipeline.
+    pub web: WebConfig,
+    /// macOS overrides.
+    pub macos: MacosConfig,
+    /// Windows overrides.
+    pub windows: WindowsConfig,
+    /// Linux overrides.
+    pub linux: LinuxConfig,
+    /// Mapped resource inputs.
+    pub resources: Vec<Resource>,
+    /// Architecture-specific helper executables.
+    pub sidecars: Vec<Sidecar>,
+    /// Native runtime recipes.
+    pub runtimes: Vec<Runtime>,
+    /// Update settings shared across installation channels.
+    pub updates: Updates,
+}
+
+/// Existing Web bundle options.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct WebConfig {
+    /// Host URL prefix.
+    pub base_path: Option<String>,
+    /// Existing path or hash routing selection.
+    pub routing: Option<String>,
+}
+
+/// macOS-specific packaging settings.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct MacosConfig {
+    /// Selected native formats.
+    pub formats: Vec<Format>,
+    /// Custom plist overlay.
+    pub info_plist: Option<PathBuf>,
+    /// Signing entitlements.
+    pub entitlements: Option<PathBuf>,
+}
+
+/// Windows-specific packaging settings.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct WindowsConfig {
+    /// Selected native formats.
+    pub formats: Vec<Format>,
+    /// Custom Win32 application manifest.
+    pub manifest: Option<PathBuf>,
+    /// Managed package identity.
+    pub msix: MsixConfig,
+}
+
+/// Windows managed package identity overrides.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct MsixConfig {
+    /// Certificate-matching publisher identity.
+    pub publisher: Option<String>,
+}
+
+/// Linux-specific packaging settings.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct LinuxConfig {
+    /// Selected native formats.
+    pub formats: Vec<Format>,
+    /// Desktop-entry template.
+    pub desktop_entry: Option<PathBuf>,
+    /// AppStream metadata.
+    pub appstream: Option<PathBuf>,
+    /// Flatpak build configuration.
+    pub flatpak: FlatpakConfig,
+}
+
+/// Flatpak build override.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct FlatpakConfig {
+    /// Manifest identifying the pinned runtime and SDK.
+    pub manifest: Option<PathBuf>,
+}
+
+/// Explicit input-to-installed-resource mapping.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Resource {
+    /// Package-relative source.
+    pub from: PathBuf,
+    /// Confined installed destination.
+    pub to: PathBuf,
+}
+
+/// A helper executable resolved for a selected target.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Sidecar {
+    /// Stable application-facing name.
+    pub name: String,
+    /// Package-relative path with documented target placeholders.
+    pub path: PathBuf,
+}
+
+/// Native runtime deployment request.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Runtime {
+    /// Stable runtime identity.
+    pub name: String,
+    /// Registered deployment recipe.
+    pub recipe: String,
+    /// Package-relative runtime source.
+    pub source: PathBuf,
+    /// Explicit dynamically loaded plugin selection.
+    #[serde(default)]
+    pub plugins: Vec<String>,
+}
+
+/// Shared public update settings; contains no private signing credentials.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct Updates {
+    /// Whether update support is requested.
+    pub enabled: bool,
+    /// Release track; defaults to stable.
+    pub channel: Option<String>,
+    /// HTTPS publication root.
+    pub base_url: Option<String>,
+    /// Provider public-key files relative to the package.
+    pub public_keys: BTreeMap<String, PathBuf>,
+}
+
+/// Validated request for one package; does not assert backend availability.
+#[derive(Clone, Debug, Serialize)]
+pub struct PackagePlan {
+    format: Format,
+    update_owner: UpdateOwner,
+}
+
+impl PackagePlan {
+    /// Returns the requested installation format.
+    pub fn format(&self) -> Format {
+        self.format
+    }
+    /// Returns the update owner determined by the installation channel.
+    pub fn update_owner(&self) -> UpdateOwner {
+        self.update_owner
+    }
+}
+
+/// Portable, validated plan that must still pass native capability checks.
+#[derive(Clone, Debug, Serialize)]
+pub struct Plan {
+    name: String,
+    identifier: String,
+    version: String,
+    platform: Platform,
+    legacy: bool,
+    config: Config,
+    packages: Vec<PackagePlan>,
+}
+
+impl Plan {
+    /// Returns the resolved display name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Returns the validated stable application identifier.
+    pub fn identifier(&self) -> &str {
+        &self.identifier
+    }
+    /// Returns the Cargo semantic version.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+    /// Returns the selected packaging platform.
+    pub fn platform(&self) -> Platform {
+        self.platform
+    }
+    /// Returns the validated configuration snapshot used by later native checks.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+    /// Returns the installation requests in configured order.
+    pub fn packages(&self) -> &[PackagePlan] {
+        &self.packages
+    }
+    /// Returns whether legacy bundle behavior was selected.
+    pub fn is_legacy(&self) -> bool {
+        self.legacy
+    }
+}
+
+/// Configuration errors detected before any native tools or network operations.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Error {
+    /// Unsupported serialized configuration revision.
+    #[error("unsupported distribution schema {0}")]
+    Schema(u32),
+    /// Invalid identity, name, channel or version value.
+    #[error("invalid distribution field: {0}")]
+    Field(String),
+    /// Input or installed path escapes its declared root.
+    #[error("path must be a confined relative path: {0}")]
+    Path(PathBuf),
+    /// A requested format cannot be produced for the selected OS.
+    #[error("format {format:?} does not support {platform:?}")]
+    Format {
+        /// Requested installation format.
+        format: Format,
+        /// Selected operating system.
+        platform: Platform,
+    },
+    /// Repeated names or output requests would collide.
+    #[error("duplicate distribution entry: {0}")]
+    Duplicate(String),
+}
+
+impl Config {
+    /// Resolves portable defaults and update ownership without performing I/O.
+    ///
+    /// # Errors
+    /// Returns an error for unsupported schemas, invalid metadata/paths, duplicate
+    /// names/formats, missing required public settings or incompatible formats.
+    pub fn plan(&self, package: &str, version: &str, platform: Platform) -> Result<Plan, Error> {
+        if let Some(schema) = self.schema_version
+            && schema != 1
+        {
+            return Err(Error::Schema(schema));
+        }
+        let legacy = self.schema_version.is_none();
+        let name = self.name.clone().unwrap_or_else(|| package.into());
+        if name.trim().is_empty()
+            || name
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '/' | '\\'))
+        {
+            return Err(Error::Field("name".into()));
+        }
+        let identifier = self
+            .identifier
+            .clone()
+            .unwrap_or_else(|| format!("dev.rake.{}", package.replace('_', "-")));
+        if !identifier.split('.').all(|part| {
+            !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        }) || !identifier.contains('.')
+        {
+            return Err(Error::Field("identifier".into()));
+        }
+        let parsed_version =
+            semver::Version::parse(version).map_err(|_| Error::Field("version".into()))?;
+        let paths = [
+            self.icon.as_ref(),
+            self.assets.as_ref(),
+            self.macos.info_plist.as_ref(),
+            self.macos.entitlements.as_ref(),
+            self.windows.manifest.as_ref(),
+            self.linux.desktop_entry.as_ref(),
+            self.linux.appstream.as_ref(),
+            self.linux.flatpak.manifest.as_ref(),
+        ];
+        for path in paths.into_iter().flatten() {
+            relative(path)?;
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for sidecar in &self.sidecars {
+            component_name(&sidecar.name)?;
+            if !names.insert(&sidecar.name) {
+                return Err(Error::Duplicate(sidecar.name.clone()));
+            }
+            relative(&sidecar.path)?;
+        }
+        for runtime in &self.runtimes {
+            component_name(&runtime.name)?;
+            if !names.insert(&runtime.name) {
+                return Err(Error::Duplicate(runtime.name.clone()));
+            }
+            relative(&runtime.source)?;
+        }
+        let mut destinations = std::collections::BTreeSet::new();
+        for resource in &self.resources {
+            relative(&resource.from)?;
+            relative(&resource.to)?;
+            if !destinations.insert(&resource.to) {
+                return Err(Error::Duplicate(resource.to.display().to_string()));
+            }
+        }
+        for path in self.updates.public_keys.values() {
+            relative(path)?;
+        }
+        if self.updates.enabled {
+            component_name(self.updates.channel.as_deref().unwrap_or("stable"))?;
+            let base = self
+                .updates
+                .base_url
+                .as_deref()
+                .and_then(|value| url::Url::parse(value).ok());
+            if !base.as_ref().is_some_and(|url| {
+                url.scheme() == "https"
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+            }) {
+                return Err(Error::Field("updates.base_url requires HTTPS".into()));
+            }
+        }
+        let formats = match platform {
+            Platform::Macos => &self.macos.formats,
+            Platform::Windows => &self.windows.formats,
+            Platform::Linux => &self.linux.formats,
+        };
+        let formats = if formats.is_empty() {
+            vec![match (platform, legacy) {
+                (Platform::Macos, true) => Format::Zip,
+                (Platform::Macos, false) => Format::Dmg,
+                (Platform::Windows, _) => Format::Nsis,
+                (Platform::Linux, true) => Format::Tar,
+                (Platform::Linux, false) => Format::Appimage,
+            }]
+        } else {
+            formats.clone()
+        };
+        let mut packages = Vec::new();
+        for format in formats {
+            if !format.supports(platform) {
+                return Err(Error::Format { format, platform });
+            }
+            if packages.iter().any(|p: &PackagePlan| p.format == format) {
+                return Err(Error::Duplicate(format!("{format:?}")));
+            }
+            if format == Format::Msi
+                && (parsed_version.major > 255
+                    || parsed_version.minor > 255
+                    || parsed_version.patch > 65535)
+            {
+                return Err(Error::Field("version exceeds MSI limits".into()));
+            }
+            if format == Format::Msix
+                && (parsed_version.major > 65535
+                    || parsed_version.minor > 65535
+                    || parsed_version.patch > 65535)
+            {
+                return Err(Error::Field("version exceeds MSIX limits".into()));
+            }
+            let owner = if !self.updates.enabled {
+                UpdateOwner::Disabled
+            } else {
+                match format {
+                    Format::App | Format::Dmg | Format::Zip if platform == Platform::Macos => {
+                        UpdateOwner::Sparkle
+                    }
+                    Format::Msix => UpdateOwner::AppInstaller,
+                    Format::Velopack => UpdateOwner::Velopack,
+                    Format::Deb => UpdateOwner::Apt,
+                    Format::Rpm => UpdateOwner::RpmRepository,
+                    Format::Arch => UpdateOwner::Pacman,
+                    Format::Flatpak => UpdateOwner::Flatpak,
+                    Format::Appimage => UpdateOwner::Appimage,
+                    _ => UpdateOwner::External,
+                }
+            };
+            let key = match owner {
+                UpdateOwner::Sparkle => Some("sparkle"),
+                UpdateOwner::Appimage => Some("appimage"),
+                _ => None,
+            };
+            if let Some(key) = key
+                && !self.updates.public_keys.contains_key(key)
+            {
+                return Err(Error::Field(format!("updates.public_keys.{key}")));
+            }
+            if format == Format::Msix
+                && self
+                    .windows
+                    .msix
+                    .publisher
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(Error::Field("windows.msix.publisher".into()));
+            }
+            packages.push(PackagePlan {
+                format,
+                update_owner: owner,
+            });
+        }
+        Ok(Plan {
+            name,
+            identifier,
+            version: version.into(),
+            platform,
+            legacy,
+            config: self.clone(),
+            packages,
+        })
+    }
+}
+
+fn relative(path: &std::path::Path) -> Result<(), Error> {
+    let text = path.to_str().ok_or_else(|| Error::Path(path.into()))?;
+    if text.is_empty()
+        || text.contains(['\\', ':'])
+        || text.chars().any(char::is_control)
+        || path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(Error::Path(path.into()));
+    }
+    Ok(())
+}
+
+fn component_name(name: &str) -> Result<(), Error> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err(Error::Field(format!("component/channel name: {name}")));
+    }
+    Ok(())
+}

@@ -9,9 +9,28 @@ mod source;
 #[cfg(unix)]
 mod terminal;
 
+mod distribution;
+
 fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
+
+    if arguments.first().is_some_and(|command| command == "bundle")
+        && arguments.iter().any(|argument| argument == "--plan")
+    {
+        if let Err(error) = distribution::run(&arguments[1..]) {
+            if json {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"error": {"message": error.to_string()}})
+                );
+            } else {
+                eprintln!("rake: {error}");
+            }
+            std::process::exit(1);
+        }
+        return;
+    }
 
     #[cfg(unix)]
     let result = if arguments.first().is_some_and(|command| command == "cdp") {
