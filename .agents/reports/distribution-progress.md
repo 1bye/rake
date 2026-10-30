@@ -332,3 +332,9 @@ assignment, which panicked in TOML indexing. Vendor configuration now inserts a
 source table explicitly and preserves unrelated Cargo build options. A portable
 regression covers the fresh-workspace case. The next checkpoint selects only
 Flatpak; the passing repositories/Arch/AppImage gates are not rerun.
+
+CI accounting correction: Flatpak retry 41113849969 was queued before its local
+check completed. That compile check caught an unavailable values_mut method in
+the pinned TOML map; the retry was immediately cancelled. iter_mut is now used,
+and the vendor regression and strict dist-library Clippy both pass before the
+replacement retry. This extra cancelled run is recorded rather than omitted.

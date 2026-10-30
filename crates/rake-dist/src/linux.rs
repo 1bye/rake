@@ -348,7 +348,7 @@ fn vendor_configuration(
     mut vendor: toml::Value,
 ) -> Result<toml::Value, Error> {
     if let Some(table) = vendor.get_mut("source").and_then(toml::Value::as_table_mut) {
-        for value in table.values_mut() {
+        for (_, value) in table.iter_mut() {
             if let Some(directory) = value.get_mut("directory") {
                 *directory = toml::Value::String("vendor".into());
             }
