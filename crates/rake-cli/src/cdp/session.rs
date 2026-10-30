@@ -149,6 +149,50 @@ impl Session {
                 Ok(json!({"profile":profile?}))
             }
             "Rake.getMemorySummary" => Ok(self.memory.metadata.clone()),
+            "HeapProfiler.takeHeapSnapshot" => {
+                if !self.memory.active {
+                    self.start_memory(&json!({}))?;
+                }
+                let capture = self.memory_capture(false)?;
+                let frames = self.memory_frames(&capture);
+                let text = self.memory.heap_snapshot(&capture, &frames)?;
+                let mut events = Vec::new();
+                if request.params["reportProgress"] == true {
+                    // Chrome prepares its worker on finished progress, before chunks arrive.
+                    events.push(Event::new(
+                        "HeapProfiler.reportHeapSnapshotProgress",
+                        json!({"done":1,"total":1,"finished":true}),
+                    ));
+                }
+                let mut offset = 0;
+                while offset < text.len() {
+                    let mut end = (offset + 32 * 1024).min(text.len());
+                    while !text.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    events.push(Event::new(
+                        "HeapProfiler.addHeapSnapshotChunk",
+                        json!({"chunk":&text[offset..end]}),
+                    ));
+                    offset = end;
+                }
+                let bytes: usize = events
+                    .iter()
+                    .map(|event| serde_json::to_vec(event).map_or(usize::MAX, |bytes| bytes.len()))
+                    .sum();
+                if self.outbound.len() + events.len() > QUEUE_LIMIT
+                    || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
+                {
+                    return Err(Error::new(
+                        -32000,
+                        "Outbound queue busy; retry the heap snapshot",
+                    ));
+                }
+                for event in events {
+                    self.event(event);
+                }
+                Ok(json!({}))
+            }
             "HeapProfiler.collectGarbage" => Err(Error::new(
                 -32601,
                 "Rust memory is released by its owners; garbage collection is unavailable",
@@ -1316,13 +1360,7 @@ impl Session {
 
     fn memory_profile(&mut self) -> std::result::Result<Value, Error> {
         let capture = self.memory_capture(self.memory.include_freed)?;
-        let frames: Vec<_> = capture.sites.iter().map(|site| {
-            let source = if let (Some(file),Some(line)) = (&site.file,site.line) {
-                self.source_descriptor(&rake_protocol::inspection::SourceLocation { file: file.clone(), line, column: site.column.unwrap_or(1).max(1) })
-            } else { json!({}) };
-            json!({"functionName":site.function,"scriptId":"","url":source["url"].as_str().unwrap_or(""),
-                "lineNumber":source["lineNumber"].as_i64().unwrap_or(-1),"columnNumber":source["columnNumber"].as_i64().unwrap_or(-1)})
-        }).collect();
+        let frames = self.memory_frames(&capture);
         let profile = self.memory.profile(&capture, &frames)?;
         if let Some(omitted) = self.memory.metadata["omitted"]
             .as_u64()
@@ -1334,6 +1372,19 @@ impl Session {
             ));
         }
         Ok(profile)
+    }
+
+    fn memory_frames(
+        &mut self,
+        capture: &rake_protocol::inspection::memory::Snapshot,
+    ) -> Vec<Value> {
+        capture.sites.iter().map(|site| {
+            let source = if let (Some(file),Some(line)) = (&site.file,site.line) {
+                self.source_descriptor(&rake_protocol::inspection::SourceLocation { file: file.clone(), line, column: site.column.unwrap_or(1).max(1) })
+            } else { json!({}) };
+            json!({"functionName":site.function,"scriptId":"","url":source["url"].as_str().unwrap_or(""),
+                "lineNumber":source["lineNumber"].as_i64().unwrap_or(-1),"columnNumber":source["columnNumber"].as_i64().unwrap_or(-1)})
+        }).collect()
     }
 
     fn stop_memory(&mut self) {
@@ -1867,6 +1918,7 @@ impl Session {
             .retain(|(event, _)| event.method.starts_with("Tracing."));
         self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
         self.dropped = 0;
+        self.event(Event::new("HeapProfiler.resetProfiles", json!({})));
         if self.domains.contains("Page") && self.source_tree_loaded {
             for document in old_sources {
                 self.event(Event::new(

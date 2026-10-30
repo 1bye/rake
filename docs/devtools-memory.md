@@ -63,3 +63,19 @@ executable. Its typed `test.memory({"action":"allocate"})` operation retains eig
 1 MiB blocks; `release` drops them, and `churn` allocates/drops eight temporary blocks.
 At most sixteen fixture blocks can be retained. These operations are absent from
 ordinary example builds.
+
+**Heap snapshot** starts native tracking if necessary and projects its sampled live
+blocks into Chrome's snapshot format. Repeated captures within that recording use
+the same allocation IDs. **Comparison** can show new and released sample counts
+and estimated byte deltas. Actual requested bytes remain in the export's `rake`
+metadata. Only allocations observed after recording starts are eligible;
+pre-existing allocations are not retroactively discovered. Synthetic root edges
+serve Chrome's viewer, and retained-size/retainer views do not represent Rust
+reference ownership. Heap snapshot nodes group by the first captured workspace
+allocation caller; unresolved callers stay explicitly unknown. Sampling profiles
+provide the full captured native stack/source links.
+
+Snapshot JSON is capped at 512 KiB and streamed in UTF-8-safe chunks. The complete
+event batch must fit the connection's outbound budget before any chunk is sent.
+Replacement emits `HeapProfiler.resetProfiles` so the next runtime cannot be
+compared to stale allocation identities. Exported files remain offline captures.

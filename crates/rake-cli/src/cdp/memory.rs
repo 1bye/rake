@@ -171,6 +171,92 @@ impl Memory {
         profile["rake"] = self.metadata.clone();
         Ok(profile)
     }
+
+    pub fn heap_snapshot(&mut self, capture: &Snapshot, frames: &[Value]) -> Result<String, Error> {
+        let _ = self.profile(capture, frames)?;
+        let live: Vec<_> = capture
+            .samples
+            .iter()
+            .filter(|sample| sample.live)
+            .collect();
+        let title = format!(
+            "Rake sampled Rust allocations · generation {} · estimated bytes · {} omissions · no ownership graph",
+            capture.generation, self.metadata["omitted"]
+        );
+        let mut strings = vec![title];
+        let mut names = BTreeMap::new();
+        let mut nodes = vec![
+            json!(9),
+            json!(0),
+            json!(1),
+            json!(0),
+            json!(live.len()),
+            json!(0),
+            json!(0),
+        ];
+        let mut edges = Vec::new();
+        for (index, sample) in live.iter().enumerate() {
+            let frame = sample
+                .stack
+                .iter()
+                .filter_map(|index| frames.get(*index as usize))
+                .find(|frame| {
+                    frame["url"].as_str().is_some_and(|url| !url.is_empty())
+                        && !frame["functionName"]
+                            .as_str()
+                            .unwrap_or("")
+                            .contains("__rust_alloc")
+                });
+            let name = frame.map_or_else(
+                || "Rust allocation · unresolved native caller".to_owned(),
+                |frame| {
+                    format!(
+                        "Rust allocation · {}",
+                        frame["functionName"].as_str().unwrap_or("unknown")
+                    )
+                },
+            );
+            let name = *names.entry(name.clone()).or_insert_with(|| {
+                strings.push(name);
+                strings.len() - 1
+            });
+            let id = sample
+                .ordinal
+                .checked_mul(2)
+                .and_then(|id| id.checked_add(1))
+                .filter(|id| *id < (1u64 << 53))
+                .ok_or_else(|| {
+                    Error::new(
+                        -32000,
+                        "Native allocation identity exceeds Chrome's numeric range",
+                    )
+                })?;
+            nodes.extend([
+                json!(8),
+                json!(name),
+                json!(id),
+                json!(sample.estimated_bytes),
+                json!(0),
+                json!(0),
+                json!(0),
+            ]);
+            edges.extend([json!(1), json!(index), json!((index + 1) * 7)]);
+        }
+        let text = json!({"snapshot":{"meta":{
+            "node_fields":["type","name","id","self_size","edge_count","trace_node_id","detachedness"],
+            "node_types":[["hidden","array","string","object","code","closure","regexp","number","native","synthetic","concatenated string","sliced string","symbol","bigint"],"string","number","number","number","number","number"],
+            "edge_fields":["type","name_or_index","to_node"],"edge_types":[["context","element","property","internal","hidden","shortcut","weak"],"string_or_number","node"],
+            "trace_function_info_fields":[],"trace_node_fields":[],"sample_fields":[],"location_fields":[]},
+            "node_count":live.len()+1,"edge_count":live.len(),"trace_function_count":0},
+            "nodes":nodes,"edges":edges,"strings":strings,"trace_function_infos":[],"trace_tree":[],"samples":[],"locations":[],"rake":self.metadata}).to_string();
+        if text.len() > 512 * 1024 {
+            return Err(Error::new(
+                -32000,
+                "Native heap snapshot exceeds the export budget",
+            ));
+        }
+        Ok(text)
+    }
 }
 
 struct Node {
@@ -196,6 +282,45 @@ fn tree(id: u32, nodes: &BTreeMap<u32, Node>) -> Value {
 mod tests {
     use super::*;
     use rake_protocol::inspection::memory::{Sample, Site};
+    #[test]
+    fn heap_projections_preserve_live_identities_for_comparison() {
+        let mut memory = Memory::default();
+        let mut capture = Snapshot {
+            generation: 1,
+            recording: true,
+            interval: 32768,
+            omitted: 0,
+            sites: vec![Site {
+                address: "0x42".into(),
+                function: "probe".into(),
+                file: None,
+                line: None,
+                column: None,
+            }],
+            samples: vec![Sample {
+                ordinal: 123,
+                size: 1024,
+                estimated_bytes: 32768,
+                live: true,
+                stack: vec![0],
+            }],
+        };
+        let frames = vec![
+            json!({"functionName":"probe","scriptId":"","url":"http://localhost/probe.rs","lineNumber":1,"columnNumber":0}),
+        ];
+        let first: Value =
+            serde_json::from_str(&memory.heap_snapshot(&capture, &frames).unwrap()).unwrap();
+        let second: Value =
+            serde_json::from_str(&memory.heap_snapshot(&capture, &frames).unwrap()).unwrap();
+        assert_eq!(first["nodes"][9], 247);
+        assert_eq!(first["nodes"], second["nodes"]);
+        assert_eq!(first["edges"], json!([1, 0, 7]));
+        capture.samples[0].live = false;
+        let freed: Value =
+            serde_json::from_str(&memory.heap_snapshot(&capture, &frames).unwrap()).unwrap();
+        assert_eq!(freed["snapshot"]["node_count"], 1);
+        assert_eq!(freed["nodes"].as_array().unwrap().len(), 7);
+    }
     #[test]
     fn profiles_keep_stack_ids_across_live_changes_and_reject_invalid_captures() {
         let mut memory = Memory::default();
