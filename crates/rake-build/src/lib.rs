@@ -61,7 +61,12 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
         .as_deref()
         .map(str::to_owned)
         .unwrap_or(std::env::var("CARGO_PKG_NAME")?);
-    println!("cargo:rustc-env=RAKE_RESOURCE_DIRECTORY={name}");
+    let resource_directory = if platform == Some(rake_dist_core::Platform::Linux) {
+        config.linux.package_name.as_deref().unwrap_or(&name)
+    } else {
+        &name
+    };
+    println!("cargo:rustc-env=RAKE_RESOURCE_DIRECTORY={resource_directory}");
     println!("cargo:rustc-env=RAKE_BUILD_RESOURCES=1");
     for path in [
         config.icon.as_ref(),

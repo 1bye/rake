@@ -44,6 +44,9 @@ pub(crate) fn runtimes(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
     } = input;
     let mut frameworks = Vec::new();
     for runtime in &config.runtimes {
+        if runtime.system {
+            continue;
+        }
         let source = files::confined(
             root(runtime.component.as_deref(), roots, package)?,
             &runtime.source,

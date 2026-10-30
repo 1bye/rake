@@ -1,7 +1,7 @@
 //! Staged native jobs. The CLI runs this coordinator inside an owned worker.
 use crate::{
-    Error, Format, Metadata, Platform, Worker, components, engine, files, plan_metadata_with,
-    recipes,
+    Error, Format, Metadata, Platform, Worker, components, engine, files, linux,
+    plan_metadata_with, recipes,
 };
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,18 @@ pub struct Artifact {
     /// Actual native verifier results for this artifact.
     #[serde(default)]
     pub trust: rake_dist_core::TrustRecord,
+    /// Declared baseline and observed native ELF requirements.
+    #[serde(default)]
+    pub linux: Option<LinuxEvidence>,
+}
+
+/// Compatibility evidence from the actual Linux staged executable and libraries.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinuxEvidence {
+    /// Declared distribution baseline; absence makes no baseline promise.
+    pub baseline: Option<rake_dist_core::LinuxBaseline>,
+    /// Measured ELF requirements, absent for an SDK-owned Flatpak build.
+    pub elf: Option<rake_dist_linux::ElfReport>,
 }
 
 /// Versioned result for every requested native artifact.
@@ -296,29 +308,31 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                     .map(|dependency| dependency.rename.as_deref().unwrap_or("rake")),
             )
         };
-        let built = if target == "universal-apple-darwin" {
-            let arm = build_for("aarch64-apple-darwin")?;
-            let intel = build_for("x86_64-apple-darwin")?;
-            let output = stage.join("universal-binary");
-            let result = Command::new("lipo")
-                .arg("-create")
-                .arg(&arm)
-                .arg(&intel)
-                .arg("-output")
-                .arg(&output)
-                .output()?;
-            if !result.status.success() {
-                return Err(Error::Execution(
-                    String::from_utf8_lossy(&result.stderr).into(),
-                ));
-            }
-            fs::set_permissions(&output, fs::metadata(&arm)?.permissions())?;
-            components::architecture(&output, &target)?;
-            output
-        } else {
-            build_for(&target)?
-        };
-        files::copy(&built, &bin.join(format!("{binary}{suffix}")))?;
+        if item.format() != Format::Flatpak {
+            let built = if target == "universal-apple-darwin" {
+                let arm = build_for("aarch64-apple-darwin")?;
+                let intel = build_for("x86_64-apple-darwin")?;
+                let output = stage.join("universal-binary");
+                let result = Command::new("lipo")
+                    .arg("-create")
+                    .arg(&arm)
+                    .arg(&intel)
+                    .arg("-output")
+                    .arg(&output)
+                    .output()?;
+                if !result.status.success() {
+                    return Err(Error::Execution(
+                        String::from_utf8_lossy(&result.stderr).into(),
+                    ));
+                }
+                fs::set_permissions(&output, fs::metadata(&arm)?.permissions())?;
+                components::architecture(&output, &target)?;
+                output
+            } else {
+                build_for(&target)?
+            };
+            files::copy(&built, &bin.join(format!("{binary}{suffix}")))?;
+        }
         let config = item.config();
         let mut resources = HashMap::new();
         let resource_stage = stage.join("resources");
@@ -495,7 +509,129 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 config.windows.timestamp_url.as_deref(),
             )?;
         }
-        let paths = if plan.platform() == Platform::Windows
+        let mut linux_evidence = None;
+        let linux_metadata = if plan.platform() == Platform::Linux {
+            linux::integration(&plan, index, binary, root, &stage, &icon_directory)?
+        } else {
+            HashMap::new()
+        };
+        if plan.platform() == Platform::Linux && item.format() != Format::Flatpak {
+            let mut groups = descriptor.native_groups.clone();
+            let name = config
+                .linux
+                .package_name
+                .as_deref()
+                .ok_or_else(|| Error::Execution("Linux package name missing".into()))?;
+            for members in groups.values_mut() {
+                for member in members {
+                    *member = PathBuf::from("usr/lib").join(name).join(&*member);
+                }
+            }
+            let payload = linux::payload(
+                &stage,
+                binary,
+                &bin,
+                &resource_stage,
+                name,
+                &linux_metadata,
+                true,
+            )?;
+            let report =
+                rake_dist_linux::normalize_elf(&payload, &groups, config.linux.baseline.as_ref())
+                    .map_err(|error| Error::Execution(error.to_string()))?;
+            files::write_json(&stage.join("elf-requirements.json"), &report)?;
+            linux_evidence = Some(LinuxEvidence {
+                baseline: config.linux.baseline.clone(),
+                elf: Some(report),
+            });
+            // The engine consumes the exact relocated files, not the Cargo output.
+            fs::copy(payload.join("usr/bin").join(binary), bin.join(binary))?;
+            fs::remove_dir_all(&resource_stage)?;
+            files::copy(&payload.join("usr/lib").join(name), &resource_stage)?;
+        }
+        let paths = if plan.platform() == Platform::Linux
+            && matches!(
+                item.format(),
+                Format::Arch | Format::Flatpak | Format::Tar | Format::Rpm | Format::Deb
+            ) {
+            let name = config
+                .linux
+                .package_name
+                .as_deref()
+                .ok_or_else(|| Error::Execution("Linux package name missing".into()))?;
+            let payload = stage.join("linux-payload");
+            match item.format() {
+                Format::Deb => vec![
+                    rake_dist_linux::build_deb(&rake_dist_linux::ArchPackage {
+                        name,
+                        version: &item.version().version,
+                        target: &target,
+                        display_name: plan.name(),
+                        dependencies: &linux::dependencies(config, item.format()),
+                        payload: &payload,
+                        output: &stage.join("deb"),
+                    })
+                    .map_err(|error| Error::Execution(error.to_string()))?,
+                ],
+                Format::Rpm => vec![
+                    rake_dist_linux::build_rpm(&rake_dist_linux::ArchPackage {
+                        name,
+                        version: &item.version().version,
+                        target: &target,
+                        display_name: plan.name(),
+                        dependencies: &linux::dependencies(config, item.format()),
+                        payload: &payload,
+                        output: &stage.join("rpm"),
+                    })
+                    .map_err(|error| Error::Execution(error.to_string()))?,
+                ],
+                Format::Arch => rake_dist_linux::build_arch(&rake_dist_linux::ArchPackage {
+                    name,
+                    version: &item.version().version,
+                    target: &target,
+                    display_name: plan.name(),
+                    dependencies: &linux::dependencies(config, item.format()),
+                    payload: &payload,
+                    output: &stage.join("arch"),
+                })
+                .map_err(|error| Error::Execution(error.to_string()))?,
+                Format::Flatpak => {
+                    let payload = linux::payload(
+                        &stage,
+                        binary,
+                        &bin,
+                        &resource_stage,
+                        name,
+                        &linux_metadata,
+                        false,
+                    )?;
+                    linux::flatpak(
+                        &plan,
+                        index,
+                        binary,
+                        selected,
+                        &metadata,
+                        &target,
+                        &payload,
+                        &stage,
+                        request.offline_components,
+                    )?
+                }
+                Format::Tar => {
+                    let path = stage.join(format!("{name}-{}.tar.gz", item.version().version));
+                    let encoder = flate2::write::GzEncoder::new(
+                        fs::File::create(&path)?,
+                        flate2::Compression::default(),
+                    );
+                    let mut archive = tar::Builder::new(encoder);
+                    archive.follow_symlinks(false);
+                    archive.append_dir_all(".", &payload)?;
+                    archive.into_inner()?.finish()?;
+                    vec![path]
+                }
+                _ => unreachable!(),
+            }
+        } else if plan.platform() == Platform::Windows
             && matches!(item.format(), Format::Msix | Format::Velopack | Format::Zip)
         {
             let payload = stage.join("payload");
@@ -530,6 +666,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 icons,
                 helpers: Vec::new(),
                 frameworks,
+                linux_files: linux_metadata,
             })?
         };
         for path in paths {
@@ -588,6 +725,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 package_version: item.version().version.clone(),
                 components: prepared.locks.clone(),
                 trust: trust_record,
+                linux: linux_evidence.clone(),
             });
         }
     }

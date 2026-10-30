@@ -16,6 +16,7 @@ pub(crate) struct Input<'a> {
     pub icons: Vec<String>,
     pub helpers: Vec<String>,
     pub frameworks: Vec<PathBuf>,
+    pub linux_files: HashMap<PathBuf, PathBuf>,
 }
 
 pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
@@ -30,6 +31,7 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         icons,
         helpers,
         frameworks,
+        linux_files,
     } = input;
     use tauri_bundler::{
         BundleBinary, BundleSettings, PackageSettings, PackageType, SettingsBuilder,
@@ -41,8 +43,6 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         Format::Zip if plan.platform() == crate::Platform::Macos => PackageType::MacOsBundle,
         Format::Nsis => PackageType::Nsis,
         Format::Msi => PackageType::WindowsMsi,
-        Format::Deb => PackageType::Deb,
-        Format::Rpm => PackageType::Rpm,
         Format::Appimage => PackageType::AppImage,
         other => {
             return Err(Error::Execution(format!(
@@ -98,6 +98,10 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
             minimum_system_version: config.minimum_system_version.clone(),
             ..Default::default()
         },
+        appimage: tauri_bundler::AppImageSettings {
+            files: linux_files,
+            ..Default::default()
+        },
         windows: tauri_bundler::WindowsSettings {
             webview_install_mode: serde_json::from_value(serde_json::json!({"type":"skip"}))?,
             ..Default::default()
@@ -114,7 +118,12 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         .project_out_directory(bin)
         .package_types(vec![kind])
         .package_settings(PackageSettings {
-            product_name: config.name.as_deref().unwrap_or(plan.name()).into(),
+            product_name: if plan.platform() == crate::Platform::Linux {
+                config.linux.package_name.as_deref().unwrap_or(plan.name())
+            } else {
+                config.name.as_deref().unwrap_or(plan.name())
+            }
+            .into(),
             version: item.version().version.clone(),
             description: format!("{} desktop application", plan.name()),
             homepage: None,

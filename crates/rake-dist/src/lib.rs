@@ -8,9 +8,12 @@ pub use components::ComponentLock;
 mod engine;
 mod execution;
 mod files;
+mod linux;
 mod process;
 mod recipes;
-pub use execution::{Artifact, BundleRequest, Distribution, bundle, execute_worker, host_target};
+pub use execution::{
+    Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, execute_worker, host_target,
+};
 pub use process::Worker;
 
 pub use rake_dist_core::{Config, Format, Plan, Platform, TrustOptions};
@@ -50,6 +53,8 @@ struct Metadata {
     workspace_members: Vec<String>,
     #[serde(default)]
     target_directory: PathBuf,
+    #[serde(default)]
+    workspace_root: PathBuf,
 }
 
 #[derive(Deserialize)]

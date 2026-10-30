@@ -267,3 +267,42 @@ fn native_relative_separators_are_canonical_and_cannot_hide_traversal() {
         config(json!({"resources":[{"from":"a","to":"one\\two"},{"from":"b","to":"one/two"}]}));
     assert!(duplicate.plan("notes", "1.0.0", Platform::Linux).is_err());
 }
+
+#[test]
+fn system_runtime_policy_is_owned_by_each_linux_format() {
+    let raw = json!({"schema_version":1,"runtimes":[{"name":"media","recipe":"gstreamer","system":true,"system_dependencies":{"deb":["libgstreamer1.0-0 (>= 1.22)"],"rpm":["gstreamer1 >= 1.22"]}}],"linux":{"formats":["deb","rpm"],"baseline":{"name":"ubuntu-24.04","glibc":"2.39","kernel":"6.8"}}});
+    let plan = config(raw.clone())
+        .plan("media_app", "1.0.0", Platform::Linux)
+        .unwrap();
+    assert_eq!(
+        plan.config().linux.package_name.as_deref(),
+        Some("media-app")
+    );
+    assert!(
+        config(raw.clone())
+            .plan_for(
+                "media_app",
+                "1.0.0",
+                Platform::Linux,
+                None,
+                Some(&[Format::Appimage])
+            )
+            .is_err()
+    );
+    assert!(
+        config(raw)
+            .plan_for(
+                "media_app",
+                "1.0.0",
+                Platform::Linux,
+                None,
+                Some(&[Format::Arch])
+            )
+            .is_err()
+    );
+    assert!(
+        config(json!({"schema_version":1,"linux":{"package_name":"Invalid Name"}}))
+            .plan("app", "1.0.0", Platform::Linux)
+            .is_err()
+    );
+}

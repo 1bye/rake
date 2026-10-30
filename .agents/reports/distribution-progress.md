@@ -113,3 +113,29 @@ and Cargo runs from the selected project so toolchain/config discovery is stable
 The adapter passes only worker-relative resource/icon paths. Local CLI consumer
 and strict Clippy checks pass. Independent SDK checks now run even if an earlier
 CLI gate fails, collecting their failures in one native checkpoint.
+
+P6 implementation: added the Linux platform owner with native dpkg-deb packages,
+RPM generation retaining versioned dependency comparisons, makepkg PKGBUILD and
+.SRCINFO output, and Flatpak source builds inside the selected SDK. The Flatpak
+compiler is pinned to Rust 1.95.0 official archive SHA-256 values; Cargo sources
+are vendored offline, SDK/runtime commits are checked and recorded, and runtime
+permissions are explicit. Dedicated source manifests remain available for custom
+SDK dependency modules. AppImage continues through the private bundler adapter.
+Linux package names/resource directories are stable independently of display names.
+Desktop/AppStream metadata, per-format system dependencies, bundled/system runtime
+policy, private ELF loader paths and numeric GLIBC baseline verification are wired
+into the coordinator. ELF requirements are recorded in distribution.json.
+
+Local P6 verification: 13 core plan tests, six Linux unit/round-trip tests,
+component/worker/resource/build tests, four spawned CLI checks, strict Clippy and
+rustdoc passed. Native ELF/dpkg tests and Debian/Fedora install/upgrade/uninstall
+are added to the manual Linux checkpoint. Arch native execution and Flatpak real
+GPUI sandbox execution remain required acceptance work; they are not established
+by portable manifest tests. No new Linux Actions run has been started yet.
+
+Windows checkpoint 41086364202 passed spawned CLI packaging/resources and failed
+the real GPUI build, then stalled in disposable trust setup. Cancellation requested
+to stop wasted runner minutes; diagnostics await job completion. The test trust
+step now has an explicit software key provider, noninteractive trust installation
+and a two-minute timeout; SDK tests have a five-minute timeout. No production
+Windows certificate/private key has been introduced.

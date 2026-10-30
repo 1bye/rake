@@ -238,17 +238,67 @@ pub struct LinuxConfig {
     pub desktop_entry: Option<PathBuf>,
     /// AppStream metadata.
     pub appstream: Option<PathBuf>,
+    /// Stable native package name; defaults to the Cargo package name.
+    pub package_name: Option<String>,
+    /// Native dependency expressions for each Linux package manager.
+    pub dependencies: BTreeMap<Format, Vec<String>>,
+    /// Explicit runtime compatibility profile.
+    pub baseline: Option<LinuxBaseline>,
     /// Flatpak build configuration.
     pub flatpak: FlatpakConfig,
 }
 
+/// Declared Linux compatibility profile, recorded with the final artifact.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct LinuxBaseline {
+    /// Distribution/profile label, such as ubuntu-24.04.
+    pub name: String,
+    /// Minimum glibc version; native ELF verification rejects newer requirements.
+    pub glibc: Option<String>,
+    /// Minimum kernel version documented for this application.
+    pub kernel: Option<String>,
+}
+
 /// Flatpak build override.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
 pub struct FlatpakConfig {
     /// Manifest identifying the pinned runtime and SDK.
     pub manifest: Option<PathBuf>,
+    /// Flatpak runtime ID.
+    pub runtime: String,
+    /// Matching SDK ID.
+    pub sdk: String,
+    /// Runtime/SDK branch.
+    pub runtime_version: String,
+    /// Optional exact installed runtime commit.
+    pub runtime_commit: Option<String>,
+    /// Optional exact installed SDK commit.
+    pub sdk_commit: Option<String>,
+    /// Explicit runtime permissions; defaults to graphics and display sockets.
+    pub finish_args: Vec<String>,
+}
+
+impl Default for FlatpakConfig {
+    fn default() -> Self {
+        Self {
+            manifest: None,
+            runtime: "org.freedesktop.Platform".into(),
+            sdk: "org.freedesktop.Sdk".into(),
+            runtime_version: "25.08".into(),
+            runtime_commit: None,
+            sdk_commit: None,
+            finish_args: vec![
+                "--socket=wayland".into(),
+                "--socket=fallback-x11".into(),
+                "--share=ipc".into(),
+                "--device=dri".into(),
+            ],
+        }
+    }
 }
 
 /// Explicit input-to-installed-resource mapping.
@@ -285,8 +335,18 @@ pub struct Runtime {
     pub name: String,
     /// Registered deployment recipe.
     pub recipe: String,
-    /// Package-relative runtime source.
+    /// Package-relative runtime source; omitted for system-managed dependencies.
+    #[serde(default)]
     pub source: PathBuf,
+    /// Declare packages supplied by the Linux installation channel instead of bundling.
+    #[serde(default)]
+    pub system: bool,
+    /// Package-manager-specific requirements for a system runtime.
+    #[serde(default)]
+    pub system_dependencies: BTreeMap<Format, Vec<String>>,
+    /// Link this runtime into the main process as well as component helpers.
+    #[serde(default)]
+    pub link_from_app: bool,
     /// Named component root instead of the package root.
     #[serde(default)]
     pub component: Option<String>,
@@ -432,6 +492,9 @@ impl Config {
     ) -> Result<Plan, Error> {
         let mut base = self.clone();
         base.normalize_paths()?;
+        if platform == Platform::Linux && base.linux.package_name.is_none() {
+            base.linux.package_name = Some(package.to_ascii_lowercase().replace('_', "-"));
+        }
         if let Some(target) = target {
             let matches_platform = Platform::from_target(target)? == platform;
             if !matches_platform {
@@ -653,7 +716,17 @@ impl Config {
             if !names.insert(&runtime.name) {
                 return Err(Error::Duplicate(runtime.name.clone()));
             }
-            validate_relative_path(&runtime.source)?;
+            if runtime.system {
+                if platform != Platform::Linux
+                    || !runtime.source.as_os_str().is_empty()
+                    || runtime.component.is_some()
+                    || !runtime.plugins.is_empty()
+                {
+                    return Err(Error::Field("system runtimes require Linux dependency declarations without bundled inputs".into()));
+                }
+            } else {
+                validate_relative_path(&runtime.source)?;
+            }
         }
         let mut destinations = std::collections::BTreeSet::new();
         for resource in &self.resources {
@@ -745,6 +818,55 @@ impl Config {
             {
                 return Err(Error::Field("windows.msix.publisher".into()));
             }
+            if platform == Platform::Linux {
+                let name = self.linux.package_name.as_deref().unwrap_or(package);
+                if name.len() < 2
+                    || !name.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"+.-".contains(&byte)
+                    })
+                    || !name.as_bytes()[0].is_ascii_alphanumeric()
+                {
+                    return Err(Error::Field("linux.package_name".into()));
+                }
+                for dependencies in self.linux.dependencies.values().chain(
+                    self.runtimes
+                        .iter()
+                        .flat_map(|runtime| runtime.system_dependencies.values()),
+                ) {
+                    for dependency in dependencies {
+                        if dependency.trim().is_empty() || dependency.chars().any(char::is_control)
+                        {
+                            return Err(Error::Field("Linux dependency expression".into()));
+                        }
+                    }
+                }
+                for runtime in self.runtimes.iter().filter(|runtime| runtime.system) {
+                    if format == Format::Appimage
+                        || runtime
+                            .system_dependencies
+                            .get(&format)
+                            .is_none_or(Vec::is_empty)
+                    {
+                        return Err(Error::Field(format!(
+                            "system runtime {} needs dependencies for {format:?}; AppImage runtimes must be bundled",
+                            runtime.name
+                        )));
+                    }
+                }
+                if let Some(baseline) = &self.linux.baseline {
+                    if baseline.name.trim().is_empty() {
+                        return Err(Error::Field("linux.baseline.name".into()));
+                    }
+                    for version in [baseline.glibc.as_deref(), baseline.kernel.as_deref()]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if version.split('.').any(|part| part.parse::<u32>().is_err()) {
+                            return Err(Error::Field("Linux baseline version".into()));
+                        }
+                    }
+                }
+            }
             packages.push(PackagePlan {
                 format,
                 update_owner: owner,
@@ -809,7 +931,9 @@ impl Config {
             sidecar.path = portable_relative_path(&sidecar.path)?;
         }
         for runtime in &mut self.runtimes {
-            runtime.source = portable_relative_path(&runtime.source)?;
+            if !runtime.system {
+                runtime.source = portable_relative_path(&runtime.source)?;
+            }
         }
         for path in self.updates.public_keys.values_mut() {
             *path = portable_relative_path(path)?;

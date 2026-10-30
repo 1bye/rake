@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/foundation", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "tests/renamed-facade"]
+members = ["crates/rake-dist-linux", "crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/foundation", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "tests/renamed-facade"]
 resolver = "3"
 
 [workspace.package]

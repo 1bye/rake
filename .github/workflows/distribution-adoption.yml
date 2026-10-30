@@ -50,8 +50,18 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p rake-dist-core -p rake-dist -p rake-build -p rake-resources -p rake-dist-macos -p rake-dist-windows --locked
+      - name: Install Linux packaging prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y patchelf rpm desktop-file-utils
+      - run: cargo test -p rake-dist-core -p rake-dist -p rake-build -p rake-resources -p rake-dist-macos -p rake-dist-windows -p rake-dist-linux --locked
+      - name: Verify real ELF relocation and Debian tool consumption
+        if: runner.os == 'Linux'
+        run: cargo test -p rake-dist-linux --features native-tests --test native --locked
       - run: cargo test -p rake-cli --test distribution_bundle --test distribution_plan --locked
+      - name: Debian and Fedora install, upgrade and uninstall
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install
       - name: Build and package the real GPUI application with custom manifest
         if: runner.os == 'Windows'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json

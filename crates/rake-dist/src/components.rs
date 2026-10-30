@@ -85,7 +85,7 @@ pub(crate) fn resolve(
     Ok(prepared)
 }
 
-fn download(
+pub(crate) fn download(
     url: &str,
     expected: &str,
     limit: u64,
