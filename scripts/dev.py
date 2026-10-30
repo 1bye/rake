@@ -349,6 +349,7 @@ class Supervisor:
 
     def launch(self, artifact):
         env = {**os.environ, "RAKE_DEV_CONTROL": "1", "RAKE_CONTROL_DIR": str(self.control)}
+        env.setdefault("RUST_BACKTRACE", "1")
         if self.checkpoint.exists():
             env["RAKE_RELOAD_CHECKPOINT"] = str(self.checkpoint)
         self.app = self.processes.start([str(artifact)], cwd=self.project.root, env=env,
@@ -492,6 +493,8 @@ class Supervisor:
                 worker = threading.Thread(target=build, daemon=True)
                 worker.start()
             if self.app and self.app.poll() is not None and self.status.get("app_running"):
+                self.output.append(f"Application exited with code {self.app.returncode}", self.app.pid,
+                    "lifecycle", level="error" if self.app.returncode else "info")
                 self.record("app_exited", app_running=False, exit_code=self.app.returncode)
             # Surface replacement compatibility outcomes while keeping the supervisor alive.
             if self.app and self.app.poll() is None and self.status["phase"] in {"watching", "running", "restore_failed"}:

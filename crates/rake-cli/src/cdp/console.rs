@@ -353,8 +353,19 @@ impl ProcessOutput {
             let stream = record["stream"].as_str().unwrap_or("output");
             let text = record["text"].as_str().unwrap_or_default();
 
+            let severity = match record["level"]
+                .as_str()
+                .or_else(|| text.split_whitespace().next())
+            {
+                Some("info" | "INFO") => "info",
+                Some("warning" | "WARN") => "warning",
+                Some("verbose" | "DEBUG" | "TRACE") => "verbose",
+                Some("error" | "ERROR") => "error",
+                _ if stream == "stderr" => "error",
+                _ => "info",
+            };
             events.push(entry(
-                "info",
+                severity,
                 format!("[{stream}] {text}"),
                 (self.epoch.unwrap_or(now)
                     + record["elapsed_us"].as_f64().unwrap_or_default() / 1e6)
@@ -381,6 +392,13 @@ impl ProcessOutput {
 pub(super) fn source_url(source: &rake_diagnostics::Source) -> String {
     // Keep the advertised URL opaque: only captured paths may be read by Sources.
     format!("rake://source/{}", source.file)
+}
+
+pub(super) fn exception(error: Error, sequence: u64) -> Value {
+    let description = format!("RakeError ({}): {}", error.code, error.message);
+    let remote = json!({"type":"object","subtype":"error","className":"RakeError","description":description});
+    json!({"result":remote,"exceptionDetails":{"exceptionId":sequence,"text":description,
+        "lineNumber":0,"columnNumber":0,"exception":remote}})
 }
 
 #[cfg(test)]
@@ -454,6 +472,7 @@ mod tests {
         let events = output.poll(10.);
 
         assert_eq!(events[0].params["entry"]["text"], "[stderr] test");
+        assert_eq!(events[0].params["entry"]["level"], "error");
         assert_eq!(events[0].params["entry"]["timestamp"], 10000.);
         assert!(
             events[1].params["entry"]["text"]

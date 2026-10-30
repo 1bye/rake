@@ -28,6 +28,7 @@ struct Session {
     outbound_bytes: usize,
     dropped: u64,
     epoch_seconds: Option<f64>,
+    exception_sequence: u64,
     objects: super::console::Objects,
     sources: super::sources::Sources,
     loss: super::console::Loss,
@@ -53,6 +54,7 @@ impl Session {
             outbound_bytes: 0,
             dropped: 0,
             epoch_seconds: None,
+            exception_sequence: 0,
             objects: super::console::Objects::default(),
             sources: super::sources::Sources::default(),
             loss: super::console::Loss::default(),
@@ -203,41 +205,50 @@ impl Session {
                     ));
                 }
 
-                let value = if let Some(argument) = expression
-                    .trim()
-                    .trim_end_matches(';')
-                    .trim()
-                    .strip_prefix("rake.openSource(")
-                    .and_then(|value| value.strip_suffix(')'))
-                {
-                    let selector = self.source_selector(argument)?;
-                    let location = self.source_location(&selector)?;
-                    crate::source::open(&location)
-                        .map_err(|error| Error::new(-32000, error.to_string()))?
-                } else if let Some(method) = match expression {
-                    "rake.resetStyles($0)" => Some("Rake.resetStyles"),
-                    "rake.undoStyles($0)" => Some("Rake.undoStyles"),
-                    "rake.resetText($0)" => Some("Rake.resetText"),
-                    "rake.undoText($0)" => Some("Rake.undoText"),
-                    _ => None,
-                } {
-                    let node = self.dom.inspected_node()?;
-                    self.handle(&Request {
-                        id: request.id,
-                        method: method.into(),
-                        params: json!({"nodeId":node}),
-                    })?
-                } else {
-                    super::evaluate::execute(&self.instance, expression)?
-                };
+                let outcome: std::result::Result<Value, Error> = (|| {
+                    let value = if let Some(argument) = expression
+                        .trim()
+                        .trim_end_matches(';')
+                        .trim()
+                        .strip_prefix("rake.openSource(")
+                        .and_then(|value| value.strip_suffix(')'))
+                    {
+                        let selector = self.source_selector(argument)?;
+                        let location = self.source_location(&selector)?;
+                        crate::source::open(&location)
+                            .map_err(|error| Error::new(-32000, error.to_string()))?
+                    } else if let Some(method) = match expression {
+                        "rake.resetStyles($0)" => Some("Rake.resetStyles"),
+                        "rake.undoStyles($0)" => Some("Rake.undoStyles"),
+                        "rake.resetText($0)" => Some("Rake.resetText"),
+                        "rake.undoText($0)" => Some("Rake.undoText"),
+                        _ => None,
+                    } {
+                        let node = self.dom.inspected_node()?;
+                        self.handle(&Request {
+                            id: request.id,
+                            method: method.into(),
+                            params: json!({"nodeId":node}),
+                        })?
+                    } else {
+                        super::evaluate::execute(&self.instance, expression)?
+                    };
 
-                let remote = if request.params["returnByValue"] == true {
-                    json!({"type":"object","value":value})
-                } else {
-                    self.objects.remote(value)
-                };
+                    let remote = if request.params["returnByValue"] == true {
+                        json!({"type":"object","value":value})
+                    } else {
+                        self.objects.remote(value)
+                    };
 
-                Ok(json!({"result":remote}))
+                    Ok(json!({"result":remote}))
+                })();
+                Ok(match outcome {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.exception_sequence += 1;
+                        super::console::exception(error, self.exception_sequence)
+                    }
+                })
             }
             "Runtime.globalLexicalScopeNames" => {
                 Ok(json!({"names":super::evaluate::names(&self.instance)?}))
@@ -660,7 +671,17 @@ impl Session {
         }
     }
 
+    fn poll_output(&mut self) {
+        if self.domains.contains("Log") || self.domains.contains("Runtime") {
+            for event in self.process_output.poll(unix_seconds()) {
+                self.event(event);
+            }
+        }
+    }
+
     fn poll(&mut self) -> Result<()> {
+        // The supervisor outlives a crashed runtime; drain stderr before querying it.
+        self.poll_output();
         match query(&self.instance, Query::Info {}, TIMEOUT)? {
             Reply::Info(info) if info.runtime_id == self.instance.info.runtime_id => {}
             _ => return Err("runtime identity changed".into()),
@@ -715,12 +736,6 @@ impl Session {
                         .objects
                         .called(record, self.epoch_seconds.unwrap_or_default());
 
-                    self.event(event);
-                }
-            }
-
-            if self.domains.contains("Log") {
-                for event in self.process_output.poll(unix_seconds()) {
                     self.event(event);
                 }
             }
@@ -1250,6 +1265,9 @@ pub(super) fn run(
                     } else if missing_since.get_or_insert_with(Instant::now).elapsed()
                         >= Duration::from_secs(5)
                     {
+                        session.poll_output();
+                        session.event(super::console::entry("error", format!("Runtime disconnected: {error}. Retained supervisor output is shown above."), unix_seconds()*1000., "rake://adapter"));
+                        session.flush(&mut socket)?;
                         socket.send(Message::text(serde_json::to_string(&Event::new(
                             "Inspector.detached",
                             json!({"reason":error.to_string()}),
@@ -1284,6 +1302,56 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evaluation_errors_are_visible_exceptions_and_crash_output_survives_dead_ipc() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!("rake-crash-{}.json", uuid::Uuid::new_v4()));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        serde_json::to_writer(file, &json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr",
+            "text":"thread 'main' panicked at app.rs:42:1: fixture panic\nstack backtrace:"}],"dropped":0})).unwrap();
+        let router =
+            rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default());
+        let instance = Instance {
+            application_id: "crash".into(),
+            pid: 0,
+            info: router.client().info(),
+            endpoint: rake_client::local::Endpoint::Local {
+                path: path.with_extension("missing.sock"),
+            },
+        };
+        let mut session = Session::new(instance, Some(path.clone()));
+        session.domains.insert("Log".into());
+        assert!(session.poll().is_err());
+        assert_eq!(session.outbound.len(), 1);
+        assert_eq!(session.outbound[0].0.params["entry"]["level"], "error");
+        assert!(
+            session.outbound[0].0.params["entry"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("stack backtrace")
+        );
+        let error = session
+            .handle(&Request {
+                id: 1,
+                method: "Runtime.evaluate".into(),
+                params: json!({"expression":"1+1"}),
+            })
+            .unwrap();
+        assert_eq!(error["result"]["subtype"], "error");
+        assert!(
+            error["exceptionDetails"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("registered command")
+        );
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn structured_logs_have_one_delivery_source_and_expandable_context() {
