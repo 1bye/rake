@@ -20,6 +20,13 @@ x86_64-unknown-linux-gnu = ["deb", "rpm", "appimage"]
 
 Serve that directory through a static HTTPS server. Immutable content is stored
 under `objects/`; each native feed tree lives under `<channel>/<target>/`.
+For MSIX, the server must support HTTP byte ranges and correct GET/HEAD
+`Content-Length`, with `.msix` served as `application/msix` and `.appinstaller`
+as `application/appinstaller`. These are native
+[App Installer hosting requirements](https://learn.microsoft.com/en-us/windows/msix/app-installer/installing-windows10-apps-web).
+Serve stable feed paths with revalidation and immutable objects with long-lived
+caching. Ordinary static servers can supply these behaviors; Python's basic HTTP
+server needs additional byte-range handling for App Installer.
 Directory export owns its root and refuses an existing unrelated directory. On
 Unix, an atomic symlink replacement switches the whole channel tree while keeping
 previous generations and objects. Windows export uses the owned directory

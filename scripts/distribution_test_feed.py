@@ -6,6 +6,7 @@ system trust is changed. This module also implements the fixture's signing argv.
 import functools
 import http.server
 import pathlib
+import re
 import ssl
 import subprocess
 import sys
@@ -36,6 +37,54 @@ class FeedHandler(http.server.SimpleHTTPRequestHandler):
         '.appinstaller': 'application/appinstaller',
         '.msix': 'application/msix',
     }
+
+    def end_headers(self):
+        self.send_header('Accept-Ranges', 'bytes')
+        super().end_headers()
+
+    def send_head(self):
+        self.byte_range = None
+        value = self.headers.get('Range')
+        path = pathlib.Path(self.translate_path(self.path))
+        if not value or not path.is_file():
+            return super().send_head()
+        size = path.stat().st_size
+        match = re.fullmatch(r'bytes=(\d*)-(\d*)', value)
+        try:
+            assert match and any(match.groups())
+            first, last = match.groups()
+            if first:
+                start, end = int(first), min(int(last), size - 1) if last else size - 1
+            else:
+                start, end = max(0, size - int(last)), size - 1
+            assert 0 <= start <= end < size
+        except (AssertionError, ValueError):
+            self.send_response(416)
+            self.send_header('Content-Range', f'bytes */{size}')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return None
+        source = path.open('rb')
+        source.seek(start)
+        self.byte_range = end - start + 1
+        self.send_response(206)
+        self.send_header('Content-Type', self.guess_type(str(path)))
+        self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        self.send_header('Content-Length', str(self.byte_range))
+        self.send_header('Last-Modified', self.date_time_string(path.stat().st_mtime))
+        self.end_headers()
+        return source
+
+    def copyfile(self, source, destination):
+        if self.byte_range is None:
+            return super().copyfile(source, destination)
+        remaining = self.byte_range
+        while remaining:
+            data = source.read(min(remaining, 64 * 1024))
+            if not data:
+                break
+            destination.write(data)
+            remaining -= len(data)
 
     def do_GET(self):
         if self.path == getattr(self.server, 'truncated_path', None):
