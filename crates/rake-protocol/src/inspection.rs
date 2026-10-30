@@ -4,6 +4,8 @@ use crate::router::{EntryId, TabId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Native allocator sampling contracts, independent of the renderer.
+pub mod memory;
 /// Live frame recording contracts.
 pub mod performance;
 /// Shared presentation of captured style values.
