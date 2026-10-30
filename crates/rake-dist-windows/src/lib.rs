@@ -233,3 +233,6 @@ mod tests {
         assert!(validate_manifest(&xml.replace("PerMonitorV2", "System")).is_err());
     }
 }
+
+mod vcruntime;
+pub use vcruntime::vc_runtime_directory;

@@ -528,24 +528,6 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 );
             }
         }
-        let component_lock = root.join("rake-dist.lock");
-        if request.locked_components && !component_lock.is_file() {
-            return Err(Error::Execution(
-                "--locked-components requires rake-dist.lock".into(),
-            ));
-        }
-        if component_lock.exists() {
-            let locked: Vec<components::ComponentLock> =
-                serde_json::from_slice(&fs::read(component_lock)?)?;
-            for resolved in &prepared.locks {
-                if !locked.contains(resolved) {
-                    return Err(Error::Execution(format!(
-                        "component {} differs from rake-dist.lock",
-                        resolved.name
-                    )));
-                }
-            }
-        }
         for (provider, path) in &config.updates.public_keys {
             rake_dist_core::validate_relative_path(Path::new(provider))?;
             if Path::new(provider).components().count() != 1 {
@@ -564,13 +546,32 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 .insert(provider.clone(), relative);
         }
         if plan.platform() == Platform::Windows {
-            crate::windows_dlls::prepare(
+            let crt = crate::windows_dlls::prepare(
                 config,
                 &descriptor,
                 &resource_stage,
                 &bin.join(format!("{binary}{suffix}")),
                 &mut resources,
             )?;
+            prepared.locks.extend(crt);
+        }
+        let component_lock = root.join("rake-dist.lock");
+        if request.locked_components && !component_lock.is_file() {
+            return Err(Error::Execution(
+                "--locked-components requires rake-dist.lock".into(),
+            ));
+        }
+        if component_lock.exists() {
+            let locked: Vec<components::ComponentLock> =
+                serde_json::from_slice(&fs::read(component_lock)?)?;
+            for resolved in &prepared.locks {
+                if !locked.contains(resolved) {
+                    return Err(Error::Execution(format!(
+                        "component {} differs from rake-dist.lock",
+                        resolved.name
+                    )));
+                }
+            }
         }
         let descriptor_path = resource_stage.join("rake-installation.json");
         if descriptor_path.exists() {

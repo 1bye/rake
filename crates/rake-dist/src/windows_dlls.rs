@@ -12,7 +12,33 @@ pub(crate) fn prepare(
     resource_stage: &Path,
     executable: &Path,
     resources: &mut HashMap<String, String>,
-) -> Result<(), Error> {
+) -> Result<Option<crate::ComponentLock>, Error> {
+    let source = rake_dist_windows::vc_runtime_directory(&descriptor.target)
+        .map_err(|error| Error::Execution(error.to_string()))?;
+    let mut fallback_roots = Vec::new();
+    let lock = if let Some(source) = source {
+        let hash = files::digest(&source)?;
+        let prepared = resource_stage
+            .parent()
+            .ok_or_else(|| Error::Execution("CRT stage parent".into()))?
+            .join("msvc-crt");
+        files::copy(&source, &prepared)?;
+        let tree_sha256 = files::digest(&prepared)?;
+        if hash != tree_sha256 || files::digest(&source)? != hash {
+            return Err(Error::Execution(
+                "MSVC redistributables changed while staging".into(),
+            ));
+        }
+        fallback_roots.push(prepared);
+        Some(crate::ComponentLock {
+            name: "rake-msvc-crt".into(),
+            target: descriptor.target.clone(),
+            source_sha256: hash,
+            tree_sha256,
+        })
+    } else {
+        None
+    };
     let roots = |component: Option<&str>, main: bool| -> Result<Vec<PathBuf>, Error> {
         config
             .runtimes
@@ -36,6 +62,7 @@ pub(crate) fn prepare(
         &roots(None, true)?,
         resource_stage,
         resource_stage,
+        &fallback_roots,
         &config.windows.system_dlls,
         resources,
     )?;
@@ -52,6 +79,7 @@ pub(crate) fn prepare(
                 .parent()
                 .ok_or_else(|| Error::Execution("helper parent missing".into()))?,
             resource_stage,
+            &fallback_roots,
             &config.windows.system_dlls,
             resources,
         )?;
@@ -73,18 +101,20 @@ pub(crate) fn prepare(
                     .parent()
                     .ok_or_else(|| Error::Execution("runtime executable parent missing".into()))?,
                 resource_stage,
+                &fallback_roots,
                 &config.windows.system_dlls,
                 resources,
             )?;
         }
     }
-    Ok(())
+    Ok(lock)
 }
 fn deploy(
     executable: &Path,
     roots: &[PathBuf],
     destination: &Path,
     resource_stage: &Path,
+    fallback_roots: &[PathBuf],
     system_dlls: &[String],
     resources: &mut HashMap<String, String>,
 ) -> Result<(), Error> {
@@ -92,6 +122,7 @@ fn deploy(
         executable,
         roots,
         destination,
+        fallback_roots,
         system_dlls,
     })
     .map_err(|error| Error::Execution(error.to_string()))?;

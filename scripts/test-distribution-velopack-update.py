@@ -116,6 +116,7 @@ x86_64-pc-windows-msvc=["velopack"]
                 while not executable.exists():
                     assert time.monotonic() < deadline, 'installation did not finish'
                     time.sleep(0.1)
+                assert (install / 'current/vcruntime140.dll').is_file(), 'MSVC runtime must be private to the installation'
                 env = dict(os.environ, RAKE_FIXTURE_STATE=str(user))
                 assert run(executable, cwd=root, env=env).strip() == '1.0.0:installed update resource'
                 assert run(executable, '--check', env=env).strip() == 'available:1.0.1'

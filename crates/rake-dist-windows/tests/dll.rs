@@ -54,6 +54,7 @@ fn relocated_helpers_use_their_own_dll_versions_without_developer_path() {
             executable: &one.join("helper.exe"),
             roots: &[one.clone(), two.clone()],
             destination: &root.path().join("ambiguous"),
+            fallback_roots: &[],
             system_dlls: &[]
         })
         .is_err()
@@ -66,6 +67,7 @@ fn relocated_helpers_use_their_own_dll_versions_without_developer_path() {
             executable: &installed.join("helper.exe"),
             roots: &[source.clone()],
             destination: &installed,
+            fallback_roots: &[],
             system_dlls: &[],
         })
         .unwrap();

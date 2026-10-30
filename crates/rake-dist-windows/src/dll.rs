@@ -16,6 +16,9 @@ pub struct DllDeployment<'a> {
     /// Declared runtime directories visible to this process. Dynamically loaded
     /// libraries/plugins in these roots also seed transitive dependency discovery.
     pub roots: &'a [PathBuf],
+    /// Toolchain release CRT directories, resolved only for imports absent from
+    /// declared roots. Their unused DLLs do not seed plugin discovery.
+    pub fallback_roots: &'a [PathBuf],
     /// Owned staging directory that becomes this executable's installed directory.
     pub destination: &'a Path,
     /// Additional DLLs explicitly supplied by an enrolled system prerequisite.
@@ -67,10 +70,22 @@ pub fn deploy_dlls(input: &DllDeployment<'_>) -> Result<Vec<PathBuf>, Error> {
             catalog.entry(name).or_default().push(path);
         }
     }
+    let seeds: Vec<_> = catalog.keys().cloned().collect();
+    for root in input.fallback_roots {
+        let root = fs::canonicalize(root)?;
+        for path in dll_files(&root, &root)? {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| Error::Tool("CRT DLL filename".into()))?
+                .to_ascii_lowercase();
+            catalog.entry(name).or_insert_with(|| vec![path]);
+        }
+    }
     let machine = pe_architecture(input.executable)?;
     let mut queue = vec![input.executable.to_owned()];
     let mut selected = BTreeMap::new();
-    for name in catalog.keys() {
+    for name in &seeds {
         let path = select(&catalog, name)?;
         queue.push(path.clone());
         selected.insert(name.clone(), path);
