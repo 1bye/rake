@@ -104,7 +104,11 @@ Identity fields are generated and protected against conflicting overrides.
 Windows manifests replace GPUI's staged resource instead of adding a second linker
 manifest. Linux desktop and AppStream integration is generated from stable app
 identity. Flatpak builds source inside its selected SDK, with vendored Cargo
-sources and verified pinned Rust tools. Declare its permissions explicitly.
+sources and verified pinned Rust tools. Its explicit Rust target overrides any
+workspace default target. Declare permissions explicitly. `linux.dependencies.flatpak`
+and system-runtime Flatpak entries contain `pkg-config` requirements (for example
+`gstreamer-1.0 >= 1.24`), checked inside the selected SDK before compiling. Use a
+custom SDK manifest with dependency modules when that SDK does not supply them.
 
 Use `resources.path("help.txt")`, `resources.helper("ffmpeg")` and
 `resources.runtime("gstreamer")` from `rake::resources!()?`. Paths are confined to

@@ -45,13 +45,23 @@ pub fn flatpak_manifest(
     identifier: &str,
     binary: &str,
     package: &str,
+    target: &str,
     manifest: &Path,
     source: &Path,
     payload: &Path,
     config: &FlatpakConfig,
     tools: &[FlatpakTool],
     features: &[String],
+    system_dependencies: &[String],
 ) -> Result<Value, Error> {
+    if rake_dist_core::Platform::from_target(target)
+        .map_err(|error| Error::Metadata(error.to_string()))?
+        != rake_dist_core::Platform::Linux
+    {
+        return Err(Error::Metadata(
+            "Flatpak requires a Linux Rust target".into(),
+        ));
+    }
     rake_dist_core::validate_relative_path(manifest)
         .map_err(|error| Error::Metadata(error.to_string()))?;
     for component in ["rustc", "cargo", "rust-std"] {
@@ -76,11 +86,29 @@ pub fn flatpak_manifest(
         format!(" --features {}", shell(&features.join(",")))
     };
     let compile = format!(
-        "cargo build --offline --locked --release --manifest-path {} --package {} --bin {}{feature_args}",
+        "cargo build --offline --locked --release --target {} --manifest-path {} --package {} --bin {}{feature_args}",
+        shell(target),
         shell(&manifest.to_string_lossy()),
         shell(package),
         shell(binary)
     );
+    let mut build_commands = Vec::new();
+    for dependency in system_dependencies {
+        if dependency.is_empty() || dependency.chars().any(char::is_control) {
+            return Err(Error::Metadata("Flatpak SDK dependency expression".into()));
+        }
+        build_commands.push(format!("pkg-config --exists {}", shell(dependency)));
+    }
+    build_commands.extend([
+        compile,
+        format!(
+            "install -Dm755 target/{}/release/{} /app/bin/{}",
+            shell(target),
+            shell(binary),
+            shell(binary)
+        ),
+        "cp -a payload/usr/. /app/".into(),
+    ]);
     Ok(json!({
         "app-id":identifier,"runtime":config.runtime,"runtime-version":config.runtime_version,"sdk":config.sdk,
         "command":binary,"finish-args":config.finish_args,
@@ -88,7 +116,7 @@ pub fn flatpak_manifest(
         "modules":[
             {"name":"rake-rust-toolchain","buildsystem":"simple","build-options":{"strip":false,"no-debuginfo":true},"build-commands":commands,"sources":sources,"cleanup":["*"]},
             {"name":"rake-application","buildsystem":"simple","build-options":{"prepend-path":"/app/.rake-build/rust/bin"},
-             "build-commands":[compile,format!("install -Dm755 target/release/{} /app/bin/{}",shell(binary),shell(binary)),"cp -a payload/usr/. /app/"],
+             "build-commands":build_commands,
              "sources":[{"type":"dir","path":source},{"type":"dir","path":payload,"dest":"payload"}]}
         ],"cleanup":["/.rake-build"]
     }))
@@ -175,24 +203,32 @@ mod tests {
             "dev.rake.Example",
             "example",
             "example",
+            "x86_64-unknown-linux-gnu",
             Path::new("examples/app/Cargo.toml"),
             Path::new("/tmp/source"),
             Path::new("/tmp/payload"),
             &FlatpakConfig::default(),
             &tools,
             &[],
+            &["fontconfig >= 2.13".into()],
         )
         .unwrap();
+        assert_eq!(
+            manifest["modules"][1]["build-commands"][0],
+            "pkg-config --exists 'fontconfig >= 2.13'"
+        );
         assert_eq!(manifest["modules"][0]["build-options"]["strip"], false);
         assert_eq!(
             manifest["modules"][0]["build-options"]["no-debuginfo"],
             true
         );
         assert!(
-            manifest["modules"][1]["build-commands"][0]
+            manifest["modules"][1]["build-commands"][1]
                 .as_str()
                 .unwrap()
-                .contains("cargo build --offline --locked")
+                .contains(
+                    "cargo build --offline --locked --release --target 'x86_64-unknown-linux-gnu'"
+                )
         );
         assert!(
             !manifest["finish-args"]
@@ -206,11 +242,13 @@ mod tests {
                 "dev.rake.Example",
                 "example",
                 "example",
+                "x86_64-unknown-linux-gnu",
                 Path::new("../Cargo.toml"),
                 Path::new("/tmp/source"),
                 Path::new("/tmp/payload"),
                 &FlatpakConfig::default(),
                 &tools,
+                &[],
                 &[]
             )
             .is_err()

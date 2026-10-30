@@ -211,12 +211,14 @@ pub(crate) fn flatpak(
             plan.identifier(),
             binary,
             &selected.name,
+            target,
             relative,
             &source,
             payload,
             &config.linux.flatpak,
             &tools,
             features,
+            &dependencies(config, Format::Flatpak),
         )
         .map_err(native)?;
         files::write_json(&manifest, &value)?;
