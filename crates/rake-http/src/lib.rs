@@ -431,7 +431,7 @@ impl Request {
                         .unwrap_or_default()
                         .into(),
                 ),
-                #[cfg(feature = "devtools")]
+                #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
                 (
                     "protocol",
                     format!("{:?}", response.version())
@@ -678,6 +678,8 @@ impl Lifecycle {
     fn new(collector: Collector) -> Self {
         static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
+        #[cfg(feature = "devtools")]
+        let start_us = collector.elapsed_us();
         Self {
             id: NEXT_REQUEST.fetch_add(1, Ordering::Relaxed),
             context: collector.context(),
@@ -685,7 +687,16 @@ impl Lifecycle {
             finished: false,
             started: Instant::now(),
             bytes: 0,
-            metadata: BTreeMap::new(),
+            metadata: {
+                #[cfg(feature = "devtools")]
+                {
+                    BTreeMap::from([("request_start_us".into(), start_us.into())])
+                }
+                #[cfg(not(feature = "devtools"))]
+                {
+                    BTreeMap::new()
+                }
+            },
             #[cfg(feature = "devtools")]
             capture_lost: false,
         }

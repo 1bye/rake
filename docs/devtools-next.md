@@ -99,3 +99,9 @@ entry, completion/help, source links, structured data, failed/pending results,
 search, Clear, Keep log across checkpointed replacement, and retained panic output.
 That pass used Chrome 156.0.8078.74; the earlier Console UI limitations above describe
 the historical Elements-only pass.
+
+
+## Network coverage
+
+The five Network steps, capture limits and verification evidence are recorded in
+[the Network checklist](devtools-network.md).

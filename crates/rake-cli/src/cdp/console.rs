@@ -235,7 +235,7 @@ fn preview(name: &str, value: &Value) -> Value {
 
 #[derive(Default)]
 pub(super) struct Loss {
-    dropped: u64,
+    unrecorded: u64,
     output_dropped: u64,
 }
 
@@ -244,16 +244,21 @@ impl Loss {
         let mut previous = cursor;
         let mut skipped = 0;
 
-        for record in &snapshot.records {
+        for record in snapshot
+            .records
+            .iter()
+            .filter(|record| record.sequence > cursor)
+        {
             skipped += record.sequence.saturating_sub(previous.saturating_add(1));
             previous = record.sequence;
         }
 
-        let changed = snapshot.dropped > self.dropped
+        let unrecorded = snapshot.dropped.saturating_sub(snapshot.evicted);
+        let changed = unrecorded > self.unrecorded
             || snapshot.output_dropped > self.output_dropped
             || skipped > 0;
 
-        self.dropped = snapshot.dropped;
+        self.unrecorded = unrecorded;
         self.output_dropped = snapshot.output_dropped;
 
         changed.then(|| {
@@ -484,6 +489,31 @@ mod tests {
     }
 
     #[test]
+    fn consumed_evictions_do_not_warn_but_unread_gaps_do() {
+        let collector = rake_diagnostics::Collector::new(2);
+        let mut loss = Loss::default();
+        let mut cursor = 0;
+        for _ in 0..5 {
+            collector.record("INFO", "test", "event", vec![], Default::default());
+            let snapshot = collector.snapshot_after(cursor, None);
+            assert!(
+                loss.observe(&snapshot, cursor).is_none(),
+                "consumed history is not new loss"
+            );
+            cursor = snapshot.records.last().unwrap().sequence;
+        }
+        for _ in 0..4 {
+            collector.record("INFO", "test", "event", vec![], Default::default());
+        }
+        let snapshot = collector.snapshot_after(cursor, None);
+        assert!(
+            loss.observe(&snapshot, cursor)
+                .unwrap()
+                .contains("skipped=2")
+        );
+    }
+
+    #[test]
     fn cumulative_loss_warns_only_on_changes() {
         let mut loss = Loss::default();
 
@@ -491,6 +521,7 @@ mod tests {
             records: vec![],
             dropped: 2,
             output_dropped: 1,
+            evicted: 0,
         };
 
         assert!(loss.observe(&snapshot, 0).unwrap().contains("dropped=2"));

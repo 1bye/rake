@@ -74,7 +74,8 @@ browser DOM, JavaScript debugger, CPU profiler or heap profiler.
 
 Wall times use an adapter observation clock estimated from retained diagnostics;
 they may skew by polling/transport latency or the age of the latest record.
-Monotonic event timestamps retain the runtime's elapsed microsecond clock.
+Monotonic event timestamps retain the runtime's elapsed microsecond clock. Network
+adds a connection offset across replacement so preserved requests share one timeline.
 
 Compatibility evidence and the tested Chrome/protocol revisions are in
 [the spike report](../.agents/reports/cdp-adapter-spike.md).
@@ -375,3 +376,6 @@ Recording adds instrumentation overhead.
 
 Console delivery progress and its verification are tracked in
 [the Console checklist](devtools-console.md).
+
+See the [Network checklist](devtools-network.md) for HTTP metadata, bounded body
+capture, origins, timing and Chrome workflows.

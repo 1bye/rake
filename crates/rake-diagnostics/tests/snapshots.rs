@@ -95,3 +95,26 @@ fn tracing_retains_the_event_callsite_and_causal_context() {
     .unwrap();
     assert!(old.source.is_none());
 }
+
+#[cfg(feature = "devtools")]
+#[test]
+fn rich_diagnostics_stay_within_the_private_ipc_envelope() {
+    let collector = rake_diagnostics::Collector::new(1024);
+    for _ in 0..100 {
+        collector.record(
+            "INFO",
+            "fixture",
+            "request",
+            vec![],
+            std::collections::BTreeMap::from([(
+                "headers".into(),
+                serde_json::json!("x".repeat(16 * 1024)),
+            )]),
+        );
+    }
+    let snapshot = collector.snapshot();
+    assert!(snapshot.dropped > 0);
+    assert!(snapshot.records.last().unwrap().sequence > 90);
+    assert_eq!(snapshot.evicted, snapshot.dropped);
+    assert!(serde_json::to_vec(&snapshot).unwrap().len() < 1024 * 1024);
+}

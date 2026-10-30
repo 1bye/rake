@@ -36,7 +36,7 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 use tracing_subscriber::{Layer, Registry};
 use web_time::Instant;
 
-/// A location reported by tracing metadata; never inferred from span names.
+/// A location reported by producer metadata; never inferred from span names.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Source {
     /// Rust source path, relative to the build workspace when available.
@@ -84,6 +84,10 @@ pub struct Snapshot {
     pub records: Vec<Record>,
     /// Records lost to capacity or writer contention since collector creation.
     pub dropped: u64,
+    /// Records evicted from retained history; these may already have been consumed.
+    #[cfg(feature = "devtools")]
+    #[serde(default)]
+    pub evicted: u64,
     /// Terminal output messages lost to the bounded native writer queue.
     pub output_dropped: u64,
 }
@@ -93,6 +97,8 @@ struct Buffer {
     sequence: u64,
     #[cfg(feature = "devtools")]
     bytes: usize,
+    #[cfg(feature = "devtools")]
+    evicted: u64,
 }
 
 struct Inner {
@@ -126,6 +132,8 @@ impl Collector {
                 sequence: 0,
                 #[cfg(feature = "devtools")]
                 bytes: 0,
+                #[cfg(feature = "devtools")]
+                evicted: 0,
             }),
             capacity,
             dropped: AtomicU64::new(0),
@@ -141,6 +149,13 @@ impl Collector {
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot_after(0, None)
+    }
+
+    /// Current collector clock, for development records spanning several observations.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn elapsed_us(&self) -> u64 {
+        self.0.started.elapsed().as_micros().min(u64::MAX as u128) as u64
     }
 
     /// Begins bounded development body capture. Contention may omit capture without blocking HTTP.
@@ -213,6 +228,8 @@ impl Collector {
                 .collect(),
             dropped: self.0.dropped.load(Ordering::Relaxed),
             output_dropped: self.0.output_dropped.load(Ordering::Relaxed),
+            #[cfg(feature = "devtools")]
+            evicted: buffer.evicted,
         }
     }
 
@@ -290,6 +307,7 @@ impl Collector {
             if let Some(old) = buffer.records.pop_front() {
                 #[cfg(feature = "devtools")]
                 {
+                    buffer.evicted += 1;
                     buffer.bytes = buffer
                         .bytes
                         .saturating_sub(serde_json::to_vec(&old).map_or(0, |bytes| bytes.len()));
@@ -328,6 +346,7 @@ impl Collector {
             }
             while buffer.bytes + bytes > LIMIT {
                 if let Some(old) = buffer.records.pop_front() {
+                    buffer.evicted += 1;
                     buffer.bytes = buffer
                         .bytes
                         .saturating_sub(serde_json::to_vec(&old).map_or(0, |bytes| bytes.len()));

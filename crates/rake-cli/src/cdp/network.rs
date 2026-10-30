@@ -69,7 +69,7 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
             "request":{"url":url,"method":f.get("method").and_then(Value::as_str).unwrap_or_default(),
                 "hasPostData":f.get("has_body").and_then(Value::as_bool).unwrap_or(false),
                 "headers":f.get("request_headers").cloned().unwrap_or(json!({})),"initialPriority":"Medium","referrerPolicy":"no-referrer"},
-            "timestamp":timestamp,"initiator":{"type":"other"},"type":"Fetch","frameId":"rake",
+            "timestamp":f.get("request_start_us").and_then(Value::as_u64).map(|us| us as f64 / 1e6).unwrap_or(timestamp),"initiator":{"type":"other"},"type":"Fetch","frameId":"rake",
             "hasUserGesture":false}),
         ),
         "headers_received" => (
@@ -103,19 +103,23 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
         _ => return Vec::new(),
     };
 
-    if phase == "headers_received" {
-        if let Some(duration) = f.get("duration_us").and_then(Value::as_u64) {
-            let start = record.elapsed_us.saturating_sub(duration) as f64 / 1e6;
-            let headers_ms = duration as f64 / 1000.0;
-            params["response"]["timing"] = json!({
-                "requestTime":start,"proxyStart":-1,"proxyEnd":-1,
-                "dnsStart":-1,"dnsEnd":-1,"connectStart":-1,"connectEnd":-1,
-                "sslStart":-1,"sslEnd":-1,"workerStart":-1,"workerReady":-1,
-                "workerFetchStart":-1,"workerRespondWithSettled":-1,
-                "sendStart":-1,"sendEnd":-1,"pushStart":0,"pushEnd":0,
-                "receiveHeadersStart":headers_ms,"receiveHeadersEnd":headers_ms
-            });
-        }
+    if phase == "headers_received"
+        && let Some(duration) = f.get("duration_us").and_then(Value::as_u64)
+    {
+        let start_us = f
+            .get("request_start_us")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| record.elapsed_us.saturating_sub(duration));
+        let start = start_us as f64 / 1e6;
+        let headers_ms = record.elapsed_us.saturating_sub(start_us) as f64 / 1000.0;
+        params["response"]["timing"] = json!({
+            "requestTime":start,"proxyStart":-1,"proxyEnd":-1,
+            "dnsStart":-1,"dnsEnd":-1,"connectStart":-1,"connectEnd":-1,
+            "sslStart":-1,"sslEnd":-1,"workerStart":-1,"workerReady":-1,
+            "workerFetchStart":-1,"workerRespondWithSettled":-1,
+            "sendStart":-1,"sendEnd":-1,"pushStart":0,"pushEnd":0,
+            "receiveHeadersStart":headers_ms,"receiveHeadersEnd":headers_ms
+        });
     }
     if phase == "started"
         && let Some(source) = &record.source

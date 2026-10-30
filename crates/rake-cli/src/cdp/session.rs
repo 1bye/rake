@@ -25,6 +25,7 @@ struct Session {
     cursor: u64,
     network_cursor: u64,
     network_paused: bool,
+    network_epoch: Option<f64>,
     network_bodies: super::network::Bodies,
     domains: BTreeSet<String>,
     outbound: VecDeque<(Event, usize)>,
@@ -56,6 +57,7 @@ impl Session {
             cursor: 0,
             network_cursor: 0,
             network_paused: false,
+            network_epoch: None,
             network_bodies: super::network::Bodies::default(),
             domains: BTreeSet::new(),
             outbound: VecDeque::new(),
@@ -799,10 +801,9 @@ impl Session {
                 kind: None,
             },
             TIMEOUT,
-        )? {
-            if let Some(record) = snapshot.records.last() {
-                self.network_cursor = record.sequence;
-            }
+        )? && let Some(record) = snapshot.records.last()
+        {
+            self.network_cursor = record.sequence;
         }
         Ok(())
     }
@@ -886,7 +887,7 @@ impl Session {
 
     fn clear_console(&mut self) {
         self.objects.release_group("console");
-        self.sources.clear();
+        // Captured source aliases also belong to Network and stay independently bounded.
         self.discard_diagnostics = true;
         // Advance the per-connection cursor, without deleting application diagnostics.
         if let Ok(Reply::Diagnostics(snapshot)) = query(
@@ -1024,15 +1025,21 @@ impl Session {
                         event.params["loaderId"] = json!(runtime);
                     }
                     self.retain_network_bodies(record, &id);
+                    let epoch = self.epoch_seconds.unwrap_or_default();
+                    let origin = *self.network_epoch.get_or_insert(epoch);
+                    let offset = epoch - origin;
+                    let timestamp = event.params["timestamp"].as_f64().unwrap_or_default();
+                    event.params["timestamp"] = json!(timestamp + offset);
+                    if let Some(time) = event.params["response"]["timing"]["requestTime"].as_f64() {
+                        event.params["response"]["timing"]["requestTime"] = json!(time + offset);
+                    }
                     if event.method == "Network.requestWillBeSent" {
                         if record.source.is_some()
                             && let Some(url) = self.source_link(record)
                         {
                             event.params["initiator"]["stack"]["callFrames"][0]["url"] = json!(url);
                         }
-                        event.params["wallTime"] = json!(
-                            self.epoch_seconds.unwrap_or_default() + record.elapsed_us as f64 / 1e6
-                        );
+                        event.params["wallTime"] = json!(epoch + timestamp);
                     }
 
                     self.event(event);
@@ -1623,7 +1630,7 @@ mod tests {
             RuntimeMessage::Query(Query::Info {}) => {let mut info=info.clone();info.runtime_id=request.runtime_id;Reply::Info(info)},
             RuntimeMessage::Query(Query::Diagnostics {after,..}) => Reply::Diagnostics(rake_diagnostics::Snapshot {
                 records:vec![serde_json::from_value(json!({"sequence":after+1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"fields":{"message":format!("event-{}",after+1)}})).unwrap()],
-                dropped:0,output_dropped:0 }),
+                dropped:0,output_dropped:0,evicted:0 }),
             _=>panic!("unexpected request"),
         }
             },
@@ -1779,6 +1786,7 @@ mod tests {
                         },
                         dropped: 0,
                         output_dropped: 0,
+                        evicted: 0,
                     })
                 }
                 _ => panic!("unexpected request"),

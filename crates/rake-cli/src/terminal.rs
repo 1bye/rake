@@ -897,6 +897,10 @@ mod tests {
             Query::Operation { operation },
             Query::Decisions {},
             Query::Events { cursor: None },
+            Query::HttpBody {
+                request_id: 1,
+                response: true,
+            },
             Query::Diagnostics {
                 after: 0,
                 kind: None,

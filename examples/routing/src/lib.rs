@@ -2,6 +2,8 @@
 
 #[cfg(feature = "console-test")]
 mod console_fixture;
+#[cfg(feature = "network-test")]
+mod network_fixture;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -638,6 +640,9 @@ fn app() -> App<Destination> {
 
     #[cfg(feature = "console-test")]
     console_fixture::register(&commands);
+
+    #[cfg(feature = "network-test")]
+    network_fixture::register(&commands, app.services().expect("fixture services").http());
 
     app.commands(commands)
 }

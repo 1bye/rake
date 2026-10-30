@@ -22,6 +22,7 @@ rake.workspace = true
 [features]
 hash-routing = []
 console-test = ["rake/devtools"]
+network-test = ["rake/devtools"]
 
 [package.metadata.rake.bundle]
 name = "Rake Routing"

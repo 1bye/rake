@@ -376,6 +376,7 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     });
     responder.join().unwrap();
     let mut methods = Vec::new();
+    let mut consumed = 0;
 
     loop {
         let event: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
@@ -383,8 +384,12 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
 
         methods.push(method.clone());
 
+        if method == "Network.dataReceived" {
+            consumed += event["params"]["dataLength"].as_u64().unwrap();
+        }
         if method == "Network.loadingFinished" {
-            assert_eq!(event["params"]["encodedDataLength"], 4);
+            assert_eq!(consumed, 4);
+            assert_eq!(event["params"]["encodedDataLength"], 0);
             break;
         }
     }

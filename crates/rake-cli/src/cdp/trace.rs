@@ -215,6 +215,7 @@ mod tests {
             ],
             dropped: 0,
             output_dropped: 0,
+            evicted: 0,
         };
 
         let doc = document(&snapshot);
@@ -238,6 +239,7 @@ mod tests {
             records: vec![record],
             dropped: 3,
             output_dropped: 1,
+            evicted: 0,
         });
 
         assert!(doc.to_string().len() < MAX_BYTES);
