@@ -89,7 +89,13 @@ pub fn plan_with(
     target: Option<&str>,
     formats: Option<&[Format]>,
 ) -> Result<Plan, Error> {
+    let manifest = std::path::absolute(manifest)?;
     let output = Command::new("cargo")
+        .current_dir(
+            manifest
+                .parent()
+                .ok_or_else(|| Error::Execution("manifest parent missing".into()))?,
+        )
         .args([
             "metadata",
             "--format-version",
@@ -99,7 +105,7 @@ pub fn plan_with(
             "--offline",
             "--manifest-path",
         ])
-        .arg(manifest)
+        .arg(&manifest)
         .output()?;
     if !output.status.success() {
         return Err(Error::Cargo(

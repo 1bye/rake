@@ -113,12 +113,16 @@ pub fn bundle(
         .prefix(".rake-worker-")
         .tempdir_in(parent)?;
     let request_file = workspace.path().join("request.json");
-    files::write_json(&request_file, request)?;
+    let mut worker_request = request.clone();
+    worker_request.manifest = std::path::absolute(&request.manifest)?;
+    worker_request.output = output;
+    files::write_json(&request_file, &worker_request)?;
     let mut command = Command::new(executable);
     command
         .arg("__distribution-worker")
         .arg(&request_file)
-        .arg(workspace.path());
+        .arg(workspace.path())
+        .current_dir(workspace.path());
     let mut worker = Worker::spawn(&mut command)?;
     let status = worker.wait(cancelled, Duration::from_secs(1800))?;
     if !status.success() {
@@ -141,6 +145,12 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     }
     let mut target = request.target.clone().map_or_else(host_target, Ok)?;
     let metadata_output = Command::new("cargo")
+        .current_dir(
+            request
+                .manifest
+                .parent()
+                .ok_or_else(|| Error::Execution("manifest parent missing".into()))?,
+        )
         .args([
             "metadata",
             "--format-version",
@@ -622,6 +632,11 @@ fn build(
     facade: Option<&str>,
 ) -> Result<PathBuf, Error> {
     let mut command = Command::new("cargo");
+    command.current_dir(
+        manifest
+            .parent()
+            .ok_or_else(|| Error::Execution("manifest parent missing".into()))?,
+    );
     command
         .args([
             "build",

@@ -56,7 +56,7 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Create a disposable local Windows signing profile
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         shell: pwsh
         run: |
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Rake CI Distribution' -KeyExportPolicy NonExportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
@@ -66,10 +66,10 @@ jobs:
           Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
           "RAKE_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
       - name: Windows SDK signing, installation and upgrade
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --locked
       - name: Verify Velopack startup precedes the app factory
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         shell: pwsh
         run: |
           cargo run -p rake-updates --features velopack --example velopack-startup --locked -- --veloapp-version

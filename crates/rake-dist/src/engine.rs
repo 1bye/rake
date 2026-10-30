@@ -51,6 +51,16 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         }
     };
     let config = item.config();
+    // Upstream resource normalization drops Windows drive prefixes. Inputs are
+    // staged in this worker, so relative paths avoid cross-drive ambiguity.
+    let resources = resources
+        .into_iter()
+        .map(|(source, destination)| Ok((worker_relative(Path::new(&source))?, destination)))
+        .collect::<Result<HashMap<_, _>, Error>>()?;
+    let icons = icons
+        .iter()
+        .map(|path| worker_relative(Path::new(path)))
+        .collect::<Result<Vec<_>, _>>()?;
     let settings = BundleSettings {
         identifier: Some(plan.identifier().into()),
         publisher: Some(plan.name().into()),
@@ -128,4 +138,15 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         .filter(|p| p.package_type == kind)
         .flat_map(|p| p.bundle_paths)
         .collect())
+}
+
+fn worker_relative(path: &Path) -> Result<String, Error> {
+    let current = dunce::canonicalize(std::env::current_dir()?)?;
+    let path = dunce::canonicalize(path)?;
+    let relative = path.strip_prefix(&current).map_err(|_| {
+        Error::Execution("bundler inputs must stay inside the worker workspace".into())
+    })?;
+    Ok(rake_dist_core::portable_relative_path(relative)?
+        .to_string_lossy()
+        .into_owned())
 }

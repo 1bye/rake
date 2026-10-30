@@ -105,3 +105,11 @@ prefixes at the engine boundary. Installation/artifact paths normalize separator
 before serialization and still reject traversal/drive prefixes; component CPU and
 OS binary format are both checked. The macOS media and CLI regressions pass after
 these changes. A targeted native retry is still required.
+
+Windows checkpoint 41081006728 passed the manifest stage and exposed the
+engine resource iterator dropping the source drive prefix. The worker now runs
+from its own directory; request manifest/output paths are resolved before spawn,
+and Cargo runs from the selected project so toolchain/config discovery is stable.
+The adapter passes only worker-relative resource/icon paths. Local CLI consumer
+and strict Clippy checks pass. Independent SDK checks now run even if an earlier
+CLI gate fails, collecting their failures in one native checkpoint.
