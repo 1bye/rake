@@ -1,5 +1,5 @@
 //! Typed partial configuration used by target and installation-format layers.
-use crate::{Config, Format, Platform, Resource, Runtime, Sidecar};
+use crate::{Component, Config, Format, Platform, Resource, Runtime, Sidecar};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -22,6 +22,8 @@ pub struct Overrides {
     pub formats: Option<Vec<Format>>,
     /// Replacement resource mappings.
     pub resources: Option<Vec<Resource>>,
+    /// Replacement component source list.
+    pub components: Option<Vec<Component>>,
     /// Replacement helper list.
     pub sidecars: Option<Vec<Sidecar>>,
     /// Replacement runtime list.
@@ -53,6 +55,9 @@ impl Overrides {
         replace!(name, icon, assets, package_version, build_number);
         if let Some(value) = &self.resources {
             config.resources.clone_from(value);
+        }
+        if let Some(value) = &self.components {
+            config.components.clone_from(value);
         }
         if let Some(value) = &self.sidecars {
             config.sidecars.clone_from(value);

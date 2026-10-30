@@ -86,3 +86,33 @@ resources beside the installed executable, independently of the working director
 Use `.path("assets/file.json")?` or `.helper("ffmpeg")?`; helpers remain private
 under the application's resource root. Development builds without a descriptor
 return `ResourceError::Unbundled` through `rake::resources::Error`.
+
+Native components use exact Rust targets. Helpers may refer to a prepared
+component instead of a package-relative file:
+
+```toml
+[package.metadata.rake.bundle]
+schema_version = 1
+sidecars = [{ name = "ffmpeg", component = "media", path = "bin/ffmpeg" }]
+components = [{ name = "media", target = "aarch64-apple-darwin", source = { type = "local", path = "vendor/media" }, licenses = ["LICENSE"] }]
+```
+
+HTTPS sources use `{ type = "https", url = "https://…", sha256 = "64 lowercase
+hex digits", archive = "tar_xz" }`. ZIP and tar_gz are supported too; `file`
+places a single downloaded file at `payload`. Downloads are size bounded and
+verified before entering the content cache. Extraction rejects traversal, unsafe
+links and special files, and limits file count/expanded size. Helpers/native
+libraries must contain the selected CPU architecture.
+
+`directory` deploys a private runtime; `gstreamer` additionally selects explicit
+plugins from `lib/gstreamer-1.0`. Include its private scanner under
+`libexec/gstreamer-1.0`. `Resources::gstreamer_command` sets plugin/scanner paths
+for the child without changing the parent process environment. macOS `framework`
+recipes preserve relative framework symlinks and expose `Resources::framework`.
+All non-system macOS load commands must resolve within the staged inventory.
+
+Each distribution includes `components.lock.json`. Check it in as
+`rake-dist.lock` to reject changes to resolved inputs; `--locked-components`
+requires that lock. `--offline-components` prohibits component downloads and
+uses only verified cached bytes. Native installer engines can still require their
+own native tools; this flag applies specifically to component resolution.

@@ -1,5 +1,8 @@
 //! Staged native jobs. The CLI runs this coordinator inside an owned worker.
-use crate::{Error, Format, Metadata, Platform, Worker, engine, files, plan_metadata_with};
+use crate::{
+    Error, Format, Metadata, Platform, Worker, components, engine, files, plan_metadata_with,
+    recipes,
+};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,6 +34,12 @@ pub struct BundleRequest {
     pub binary: Option<String>,
     /// Build the release Cargo profile.
     pub release: bool,
+    /// Resolve remote components from verified cache only.
+    #[serde(default)]
+    pub offline_components: bool,
+    /// Require all resolved inputs to match a checked-in rake-dist.lock.
+    #[serde(default)]
+    pub locked_components: bool,
 }
 
 /// Final artifact with deterministic integrity information (not an update signature).
@@ -44,6 +53,9 @@ pub struct Artifact {
     pub sha256: String,
     /// Native package version.
     pub package_version: String,
+    /// Exact native component inputs and prepared tree hashes.
+    #[serde(default)]
+    pub components: Vec<components::ComponentLock>,
 }
 
 /// Versioned result for every requested native artifact.
@@ -263,6 +275,14 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 resource.to.to_string_lossy().into_owned(),
             );
         }
+        let prepared = components::resolve(
+            &config.components,
+            &target,
+            root,
+            &stage.join("components"),
+            &metadata.target_directory.join("rake-component-cache"),
+            request.offline_components,
+        )?;
         let mut descriptor = rake_dist_core::Installation {
             schema_version: 1,
             identifier: plan.identifier().into(),
@@ -274,17 +294,68 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             updates: config.updates.clone(),
             helpers: Default::default(),
             runtimes: Default::default(),
+            frameworks: Default::default(),
         };
         for helper in &config.sidecars {
             let path = PathBuf::from(helper.path.to_string_lossy().replace("{target}", &target));
             let relative = PathBuf::from("rake/helpers").join(format!("{}{suffix}", helper.name));
             let destination = resource_stage.join(&relative);
-            files::copy(&files::confined(root, &path)?, &destination)?;
+            let source_root = recipes::root(helper.component.as_deref(), &prepared.roots, root)?;
+            files::copy(&files::confined(source_root, &path)?, &destination)?;
             resources.insert(
                 destination.to_string_lossy().into_owned(),
                 relative.to_string_lossy().into_owned(),
             );
+            components::architecture(&destination, &target)?;
             descriptor.helpers.insert(helper.name.clone(), relative);
+        }
+        let frameworks = recipes::runtimes(recipes::Input {
+            config,
+            package: root,
+            roots: &prepared.roots,
+            resource_stage: &resource_stage,
+            target: &target,
+            descriptor: &mut descriptor,
+            resources: &mut resources,
+        })?;
+        for component in config
+            .components
+            .iter()
+            .filter(|component| component.target == target)
+        {
+            let source_root = prepared
+                .roots
+                .get(&component.name)
+                .ok_or_else(|| Error::Execution("prepared component missing".into()))?;
+            for license in &component.licenses {
+                let relative = PathBuf::from("rake/licenses")
+                    .join(&component.name)
+                    .join(license);
+                let destination = resource_stage.join(&relative);
+                files::copy(&files::confined(source_root, license)?, &destination)?;
+                resources.insert(
+                    destination.to_string_lossy().into_owned(),
+                    relative.to_string_lossy().into_owned(),
+                );
+            }
+        }
+        let component_lock = root.join("rake-dist.lock");
+        if request.locked_components && !component_lock.is_file() {
+            return Err(Error::Execution(
+                "--locked-components requires rake-dist.lock".into(),
+            ));
+        }
+        if component_lock.exists() {
+            let locked: Vec<components::ComponentLock> =
+                serde_json::from_slice(&fs::read(component_lock)?)?;
+            for resolved in &prepared.locks {
+                if !locked.contains(resolved) {
+                    return Err(Error::Execution(format!(
+                        "component {} differs from rake-dist.lock",
+                        resolved.name
+                    )));
+                }
+            }
         }
         for (provider, path) in &config.updates.public_keys {
             rake_dist_core::validate_relative_path(Path::new(provider))?;
@@ -323,11 +394,6 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             )
             .map_err(|e| Error::Execution(e.to_string()))?;
         }
-        if !config.runtimes.is_empty() {
-            return Err(Error::Execution(
-                "runtime requests require a component recipe".into(),
-            ));
-        }
         let source_icon = config
             .icon
             .as_ref()
@@ -349,8 +415,15 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             resources,
             icons,
             helpers: Vec::new(),
+            frameworks,
         })?;
         for path in paths {
+            if plan.platform() == Platform::Macos
+                && path.extension().is_some_and(|extension| extension == "app")
+            {
+                rake_dist_macos::normalize_loaders(&path)
+                    .map_err(|error| Error::Execution(error.to_string()))?;
+            }
             if !fs::canonicalize(&path)?.starts_with(fs::canonicalize(&stage)?) {
                 return Err(Error::Execution("engine output escaped job".into()));
             }
@@ -370,6 +443,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 format: item.format(),
                 sha256: files::digest(&destination)?,
                 package_version: item.version().version.clone(),
+                components: prepared.locks.clone(),
             });
         }
     }
@@ -381,6 +455,15 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         engine: "tauri-bundler 2.10.4".into(),
         artifacts,
     };
+    let mut locks = Vec::new();
+    for artifact in &result.artifacts {
+        for component in &artifact.components {
+            if !locks.contains(component) {
+                locks.push(component.clone());
+            }
+        }
+    }
+    files::write_json(&result_dir.join("components.lock.json"), &locks)?;
     files::write_json(&result_dir.join("distribution.json"), &result)?;
     files::commit(&result_dir, &output, plan.identifier())?;
     Ok(result)

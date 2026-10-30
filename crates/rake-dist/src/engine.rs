@@ -15,6 +15,7 @@ pub(crate) struct Input<'a> {
     pub resources: HashMap<String, String>,
     pub icons: Vec<String>,
     pub helpers: Vec<String>,
+    pub frameworks: Vec<PathBuf>,
 }
 
 pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
@@ -28,6 +29,7 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         resources,
         icons,
         helpers,
+        frameworks,
     } = input;
     use tauri_bundler::{
         BundleBinary, BundleSettings, PackageSettings, PackageType, SettingsBuilder,
@@ -76,6 +78,12 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                 })
                 .transpose()?,
             bundle_version: config.build_number.clone(),
+            frameworks: (!frameworks.is_empty()).then(|| {
+                frameworks
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect()
+            }),
             minimum_system_version: config.minimum_system_version.clone(),
             ..Default::default()
         },

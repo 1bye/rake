@@ -14,3 +14,4 @@ rake-dist-core = { path = "../rake-dist-core" }
 thiserror.workspace = true
 roxmltree = "0.20"
 tempfile = "3"
+dunce = "1"

@@ -207,3 +207,26 @@ fn target_triples_must_parse_and_agree_with_platform() {
         );
     }
 }
+
+#[test]
+fn pinned_components_reject_bad_hashes_and_missing_target_sources() {
+    let source = json!({"name":"media","target":"x86_64-unknown-linux-gnu","source":{"type":"https","url":"https://example.com/media.zip","sha256":"bad","archive":"zip"}});
+    assert!(
+        config(json!({"components":[source]}))
+            .plan("notes", "1.0.0", Platform::Linux)
+            .is_err()
+    );
+    let settings =
+        config(json!({"sidecars":[{"name":"ffmpeg","path":"bin/ffmpeg","component":"media"}]}));
+    assert!(
+        settings
+            .plan_for(
+                "notes",
+                "1.0.0",
+                Platform::Linux,
+                Some("x86_64-unknown-linux-gnu"),
+                None
+            )
+            .is_err()
+    );
+}

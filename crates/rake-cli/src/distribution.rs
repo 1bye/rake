@@ -58,6 +58,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     let mut output = PathBuf::from("dist");
     let mut binary = None;
     let mut release = true;
+    let mut offline_components = false;
+    let mut locked_components = false;
     let mut manifest = PathBuf::from("Cargo.toml");
     let mut package = None;
     let mut platform = std::env::consts::OS;
@@ -68,6 +70,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         match argument.as_str() {
             "--plan" | "--json" | "--native" => {}
             "--release" => release = true,
+            "--offline-components" => offline_components = true,
+            "--locked-components" => locked_components = true,
             "--debug" => release = false,
             "--output" => output = args.next().ok_or("--output requires a value")?.into(),
             "--bin" => binary = Some(args.next().ok_or("--bin requires a value")?.clone()),
@@ -109,6 +113,17 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         "linux" => Platform::Linux,
         _ => return Err(format!("unsupported platform: {platform}").into()),
     };
+    let native_platform = match std::env::consts::OS {
+        "macos" => Platform::Macos,
+        "windows" => Platform::Windows,
+        _ => Platform::Linux,
+    };
+    let host = if platform == native_platform && target.is_none() {
+        Some(rake_dist::host_target()?)
+    } else {
+        None
+    };
+    let target = target.or(host.as_deref());
     let plan = rake_dist::plan_with(
         &manifest,
         package,
@@ -142,6 +157,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             output,
             binary,
             release,
+            offline_components,
+            locked_components,
         };
         let result = rake_dist::bundle(&request, &std::env::current_exe()?, &cancelled)?;
         println!("{}", serde_json::to_string_pretty(&result)?);

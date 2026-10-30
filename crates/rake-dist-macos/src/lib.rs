@@ -1,9 +1,17 @@
 //! macOS metadata policy and native release finalization.
+mod loaders;
+pub use loaders::{normalize_loaders, signable_inventory};
 use std::path::Path;
 
 /// macOS metadata/finalization failures.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Native filesystem/process failure.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// Native payload or tool failed validation.
+    #[error("macOS distribution: {0}")]
+    Native(String),
     /// Malformed custom plist.
     #[error(transparent)]
     Plist(#[from] plist::Error),

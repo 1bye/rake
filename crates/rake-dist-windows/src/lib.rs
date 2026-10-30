@@ -11,8 +11,8 @@ pub enum Error {
     #[error("custom manifest must retain GPUI declarations: {0}")]
     Manifest(&'static str),
     /// Windows SDK rejected the manifest replacement.
-    #[error("mt.exe failed to update or verify resource #1")]
-    Tool,
+    #[error("mt.exe failed to update or verify resource #1: {0}")]
+    Tool(String),
 }
 
 /// Validates the required GPUI manifest settings without adding a second resource.
@@ -63,39 +63,37 @@ pub fn validate_manifest(xml: &str) -> Result<(), Error> {
 /// Requires Windows SDK mt.exe and a valid manifest retaining GPUI declarations.
 pub fn apply_manifest(binary: &Path, manifest: &Path) -> Result<(), Error> {
     validate_manifest(&fs::read_to_string(manifest)?)?;
-    if !Command::new("mt.exe")
+    let binary = dunce::simplified(binary);
+    let manifest = dunce::simplified(manifest);
+    mt(Command::new("mt.exe")
         .arg("-nologo")
         .arg("-manifest")
         .arg(manifest)
-        .arg(format!("-outputresource:{};#1", binary.display()))
-        .status()?
-        .success()
-    {
-        return Err(Error::Tool);
-    }
-    if !Command::new("mt.exe")
+        .arg(format!("-outputresource:{};#1", binary.display())))?;
+    mt(Command::new("mt.exe")
         .args(["-nologo", "-validate_manifest", "-manifest"])
-        .arg(manifest)
-        .status()?
-        .success()
-    {
-        return Err(Error::Tool);
-    }
+        .arg(manifest))?;
     let directory = tempfile::tempdir()?;
     let extracted = directory.path().join("embedded.manifest");
-    if !Command::new("mt.exe")
+    mt(Command::new("mt.exe")
         .arg("-nologo")
         .arg(format!("-inputresource:{};#1", binary.display()))
-        .arg(format!("-out:{}", extracted.display()))
-        .status()?
-        .success()
-    {
-        return Err(Error::Tool);
-    }
+        .arg(format!("-out:{}", extracted.display())))?;
     validate_manifest(&fs::read_to_string(extracted)?)?;
     Ok(())
 }
 
+fn mt(command: &mut Command) -> Result<(), Error> {
+    let result = command.output()?;
+    if !result.status.success() {
+        return Err(Error::Tool(format!(
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )));
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::validate_manifest;

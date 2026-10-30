@@ -13,8 +13,30 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
     let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap();
+    let target = Command::new("rustc").arg("-vV").output().unwrap();
+    let target = String::from_utf8(target.stdout).unwrap();
+    let target = target
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .unwrap();
+    fs::create_dir(root.join("vendor")).unwrap();
+    fs::write(root.join("helper.rs"), "fn main(){print!(\"helper\");}").unwrap();
+    let helper_name = if cfg!(windows) {
+        "helper.exe"
+    } else {
+        "helper"
+    };
+    assert!(
+        Command::new("rustc")
+            .arg(root.join("helper.rs"))
+            .arg("-o")
+            .arg(root.join("vendor").join(helper_name))
+            .status()
+            .unwrap()
+            .success()
+    );
     let manifest = format!(
-        "[workspace]\n[package]\nname='tiny-dist-fixture'\nversion='1.0.0'\nedition='2024'\n[package.metadata.rake.bundle]\nschema_version=1\nidentifier='dev.rake.fixture'\nresources=[{{from='message.txt',to='message.txt'}}]\n[dependencies]\nrake-resources={{path={:?}}}\n[build-dependencies]\nrake-build={{path={:?}}}\n",
+        "[workspace]\n[package]\nname='tiny-dist-fixture'\nversion='1.0.0'\nedition='2024'\n[package.metadata.rake.bundle]\nschema_version=1\nidentifier='dev.rake.fixture'\nresources=[{{from='message.txt',to='message.txt'}}]\ncomponents=[{{name='tools',target='{target}',source={{type='local',path='vendor'}}}}]\nsidecars=[{{name='test-helper',path='{helper_name}',component='tools'}}]\n[dependencies]\nrake-resources={{path={:?}}}\n[build-dependencies]\nrake-build={{path={:?}}}\n",
         repository.join("rake-resources"),
         repository.join("rake-build")
     );
@@ -34,7 +56,7 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
         "fn main(){rake_build::build().unwrap();}",
     )
     .unwrap();
-    fs::write(root.join("src/main.rs"), r#"fn main(){let resources=rake_resources::resources!().unwrap();print!("{}",std::fs::read_to_string(resources.path("message.txt").unwrap()).unwrap());}"#).unwrap();
+    fs::write(root.join("src/main.rs"), r#"fn main(){let resources=rake_resources::resources!().unwrap();let helper=std::process::Command::new(resources.helper("test-helper").unwrap()).output().unwrap();print!("{}:{}",std::fs::read_to_string(resources.path("message.txt").unwrap()).unwrap(),String::from_utf8(helper.stdout).unwrap());}"#).unwrap();
     fs::write(root.join("message.txt"), "packaged resource").unwrap();
     assert!(
         Command::new("cargo")
@@ -95,9 +117,21 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
             .unwrap();
         assert_eq!(
             String::from_utf8(launched.stdout).unwrap().trim(),
-            "packaged resource"
+            "packaged resource:helper"
         );
     }
+    let before = fs::read(output.join("distribution.json")).unwrap();
+    fs::copy(
+        output.join("components.lock.json"),
+        root.join("rake-dist.lock"),
+    )
+    .unwrap();
+    fs::write(root.join("vendor/changed.txt"), "changed component input").unwrap();
+    let changed = run();
+    assert!(!changed.status.success());
+    assert!(String::from_utf8_lossy(&changed.stderr).contains("rake-dist.lock"));
+    assert_eq!(fs::read(output.join("distribution.json")).unwrap(), before);
+
     fs::remove_file(output.join(".rake-distribution")).unwrap();
     fs::write(output.join("keep.txt"), "not yours").unwrap();
     let refused = run();

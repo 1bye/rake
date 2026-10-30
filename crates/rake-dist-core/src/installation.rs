@@ -27,4 +27,7 @@ pub struct Installation {
     pub helpers: BTreeMap<String, PathBuf>,
     /// Runtime directories relative to the descriptor/resource directory.
     pub runtimes: BTreeMap<String, PathBuf>,
+    /// macOS frameworks relative to Contents/Frameworks.
+    #[serde(default)]
+    pub frameworks: BTreeMap<String, PathBuf>,
 }

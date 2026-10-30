@@ -2,6 +2,8 @@
 //!
 //! Resolving a plan performs no filesystem, network or native-tool operations.
 
+mod component;
+pub use component::{Archive, Component, ComponentSource};
 mod installation;
 pub use installation::Installation;
 mod overrides;
@@ -135,6 +137,8 @@ pub struct Config {
     pub windows: WindowsConfig,
     /// Linux overrides.
     pub linux: LinuxConfig,
+    /// Pinned native component sources by name and exact target.
+    pub components: Vec<Component>,
     /// Mapped resource inputs.
     pub resources: Vec<Resource>,
     /// Architecture-specific helper executables.
@@ -235,6 +239,9 @@ pub struct Sidecar {
     pub name: String,
     /// Package-relative path with documented target placeholders.
     pub path: PathBuf,
+    /// Named component root instead of the package root.
+    #[serde(default)]
+    pub component: Option<String>,
 }
 
 /// Native runtime deployment request.
@@ -248,6 +255,9 @@ pub struct Runtime {
     pub recipe: String,
     /// Package-relative runtime source.
     pub source: PathBuf,
+    /// Named component root instead of the package root.
+    #[serde(default)]
+    pub component: Option<String>,
     /// Explicit dynamically loaded plugin selection.
     #[serde(default)]
     pub plugins: Vec<String>,
@@ -438,6 +448,25 @@ impl Config {
                 layer.apply(&mut effective, platform);
             }
             *effective.formats_mut(platform) = vec![format];
+            for name in effective
+                .sidecars
+                .iter()
+                .filter_map(|item| item.component.as_deref())
+                .chain(
+                    effective
+                        .runtimes
+                        .iter()
+                        .filter_map(|item| item.component.as_deref()),
+                )
+            {
+                if !effective.components.iter().any(|component| {
+                    component.name == name && target.is_none_or(|target| component.target == target)
+                }) {
+                    return Err(Error::Field(format!(
+                        "component {name} has no source for the selected target"
+                    )));
+                }
+            }
             let mut validated = effective.plan_effective(package, version, platform)?;
             packages.append(&mut validated.packages);
         }
@@ -531,9 +560,54 @@ impl Config {
         for path in paths.into_iter().flatten() {
             validate_relative_path(path)?;
         }
+        let mut components = std::collections::BTreeSet::new();
+        for component in &self.components {
+            component_name(&component.name)?;
+            if component.target.parse::<target_lexicon::Triple>().is_err() {
+                return Err(Error::Field("component target".into()));
+            }
+            if !components.insert((&component.name, &component.target)) {
+                return Err(Error::Duplicate(component.name.clone()));
+            }
+            for path in &component.licenses {
+                validate_relative_path(path)?;
+            }
+            match &component.source {
+                ComponentSource::Local { path } => validate_relative_path(path)?,
+                ComponentSource::Https {
+                    url,
+                    sha256,
+                    max_download_bytes,
+                    ..
+                } => {
+                    let url =
+                        url::Url::parse(url).map_err(|_| Error::Field("component URL".into()))?;
+                    if url.scheme() != "https"
+                        || url.host_str().is_none()
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                        || url.fragment().is_some()
+                    {
+                        return Err(Error::Field("component requires public HTTPS URL".into()));
+                    }
+                    if sha256.len() != 64
+                        || !sha256
+                            .bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                        || *max_download_bytes == 0
+                        || *max_download_bytes > 4 * 1024 * 1024 * 1024
+                    {
+                        return Err(Error::Field("component hash/download limit".into()));
+                    }
+                }
+            }
+        }
         let mut names = std::collections::BTreeSet::new();
         for sidecar in &self.sidecars {
             component_name(&sidecar.name)?;
+            if let Some(component) = &sidecar.component {
+                component_name(component)?;
+            }
             if !names.insert(&sidecar.name) {
                 return Err(Error::Duplicate(sidecar.name.clone()));
             }
@@ -541,6 +615,12 @@ impl Config {
         }
         for runtime in &self.runtimes {
             component_name(&runtime.name)?;
+            if let Some(component) = &runtime.component {
+                component_name(component)?;
+            }
+            for plugin in &runtime.plugins {
+                component_name(plugin)?;
+            }
             if !names.insert(&runtime.name) {
                 return Err(Error::Duplicate(runtime.name.clone()));
             }

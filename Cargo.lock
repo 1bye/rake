@@ -6019,7 +6019,10 @@ name = "rake-dist"
 version = "0.1.0"
 dependencies = [
  "command-group",
+ "flate2",
  "fs2",
+ "liblzma",
+ "object",
  "rake-build",
  "rake-dist-core",
  "rake-dist-macos",
@@ -6028,9 +6031,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tauri-bundler",
  "tempfile",
  "thiserror 2.0.21",
+ "ureq",
+ "zip",
 ]
 
 [[package]]
@@ -6061,6 +6067,7 @@ dependencies = [
 name = "rake-dist-windows"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "rake-dist-core",
  "roxmltree 0.20.0",
  "tempfile",

@@ -2,16 +2,22 @@
 //!
 //! Native execution is separate from the portable plan returned here.
 
+mod components;
+pub use components::ComponentLock;
 mod engine;
 mod execution;
 mod files;
 mod process;
+mod recipes;
 pub use execution::{Artifact, BundleRequest, Distribution, bundle, execute_worker, host_target};
 pub use process::Worker;
 
 pub use rake_dist_core::{Config, Format, Plan, Platform};
 use serde::Deserialize;
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// Errors loading the selected package and its distribution configuration.
 #[derive(Debug, thiserror::Error)]
@@ -20,8 +26,8 @@ pub enum Error {
     /// Native execution or output ownership failed.
     #[error("distribution: {0}")]
     Execution(String),
-    /// Cargo could not be started.
-    #[error("cannot run cargo metadata")]
+    /// A filesystem or process operation failed.
+    #[error("distribution I/O: {0}")]
     Io(#[from] std::io::Error),
     /// Cargo rejected the manifest or locked dependency resolution.
     #[error("cargo metadata failed: {0}")]
@@ -41,6 +47,8 @@ pub enum Error {
 struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
+    #[serde(default)]
+    target_directory: PathBuf,
 }
 
 #[derive(Deserialize)]

@@ -73,6 +73,7 @@ impl Resources {
             .helpers
             .values()
             .chain(installation.runtimes.values())
+            .chain(installation.frameworks.values())
         {
             validate_relative_path(path).map_err(|e| Error::Invalid(e.to_string()))?;
         }
@@ -107,6 +108,57 @@ impl Resources {
                 .get(name)
                 .ok_or_else(|| Error::Invalid(format!("unknown helper {name}")))?,
         )
+    }
+
+    /// Resolves a macOS framework under Contents/Frameworks.
+    /// # Errors
+    /// Returns errors for missing frameworks or paths escaping the bundle.
+    pub fn framework(&self, name: &str) -> Result<PathBuf, Error> {
+        if self.installation.platform != rake_dist_core::Platform::Macos {
+            return Err(Error::Invalid("frameworks require macOS".into()));
+        }
+        let root = fs::canonicalize(
+            self.root
+                .parent()
+                .ok_or(Error::Unbundled)?
+                .join("Frameworks"),
+        )?;
+        let relative = self
+            .installation
+            .frameworks
+            .get(name)
+            .ok_or_else(|| Error::Invalid(format!("unknown framework {name}")))?;
+        let path = fs::canonicalize(root.join(relative))?;
+        if !path.starts_with(&root) {
+            return Err(Error::Invalid("framework escapes bundle".into()));
+        }
+        Ok(path)
+    }
+
+    /// Configures a helper process to discover only a packaged GStreamer runtime.
+    /// # Errors
+    /// Requires a runtime with lib/gstreamer-1.0 and a packaged scanner in libexec.
+    pub fn gstreamer_command(
+        &self,
+        helper: &str,
+        runtime: &str,
+    ) -> Result<std::process::Command, Error> {
+        let root = self.runtime(runtime)?;
+        let plugins = root.join("lib/gstreamer-1.0");
+        let scanner = root.join("libexec/gstreamer-1.0").join(if cfg!(windows) {
+            "gst-plugin-scanner.exe"
+        } else {
+            "gst-plugin-scanner"
+        });
+        if !plugins.is_dir() || !scanner.is_file() {
+            return Err(Error::Invalid("GStreamer plugin/scanner layout".into()));
+        }
+        let mut command = std::process::Command::new(self.helper(helper)?);
+        command
+            .env("GST_PLUGIN_SYSTEM_PATH_1_0", "")
+            .env("GST_PLUGIN_PATH_1_0", plugins)
+            .env("GST_PLUGIN_SCANNER_1_0", scanner);
+        Ok(command)
     }
 
     /// Resolves a configured native runtime directory.

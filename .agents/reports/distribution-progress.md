@@ -49,7 +49,17 @@ Native mt.exe/PE behavior remains a Windows acceptance gate in the manual workfl
 The existing facade no-default-features Wasm check fails in control/web.rs because
 reload::host is GPUI-gated; this unrelated baseline was not changed.
 
-P4-P9: in progress. Native platform/update acceptance remains required; archive
+P4: implemented target-specific local and pinned HTTPS components, verified
+content cache, bounded ZIP/tar.gz/tar.xz extraction, component lock records,
+license copying, private native helpers, runtime/directory/GStreamer/framework
+recipes, architecture inspection including universal Mach-O inputs, and macOS
+loader normalization against declared staged code. Tests cover verified offline
+cache/extraction, corrupt/missing cache, tar-link escape, wrong target sources,
+real helper execution after relocation and locked input changes preserving the
+previous output. Media fixture execution will be completed with P5 final signing.
+No clean-machine FFmpeg/GStreamer claim is made yet.
+
+P5-P9: in progress. Native platform/update acceptance remains required; archive
 assembly and portable tests do not establish installation or upgrade support.
 
 CI runs (only one full matrix and one Windows-only retry):
@@ -65,3 +75,9 @@ The inherited Rake push workflow also ran on the two adoption pushes:
 41057985075 and 41058896200. Both failed on existing strict rake-protocol lints.
 These were additional to the three-platform adoption matrix and Windows-only
 retry. Subsequent phase commits remain local to prevent more automatic runs.
+
+Native executor acceptance run 41067548580: Linux passed. Windows core, resource,
+codec, manifest-policy and descendant-cancellation tests passed; the CLI package
+failed at mt.exe resource replacement. Diagnostic capture and Windows verbatim
+path normalization were added. A Windows-only retry is reserved for the next
+consolidated native checkpoint. No broad push workflow ran on these pushes.
