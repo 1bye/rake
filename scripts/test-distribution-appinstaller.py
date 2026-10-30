@@ -53,8 +53,8 @@ $ErrorActionPreference='Stop'
 Add-AppxPackage -AppInstallerFile $Feed
 $p=Get-AppxPackage -Name $Name
 if($p.Version.ToString() -ne $Version){throw 'wrong managed package version'}
-$settings=Get-AppxPackageAutoUpdateSettings -PackageFamilyName $p.PackageFamilyName
-if(-not $settings.AppInstallerUri){throw 'App Installer association missing'}
+$settings=Get-AppxPackageAutoUpdateSettings -PackageFullName $p.PackageFullName
+if(-not $settings.AppInstallerUri){throw ('App Installer association missing: '+($settings|ConvertTo-Json -Depth 8))}
 $state=Join-Path $env:LOCALAPPDATA ('Packages\'+$p.PackageFamilyName+'\LocalState')
 New-Item -ItemType Directory -Force -Path $state | Out-Null
 $marker=Join-Path $state 'rake-acceptance'
@@ -79,6 +79,8 @@ resources=[{{from="message.txt",to="message.txt"}}]
 formats=["msix"]
 certificate_thumbprint="{os.environ['RAKE_TEST_CERT_THUMBPRINT']}"
 timestamp_url="http://timestamp.digicert.com"
+[package.metadata.rake.bundle.windows.msix]
+publisher="CN=Rake CI Distribution"
 [package.metadata.rake.bundle.updates]
 enabled=true
 base_url={json.dumps(feed.base_url)}
