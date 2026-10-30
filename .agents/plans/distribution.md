@@ -1,6 +1,6 @@
 # Plan for cross platform product distribution
 
-Status: implementation in progress; see ../reports/distribution-progress.md. Date: 2026-10-30.
+Status: P0–P9 implemented and required native gates passed for the initial profiles; see ../reports/distribution-progress.md. Date: 2026-10-30.
 
 Rake should provide one application configuration and one release workflow for
 macOS, Windows and Linux. The implementation covers installation, icons and
@@ -13,8 +13,11 @@ gate below. Keep engine types private. Add dedicated handling for Arch, Flatpak,
 MSIX and updater-specific formats. Package creation and update installation are
 separate responsibilities.
 
-All commands, crates and new configuration below describe the intended
-implementation. Existing bundle commands remain supported during migration.
+This document preserves the original baseline and implementation plan. The final
+crate/API/configuration contracts and exact native evidence are recorded in
+[implementation progress](../reports/distribution-progress.md) and
+[the user guide](../../docs/distribution.md). Existing native bundle contracts
+are now preserved through Rust; Web retains its Python implementation.
 
 ## 1. Current implementation and migration constraints
 
@@ -775,3 +778,25 @@ not an unqualified promise of every distribution or libc.
 Completion is defined by the native acceptance matrix above, not by crate count
 or the presence of configuration fields.
 
+
+
+## Completion record
+
+All P0–P9 phases have separate implementation commits and phase-specific follow-ups.
+The initial macOS arm64, Windows x86_64 MSVC and Linux x86_64 GNU gates passed,
+including actual minimal application frames, native trust, owned helpers, signed
+Sparkle/Velopack/AppImage N→N+1 handoffs, signed Linux repository upgrades and
+HTTPS App Installer enrollment/native activation/upgrade. Flatpak X11 and Wayland
+frames and native signed repository preparation/handoff/upgrade passed in
+[41133766124](https://github.com/1bye/rake/actions/runs/41133766124); the final
+Windows managed channel/helper gate passed in
+[41136419908](https://github.com/1bye/rake/actions/runs/41136419908).
+
+Execution refinements: DEB/RPM are owned by the Linux backend for structured
+metadata and dependency policy; Tauri remains the private common assembly adapter.
+Linux repositories prepare on their native signing worker, then hand off verified
+snapshots to serialized publication. Public update keys remain immutable per
+channel; rotation explicitly enrolls a new channel through a signed installer.
+The exact accepted limits and additional profile expansions are documented in the
+capability matrix. No public release, store submission or default-branch merge
+was performed.

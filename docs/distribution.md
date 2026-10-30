@@ -150,22 +150,36 @@ See [release configuration](distribution-release.md) for one-command publication
 local signing profiles, required native runner gates and Linux repositories.
 See [native acceptance](distribution-native-tests.md) for the repeatable tests.
 
-## Current native evidence and compatibility
+## Native evidence and compatibility
 
-| Channel | Established native evidence | Remaining acceptance |
-| --- | --- | --- |
-| macOS app/ZIP/DMG | Real Rake launch, relocated media, Developer ID/notary/staple, signed Sparkle N→N+1 with Save/Cancel and tamper rejection | Full universal updater matrix and remaining failure scenarios |
-| Windows NSIS | Real GPUI build/packaging, metadata/resources | Installed UI/media and conventional installer lifecycle |
-| Windows MSIX | Signed package install/upgrade, native identity | App Installer fresh-feed association |
-| Windows Velopack | SDK startup and native tool availability | Package/install/update/restart gate |
-| Debian/Fedora | Install, unrelated-CWD resources, upgrade/uninstall and ELF baseline tests | Generated repository upgrades and desktop/media matrix |
-| Arch/AppImage/Flatpak | Implemented backends and portable contracts | Native makepkg, AppImage N+1, real Flatpak sandbox UI |
+The initial profiles are macOS arm64, Windows x86_64 MSVC and Linux x86_64 GNU.
+Linux package-manager acceptance uses Ubuntu 24.04, Fedora 43 and an isolated Arch
+container; Flatpak uses pinned Freedesktop 25.08 SDK/runtime commits. Declare an
+older glibc baseline explicitly: the ELF check rejects newer observed requirements.
+An unset baseline makes no promise about older distributions.
 
-`distribution.json` records every artifact, hash, native package version,
-components and trust evidence. Tool presence does not imply these native gates
-passed. Existing legacy bundle JSON and the Web pipeline continue through their
-current compatibility path while native parity is completed. Native Python
-packaging retirement is gated on that parity; the Web implementation remains.
+| Channel | Established native evidence |
+| --- | --- |
+| macOS app/ZIP/DMG | Real minimal app frame/resource; relocated FFmpeg/GStreamer; Developer ID/notary/staple; signed Sparkle N→N+1 with Save/Cancel, cached retry and tamper rejection |
+| Windows NSIS/MSI | Signed install, unrelated-CWD resources, private CRT, OS protocol/file registration, upgrade/uninstall; actual installed minimal GPUI frame |
+| Windows MSIX | Signed managed install/upgrade/data preservation; SDK-validated identity, protocols/file types and localized PRI; HTTPS App Installer fresh enrollment, channel association, native activation and N+1 upgrade |
+| Windows Velopack | Native installer lifecycle and actual signed HTTPS SDK N→N+1 relaunch; tamper, cancel, decline and corrupt-cache rejection |
+| Debian/Fedora | Package install/upgrade/uninstall, real ELF relocation/baseline checks, signed APT/RPM fresh-install and repository upgrade |
+| Arch | Native makepkg recipe/build/install/upgrade/uninstall and signed pacman repository discovery |
+| AppImage | Real signed HTTPS N→N+1 replacement/relaunch with retained history/data; signature, truncation, disk-full, lock, read-only, decline and cancel checks |
+| Flatpak | Actual pinned-SDK source build, X11/Wayland sandbox frames/resources and signed repository/ref enrollment plus N+1 upgrade/data preservation |
+
+The acceptance scripts and linked CI evidence are recorded in
+[native tests](distribution-native-tests.md). Native tests establish their selected
+profiles; additional CPU architectures, older Linux baselines and universal updater
+combinations require dedicated native runs. A universal pure-Rust macOS packaging
+fixture has separately passed slice checks and Apple Silicon execution.
+
+`distribution.json` records artifact hashes, native versions, components and trust
+evidence. Legacy macOS/Linux bundle JSON, archives and unpacked layouts are
+preserved by the Rust coordinator. Native Python assembly/signing has been retired;
+the Python Web pipeline and development supervisor remain, with native builds
+from that supervisor delegated to Rust. Existing Web bundle tests still pass.
 
 `resources.spawn_helper("ffmpeg", ["-version"])?` returns an owned
 `rake::resources::HelperProcess`. Its drop/cancel path terminates and reaps the

@@ -1,371 +1,105 @@
 # Distribution implementation progress
 
-Branch: codex/distribution. Fresh managed worktree; original checkout unchanged.
+Branch: `codex/distribution`, in the fresh managed `distribution/rake` worktree.
+The original checkout is unchanged. Every implementation phase has separate commits;
+follow-up fixes keep their phase labels. P0–P9 implementation and required native gates are complete for the initial
+supported profiles. Generated Windows App Installer HTTPS enrollment, native
+activation, N+1 upgrade, resource reads and data preservation passed in
+[41136419908](https://github.com/1bye/rake/actions/runs/41136419908).
 
-P0: basic adoption matrix passed on native macOS and Ubuntu; the Windows-only
-follow-up passed after native path normalization. Extra local macOS tests passed
-custom plist, a relocated linked framework, framework symlinks, and strict
-external ad-hoc signature verification. Developer ID identity and the local
-1git-bruno notarization profile are available; a read-only history request
-validated the profile. No credentials are serialized in project configuration.
-The fixture now passed Developer ID signing, Apple notarization and stapled-ticket
-validation using the existing local profile. The current rake-foundation binary
-was also packaged, relocated and launched through the native UI; the Rake window
-rendered its Load JSON control. Cancellation and updater handoff remain open.
+| Phase | Result and completion evidence |
+| --- | --- |
+| P0 | Engine comparison/adoption complete on macOS arm64, Windows x64 MSVC and Linux x64 GNU. Tauri 2.10.4 is private to the CLI coordinator; see the adoption report. Actual minimal native frames/resources pass on all three profiles. |
+| P1 | Versioned configuration/schema/planning, target/format overrides, native version mapping, ownership policy, custom recipe/backend contracts and independent verification implemented. External consumers and precise rejection cases pass. |
+| P2 | Portable native CLI, isolated process groups/Windows Jobs, bounded cancellation, input confinement, immutable snapshots, output locks and transactional ownership implemented. Real bundles and resources execute after relocation; legacy Mac/Linux layouts/JSON survive through Rust. |
+| P3 | PNG/SVG/default icons, installed resource descriptors, PE manifest/version integration, protected plist identity, privacy strings, desktop categories/protocols/file associations, localized macOS/Linux labels and SDK-generated MSIX PRI implemented. Native Mac metadata and Windows SDK/registrations pass. |
+| P4 | Local/pinned HTTPS components, checked hashes/cache/archive bounds, component lock, licenses, owned helpers, framework/GStreamer recipes, native loader groups and private MSVC CRT implemented. Relocated FFmpeg/GStreamer processes a frame/loads plugins on macOS; real Windows DLL isolation and helper-tree cleanup pass; real ELF closure/baseline checks pass. |
+| P5 | Developer ID/notary/staple, ad-hoc development trust, universal pure-Rust Mac packaging, Windows Authenticode/RFC3161, NSIS/MSI/MSIX/Velopack assembly and native installer lifecycles pass. Generated MSIX HTTPS App Installer fresh enrollment, native activation, channel association and N+1 upgrade also pass. |
+| P6 | Native DEB/RPM/Arch/AppImage/Flatpak backends implemented. Install/upgrade/uninstall, signed package-manager repositories, pinned-SDK source builds and actual Flatpak X11/Wayland frames/resources pass. |
+| P7 | Owned Sparkle/Velopack/AppImage providers and quit guards implemented. Actual signed N→N+1 native update/relaunch with preserved data passes for all three. Save/Cancel, cached retry, feed tampering, transfer cancellation, corrupt cache, locked/read-only images, truncation, insufficient space and killed staging have focused coverage. Managed channels cannot self-replace. |
+| P8 | Directory/GitHub draft/transactional HTTPS publishers, required matrices, immutable upload/readback, signed native feeds, retained AppImage history, immutable trust roots and Linux repositories implemented. Real TLS/process protocol failures preserve channels. Signed APT/RPM/pacman/Flatpak fresh install and native N+1 upgrades pass. Linux-native repository preparation/handoff passes. Generated MSIX managed feeds also pass native fresh enrollment and N+1 upgrade. |
+| P9 | Minimal `rake::view!` example, build/doctor/release workflow, configuration/docs and native Python retirement implemented. Native legacy and Web contracts pass. Final documentation and evidence match the completed initial native matrix. |
 
-P1: added portable raw configuration, validated package plans, generated schema,
-read-only Cargo package selection and CLI --plan/--schema. Public-consumer tests
-cover documented TOML examples, legacy defaults, package-manager update ownership,
-path boundaries, update trust settings and Windows version constraints. CLI tests
-exercise structured errors and lockfile preservation. Native availability remains
-explicitly pending. Target/format partial overrides now replace arrays and merge public-key maps;
-explicit CLI format selection wins. Rust triples must parse and match the OS.
-Native version mappings preserve Debian/RPM prerelease ordering, enforce Windows
-numeric bounds and require explicit mappings where monotonicity is not automatic.
-Nine core, two metadata and three CLI consumer tests pass; focused strict Clippy
-and rustdoc pass. The broader CLI tests require local sockets outside the sandbox.
+## Decisive native checkpoints
 
-P2: implemented the portable schema-1/explicit-native CLI dispatch, pinned private
-engine adapter, Cargo JSON build discovery, staged resource/helper copies,
-process-group/Windows Job ownership, deadline/cancellation, per-output locking,
-input confinement, inventories and owned transactional directory replacement.
-Local CLI end-to-end test packages a real tiny Cargo executable, reads its
-resource after relocation, runs it from another directory and refuses an unowned
-output without deleting its files. A descendant-held file lock proves cancellation
-kills the worker's child. Security tests reject escaping symlinks and protect
-unowned output. Focused tests, strict Clippy and rustdoc pass on macOS. New native
-executor runs on Windows/Linux remain queued for one consolidated CI run.
-Existing legacy/native Python and Web dispatch remain in place during migration.
+- [41057984993](https://github.com/1bye/rake/actions/runs/41057984993) and
+  [41058997245](https://github.com/1bye/rake/actions/runs/41058997245): both engine adapters on all three native hosts, Windows path normalization follow-up.
+- Local macOS: actual Developer ID signing, Apple notarization, stapling/ticket
+  verification of a linked framework; real FFmpeg/GStreamer closure (103 native
+  files), private plugins/scanner, clean PATH/CWD; native Sparkle signed update,
+  dirty Cancel/cached retry/Save/automatic N+1 startup before UI reattachment,
+  preserved data and tamper rejection. Actual AppKit terminate deferral/approval.
+- [41104892784](https://github.com/1bye/rake/actions/runs/41104892784): signed MSIX install/upgrade and real Windows GPUI packaging.
+- [41108529192](https://github.com/1bye/rake/actions/runs/41108529192): native Velopack N/N+1 installer lifecycle and early startup.
+- [41111628107](https://github.com/1bye/rake/actions/runs/41111628107): signed APT/RPM/pacman repository enrollment/upgrade, Arch makepkg and actual AppImage HTTPS update/relaunch.
+- [41130631879](https://github.com/1bye/rake/actions/runs/41130631879): actual Velopack signed HTTPS SDK update/relaunch with tamper/cancel/decline/cache rejection; native private DLL closure; localized MSIX/PRI SDK validation; NSIS registrations/lifecycle.
+- [41130639063](https://github.com/1bye/rake/actions/runs/41130639063): retained AppImage history after deleting old builds, actual signature/truncation/disk-full failures, Linux legacy compatibility, actual pinned-SDK Flatpak source build/X11 frame/resource.
+- [41132236560](https://github.com/1bye/rake/actions/runs/41132236560): signed MSI N/N+1 install/registrations/uninstall and installed minimal Windows native frame/resource.
+- [41133759023](https://github.com/1bye/rake/actions/runs/41133759023): Windows root/grandchild helper lifetime passes; managed download exposed the fixture's missing HTTP range support.
+- [41133766124](https://github.com/1bye/rake/actions/runs/41133766124): complete cached-GUI X11/Wayland sandbox acceptance plus signed Flatpak repository/ref fresh enrollment, native N+1 discovery/upgrade and app-data preservation, using native repository preparation/verified handoff.
+- Local macOS minimal example: a fresh ad-hoc bundle launched from `/`, rendered
+  its frame and read its installed resource. WindowServer access requires leaving
+  the filesystem sandbox. Production trust acceptance is separate from this UI fixture.
 
-P3: added rake-build, rake-resources and the platform metadata owners. The
-build helper tracks metadata/format changes, rasterizes PNG/SVG icons, and embeds
-Windows icon/version resources without adding a second manifest. Custom Windows
-manifests replace staged resource #1 with SDK validation/readback and retain
-GPUI settings. macOS plist identity conflicts fail instead of changing identity.
-Installation descriptors and public keys are written before signing; private
-helpers and resources resolve after relocation. Local codec, resource-confinement,
-manifest-policy and real consumer packaging tests pass. Strict Clippy/rustdoc pass.
-Native mt.exe/PE behavior remains a Windows acceptance gate in the manual workflow.
-The existing facade no-default-features Wasm check fails in control/web.rs because
-reload::host is GPUI-gated; this unrelated baseline was not changed.
+Some earlier checkpoint jobs failed at a later independent gate; only their passing
+steps are counted above. The final feed/activation/helper run
+[41136419908](https://github.com/1bye/rake/actions/runs/41136419908) passed completely.
+Its fixture uses runtime Appx parameter metadata and native package activation,
+with exact C# interop compiled offline before the native check. The disposable
+HTTPS server supplies real byte ranges required by App Installer.
 
-P4: implemented target-specific local and pinned HTTPS components, verified
-content cache, bounded ZIP/tar.gz/tar.xz extraction, component lock records,
-license copying, private native helpers, runtime/directory/GStreamer/framework
-recipes, architecture inspection including universal Mach-O inputs, and macOS
-loader normalization against declared staged code. Tests cover verified offline
-cache/extraction, corrupt/missing cache, tar-link escape, wrong target sources,
-real helper execution after relocation and locked input changes preserving the
-previous output. The P5 media suite now runs real FFmpeg and GStreamer after relocation with
-103 native files, private scanner/plugin paths, an empty registry, and a clean
-child PATH/working directory. It processes a video frame and loads coreelements.
-Duplicate library names across components are isolated through declared groups.
-This establishes macOS media deployment with these local inputs, not every distro.
+Native release CI transports tar archives to preserve executable modes and relative
+framework links. A real Developer ID-signed framework fixture passed a complete
+transport roundtrip and post-extraction strict signature verification outside the
+filesystem sandbox. No production private key was read or exported for this check.
 
-P5: implemented inside-out macOS signing, required local identity/profile
-preflight, notarization/stapling, App/ZIP/DMG assembly and post-copy verification.
-The production executor passed Developer ID/notary/ticket checks on a linked
-framework app and ran the final copied binary. A universal pure-Rust app contains
-both arm64/x86_64 slices and runs on Apple Silicon; helpers/runtimes must contain
-both slices when universal is selected. Added Windows local-store Authenticode
-sign/verify, SDK MSIX manifests/assets/assembly, pinned Velopack release-family
-packaging and early SDK startup ahead of macro app factories. The SDK disables
-auto-apply on startup. Added native Windows SDK/package/signing acceptance suites.
-Windows native installation/signing and Velopack packaging remain validation gates.
+## Local verification
 
-P6-P9: in progress. Native platform/update acceptance remains required; archive
-assembly and portable tests do not establish installation or upgrade support.
+Focused distribution/core/build/resources/platform suites and external consumers
+pass. The coordinator has 24 unit/protocol tests, four extension contracts, two
+metadata consumers and real worker-descendant cancellation coverage. Sixteen core
+planning and two desktop metadata consumers pass. The updater suite has ten tests,
+including a killed staging process and recovery of only owned partial files.
+Guarded quit tests and actual native AppKit deferral supplement provider tests.
 
-CI runs (only one full matrix and one Windows-only retry):
-- https://github.com/1bye/rake/actions/runs/41057984993
-- https://github.com/1bye/rake/actions/runs/41058997245
+Legacy bundle tests (seven, including real Web serving/bindings) and supervisor
+checks (eleven) pass. Web uses a task-local wasm-bindgen exactly matching 0.2.129;
+no unrelated tool installation was replaced. The facade explicitly compiles for
+`wasm32-unknown-unknown` without desktop defaults. Its six existing router/web
+unused-code warnings remain; a native check is not used as Wasm evidence.
 
-Future distribution adoption runs are manual-only and support a single-platform
-selection to keep runner cost bounded.
+Focused strict Clippy and rustdoc pass for the new public crates and selected
+updater features. Formatting, Python fixture compilation and diff whitespace
+checks pass. A real verified-TLS fixture checks HTTP HEAD/MIME, exact/open/suffix
+byte ranges, framing and 416 errors before App Installer retries. The entire
+pre-existing workspace is not claimed clean: unrelated strict protocol lints
+were observed in inherited CI. Verification is scoped to this change.
 
-## CI accounting
+## Cost and scope accounting
 
-The inherited Rake push workflow also ran on the two adoption pushes:
-41057985075 and 41058896200. Both failed on existing strict rake-protocol lints.
-These were additional to the three-platform adoption matrix and Windows-only
-retry. Subsequent phase commits remain local to prevent more automatic runs.
+The broad engine comparison was not repeated for follow-ups. Later runs select
+one platform and outstanding gates; cached GUI artifacts avoid rebuilding the
+nine-minute Flatpak application for compositor/repository diagnostics. Multiple
+focused retries were necessary, including fixture errors; they are not described
+as one successful matrix. Commits carry `[skip ci]` to avoid inherited push runs.
+Two initial inherited push checks (41057985075 and 41058896200) failed on baseline
+protocol lints. Later native workflows are manual.
 
-Native executor acceptance run 41067548580: Linux passed. Windows core, resource,
-codec, manifest-policy and descendant-cancellation tests passed; the CLI package
-failed at mt.exe resource replacement. Diagnostic capture and Windows verbatim
-path normalization were added. A Windows-only retry is reserved for the next
-consolidated native checkpoint. No broad push workflow ran on these pushes.
+Cancelled runs are not omitted: 41113849969 was requested too early and cancelled
+after a local compile error; 41121908205 continued a real SDK build for roughly
+eight minutes despite its cancel acknowledgement before replacement concurrency
+stopped it. 41122853171 was cancelled with no usable native evidence. Cancellation
+acknowledgement is never counted as terminal state or zero runner cost.
 
-Windows checkpoint 41077196757 isolated SDK error c10100b7: wildcard root
-processorArchitecture is invalid in a definition identity. The platform backend
-now maps that field to the actual PE machine, rejects conflicting explicit
-architectures, and preserves dependency wildcards. Portable regression tests cover
-the PE header and XML rewriting. Canonical native paths now avoid Windows verbatim
-prefixes at the engine boundary. Installation/artifact paths normalize separators
-before serialization and still reject traversal/drive prefixes; component CPU and
-OS binary format are both checked. The macOS media and CLI regressions pass after
-these changes. A targeted native retry is still required.
+Validated initial profiles: macOS arm64; hosted Windows x64 MSVC; Linux x64 GNU
+on Ubuntu 24.04, Fedora 43, Arch and Freedesktop 25.08. Additional CPU/libc/GPU
+profiles and universal updater combinations remain separate native expansions.
+Universal pure-Rust Mac slice/execution acceptance does not establish every SDK.
+The media fixture establishes its real selected local inputs, not every codec SDK.
 
-Windows checkpoint 41081006728 passed the manifest stage and exposed the
-engine resource iterator dropping the source drive prefix. The worker now runs
-from its own directory; request manifest/output paths are resolved before spawn,
-and Cargo runs from the selected project so toolchain/config discovery is stable.
-The adapter passes only worker-relative resource/icon paths. Local CLI consumer
-and strict Clippy checks pass. Independent SDK checks now run even if an earlier
-CLI gate fails, collecting their failures in one native checkpoint.
-
-P6 implementation: added the Linux platform owner with native dpkg-deb packages,
-RPM generation retaining versioned dependency comparisons, makepkg PKGBUILD and
-.SRCINFO output, and Flatpak source builds inside the selected SDK. The Flatpak
-compiler is pinned to Rust 1.95.0 official archive SHA-256 values; Cargo sources
-are vendored offline, SDK/runtime commits are checked and recorded, and runtime
-permissions are explicit. Dedicated source manifests remain available for custom
-SDK dependency modules. AppImage continues through the private bundler adapter.
-Linux package names/resource directories are stable independently of display names.
-Desktop/AppStream metadata, per-format system dependencies, bundled/system runtime
-policy, private ELF loader paths and numeric GLIBC baseline verification are wired
-into the coordinator. ELF requirements are recorded in distribution.json.
-
-Local P6 verification: 13 core plan tests, six Linux unit/round-trip tests,
-component/worker/resource/build tests, four spawned CLI checks, strict Clippy and
-rustdoc passed. Native ELF/dpkg tests and Debian/Fedora install/upgrade/uninstall
-are added to the manual Linux checkpoint. Arch native execution and Flatpak real
-GPUI sandbox execution remain required acceptance work; they are not established
-by portable manifest tests. No new Linux Actions run has been started yet.
-
-Windows checkpoint 41086364202 passed spawned CLI packaging/resources and failed
-the real GPUI build, then stalled in disposable trust setup. Cancellation requested
-to stop wasted runner minutes; diagnostics await job completion. The test trust
-step now has an explicit software key provider, noninteractive trust installation
-and a two-minute timeout; SDK tests have a five-minute timeout. No production
-Windows certificate/private key has been introduced.
-
-P6 native checkpoint 41091230341 passed on Ubuntu 24.04, including real ELF
-relocation and baseline rejection, spawned CLI packaging, and Debian/Fedora
-installation, relocated launch, upgrade and uninstall. Fedora runs in an isolated
-Fedora 43 container. Arch makepkg and the actual Flatpak GPUI sandbox remain open.
-
-P7 first implementation: rake-build embeds immutable update identity, native/Cargo
-versions, target, packaging owner, channel, HTTPS root and verification key bytes.
-Installed descriptors must match and cannot turn a managed package into an
-AppImage. Installer startup captures policy in the consuming application crate;
-Velopack auto-application remains disabled. Its Rust SDK startup probe now uses
---veloapp-install 1.0.0 (the earlier --veloapp-version flag is not a Rust SDK hook).
-
-The updater crate now has bounded/cancellable HTTPS transport, authenticated full
-AppImage feeds, installed-image ownership verification, verified sibling staging,
-exclusive locks, atomic replacement and trusted previous-image recovery. The
-pinned Velopack SDK has a signed native-feed transport with contextual signature
-and expiry, full-package staging, cancellation/progress and independent cached
-package checksum verification. This adds a public updates.public_keys.velopack
-reference to configuration; private update-signing keys are never serialized.
-
-Restart handoffs are owned and inert until committed. Router::quit_for_update
-uses existing document/history/window/work guards; cancellation discards the
-installer and preserves admission. Native workspaces invoke the handoff only at
-Ready, and keep a failed restart visible for manual exit. Multiple windows cannot
-bypass that failure. Standalone/custom hosts have the same explicit callback
-handoff contract. This does not yet establish the OS-quit bridge or Sparkle SDK.
-
-Local evidence: 14 guarded-quit tests including dirty cancellation and failed
-restart, seven update tests including signature/channel/expiry/downgrade/recovery
-and cached corruption, core tests, native facade consumers, strict Clippy and
-rustdoc pass. Real signed N-to-N+1 updater acceptance remains open. A Windows
-native Velopack packaging/install/upgrade/uninstall fixture is prepared for the
-next consolidated checkpoint. P7 is not complete; Sparkle, OS-initiated quit and
-native provider restart acceptance still require implementation/validation.
-
-Windows run 41086364202 was cancelled after trust setup stalled. Both gh and the
-connected GitHub tool return BlobNotFound for its job log. A fresh-runner build
-bug was independently corrected: ordinary locked Cargo builds may fetch missing
-dependencies instead of unconditionally forcing offline mode. This is a concrete
-fix, not verified attribution of the unavailable GPUI failure log.
-
-Windows checkpoint 41095152890: core and spawned CLI checks passed. Real GPUI
-compilation reached Rake and found existing Unix-only checkpoint filesystem calls
-in reload/host.rs; Windows distribution now bypasses that Unix dev-supervisor
-checkpoint path without weakening its Unix private-file checks. The Rust SDK
-startup call now explicitly names the external ::velopack crate, avoiding the
-private adapter module shadowing it on Windows. The pinned native vpk tool
-installed successfully. Test certificate creation also succeeded, but adding a
-current-user root still prompted and timed out. The disposable runner now imports
-only its public test trust into LocalMachine stores, and records the current-user
-signing thumbprint before trust setup so cleanup still runs after partial failure.
-The manual checkpoint saves dependency caches on failure to avoid rebuilding GPUI
-on each targeted follow-up. These fixes require a native follow-up, not an inferred
-Windows acceptance result.
-
-Windows checkpoint 41099657004 passed real GPUI NSIS packaging, disposable local
-trust setup and the pinned Rust updater startup hook. MSIX unpacking passed;
-signing/install and Velopack fixture stopped at certificate-subject preflight
-because a clean PowerShell process lacked the Cert provider. Subject lookup now
-uses the native .NET CurrentUser My store directly. A consolidated retry remains.
-
-P7 native Sparkle: automatic pinned SDK preparation (2.10.1 with verified SHA-256),
-framework/license staging, signed-feed plist policy, universal policy propagation,
-SDK standard UI and main-thread controller ownership are implemented. An owned
-AppKit delegate proxy defers OS termination and preserves GPUI delegate behavior.
-Routed workspaces join native update requests to the existing dirty/work/window
-quit transaction; cached SDK installations use the same approval path. Native
-continuations are consumed once and controller teardown declines retained replies.
-
-Actual macOS N-to-N+1 GUI acceptance passed: signed feed/payload download,
-dirty-document Cancel preserving N, cached update retry, Save followed by SDK
-automatic relaunch at N+1, persistent user data preservation, and rejection of a
-feed modified without resigning. The N+1 startup marker was observed before UI
-reattachment. The AppKit terminate probe passed deferred cancellation/approval.
-Repeatable fixture preparation and assertions are documented in
-scripts/prepare-distribution-sparkle.py and docs/distribution-native-tests.md.
-Local portable policy (14), updater (7), guarded quit (14), full SDK Clippy and
-native facade updates-sparkle/devtools compilation passed. Linux/Windows N+1
-SDK acceptance and the remaining native format gates are still open.
-
-Windows checkpoint 41104892784: MSIX native signing, installation and upgrade now
-passed, along with real GPUI NSIS packaging and early startup. Velopack reached
-its native tool; pinned vpk rejects --version. The exact 1.2.161 tool was installed
-locally and its --help output/pack options inspected. The adapter now probes that
-versioned help and disables update checks/interactive console prompts. The first
-fixture build exceeded its old two-minute subprocess bound; bundle gets seven
-minutes within the existing eight-minute gate. A focused velopack-only mode
-skips already-passed GPUI/MSIX/core checks and reuses caches.
-
-P8 implementation: added explicit directory, GitHub draft-release and HTTPS
-transactional publishers; all-target/version/format gates, artifact readback,
-immutable objects, native feeds and public signing-profile commands. Directory
-promotion uses an atomic whole-channel symlink on Unix and retains old generations.
-Added SDK-signed Sparkle feed verification against the configured public key,
-Velopack native feed sidecars, signed AppImage history, MSIX App Installer metadata
-from actual build identity, and Linux repository generation through native GPG,
-APT/RPM/pacman/Flatpak tools. Added manual serialized release CI using enrolled
-local signing profiles; no real release has been published.
-
-P8 local tests: complete core/dist/Linux suites pass; focused strict Clippy and
-rustdoc pass. Real Sparkle 2.10.1 signed-feed fixture verifies and tampering/wrong
-keys fail. Publication regressions cover missing target, changed artifact, concurrent
-lease, replay/downgrade, unowned output, cancellation and retained immutable files.
-A spawned CLI release plan/export/replay check passed in an isolated directory.
-Native repository install/upgrade, remote publisher protocol tests and fresh native
-updater discovery against generated publications remain acceptance work. These
-are implementation commits, not a declaration that all phase gates are complete.
-
-P9 developer workflow implementation: added a portable native Cargo build worker,
-read-only distribution doctor/tool requirements, feature forwarding for bundle and
-SDK-owned Flatpak builds, and a compiling minimal rake::view! desktop example
-with SVG icon/resources/build script. Fixed the existing no-GPUI Wasm reload
-module gate; explicit wasm32-unknown-unknown facade compilation now succeeds
-(with existing router/web dead-code warnings). Added user documentation that
-separates backend implementation from proven native installation capabilities.
-Native Python retirement and the legacy JSON bridge remain gated on native parity.
-
-Local P9 verification: six spawned CLI plan/build/doctor/bundle tests passed,
-including real compiled feature behavior and installed resources/private helper
-execution after relocation. The new minimal desktop example compiles. Strict
-Clippy for CLI/dist/example passes. One attempt exhausted local disk while
-archiving GPUI; only this task's temporary vpk installation was removed, and the
-unchanged check passed on retry. No unrelated checkout or temporary task data was
-removed. The focused Windows checkpoint 41106825841 exposed platform-specific
-console help output; successful stdout/stderr are now both inspected and ANSI
-formatting is stripped before checking an exact version token. Native tool checks
-now run before Cargo compilation; another broad native matrix is not needed.
-
-Windows focused checkpoint 41108529192 passed. The native fixture created both
-Velopack versions through the Rust CLI, installed them, executed relocated resource
-reads, verified user data through N-to-N+1 installer upgrade, and uninstalled.
-The early Rust SDK startup hook also passed. This closes native P5 Velopack
-packaging/install acceptance; SDK feed-driven updates and guarded restart remain
-separate P7/P8 tests. Together with checkpoint 41104892784, native Windows MSIX
-signing/install/upgrade and real GPUI NSIS build gates are established.
-
-P8 follow-up: final records now carry the public update policy used by their
-format build. Publication rejects destination/channel/key conflicts with that
-policy. Source manifests and metadata no longer satisfy required native package
-gates; Linux repository input selection excludes recipe/manifest/toolchain files.
-RPM verification uses an isolated public key database instead of changing host
-trust. APT/RPM native repository upgrade acceptance is added to the Linux fixture.
-
-P7 interruption follow-up: AppImage sibling staging has an owned, bounded journal.
-A real subprocess is killed after writing partial staging; the next trusted update
-lease removes that recorded partial file while preserving unrelated user files.
-Unknown/escaping journals are preserved with an error. Normal decline/cancellation
-removes both staging and its journal. Ten updater tests pass; strict Clippy and
-rustdoc pass for AppImage/Velopack/native-tests features.
-
-Native acceptance transport can enroll one disposable CA only for an explicit
-127.0.0.1 HTTPS root, behind native-tests. Chain and hostname verification remain
-enabled; production features retain WebPKI trust. The isolated TLS/signing fixture
-passed real HTTPS, hostname verification, untrusted-CA rejection and Ed25519 signing
-without changing system trust or reading production keys. A real AppImage N/N+1
-publication/update fixture is prepared for the consolidated Linux checkpoint.
-The facade now reexports the updates! macro as well as the updates module, and
-its no-default-features/updates-appimage consumer compiles.
-
-P6 remaining-gate fixtures: added native Arch makepkg/install/upgrade/uninstall and
-signed pacman repository discovery in an isolated official Arch container. Added a
-real GPUI Flatpak source build with installed SDK/runtime commit pins and a frame
-callback that verifies the installed resource after rendering. Flatpak vendoring
-now fetches missing locked sources rather than forcing offline resolution on a
-fresh runner. Source compile features and the Flatpak policy stay SDK-owned.
-Local Linux package tests and strict dist/Linux/example Clippy pass. The actual
-Arch/Flatpak native gates remain pending the single consolidated Linux checkpoint,
-which also exercises signed APT/RPM repositories and real AppImage HTTPS updates.
-
-P4 helper lifetime follow-up: rake-resources now exposes HelperProcess and a
-confined spawn_helper convenience. A concrete owner retains its Unix process
-group/Windows Job and terminates/reaps it on cancel/drop. Stdio handles can move
-to readers without detaching the owner. A real child/grandchild regression proves
-that dropping the owner releases the descendant's file lock. Resource tests,
-strict Clippy/rustdoc and the explicit no-default-features Wasm facade check pass.
-Native process dependencies are target-gated out of Wasm; existing router/web
-dead-code warnings remain unchanged.
-
-Consolidated Linux checkpoint 41111628107 established: generated signed APT and
-RPM repositories support fresh N installation and native N+1 discovery/upgrade;
-Arch makepkg/install/upgrade/uninstall and its signed pacman repository pass;
-real AppImage artifacts update over a signed HTTPS publication and relaunch N+1,
-with installed resources and preserved data. Decline/cancel, competing updater
-lock and read-only image rejection also passed through the actual native image.
-Transient trust-enrollment diagnostics were followed by successful signed native
-repository operations; they are not ignored package-manager failures.
-
-Flatpak stopped before SDK compilation at an empty Cargo config source-table
-assignment, which panicked in TOML indexing. Vendor configuration now inserts a
-source table explicitly and preserves unrelated Cargo build options. A portable
-regression covers the fresh-workspace case. The next checkpoint selects only
-Flatpak; the passing repositories/Arch/AppImage gates are not rerun.
-
-CI accounting correction: Flatpak retry 41113849969 was queued before its local
-check completed. That compile check caught an unavailable values_mut method in
-the pinned TOML map; the retry was immediately cancelled. iter_mut is now used,
-and the vendor regression and strict dist-library Clippy both pass before the
-replacement retry. This extra cancelled run is recorded rather than omitted.
-
-P4 Windows DLL deployment: added PE import/architecture inspection and closure
-preparation from declared runtime groups. Main-process roots require
-link_from_app; helpers and runtime subprocesses have isolated loader directories.
-Conflicting same-name versions in one process and undeclared imports fail before
-signing. System DLL allowances are explicit; redistributable CRT DLLs are not
-silently considered OS libraries. Case-insensitive native file inspection is
-preserved. Portable core/dist/Windows tests, strict Clippy and rustdoc pass.
-A real MSVC DLL/helper relocation test is queued with the next consolidated
-Windows SDK gate; this commit does not claim that native test already passed.
-
-Flatpak-only checkpoint 41114061388 reached the pinned SDK source build. The SDK
-builder's default debug-info extraction rewrote the installed Rust compiler's
-shared libraries; eu-strip reported malformed LLVM/compiler ELF files and rustc
-could no longer load LLVM. The toolchain module now explicitly disables stripping
-and debug extraction while retaining final cleanup of build-only tools. This
-matches Flatpak's documented build options. Linux unit/manifest tests and strict
-Clippy pass before the next Flatpak-only retry; no passing Linux gate is rerun.
-
-P1 extension follow-up: explicit versioned Rust backend/recipe contracts and
-command adapters now run through owned staging, bounded JSON stdin/stdout and
-process-tree cancellation. Custom recipes must declare their complete actual
-native inventory, with target architecture and confinement checks. Custom formats
-consume a selected built-in artifact and remain unverified/local unless an
-independent configured native verifier accepts identity/version/target and exact
-bytes. Release checks that verifier and required custom format matrix. A spawned
-CLI consumer exercised recipe, packaging and verification; four external contract
-tests, 15 coordinator tests, core tests, strict Clippy and rustdoc pass. Publication
-snapshots selected verified inputs before feed generation/upload; changed sources
-cannot alter the published bytes. Human artifact filenames map to portable
-content-addressed object names, including names containing spaces.
+Native signing uses enrolled local profiles. CI uses only disposable certificates
+and update keys. Production keys were never exported. No public release, tag,
+store submission, default-branch merge or production deployment was performed.
+HTTPS publication requires the documented transactional service; directory export
+works with a suitable static HTTPS host. Key rotation uses a new channel and a
+normally signed installer enrollment, rather than silently changing trust roots.

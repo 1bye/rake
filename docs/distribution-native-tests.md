@@ -50,3 +50,62 @@ and uses only a disposable runner certificate. The Windows SDK tests also inspec
 PE metadata and create/install/upgrade/remove MSIX packages. Missing credentials
 or native prerequisites fail the explicit acceptance suite; they do not count as
 passing a gate.
+
+
+## Focused native gates and evidence
+
+- `scripts/test-distribution-windows-installers.py`: signed NSIS/MSI installation,
+  private CRT, protocol/file registrations, N+1 upgrade, unrelated-CWD resources,
+  uninstall and an actual installed minimal GPUI frame. `--only` selects one gate.
+- `scripts/test-distribution-velopack-update.py`: generated signed HTTPS feeds,
+  untrusted/tampered metadata, cancellation/decline, cached package corruption and
+  native SDK automatic N+1 relaunch with persistent data.
+- `scripts/test-distribution-appinstaller.py`: generated HTTPS App Installer
+  enrollment, native channel association, managed N+1 installation and persistent
+  data. Its disposable CA is enrolled only on an isolated Actions runner.
+- `scripts/test-distribution-appimage.py`: publish N and N+1 separately, remove old
+  build directories, then authenticate installed N from retained signed history.
+  Actual image execution covers signature/truncation/insufficient-space rejection,
+  cancellation, competing updater locks, read-only installations, atomic N+1
+  replacement and automatic relaunch/data preservation.
+- `scripts/test-distribution-linux.py --repositories`: signed APT/RPM repositories,
+  fresh native installs and package-manager update discovery. Fedora uses `fedora:43`.
+- `scripts/test-distribution-linux-formats.py`: Arch makepkg/pacman and Flatpak.
+  The GUI is built from source within its pinned SDK; frame callbacks verify its
+  installed resource. Wayland uses a nested Weston compositor with an input seat.
+  Signed Flatpak repositories use native worker preparation, verified handoff,
+  fresh N enrollment and native N+1 upgrade. `--reuse-flatpak` checks hashes of an
+  explicitly retained GUI artifact while rebuilding the small repository fixture.
+
+Cost-bounded workflow modes select only outstanding gates. `flatpak` with an
+explicit `fixture_run` reuses `native-flatpak`; the nine-minute GUI source build
+is not repeated for repository or compositor diagnostics. `appinstaller` skips
+already-passed Windows updater, installer and UI suites. The initial broad
+comparison is not rerun for phase follow-ups. Cancel acknowledgements are not
+terminal job states; wait for completion before dispatching a replacement.
+
+Recorded checkpoints:
+
+| Run | Passing native gates |
+| --- | --- |
+| [41104892784](https://github.com/1bye/rake/actions/runs/41104892784) | Signed MSIX install/upgrade and real GPUI packaging |
+| [41108529192](https://github.com/1bye/rake/actions/runs/41108529192) | Velopack installer N/N+1 lifecycle |
+| [41111628107](https://github.com/1bye/rake/actions/runs/41111628107) | APT/RPM/Arch repositories and signed native AppImage update |
+| [41130631879](https://github.com/1bye/rake/actions/runs/41130631879) | Velopack HTTPS SDK update/relaunch, native DLL isolation, localized MSIX/PRI and NSIS registrations |
+| [41132236560](https://github.com/1bye/rake/actions/runs/41132236560) | Signed MSI lifecycle/registrations and installed minimal Windows UI |
+| [41130639063](https://github.com/1bye/rake/actions/runs/41130639063) | Expanded AppImage failures/history, Linux legacy compatibility and source-built Flatpak X11 frame |
+| [41133766124](https://github.com/1bye/rake/actions/runs/41133766124) | Flatpak X11/Wayland frames, signed repository/ref enrollment, verified native handoff and N+1 upgrade/data preservation |
+| [41136419908](https://github.com/1bye/rake/actions/runs/41136419908) | HTTPS App Installer enrollment/association, native managed activation, N+1 upgrade/data preservation and Windows helper tree lifetime |
+
+Some earlier checkpoint jobs failed at a later independent gate; the table names
+only steps that passed. The final Linux and Windows runs above passed completely.
+The initial native matrix and required P0–P9 gates are complete. MSIX launch uses
+Windows package activation; the fixture never changes protected installation ACLs.
+The release CI archive transport also passed a real Developer ID framework
+roundtrip with executable modes, relative symlinks, bytes and signature intact.
+
+The minimal macOS example was also bundled ad hoc, run from `/`, rendered its
+native frame and read its installed resource on 2026-10-30. Running it requires
+WindowServer access outside the filesystem sandbox. The same `native-acceptance`
+feature is used on all three initial platforms. Production trust and Sparkle
+acceptance above remain separate from this development UI fixture.
