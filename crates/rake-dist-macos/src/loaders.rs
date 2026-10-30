@@ -1,5 +1,6 @@
 //! Normalizes every non-system load command against the declared staged inventory.
 use crate::Error;
+use object::read::macho::{FatArch, MachHeader};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -41,12 +42,44 @@ fn walk(root: &Path, path: &Path, output: &mut Vec<PathBuf>) -> Result<(), Error
                         | [0xca, 0xfe, 0xba, 0xbe]
                         | [0xca, 0xfe, 0xba, 0xbf]
                 )
+                && is_loadable_macho(&fs::read(&path)?)
             {
                 output.push(path);
             }
         }
     }
     Ok(())
+}
+fn is_loadable_macho(bytes: &[u8]) -> bool {
+    let loadable = |kind| {
+        matches!(
+            kind,
+            object::macho::MH_EXECUTE | object::macho::MH_DYLIB | object::macho::MH_BUNDLE
+        )
+    };
+    let thin = |bytes: &[u8]| match object::File::parse(bytes) {
+        Ok(object::File::MachO32(file)) => loadable(file.macho_header().filetype(file.endian())),
+        Ok(object::File::MachO64(file)) => loadable(file.macho_header().filetype(file.endian())),
+        _ => false,
+    };
+    if thin(bytes) {
+        return true;
+    }
+    if let Ok(fat) = object::read::macho::MachOFatFile32::parse(bytes) {
+        return !fat.arches().is_empty()
+            && fat
+                .arches()
+                .iter()
+                .all(|arch| arch.data(bytes).is_ok_and(thin));
+    }
+    if let Ok(fat) = object::read::macho::MachOFatFile64::parse(bytes) {
+        return !fat.arches().is_empty()
+            && fat
+                .arches()
+                .iter()
+                .all(|arch| arch.data(bytes).is_ok_and(thin));
+    }
+    false
 }
 
 fn aliases(path: &Path, names: &mut BTreeMap<String, Vec<PathBuf>>) -> Result<(), Error> {
@@ -247,4 +280,51 @@ pub fn normalize_loaders(root: &Path) -> Result<Vec<PathBuf>, Error> {
         }
     }
     Ok(inventory)
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+    fn macho(kind: u32) -> Vec<u8> {
+        [0xfeedfacf_u32, 0x0100000c, 0, kind, 0, 0, 0, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect()
+    }
+    #[test]
+    fn only_loadable_macho_images_enter_signing_and_loader_tools() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, kind) in [
+            ("app", object::macho::MH_EXECUTE),
+            ("library", object::macho::MH_DYLIB),
+            ("plugin", object::macho::MH_BUNDLE),
+            ("object.o", object::macho::MH_OBJECT),
+        ] {
+            fs::write(root.path().join(name), macho(kind)).unwrap();
+        }
+        let mut fat: Vec<u8> = [0xcafebabe_u32, 1, 0x0100000c, 0, 4096, 32, 12]
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect();
+        fat.resize(4096, 0);
+        fat.extend(macho(object::macho::MH_DYLIB));
+        fs::write(root.path().join("universal"), fat).unwrap();
+        fs::write(
+            root.path().join("java.class"),
+            [0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 65, 0, 1, 7, 0],
+        )
+        .unwrap();
+        let names: std::collections::BTreeSet<_> = signable_inventory(root.path())
+            .unwrap()
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["app", "library", "plugin", "universal"]
+                .into_iter()
+                .map(std::ffi::OsString::from)
+                .collect()
+        );
+    }
 }
