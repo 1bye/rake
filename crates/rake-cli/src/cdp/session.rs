@@ -125,6 +125,7 @@ impl Session {
                 self.refresh_dom()?;
                 self.dom.accessibility(method, &request.params)
             }
+            "Rake.getPerformanceSummary" => Ok(self.frame_trace.summary()),
             "Tracing.getCategories" => Ok(
                 json!({"categories":["devtools.timeline","rake.frames","rake.callbacks","rake.causal"]}),
             ),
