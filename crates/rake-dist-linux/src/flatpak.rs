@@ -84,7 +84,7 @@ pub fn flatpak_manifest(
     Ok(json!({
         "app-id":identifier,"runtime":config.runtime,"runtime-version":config.runtime_version,"sdk":config.sdk,
         "command":binary,"finish-args":config.finish_args,
-        "build-options":{"env":{"CARGO_HOME":"/run/build/rake-application/.cargo-home","CARGO_TARGET_DIR":"/run/build/rake-application/target"}},
+        "build-options":{"env":{"CARGO_HOME":"/run/build/rake-application/.cargo-home","CARGO_TARGET_DIR":"/run/build/rake-application/target","RAKE_DISTRIBUTION_FORMAT":"flatpak","CARGO_PROFILE_RELEASE_DEBUG":"0","CARGO_INCREMENTAL":"0"}},
         "modules":[
             {"name":"rake-rust-toolchain","buildsystem":"simple","build-commands":commands,"sources":sources,"cleanup":["*"]},
             {"name":"rake-application","buildsystem":"simple","build-options":{"prepend-path":"/app/.rake-build/rust/bin"},

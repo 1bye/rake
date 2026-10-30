@@ -34,6 +34,9 @@ pub struct BundleRequest {
     pub binary: Option<String>,
     /// Build the release Cargo profile.
     pub release: bool,
+    /// Additional Cargo feature selections, merged with required native provider features.
+    #[serde(default)]
+    pub features: Vec<String>,
     /// Resolve remote components from verified cache only.
     #[serde(default)]
     pub offline_components: bool,
@@ -204,6 +207,10 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     }
     let metadata: Metadata = serde_json::from_slice(&metadata_output.stdout)?;
     for item in plan.packages() {
+        if item.format() == Format::Velopack {
+            rake_dist_windows::verify_velopack_tool()
+                .map_err(|error| Error::Execution(error.to_string()))?;
+        }
         let trust = effective_trust(item.config(), &request.trust);
         match plan.platform() {
             Platform::Macos => {
@@ -331,6 +338,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         let build_context = crate::sparkle::BuildContext {
             distribution_target: &target,
             sparkle_framework: sdk.as_deref(),
+            features: &request.features,
         };
         let build_for = |target| {
             build(
@@ -668,6 +676,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                         &payload,
                         &stage,
                         request.offline_components,
+                        &request.features,
                     )?
                 }
                 Format::Tar => {
@@ -848,6 +857,9 @@ fn build(
         ])
         .arg(manifest)
         .args(["--package", package, "--bin", binary, "--target", target]);
+    if !context.features.is_empty() {
+        command.arg("--features").arg(context.features.join(","));
+    }
     let feature = if format == Format::Velopack {
         Some("updates-velopack")
     } else if package_plan.update_owner() == rake_dist_core::UpdateOwner::Sparkle {

@@ -74,11 +74,19 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     let mut platform = std::env::consts::OS;
     let mut target = None;
     let mut formats = Vec::new();
+    let mut features = Vec::new();
     let mut args = arguments.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--plan" | "--json" | "--native" => {}
             "--release" => release = true,
+            "--features" => features.extend(
+                args.next()
+                    .ok_or("--features requires a value")?
+                    .split(',')
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+            ),
             "--trusted" => trust.required = true,
             "--sign-identity" => {
                 trust.macos_identity = Some(
@@ -188,6 +196,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             output,
             binary,
             release,
+            features,
             offline_components,
             locked_components,
             trust,

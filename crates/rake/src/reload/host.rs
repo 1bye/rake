@@ -3,11 +3,13 @@
 #[cfg(any(unix, target_family = "wasm"))]
 use super::MAX_CHECKPOINT_BYTES;
 use super::WorkspaceCheckpoint;
+#[cfg(feature = "gpui")]
 use crate::control::ControlConfig;
 
 #[cfg(target_family = "wasm")]
 const STORAGE_KEY: &str = "rake-dev-workspace";
 
+#[cfg(feature = "gpui")]
 pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, String>> {
     if !matches!(config, ControlConfig::FromEnvironment) {
         return None;
@@ -70,7 +72,7 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
     }
 }
 
-#[cfg(any(unix, target_family = "wasm"))]
+#[cfg(all(feature = "gpui", any(unix, target_family = "wasm")))]
 fn decode(bytes: &[u8]) -> Result<WorkspaceCheckpoint, String> {
     if bytes.len() > MAX_CHECKPOINT_BYTES {
         return Err("reload checkpoint exceeds 512 KiB".into());
@@ -79,6 +81,7 @@ fn decode(bytes: &[u8]) -> Result<WorkspaceCheckpoint, String> {
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "gpui")]
 pub(crate) fn clear() {
     #[cfg(unix)]
     if std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")

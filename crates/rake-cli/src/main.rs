@@ -10,6 +10,7 @@ mod source;
 mod terminal;
 
 mod distribution;
+mod native_commands;
 mod release;
 
 fn main() {
@@ -54,6 +55,33 @@ fn main() {
             });
         if let Err(error) = result {
             eprintln!("rake worker: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if arguments.first().is_some_and(|command| {
+        command == "__native-build" || native_commands::handles(command, &arguments[1..])
+    }) {
+        let result = if arguments[0] == "__native-build" {
+            arguments
+                .get(1)
+                .ok_or("native build result path missing")
+                .map_err(Into::into)
+                .and_then(|output| {
+                    native_commands::build_worker(std::path::Path::new(output), &arguments[2..])
+                })
+        } else {
+            native_commands::run(&arguments[0], &arguments[1..])
+        };
+        if let Err(error) = result {
+            if json {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"error":{"message":error.to_string()}})
+                );
+            } else {
+                eprintln!("rake: {error}");
+            }
             std::process::exit(1);
         }
         return;

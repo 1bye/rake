@@ -49,6 +49,7 @@ pub(crate) fn prepare(
 }
 
 pub(crate) struct BuildContext<'a> {
+    pub features: &'a [String],
     pub distribution_target: &'a str,
     pub sparkle_framework: Option<&'a Path>,
 }

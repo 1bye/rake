@@ -6125,6 +6125,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-distribution-example"
+version = "0.1.0"
+dependencies = [
+ "rake",
+ "rake-build",
+]
+
+[[package]]
 name = "rake-foundation"
 version = "0.1.0"
 dependencies = [

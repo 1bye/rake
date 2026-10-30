@@ -247,3 +247,23 @@ A spawned CLI release plan/export/replay check passed in an isolated directory.
 Native repository install/upgrade, remote publisher protocol tests and fresh native
 updater discovery against generated publications remain acceptance work. These
 are implementation commits, not a declaration that all phase gates are complete.
+
+P9 developer workflow implementation: added a portable native Cargo build worker,
+read-only distribution doctor/tool requirements, feature forwarding for bundle and
+SDK-owned Flatpak builds, and a compiling minimal rake::view! desktop example
+with SVG icon/resources/build script. Fixed the existing no-GPUI Wasm reload
+module gate; explicit wasm32-unknown-unknown facade compilation now succeeds
+(with existing router/web dead-code warnings). Added user documentation that
+separates backend implementation from proven native installation capabilities.
+Native Python retirement and the legacy JSON bridge remain gated on native parity.
+
+Local P9 verification: six spawned CLI plan/build/doctor/bundle tests passed,
+including real compiled feature behavior and installed resources/private helper
+execution after relocation. The new minimal desktop example compiles. Strict
+Clippy for CLI/dist/example passes. One attempt exhausted local disk while
+archiving GPUI; only this task's temporary vpk installation was removed, and the
+unchanged check passed on retry. No unrelated checkout or temporary task data was
+removed. The focused Windows checkpoint 41106825841 exposed platform-specific
+console help output; successful stdout/stderr are now both inspected and ANSI
+formatting is stripped before checking an exact version token. Native tool checks
+now run before Cargo compilation; another broad native matrix is not needed.

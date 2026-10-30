@@ -135,6 +135,7 @@ pub(crate) fn flatpak(
     payload: &Path,
     stage: &Path,
     offline: bool,
+    features: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
     let config = plan.packages()[index].config();
     let output = stage.join("flatpak");
@@ -197,7 +198,7 @@ pub(crate) fn flatpak(
             payload,
             &config.linux.flatpak,
             &tools,
-            &[],
+            features,
         )
         .map_err(native)?;
         files::write_json(&manifest, &value)?;

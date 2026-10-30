@@ -117,6 +117,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
                 output: output.clone(),
                 binary: None,
                 release: true,
+                features: vec![],
                 offline_components: false,
                 locked_components: true,
                 trust: rake_dist::TrustOptions {

@@ -1,0 +1,23 @@
+[package]
+name = "rake-distribution-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rake = { workspace = true, features = ["experimental-view"] }
+
+[build-dependencies]
+rake-build = { path = "../../crates/rake-build" }
+
+[package.metadata.rake.bundle]
+schema_version = 1
+name = "Rake Desktop"
+identifier = "dev.rake.desktop-example"
+icon = "assets/icon.svg"
+resources = [{ from = "assets/welcome.txt", to = "welcome.txt" }]
