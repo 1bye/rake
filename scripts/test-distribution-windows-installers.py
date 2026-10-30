@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import time
@@ -28,6 +29,7 @@ def absent(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cli', type=pathlib.Path, required=True)
+    parser.add_argument('--only', choices=['nsis', 'msi', 'gpui'], action='append')
     args = parser.parse_args()
     assert os.name == 'nt' and os.environ.get('GITHUB_ACTIONS') == 'true', 'requires disposable Windows Actions runner'
     cli = args.cli.resolve()
@@ -41,6 +43,10 @@ def main():
         (source / 'build.rs').write_text('fn main(){rake_build::build().unwrap();}')
         (source / 'src/main.rs').write_text('fn main(){let r=rake_resources::resources!().unwrap();println!("{}:{}",env!("CARGO_PKG_VERSION"),std::fs::read_to_string(r.path("message.txt").unwrap()).unwrap());}')
         for format in ('nsis', 'msi'):
+            if args.only and format not in args.only:
+                continue
+            scheme = f'rake-install-{format}-{os.getpid()}'
+            extension = f'rakenote{os.getpid()}{format}'
             installed = root / f'installed-{format}'
             executable = installed / 'installer-smoke.exe'
             user = root / f'user-{format}'
@@ -62,6 +68,10 @@ rake-build={{path={json.dumps(str(repository / 'crates/rake-build'))}}}
 schema_version=1
 identifier="dev.rake.installer-{format}-{os.getpid()}"
 resources=[{{from="message.txt",to="message.txt"}}]
+[package.metadata.rake.bundle.desktop]
+category="utility"
+url_schemes=["{scheme}"]
+file_associations=[{{extensions=["{extension}"],name="RakeInstallerNote",description="Rake installer note",mime_type="application/x-rake-installer-note"}}]
 ''')
                     run('cargo', 'generate-lockfile', '--offline', '--manifest-path', source / 'Cargo.toml')
                     output = root / f'{format}-{version}'
@@ -73,6 +83,10 @@ resources=[{{from="message.txt",to="message.txt"}}]
                         run(last_package, '/S', f'/D={installed}')
                     assert run(executable, cwd=root).strip() == f'{version}:installer resource'
                     assert (installed / 'vcruntime140.dll').is_file(), 'CRT must deploy beside the application'
+                    command = run('reg.exe', 'query', rf'HKCR\{scheme}\shell\open\command', '/ve')
+                    handler = re.search(r'"([^"\r\n]+\.exe)"', command, re.IGNORECASE)
+                    assert handler and pathlib.Path(handler.group(1)).samefile(executable), command
+                    run('reg.exe', 'query', rf'HKCR\.{extension}')
                     assert (user / 'document').read_text() == 'preserved user content'
             finally:
                 if executable.exists():
@@ -83,27 +97,28 @@ resources=[{{from="message.txt",to="message.txt"}}]
                     absent(executable)
                 assert (user / 'document').read_text() == 'preserved user content'
             print(f'{format} signed install, unrelated-CWD resources, N+1 upgrade and uninstall passed', flush=True)
-        output = root / 'gpui-output'
-        result = json.loads(run(cli, 'bundle', '--native', '--debug', '--package', 'rake-distribution-example', '--format', 'nsis', '--features', 'native-acceptance', '--output', output, '--json', timeout=900))
-        setup = next(output / item['path'] for item in result['artifacts'])
-        installed = root / 'installed-gpui'
-        run(setup, '/S', f'/D={installed}')
-        try:
-            with (root / 'gpui.log').open('w') as log:
-                process = subprocess.Popen([str(installed / 'rake-distribution-example.exe')], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-                try:
-                    status = process.wait(timeout=60)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                    raise AssertionError('installed GPUI exceeded 60 seconds:\n' + (root / 'gpui.log').read_text())
-            log = (root / 'gpui.log').read_text()
-            print(log, flush=True)
-            assert status == 0 and 'RAKE_NATIVE_FRAME:' in log and 'This resource is included' in log
-            print('Windows installed NSIS GPUI native frame and packaged resource passed')
-        finally:
-            run(installed / 'uninstall.exe', '/S')
-            absent(installed / 'rake-distribution-example.exe')
+        if not args.only or 'gpui' in args.only:
+            output = root / 'gpui-output'
+            result = json.loads(run(cli, 'bundle', '--native', '--debug', '--package', 'rake-distribution-example', '--format', 'nsis', '--features', 'native-acceptance', '--output', output, '--json', timeout=900))
+            setup = next(output / item['path'] for item in result['artifacts'])
+            installed = root / 'installed-gpui'
+            run(setup, '/S', f'/D={installed}')
+            try:
+                with (root / 'gpui.log').open('w') as log:
+                    process = subprocess.Popen([str(installed / 'rake-distribution-example.exe')], cwd=root, stdout=log, stderr=subprocess.STDOUT)
+                    try:
+                        status = process.wait(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                        raise AssertionError('installed GPUI exceeded 60 seconds:\n' + (root / 'gpui.log').read_text())
+                log = (root / 'gpui.log').read_text()
+                print(log, flush=True)
+                assert status == 0 and 'RAKE_NATIVE_FRAME:' in log and 'This resource is included' in log
+                print('Windows installed NSIS GPUI native frame and packaged resource passed')
+            finally:
+                run(installed / 'uninstall.exe', '/S')
+                absent(installed / 'rake-distribution-example.exe')
 
 
 if __name__ == '__main__':
