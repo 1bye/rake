@@ -8,6 +8,13 @@ use futures::future::LocalBoxFuture;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{marker::PhantomData, rc::Rc};
 
+mod memory;
+pub use memory::MemoryBackend;
+#[cfg(not(target_family = "wasm"))]
+mod file;
+#[cfg(not(target_family = "wasm"))]
+pub use file::FileBackend;
+
 /// Largest UTF-8 key accepted by the typed facade, in bytes.
 pub const MAX_KEY_BYTES: usize = 256;
 /// Largest encoded JSON value accepted by the typed facade, in bytes.
@@ -18,6 +25,9 @@ pub const MAX_PAGE_SIZE: usize = 256;
 /// Storage validation, conversion or backend failure.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// A bounded backend cannot admit another key or value.
+    #[error("storage backend capacity reached")]
+    Capacity,
     /// Keys must contain 1–256 UTF-8 bytes and no NUL.
     #[error("storage key must contain 1–256 bytes and no NUL")]
     InvalidKey,

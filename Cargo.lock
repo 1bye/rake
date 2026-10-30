@@ -4529,6 +4529,7 @@ dependencies = [
  "anyhow",
  "async-io",
  "backtrace",
+ "blocking",
  "console_error_panic_hook",
  "event-listener",
  "futures",
