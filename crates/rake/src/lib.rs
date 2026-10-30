@@ -13,6 +13,16 @@ mod inspection_macros;
 pub use rake_resources as resources;
 pub use rake_resources::{Resources, resources};
 
+#[cfg(feature = "updates")]
+pub use rake_updates as updates;
+
+/// Runs enabled native updater installer callbacks before constructing the app.
+/// Manual entry points call this first; `#[rake::app]` does so automatically.
+pub fn early_startup() {
+    #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+    rake_updates::early_startup();
+}
+
 pub mod control;
 
 pub use rake_diagnostics as diagnostics;

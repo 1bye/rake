@@ -7,6 +7,8 @@ pub use component::{Archive, Component, ComponentSource};
 mod installation;
 pub use installation::Installation;
 mod overrides;
+mod trust;
+pub use trust::{TrustOptions, TrustRecord};
 mod version;
 pub use overrides::{Overrides, UpdateOverrides};
 pub use version::PackageVersion;
@@ -165,12 +167,18 @@ pub struct WebConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
 pub struct MacosConfig {
+    /// Build and validate Apple Silicon and Intel slices in one application.
+    pub universal: bool,
     /// Selected native formats.
     pub formats: Vec<Format>,
     /// Custom plist overlay.
     pub info_plist: Option<PathBuf>,
     /// Signing entitlements.
     pub entitlements: Option<PathBuf>,
+    /// Existing local Developer ID signing identity.
+    pub signing_identity: Option<String>,
+    /// Existing notarytool Keychain profile.
+    pub notary_profile: Option<String>,
 }
 
 /// Windows-specific packaging settings.
@@ -184,6 +192,10 @@ pub struct WindowsConfig {
     pub manifest: Option<PathBuf>,
     /// Managed package identity.
     pub msix: MsixConfig,
+    /// Current-user certificate store thumbprint; never a private-key path.
+    pub certificate_thumbprint: Option<String>,
+    /// RFC 3161 timestamp service URL used for release signing.
+    pub timestamp_url: Option<String>,
 }
 
 /// Windows managed package identity overrides.
@@ -193,6 +205,8 @@ pub struct WindowsConfig {
 pub struct MsixConfig {
     /// Certificate-matching publisher identity.
     pub publisher: Option<String>,
+    /// Optional complete AppxManifest.xml retaining the generated identity.
+    pub manifest: Option<PathBuf>,
 }
 
 /// Linux-specific packaging settings.
@@ -460,7 +474,13 @@ impl Config {
                 )
             {
                 if !effective.components.iter().any(|component| {
-                    component.name == name && target.is_none_or(|target| component.target == target)
+                    component.name == name
+                        && target.is_none_or(|target| {
+                            component.target == target
+                                || (platform == Platform::Macos
+                                    && effective.macos.universal
+                                    && component.target == "universal-apple-darwin")
+                        })
                 }) {
                     return Err(Error::Field(format!(
                         "component {name} has no source for the selected target"
@@ -553,6 +573,7 @@ impl Config {
             self.macos.info_plist.as_ref(),
             self.macos.entitlements.as_ref(),
             self.windows.manifest.as_ref(),
+            self.windows.msix.manifest.as_ref(),
             self.linux.desktop_entry.as_ref(),
             self.linux.appstream.as_ref(),
             self.linux.flatpak.manifest.as_ref(),
@@ -563,7 +584,9 @@ impl Config {
         let mut components = std::collections::BTreeSet::new();
         for component in &self.components {
             component_name(&component.name)?;
-            if component.target.parse::<target_lexicon::Triple>().is_err() {
+            if component.target != "universal-apple-darwin"
+                && component.target.parse::<target_lexicon::Triple>().is_err()
+            {
                 return Err(Error::Field("component target".into()));
             }
             if !components.insert((&component.name, &component.target)) {
@@ -721,7 +744,11 @@ impl Config {
                 update_owner: owner,
                 version: version::convert(
                     &parsed_version,
-                    format,
+                    if format == Format::Zip && platform == Platform::Macos {
+                        Format::App
+                    } else {
+                        format
+                    },
                     self.package_version.as_deref(),
                     self.build_number.as_deref(),
                 )?,

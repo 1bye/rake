@@ -2,6 +2,7 @@
 //!
 //! Native execution is separate from the portable plan returned here.
 
+mod archives;
 mod components;
 pub use components::ComponentLock;
 mod engine;
@@ -12,7 +13,7 @@ mod recipes;
 pub use execution::{Artifact, BundleRequest, Distribution, bundle, execute_worker, host_target};
 pub use process::Worker;
 
-pub use rake_dist_core::{Config, Format, Plan, Platform};
+pub use rake_dist_core::{Config, Format, Plan, Platform, TrustOptions};
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -164,4 +165,6 @@ struct CargoTarget {
 struct CargoDependency {
     name: String,
     kind: Option<String>,
+    #[serde(default)]
+    rename: Option<String>,
 }

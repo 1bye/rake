@@ -230,3 +230,19 @@ fn pinned_components_reject_bad_hashes_and_missing_target_sources() {
             .is_err()
     );
 }
+
+#[test]
+fn universal_macos_accepts_only_explicit_universal_component_inputs() {
+    let settings = config(
+        json!({"schema_version":1,"macos":{"universal":true},"sidecars":[{"name":"media","path":"bin/media","component":"media"}],"components":[{"name":"media","target":"universal-apple-darwin","source":{"type":"local","path":"vendor/media"}}]}),
+    );
+    settings
+        .plan_for(
+            "notes",
+            "1.0.0",
+            Platform::Macos,
+            Some("aarch64-apple-darwin"),
+            None,
+        )
+        .unwrap();
+}

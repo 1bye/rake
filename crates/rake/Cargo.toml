@@ -12,12 +12,15 @@ workspace = true
 
 [features]
 default = ["gpui"]
+updates = ["dep:rake-updates"]
+updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
 view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
 
 [dependencies]
+rake-updates = { path = "../rake-updates", optional = true }
 rake-resources = { path = "../rake-resources" }
 rake-ui = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }

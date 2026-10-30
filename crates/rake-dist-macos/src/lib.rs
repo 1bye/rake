@@ -1,4 +1,6 @@
 //! macOS metadata policy and native release finalization.
+mod finalize;
+pub use finalize::{notarize, package, preflight, sign_app, verify_artifact};
 mod loaders;
 pub use loaders::{normalize_loaders, signable_inventory};
 use std::path::Path;

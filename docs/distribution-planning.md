@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 A PNG or SVG icon generates PNG/ICO variants; the Mac engine generates ICNS.
 The SVG renderer accepts vector shapes without external image references.
 Windows custom manifests replace resource #1 on a staged PE after linking;
-start from `crates/rake-build/templates/windows.manifest.xml` to retain GPUI's
+start from `crates/rake-dist-windows/templates/default.manifest.xml` to retain GPUI's
 DPI, compatibility and heap settings. `rake-build` adds no competing manifest.
 The SDK's `mt.exe` validates and reads back the embedded resource.
 
@@ -116,3 +116,22 @@ Each distribution includes `components.lock.json`. Check it in as
 requires that lock. `--offline-components` prohibits component downloads and
 uses only verified cached bytes. Native installer engines can still require their
 own native tools; this flag applies specifically to component resolution.
+
+macOS App/ZIP/DMG finalization now signs all native payloads inside out, verifies
+signatures, and optionally requires notarization and stapled tickets. Set
+`macos.signing_identity` and `macos.notary_profile` to existing local identity /
+Keychain profile names, or pass `--sign-identity` and `--notary-profile`.
+`--trusted` refuses missing release credentials. Ordinary development bundles
+use ad-hoc signing. Ticket/signature checks run again after final copying.
+`macos.universal = true` builds both Rust targets and combines them with lipo;
+helpers and native libraries must also contain both slices.
+
+Windows signing uses `windows.certificate_thumbprint` from the existing
+current-user My certificate store, with `windows.timestamp_url` for trusted
+releases. The signer verifies Authenticode after signing. MSIX requires a
+certificate-matching `windows.msix.publisher`; an optional full
+`windows.msix.manifest` must preserve generated identity and executable fields.
+Velopack uses pinned vpk 1.2.161 and selects the matching Rake SDK feature for its
+build variant. `#[rake::app]` runs installer startup ahead of the app factory;
+manual entry points must call `rake::early_startup()` first. Automatic SDK
+application of downloaded updates on startup is disabled so restart can be guarded.

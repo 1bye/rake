@@ -1,4 +1,9 @@
 //! Replaces one staged Win32 manifest, preserving GPUI's required declarations.
+mod packages;
+pub use packages::{
+    Msix, certificate_subject, msix_manifest, package_msix, package_velopack, preflight, sign,
+};
+
 use std::{fs, path::Path, process::Command};
 
 /// Native Windows metadata errors.
@@ -11,7 +16,7 @@ pub enum Error {
     #[error("custom manifest must retain GPUI declarations: {0}")]
     Manifest(&'static str),
     /// Windows SDK rejected the manifest replacement.
-    #[error("mt.exe failed to update or verify resource #1: {0}")]
+    #[error("Windows distribution tool failed: {0}")]
     Tool(String),
 }
 
@@ -94,12 +99,44 @@ fn mt(command: &mut Command) -> Result<(), Error> {
     }
     Ok(())
 }
+/// Writes one generated manifest into the staged executable, preserving icon/version resources.
+/// # Errors
+/// Requires a valid numeric native version and the Windows SDK.
+pub fn apply_default_manifest(binary: &Path, identifier: &str, version: &str) -> Result<(), Error> {
+    let fields = version.split(['-', '+']).next().unwrap_or("");
+    let mut parts = fields
+        .split('.')
+        .map(str::parse::<u16>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| Error::Tool(error.to_string()))?;
+    if !(3..=4).contains(&parts.len()) {
+        return Err(Error::Tool(
+            "native executable version requires 3–4 numeric fields".into(),
+        ));
+    }
+    if parts.len() == 3 {
+        parts.push(0);
+    }
+    let version = parts
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(".");
+    let xml = include_str!("../templates/default.manifest.xml")
+        .replace("dev.rake.application", identifier)
+        .replace("version=\"1.0.0.0\"", &format!("version=\"{version}\""));
+    let directory = tempfile::tempdir()?;
+    let manifest = directory.path().join("application.manifest");
+    fs::write(&manifest, xml)?;
+    apply_manifest(binary, &manifest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_manifest;
     #[test]
     fn custom_manifest_retains_gpui_settings_and_rejects_comment_spoofing() {
-        let xml = include_str!("../../rake-build/templates/windows.manifest.xml");
+        let xml = include_str!("../templates/default.manifest.xml");
         validate_manifest(xml).unwrap();
         assert!(validate_manifest(&format!("<assembly><!-- {xml} --></assembly>")).is_err());
         assert!(validate_manifest(&xml.replace("PerMonitorV2", "System")).is_err());

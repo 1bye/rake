@@ -43,7 +43,7 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
     let manifest = if cfg!(windows) {
         fs::write(
             root.join("custom.manifest"),
-            include_str!("../../rake-build/templates/windows.manifest.xml"),
+            include_str!("../../rake-dist-windows/templates/default.manifest.xml"),
         )
         .unwrap();
         format!("{manifest}\n[package.metadata.rake.bundle.windows]\nmanifest='custom.manifest'\n")

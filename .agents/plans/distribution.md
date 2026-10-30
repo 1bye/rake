@@ -1,6 +1,6 @@
 # Plan for cross platform product distribution
 
-Status: proposed implementation plan. Date: 2026-10-30.
+Status: implementation in progress; see ../reports/distribution-progress.md. Date: 2026-10-30.
 
 Rake should provide one application configuration and one release workflow for
 macOS, Windows and Linux. The implementation covers installation, icons and

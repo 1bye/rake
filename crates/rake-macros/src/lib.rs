@@ -277,6 +277,7 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
         #[cfg(not(target_family = "wasm"))]
         /// Runs the application on the native host.
         pub fn main() {
+            #rake::early_startup();
             if let Err(error) = #factory().run() {
                 eprintln!("Rake startup failed: {error}");
                 ::std::process::exit(1);

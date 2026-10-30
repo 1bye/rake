@@ -82,6 +82,16 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
             &output,
         )?;
         let mut resource = tauri_winres::WindowsResource::new();
+        let version = config
+            .package_version
+            .clone()
+            .unwrap_or(std::env::var("CARGO_PKG_VERSION")?);
+        let numeric = windows_version(&version)?;
+        resource
+            .set_version_info(tauri_winres::VersionInfo::FILEVERSION, numeric)
+            .set_version_info(tauri_winres::VersionInfo::PRODUCTVERSION, numeric)
+            .set("FileVersion", &version)
+            .set("ProductVersion", &version);
         resource
             .set("ProductName", &name)
             .set("FileDescription", &name)
@@ -97,6 +107,25 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
         resource.compile()?;
     }
     Ok(())
+}
+
+fn windows_version(version: &str) -> Result<u64, Box<dyn std::error::Error>> {
+    let version = version
+        .split(['-', '+'])
+        .next()
+        .ok_or("missing Windows file version")?;
+    let fields: Vec<u16> = version
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<_, _>>()?;
+    if !(3..=4).contains(&fields.len()) {
+        return Err("Windows file version needs three or four numeric fields".into());
+    }
+    Ok(fields
+        .iter()
+        .chain(std::iter::repeat(&0))
+        .take(4)
+        .fold(0_u64, |value, field| (value << 16) | u64::from(*field)))
 }
 
 /// Generates PNG and ICO variants from one PNG; a simple neutral icon is the default.
@@ -146,4 +175,41 @@ pub fn generate_icons(
     resized.save(directory.join("icon.png"))?;
     resized.save(directory.join("icon.ico"))?;
     Ok(directory)
+}
+
+/// Generates required MSIX store/tile assets from the normalized icon.
+/// # Errors
+/// Returns icon decoding or output filesystem errors.
+pub fn generate_msix_assets(
+    icons: &Path,
+    payload: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let image = image::open(icons.join("icon.png"))?.into_rgba8();
+    let assets = payload.join("Assets");
+    fs::create_dir_all(&assets)?;
+    for (name, size) in [
+        ("StoreLogo.png", 50),
+        ("Square150x150Logo.png", 150),
+        ("Square44x44Logo.png", 44),
+    ] {
+        image::imageops::resize(&image, size, size, image::imageops::FilterType::Lanczos3)
+            .save(assets.join(name))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pe_versions_preserve_numeric_mapping_and_reject_overflow() {
+        assert_eq!(
+            super::windows_version("1.2.3-beta.4").unwrap(),
+            (1_u64 << 48) | (2_u64 << 32) | (3_u64 << 16)
+        );
+        assert_eq!(
+            super::windows_version("1.2.3.4").unwrap(),
+            (1_u64 << 48) | (2_u64 << 32) | (3_u64 << 16) | 4
+        );
+        assert!(super::windows_version("65536.1.0").is_err());
+    }
 }

@@ -7,7 +7,15 @@ pub(crate) fn handles(arguments: &[String]) -> bool {
     if arguments.iter().any(|arg| {
         matches!(
             arg.as_str(),
-            "--native" | "--plan" | "--schema" | "--platform" | "--target-triple" | "--format"
+            "--native"
+                | "--plan"
+                | "--schema"
+                | "--platform"
+                | "--target-triple"
+                | "--format"
+                | "--trusted"
+                | "--notary-profile"
+                | "--certificate-thumbprint"
         )
     }) {
         return true;
@@ -60,6 +68,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     let mut release = true;
     let mut offline_components = false;
     let mut locked_components = false;
+    let mut trust = rake_dist::TrustOptions::default();
     let mut manifest = PathBuf::from("Cargo.toml");
     let mut package = None;
     let mut platform = std::env::consts::OS;
@@ -70,6 +79,28 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         match argument.as_str() {
             "--plan" | "--json" | "--native" => {}
             "--release" => release = true,
+            "--trusted" => trust.required = true,
+            "--sign-identity" => {
+                trust.macos_identity = Some(
+                    args.next()
+                        .ok_or("--sign-identity requires a value")?
+                        .clone(),
+                )
+            }
+            "--notary-profile" => {
+                trust.notary_profile = Some(
+                    args.next()
+                        .ok_or("--notary-profile requires a value")?
+                        .clone(),
+                )
+            }
+            "--certificate-thumbprint" => {
+                trust.windows_thumbprint = Some(
+                    args.next()
+                        .ok_or("--certificate-thumbprint requires a value")?
+                        .clone(),
+                )
+            }
             "--offline-components" => offline_components = true,
             "--locked-components" => locked_components = true,
             "--debug" => release = false,
@@ -159,6 +190,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             release,
             offline_components,
             locked_components,
+            trust,
         };
         let result = rake_dist::bundle(&request, &std::env::current_exe()?, &cancelled)?;
         println!("{}", serde_json::to_string_pretty(&result)?);

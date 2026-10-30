@@ -55,3 +55,31 @@ jobs:
       - name: Build and package the real GPUI application with custom manifest
         if: runner.os == 'Windows'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
+      - name: Create a disposable local Windows signing profile
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Rake CI Distribution' -KeyExportPolicy NonExportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
+          $public = Join-Path $env:RUNNER_TEMP 'rake-test-public.cer'
+          Export-Certificate -Cert $cert -FilePath $public | Out-Null
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+          "RAKE_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+      - name: Windows SDK signing, installation and upgrade
+        if: runner.os == 'Windows'
+        run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --locked
+      - name: Verify Velopack startup precedes the app factory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo run -p rake-updates --features velopack --example velopack-startup --locked -- --veloapp-version
+          if ($LASTEXITCODE -ne 0) { throw 'Velopack installer startup failed' }
+      - name: Remove disposable signing profile
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:RAKE_TEST_CERT_THUMBPRINT) {
+            foreach ($store in @('My', 'Root', 'TrustedPeople')) {
+              Remove-Item -LiteralPath "Cert:\CurrentUser\$store\$env:RAKE_TEST_CERT_THUMBPRINT" -ErrorAction SilentlyContinue
+            }
+          }

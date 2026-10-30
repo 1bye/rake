@@ -102,6 +102,30 @@ fn system(path: &str) -> bool {
 /// Requires otool/install_name_tool and a complete confined native inventory.
 pub fn normalize_loaders(root: &Path) -> Result<Vec<PathBuf>, Error> {
     let inventory = signable_inventory(root)?;
+    let contents = fs::canonicalize(root)?.join("Contents");
+    let descriptor = contents.join("Resources/rake-installation.json");
+    let groups = if descriptor.is_file() {
+        let installation: rake_dist_core::Installation =
+            serde_json::from_slice(&fs::read(descriptor)?)
+                .map_err(|error| Error::Native(error.to_string()))?;
+        let mut groups = Vec::new();
+        for members in installation.native_groups.into_values() {
+            let mut paths = Vec::new();
+            for member in members {
+                rake_dist_core::validate_relative_path(&member)
+                    .map_err(|error| Error::Native(error.to_string()))?;
+                let member = fs::canonicalize(contents.join(member))?;
+                if !member.starts_with(&contents) {
+                    return Err(Error::Native("native group escapes bundle".into()));
+                }
+                paths.push(member);
+            }
+            groups.push(paths);
+        }
+        groups
+    } else {
+        Vec::new()
+    };
     let mut names: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     for file in &inventory {
         names
@@ -120,6 +144,18 @@ pub fn normalize_loaders(root: &Path) -> Result<Vec<PathBuf>, Error> {
         values.dedup();
     }
     for file in &inventory {
+        if file
+            .extension()
+            .is_some_and(|extension| extension == "dylib")
+        {
+            run(Command::new("install_name_tool")
+                .arg("-id")
+                .arg(format!(
+                    "@rpath/{}",
+                    file.file_name().unwrap_or_default().to_string_lossy()
+                ))
+                .arg(file))?;
+        }
         let output = run(Command::new("otool").arg("-L").arg(file))?;
         let dependencies: BTreeSet<_> = output
             .lines()
@@ -140,7 +176,20 @@ pub fn normalize_loaders(root: &Path) -> Result<Vec<PathBuf>, Error> {
                     file.display()
                 ))
             })?;
-            let selected = if candidates.len() == 1 {
+            let group = groups
+                .iter()
+                .find(|members| members.iter().any(|member| file.starts_with(member)));
+            let local: Vec<_> = candidates
+                .iter()
+                .filter(|candidate| {
+                    group.is_some_and(|members| {
+                        members.iter().any(|member| candidate.starts_with(member))
+                    })
+                })
+                .collect();
+            let selected = if local.len() == 1 {
+                local[0]
+            } else if candidates.len() == 1 {
                 &candidates[0]
             } else {
                 let relative = dependency.strip_prefix("@rpath/").unwrap_or(dependency);
@@ -175,6 +224,7 @@ pub fn normalize_loaders(root: &Path) -> Result<Vec<PathBuf>, Error> {
         }
         let commands = run(Command::new("otool").arg("-l").arg(file))?;
         let mut in_rpath = false;
+        let mut rpaths = BTreeSet::new();
         for line in commands.lines() {
             let line = line.trim();
             if line.starts_with("cmd ") {
@@ -187,10 +237,13 @@ pub fn normalize_loaders(root: &Path) -> Result<Vec<PathBuf>, Error> {
                 && path.starts_with('/')
                 && !system(path)
             {
-                run(Command::new("install_name_tool")
-                    .args(["-delete_rpath", path])
-                    .arg(file))?;
+                rpaths.insert(path);
             }
+        }
+        for path in rpaths {
+            run(Command::new("install_name_tool")
+                .args(["-delete_rpath", path])
+                .arg(file))?;
         }
     }
     Ok(inventory)

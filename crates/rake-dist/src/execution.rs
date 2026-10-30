@@ -40,6 +40,9 @@ pub struct BundleRequest {
     /// Require all resolved inputs to match a checked-in rake-dist.lock.
     #[serde(default)]
     pub locked_components: bool,
+    /// Public local signing references and release enforcement.
+    #[serde(default)]
+    pub trust: rake_dist_core::TrustOptions,
 }
 
 /// Final artifact with deterministic integrity information (not an update signature).
@@ -56,6 +59,9 @@ pub struct Artifact {
     /// Exact native component inputs and prepared tree hashes.
     #[serde(default)]
     pub components: Vec<components::ComponentLock>,
+    /// Actual native verifier results for this artifact.
+    #[serde(default)]
+    pub trust: rake_dist_core::TrustRecord,
 }
 
 /// Versioned result for every requested native artifact.
@@ -133,7 +139,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             request.platform
         )));
     }
-    let target = request.target.clone().map_or_else(host_target, Ok)?;
+    let mut target = request.target.clone().map_or_else(host_target, Ok)?;
     let metadata_output = Command::new("cargo")
         .args([
             "metadata",
@@ -158,7 +164,23 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         Some(&target),
         (!request.formats.is_empty()).then_some(&request.formats),
     )?;
+    if plan.platform() == Platform::Macos && plan.config().macos.universal {
+        target = "universal-apple-darwin".into();
+    }
     let metadata: Metadata = serde_json::from_slice(&metadata_output.stdout)?;
+    for item in plan.packages() {
+        let trust = effective_trust(item.config(), &request.trust);
+        match plan.platform() {
+            Platform::Macos => {
+                rake_dist_macos::preflight(&trust).map_err(|e| Error::Execution(e.to_string()))?
+            }
+            Platform::Windows => {
+                rake_dist_windows::preflight(&trust, item.config().windows.timestamp_url.as_deref())
+                    .map_err(|e| Error::Execution(e.to_string()))?
+            }
+            _ => {}
+        }
+    }
     let selected = metadata
         .packages
         .iter()
@@ -249,14 +271,43 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         } else {
             ""
         };
-        let built = build(
-            &selected.manifest_path,
-            &selected.name,
-            binary,
-            &target,
-            request.release,
-            item.format(),
-        )?;
+        let build_for = |target| {
+            build(
+                &selected.manifest_path,
+                &selected.name,
+                binary,
+                target,
+                request.release,
+                item.format(),
+                selected
+                    .dependencies
+                    .iter()
+                    .find(|dependency| dependency.name == "rake")
+                    .map(|dependency| dependency.rename.as_deref().unwrap_or("rake")),
+            )
+        };
+        let built = if target == "universal-apple-darwin" {
+            let arm = build_for("aarch64-apple-darwin")?;
+            let intel = build_for("x86_64-apple-darwin")?;
+            let output = stage.join("universal-binary");
+            let result = Command::new("lipo")
+                .arg("-create")
+                .arg(&arm)
+                .arg(&intel)
+                .arg("-output")
+                .arg(&output)
+                .output()?;
+            if !result.status.success() {
+                return Err(Error::Execution(
+                    String::from_utf8_lossy(&result.stderr).into(),
+                ));
+            }
+            fs::set_permissions(&output, fs::metadata(&arm)?.permissions())?;
+            components::architecture(&output, &target)?;
+            output
+        } else {
+            build_for(&target)?
+        };
         files::copy(&built, &bin.join(format!("{binary}{suffix}")))?;
         let config = item.config();
         let mut resources = HashMap::new();
@@ -287,6 +338,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             schema_version: 1,
             identifier: plan.identifier().into(),
             version: plan.version().into(),
+            package_version: item.version().version.clone(),
             target: target.clone(),
             platform: plan.platform(),
             format: item.format(),
@@ -295,6 +347,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             helpers: Default::default(),
             runtimes: Default::default(),
             frameworks: Default::default(),
+            native_groups: Default::default(),
         };
         for helper in &config.sidecars {
             let path = PathBuf::from(helper.path.to_string_lossy().replace("{target}", &target));
@@ -307,6 +360,18 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 relative.to_string_lossy().into_owned(),
             );
             components::architecture(&destination, &target)?;
+            if let Some(component) = &helper.component {
+                let member = if plan.platform() == Platform::Macos {
+                    PathBuf::from("Resources").join(&relative)
+                } else {
+                    relative.clone()
+                };
+                descriptor
+                    .native_groups
+                    .entry(component.clone())
+                    .or_default()
+                    .push(member);
+            }
             descriptor.helpers.insert(helper.name.clone(), relative);
         }
         let frameworks = recipes::runtimes(recipes::Input {
@@ -385,14 +450,19 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             descriptor_path.to_string_lossy().into_owned(),
             "rake-installation.json".into(),
         );
-        if request.platform == Platform::Windows
-            && let Some(manifest) = &config.windows.manifest
-        {
-            rake_dist_windows::apply_manifest(
-                &bin.join(format!("{binary}{suffix}")),
-                &files::confined(root, manifest)?,
-            )
-            .map_err(|e| Error::Execution(e.to_string()))?;
+        if request.platform == Platform::Windows {
+            let binary_path = bin.join(format!("{binary}{suffix}"));
+            if let Some(manifest) = &config.windows.manifest {
+                rake_dist_windows::apply_manifest(&binary_path, &files::confined(root, manifest)?)
+                    .map_err(|error| Error::Execution(error.to_string()))?;
+            } else {
+                rake_dist_windows::apply_default_manifest(
+                    &binary_path,
+                    plan.identifier(),
+                    &item.version().version,
+                )
+                .map_err(|error| Error::Execution(error.to_string()))?;
+            }
         }
         let source_icon = config
             .icon
@@ -405,25 +475,81 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             .into_iter()
             .map(|name| icon_directory.join(name).to_string_lossy().into_owned())
             .collect();
-        let paths = engine::package(engine::Input {
-            plan: &plan,
-            index,
-            bin: &bin,
-            binary,
-            target: &target,
-            root,
-            resources,
-            icons,
-            helpers: Vec::new(),
-            frameworks,
-        })?;
-        for path in paths {
-            if plan.platform() == Platform::Macos
-                && path.extension().is_some_and(|extension| extension == "app")
-            {
-                rake_dist_macos::normalize_loaders(&path)
-                    .map_err(|error| Error::Execution(error.to_string()))?;
+        let trust = effective_trust(config, &request.trust);
+        if plan.platform() == Platform::Windows {
+            sign_windows_tree(&bin, &trust, config.windows.timestamp_url.as_deref())?;
+            sign_windows_tree(
+                &resource_stage,
+                &trust,
+                config.windows.timestamp_url.as_deref(),
+            )?;
+        }
+        let paths = if plan.platform() == Platform::Windows
+            && matches!(item.format(), Format::Msix | Format::Velopack | Format::Zip)
+        {
+            let payload = stage.join("payload");
+            fs::create_dir_all(&payload)?;
+            files::copy(
+                &bin.join(format!("{binary}.exe")),
+                &payload.join(format!("{binary}.exe")),
+            )?;
+            for (source, relative) in &resources {
+                files::copy(Path::new(source), &payload.join(relative))?;
             }
+            windows_package(
+                &plan,
+                index,
+                &payload,
+                &stage,
+                binary,
+                &target,
+                &icon_directory,
+                root,
+                &trust,
+            )?
+        } else {
+            engine::package(engine::Input {
+                plan: &plan,
+                index,
+                bin: &bin,
+                binary,
+                target: &target,
+                root,
+                resources,
+                icons,
+                helpers: Vec::new(),
+                frameworks,
+            })?
+        };
+        for path in paths {
+            let (path, trust_record) = if plan.platform() == Platform::Macos {
+                let entitlements = config
+                    .macos
+                    .entitlements
+                    .as_ref()
+                    .map(|path| files::confined(root, path))
+                    .transpose()?;
+                rake_dist_macos::package(
+                    &path,
+                    item.format(),
+                    &stage,
+                    config.name.as_deref().unwrap_or(plan.name()),
+                    &trust,
+                    entitlements.as_deref(),
+                )
+                .map_err(|error| Error::Execution(error.to_string()))?
+            } else if plan.platform() == Platform::Windows
+                && path.extension().is_some_and(|extension| {
+                    matches!(extension.to_str(), Some("exe" | "msi" | "msix"))
+                })
+            {
+                let record =
+                    rake_dist_windows::sign(&path, &trust, config.windows.timestamp_url.as_deref())
+                        .map_err(|error| Error::Execution(error.to_string()))?;
+                (path, record)
+            } else {
+                (path, rake_dist_core::TrustRecord::default())
+            };
             if !fs::canonicalize(&path)?.starts_with(fs::canonicalize(&stage)?) {
                 return Err(Error::Execution("engine output escaped job".into()));
             }
@@ -438,12 +564,17 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                     .ok_or_else(|| Error::Execution("artifact parent".into()))?,
             )?;
             files::copy(&path, &destination)?;
+            if plan.platform() == Platform::Macos {
+                rake_dist_macos::verify_artifact(&destination, item.format(), &trust_record)
+                    .map_err(|error| Error::Execution(error.to_string()))?;
+            }
             artifacts.push(Artifact {
                 path: relative,
                 format: item.format(),
                 sha256: files::digest(&destination)?,
                 package_version: item.version().version.clone(),
                 components: prepared.locks.clone(),
+                trust: trust_record,
             });
         }
     }
@@ -485,6 +616,7 @@ fn build(
     target: &str,
     release: bool,
     format: Format,
+    facade: Option<&str>,
 ) -> Result<PathBuf, Error> {
     let mut command = Command::new("cargo");
     command
@@ -497,6 +629,14 @@ fn build(
         ])
         .arg(manifest)
         .args(["--package", package, "--bin", binary, "--target", target]);
+    if format == Format::Velopack {
+        let facade = facade.ok_or_else(|| {
+            Error::Execution("Velopack requires the Rake facade's early startup integration".into())
+        })?;
+        command
+            .arg("--features")
+            .arg(format!("{facade}/updates-velopack"));
+    }
     command.env(
         "RAKE_DISTRIBUTION_FORMAT",
         serde_json::to_value(format)?
@@ -541,4 +681,128 @@ fn build(
         return Err(Error::Execution("Cargo build failed".into()));
     }
     executable.ok_or_else(|| Error::Execution("Cargo did not report an executable".into()))
+}
+
+fn effective_trust(
+    config: &crate::Config,
+    overrides: &rake_dist_core::TrustOptions,
+) -> rake_dist_core::TrustOptions {
+    rake_dist_core::TrustOptions {
+        required: overrides.required,
+        macos_identity: overrides
+            .macos_identity
+            .clone()
+            .or_else(|| config.macos.signing_identity.clone()),
+        notary_profile: overrides
+            .notary_profile
+            .clone()
+            .or_else(|| config.macos.notary_profile.clone()),
+        windows_thumbprint: overrides
+            .windows_thumbprint
+            .clone()
+            .or_else(|| config.windows.certificate_thumbprint.clone()),
+    }
+}
+
+fn sign_windows_tree(
+    root: &Path,
+    trust: &rake_dist_core::TrustOptions,
+    timestamp: Option<&str>,
+) -> Result<(), Error> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            sign_windows_tree(&entry.path(), trust, timestamp)?;
+        } else if entry.file_type()?.is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| matches!(extension.to_str(), Some("exe" | "dll")))
+        {
+            rake_dist_windows::sign(&entry.path(), trust, timestamp)
+                .map_err(|e| Error::Execution(e.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one private platform dispatch boundary"
+)]
+fn windows_package(
+    plan: &crate::Plan,
+    index: usize,
+    payload: &Path,
+    stage: &Path,
+    binary: &str,
+    target: &str,
+    icons: &Path,
+    root: &Path,
+    trust: &rake_dist_core::TrustOptions,
+) -> Result<Vec<PathBuf>, Error> {
+    let item = &plan.packages()[index];
+    let config = item.config();
+    match item.format() {
+        Format::Msix => {
+            let publisher = config
+                .windows
+                .msix
+                .publisher
+                .as_deref()
+                .ok_or_else(|| Error::Execution("MSIX publisher missing".into()))?;
+            if let Some(thumbprint) = &trust.windows_thumbprint {
+                let subject = rake_dist_windows::certificate_subject(thumbprint)
+                    .map_err(|e| Error::Execution(e.to_string()))?;
+                if subject != publisher {
+                    return Err(Error::Execution(
+                        "MSIX publisher differs from signing certificate subject".into(),
+                    ));
+                }
+            }
+            rake_build::generate_msix_assets(icons, payload)
+                .map_err(|e| Error::Execution(e.to_string()))?;
+            let custom = config
+                .windows
+                .msix
+                .manifest
+                .as_ref()
+                .map(|path| files::confined(root, path))
+                .transpose()?;
+            let settings = rake_dist_windows::Msix {
+                identifier: plan.identifier(),
+                publisher,
+                version: &item.version().version,
+                target,
+                executable: &format!("{binary}.exe"),
+                name: plan.name(),
+                manifest: custom.as_deref(),
+            };
+            Ok(vec![
+                rake_dist_windows::package_msix(payload, stage, &settings)
+                    .map_err(|e| Error::Execution(e.to_string()))?,
+            ])
+        }
+        Format::Velopack => {
+            let output = stage.join("velopack");
+            fs::create_dir_all(&output)?;
+            rake_dist_windows::package_velopack(
+                payload,
+                &output,
+                plan.identifier(),
+                &item.version().version,
+                &format!("{binary}.exe"),
+                config.updates.channel.as_deref().unwrap_or("stable"),
+            )
+            .map_err(|e| Error::Execution(e.to_string()))
+        }
+        Format::Zip => {
+            let output = stage.join(format!("{binary}.zip"));
+            crate::archives::zip(payload, &output)?;
+            Ok(vec![output])
+        }
+        _ => Err(Error::Execution(
+            "unsupported dedicated Windows format".into(),
+        )),
+    }
 }

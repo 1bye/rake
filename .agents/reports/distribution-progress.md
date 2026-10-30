@@ -56,10 +56,24 @@ recipes, architecture inspection including universal Mach-O inputs, and macOS
 loader normalization against declared staged code. Tests cover verified offline
 cache/extraction, corrupt/missing cache, tar-link escape, wrong target sources,
 real helper execution after relocation and locked input changes preserving the
-previous output. Media fixture execution will be completed with P5 final signing.
-No clean-machine FFmpeg/GStreamer claim is made yet.
+previous output. The P5 media suite now runs real FFmpeg and GStreamer after relocation with
+103 native files, private scanner/plugin paths, an empty registry, and a clean
+child PATH/working directory. It processes a video frame and loads coreelements.
+Duplicate library names across components are isolated through declared groups.
+This establishes macOS media deployment with these local inputs, not every distro.
 
-P5-P9: in progress. Native platform/update acceptance remains required; archive
+P5: implemented inside-out macOS signing, required local identity/profile
+preflight, notarization/stapling, App/ZIP/DMG assembly and post-copy verification.
+The production executor passed Developer ID/notary/ticket checks on a linked
+framework app and ran the final copied binary. A universal pure-Rust app contains
+both arm64/x86_64 slices and runs on Apple Silicon; helpers/runtimes must contain
+both slices when universal is selected. Added Windows local-store Authenticode
+sign/verify, SDK MSIX manifests/assets/assembly, pinned Velopack release-family
+packaging and early SDK startup ahead of macro app factories. The SDK disables
+auto-apply on startup. Added native Windows SDK/package/signing acceptance suites.
+Windows native installation/signing and Velopack packaging remain validation gates.
+
+P6-P9: in progress. Native platform/update acceptance remains required; archive
 assembly and portable tests do not establish installation or upgrade support.
 
 CI runs (only one full matrix and one Windows-only retry):

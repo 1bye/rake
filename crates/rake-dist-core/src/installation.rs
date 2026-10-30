@@ -13,6 +13,9 @@ pub struct Installation {
     pub identifier: String,
     /// Cargo semantic version.
     pub version: String,
+    /// Native version used by this installation channel (empty in older descriptors).
+    #[serde(default)]
+    pub package_version: String,
     /// Rust build target.
     pub target: String,
     /// Operating system.
@@ -30,4 +33,7 @@ pub struct Installation {
     /// macOS frameworks relative to Contents/Frameworks.
     #[serde(default)]
     pub frameworks: BTreeMap<String, PathBuf>,
+    /// Native loader isolation groups, relative to Contents on macOS.
+    #[serde(default)]
+    pub native_groups: BTreeMap<String, Vec<PathBuf>>,
 }

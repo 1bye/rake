@@ -75,7 +75,21 @@ pub(crate) fn convert(
                     "macOS prerelease requires a monotonic build_number".into(),
                 ));
             }
+            let parts: Vec<_> = mapped.split('.').collect();
+            if parts.len() != 3 || parts.iter().any(|part| part.parse::<u64>().is_err()) {
+                return Err(Error::Field(
+                    "macOS package_version requires three numeric fields".into(),
+                ));
+            }
             mapped.into()
+        }
+        Format::Velopack | Format::Appimage => {
+            let mapped = explicit
+                .map(str::to_owned)
+                .unwrap_or_else(|| version.to_string());
+            semver::Version::parse(&mapped)
+                .map_err(|_| Error::Field("updater package_version must use SemVer".into()))?;
+            mapped
         }
         _ => explicit
             .map(str::to_owned)

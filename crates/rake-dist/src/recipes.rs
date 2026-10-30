@@ -78,6 +78,13 @@ pub(crate) fn runtimes(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                 descriptor
                     .frameworks
                     .insert(runtime.name.clone(), PathBuf::from(name));
+                if let Some(component) = &runtime.component {
+                    descriptor
+                        .native_groups
+                        .entry(component.clone())
+                        .or_default()
+                        .push(PathBuf::from("Frameworks").join(name));
+                }
                 frameworks.push(stage);
             }
             "directory" | "gstreamer" => {
@@ -92,6 +99,18 @@ pub(crate) fn runtimes(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                     destination.to_string_lossy().into_owned(),
                     relative.to_string_lossy().into_owned(),
                 );
+                if let Some(component) = &runtime.component {
+                    let member = if descriptor.platform == Platform::Macos {
+                        PathBuf::from("Resources").join(&relative)
+                    } else {
+                        relative.clone()
+                    };
+                    descriptor
+                        .native_groups
+                        .entry(component.clone())
+                        .or_default()
+                        .push(member);
+                }
                 descriptor.runtimes.insert(runtime.name.clone(), relative);
             }
             name => {

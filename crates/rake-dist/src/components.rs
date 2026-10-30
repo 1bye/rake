@@ -363,6 +363,10 @@ fn validate_tree(root: &Path, path: &Path) -> Result<(), Error> {
 }
 
 pub(crate) fn architecture(path: &Path, target: &str) -> Result<(), Error> {
+    if target == "universal-apple-darwin" {
+        architecture(path, "aarch64-apple-darwin")?;
+        return architecture(path, "x86_64-apple-darwin");
+    }
     use object::{Object, read::macho::FatArch};
     if fs::metadata(path)?.len() > 512 * 1024 * 1024 {
         return Err(Error::Execution(

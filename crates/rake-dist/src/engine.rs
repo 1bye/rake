@@ -37,7 +37,8 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
     let item = &plan.packages()[index];
     let kind = match item.format() {
         Format::App => PackageType::MacOsBundle,
-        Format::Dmg => PackageType::Dmg,
+        Format::Dmg => PackageType::MacOsBundle,
+        Format::Zip if plan.platform() == crate::Platform::Macos => PackageType::MacOsBundle,
         Format::Nsis => PackageType::Nsis,
         Format::Msi => PackageType::WindowsMsi,
         Format::Deb => PackageType::Deb,
