@@ -786,6 +786,12 @@ mod tests {
         };
 
         let commands = vec![
+            Command::RecordMemory {
+                owner: "test".into(),
+                enabled: false,
+                interval: 32768,
+                lease_ms: 0,
+            },
             Command::EditElementText {
                 id: "boundary".into(),
                 generation: "1".into(),
@@ -867,6 +873,10 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Memory {
+                owner: "test".into(),
+                include_freed: false,
+            },
             Query::InspectPick {},
             Query::Frames { after: 0 },
             Query::Windows {},

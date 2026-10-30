@@ -27,3 +27,22 @@ The representation retains at most 512 live and 512 recently freed samples,
 Omissions are explicit. Snapshot identities survive repeated captures in one
 generation and expire on a new recording/runtime. Source availability depends on
 native debug information and the existing workspace source confinement.
+
+Enable `rake/devtools-memory` only in development. On Unix, install
+`rake::memory::TrackingAllocator::new(existing_allocator)` as the executable's
+`#[global_allocator]`, behind the application's own development feature. The
+library never selects a global allocator for its consumers. Without the feature
+and gated static, production uses its original allocator with no tracking hooks,
+recorder state or stack unwinding dependency. WASM does not advertise native
+memory capture.
+
+`record_memory` controls one process-wide recorder with a unique client token
+and a renewable lease of at most five seconds. A competing client cannot stop or
+renew it. Expired recording tokens cannot silently start a fresh capture.
+`memory` returns that owner's bounded samples. Allocation hooks delegate to the
+wrapped allocator, including zeroed and failed/reallocated blocks. They suppress
+recursive instrumentation, use nonblocking table access and count admission loss.
+Debug information is resolved only when querying, outside the hook/table lock.
+Sampler and query allocations on their own thread are excluded. Freed blocks
+missed through contention can leave stale samples, so a partial capture is not
+evidence of a leak. Native C/C++ allocator calls are not intercepted.

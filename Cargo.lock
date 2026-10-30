@@ -4528,6 +4528,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-io",
+ "backtrace",
  "console_error_panic_hook",
  "event-listener",
  "futures",

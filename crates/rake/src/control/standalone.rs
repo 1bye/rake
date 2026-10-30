@@ -69,6 +69,7 @@ impl super::host::Host for InspectionClient {
             element_inspection: status,
             element_interaction: status != Status::Unavailable,
             commands: [
+                "record_memory",
                 "navigate_element",
                 "highlight_element",
                 "inspect_mode",
@@ -76,9 +77,12 @@ impl super::host::Host for InspectionClient {
                 "edit_element_text",
                 "record_frames",
             ]
+            .into_iter()
+            .filter(|name| *name != "record_memory" || super::memory::available())
             .map(str::to_owned)
-            .into(),
+            .collect(),
             queries: [
+                "memory",
                 "info",
                 "schema",
                 "diagnostics",
@@ -89,8 +93,10 @@ impl super::host::Host for InspectionClient {
                 "inspect_element",
                 "inspect_pick",
             ]
+            .into_iter()
+            .filter(|name| *name != "memory" || super::memory::available())
             .map(str::to_owned)
-            .into(),
+            .collect(),
             supported_targets: Vec::new(),
             completed_operations: 0,
             pending_operations: 0,
@@ -132,6 +138,16 @@ impl super::host::Host for InspectionClient {
             Message::Query(Query::Frames { after }) => {
                 Ok(Reply::Frames(store.frames(after, &self.0.collector)))
             }
+            Message::Query(Query::Memory {
+                owner,
+                include_freed,
+            }) => super::memory::snapshot(&owner, include_freed),
+            Message::Command(Command::RecordMemory {
+                owner,
+                enabled,
+                interval,
+                lease_ms,
+            }) => super::memory::record(&owner, enabled, interval, lease_ms),
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
             Message::Query(Query::InspectElement { id }) => Ok(Reply::Element(store.element(&id)?)),
             Message::Query(Query::InspectPick {}) => Ok(Reply::InspectPick(store.pick()?)),

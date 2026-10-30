@@ -13,6 +13,7 @@ workspace = true
 [features]
 default = ["gpui"]
 devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]
+devtools-memory = ["devtools", "dep:backtrace"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
 view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]
@@ -38,6 +39,7 @@ gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-c
 
 [target.'cfg(unix)'.dependencies]
 rake-client.workspace = true
+backtrace = { version = "0.3.76", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 anyhow = "1"

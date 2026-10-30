@@ -17,6 +17,7 @@
 
 mod commands;
 mod host;
+mod memory;
 #[cfg(all(feature = "gpui", feature = "devtools"))]
 pub(crate) mod standalone;
 
@@ -138,8 +139,16 @@ impl<R: Route> RuntimeClient<R> {
                 "native"
             }
             .into(),
-            commands: Command::names().iter().map(|name| (*name).into()).collect(),
-            queries: Query::names().iter().map(|name| (*name).into()).collect(),
+            commands: Command::names()
+                .iter()
+                .filter(|name| **name != "record_memory" || memory::available())
+                .map(|name| (*name).into())
+                .collect(),
+            queries: Query::names()
+                .iter()
+                .filter(|name| **name != "memory" || memory::available())
+                .map(|name| (*name).into())
+                .collect(),
             supported_targets: self.router.supported_targets(),
             completed_operations,
             pending_operations,
@@ -178,6 +187,7 @@ impl<R: Route> RuntimeClient<R> {
                         | Command::EditElementStyle { .. }
                         | Command::EditElementText { .. }
                         | Command::RecordFrames { .. }
+                        | Command::RecordMemory { .. }
                 ) {
                     return self.command(&command);
                 }
@@ -265,6 +275,14 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::RecordMemory {
+                owner,
+                enabled,
+                interval,
+                lease_ms,
+            } => {
+                return memory::record(owner, *enabled, *interval, *lease_ms);
+            }
             Command::RecordFrames { enabled, lease_ms } => {
                 self.state.inspection.record_frames(*enabled, *lease_ms)?;
                 return Ok(Reply::Acknowledged);
@@ -410,6 +428,10 @@ impl<R: Route> RuntimeClient<R> {
             Query::Frames { after } => Ok(Reply::Frames(
                 self.router.frame_records(&self.state.inspection, after),
             )),
+            Query::Memory {
+                owner,
+                include_freed,
+            } => memory::snapshot(&owner, include_freed),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),

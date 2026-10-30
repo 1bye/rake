@@ -12,6 +12,9 @@ mod inspection_macros;
 
 pub mod control;
 
+#[cfg(all(feature = "devtools-memory", unix))]
+pub mod memory;
+
 pub use rake_diagnostics as diagnostics;
 
 pub use rake_http as http;

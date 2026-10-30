@@ -48,6 +48,17 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Starts/renews or stops a process-wide native allocation recording lease.
+    RecordMemory {
+        /// Unique client recording token, 1–128 bytes; never reused after stop/expiry.
+        owner: String,
+        /// Start/renew capture, or freeze retained samples.
+        enabled: bool,
+        /// Poisson sample interval, 256–16777216 requested bytes.
+        interval: u64,
+        /// Lease 1–5000 ms when enabled. Expiry stops hooks without client cleanup.
+        lease_ms: u64,
+    },
     /// Edits rendered text without changing application state or Rust source.
     EditElementText {
         /// Exact current text boundary.
@@ -207,6 +218,7 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "record_memory",
             "record_frames",
             "edit_element_style",
             "edit_element_text",
@@ -237,6 +249,13 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Samples owned by one exact native recording, with bounded symbolization.
+    Memory {
+        /// Exact recording token supplied to RecordMemory.
+        owner: String,
+        /// Include recently freed allocation samples for churn analysis.
+        include_freed: bool,
+    },
     /// Retained frame timings after a recording sequence, with loss and continuation metadata.
     Frames {
         /// Exclusive recording cursor, zero starts at retained history.
@@ -326,6 +345,7 @@ impl Query {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "memory",
             "windows",
             "window",
             "quit",
@@ -433,6 +453,8 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    /// Native allocation samples, without ownership graph or exact heap claims.
+    Memory(crate::inspection::memory::Snapshot),
     /// Capture generation, hover and sequenced click selection.
     InspectPick(crate::inspection::Pick),
     /// Guarded application shutdown status.
@@ -478,6 +500,12 @@ pub enum Reply {
 /// Structured protocol errors; transport failures are reported separately as I/O errors.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum ControlError {
+    /// Invalid native recording parameters, unavailable allocator, or owner conflict.
+    #[error("memory recording: {reason}")]
+    Memory {
+        /// Actionable native recorder failure.
+        reason: String,
+    },
     /// This host does not implement the requested operation; consult RuntimeInfo capabilities.
     #[error("this host does not support {operation}")]
     Unsupported {
