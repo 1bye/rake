@@ -46,3 +46,20 @@ Debug information is resolved only when querying, outside the hook/table lock.
 Sampler and query allocations on their own thread are excluded. Freed blocks
 missed through contention can leave stale samples, so a partial capture is not
 evidence of a leak. Native C/C++ allocator calls are not intercepted.
+
+Chrome's **Allocation sampling** uses `HeapProfiler.startSampling`,
+`getSamplingProfile` and `stopSampling`. Call-tree IDs stay stable across polls of
+one recording. Rows carry demangled native function names and captured Rust source
+links where debug information is available. Recently freed samples are included
+when Chrome requests either collected-object option; Rust has no minor/major GC.
+Profiles expose bounded measurement/count/loss metadata in their `rake` field and
+through `Rake.getMemorySummary`. Chrome's JavaScript heap usage remains zero;
+that number does not measure the native heap. Garbage-collection requests fail
+explicitly. Closing the connection, disabling HeapProfiler or replacing the native
+runtime stops the recorder; the lease also expires after client failure.
+
+The routing example's `memory-test` feature installs the wrapper in its native
+executable. Its typed `test.memory({"action":"allocate"})` operation retains eight
+1 MiB blocks; `release` drops them, and `churn` allocates/drops eight temporary blocks.
+At most sixteen fixture blocks can be retained. These operations are absent from
+ordinary example builds.

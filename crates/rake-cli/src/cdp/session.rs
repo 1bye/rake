@@ -49,6 +49,7 @@ struct Session {
     tracked_style_node: Option<i32>,
     edit_sheets: BTreeSet<i32>,
     frame_trace: super::frames::Trace,
+    memory: super::memory::Memory,
     pending_trace_complete: Option<Value>,
     detached: Option<String>,
 }
@@ -84,6 +85,7 @@ impl Session {
             tracked_style_node: None,
             edit_sheets: BTreeSet::new(),
             frame_trace: super::frames::Trace::default(),
+            memory: super::memory::Memory::default(),
             pending_trace_complete: None,
             detached: None,
         }
@@ -128,6 +130,29 @@ impl Session {
         }
 
         match method {
+            "HeapProfiler.enable" => Ok(json!({})),
+            "HeapProfiler.disable" => {
+                self.stop_memory();
+                Ok(json!({}))
+            }
+            "Runtime.getIsolateId" => Ok(json!({"id":self.instance.info.runtime_id.to_string()})),
+            "Runtime.getHeapUsage" => Ok(json!({"usedSize":0,"totalSize":0})), // Native host has no JavaScript heap.
+            "HeapProfiler.startSampling" => {
+                self.start_memory(&request.params)?;
+                Ok(json!({}))
+            }
+            "HeapProfiler.getSamplingProfile" | "HeapProfiler.stopSampling" => {
+                let profile = self.memory_profile();
+                if method == "HeapProfiler.stopSampling" {
+                    self.stop_memory();
+                }
+                Ok(json!({"profile":profile?}))
+            }
+            "Rake.getMemorySummary" => Ok(self.memory.metadata.clone()),
+            "HeapProfiler.collectGarbage" => Err(Error::new(
+                -32601,
+                "Rust memory is released by its owners; garbage collection is unavailable",
+            )),
             "Accessibility.enable" => {
                 self.domains.insert("Accessibility".into());
                 Ok(json!({}))
@@ -1097,6 +1122,19 @@ impl Session {
             Reply::Info(info) if info.runtime_id == self.instance.info.runtime_id => {}
             _ => return Err("runtime identity changed".into()),
         }
+        if self.memory.active
+            && self
+                .memory
+                .renewed
+                .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
+        {
+            if let Err(error) = self.control(self.memory.command(true)) {
+                self.memory.active = false;
+                self.warning(format!("Native memory capture stopped: {}", error.message));
+            } else {
+                self.memory.renewed = Some(Instant::now());
+            }
+        }
 
         if self.domains.contains("DOM")
             || self.domains.contains("Accessibility")
@@ -1232,6 +1270,80 @@ impl Session {
         Ok(())
     }
 
+    fn start_memory(&mut self, params: &Value) -> std::result::Result<(), Error> {
+        if !self
+            .instance
+            .info
+            .queries
+            .iter()
+            .any(|query| query == "memory")
+        {
+            return Err(Error::new(
+                -32000,
+                "Native memory capture requires devtools-memory and an installed TrackingAllocator",
+            ));
+        }
+        let command = self.memory.begin(params)?;
+        self.control(command)?;
+        self.memory.active = true;
+        self.memory.renewed = Some(Instant::now());
+        Ok(())
+    }
+
+    fn memory_capture(
+        &self,
+        include_freed: bool,
+    ) -> std::result::Result<rake_protocol::inspection::memory::Snapshot, Error> {
+        let owner = self
+            .memory
+            .owner
+            .as_ref()
+            .ok_or_else(|| Error::new(-32000, "Start a native memory recording first"))?;
+        let reply = query(
+            &self.instance,
+            Query::Memory {
+                owner: owner.clone(),
+                include_freed,
+            },
+            Duration::from_secs(30),
+        )
+        .map_err(|error| Error::new(-32000, error.to_string()))?;
+        let Reply::Memory(capture) = reply else {
+            return Err(Error::new(-32000, "Unexpected memory capture reply"));
+        };
+        Ok(capture)
+    }
+
+    fn memory_profile(&mut self) -> std::result::Result<Value, Error> {
+        let capture = self.memory_capture(self.memory.include_freed)?;
+        let frames: Vec<_> = capture.sites.iter().map(|site| {
+            let source = if let (Some(file),Some(line)) = (&site.file,site.line) {
+                self.source_descriptor(&rake_protocol::inspection::SourceLocation { file: file.clone(), line, column: site.column.unwrap_or(1).max(1) })
+            } else { json!({}) };
+            json!({"functionName":site.function,"scriptId":"","url":source["url"].as_str().unwrap_or(""),
+                "lineNumber":source["lineNumber"].as_i64().unwrap_or(-1),"columnNumber":source["columnNumber"].as_i64().unwrap_or(-1)})
+        }).collect();
+        let profile = self.memory.profile(&capture, &frames)?;
+        if let Some(omitted) = self.memory.metadata["omitted"]
+            .as_u64()
+            .filter(|omitted| *omitted > 0)
+        {
+            self.warning(format!(
+                "Native memory capture is partial: {} known omissions",
+                omitted
+            ));
+        }
+        Ok(profile)
+    }
+
+    fn stop_memory(&mut self) {
+        if self.memory.active {
+            let _ = self.control(self.memory.command(false));
+            self.memory.active = false;
+            self.memory.metadata["recording"] = json!(false);
+        }
+    }
+
     fn control(&self, command: Command) -> std::result::Result<(), Error> {
         let reply = crate::terminal::exchange(
             &self.instance,
@@ -1253,6 +1365,7 @@ impl Session {
     }
 
     fn cleanup(&mut self) {
+        self.stop_memory();
         if self.frame_trace.active {
             let _ = self.control(Command::RecordFrames {
                 enabled: false,
@@ -1729,6 +1842,7 @@ impl Session {
     fn replace(&mut self, instance: Instance) {
         self.finish_trace(Some("runtime replaced"));
         self.cleanup();
+        self.memory = super::memory::Memory::default();
         self.last_hover = None;
         self.last_pick_sequence = 0;
         self.tracked_style_node = None;

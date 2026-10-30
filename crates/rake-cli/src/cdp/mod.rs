@@ -7,6 +7,7 @@ mod dom;
 mod editing;
 mod evaluate;
 mod frames;
+mod memory;
 mod network;
 mod server;
 mod session;

@@ -2,6 +2,8 @@
 
 #[cfg(feature = "console-test")]
 mod console_fixture;
+#[cfg(all(feature = "memory-test", unix))]
+mod memory_fixture;
 #[cfg(feature = "network-test")]
 mod network_fixture;
 #[cfg(feature = "performance-test")]
@@ -677,6 +679,9 @@ fn app() -> App<Destination> {
 
     #[cfg(feature = "console-test")]
     console_fixture::register(&commands);
+
+    #[cfg(all(feature = "memory-test", unix))]
+    memory_fixture::register(&commands);
 
     #[cfg(feature = "network-test")]
     network_fixture::register(&commands, app.services().expect("fixture services").http());
