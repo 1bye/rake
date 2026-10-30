@@ -32,6 +32,18 @@ class FeedHandler(http.server.SimpleHTTPRequestHandler):
     # responses otherwise depend on Python/Schannel TLS shutdown behavior.
     protocol_version = 'HTTP/1.1'
 
+    def do_GET(self):
+        if self.path == getattr(self.server, 'truncated_path', None):
+            path = pathlib.Path(self.translate_path(self.path))
+            data = path.read_bytes()
+            data = data[:len(data) // 2]
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        super().do_GET()
+
 
 class TestFeed:
     def __init__(self, root):

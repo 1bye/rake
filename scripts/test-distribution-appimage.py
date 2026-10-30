@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 from distribution_test_feed import TestFeed
 
 
@@ -62,7 +63,6 @@ fn main(){
     handoff.commit(true).unwrap();
 }
 ''')
-            outputs = []
             images = []
             for version in ('1.0.0', '1.0.1'):
                 manifest = f'''[workspace]
@@ -101,9 +101,12 @@ x86_64-unknown-linux-gnu=["appimage"]
                 result = json.loads(run(cli, 'bundle', '--native', '--debug', '--manifest-path', source / 'Cargo.toml', '--output', output, '--json'))
                 image = next(output / record['path'] for record in result['artifacts'] if record['format'] == 'appimage')
                 assert image.read_bytes()[8:11] == b'AI\x02'
-                outputs.append(output)
-                images.append(image)
-            run(cli, 'release', '--manifest-path', source / 'Cargo.toml', '--from', outputs[0], '--from', outputs[1], '--json')
+                saved = root / f'{version}.AppImage'
+                shutil.copy2(image, saved)
+                images.append(saved)
+                run(cli, 'release', '--manifest-path', source / 'Cargo.toml', '--from', output, '--json')
+                shutil.rmtree(output) # The next release must recover installed history from its signed channel.
+
             installed = root / 'installed/App.AppImage'
             installed.parent.mkdir()
             shutil.copy2(images[0], installed)
@@ -114,6 +117,33 @@ x86_64-unknown-linux-gnu=["appimage"]
             env = dict(os.environ, RAKE_FIXTURE_STATE=str(state))
             assert run(installed, '--version', cwd='/', env=env).strip() == '1.0.0:installed resource'
             assert run(installed, '--check', cwd='/', env=env).strip() == 'available:1.0.1'
+            native_feed = feed.site / 'stable/x86_64-unknown-linux-gnu/appimage.json'
+            envelope = json.loads(native_feed.read_text())
+            signed = native_feed.read_bytes()
+            tampered = dict(envelope, signature=('0' if envelope['signature'][0] != '0' else '1') + envelope['signature'][1:])
+            native_feed.unlink() # Do not mutate its retained immutable object through a hard link.
+            native_feed.write_text(json.dumps(tampered))
+            rejected = subprocess.run([str(installed), '--check'], env=env, capture_output=True, text=True, timeout=30)
+            assert rejected.returncode != 0 and digest(installed) == original
+            native_feed.write_bytes(signed)
+            release = next(item for item in json.loads(envelope['payload'])['releases'] if item['version'] == '1.0.1')
+            feed.server.truncated_path = urllib.parse.urlsplit(release['url']).path
+            try:
+                rejected = subprocess.run([str(installed), '--update'], env=env, capture_output=True, text=True, timeout=30)
+                assert rejected.returncode != 0 and digest(installed) == original, 'truncated transfer cannot replace N'
+            finally:
+                feed.server.truncated_path = None
+            volume = root / 'space-limited'
+            volume.mkdir()
+            run('sudo', 'mount', '-t', 'tmpfs', '-o', f'size={images[0].stat().st_size + 128 * 1024},mode=0700,uid={os.getuid()},gid={os.getgid()}', 'tmpfs', volume)
+            try:
+                limited = volume / 'Limited.AppImage'
+                shutil.copy2(images[0], limited)
+                rejected = subprocess.run([str(limited), '--update'], env=env, capture_output=True, text=True, timeout=30)
+                assert rejected.returncode != 0 and digest(limited) == original
+                assert 'No space left' in rejected.stderr or 'StorageFull' in rejected.stderr, rejected.stderr
+            finally:
+                run('sudo', 'umount', volume)
             for mode in ('--decline', '--cancel'):
                 run(installed, mode, cwd='/', env=env)
                 assert digest(installed) == original
@@ -134,7 +164,7 @@ x86_64-unknown-linux-gnu=["appimage"]
             assert (state / 'restarted').read_text() == '1.0.1'
             assert digest(installed) == digest(images[1])
             assert (state / 'document').read_text() == 'preserve unsaved work'
-            print('Real AppImage signed HTTPS publication, decline, cancel, locks, readonly rejection and N+1 relaunch passed')
+            print('Real AppImage retained signed history, HTTPS publication, signature/truncation/disk-full rejection, decline/cancel/locks/readonly and N+1 relaunch passed')
 
 
 if __name__ == '__main__':
