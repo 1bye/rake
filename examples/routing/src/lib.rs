@@ -4,6 +4,8 @@
 mod console_fixture;
 #[cfg(feature = "network-test")]
 mod network_fixture;
+#[cfg(feature = "performance-test")]
+mod performance_fixture;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -207,7 +209,24 @@ impl Render for Screen {
             .children({
                 #[cfg(feature = "network-test")]
                 {
-                    Some(network_fixture::controls(self, cx))
+                    Some(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_2()
+                            .child(network_fixture::controls(self, cx))
+                            .children({
+                                #[cfg(feature = "performance-test")]
+                                {
+                                    Some(performance_fixture::probe(cx))
+                                }
+                                #[cfg(not(feature = "performance-test"))]
+                                {
+                                    None::<rake::gpui::AnyElement>
+                                }
+                            }),
+                    )
                 }
                 #[cfg(not(feature = "network-test"))]
                 {
@@ -661,6 +680,9 @@ fn app() -> App<Destination> {
 
     #[cfg(feature = "network-test")]
     network_fixture::register(&commands, app.services().expect("fixture services").http());
+
+    #[cfg(feature = "performance-test")]
+    performance_fixture::register(&commands, app.services().expect("fixture services").http());
 
     app.commands(commands)
 }

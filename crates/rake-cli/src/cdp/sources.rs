@@ -66,8 +66,7 @@ impl Sources {
         crate::source::read(location).map_err(|error| Error::new(-32000, error.to_string()))
     }
 
-    pub fn load(&mut self, params: &Value) -> Result<Value, Error> {
-        let text = self.content(params)?;
+    pub fn stream(&mut self, text: String) -> Result<Value, Error> {
         if self.streams.len() == 8 {
             return Err(Error::new(
                 -32000,

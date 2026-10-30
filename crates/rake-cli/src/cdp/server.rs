@@ -46,7 +46,7 @@ fn http_body(stream: &mut TcpStream, status: &str, mime: &str, body: &[u8]) -> s
     stream.write_all(body)
 }
 
-fn frame_source_content(instance: &Instance, tail: &str) -> Result<String> {
+pub(super) fn frame_source_content(instance: &Instance, tail: &str) -> Result<String> {
     use rake_protocol::control::{Query, Reply};
     let mut parts = tail.split('/');
     let sequence: u64 = parts.next().ok_or("Frame sequence required")?.parse()?;

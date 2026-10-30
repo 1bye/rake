@@ -48,6 +48,7 @@ struct Session {
     tracked_style_node: Option<i32>,
     edit_sheets: BTreeSet<i32>,
     frame_trace: super::frames::Trace,
+    pending_trace_complete: Option<Value>,
     detached: Option<String>,
 }
 
@@ -81,6 +82,7 @@ impl Session {
             tracked_style_node: None,
             edit_sheets: BTreeSet::new(),
             frame_trace: super::frames::Trace::default(),
+            pending_trace_complete: None,
             detached: None,
         }
     }
@@ -107,6 +109,17 @@ impl Session {
         }
 
         let method = request.method.as_str();
+        if let Some(reason) = &self.detached
+            && !matches!(
+                method,
+                "IO.read" | "IO.close" | "Tracing.end" | "Rake.getPerformanceSummary"
+            )
+        {
+            return Err(Error::new(
+                -32000,
+                format!("Runtime disconnected: {reason}"),
+            ));
+        }
 
         match method {
             "Accessibility.enable" => {
@@ -130,6 +143,9 @@ impl Session {
                 json!({"categories":["devtools.timeline","rake.frames","rake.callbacks","rake.causal"]}),
             ),
             "Tracing.start" => {
+                if self.pending_trace_complete.is_some() {
+                    return Err(Error::new(-32000, "Stop the previous recording first"));
+                }
                 if !self
                     .instance
                     .info
@@ -180,6 +196,10 @@ impl Session {
             }
             "Tracing.end" => {
                 if !self.frame_trace.active {
+                    if let Some(complete) = self.pending_trace_complete.take() {
+                        self.event(Event::new("Tracing.tracingComplete", complete));
+                        return Ok(json!({}));
+                    }
                     return if self.frame_trace.has_stream() {
                         Ok(json!({}))
                     } else {
@@ -786,9 +806,12 @@ impl Session {
                 json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources()}}),
             ),
             "Page.getResourceContent" => {
-                Ok(json!({"content":self.sources.content(&request.params)?,"base64Encoded":false}))
+                Ok(json!({"content":self.source_content(&request.params)?,"base64Encoded":false}))
             }
-            "Network.loadNetworkResource" => self.sources.load(&request.params),
+            "Network.loadNetworkResource" => {
+                let text = self.source_content(&request.params)?;
+                self.sources.stream(text)
+            }
             "IO.read"
                 if request.params["handle"]
                     .as_str()
@@ -812,6 +835,17 @@ impl Session {
                 format!("Unsupported CDP method: {method}"),
             )),
         }
+    }
+
+    fn source_content(&self, params: &Value) -> std::result::Result<String, Error> {
+        if let (Some(base), Some(url)) = (&self.source_base, params["url"].as_str()) {
+            let prefix = format!("{base}/{}/source/frame/", self.instance.info.runtime_id);
+            if let Some(tail) = url.strip_prefix(&prefix) {
+                return super::server::frame_source_content(&self.instance, tail)
+                    .map_err(|error| Error::new(-32000, error.to_string()));
+            }
+        }
+        self.sources.content(params)
     }
 
     fn skip_network_backlog(&mut self) -> Result<()> {
@@ -962,9 +996,18 @@ impl Session {
 
         self.poll_overlay().map_err(|error| error.message)?;
         if self.frame_trace.active {
-            self.poll_frames(true).map_err(|error| error.message)?;
-            self.poll_performance_diagnostics()
-                .map_err(|error| error.message)?;
+            let result = self
+                .poll_frames(true)
+                .and_then(|_| self.poll_performance_diagnostics());
+            if let Err(error) = result {
+                if error.message == "Recording lease expired"
+                    || error.message.starts_with("Recording clock restarted")
+                {
+                    self.finish_trace(Some("capture became unavailable"));
+                } else {
+                    return Err(error.message.into());
+                }
+            }
         }
 
         let console = self.domains.contains("Log") || self.domains.contains("Runtime");
@@ -1402,7 +1445,12 @@ impl Session {
         let report = self.frame_trace.report();
         self.trace_events(report);
         complete["dataLossOccurred"] = json!(self.frame_trace.loss);
-        self.event(Event::new("Tracing.tracingComplete", complete));
+        if reason.is_some() && !self.frame_trace.has_stream() {
+            // Chrome's ReportEvents client must remain active until the user presses Stop.
+            self.pending_trace_complete = Some(complete);
+        } else {
+            self.event(Event::new("Tracing.tracingComplete", complete));
+        }
     }
 
     fn trace_events(&mut self, events: Vec<Value>) {
@@ -1460,6 +1508,19 @@ impl Session {
         else {
             return Err(Error::new(-32000, "Unexpected frames reply"));
         };
+        if renew && !frames.recording {
+            return Err(Error::new(-32000, "Recording lease expired"));
+        }
+        if frames
+            .clock
+            .as_ref()
+            .is_some_and(|clock| !self.frame_trace.causal.consistent(clock))
+        {
+            return Err(Error::new(
+                -32000,
+                "Recording clock restarted; ending partial capture",
+            ));
+        }
         for frame in &frames.frames {
             for (index, node) in frame.nodes.iter().enumerate() {
                 let url = super::frames::source_url(
@@ -1674,7 +1735,7 @@ pub(super) fn run(
                     } else if missing_since.get_or_insert_with(Instant::now).elapsed()
                         >= Duration::from_secs(5)
                     {
-                        if session.frame_trace.active {
+                        if session.frame_trace.active || session.pending_trace_complete.is_some() {
                             session.finish_trace(Some("runtime disconnected"));
                             session.detached = Some(error.to_string());
                             session.flush(&mut socket)?;
@@ -1717,6 +1778,7 @@ pub(super) fn run(
         session.flush(&mut socket)?;
         if let Some(reason) = &session.detached
             && !session.frame_trace.has_stream()
+            && session.pending_trace_complete.is_none()
         {
             socket.send(Message::text(serde_json::to_string(&Event::new(
                 "Inspector.detached",
@@ -2038,6 +2100,46 @@ mod tests {
         });
 
         (instance, worker, path)
+    }
+
+    #[test]
+    fn automatic_report_event_completion_waits_for_chrome_stop() {
+        let (instance, worker, path) = fixture(
+            |request| match request.message {
+                RuntimeMessage::Command(Command::RecordFrames { enabled: false, .. }) => {
+                    Reply::Data(json!("runtime unavailable"))
+                }
+                _ => panic!("unexpected request"),
+            },
+            1,
+        );
+        let mut session = Session::new(instance, None);
+        session
+            .frame_trace
+            .begin(&json!({"transferMode":"ReportEvents"}))
+            .unwrap();
+        session.finish_trace(Some("runtime replaced"));
+        assert!(!session.frame_trace.active);
+        assert!(session.pending_trace_complete.is_some());
+        assert!(
+            !session
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method == "Tracing.tracingComplete")
+        );
+        let request = |method: &str| Request {
+            id: 1,
+            method: method.into(),
+            params: json!({}),
+        };
+        assert!(session.handle(&request("Tracing.start")).is_err());
+        session.handle(&request("Tracing.end")).unwrap();
+        assert!(session.pending_trace_complete.is_none());
+        let complete = &session.outbound.back().unwrap().0;
+        assert_eq!(complete.method, "Tracing.tracingComplete");
+        assert_eq!(complete.params["dataLossOccurred"], true);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

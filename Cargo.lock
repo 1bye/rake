@@ -4688,6 +4688,7 @@ name = "rake-routing"
 version = "0.1.0"
 dependencies = [
  "rake",
+ "tracing",
 ]
 
 [[package]]

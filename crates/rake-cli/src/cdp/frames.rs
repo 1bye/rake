@@ -15,7 +15,6 @@ pub(super) struct Trace {
     events: Vec<Value>,
     bytes: usize,
     stream: Option<(String, usize)>,
-    initial_dropped: Option<u64>,
     generation: u64,
     handle: String,
     started: Option<std::time::Instant>,
@@ -51,11 +50,13 @@ impl Trace {
             ..Self::default()
         };
         self.push(vec![
+            json!({"name":"process_name","ph":"M","pid":2,"tid":1,"args":{"name":"Rake asynchronous observations"}}),
+            json!({"name":"thread_name","ph":"M","pid":2,"tid":1,"args":{"name":"Rake custom tracks"}}),
             json!({"name":"process_name","ph":"M","pid":1,"tid":1,"args":{"name":"Rake GPUI (observed wall time)"}}),
             json!({"name":"thread_name","ph":"M","pid":1,"tid":1,"args":{"name":"CrRendererMain"}}),
             json!({"name":"TracingStartedInBrowser","cat":"disabled-by-default-devtools.timeline","ph":"I","s":"t","pid":1,"tid":1,"ts":0,
                 "args":{"data":{"persistentIds":true,"frames":[{"frame":"rake","processId":1,"url":"rake://runtime","name":"Rake GPUI"}]}}}),
-            json!({"name":"Rake recording started","cat":"rake.recording","ph":"i","s":"g","pid":1,"tid":1,"ts":0}),
+            json!({"name":"Rake recording started","cat":"rake.recording","ph":"I","s":"g","pid":1,"tid":1,"ts":0}),
         ]);
         Ok(())
     }
@@ -86,9 +87,17 @@ impl Trace {
     }
 
     pub fn collect(&mut self, frames: &Frames) -> Vec<Value> {
-        let baseline = *self.initial_dropped.get_or_insert(frames.dropped);
-        self.loss |= frames.gap || frames.dropped > baseline;
-        self.cursor = frames.cursor;
+        self.loss |= frames.gap;
+        let previous = self.cursor;
+        let mut fresh = frames.clone();
+        fresh.frames.retain(|frame| frame.sequence > previous);
+        let mut sequence = previous;
+        for frame in &fresh.frames {
+            self.loss |= frame.sequence != sequence.saturating_add(1);
+            sequence = frame.sequence;
+        }
+        self.cursor = self.cursor.max(frames.cursor);
+        let frames = &fresh;
         self.analysis.observe(frames);
         self.push(events(frames, self.source_prefix.as_deref()));
         self.report()
@@ -98,12 +107,28 @@ impl Trace {
         self.active = false;
         let elapsed = self
             .started
-            .map_or(0, |start| start.elapsed().as_micros() as u64);
+            .map_or(0, |start| (start.elapsed().as_micros() as u64).max(1));
         let incomplete = self.causal.finish(elapsed);
         self.push(incomplete);
         self.loss |= self.causal.loss;
         self.push(self.analysis.events(elapsed));
-        self.push(vec![json!({"name":"Rake recording stopped","cat":"rake.recording","ph":"i","s":"g","pid":1,"tid":1,"ts":elapsed})]);
+        self.events.extend(track(
+            if self.loss {
+                "Partial capture"
+            } else {
+                "Recording complete"
+            },
+            0,
+            elapsed,
+            "Capture status",
+            if self.loss { "error" } else { "primary" },
+            vec![
+                json!(["Data loss", self.loss.to_string()]),
+                json!(["Measurement", "recording lifetime; not CPU execution"]),
+            ],
+        ));
+        // Reserved metadata space keeps finite Chrome bounds even when observations filled the buffer.
+        self.events.push(json!({"name":"Rake recording stopped","cat":"rake.recording","ph":"I","s":"g","pid":1,"tid":1,"ts":elapsed}));
         if self.stream_mode {
             let document = json!({"traceEvents":std::mem::take(&mut self.events),"displayTimeUnit":"ms",
                 "metadata":{"clock":"recording monotonic microseconds","measurement":"GPUI draw and inclusive boundary CPU wall time; no GPU execution or CPU samples","dataLossOccurred":self.loss,"frames":self.summary(),"causal":self.causal.metadata()}});
@@ -315,8 +340,8 @@ pub(super) fn track(
     let detail = json!({"devtools":{"dataType":"track-entry","trackGroup":"Rake / observed wall time","track":lane,
         "color":color,"properties":properties,"tooltipText":name}}).to_string();
     vec![
-        json!({"name":name,"cat":"blink.user_timing","ph":"b","id":id,"pid":1,"tid":1,"ts":start,"args":{"detail":detail}}),
-        json!({"name":name,"cat":"blink.user_timing","ph":"e","id":id,"pid":1,"tid":1,"ts":start.saturating_add(duration),"args":{}}),
+        json!({"name":name,"cat":"blink.user_timing","ph":"b","id":id,"pid":2,"tid":1,"ts":start,"args":{"detail":detail}}),
+        json!({"name":name,"cat":"blink.user_timing","ph":"e","id":id,"pid":2,"tid":1,"ts":start.saturating_add(duration),"args":{}}),
     ]
 }
 
@@ -443,6 +468,69 @@ mod tests {
     }
 
     #[test]
+    fn consumed_evictions_and_duplicate_pages_do_not_report_loss() {
+        let mut trace = Trace::default();
+        trace.begin(&json!({})).unwrap();
+        trace.cursor = 10;
+        let mut page = Frames {
+            clock: None,
+            recording: true,
+            frames: vec![sample(11, 10, 5)],
+            cursor: 11,
+            more: false,
+            dropped: 10,
+            gap: false,
+        };
+        trace.collect(&page);
+        trace.collect(&page);
+        assert_eq!(trace.summary()["windows"][0]["drawCount"], 1);
+        assert!(!trace.loss);
+        page.frames = vec![sample(13, 20, 5)];
+        page.cursor = 13;
+        trace.collect(&page);
+        assert!(trace.loss);
+    }
+
+    #[test]
+    fn full_stream_is_bounded_and_reports_omissions() {
+        let mut trace = Trace::default();
+        trace
+            .begin(&json!({"transferMode":"ReturnAsStream"}))
+            .unwrap();
+        let payload = "🙂".repeat(2048);
+        for _ in 0..600 {
+            trace.push(vec![
+                json!({"name":payload,"ph":"i","ts":0,"pid":1,"tid":1}),
+            ]);
+        }
+        let done = trace.end();
+        assert_eq!(done["dataLossOccurred"], true);
+        let document = &trace.stream.as_ref().unwrap().0;
+        assert!(document.len() <= MAX_TRACE_BYTES);
+        let parsed: Value = serde_json::from_str(document).unwrap();
+        assert_eq!(parsed["metadata"]["dataLossOccurred"], true);
+        assert!(
+            parsed["traceEvents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["name"] == "Partial capture")
+        );
+        assert!(
+            parsed["traceEvents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["name"] == "Rake recording stopped")
+        );
+        assert!(
+            trace
+                .read(&json!({"handle":done["stream"],"size":0}))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn callback_hotspots_keep_identity_source_and_inclusive_samples() {
         use rake_protocol::inspection::{FramePhase, NodeTiming, SourceLocation};
         let mut frame = sample(1, 100, 500);
@@ -547,6 +635,15 @@ mod tests {
         let first = trace.end()["stream"].clone();
         let data = trace.read(&json!({"handle":first})).unwrap();
         let document: Value = serde_json::from_str(data["data"].as_str().unwrap()).unwrap();
+        assert!(
+            document["traceEvents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["name"] == "Rake recording stopped"
+                    && event["ph"] == "I"
+                    && event["ts"].as_u64().unwrap() > 0)
+        );
         assert!(
             document["traceEvents"]
                 .as_array()

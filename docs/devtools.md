@@ -379,3 +379,7 @@ Console delivery progress and its verification are tracked in
 
 See the [Network checklist](devtools-network.md) for HTTP metadata, bounded body
 capture, origins, timing and Chrome workflows.
+
+See the [Performance checklist](devtools-performance.md) for live Record/Stop,
+frame and callback analysis, calibrated command/task/span/HTTP tracks, Rust source
+links, bounded trace export and stock Chrome verification.

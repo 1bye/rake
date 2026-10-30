@@ -105,3 +105,9 @@ the historical Elements-only pass.
 
 The five Network steps, capture limits and verification evidence are recorded in
 [the Network checklist](devtools-network.md).
+
+## Performance coverage
+
+The five Performance steps, native regression fixture, stock Chrome verification
+and remaining engine boundaries are recorded in
+[the Performance checklist](devtools-performance.md).
