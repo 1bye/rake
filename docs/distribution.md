@@ -150,3 +150,50 @@ helpers can carry different DLL versions with the same basename. Undeclared
 imports, architecture mismatches and conflicting versions in one process fail.
 `windows.system_dlls` declares explicit DLL prerequisites supplied by the target
 system; the adapter never discovers dependencies through the developer's PATH.
+
+## Custom formats and component recipes
+
+Register explicit commands when an enterprise installer or runtime needs a custom
+preparation step. Format names are globally unique slugs. A custom format consumes
+an already selected built-in format on its native host:
+
+```toml
+[[package.metadata.rake.bundle.custom_formats]]
+name = "company-macos"
+platform = "macos"
+input_format = "app"
+command = ["python3", "packaging/company.py", "package"]
+verify_command = ["python3", "packaging/company.py", "verify"]
+
+[package.metadata.rake.bundle.component_recipes]
+codec = ["python3", "packaging/codec.py"]
+
+[[package.metadata.rake.bundle.runtimes]]
+name = "codec"
+recipe = "codec"
+source = "vendor/codec"
+options = { plugins = "decoder" }
+
+[package.metadata.rake.bundle.release.custom_required]
+aarch64-apple-darwin = ["company-macos"]
+```
+
+Commands receive one schema-1 JSON request on stdin, return one JSON response on
+stdout, and write diagnostics to stderr. They run without a shell in the package
+root, with a deadline and process-tree cancellation. Input is an owned copy;
+output is an empty owned directory. Responses are limited to 4 MiB. Backend
+responses have `schema_version` and relative `artifacts` paths. Recipe responses
+have `schema_version`, a relative `root` directory and every relative native file
+in `native_code`; missing native files, wrong architectures and escaping paths fail.
+The public Rust contracts are `rake_dist_core::{PackageBackend, ComponentRecipe}`;
+`rake_dist::{run_package_backend, run_component_recipe}` checks their outputs.
+
+Custom outputs remain local unless an explicitly configured independent verifier
+accepts them. Its request includes application identity/version, target, public
+signing-profile references, artifact path and measured SHA-256. Its response must
+contain `schema_version = 1`, the same `sha256`, and a nonempty native `policy`.
+The verifier must inspect the actual native format, signature, identity and version;
+a backend's own success response never establishes those facts. Release requires
+the same configured verifier and exact verified bytes, and snapshots selected
+inputs before generating feeds or uploading. Extensions execute trusted developer
+code; path confinement is an output contract, not an operating-system sandbox.

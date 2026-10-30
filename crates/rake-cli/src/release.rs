@@ -158,6 +158,16 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
         public_keys: keys,
         published_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         updates_enabled: config.updates.enabled,
+        custom_verifiers: config
+            .custom_formats
+            .iter()
+            .filter_map(|format| {
+                format
+                    .verify_command
+                    .clone()
+                    .map(|command| (format.name.clone(), command))
+            })
+            .collect(),
     };
     let work = tempfile::tempdir()?;
     let request_file = work.path().join("request.json");

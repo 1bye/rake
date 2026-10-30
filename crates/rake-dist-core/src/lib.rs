@@ -2,6 +2,11 @@
 //!
 //! Resolving a plan performs no filesystem, network or native-tool operations.
 
+mod extension;
+pub use extension::{
+    BackendOutput, BackendRequest, ComponentRecipe, CustomFormat, ExtensionError, PackageBackend,
+    PreparedComponent, RecipeRequest, Verification, VerifyRequest,
+};
 mod component;
 pub use component::{Archive, Component, ComponentSource};
 mod release;
@@ -175,6 +180,10 @@ pub struct Config {
     pub updates: Updates,
     /// Publication, signing references and required release targets.
     pub release: ReleaseConfig,
+    /// Explicit external package backends, scoped to their native platform.
+    pub custom_formats: Vec<CustomFormat>,
+    /// Explicit command recipes keyed by Runtime.recipe (built-in names are reserved).
+    pub component_recipes: BTreeMap<String, Vec<String>>,
 }
 
 /// Existing Web bundle options.
@@ -363,6 +372,9 @@ pub struct Runtime {
     /// Explicit dynamically loaded plugin selection.
     #[serde(default)]
     pub plugins: Vec<String>,
+    /// Public options for an explicitly configured component recipe.
+    #[serde(default)]
+    pub options: BTreeMap<String, String>,
 }
 
 /// Shared public update settings; contains no private signing credentials.
@@ -532,6 +544,18 @@ impl Config {
             *base.formats_mut(platform) = formats.to_vec();
         }
         let requested = base.selected_formats(platform);
+        for backend in base
+            .custom_formats
+            .iter()
+            .filter(|backend| backend.platform == platform)
+        {
+            if !requested.contains(&backend.input_format) {
+                return Err(Error::Field(format!(
+                    "custom format {} requires selected input_format {:?}",
+                    backend.name, backend.input_format
+                )));
+            }
+        }
         let mut packages = Vec::new();
         for format in requested {
             if packages.iter().any(|p: &PackagePlan| p.format == format) {
@@ -692,6 +716,28 @@ impl Config {
                     .all(|value| value.is_ascii_alphanumeric() || b"._-".contains(&value))
         }) {
             return Err(Error::Field("windows.system_dlls basenames".into()));
+        }
+        let mut custom_names = std::collections::BTreeSet::new();
+        for backend in &self.custom_formats {
+            component_name(&backend.name)?;
+            if !custom_names.insert(&backend.name)
+                || !backend.input_format.supports(backend.platform)
+            {
+                return Err(Error::Field("custom_formats name/input platform".into()));
+            }
+            extension_command(&backend.command)?;
+            if let Some(verifier) = &backend.verify_command {
+                extension_command(verifier)?;
+            }
+        }
+        for (name, command) in &self.component_recipes {
+            component_name(name)?;
+            if matches!(name.as_str(), "directory" | "framework" | "gstreamer") {
+                return Err(Error::Field(
+                    "built-in component recipes cannot be replaced".into(),
+                ));
+            }
+            extension_command(command)?;
         }
         let mut components = std::collections::BTreeSet::new();
         for component in &self.components {
@@ -1006,6 +1052,15 @@ fn component_name(name: &str) -> Result<(), Error> {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
     {
         return Err(Error::Field(format!("component/channel name: {name}")));
+    }
+    Ok(())
+}
+
+fn extension_command(command: &[String]) -> Result<(), Error> {
+    if command.is_empty() || command[0].is_empty() || command.iter().any(|arg| arg.contains('\0')) {
+        return Err(Error::Field(
+            "extension requires explicit nonempty argv".into(),
+        ));
     }
     Ok(())
 }

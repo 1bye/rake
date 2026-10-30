@@ -6,6 +6,10 @@ mod archives;
 mod components;
 pub use components::ComponentLock;
 mod engine;
+mod extensions;
+pub use extensions::{
+    CheckedArtifact, CommandExtension, CustomArtifact, run_component_recipe, run_package_backend,
+};
 mod execution;
 mod files;
 mod linux;

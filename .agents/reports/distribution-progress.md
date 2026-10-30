@@ -356,3 +356,16 @@ could no longer load LLVM. The toolchain module now explicitly disables strippin
 and debug extraction while retaining final cleanup of build-only tools. This
 matches Flatpak's documented build options. Linux unit/manifest tests and strict
 Clippy pass before the next Flatpak-only retry; no passing Linux gate is rerun.
+
+P1 extension follow-up: explicit versioned Rust backend/recipe contracts and
+command adapters now run through owned staging, bounded JSON stdin/stdout and
+process-tree cancellation. Custom recipes must declare their complete actual
+native inventory, with target architecture and confinement checks. Custom formats
+consume a selected built-in artifact and remain unverified/local unless an
+independent configured native verifier accepts identity/version/target and exact
+bytes. Release checks that verifier and required custom format matrix. A spawned
+CLI consumer exercised recipe, packaging and verification; four external contract
+tests, 15 coordinator tests, core tests, strict Clippy and rustdoc pass. Publication
+snapshots selected verified inputs before feed generation/upload; changed sources
+cannot alter the published bytes. Human artifact filenames map to portable
+content-addressed object names, including names containing spaces.

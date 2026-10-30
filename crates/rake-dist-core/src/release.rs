@@ -12,6 +12,8 @@ pub struct ReleaseConfig {
     pub publisher: Option<Publisher>,
     /// Complete matrix required before any channel promotion, keyed by Rust target.
     pub required: BTreeMap<String, Vec<Format>>,
+    /// Custom backend names required on each target before channel promotion.
+    pub custom_required: BTreeMap<String, Vec<String>>,
     /// Named provider signing commands. Input is exact message bytes on stdin;
     /// output is a raw 64-byte Ed25519 signature. Commands keep private keys in
     /// the selected local signing profile. No shell expansion occurs.
@@ -73,6 +75,19 @@ impl ReleaseConfig {
             };
             if formats.is_empty() || formats.iter().any(|format| !format.supports(platform)) {
                 return Err(Error::Field("release.required formats".into()));
+            }
+        }
+        for (target, names) in &self.custom_required {
+            if target != "universal-apple-darwin" {
+                crate::Platform::from_target(target)?;
+            }
+            if names.is_empty() {
+                return Err(Error::Field(
+                    "release.custom_required cannot be empty".into(),
+                ));
+            }
+            for name in names {
+                crate::component_name(name)?;
             }
         }
         for (target, formats) in &self.repositories {

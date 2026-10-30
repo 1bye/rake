@@ -81,7 +81,7 @@ pub(crate) fn digest(path: &Path) -> Result<String, Error> {
             hash.update(entry.file_name().as_encoded_bytes());
             hash.update(digest(&entry.path())?.as_bytes());
         }
-    } else {
+    } else if fs::metadata(path)?.is_file() {
         let mut file = fs::File::open(path)?;
         let mut bytes = [0; 65536];
         loop {
@@ -91,6 +91,8 @@ pub(crate) fn digest(path: &Path) -> Result<String, Error> {
             }
             hash.update(&bytes[..count]);
         }
+    } else {
+        return Err(Error::Execution("special files cannot be hashed".into()));
     }
     Ok(format!("{:x}", hash.finalize()))
 }
@@ -139,6 +141,40 @@ pub(crate) fn commit(staged: &Path, output: &Path, identifier: &str) -> Result<(
         return Err(error.into());
     }
     Ok(())
+}
+
+pub(crate) fn validate_tree(root: &Path) -> Result<(), Error> {
+    let canonical = dunce::canonicalize(root)?;
+    let mut count = 0;
+    fn inspect(path: &Path, root: &Path, count: &mut usize) -> Result<(), Error> {
+        *count += 1;
+        if *count > 100_000 {
+            return Err(Error::Execution(
+                "native output exceeds file inventory bound".into(),
+            ));
+        }
+        let actual = dunce::canonicalize(path)?;
+        if !actual.starts_with(root) {
+            return Err(Error::Execution(
+                "native output symlink escapes staging".into(),
+            ));
+        }
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() {
+            return Ok(());
+        }
+        if metadata.is_dir() {
+            for entry in fs::read_dir(path)? {
+                inspect(&entry?.path(), root, count)?;
+            }
+        } else if !metadata.is_file() {
+            return Err(Error::Execution(
+                "native output contains a special file".into(),
+            ));
+        }
+        Ok(())
+    }
+    inspect(root, &canonical, &mut count)
 }
 
 #[cfg(test)]

@@ -37,6 +37,8 @@ pub struct ReleaseRequest {
     pub published_at: u64,
     /// Generate configured provider feeds as well as immutable downloads.
     pub updates_enabled: bool,
+    /// Independently configured native verifiers accepted for custom formats.
+    pub custom_verifiers: BTreeMap<String, Vec<String>>,
 }
 /// Final channel state. Native feeds remain the provider's native protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -69,6 +71,14 @@ struct Input {
     artifact: Artifact,
     source: PathBuf,
 }
+struct CustomInput {
+    artifact: crate::CustomArtifact,
+    source: PathBuf,
+}
+struct Inputs {
+    native: Vec<Input>,
+    custom: Vec<CustomInput>,
+}
 struct Prepared {
     directory: tempfile::TempDir,
     state: PublishedRelease,
@@ -96,12 +106,14 @@ fn cancelled(flag: &AtomicBool) -> Result<(), Error> {
         Ok(())
     }
 }
-fn inputs(request: &ReleaseRequest) -> Result<Vec<Input>, Error> {
+fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
     request.config.validate()?;
     segment(&request.channel)?;
-    segment(&request.version)?;
+    semver::Version::parse(&request.version).map_err(|error| fail(error.to_string()))?;
     let mut output = Vec::new();
+    let mut custom = Vec::new();
     let mut matrix = BTreeSet::new();
+    let mut custom_matrix = BTreeSet::new();
     for directory in &request.distributions {
         let distribution: Distribution =
             serde_json::from_slice(&fs::read(directory.join("distribution.json"))?)?;
@@ -109,6 +121,31 @@ fn inputs(request: &ReleaseRequest) -> Result<Vec<Input>, Error> {
             return Err(fail("release distribution identity/schema mismatch"));
         }
         segment(&distribution.target)?;
+        semver::Version::parse(&distribution.version).map_err(|error| fail(error.to_string()))?;
+        for artifact in &distribution.custom_artifacts {
+            let source = files::confined(directory, &artifact.path)?;
+            let proof = artifact.verification.as_ref().ok_or_else(|| {
+                fail("custom format requires an independent native verifier before release")
+            })?;
+            if !source.is_file()
+                || files::digest(&source)? != artifact.sha256
+                || proof.schema_version != 1
+                || proof.sha256 != artifact.sha256
+                || proof.policy.trim().is_empty()
+                || artifact.verifier.as_ref() != request.custom_verifiers.get(&artifact.format)
+            {
+                return Err(fail(
+                    "custom format verification or output identity mismatch",
+                ));
+            }
+            if distribution.version == request.version {
+                custom_matrix.insert((distribution.target.clone(), artifact.format.clone()));
+            }
+            custom.push(CustomInput {
+                artifact: artifact.clone(),
+                source,
+            });
+        }
         for artifact in &distribution.artifacts {
             let source = files::confined(directory, &artifact.path)?;
             if files::digest(&source)? != artifact.sha256 {
@@ -211,10 +248,20 @@ fn inputs(request: &ReleaseRequest) -> Result<Vec<Input>, Error> {
             }
         }
     }
-    if matrix.is_empty() {
+    for (target, names) in &request.config.custom_required {
+        for name in names {
+            if !custom_matrix.contains(&(target.clone(), name.clone())) {
+                return Err(fail(format!("release custom gate missing {target} {name}")));
+            }
+        }
+    }
+    if matrix.is_empty() && custom_matrix.is_empty() {
         return Err(fail("release has no artifacts for selected version"));
     }
-    Ok(output)
+    Ok(Inputs {
+        native: output,
+        custom,
+    })
 }
 fn signer(
     request: &ReleaseRequest,
@@ -297,9 +344,24 @@ fn feed_name(request: &ReleaseRequest, target: &str, file: &str) -> String {
     format!("{}/{target}/{file}", request.channel)
 }
 fn object_name(hash: &str, file: &str) -> Result<String, Error> {
-    segment(file)?;
-    Ok(format!("{hash}-{file}"))
+    let path = Path::new(file);
+    rake_dist_core::validate_relative_path(path)?;
+    if path.components().count() != 1 || file.chars().any(char::is_control) {
+        return Err(fail("invalid immutable object filename"));
+    }
+    let slug = file
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || "._-".contains(character) {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Ok(format!("{hash}-{slug}"))
 }
+
 fn add(prepared: &mut Prepared, name: String, source: &Path, url: String) -> Result<(), Error> {
     let hash = files::digest(source)?;
     let size = fs::metadata(source)?.len();
@@ -337,9 +399,45 @@ fn generated(prepared: &mut Prepared, name: String, bytes: &[u8], root: &str) ->
     )
 }
 fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Error> {
-    let inputs = inputs(request)?;
+    let mut selected = inputs(request)?;
     let root = public_root(&request.config)?;
     let directory = tempfile::tempdir()?;
+    for (index, input) in selected.native.iter_mut().enumerate() {
+        let snapshot = directory
+            .path()
+            .join("inputs")
+            .join(index.to_string())
+            .join(
+                input
+                    .source
+                    .file_name()
+                    .ok_or_else(|| fail("artifact filename"))?,
+            );
+        files::copy(&input.source, &snapshot)?;
+        if files::digest(&snapshot)? != input.artifact.sha256 {
+            return Err(fail("artifact changed during release preparation"));
+        }
+        input.source = snapshot;
+    }
+    for (index, input) in selected.custom.iter_mut().enumerate() {
+        let snapshot = directory
+            .path()
+            .join("custom-inputs")
+            .join(index.to_string())
+            .join(
+                input
+                    .source
+                    .file_name()
+                    .ok_or_else(|| fail("custom filename"))?,
+            );
+        files::copy(&input.source, &snapshot)?;
+        if files::digest(&snapshot)? != input.artifact.sha256 {
+            return Err(fail("custom artifact changed during release preparation"));
+        }
+        input.source = snapshot;
+    }
+    let inputs = selected.native;
+
     let mut prepared = Prepared {
         directory,
         state: PublishedRelease {
@@ -412,6 +510,23 @@ fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Erro
             }
             _ => {}
         }
+    }
+    for input in selected.custom {
+        let artifact = input.artifact;
+        let source = input.source;
+        let name = object_name(
+            &artifact.sha256,
+            source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| fail("custom filename"))?,
+        )?;
+        let url = if matches!(request.config.publisher, Some(Publisher::Github { .. })) {
+            format!("{root}/{name}")
+        } else {
+            format!("{root}/objects/{name}")
+        };
+        add(&mut prepared, format!("objects/{name}"), &source, url)?;
     }
     for (target, releases) in images {
         let feed = UpdateFeed {
@@ -1081,6 +1196,7 @@ mod tests {
             version: version.into(),
             target: "x86_64-unknown-linux-gnu".into(),
             engine: "test".into(),
+            custom_artifacts: vec![],
             artifacts: vec![Artifact {
                 path: "app.tar.gz".into(),
                 format: Format::Tar,
@@ -1112,6 +1228,7 @@ mod tests {
             public_keys: BTreeMap::new(),
             published_at: 1_800_000_000,
             updates_enabled: false,
+            custom_verifiers: BTreeMap::new(),
         }
     }
     #[test]
@@ -1247,6 +1364,69 @@ mod tests {
         assert!(!root.path().join("published").exists());
     }
     #[test]
+    fn release_uses_a_verified_snapshot_even_if_build_outputs_change() {
+        let root = tempfile::tempdir().unwrap();
+        let request = fixture(root.path(), "1.0.0");
+        let input = request.distributions[0].join("app.tar.gz");
+        let expected = fs::read(&input).unwrap();
+        let mut prepared = prepare(&request, &AtomicBool::new(false)).unwrap();
+        fs::write(input, b"a later build replaced this source").unwrap();
+        let destination = root.path().join("published");
+        publish_directory(
+            &request,
+            &mut prepared,
+            &destination,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let url = &prepared.state.files.values().next().unwrap().url;
+        let relative = url.strip_prefix("https://downloads.example.test/").unwrap();
+        assert_eq!(fs::read(destination.join(relative)).unwrap(), expected);
+    }
+    #[test]
+    fn custom_releases_require_independent_verification_and_safe_object_names() {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = fixture(root.path(), "1.0.0");
+        let manifest = request.distributions[0].join("distribution.json");
+        let file = request.distributions[0].join("Company Installer.pkg");
+        fs::write(&file, b"custom format payload").unwrap();
+        let hash = files::digest(&file).unwrap();
+        let command = vec!["tools/verify-company-installer".into()];
+        let mut distribution: Distribution =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        distribution.custom_artifacts.push(crate::CustomArtifact {
+            format: "company-installer".into(),
+            path: "Company Installer.pkg".into(),
+            sha256: hash.clone(),
+            verification: None,
+            verifier: Some(command.clone()),
+        });
+        files::write_json(&manifest, &distribution).unwrap();
+        assert!(publish(&request, &AtomicBool::new(false)).is_err());
+        assert!(!root.path().join("published").exists());
+        request
+            .custom_verifiers
+            .insert("company-installer".into(), command);
+        request.config.custom_required.insert(
+            distribution.target.clone(),
+            vec!["company-installer".into()],
+        );
+        distribution.custom_artifacts[0].verification = Some(rake_dist_core::Verification {
+            schema_version: 1,
+            sha256: hash,
+            policy: "fixture-format-contract".into(),
+        });
+        files::write_json(&manifest, &distribution).unwrap();
+        let state = publish(&request, &AtomicBool::new(false)).unwrap();
+        assert!(
+            state
+                .files
+                .values()
+                .any(|file| file.url.ends_with("Company_Installer.pkg"))
+        );
+        assert!(state.files.values().all(|file| !file.url.contains(' ')));
+    }
+    #[test]
     fn appinstaller_preserves_actual_native_identity_and_escapes_xml() {
         let root = tempfile::tempdir().unwrap();
         let request = fixture(root.path(), "1.0.0");
@@ -1368,7 +1548,7 @@ mod signature_tests {
     }
 }
 
-fn package_payload(format: Format, path: &Path) -> bool {
+pub(crate) fn package_payload(format: Format, path: &Path) -> bool {
     let name = path
         .file_name()
         .and_then(|value| value.to_str())

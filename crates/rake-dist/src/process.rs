@@ -39,8 +39,38 @@ impl Worker {
     /// # Errors
     /// Returns interruption, timeout or OS wait errors.
     pub fn wait(&mut self, cancelled: &AtomicBool, timeout: Duration) -> io::Result<ExitStatus> {
+        self.wait_inner(cancelled, timeout, None)
+    }
+
+    pub(crate) fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child.inner().stdout.take()
+    }
+    pub(crate) fn wait_with_abort(
+        &mut self,
+        cancelled: &AtomicBool,
+        timeout: Duration,
+        abort: &AtomicBool,
+    ) -> io::Result<ExitStatus> {
+        self.wait_inner(cancelled, timeout, Some(abort))
+    }
+    fn wait_inner(
+        &mut self,
+        cancelled: &AtomicBool,
+        timeout: Duration,
+        abort: Option<&AtomicBool>,
+    ) -> io::Result<ExitStatus> {
+        if self.finished {
+            return self.child.wait();
+        }
         let started = Instant::now();
         loop {
+            if abort.is_some_and(|abort| abort.load(Ordering::Acquire)) {
+                self.cancel()?;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "distribution worker output exceeded bound",
+                ));
+            }
             if cancelled.load(Ordering::Acquire) || started.elapsed() >= timeout {
                 self.cancel()?;
                 return Err(io::Error::new(

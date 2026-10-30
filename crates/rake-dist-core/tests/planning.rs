@@ -365,3 +365,16 @@ fn publication_destinations_and_native_feed_paths_are_explicit() {
         serde_json::from_value(json!({"required":{"x86_64-pc-windows-msvc":["dmg"]}})).unwrap();
     assert!(wrong.validate().is_err());
 }
+
+#[test]
+fn custom_formats_require_explicit_commands_and_selected_inputs() {
+    let mut config = config(
+        json!({"schema_version":1,"macos":{"formats":["app"]},"custom_formats":[{"name":"company-installer","platform":"macos","input_format":"app","command":["tools/company-packager"],"verify_command":["tools/verify-company-installer"]}],"component_recipes":{"codec":["tools/prepare-codec"]},"runtimes":[{"name":"codec","recipe":"codec","source":"vendor/codec","options":{"profile":"minimal"}}]}),
+    );
+    assert!(config.plan("example", "1.0.0", Platform::Macos).is_ok());
+    config.macos.formats = vec![Format::Dmg];
+    assert!(config.plan("example", "1.0.0", Platform::Macos).is_err());
+    config.macos.formats = vec![Format::App];
+    config.custom_formats[0].command.clear();
+    assert!(config.plan("example", "1.0.0", Platform::Macos).is_err());
+}

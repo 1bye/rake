@@ -117,16 +117,49 @@ pub(crate) fn runtimes(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                 descriptor.runtimes.insert(runtime.name.clone(), relative);
             }
             name => {
-                return Err(Error::Execution(format!(
-                    "unknown or incompatible runtime recipe: {name}"
-                )));
+                let command = config.component_recipes.get(name).ok_or_else(|| {
+                    Error::Execution(format!("unknown or incompatible runtime recipe: {name}"))
+                })?;
+                let relative = PathBuf::from("rake/runtimes").join(&runtime.name);
+                let destination = resource_stage.join(&relative);
+                fs::create_dir_all(
+                    destination
+                        .parent()
+                        .ok_or_else(|| Error::Execution("runtime parent".into()))?,
+                )?;
+                crate::extensions::recipe(
+                    command,
+                    runtime.options.clone(),
+                    &runtime.name,
+                    target,
+                    &source,
+                    &destination,
+                    package,
+                )?;
+                resources.insert(
+                    destination.to_string_lossy().into_owned(),
+                    relative.to_string_lossy().into_owned(),
+                );
+                if let Some(component) = &runtime.component {
+                    let member = if descriptor.platform == Platform::Macos {
+                        PathBuf::from("Resources").join(&relative)
+                    } else {
+                        relative.clone()
+                    };
+                    descriptor
+                        .native_groups
+                        .entry(component.clone())
+                        .or_default()
+                        .push(member);
+                }
+                descriptor.runtimes.insert(runtime.name.clone(), relative);
             }
         }
     }
     Ok(frameworks)
 }
 
-fn inspect_tree(path: &Path, target: &str) -> Result<(), Error> {
+pub(crate) fn inspect_tree(path: &Path, target: &str) -> Result<(), Error> {
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
             let entry = entry?;

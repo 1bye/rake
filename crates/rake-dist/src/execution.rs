@@ -103,6 +103,9 @@ pub struct Distribution {
     pub engine: String,
     /// Final artifact records.
     pub artifacts: Vec<Artifact>,
+    /// Explicit custom backend outputs, with independent verification evidence.
+    #[serde(default)]
+    pub custom_artifacts: Vec<crate::CustomArtifact>,
 }
 
 /// Reads the compiler's native target triple.
@@ -843,12 +846,21 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             });
         }
     }
+    let custom_artifacts = crate::extensions::package_custom(
+        &plan,
+        &target,
+        root,
+        &result_dir,
+        &artifacts,
+        &effective_trust(plan.config(), &request.trust),
+    )?;
     let result = Distribution {
         schema_version: 1,
         identifier: plan.identifier().into(),
         version: plan.version().into(),
         target,
         engine: "tauri-bundler 2.10.4".into(),
+        custom_artifacts,
         artifacts,
     };
     let mut locks = Vec::new();
