@@ -92,7 +92,7 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
         "completed" => (
             "Network.loadingFinished",
             json!({"requestId":request_id,
-            "timestamp":timestamp,"encodedDataLength":f.get("received_bytes")}),
+            "timestamp":timestamp,"encodedDataLength":0}),
         ),
         "failed" | "timed_out" | "cancelled" | "abandoned" => (
             "Network.loadingFailed",
@@ -203,6 +203,62 @@ mod tests {
     }
 
     #[test]
+    fn preserved_bodies_are_bounded_and_old_ids_cannot_retarget() {
+        let mut bodies = Bodies::default();
+        let data = json!({"bytes":[104,105],"complete":true,"truncated":false,"failure":null});
+        bodies.insert("old:1".into(), [Value::Null, data.clone()]);
+        assert_eq!(
+            body(bodies.get("old:1", true).unwrap(), true).unwrap()["body"],
+            "hi"
+        );
+        assert!(local_id("old:1", "new").is_err());
+        assert_eq!(local_id("new:1", "new").unwrap(), 1);
+        for id in 1..70 {
+            bodies.insert(format!("new:{id}"), [Value::Null, data.clone()]);
+        }
+        assert!(bodies.get("old:1", true).is_none());
+        assert!(bodies.entries.len() <= 64);
+        let large = serde_json::to_value(rake_diagnostics::http::Body {
+            bytes: vec![0; 65536],
+            complete: true,
+            ..Default::default()
+        })
+        .unwrap();
+        for id in 70..100 {
+            bodies.insert(format!("new:{id}"), [large.clone(), large.clone()]);
+        }
+        assert!(bodies.bytes <= 1024 * 1024);
+    }
+
+    #[test]
+    fn response_search_handles_case_regex_and_binary_failures() {
+        let body = json!({"body":"First\nhello World\nhello again","base64Encoded":false});
+        assert_eq!(
+            search(&body, &json!({"query":"world"})).unwrap()["result"][0]["lineNumber"],
+            1
+        );
+        assert_eq!(
+            search(&body, &json!({"query":"world","caseSensitive":true})).unwrap()["result"],
+            json!([])
+        );
+        assert_eq!(
+            search(&body, &json!({"query":"^hello","isRegex":true})).unwrap()["result"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(search(&body, &json!({"query":"[","isRegex":true})).is_err());
+        assert!(
+            search(
+                &json!({"body":"AP8=","base64Encoded":true}),
+                &json!({"query":"x"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn every_phase_preserves_identity_time_and_cancellation() {
         for (phase, method) in [
             ("started", "requestWillBeSent"),
@@ -235,4 +291,87 @@ mod tests {
             }
         }
     }
+}
+
+/// Completed bodies survive runtime replacement for Chrome's Preserve log, within one connection.
+#[derive(Default)]
+pub(super) struct Bodies {
+    entries: std::collections::VecDeque<(String, [Option<rake_diagnostics::http::Body>; 2], usize)>,
+    bytes: usize,
+}
+
+impl Bodies {
+    pub fn insert(&mut self, id: String, bodies: [Value; 2]) {
+        if self.entries.iter().any(|entry| entry.0 == id) {
+            return;
+        }
+        let bodies =
+            bodies.map(|body| serde_json::from_value::<rake_diagnostics::http::Body>(body).ok());
+        let bytes = bodies
+            .iter()
+            .flatten()
+            .map(|body| body.bytes.len())
+            .sum::<usize>();
+        if bytes > 1024 * 1024 {
+            return;
+        }
+        while self.entries.len() >= 64 || self.bytes.saturating_add(bytes) > 1024 * 1024 {
+            if let Some((_, _, bytes)) = self.entries.pop_front() {
+                self.bytes -= bytes;
+            } else {
+                break;
+            }
+        }
+        self.bytes += bytes;
+        self.entries.push_back((id, bodies, bytes));
+    }
+
+    pub fn get(&self, id: &str, response: bool) -> Option<Value> {
+        self.entries
+            .iter()
+            .find(|entry| entry.0 == id)
+            .map(|entry| serde_json::to_value(&entry.1[usize::from(response)]).unwrap_or_default())
+    }
+}
+
+pub(super) fn local_id(id: &str, runtime: &str) -> Result<u64, Error> {
+    let (owner, id) = id
+        .split_once(':')
+        .ok_or_else(|| Error::new(-32602, "Invalid request ID"))?;
+    if owner != runtime {
+        return Err(Error::new(
+            -32000,
+            "Request belongs to an expired runtime; body is no longer retained",
+        ));
+    }
+    id.parse()
+        .map_err(|_| Error::new(-32602, "Invalid request ID"))
+}
+
+pub(super) fn search(body: &Value, params: &Value) -> Result<Value, Error> {
+    let text = body["body"]
+        .as_str()
+        .filter(|_| body["base64Encoded"] == false)
+        .ok_or_else(|| Error::new(-32000, "Search requires a complete UTF-8 response"))?;
+    let query = params["query"]
+        .as_str()
+        .ok_or_else(|| Error::new(-32602, "Search query required"))?;
+    let pattern = if params["isRegex"].as_bool().unwrap_or(false) {
+        query.to_owned()
+    } else {
+        regex::escape(query)
+    };
+    let matcher = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!params["caseSensitive"].as_bool().unwrap_or(false))
+        .size_limit(1024 * 1024)
+        .build()
+        .map_err(|_| Error::new(-32602, "Invalid or oversized search expression"))?;
+    let result: Vec<Value> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| matcher.is_match(line))
+        .take(1000)
+        .map(|(number, line)| json!({"lineNumber":number,"lineContent":line}))
+        .collect();
+    Ok(json!({"result":result}))
 }

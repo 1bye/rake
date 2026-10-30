@@ -44,3 +44,25 @@ stack presentation carries that Rust location and captured span names, command,
 operation, task and generation IDs when instrumented. It is not a JavaScript or
 Rust backtrace. Links use the same workspace-confined read-only source mechanism
 as Console, and work with Network enabled independently of Console.
+
+## Filtering, copying and lifecycle
+
+Chrome's native URL/method/status/type filters, header copying, Copy as cURL,
+Copy response and HAR export operate on captured data. Credential fields stay
+redacted in copies; truncated or unavailable bodies are not silently fetched again.
+Response-body search supports literal/regex queries and case sensitivity with a
+bounded regex engine.
+
+Request IDs include their runtime UUID, and loader IDs follow the virtual frame.
+Chrome Clear removes rows locally; incremental cursors prevent cleared rows from
+reappearing. Stopping and resuming recording skips traffic produced while paused.
+Chrome Preserve log keeps rows across checkpointed runtime replacement. Each
+connection retains completed request/response bytes across replacement (64 requests,
+1 MiB total), so recent preserved rows remain readable. Evicted bodies report an
+error; old request IDs never retarget a successor with the same local counter.
+This retention ends when the connection closes. Preserve log does not preserve
+application-side requests or replay them.
+
+Browser cache, service workers, request blocking, throttling and cookie mutation
+are not Rake HTTP controls; unsupported mutations return errors. This tab does not
+monitor traffic made through unrelated clients, browser internals or raw sockets.

@@ -4567,6 +4567,7 @@ dependencies = [
  "rake-client",
  "rake-diagnostics",
  "rake-protocol",
+ "regex",
  "serde",
  "serde_json",
  "tungstenite",

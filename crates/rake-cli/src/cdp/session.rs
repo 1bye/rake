@@ -24,6 +24,8 @@ struct Session {
     instance: Instance,
     cursor: u64,
     network_cursor: u64,
+    network_paused: bool,
+    network_bodies: super::network::Bodies,
     domains: BTreeSet<String>,
     outbound: VecDeque<(Event, usize)>,
     outbound_bytes: usize,
@@ -53,6 +55,8 @@ impl Session {
             instance,
             cursor: 0,
             network_cursor: 0,
+            network_paused: false,
+            network_bodies: super::network::Bodies::default(),
             domains: BTreeSet::new(),
             outbound: VecDeque::new(),
             outbound_bytes: 0,
@@ -717,25 +721,14 @@ impl Session {
                 Ok(json!({}))
             }
             "Network.getResponseBody" | "Network.getRequestPostData" => {
-                let id = request.params["requestId"]
-                    .as_str()
-                    .and_then(|id| id.parse().ok())
-                    .ok_or_else(|| Error::new(-32602, "Invalid request ID"))?;
-                let response = method == "Network.getResponseBody";
-                let Reply::Data(body) = query(
-                    &self.instance,
-                    Query::HttpBody {
-                        request_id: id,
-                        response,
-                    },
-                    TIMEOUT,
-                )
-                .map_err(|error| Error::new(-32000, error.to_string()))?
-                else {
-                    return Err(Error::new(-32000, "HTTP capture unavailable"));
-                };
-                super::network::body(body, response)
+                self.network_body(&request.params, method == "Network.getResponseBody")
             }
+            "Network.searchInResponseBody" => {
+                let body = self.network_body(&request.params, true)?;
+                super::network::search(&body, &request.params)
+            }
+            "Network.setCacheDisabled" if request.params["cacheDisabled"] == false => Ok(json!({})),
+            "Network.setBypassServiceWorker" if request.params["bypass"] == false => Ok(json!({})),
             "Inspector.enable"
             | "Page.enable"
             | "Page.disable"
@@ -744,6 +737,11 @@ impl Session {
                 let domain = method.split('.').next().unwrap_or_default();
                 let fresh = self.domains.insert(domain.into());
 
+                if domain == "Network" && fresh && self.network_paused {
+                    self.skip_network_backlog()
+                        .map_err(|error| Error::new(-32000, error.to_string()))?;
+                    self.network_paused = false;
+                }
                 if domain == "Runtime" && fresh {
                     self.event(Event::new("Runtime.executionContextCreated", json!({"context":{
                         "id":1, "origin":"rake://runtime", "name":self.instance.application_id,
@@ -753,6 +751,9 @@ impl Session {
                 Ok(json!({}))
             }
             "Network.disable" | "Log.disable" | "Runtime.disable" => {
+                if method == "Network.disable" {
+                    self.network_paused = true;
+                }
                 self.domains
                     .remove(method.split('.').next().unwrap_or_default());
 
@@ -788,6 +789,72 @@ impl Session {
                 format!("Unsupported CDP method: {method}"),
             )),
         }
+    }
+
+    fn skip_network_backlog(&mut self) -> Result<()> {
+        if let Reply::Diagnostics(snapshot) = query(
+            &self.instance,
+            Query::Diagnostics {
+                after: self.network_cursor,
+                kind: None,
+            },
+            TIMEOUT,
+        )? {
+            if let Some(record) = snapshot.records.last() {
+                self.network_cursor = record.sequence;
+            }
+        }
+        Ok(())
+    }
+
+    fn network_body(&self, params: &Value, response: bool) -> std::result::Result<Value, Error> {
+        let id = params["requestId"]
+            .as_str()
+            .ok_or_else(|| Error::new(-32602, "Request ID required"))?;
+        if let Some(body) = self.network_bodies.get(id, response) {
+            return super::network::body(body, response);
+        }
+        let id = super::network::local_id(id, &self.instance.info.runtime_id.to_string())?;
+        let Reply::Data(body) = query(
+            &self.instance,
+            Query::HttpBody {
+                request_id: id,
+                response,
+            },
+            TIMEOUT,
+        )
+        .map_err(|error| Error::new(-32000, error.to_string()))?
+        else {
+            return Err(Error::new(-32000, "HTTP capture unavailable"));
+        };
+        super::network::body(body, response)
+    }
+
+    fn retain_network_bodies(&mut self, record: &rake_diagnostics::Record, id: &str) {
+        let phase = record.fields["phase"].as_str().unwrap_or_default();
+        if !matches!(
+            phase,
+            "completed" | "failed" | "timed_out" | "cancelled" | "abandoned"
+        ) {
+            return;
+        }
+        let Some(request_id) = record.fields["request_id"].as_u64() else {
+            return;
+        };
+        let mut bodies = [Value::Null, Value::Null];
+        for (index, body) in bodies.iter_mut().enumerate() {
+            if let Ok(Reply::Data(value)) = query(
+                &self.instance,
+                Query::HttpBody {
+                    request_id,
+                    response: index == 1,
+                },
+                TIMEOUT,
+            ) {
+                *body = value;
+            }
+        }
+        self.network_bodies.insert(id.into(), bodies);
     }
 
     fn source_link(&mut self, record: &rake_diagnostics::Record) -> Option<String> {
@@ -947,6 +1014,16 @@ impl Session {
                 }
                 self.sources.observe(record);
                 for mut event in super::network::translate(record) {
+                    let runtime = self.instance.info.runtime_id.to_string();
+                    let id = format!(
+                        "{runtime}:{}",
+                        event.params["requestId"].as_str().unwrap_or_default()
+                    );
+                    event.params["requestId"] = json!(id);
+                    if event.params.get("loaderId").is_some() {
+                        event.params["loaderId"] = json!(runtime);
+                    }
+                    self.retain_network_bodies(record, &id);
                     if event.method == "Network.requestWillBeSent" {
                         if record.source.is_some()
                             && let Some(url) = self.source_link(record)

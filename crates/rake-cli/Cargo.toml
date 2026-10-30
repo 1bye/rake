@@ -17,6 +17,7 @@ doc = false
 
 [dependencies]
 base64 = "0.22.1"
+regex = "1"
 rake-client.workspace = true
 rake-protocol.workspace = true
 rake-diagnostics = { workspace = true, features = ["devtools"] }
