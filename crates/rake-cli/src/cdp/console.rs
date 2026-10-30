@@ -186,6 +186,14 @@ impl Objects {
         self.bytes = 0;
     }
 
+    pub fn logged(&mut self, record: &Record, epoch: f64) -> Event {
+        let called = self.called(record, epoch);
+        let mut event = translate(record, epoch).expect("event records only");
+        event.params["entry"]["text"] = called.params["args"][0]["value"].clone();
+        event.params["entry"]["args"] = json!([called.params["args"][1]]);
+        event
+    }
+
     pub fn called(&mut self, record: &Record, epoch: f64) -> Event {
         let fields = json!({"fields":record.fields,"target":record.target,"spans":record.spans,
             "spanId":record.span_id,"parentSpanId":record.parent_span_id,"sequence":record.sequence,
@@ -311,7 +319,7 @@ impl ProcessOutput {
         Ok(Some(serde_json::from_slice(&bytes)?))
     }
 
-    pub fn poll(&mut self, now: f64) -> Vec<Event> {
+    pub fn poll(&mut self, now: f64, include_mirrors: bool) -> Vec<Event> {
         let snapshot = match self.read() {
             Ok(Some(snapshot)) => {
                 self.last_error = None;
@@ -357,6 +365,9 @@ impl ProcessOutput {
 
             skipped += sequence.saturating_sub(self.cursor + 1);
             self.cursor = sequence;
+            if !include_mirrors && record["structured"] == true {
+                continue;
+            }
             let stream = record["stream"].as_str().unwrap_or("output");
             let text = record["text"].as_str().unwrap_or_default();
 
@@ -404,7 +415,7 @@ pub(super) fn source_url(source: &rake_diagnostics::Source) -> String {
 pub(super) fn exception(error: Error, sequence: u64) -> Value {
     let description = format!("RakeError ({}): {}", error.code, error.message);
     let remote = json!({"type":"object","subtype":"error","className":"RakeError","description":description});
-    json!({"result":remote,"exceptionDetails":{"exceptionId":sequence,"text":description,
+    json!({"result":remote,"exceptionDetails":{"exceptionId":sequence,"text":"Uncaught",
         "lineNumber":0,"columnNumber":0,"exception":remote}})
 }
 
@@ -489,6 +500,31 @@ mod tests {
     }
 
     #[test]
+    fn marked_mirrors_are_hidden_live_but_retained_after_runtime_failure() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!("rake-mirror-{}.json", uuid::Uuid::new_v4()));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        serde_json::to_writer(file,&json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr","text":"INFO app mirrored","structured":true},
+            {"sequence":2,"elapsed_us":1,"stream":"stderr","text":"panic output","structured":false}],"dropped":0})).unwrap();
+        let mut live = ProcessOutput::new(Some(path.clone()));
+        let live_entries = live.poll(10., false);
+        assert_eq!(live_entries.len(), 1);
+        assert_eq!(
+            live_entries[0].params["entry"]["text"],
+            "[stderr] panic output"
+        );
+        assert!(live.poll(11., false).is_empty());
+        let mut disconnected = ProcessOutput::new(Some(path.clone()));
+        assert_eq!(disconnected.poll(10., true).len(), 2);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn process_output_has_its_own_clock_cursor_and_loss() {
         use std::os::unix::fs::OpenOptionsExt;
         let path = std::env::temp_dir().join(format!("rake-output-{}.json", uuid::Uuid::new_v4()));
@@ -502,7 +538,7 @@ mod tests {
 
         serde_json::to_writer(file,&json!({"dropped":1,"records":[{"sequence":2,"elapsed_us":500000,"stream":"stderr","text":"test"}]})).unwrap();
         let mut output = ProcessOutput::new(Some(path.clone()));
-        let events = output.poll(10.);
+        let events = output.poll(10., true);
 
         assert_eq!(events[0].params["entry"]["text"], "[stderr] test");
         assert_eq!(events[0].params["entry"]["level"], "error");
@@ -513,7 +549,7 @@ mod tests {
                 .unwrap()
                 .contains("skipped=1")
         );
-        assert!(output.poll(20.).is_empty());
+        assert!(output.poll(20., true).is_empty());
         std::fs::remove_file(path).unwrap();
     }
 }

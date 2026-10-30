@@ -1,5 +1,8 @@
 //! Typed routing with independently retained drafts and structured save/discard decisions.
 
+#[cfg(feature = "console-test")]
+mod console_fixture;
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -632,6 +635,9 @@ fn app() -> App<Destination> {
             }
         })
         .expect("fetch registration");
+
+    #[cfg(feature = "console-test")]
+    console_fixture::register(&commands);
 
     app.commands(commands)
 }

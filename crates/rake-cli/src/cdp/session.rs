@@ -23,6 +23,7 @@ const FRAME_HIGH_WATER_CURSOR: u64 = (1 << 53) - 1;
 struct Session {
     instance: Instance,
     cursor: u64,
+    network_cursor: u64,
     domains: BTreeSet<String>,
     outbound: VecDeque<(Event, usize)>,
     outbound_bytes: usize,
@@ -32,6 +33,7 @@ struct Session {
     discard_diagnostics: bool,
     objects: super::console::Objects,
     sources: super::sources::Sources,
+    source_base: Option<String>,
     loss: super::console::Loss,
     process_output: super::console::ProcessOutput,
     dom: super::dom::Dom,
@@ -50,6 +52,7 @@ impl Session {
         Self {
             instance,
             cursor: 0,
+            network_cursor: 0,
             domains: BTreeSet::new(),
             outbound: VecDeque::new(),
             outbound_bytes: 0,
@@ -59,6 +62,7 @@ impl Session {
             discard_diagnostics: false,
             objects: super::console::Objects::default(),
             sources: super::sources::Sources::default(),
+            source_base: None,
             loss: super::console::Loss::default(),
             process_output: super::console::ProcessOutput::new(output),
             dom: super::dom::Dom::default(),
@@ -738,9 +742,9 @@ impl Session {
 
                 Ok(json!({}))
             }
-            "Page.getResourceTree" => {
-                Ok(json!({"frameTree":{"frame":frame(),"resources":self.sources.resources()}}))
-            }
+            "Page.getResourceTree" => Ok(
+                json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources()}}),
+            ),
             "Page.getResourceContent" => {
                 Ok(json!({"content":self.sources.content(&request.params)?,"base64Encoded":false}))
             }
@@ -760,7 +764,9 @@ impl Session {
                 self.sources.close(&request.params);
                 Ok(json!({}))
             }
-            "Page.getFrameTree" => Ok(json!({"frameTree":{"frame":frame()}})),
+            "Page.getFrameTree" => {
+                Ok(json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string())}}))
+            }
             _ => Err(Error::new(
                 -32601,
                 format!("Unsupported CDP method: {method}"),
@@ -784,7 +790,7 @@ impl Session {
             self.accept_diagnostics(&snapshot);
             self.discard_diagnostics = false;
         }
-        self.process_output.poll(unix_seconds());
+        self.process_output.poll(unix_seconds(), true);
         self.outbound.retain(|(event, _)| {
             !matches!(
                 event.method.as_str(),
@@ -801,18 +807,19 @@ impl Session {
         }
     }
 
-    fn poll_output(&mut self) {
+    fn poll_output(&mut self, include_mirrors: bool) {
         if self.domains.contains("Log") || self.domains.contains("Runtime") {
-            for event in self.process_output.poll(unix_seconds()) {
+            for event in self.process_output.poll(unix_seconds(), include_mirrors) {
                 self.event(event);
             }
         }
     }
 
     fn poll(&mut self) -> Result<()> {
-        // The supervisor outlives a crashed runtime; drain stderr before querying it.
-        self.poll_output();
-        match query(&self.instance, Query::Info {}, TIMEOUT)? {
+        let live = query(&self.instance, Query::Info {}, TIMEOUT);
+        // Raw stdout/stderr survive failed IPC; marked diagnostic mirrors are fallback only.
+        self.poll_output(live.is_err());
+        match live? {
             Reply::Info(info) if info.runtime_id == self.instance.info.runtime_id => {}
             _ => return Err("runtime identity changed".into()),
         }
@@ -826,12 +833,19 @@ impl Session {
             self.poll_frames(true).map_err(|error| error.message)?;
         }
 
+        let console = self.domains.contains("Log") || self.domains.contains("Runtime");
+        let network = self.domains.contains("Network");
+        if !console && !network {
+            return Ok(());
+        }
+        let after = match (console, network) {
+            (true, true) => self.cursor.min(self.network_cursor),
+            (false, true) => self.network_cursor,
+            _ => self.cursor,
+        };
         let Reply::Diagnostics(snapshot) = query(
             &self.instance,
-            Query::Diagnostics {
-                after: self.cursor,
-                kind: None,
-            },
+            Query::Diagnostics { after, kind: None },
             TIMEOUT,
         )?
         else {
@@ -839,12 +853,13 @@ impl Session {
         };
 
         let discard = std::mem::take(&mut self.discard_diagnostics);
-        let warning = self.loss.observe(&snapshot, self.cursor);
+        let warning = console
+            .then(|| self.loss.observe(&snapshot, self.cursor))
+            .flatten();
 
         if let Some(record) = snapshot.records.last() {
             self.epoch_seconds
                 .get_or_insert_with(|| unix_seconds() - record.elapsed_us as f64 / 1e6);
-            self.cursor = record.sequence;
         }
 
         if !discard && (self.domains.contains("Log") || self.domains.contains("Runtime")) {
@@ -852,28 +867,60 @@ impl Session {
                 self.warning(warning);
             }
 
-            for record in &snapshot.records {
+            for record in snapshot
+                .records
+                .iter()
+                .filter(|record| record.sequence > after)
+            {
                 self.sources.observe(record);
-                if self.domains.contains("Log")
-                    && !self.domains.contains("Runtime")
-                    && let Some(event) =
-                        super::console::translate(record, self.epoch_seconds.unwrap_or_default())
-                {
-                    self.event(event);
+                if record.sequence <= self.cursor || record.kind != "event" {
+                    continue;
                 }
-
-                if self.domains.contains("Runtime") && record.kind == "event" {
-                    let event = self
-                        .objects
-                        .called(record, self.epoch_seconds.unwrap_or_default());
-
-                    self.event(event);
+                let mut event = if self.domains.contains("Log") {
+                    self.objects
+                        .logged(record, self.epoch_seconds.unwrap_or_default())
+                } else {
+                    self.objects
+                        .called(record, self.epoch_seconds.unwrap_or_default())
+                };
+                if let (Some(base), Some(source)) = (&self.source_base, &record.source) {
+                    let filename = std::path::Path::new(&source.file)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("source.rs");
+                    let filename: String = filename
+                        .chars()
+                        .map(|c| {
+                            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect();
+                    let url = format!(
+                        "{base}/{}/source/{}/{filename}",
+                        self.instance.info.runtime_id, record.sequence
+                    );
+                    self.sources.alias(url.clone(), record);
+                    if event.method == "Log.entryAdded" {
+                        event.params["entry"]["url"] = json!(url);
+                    } else {
+                        event.params["stackTrace"]["callFrames"][0]["url"] = json!(url);
+                    }
                 }
+                self.event(event);
             }
+        }
+        if console && let Some(record) = snapshot.records.last() {
+            self.cursor = record.sequence;
         }
 
         if self.domains.contains("Network") {
             for record in &snapshot.records {
+                if record.sequence <= self.network_cursor {
+                    continue;
+                }
                 for mut event in super::network::translate(record) {
                     if event.method == "Network.requestWillBeSent" {
                         event.params["wallTime"] = json!(
@@ -884,6 +931,10 @@ impl Session {
                     self.event(event);
                 }
             }
+        }
+
+        if network && let Some(record) = snapshot.records.last() {
+            self.network_cursor = record.sequence;
         }
 
         Ok(())
@@ -1270,6 +1321,7 @@ impl Session {
 
         self.instance = instance;
         self.cursor = 0;
+        self.network_cursor = 0;
         self.epoch_seconds = None;
         self.objects.clear();
         self.sources.clear();
@@ -1348,8 +1400,8 @@ fn unix_seconds() -> f64 {
         .as_secs_f64()
 }
 
-fn frame() -> Value {
-    json!({"id":"rake", "loaderId":"rake", "url":"rake://runtime", "domainAndRegistry":"",
+fn frame(runtime: &str) -> Value {
+    json!({"id":"rake", "loaderId":runtime, "url":"rake://runtime", "domainAndRegistry":"",
         "securityOrigin":"rake://runtime", "mimeType":"text/plain", "secureContextType":"Secure",
         "crossOriginIsolatedContextType":"NotIsolated", "gatedAPIFeatures":[]})
 }
@@ -1359,6 +1411,7 @@ pub(super) fn run(
     instance: Instance,
     output: Option<std::path::PathBuf>,
     directory: std::path::PathBuf,
+    source_base: String,
 ) -> Result<()> {
     socket
         .get_mut()
@@ -1367,6 +1420,7 @@ pub(super) fn run(
         .get_mut()
         .set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut session = Session::new(instance, output);
+    session.source_base = Some(source_base);
     let mut next_poll = Instant::now();
     let mut missing_since: Option<Instant> = None;
 
@@ -1401,8 +1455,20 @@ pub(super) fn run(
                     } else if missing_since.get_or_insert_with(Instant::now).elapsed()
                         >= Duration::from_secs(5)
                     {
-                        session.poll_output();
-                        session.event(super::console::entry("error", format!("Runtime disconnected: {error}. Retained supervisor output is shown above."), unix_seconds()*1000., "rake://adapter"));
+                        session.poll_output(true);
+                        let text = format!(
+                            "Runtime disconnected: {error}. Retained supervisor output is shown above."
+                        );
+                        if session.domains.contains("Log") {
+                            session.event(super::console::entry(
+                                "error",
+                                text,
+                                unix_seconds() * 1000.,
+                                "rake://adapter",
+                            ));
+                        } else if session.domains.contains("Runtime") {
+                            session.event(Event::new("Runtime.consoleAPICalled",json!({"type":"error","args":[{"type":"string","value":text}],"executionContextId":1,"timestamp":unix_seconds()*1000.})));
+                        }
                         session.flush(&mut socket)?;
                         socket.send(Message::text(serde_json::to_string(&Event::new(
                             "Inspector.detached",
@@ -1572,7 +1638,7 @@ mod tests {
             .unwrap();
         assert_eq!(error["result"]["subtype"], "error");
         assert!(
-            error["exceptionDetails"]["text"]
+            error["result"]["description"]
                 .as_str()
                 .unwrap()
                 .contains("registered command")
@@ -1622,13 +1688,10 @@ mod tests {
             "Log and Runtime must not duplicate diagnostics"
         );
         let event = &session.outbound[0].0;
-        assert_eq!(event.method, "Runtime.consoleAPICalled");
-        assert_eq!(event.params["type"], "warning");
-        assert_eq!(
-            event.params["stackTrace"]["callFrames"][0]["lineNumber"],
-            41
-        );
-        let id = event.params["args"][1]["objectId"]
+        assert_eq!(event.method, "Log.entryAdded");
+        assert_eq!(event.params["entry"]["level"], "warning");
+        assert_eq!(event.params["entry"]["lineNumber"], 41);
+        let id = event.params["entry"]["args"][0]["objectId"]
             .as_str()
             .unwrap()
             .to_owned();

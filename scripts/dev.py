@@ -359,7 +359,10 @@ class Supervisor:
             def collect(pipe=pipe, label=label, pid=self.app.pid):
                 with pipe:
                     while chunk := pipe.readline(2048):
-                        self.output.append(chunk, pid, label)
+                        structured = chunk.startswith("\x1eRAKE_DIAGNOSTIC ")
+                        if structured:
+                            chunk = chunk[len("\x1eRAKE_DIAGNOSTIC "):]
+                        self.output.append(chunk, pid, label, structured=structured)
                         print(chunk, file=sys.stderr, end="", flush=True)
             reader = threading.Thread(target=collect, daemon=True)
             reader.start()

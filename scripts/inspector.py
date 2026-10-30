@@ -188,7 +188,7 @@ class ProcessOutput:
         self.dropped = 0
         self.started = time.monotonic()
 
-    def append(self, text, pid, stream, level=None):
+    def append(self, text, pid, stream, level=None, structured=False):
         import time
         encoded = text.encode("utf-8", errors="replace")
         with self.lock:
@@ -196,7 +196,7 @@ class ProcessOutput:
                 self.dropped += 1
             self.sequence += 1
             self.records.append({"sequence": self.sequence, "elapsed_us": int((time.monotonic() - self.started) * 1000000),
-                "pid": pid, "stream": stream, "level": level, "text": encoded[:2048].decode("utf-8", errors="ignore"),
+                "pid": pid, "stream": stream, "level": level, "structured": structured, "text": encoded[:2048].decode("utf-8", errors="ignore"),
                 "truncated": len(encoded) > 2048})
 
     def snapshot(self):

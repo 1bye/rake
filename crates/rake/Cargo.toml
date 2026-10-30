@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 default = ["gpui"]
-devtools = []
+devtools = ["rake-diagnostics/devtools"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
 view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
 gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle"]

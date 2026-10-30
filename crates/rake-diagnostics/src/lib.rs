@@ -48,6 +48,7 @@ pub struct Record {
     /// Monotonic sequence within this collector; not a router revision.
     pub sequence: u64,
     /// Emitting tracing call site; absent for older or manually recorded events.
+    #[cfg(feature = "devtools")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     /// Time since collector creation, in microseconds.
@@ -246,6 +247,7 @@ impl Collector {
 
         buffer.records.push_back(Record {
             sequence,
+            #[cfg(feature = "devtools")]
             source: context.source,
             elapsed_us: self.0.started.elapsed().as_micros().min(u64::MAX as u128) as u64,
             level: level.into(),
@@ -296,6 +298,7 @@ pub struct CollectorLayer(Collector);
 /// Owned causal metadata captured before asynchronous work changes context.
 #[derive(Clone, Debug, Default)]
 pub struct CapturedContext {
+    #[cfg(feature = "devtools")]
     source: Option<Source>,
     spans: Vec<String>,
     fields: BTreeMap<String, Value>,
@@ -423,20 +426,25 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
         let mut fields = Fields::default();
 
         event.record(&mut fields);
-        let mut context = cx
+        let context = cx
             .event_span(event)
             .map(|span| capture(span, &self.0))
             .unwrap_or_default();
 
-        context.source =
-            event
-                .metadata()
-                .file()
-                .zip(event.metadata().line())
-                .map(|(file, line)| Source {
-                    file: file.into(),
-                    line,
-                });
+        #[cfg(feature = "devtools")]
+        let context = {
+            let mut context = context;
+            context.source =
+                event
+                    .metadata()
+                    .file()
+                    .zip(event.metadata().line())
+                    .map(|(file, line)| Source {
+                        file: file.into(),
+                        line,
+                    });
+            context
+        };
         self.0.record_context(
             context,
             event.metadata().level().as_str(),
@@ -550,6 +558,8 @@ pub enum DiagnosticsError {
 }
 
 struct OutputLayer {
+    #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
+    mirror_marker: bool,
     #[cfg(not(target_family = "wasm"))]
     sender: std::sync::mpsc::SyncSender<String>,
     #[cfg(not(target_family = "wasm"))]
@@ -573,7 +583,13 @@ impl OutputLayer {
                 })
                 .map_err(DiagnosticsError::OutputWorker)?;
 
-            Ok(Self { sender, collector })
+            Ok(Self {
+                sender,
+                collector,
+                #[cfg(feature = "devtools")]
+                mirror_marker: std::env::var_os("RAKE_DEV_CONTROL")
+                    .is_some_and(|value| value == "1"),
+            })
         }
 
         #[cfg(target_family = "wasm")]
@@ -597,6 +613,12 @@ impl<S: Subscriber> Layer<S> for OutputLayer {
             fields.0
         );
 
+        #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
+        let text = if self.mirror_marker {
+            format!("\u{1e}RAKE_DIAGNOSTIC {text}")
+        } else {
+            text
+        };
         #[cfg(not(target_family = "wasm"))]
         if self.sender.try_send(text).is_err() {
             self.collector

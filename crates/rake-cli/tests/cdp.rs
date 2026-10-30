@@ -166,7 +166,7 @@ fn discovery_access_wire_and_detach() {
         assert_eq!(reply["result"], json!({}));
         let names = cdp_call(&mut socket, "Runtime.globalLexicalScopeNames", json!({}));
 
-        assert_eq!(names["result"]["names"], json!(["test.echo"]));
+        assert_eq!(names["result"]["names"], json!(["$0", "rake", "test"]));
         let compiled = cdp_call(
             &mut socket,
             "Runtime.compileScript",
@@ -187,7 +187,13 @@ fn discovery_access_wire_and_detach() {
             json!({"expression":"unknown({})"}),
         );
 
-        assert_eq!(unknown["error"]["code"], -32602);
+        assert_eq!(unknown["result"]["result"]["subtype"], "error");
+        assert!(
+            unknown["result"]["result"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Unregistered command: unknown")
+        );
         let first = cdp_call(
             &mut socket,
             "Runtime.evaluate",

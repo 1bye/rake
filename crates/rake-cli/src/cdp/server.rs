@@ -23,24 +23,59 @@ fn target(instance: &Instance, authority: &str, token: &str) -> Value {
 }
 
 fn http(stream: &mut TcpStream, status: &str, body: &Value) -> std::io::Result<()> {
-    let mut header = Vec::new();
+    http_body(
+        stream,
+        status,
+        "application/json",
+        &serde_json::to_vec(body)?,
+    )
+}
 
+fn http_body(stream: &mut TcpStream, status: &str, mime: &str, body: &[u8]) -> std::io::Result<()> {
+    let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") && header.len() < 16384 {
         let mut byte = [0];
-
         stream.read_exact(&mut byte)?;
         header.push(byte[0]);
     }
-
-    let body = serde_json::to_vec(body)?;
-
     write!(
         stream,
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; sandbox\r\n\r\n",
         body.len()
     )?;
+    stream.write_all(body)
+}
 
-    stream.write_all(&body)
+fn source_content(instance: &Instance, sequence: u64) -> Result<String> {
+    use rake_protocol::{
+        control::{Query, Reply},
+        inspection::SourceLocation,
+    };
+    let after = sequence
+        .checked_sub(1)
+        .ok_or("Invalid diagnostic sequence")?;
+    let Reply::Diagnostics(snapshot) = crate::terminal::query(
+        instance,
+        Query::Diagnostics {
+            after,
+            kind: Some("event".into()),
+        },
+        super::TIMEOUT,
+    )?
+    else {
+        return Err("Diagnostic source unavailable".into());
+    };
+    let source = snapshot
+        .records
+        .iter()
+        .find(|record| record.sequence == sequence)
+        .and_then(|record| record.source.as_ref())
+        .ok_or("Diagnostic source expired or unavailable")?;
+    crate::source::read(&SourceLocation {
+        file: source.file.clone(),
+        line: source.line,
+        column: 1,
+    })
 }
 
 fn connection(
@@ -143,7 +178,16 @@ fn connection(
         )?);
     };
 
-    let Some(instance) = discover(&options.directory, options.selector.as_deref())?
+    let (id, source) = id
+        .split_once("/source/")
+        .map_or((id, None), |(id, tail)| (id, Some(tail)));
+    // Source URLs name an exact runtime; a discovery selector may name its predecessor.
+    let selector = if source.is_some() {
+        None
+    } else {
+        options.selector.as_deref()
+    };
+    let Some(instance) = discover(&options.directory, selector)?
         .into_iter()
         .find(|i| i.info.runtime_id.to_string() == id)
     else {
@@ -154,6 +198,23 @@ fn connection(
         )?);
     };
 
+    if let Some(source) = source {
+        let sequence = source
+            .split_once('/')
+            .and_then(|(sequence, _)| sequence.parse::<u64>().ok());
+        let content = sequence
+            .ok_or_else(|| "Invalid diagnostic source URL".into())
+            .and_then(|sequence| source_content(&instance, sequence));
+        match content {
+            Ok(text) => http_body(&mut stream, "200 OK", "text/plain", text.as_bytes())?,
+            Err(error) => http(
+                &mut stream,
+                "404 Not Found",
+                &json!({"error":error.to_string()}),
+            )?,
+        };
+        return Ok(());
+    }
     let socket = tungstenite::accept_with_config(
         stream,
         Some(
@@ -169,6 +230,7 @@ fn connection(
         instance,
         options.process_output.clone(),
         options.directory.clone(),
+        format!("http://{authority}/{token}"),
     )
 }
 

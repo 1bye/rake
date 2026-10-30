@@ -70,6 +70,7 @@ fn span_alias_includes_both_lifecycle_records_with_an_exclusive_cursor() {
     assert_eq!(collector.snapshot_after(0, None).records.len(), 3);
 }
 
+#[cfg(feature = "devtools")]
 #[test]
 fn tracing_retains_the_event_callsite_and_causal_context() {
     use tracing_subscriber::prelude::*;

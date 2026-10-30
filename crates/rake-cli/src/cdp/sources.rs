@@ -29,6 +29,21 @@ impl Sources {
         }
     }
 
+    pub fn alias(&mut self, url: String, record: &rake_diagnostics::Record) {
+        if let Some(source) = &record.source
+            && self.locations.len() < 128
+        {
+            self.locations.insert(
+                url,
+                SourceLocation {
+                    file: source.file.clone(),
+                    line: source.line,
+                    column: 1,
+                },
+            );
+        }
+    }
+
     pub fn resources(&self) -> Vec<Value> {
         self.locations
             .keys()

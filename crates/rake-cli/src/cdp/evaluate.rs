@@ -176,7 +176,7 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
                     }
                     OperationState::Queued | OperationState::Running
                         if Instant::now() < deadline => {}
-                    _ => return Ok(json!({"requestKey":key,"operation":record})),
+                    _ => return Ok(outcome(instance, Some(&key), &record)),
                 }
             }
             Ok(_) => {

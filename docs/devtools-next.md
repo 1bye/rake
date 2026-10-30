@@ -89,3 +89,13 @@ JavaScript evaluation and Rust source rewriting remain unsupported. Chrome's
 Sources/debugger is not a Rust debugger. The Console helper UI checks noted above remain verification work, rather than
 a claim of full parity.
 See [element inspection](element-inspection.md) for the engine coverage contract.
+
+
+## Console coverage
+
+The five Console steps and their 2026-10-30 stock Chrome verification are recorded
+in [the Console checklist](devtools-console.md). This includes reviewed command
+entry, completion/help, source links, structured data, failed/pending results,
+search, Clear, Keep log across checkpointed replacement, and retained panic output.
+That pass used Chrome 156.0.8078.74; the earlier Console UI limitations above describe
+the historical Elements-only pass.

@@ -10,6 +10,9 @@ description = "Bounded structured diagnostics and tracing integration without a 
 [lints]
 workspace = true
 
+[features]
+devtools = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

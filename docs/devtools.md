@@ -206,8 +206,13 @@ uncertain delivery error names the key and is never resent automatically. Use
 `rake ctl` to observe or explicitly retry with the identical payload and key;
 evaluating again submits a new mutation. Eager/side-effect-free evaluation is
 rejected. Registry names and non-persisting compile checks read `Query::Commands`.
-JavaScript evaluation, persisted scripts, and autocomplete via JavaScript calls
-remain unavailable. `Runtime.callFunctionOn` recognizes only Chrome's zero-argument
+`rake.help()` lists Console helpers, `rake.commands()` returns application command
+schemas, and `rake.command("demo.echo")` describes one command. Namespaces such as
+`rake.` and `demo.` provide read-only completion data. Results label their operation
+state and include an `observe` token: pass that literal JSON to `rake.operation(...)`
+to observe without resubmitting. Tokens include the runtime UUID and expire on
+replacement. General JavaScript evaluation, persisted scripts and autocomplete
+that executes arbitrary JavaScript remain unavailable. `Runtime.callFunctionOn` recognizes only Chrome's zero-argument
 focus/scroll helpers on retained node objects; it never evaluates JavaScript.
 
 Elements Find (`Cmd/Ctrl+F`) searches captured names, IDs and text, including collapsed
@@ -219,7 +224,7 @@ same actions plus **Open Rust source**. In Chrome's Console, use
 open the construction site using the system default editor. This explicit host
 action is restricted to existing Rust files inside `RAKE_SOURCE_ROOT` (default:
 the adapter host's current directory). The editor helper returns no source contents; captured diagnostic source links can
-read bounded workspace Rust files into Chrome’s Sources viewer.
+open bounded workspace Rust files as read-only text through authenticated loopback URLs.
 line/column remain metadata when the default editor cannot accept a location.
 For an attribute or registered handler site, use
 `rake.openSource($0, {"kind":"style","index":0})` or

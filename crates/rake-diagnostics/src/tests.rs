@@ -15,6 +15,8 @@ fn a_full_output_queue_reports_loss_and_keeps_collecting() {
     let subscriber = tracing_subscriber::registry()
         .with(collector.layer())
         .with(OutputLayer {
+            #[cfg(feature = "devtools")]
+            mirror_marker: false,
             sender,
             collector: collector.clone(),
         });
