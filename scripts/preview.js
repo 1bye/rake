@@ -104,6 +104,12 @@ function closeComposer() {
   selected = null; editingID = null; $('composer').hidden = true; $('comment').value = '';
   $('mode-hint').hidden = !selecting; drawOverlays();
 }
+function resizeComment() {
+  if ($('composer').hidden) return;
+  $('comment').style.height = 'auto';
+  $('comment').style.height = $('comment').scrollHeight + 'px';
+  positionComposer();
+}
 function positionComposer() {
   if ($('composer').hidden) return;
   const box = $('composer').getBoundingClientRect(), stage = screen.getBoundingClientRect();
@@ -119,11 +125,11 @@ function openComposer(element, generation, note, location) {
   cancelPick(); selected = element; selectedGeneration = generation; editingID = note?.id; anchor = location;
   hoveredID = null; setMenu(false); $('composer').hidden = false; $('mode-hint').hidden = true;
   $('draft-number').textContent = note?.number || '+';
-  $('draft-title').textContent = note ? 'Edit annotation' : 'New annotation';
-  $('element-name').textContent = labelOf(element);
-  $('element-source').textContent = sourceOf(element); $('element-source').title = sourceOf(element);
-  $('comment').value = note?.comment || ''; $('save').firstChild.textContent = note ? 'Save note ' : 'Add note ';
-  positionComposer(); drawOverlays(); queueResolution(); $('comment').focus();
+  $('copy-context').title = labelOf(element) + '\n' + sourceOf(element) + '\nCopy element context';
+  const action = note ? 'Save note' : 'Add note';
+  $('save').setAttribute('aria-label', action); $('save').title = action + ' (Enter)';
+  $('comment').value = note?.comment || '';
+  resizeComment(); drawOverlays(); queueResolution(); $('comment').focus();
 }
 function previewNote(id) { hoveredID = id; drawOverlays(); queueResolution(); }
 function cancelPick() {
@@ -448,7 +454,12 @@ $('composer').onsubmit = event => {
     status(notes.warning || 'Annotation saved', notes.warning ? 'error' : 'info');
   } catch (failure) { error(failure.message); }
 };
-$('comment').onkeydown = event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); $('composer').requestSubmit(); } };
+$('comment').oninput = resizeComment;
+$('comment').onkeydown = event => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+    event.preventDefault(); if (!event.repeat) $('composer').requestSubmit();
+  }
+};
 $('annotations-menu').onmouseenter = () => setMenu(true);
 $('annotations-menu').onmouseleave = () => { menuTimer = setTimeout(() => setMenu(false), 160); };
 $('annotations-menu').onfocusin = () => setMenu(true);
@@ -517,6 +528,6 @@ screen.addEventListener('mouseleave', () => { hover = pointer = null; cancelPick
 
 new ResizeObserver(() => { drawOverlays(); positionComposer(); }).observe(screen);
 new ResizeObserver(positionComposer).observe($('composer'));
-window.addEventListener('resize', () => { pointer = null; cancelPick(); fitWindow(); });
+window.addEventListener('resize', () => { pointer = null; cancelPick(); fitWindow(); resizeComment(); });
 setInterval(() => { if (channel?.readyState === WebSocket.OPEN && pending.size < 4) void request('preview_state').catch(() => {}); }, 5000);
 renderNotes(); connect();

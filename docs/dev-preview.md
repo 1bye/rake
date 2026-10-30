@@ -85,8 +85,9 @@ In Annotate mode, click an element to write a note in the contextual editor.
 The live picker outlines the deepest inspected element without activating the control;
 automatic text boundaries resolve to their containing paragraph, button or other element.
 Notes retain the Rust construction site, semantic/stable identities, text and
-macro-authored style source metadata, plus bounded source ancestry from the exact selected capture. `Cmd/Ctrl+Enter` saves; Escape cancels and
-returns to Interact. Scrolling works in either mode. Picking opaque/cached content
+macro-authored style source metadata, plus bounded source ancestry from the exact selected capture.
+The compact floating editor grows with the comment. Enter saves, Shift+Enter adds
+a new line, and Escape cancels and returns to Interact. Scrolling works in either mode. Picking opaque/cached content
 resolves to an inspected ancestor.
 
 Hover or focus the toolbar's comments badge to see saved annotations. Hover or
@@ -104,7 +105,8 @@ The picker follows [React Grab's copy workflow](https://github.com/aidenybai/rea
 hover an element and press `Cmd/Ctrl+C` to copy its source reference, including from
 Interact mode. In Annotate mode a cursor-following label shows the element, Rust
 site and shortcuts. Bare `C` copies the hovered target; Enter or a click opens the
-comment editor. Its **Copy context** action copies the element without saving a note.
+comment editor. Its leading context icon copies the element without saving a note;
+hovering the icon shows the element name and Rust source site.
 Normal copying of selected text in the editor/page stays with the browser.
 
 A copied annotation looks like this (the exact tags, text and source sites come
