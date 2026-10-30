@@ -28,6 +28,7 @@ pub mod quit;
 pub mod reload;
 pub mod router;
 pub mod services;
+pub mod storage;
 pub mod tasks;
 
 #[cfg(feature = "gpui")]
