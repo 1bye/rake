@@ -29,6 +29,7 @@ def main():
     assert os.name == "nt", "requires a disposable Windows runner"
     cli = args.cli.resolve()
     repository = pathlib.Path(__file__).resolve().parents[1]
+    os.environ["CARGO_TARGET_DIR"] = str(repository / "target")
     identifier = f"dev.rake.velosmoke{os.getpid()}"
     install = pathlib.Path(os.environ["LOCALAPPDATA"]) / identifier
     assert not install.exists(), "refuse to replace an existing installation"
