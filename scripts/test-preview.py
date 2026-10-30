@@ -52,6 +52,47 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(request["message"]["type"], "query")
         self.assertEqual(request["message"]["value"]["point"], {"window": "window-1", "native_id": 42, "generation": "current", "x": 100, "y": 80})
 
+    def test_grab_promotes_text_and_collects_pinned_ancestors_and_descendant_text(self):
+        leaf = {'id':'leaf','parent':'button','kind':'Text','view':{'tag':'Text'},'text':'Save'}
+        root = {'id':'root','kind':'View','view':{'tag':'Editor'},'source':{'file':'src/editor.rs','line':4,'column':2}}
+        button = {'id':'button','parent':'root','kind':'Div','view':{'tag':'button'},'source':{'file':'src/button.rs','line':7,'column':3},'styles':{'not':'copied'}}
+        queries = []
+        def request(runtime, value, command=False):
+            self.assertFalse(command)
+            queries.append(value)
+            if value['type'] == 'preview_element': return leaf
+            if value['type'] == 'inspect_element': return button
+            self.assertEqual(value['generation'],'current')
+            if value['offset'] == 0:
+                return {'snapshot':{'capture':'current','elements':[root, button]},'next':2}
+            return {'snapshot':{'capture':'current','elements':[leaf, {'id':'elsewhere','parent':'root','text':'Do not include'}]},'next':None}
+        with patch.object(self.preview, 'request', side_effect=request):
+            grabbed = self.preview.handle('preview_grab', {'reference':'frame','x':30,'y':30})
+        element = grabbed['element']
+        self.assertEqual(grabbed['generation'],'current')
+        self.assertEqual(element['id'],'button')
+        self.assertEqual(element['grab']['text'],'Save')
+        self.assertEqual([f['name'] for f in element['grab']['frames']],['button','Editor'])
+        self.assertEqual(element['grab']['frames'][1]['source']['file'],'src/editor.rs')
+        self.assertFalse(element['grab']['truncated'])
+        self.assertNotIn('styles',element)
+        self.assertEqual(queries[-1]['offset'],2)
+
+    def test_hover_is_lightweight_and_expired_context_never_uses_another_capture(self):
+        element = {'id':'button','kind':'Div','view':{'tag':'button'},'text':'Save','source':{'file':'src/view.rs','line':9},'resolved':{'large':'not copied'}}
+        def request(runtime, query, command=False):
+            if query['type'] == 'preview_element': return element
+            return {'snapshot':{'capture':'different','elements':[{'id':'button','text':'wrong'}]},'next':None}
+        with patch.object(self.preview, 'request', side_effect=request) as calls:
+            hovered = self.preview.handle('preview_hover', {'reference':'frame','x':30,'y':30})
+            self.assertEqual(calls.call_count,1)
+            self.assertNotIn('grab',hovered['element'])
+            self.assertNotIn('resolved',hovered['element'])
+            grabbed = self.preview.handle('preview_grab', {'reference':'frame','x':30,'y':30})
+        self.assertTrue(grabbed['element']['grab']['truncated'])
+        self.assertEqual(grabbed['element']['grab']['text'],'Save')
+        self.assertEqual(grabbed['element']['grab']['frames'][0]['source']['line'],9)
+
     def test_annotation_resolution_follows_stable_ids_and_keeps_exact_targets_scoped(self):
         element = {'id':'element-current-4', 'stable_id':'boundary-7',
             'layout':{'x':20,'y':30,'width':80,'height':20}, 'content_mask':{'x':0,'y':0,'width':600,'height':400},

@@ -14,9 +14,10 @@
   <canvas id="screen" role="img" aria-label="Live native application preview" hidden></canvas>
   <div id="pins" aria-label="Annotation pins"></div><div id="outline" hidden><span id="outline-label"></span></div>
 </div></section><div id="empty-state"><span class="loading-dot"></span>Connecting to your app</div></main>
+<div id="picker-label" class="grab-label" role="tooltip" hidden><strong id="picker-name"></strong><span id="picker-source"></span><span class="grab-keys"><kbd id="picker-copy-key">⌘C</kbd> Copy <span>·</span> <kbd>↵</kbd> Comment</span></div>
 <p id="status" class="notice" role="status" hidden></p>
 <div class="bottom-controls">
-  <p id="mode-hint" hidden>Click an element to leave a note <kbd>esc</kbd> to exit</p>
+  <p id="mode-hint" hidden>Hover to inspect · copy with ⌘C / Ctrl+C · click to comment <kbd>esc</kbd> to exit</p>
   <nav class="toolbar" aria-label="Preview controls">
     <button id="interact" class="tool" aria-label="Interact" aria-pressed="true" title="Interact (V)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 3 13 10-7 1-4 6z"/></svg><span class="tooltip">Interact <kbd>V</kbd></span></button>
     <button id="select" class="tool" aria-label="Annotate element" aria-pressed="false" title="Annotate element (C)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4M12 8v8m-4-4h8"/></svg><span class="tool-label">Annotate</span><span class="tooltip">Pick an element <kbd>C</kbd></span></button>
@@ -35,6 +36,6 @@
   <div class="popover-heading"><span class="draft-label"><span id="draft-number" class="note-number">+</span><strong id="draft-title">New annotation</strong></span><button id="cancel" class="icon-button" type="button" aria-label="Cancel annotation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
   <div class="element-context"><span id="element-name"></span><span id="element-source" title="Rust construction site"></span></div>
   <label class="sr-only" for="comment">Annotation details</label><textarea id="comment" placeholder="What should change here?" maxlength="2000" rows="4" required></textarea>
-  <div class="composer-footer"><span>Rust context attached</span><button id="save" class="save-button" type="submit">Add note <kbd>↵</kbd></button></div>
+  <div class="composer-footer"><button id="copy-context" class="context-copy" type="button" title="Copy element and Rust source context">Copy context</button><button id="save" class="save-button" type="submit">Add note <kbd>↵</kbd></button></div>
 </form>
 </body></html>

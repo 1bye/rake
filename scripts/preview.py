@@ -285,7 +285,7 @@ class Preview:
             return None
         if action == 'preview_resolve':
             return self.resolve(body)
-        if action not in {'preview_input', 'preview_select'}:
+        if action not in {'preview_input', 'preview_select', 'preview_hover', 'preview_grab'}:
             raise BridgeError(404, 'Unknown preview endpoint')
         x, y = body.get('x'), body.get('y')
         if any(type(v) not in (int, float) or not math.isfinite(v) for v in (x, y)):
@@ -299,8 +299,28 @@ class Preview:
             raise BridgeError(400, 'Position is outside GPUI content')
         point = {k: window[k] for k in ('window', 'native_id', 'generation')}
         point.update(x=math.floor(x), y=math.floor(y))
-        if action == 'preview_select':
-            return self.request(runtime, {'type': 'preview_element', 'point': point})
+        if action in {'preview_select', 'preview_hover', 'preview_grab'}:
+            element = self.request(runtime, {'type':'preview_element', 'point':point})
+            if action == 'preview_select':
+                return element
+            # DOM pickers select elements rather than internal text leaves.
+            seen = set()
+            for _ in range(4):
+                if (element.get('view') or {}).get('tag') != 'Text' or not element.get('parent') or element['parent'] in seen:
+                    break
+                seen.add(element['parent'])
+                try:
+                    parent = self.request(runtime, {'type':'inspect_element', 'id':element['parent']})
+                    if parent.get('id') != element['parent']:
+                        break
+                    element = parent
+                except BridgeError:
+                    break
+            keys = ('id', 'stable_id', 'parent', 'kind', 'semantic_id', 'view', 'source', 'text', 'layout', 'content_mask', 'metadata_truncated')
+            selected = {key:element.get(key) for key in keys}
+            if action == 'preview_grab':
+                selected['grab'] = self.context(runtime, window['generation'], element)
+            return {'generation':window['generation'], 'element':selected}
         value = body.get('input')
         if not isinstance(value, dict) or value.get('type') not in {'move', 'click', 'scroll', 'wheel'}:
             raise BridgeError(400, 'Unsupported preview input')
@@ -362,3 +382,72 @@ class Preview:
             offset = following
             page = self.request(runtime, {'type':'inspect_tree_page', 'generation':generation, 'offset':offset})
         raise BridgeError(409, 'Annotation tree exceeded its page bound')
+
+    @staticmethod
+    def frame(element):
+        name = (element.get('view') or {}).get('tag')
+        if not name:
+            name = element.get('kind', 'Element').rsplit('::', 1)[-1].replace('<', '').replace('>', '')
+        return {'name':name, 'source':element.get('source')}
+
+    def context(self, runtime, generation, selected):
+        """Bounded exact-capture source ancestry and descendant text for a copy gesture."""
+        result = {'text':selected.get('text') or '', 'frames':[self.frame(selected)], 'truncated':False}
+        index, descendants, covered, text = {}, set(), set(), []
+        found = done = False
+        offset, text_length, deadline = 0, 0, time.monotonic() + 1.5
+        try:
+            for _ in range(32):
+                page = self.request(runtime, {'type':'inspect_tree_page', 'generation':generation, 'offset':offset})
+                snapshot = page['snapshot']
+                if snapshot['capture'] != generation:
+                    raise BridgeError(409, 'Copy capture changed')
+                for element in snapshot['elements']:
+                    index[element['id']] = {'parent':element.get('parent'), **self.frame(element)}
+                    if element['id'] == selected['id']:
+                        found = True
+                    elif found and element.get('parent') not in descendants:
+                        done = True
+                        break
+                    if not found:
+                        continue
+                    descendants.add(element['id'])
+                    if (element.get('accessibility') or {}).get('hidden') or element.get('parent') in covered:
+                        covered.add(element['id'])
+                    elif element.get('text') is not None:
+                        fragment = element['text'][:256]
+                        if fragment:
+                            text.append(fragment)
+                            text_length += len(fragment)
+                        covered.add(element['id'])
+                    if text_length >= 256:
+                        done = True
+                        break
+                following = page.get('next')
+                if done or following is None:
+                    break
+                if type(following) is not int or not offset < following < 8192 or time.monotonic() > deadline:
+                    result['truncated'] = True
+                    break
+                offset = following
+            else:
+                result['truncated'] = True
+        except (BridgeError, KeyError, TypeError):
+            result['truncated'] = True
+        if text:
+            result['text'] = ' '.join(text)[:256]
+        if found:
+            parent, visited = selected.get('parent'), {selected['id']}
+            while parent and len(result['frames']) < 20:
+                if parent in visited or parent not in index:
+                    result['truncated'] = True
+                    break
+                visited.add(parent)
+                frame = index[parent]
+                result['frames'].append({key:frame[key] for key in ('name','source')})
+                parent = frame['parent']
+            if parent and len(result['frames']) == 20:
+                result['truncated'] = True
+        else:
+            result['truncated'] = True
+        return result

@@ -32,7 +32,7 @@ wheel.add(10000,-10000);input=wheel.take();assert.equal(input.dx,128000);assert.
 console.log('Preview regressions passed: fragmented binary stream, bounded parser, scaled coordinates and fractional scroll phases');
 
 const annotationCode = readFileSync(new URL('./preview-annotations.js', import.meta.url),'utf8');
-const {Annotations, targetKey, visibleBounds, MAX_ANNOTATIONS} = await import('data:text/javascript;base64,' + Buffer.from(annotationCode).toString('base64'));
+const {Annotations, targetKey, visibleBounds, MAX_ANNOTATIONS, formatReference, formatAnnotation, formatAnnotations} = await import('data:text/javascript;base64,' + Buffer.from(annotationCode).toString('base64'));
 const stored = new Map(), storage = {getItem:key => stored.get(key), setItem:(key, value) => stored.set(key, value)};
 const notes = new Annotations(storage);
 notes.activate('runtime-one', 'window-one');
@@ -66,3 +66,22 @@ const unavailable = new Annotations({getItem:()=>{throw Error('disabled')},setIt
 unavailable.activate('runtime','window');unavailable.save('Still usable',element,'one');
 assert.equal(unavailable.items.length,1);assert.match(unavailable.warning,/kept in memory/);
 console.log('Annotation regressions passed: session persistence, runtime/window isolation, stable identity, clipping, context copy, edits and bounds');
+
+
+const contextElement = {...element, source:{file:'src/panel.rs',line:12,column:7}, view:{tag:'button',
+  style_sources:[{scope:'button',attribute:'class',expression:'"px-3 rounded"'}]},
+  grab:{text:'Save & close <now>',frames:[
+    {name:'SaveButton',source:{file:'src/button.rs',line:12,column:7}},
+    {name:'Editor',source:{file:'src/editor.rs',line:42,column:3}},
+    {name:'App',source:{file:'src/main.rs',line:6,column:1}},
+    {name:'BeyondDefaultBudget',source:{file:'src/root.rs',line:1,column:1}}]}};
+const reference = '[<button id="save" class="px-3 rounded">Save &amp; close &lt;now&gt;</button> in SaveButton (at src/button.rs:12:7) in Editor (at src/editor.rs:42:3) in App (at src/main.rs:6:1)]';
+assert.equal(formatReference(contextElement),reference);
+assert.equal(formatAnnotation({comment:'  Make this clearer.  ',element:contextElement}),'Make this clearer.\n'+reference);
+assert.equal(formatAnnotations([{comment:'First',element:contextElement},{comment:'Second',element:contextElement}]),'First\n'+reference+'\n\nSecond\n'+reference);
+assert.equal(formatReference({kind:'Div'}),'[<Div />]');
+assert.equal(formatReference({...element,semantic_id:'save"<&',text:'<&',source:null}), '[<button id="save&quot;&lt;&amp;">&lt;&amp;</button>]');
+assert.match(formatReference({...element,text:'&'.repeat(200)}), /(?:&amp;)+\.\.\.<\/button>/);
+assert.doesNotMatch(formatReference({...contextElement,view:{tag:'button',style_sources:[{scope:'button',attribute:'class',expression:'dangerous_rust()'}]}}), /class=/);
+assert.equal(formatReference({...element,source:{file:'src/view.rs',line:0,column:0}}), '[<button id="save" /> in button (at src/view.rs)]');
+console.log('Grab output regressions passed: shared bracketed references, comments, source stacks, escaping and bounded previews');

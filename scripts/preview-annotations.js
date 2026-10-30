@@ -3,9 +3,61 @@ export const MAX_ANNOTATIONS = 32;
 export const MAX_COMMENT = 2000;
 
 export function contextFor(element) {
-  const {id, stable_id, kind, semantic_id, source, view, text, layout, content_mask, metadata_truncated} = element;
-  return {id, stable_id, kind, semantic_id, source, view, text, layout, content_mask, metadata_truncated};
+  const {id, stable_id, kind, semantic_id, source, view, text, layout, content_mask, metadata_truncated, grab} = element;
+  return {id, stable_id, kind, semantic_id, source, view, text, layout, content_mask, metadata_truncated, grab};
 }
+
+// React Grab's plain-text contract: comment, then [inline element + source stack].
+// Frames here are observed Rust inspection boundaries, not a synthetic call stack.
+function escaped(value, attribute = false, limit = 100) {
+  const content = String(value).replace(/\s+/g, ' ').trim();
+  const entities = {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;'};
+  const parts = Array.from(content, char => entities[char] && (attribute || char !== '"') ? entities[char] : char);
+  if (parts.join('').length <= limit) return parts.join('');
+  let result = '';
+  for (const part of parts) {
+    if (result.length + part.length > limit - 3) break;
+    result += part;
+  }
+  return result + '...';
+}
+export function elementName(element) {
+  const name = element.view?.tag || element.kind?.split('::').pop().replace(/[<>]/g, '') || 'Element';
+  return String(name).replace(/[^\w:.-]/g, '_').slice(0, 256) || 'Element';
+}
+export function formatReference(element) {
+  const tag = elementName(element), attrs = [];
+  if (element.semantic_id) attrs.push(`id="${escaped(element.semantic_id, true, 120)}"`);
+  for (const site of element.view?.style_sources || []) {
+    if (site.scope !== tag || site.attribute !== 'class') continue;
+    // Only literal authored classes are known; never evaluate Rust expressions.
+    try {
+      const value = JSON.parse(site.expression);
+      if (typeof value === 'string') { attrs.push(`class="${escaped(value, true, 15)}"`); break; }
+    } catch { /* Dynamic/opaque classes stay out of the element preview. */ }
+  }
+  const text = escaped(element.grab?.text ?? element.text ?? '', false, 100);
+  const opening = '<' + tag + (attrs.length ? ' ' + attrs.join(' ') : '');
+  const markup = text ? `${opening}>${text}</${tag}>` : `${opening} />`;
+  const frames = element.grab?.frames?.length ? element.grab.frames : [{name:tag, source:element.source}];
+  const lines = [], seen = new Set();
+  for (const frame of frames.slice(0, 20)) {
+    if (!frame.source?.file) continue;
+    const source = frame.source;
+    const location = String(source.file).replace(/[\r\n\t]/g, ' ').slice(0, 512)
+      + (Number.isInteger(source.line) && source.line > 0 ? ':' + source.line : '')
+      + (Number.isInteger(source.line) && source.line > 0 && Number.isInteger(source.column) && source.column > 0 ? ':' + source.column : '');
+    const name = String(frame.name || tag).replace(/\s+/g, ' ').slice(0, 256);
+    const line = `in ${name} (at ${location})`;
+    if (!seen.has(line)) { lines.push(line); seen.add(line); }
+    if (lines.length === 3) break;
+  }
+  return '[' + markup + (lines.length ? ' ' + lines.join(' ') : '') + ']';
+}
+export function formatAnnotation(note) {
+  return note.comment.trim() + '\n' + formatReference(note.element);
+}
+export function formatAnnotations(notes) { return notes.map(formatAnnotation).join('\n\n'); }
 
 export function targetKey(element, generation) {
   return element.stable_id || `${generation}:${element.id}`;

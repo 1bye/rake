@@ -81,16 +81,49 @@ compact top-right HUD shows live connection state, displayed FPS and reconnect;
 its tooltip retains codec, dimensions and native backdrop details.
 
 In Annotate mode, click an element to write a note in the contextual editor.
-Selection reads the deepest inspected boundary without activating the control.
-Notes include the Rust construction site, semantic/stable identities, text and
-macro-authored style source metadata. `Cmd/Ctrl+Enter` saves; Escape cancels and
+The live picker outlines the deepest inspected element without activating the control;
+automatic text boundaries resolve to their containing paragraph, button or other element.
+Notes retain the Rust construction site, semantic/stable identities, text and
+macro-authored style source metadata, plus bounded source ancestry from the exact selected capture. `Cmd/Ctrl+Enter` saves; Escape cancels and
 returns to Interact. Scrolling works in either mode. Picking opaque/cached content
 resolves to an inspected ancestor.
 
 The toolbar's annotation badge opens a popover on hover, focus or click. Hover or
 focus a note to outline its element. Clicking a note/pin edits it; the remove
-button deletes it. **Copy annotations** exports the comments and captured Rust
-context as JSON for use with an agent. No notes are sent to an agent automatically.
+button deletes it. **Copy annotations** uses the same plain-text format as a direct element copy,
+with each comment above its bracketed reference. Hovering a note also supports
+`Cmd/Ctrl+C` for copying just that note. No notes are sent to an agent automatically.
+
+The picker follows [React Grab's copy workflow](https://github.com/aidenybai/react-grab#readme):
+hover an element and press `Cmd/Ctrl+C` to copy its source reference, including from
+Interact mode. In Annotate mode a cursor-following label shows the element, Rust
+site and shortcuts. Bare `C` copies the hovered target; Enter or a click opens the
+comment editor. Its **Copy context** action copies the element without saving a note.
+Normal copying of selected text in the editor/page stays with the browser.
+
+A copied annotation looks like this (the exact tags, text and source sites come
+from the captured tree):
+
+```text
+Make this action more prominent.
+[<button id="save">Save</button> in SaveButton (at src/button.rs:42:9) in Editor (at src/editor.rs:18:5)]
+```
+
+The formatter matches React Grab's comment-plus-reference plain-text convention.
+The inline preview uses Rake's view tag/type, semantic ID, literal authored classes
+and normalized descendant text. Text is bounded to 100 escaped characters; class
+previews to 15 and IDs to 120. At most three distinct source frames are displayed.
+These are observed Rust inspection boundaries, not React owners or a fabricated
+native call stack. Opaque/missing parents stay unavailable; older stored notes
+fall back to their captured construction site. The preview is a diagnostic element
+representation, not HTML rendered by GPUI. Full styles and runtime/capture IDs
+are omitted from the clipboard text.
+
+Hover reads are coalesced to at most ten per second, with one outstanding read,
+on a separate authenticated HTTP request. They omit style payloads. Source ancestry
+and descendant text are collected only for explicit copy/comment gestures, using
+bounded exact-generation pages; a stale/partial capture keeps only observed context.
+Pointer exit, mode changes, resized viewports and disconnection cancel hover reads.
 
 Up to 32 notes, each with 2000 characters, are stored in this tab's browser session,
 scoped to the runtime and native host. Reloading restores them; a runtime/window
