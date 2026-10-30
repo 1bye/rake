@@ -23,16 +23,26 @@ pub use rake_updates::updates;
 /// # Panics
 /// Panics if a hand-written embedded policy is invalid; rake-build validates generated policy.
 pub fn early_startup_for(embedded: Option<&str>) {
+    early_startup_with_desktop(embedded, None);
+}
+/// Runs installer startup with common desktop metadata captured by [`early_startup!`].
+/// # Panics
+/// Panics if hand-written embedded metadata is invalid; rake-build validates generated metadata.
+pub fn early_startup_with_desktop(embedded: Option<&str>, desktop: Option<&str>) {
     #[cfg(all(feature = "updates", not(target_family = "wasm")))]
-    rake_updates::early_startup_for(embedded).expect("generated Rake update policy must be valid");
+    rake_updates::early_startup_with_desktop(embedded, desktop)
+        .expect("generated Rake distribution policy must be valid");
     #[cfg(any(not(feature = "updates"), target_family = "wasm"))]
-    let _ = embedded;
+    let _ = (embedded, desktop);
 }
 /// Initializes installer callbacks using policy embedded into the application crate.
 #[macro_export]
 macro_rules! early_startup {
     () => {
-        $crate::early_startup_for(option_env!("RAKE_UPDATE_POLICY"))
+        $crate::early_startup_with_desktop(
+            option_env!("RAKE_UPDATE_POLICY"),
+            option_env!("RAKE_DESKTOP_METADATA"),
+        )
     };
 }
 

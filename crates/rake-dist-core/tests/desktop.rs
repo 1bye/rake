@@ -81,3 +81,26 @@ fn metadata_rejects_path_and_desktop_injection_before_native_tools() {
         );
     }
 }
+
+#[test]
+fn velopack_accepts_common_registrations_without_custom_callbacks() {
+    let config: Config = toml::from_str(&CONFIG.replace("formats=['msix']", "formats=['velopack']").replace("[desktop.localizations.fr]\nname='Notes françaises'\ndescription='Documents & notes'\n", "")).unwrap();
+    let plan = config
+        .plan_for(
+            "labels",
+            "1.0.0",
+            Platform::Windows,
+            Some("x86_64-pc-windows-msvc"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(plan.packages()[0].format(), Format::Velopack);
+    assert_eq!(
+        plan.packages()[0].config().desktop.url_schemes,
+        ["rake-notes"]
+    );
+    assert_eq!(
+        plan.packages()[0].config().desktop.file_associations[0].extensions,
+        ["rnote"]
+    );
+}

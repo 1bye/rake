@@ -94,6 +94,10 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         config
     };
+    println!(
+        "cargo:rustc-env=RAKE_DESKTOP_METADATA={}",
+        serde_json::to_string(&config.desktop)?
+    );
     let name = config
         .name
         .as_deref()

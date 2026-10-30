@@ -6270,6 +6270,8 @@ dependencies = [
  "ureq",
  "url",
  "velopack",
+ "windows-sys 0.61.2",
+ "winreg",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update, linux-final, windows-final, appinstaller]
+        options: [acceptance, comparison, velopack, velopack-update, linux-deep, flatpak, windows-update, linux-final, windows-final, appinstaller]
         default: acceptance
       fixture_run:
         type: string
@@ -42,7 +42,7 @@ jobs:
           name: adoption-${{ matrix.os }}
           path: adoption-results.json
   acceptance:
-    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
+    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +116,7 @@ jobs:
         if: runner.os == 'Windows' && inputs.mode == 'acceptance'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Build CLI for focused Velopack acceptance
-        if: inputs.mode == 'velopack' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
+        if: inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
         run: cargo build -p rake-cli --locked
       - name: Create a disposable local Windows signing profile
         timeout-minutes: 2
@@ -142,8 +142,16 @@ jobs:
       - name: Inspect pinned Velopack CLI console output
         if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller'
         run: vpk --help
+      - name: Focused registration and built-in signing tests
+        if: runner.os == 'Windows' && (inputs.mode == 'velopack' || inputs.mode == 'velopack-update')
+        timeout-minutes: 4
+        run: |
+          cargo test -p rake-updates --features velopack --lib --locked
+          cargo test -p rake-dist --test signing --locked
+          cargo test -p rake-cli --test update_key --locked
+          cargo test -p rake-dist-core --locked
       - name: Velopack native install, upgrade and uninstall
-        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-update' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller'
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-update' && inputs.mode != 'velopack-update' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller' && (inputs.mode != 'velopack' || success())
         timeout-minutes: 8
         run: python scripts/test-distribution-velopack.py --cli target/debug/rake.exe
       - name: Native private DLL isolation
@@ -151,7 +159,7 @@ jobs:
         timeout-minutes: 3
         run: cargo test -p rake-dist-windows --features native-signing-tests --test dll --locked
       - name: Velopack signed HTTPS feed and guarded SDK restart
-        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || ((inputs.mode == 'velopack' || inputs.mode == 'velopack-update') && success()))
         timeout-minutes: 12
         run: python scripts/test-distribution-velopack-update.py --cli target/debug/rake.exe
       - name: Managed metadata and localized PRI SDK acceptance

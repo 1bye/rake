@@ -12,6 +12,8 @@ mod sparkle;
 #[cfg(all(target_os = "macos", feature = "sparkle"))]
 pub use sparkle::{Sparkle, SparkleStage, SparkleStatus};
 mod service;
+#[cfg(all(windows, feature = "velopack"))]
+mod windows_registrations;
 pub use rake_dist_core::{UpdateBinding, UpdateOwner};
 pub use service::{
     Capability, DownloadProgress, RestartDisposition, RestartHandoff, UpdateService,
@@ -53,6 +55,24 @@ pub enum Error {
 /// # Errors
 /// Rejects invalid embedded policy. An absent policy means an unbundled application.
 pub fn early_startup_for(embedded: Option<&str>) -> Result<(), Error> {
+    early_startup_with_desktop(embedded, None)
+}
+
+/// Runs provider startup and automatic installer registrations from build-script metadata.
+/// Prefer [`early_startup!`] so both policies are captured from the application crate.
+/// # Errors
+/// Rejects invalid embedded policy or desktop metadata before running installer callbacks.
+pub fn early_startup_with_desktop(
+    embedded: Option<&str>,
+    desktop: Option<&str>,
+) -> Result<(), Error> {
+    let desktop: rake_dist_core::DesktopMetadata = desktop
+        .map(serde_json::from_str)
+        .transpose()?
+        .unwrap_or_default();
+    desktop
+        .validate()
+        .map_err(|error| Error::Policy(error.to_string()))?;
     if let Some(embedded) = embedded {
         let binding: UpdateBinding = serde_json::from_str(embedded)?;
         binding
@@ -60,9 +80,7 @@ pub fn early_startup_for(embedded: Option<&str>) -> Result<(), Error> {
             .map_err(|error| Error::Policy(error.to_string()))?;
         #[cfg(all(windows, feature = "velopack"))]
         if binding.format == rake_dist_core::Format::Velopack {
-            ::velopack::VelopackApp::build()
-                .set_auto_apply_on_startup(false)
-                .run();
+            windows_registrations::startup(&binding, &desktop);
         }
     }
     Ok(())
@@ -72,7 +90,10 @@ pub fn early_startup_for(embedded: Option<&str>) -> Result<(), Error> {
 #[macro_export]
 macro_rules! early_startup {
     () => {
-        $crate::early_startup_for(option_env!("RAKE_UPDATE_POLICY"))
+        $crate::early_startup_with_desktop(
+            option_env!("RAKE_UPDATE_POLICY"),
+            option_env!("RAKE_DESKTOP_METADATA"),
+        )
     };
 }
 

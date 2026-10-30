@@ -14,7 +14,7 @@ sparkle = ["native-lifecycle"]
 native-tests = ["native-lifecycle"]
 native-lifecycle = ["dep:cc", "dep:event-listener"]
 appimage = ["dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:fs2", "dep:tempfile"]
-velopack = ["dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
+velopack = ["dep:winreg", "dep:windows-sys", "dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
 
 [dependencies]
 serde.workspace = true
@@ -44,3 +44,7 @@ cc = { version = "1", optional = true }
 [[example]]
 name = "native-quit"
 required-features = ["native-tests"]
+
+[target.'cfg(windows)'.dependencies]
+winreg = { version = "0.56", optional = true }
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell"], optional = true }

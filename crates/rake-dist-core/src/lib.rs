@@ -976,12 +976,6 @@ impl Config {
             {
                 return Err(Error::Field("Windows localized OS display labels require MSIX or a custom installer backend".into()));
             }
-            if format == Format::Velopack
-                && (!self.desktop.url_schemes.is_empty()
-                    || !self.desktop.file_associations.is_empty())
-            {
-                return Err(Error::Field("Velopack custom protocol/file registrations require application installer callbacks; select NSIS/MSI/MSIX or an explicit backend".into()));
-            }
             packages.push(PackagePlan {
                 format,
                 update_owner: owner,

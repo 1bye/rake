@@ -93,9 +93,15 @@ Categories, protocols and file types feed macOS bundles, NSIS/MSI registration a
 Linux desktop/MIME metadata. MSIX generates managed protocol/file declarations.
 Localized labels become macOS `InfoPlist.strings`, Linux desktop/AppStream labels,
 and MSIX `resources.pri` through the Windows SDK's `makepri.exe`. Windows localized
-OS labels require MSIX; Velopack protocol/file registration needs application
-installer callbacks or an explicit backend. Planning rejects unsupported automatic
-combinations. Your application handles the resulting native activation events.
+OS labels require MSIX. Velopack automatically registers protocols and file types
+per user through its install/update/uninstall callbacks, embedded by `rake-build`
+and wired by `#[rake::app]` or `rake::early_startup!()`. No application callbacks or
+registry scripts are needed. Rake remembers its owned declarations and reconciles them on both SDK updates
+and Setup replacement, including removal of every declaration in a new version. Removal checks both application ownership and executable command, and
+leaves other handlers intact. File types also appear in Open With; existing
+defaults and Windows UserChoice settings are preserved. Protocol keys already
+owned by another per-user application are rejected. Portable Velopack packages
+do not register handlers. Planning rejects unsupported automatic combinations. Your application handles the resulting native activation events.
 A complete custom native metadata file owns those fields; conflicting common
 registrations are rejected. Privacy-purpose text merges into the macOS plist and
 must match any duplicate custom key.

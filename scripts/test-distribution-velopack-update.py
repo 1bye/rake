@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import winreg
 from distribution_test_feed import TestFeed
 
 
@@ -36,7 +37,8 @@ def main():
                 source = root / 'source'
                 (source / 'src').mkdir(parents=True)
                 (source / 'ca.pem').write_bytes(feed.ca.read_bytes())
-                (source / 'updates.pub').write_text(feed.public_key.hex())
+                seed = feed.private / 'rake-update-seed'
+                run(cli, 'update-key', 'generate', '--private-key', seed, '--public-key', source / 'updates.pub')
                 (source / 'message.txt').write_text('installed update resource')
                 (source / 'build.rs').write_text('fn main(){rake_build::build().unwrap();}')
                 (source / 'src/main.rs').write_text(r'''
@@ -85,6 +87,8 @@ rake-build={{path={json.dumps(str(repository / 'crates/rake-build'))}}}
 schema_version=1
 identifier="{identifier}"
 resources=[{{from="ca.pem",to="ca.pem"}},{{from="message.txt",to="message.txt"}}]
+[package.metadata.rake.bundle.desktop]
+url_schemes=["rake-veloupdate{os.getpid()}-{version[-1]}"]
 [package.metadata.rake.bundle.windows]
 formats=["velopack"]
 timestamp_url="http://timestamp.digicert.com"
@@ -97,8 +101,9 @@ velopack="updates.pub"
 kind="directory"
 path={json.dumps(str(feed.site))}
 public_url={json.dumps(feed.base_url)}
-[package.metadata.rake.bundle.release.signers]
-velopack={json.dumps(feed.signer)}
+[package.metadata.rake.bundle.release.signing_keys.velopack]
+kind="file"
+path={json.dumps(str(seed))}
 [package.metadata.rake.bundle.release.required]
 x86_64-pc-windows-msvc=["velopack"]
 '''
@@ -143,8 +148,16 @@ x86_64-pc-windows-msvc=["velopack"]
                     time.sleep(0.1)
                 assert (user / 'restarted').read_text() == '1.0.1'
                 assert run(executable, env=env).strip() == '1.0.1:installed update resource'
+                scheme = f'rake-veloupdate{os.getpid()}'
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f'Software\\Classes\\{scheme}-1\\shell\\open\\command') as key:
+                    assert winreg.QueryValueEx(key, '')[0].casefold() == f'"{executable}" "%1"'.casefold()
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f'Software\\Classes\\{scheme}-0'):
+                        raise AssertionError('SDK update must remove the old protocol registration')
+                except FileNotFoundError:
+                    pass
                 assert (user / 'document').read_text() == 'preserve dirty work'
-                print('Velopack signed HTTPS publication, tamper/cancel/decline/cache rejection and SDK N+1 relaunch passed')
+                print('Velopack built-in signing, HTTPS tamper/cancel/decline/cache rejection, SDK N+1 relaunch and registration migration passed')
     finally:
         updater = install / 'Update.exe'
         if updater.exists():
