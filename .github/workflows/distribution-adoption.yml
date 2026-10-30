@@ -1,0 +1,34 @@
+name: Distribution adoption
+on:
+  push:
+    branches: [codex/distribution]
+    paths:
+      - tests/distribution-adoption/**
+      - scripts/test-distribution-adoption.py
+      - .github/workflows/distribution-adoption.yml
+  workflow_dispatch:
+concurrency:
+  group: distribution-adoption-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tests/distribution-adoption
+      - run: python scripts/test-distribution-adoption.py --output adoption-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adoption-${{ matrix.os }}
+          path: adoption-results.json
