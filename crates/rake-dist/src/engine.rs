@@ -131,6 +131,8 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                 ..Default::default()
             },
             windows: tauri_bundler::WindowsSettings {
+                #[expect(deprecated, reason = "pinned 2.10.4 defaults MSI to a project icon; clear it to use the staged common icon")]
+                icon_path: PathBuf::new(),
                 webview_install_mode: serde_json::from_value(serde_json::json!({"type":"skip"}))?,
                 ..Default::default()
             },
