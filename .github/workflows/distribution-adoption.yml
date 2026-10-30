@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update, linux-final]
+        options: [acceptance, comparison, velopack, linux-deep, flatpak, windows-update, linux-final, windows-final]
         default: acceptance
       fixture_run:
         type: string
@@ -42,7 +42,7 @@ jobs:
           name: adoption-${{ matrix.os }}
           path: adoption-results.json
   acceptance:
-    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final'
+    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final' || inputs.mode == 'windows-final'
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +116,7 @@ jobs:
         if: runner.os == 'Windows' && inputs.mode == 'acceptance'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Build CLI for focused Velopack acceptance
-        if: inputs.mode == 'velopack' || inputs.mode == 'windows-update'
+        if: inputs.mode == 'velopack' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final'
         run: cargo build -p rake-cli --locked
       - name: Create a disposable local Windows signing profile
         timeout-minutes: 2
@@ -136,14 +136,14 @@ jobs:
         if: always() && runner.os == 'Windows' && inputs.mode == 'acceptance'
         run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --test dll --locked
       - name: Install pinned native Velopack tool
-        if: always() && runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final'
         timeout-minutes: 3
         run: dotnet tool install --global vpk --version 1.2.161
       - name: Inspect pinned Velopack CLI console output
-        if: always() && runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final'
         run: vpk --help
       - name: Velopack native install, upgrade and uninstall
-        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-update'
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-update' && inputs.mode != 'windows-final'
         timeout-minutes: 8
         run: python scripts/test-distribution-velopack.py --cli target/debug/rake.exe
       - name: Native private DLL isolation
@@ -163,15 +163,19 @@ jobs:
         timeout-minutes: 4
         run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only nsis
       - name: MSI lifecycle and OS registrations
-        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || inputs.mode == 'windows-final')
         timeout-minutes: 4
         run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only msi
       - name: Installed Windows native UI
-        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || inputs.mode == 'windows-final')
         timeout-minutes: 8
         run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only gpui
+      - name: Generated HTTPS App Installer enrollment and managed upgrade
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-final'
+        timeout-minutes: 6
+        run: python scripts/test-distribution-appinstaller.py --cli target/debug/rake.exe
       - name: Verify Velopack startup precedes the app factory
-        if: always() && runner.os == 'Windows'
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final'
         shell: pwsh
         run: |
           cargo run -p rake-updates --features velopack --example velopack-startup --locked -- --veloapp-install 1.0.0
