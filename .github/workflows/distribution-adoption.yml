@@ -148,6 +148,10 @@ jobs:
         if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
         timeout-minutes: 12
         run: python scripts/test-distribution-velopack-update.py --cli target/debug/rake.exe
+      - name: Conventional Windows installers and installed native UI
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 15
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe
       - name: Verify Velopack startup precedes the app factory
         if: always() && runner.os == 'Windows'
         shell: pwsh
