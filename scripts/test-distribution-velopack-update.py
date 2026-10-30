@@ -87,7 +87,7 @@ identifier="{identifier}"
 resources=[{{from="ca.pem",to="ca.pem"}},{{from="message.txt",to="message.txt"}}]
 [package.metadata.rake.bundle.windows]
 formats=["velopack"]
-timestamp_url="https://timestamp.digicert.com"
+timestamp_url="http://timestamp.digicert.com"
 [package.metadata.rake.bundle.updates]
 enabled=true
 base_url={json.dumps(feed.base_url)}

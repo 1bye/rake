@@ -36,13 +36,16 @@ pub fn preflight(trust: &TrustOptions, timestamp: Option<&str>) -> Result<(), Er
     }
     if let Some(url) = timestamp {
         let url = url::Url::parse(url).map_err(|e| Error::Tool(e.to_string()))?;
-        if url.scheme() != "https"
+        // RFC 3161 authenticates the timestamp token itself; native SignTool
+        // and public TSA services also use HTTP transport.
+        if !matches!(url.scheme(), "http" | "https")
             || url.host_str().is_none()
             || !url.username().is_empty()
             || url.password().is_some()
+            || url.fragment().is_some()
         {
             return Err(Error::Tool(
-                "timestamp service requires public HTTPS".into(),
+                "timestamp service requires a public HTTP(S) URL without credentials".into(),
             ));
         }
     }
@@ -287,6 +290,20 @@ mod tests {
         msix_manifest(&settings).unwrap();
         settings.version = "1.2.4.0";
         assert!(msix_manifest(&settings).is_err());
+    }
+    #[test]
+    fn timestamp_transport_accepts_native_http_and_rejects_other_schemes_and_credentials() {
+        for url in ["http://timestamp.digicert.com", "https://tsa.example.test"] {
+            preflight(&TrustOptions::default(), Some(url)).unwrap();
+        }
+        for url in [
+            "file:///tmp/token",
+            "ftp://tsa.example.test",
+            "http://user:secret@tsa.example.test",
+            "https://tsa.example.test/#fragment",
+        ] {
+            assert!(preflight(&TrustOptions::default(), Some(url)).is_err());
+        }
     }
     #[test]
     fn trusted_windows_release_requires_existing_credentials() {
