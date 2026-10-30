@@ -984,6 +984,16 @@ fn publish_github(
     tag: &str,
     flag: &AtomicBool,
 ) -> Result<(), Error> {
+    publish_github_with_program(request, prepared, repository, tag, flag, Path::new("gh"))
+}
+fn publish_github_with_program(
+    request: &ReleaseRequest,
+    prepared: &mut Prepared,
+    repository: &str,
+    tag: &str,
+    flag: &AtomicBool,
+    program: &Path,
+) -> Result<(), Error> {
     let lease = request.package_root.join(".rake-release-github.lock");
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -991,9 +1001,72 @@ fn publish_github(
         .write(true)
         .open(lease)?;
     lock.try_lock_exclusive()?;
+    let listing = prepared.directory.path().join("github-releases.json");
+    let mut command = Command::new(program);
+    command
+        .args([
+            "release",
+            "list",
+            "--repo",
+            repository,
+            "--limit",
+            "100",
+            "--exclude-drafts",
+            "--exclude-pre-releases",
+            "--json",
+            "isLatest,tagName",
+        ])
+        .stdout(fs::File::create(&listing)?)
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::null());
+    let mut worker = crate::Worker::spawn_with_io(&mut command)?;
+    if !worker.wait(flag, Duration::from_secs(120))?.success()
+        || fs::metadata(&listing)?.len() > 1024 * 1024
+    {
+        return Err(fail("GitHub previous-channel lookup failed"));
+    }
+    let releases: Vec<serde_json::Value> = serde_json::from_slice(&fs::read(listing)?)?;
+    if !releases.is_empty() {
+        let latest = releases
+            .iter()
+            .find(|release| release["isLatest"] == true)
+            .and_then(|release| release["tagName"].as_str())
+            .ok_or_else(|| fail("GitHub latest release is outside bounded history"))?;
+        let previous = prepared.directory.path().join("github-previous");
+        fs::create_dir(&previous)?;
+        gh(
+            Command::new(program)
+                .args([
+                    "release",
+                    "download",
+                    latest,
+                    "--repo",
+                    repository,
+                    "--pattern",
+                    "release.json",
+                    "--dir",
+                ])
+                .arg(&previous),
+            flag,
+        )?;
+        let path = previous.join("release.json");
+        if fs::metadata(&path)?.len() > 4 * 1024 * 1024 {
+            return Err(fail("GitHub previous state exceeds bound"));
+        }
+        let state: PublishedRelease = serde_json::from_slice(&fs::read(&path)?)?;
+        if state.identifier != request.identifier
+            || state.channel != request.channel
+            || semver::Version::parse(&state.version).map_err(|error| fail(error.to_string()))?
+                >= semver::Version::parse(&request.version)
+                    .map_err(|error| fail(error.to_string()))?
+        {
+            return Err(fail("GitHub channel identity/version conflict"));
+        }
+        prepared.state.previous = Some(files::digest(&path)?);
+    }
     // No tag creation and no replacement of existing published releases/assets.
     gh(
-        Command::new("gh").args([
+        Command::new(program).args([
             "release",
             "create",
             tag,
@@ -1028,7 +1101,7 @@ fn publish_github(
         let destination = assets.join(&filename);
         fs::copy(source, &destination)?;
         gh(
-            Command::new("gh")
+            Command::new(program)
                 .args(["release", "upload", tag, "--repo", repository])
                 .arg(destination),
             flag,
@@ -1036,7 +1109,7 @@ fn publish_github(
     }
     files::write_json(&assets.join("release.json"), &prepared.state)?;
     gh(
-        Command::new("gh")
+        Command::new(program)
             .args(["release", "upload", tag, "--repo", repository])
             .arg(assets.join("release.json")),
         flag,
@@ -1044,7 +1117,7 @@ fn publish_github(
     let verification = prepared.directory.path().join("github-readback");
     fs::create_dir(&verification)?;
     gh(
-        Command::new("gh")
+        Command::new(program)
             .args(["release", "download", tag, "--repo", repository, "--dir"])
             .arg(&verification),
         flag,
@@ -1054,9 +1127,14 @@ fn publish_github(
             return Err(fail("GitHub downloaded asset verification failed"));
         }
     }
+    if files::digest(&verification.join("release.json"))?
+        != files::digest(&assets.join("release.json"))?
+    {
+        return Err(fail("GitHub release state readback verification failed"));
+    }
     cancelled(flag)?;
     gh(
-        Command::new("gh").args([
+        Command::new(program).args([
             "release",
             "edit",
             tag,
@@ -1081,10 +1159,22 @@ fn publish_https(
         ))
     })?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
+        .https_only(true)
+        .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(300)))
         .http_status_as_error(false)
         .build()
         .into();
+    publish_https_with_agent(request, prepared, root, &token, flag, &agent)
+}
+fn publish_https_with_agent(
+    request: &ReleaseRequest,
+    prepared: &mut Prepared,
+    root: &str,
+    token: &str,
+    flag: &AtomicBool,
+    agent: &ureq::Agent,
+) -> Result<(), Error> {
     let channel = format!(
         "{}/channels/{}",
         root.trim_end_matches('/'),
@@ -1187,7 +1277,7 @@ fn publish_https(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn fixture(root: &Path, version: &str) -> ReleaseRequest {
+    pub(super) fn fixture(root: &Path, version: &str) -> ReleaseRequest {
         let input = root.join(version);
         fs::create_dir_all(&input).unwrap();
         fs::write(input.join("app.tar.gz"), format!("payload {version}")).unwrap();
@@ -1599,3 +1689,7 @@ pub(crate) fn package_payload(format: Format, path: &Path) -> bool {
         _ => false,
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "release_remote_tests.rs"]
+mod remote_tests;
