@@ -174,6 +174,10 @@ jobs:
         if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-final' || inputs.mode == 'appinstaller')
         timeout-minutes: 6
         run: python scripts/test-distribution-appinstaller.py --cli target/debug/rake.exe
+      - name: Windows helper process tree ownership
+        if: always() && runner.os == 'Windows' && inputs.mode == 'appinstaller'
+        timeout-minutes: 2
+        run: cargo test -p rake-resources --test process --locked
       - name: Verify Velopack startup precedes the app factory
         if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller'
         shell: pwsh
