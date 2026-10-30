@@ -414,12 +414,12 @@ fn generated(prepared: &mut Prepared, name: String, bytes: &[u8], root: &str) ->
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| fail("feed filename"))?;
-    add(
-        prepared,
-        name,
-        &path,
-        format!("{root}/objects/{}", object_name(&hash, filename)?),
-    )
+    let url = if root.starts_with("https://github.com/") && root.contains("/releases/download/") {
+        format!("{root}/{}", name.replace('/', "-"))
+    } else {
+        format!("{root}/objects/{}", object_name(&hash, filename)?)
+    };
+    add(prepared, name, &path, url)
 }
 fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Error> {
     let mut selected = inputs(request)?;
@@ -952,6 +952,16 @@ fn publish_directory(
         }
         previous_keys(&previous, &prepared.state)?;
         prepared.state.previous = Some(files::digest(&current.join("release.json"))?);
+        for name in appimage_feeds(prepared) {
+            if let Some(record) = previous.files.get(&name) {
+                let relative = name
+                    .strip_prefix(&format!("{}/", request.channel))
+                    .ok_or_else(|| fail("AppImage channel path"))?;
+                let path = files::confined(&current, Path::new(relative))?;
+                let bytes = read_history(&path, record)?;
+                merge_appimage_history(request, prepared, &name, &bytes, flag)?;
+            }
+        }
     }
     let objects = root.join("objects");
     if objects.is_symlink() {
@@ -997,6 +1007,109 @@ fn publish_directory(
     cancelled(flag)?;
     promote_directory(&staged, &current, root, &request.identifier)?;
     Ok(())
+}
+fn appimage_feeds(prepared: &Prepared) -> Vec<String> {
+    prepared
+        .objects
+        .keys()
+        .filter(|name| name.ends_with("/appimage.json"))
+        .cloned()
+        .collect()
+}
+fn verify_history_bytes(bytes: &[u8], record: &PublishedFile) -> Result<(), Error> {
+    use sha2::Digest as _;
+    if bytes.len() > 1024 * 1024
+        || bytes.len() as u64 != record.size
+        || hex::encode(sha2::Sha256::digest(bytes)) != record.sha256
+    {
+        return Err(fail("previous AppImage history hash mismatch"));
+    }
+    Ok(())
+}
+fn read_history(path: &Path, record: &PublishedFile) -> Result<Vec<u8>, Error> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    verify_history_bytes(&bytes, record)?;
+    Ok(bytes)
+}
+fn merge_appimage_history(
+    request: &ReleaseRequest,
+    prepared: &mut Prepared,
+    name: &str,
+    bytes: &[u8],
+    flag: &AtomicBool,
+) -> Result<(), Error> {
+    let key = request
+        .public_keys
+        .get("appimage")
+        .ok_or_else(|| fail("AppImage history public key missing"))?;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&decode_key(key)?)
+        .map_err(|error| fail(error.to_string()))?;
+    let previous: SignedUpdateFeed = serde_json::from_slice(bytes)?;
+    let signature = hex::decode(&previous.signature).map_err(|error| fail(error.to_string()))?;
+    key.verify_strict(
+        previous.payload.as_bytes(),
+        &ed25519_dalek::Signature::from_slice(&signature)
+            .map_err(|error| fail(error.to_string()))?,
+    )
+    .map_err(|_| fail("previous AppImage history signature rejected"))?;
+    // Expiry authorizes new installation, not the already-signed ownership facts
+    // being carried into a freshly signed feed with a new expiry.
+    let previous: UpdateFeed = serde_json::from_str(&previous.payload)?;
+    let source = prepared
+        .objects
+        .get(name)
+        .ok_or_else(|| fail("prepared AppImage feed missing"))?;
+    let envelope: SignedUpdateFeed = serde_json::from_slice(&fs::read(source)?)?;
+    let mut feed: UpdateFeed = serde_json::from_str(&envelope.payload)?;
+    if previous.schema_version != 1
+        || previous.identifier != feed.identifier
+        || previous.target != feed.target
+        || previous.channel != feed.channel
+        || previous.published_at > feed.published_at
+        || previous.releases.len() > 1000
+    {
+        return Err(fail("previous AppImage history context rejected"));
+    }
+    for release in previous.releases {
+        if let Some(existing) = feed
+            .releases
+            .iter()
+            .find(|existing| existing.version == release.version)
+        {
+            if existing.sha256 != release.sha256
+                || existing.size != release.size
+                || existing.package_version != release.package_version
+            {
+                return Err(fail(
+                    "AppImage version history conflicts with supplied bytes",
+                ));
+            }
+        } else {
+            feed.releases.push(release);
+        }
+    }
+    if feed.releases.len() > 1000 {
+        return Err(fail(
+            "AppImage history exceeds 1000 versions; enroll a new channel with an installer",
+        ));
+    }
+    let payload = serde_json::to_string(&feed)?;
+    let signature = hex::encode(signer(request, "appimage", payload.as_bytes(), flag)?);
+    let bytes = serde_json::to_vec(&SignedUpdateFeed { payload, signature })?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(fail("AppImage history exceeds feed size bound"));
+    }
+    prepared.objects.remove(name);
+    prepared.state.files.remove(name);
+    generated(
+        prepared,
+        name.into(),
+        &bytes,
+        &public_root(&request.config)?,
+    )
 }
 fn gh(command: &mut Command, flag: &AtomicBool) -> Result<(), Error> {
     run_tool(command, flag)
@@ -1088,6 +1201,28 @@ fn publish_github_with_program(
         }
         previous_keys(&state, &prepared.state)?;
         prepared.state.previous = Some(files::digest(&path)?);
+        for name in appimage_feeds(prepared) {
+            if let Some(record) = state.files.get(&name) {
+                let filename = name.replace('/', "-");
+                gh(
+                    Command::new(program)
+                        .args([
+                            "release",
+                            "download",
+                            latest,
+                            "--repo",
+                            repository,
+                            "--pattern",
+                            &filename,
+                            "--dir",
+                        ])
+                        .arg(&previous),
+                    flag,
+                )?;
+                let bytes = read_history(&previous.join(filename), record)?;
+                merge_appimage_history(request, prepared, &name, &bytes, flag)?;
+            }
+        }
     }
     // No tag creation and no replacement of existing published releases/assets.
     gh(
@@ -1233,6 +1368,32 @@ fn publish_https_with_agent(
         }
         previous_keys(&state, &prepared.state)?;
         prepared.state.previous = Some(etag.clone());
+        for name in appimage_feeds(prepared) {
+            if let Some(record) = state.files.get(&name) {
+                let filename = record
+                    .url
+                    .rsplit('/')
+                    .next()
+                    .ok_or_else(|| fail("history object filename"))?;
+                segment(filename)?;
+                let mut response = agent
+                    .get(format!("{}/objects/{filename}", root.trim_end_matches('/')))
+                    .header("Authorization", &format!("Bearer {token}"))
+                    .call()
+                    .map_err(|_| fail("HTTPS history readback failed"))?;
+                if response.status() != 200 {
+                    return Err(fail("HTTPS history readback rejected"));
+                }
+                let bytes = response
+                    .body_mut()
+                    .with_config()
+                    .limit(1024 * 1024)
+                    .read_to_vec()
+                    .map_err(|_| fail("HTTPS history exceeds bound or is truncated"))?;
+                verify_history_bytes(&bytes, record)?;
+                merge_appimage_history(request, prepared, &name, &bytes, flag)?;
+            }
+        }
         Some(etag)
     } else if previous.status() == 404 {
         None

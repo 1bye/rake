@@ -91,5 +91,5 @@ if __name__ == '__main__':
     current = root / 'current.json'
     with TestFeed(root) as feed:
         feed.server.RequestHandlerClass = Publisher
-        print(json.dumps({'url': feed.base_url, 'ca': str(feed.ca)}), flush=True)
+        print(json.dumps({'url': feed.base_url, 'ca': str(feed.ca), 'public_key': feed.public_key.hex(), 'signer': feed.signer}), flush=True)
         sys.stdin.buffer.read()

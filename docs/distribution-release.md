@@ -4,7 +4,7 @@
 configuration without loading signing credentials or publishing. An explicit
 `rake release` builds with release trust and locked native components, then
 publishes. Use repeated `--from <bundle-directory>` to promote a complete native
-runner matrix, including retained versions needed by standalone update feeds.
+runner matrix. Existing signed AppImage history is retained by the publisher.
 
 ```toml
 [package.metadata.rake.bundle.release.publisher]
@@ -58,7 +58,11 @@ public key; the SDK obtains native build counters and enclosure metadata from th
 actual archives. Velopack keeps its native release JSON plus a context/expiry-bound
 signature sidecar. MSIX App Installer identity comes from the built artifact record.
 
-Supply retained N and N+1 distributions when generating AppImage or Velopack feeds.
+Publish N once, then supply N+1 outputs on the next release. Directory, GitHub and
+HTTPS publishers merge the previous authenticated AppImage history under the
+promotion lease/precondition, including history whose old feed has expired. Old
+build directories are not required. Tampered history and version forks prevent
+promotion. Retain the immutable published objects/releases.
 The AppImage adapter authenticates the installed N image against this history;
 removing that record prevents an old installation from authorizing replacement.
 
