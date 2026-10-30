@@ -6049,6 +6049,7 @@ dependencies = [
  "hex",
  "liblzma",
  "object",
+ "plist",
  "rake-build",
  "rake-dist-core",
  "rake-dist-linux",

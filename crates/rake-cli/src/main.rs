@@ -87,7 +87,6 @@ fn main() {
         return;
     }
     if arguments.first().is_some_and(|command| command == "bundle")
-        && distribution::handles(&arguments[1..])
         && !arguments
             .windows(2)
             .any(|pair| pair[0] == "--target" && pair[1] == "web")

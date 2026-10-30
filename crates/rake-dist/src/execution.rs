@@ -43,6 +43,12 @@ pub struct BundleRequest {
     /// Require all resolved inputs to match a checked-in rake-dist.lock.
     #[serde(default)]
     pub locked_components: bool,
+    /// Preserve the legacy bundle.json and unpacked native application layout.
+    #[serde(default)]
+    pub compatibility: bool,
+    /// Explicit macOS entitlements override; validated before final signing.
+    #[serde(default)]
+    pub entitlements: Option<PathBuf>,
     /// Public local signing references and release enforcement.
     #[serde(default)]
     pub trust: rake_dist_core::TrustOptions,
@@ -211,6 +217,20 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             (!request.formats.is_empty()).then_some(&request.formats),
         )?;
     }
+    if request.compatibility
+        && (plan.packages().len() != 1
+            || !matches!(
+                (plan.platform(), plan.packages()[0].format()),
+                (Platform::Macos, Format::Zip) | (Platform::Linux, Format::Tar)
+            ))
+    {
+        return Err(Error::Execution(
+            "legacy compatibility requires one macOS ZIP or Linux tar format".into(),
+        ));
+    }
+    if request.entitlements.is_some() && plan.platform() != Platform::Macos {
+        return Err(Error::Execution("--entitlements requires macOS".into()));
+    }
     let metadata: Metadata = serde_json::from_slice(&metadata_output.stdout)?;
     for item in plan.packages() {
         if item.format() == Format::Velopack {
@@ -298,6 +318,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     lock.try_lock_exclusive()
         .map_err(|_| Error::Execution("another distribution job owns this output".into()))?;
     if output.exists()
+        && !(request.compatibility && crate::compatibility::owns(&output, &selected.name))
         && (output.is_symlink()
             || fs::read_to_string(output.join(".rake-distribution"))
                 .ok()
@@ -361,6 +382,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 &build_context,
             )
         };
+        let mut legacy_libraries = Vec::new();
         if item.format() != Format::Flatpak {
             let built = if target == "universal-apple-darwin" {
                 let arm = build_for("aarch64-apple-darwin")?;
@@ -384,6 +406,10 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             } else {
                 build_for(&target)?
             };
+            if request.compatibility && plan.is_legacy() && plan.platform() == Platform::Macos {
+                legacy_libraries =
+                    crate::compatibility::mac_libraries(&built, &stage.join("legacy-libraries"))?;
+            }
             files::copy(&built, &bin.join(format!("{binary}{suffix}")))?;
         }
         let mut resources = HashMap::new();
@@ -457,6 +483,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             descriptor: &mut descriptor,
             resources: &mut resources,
         })?;
+        frameworks.extend(legacy_libraries);
         if let Some(sdk) = &sdk {
             let framework = stage.join("frameworks/Sparkle.framework");
             files::copy(sdk, &framework)?;
@@ -576,12 +603,34 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             .as_ref()
             .map(|path| files::confined(root, path))
             .transpose()?;
-        let icon_directory = rake_build::generate_icons(source_icon.as_deref(), &stage)
-            .map_err(|e| Error::Execution(format!("icon generation: {e}")))?;
-        let icons = ["icon.png", "icon.ico"]
+        let native_icns = plan.platform() == Platform::Macos
+            && source_icon.as_ref().is_some_and(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "icns")
+            });
+        let icon_directory = rake_build::generate_icons(
+            if native_icns {
+                None
+            } else {
+                source_icon.as_deref()
+            },
+            &stage,
+        )
+        .map_err(|e| Error::Execution(format!("icon generation: {e}")))?;
+        let mut icons: Vec<_> = ["icon.png", "icon.ico"]
             .into_iter()
             .map(|name| icon_directory.join(name).to_string_lossy().into_owned())
             .collect();
+        if native_icns {
+            let destination = icon_directory.join("icon.icns");
+            files::copy(
+                source_icon
+                    .as_deref()
+                    .ok_or_else(|| Error::Execution("ICNS input missing".into()))?,
+                &destination,
+            )?;
+            icons.push(destination.to_string_lossy().into_owned());
+        }
         let trust = effective_trust(config, &request.trust);
         if plan.platform() == Platform::Windows {
             sign_windows_tree(&bin, &trust, config.windows.timestamp_url.as_deref())?;
@@ -708,7 +757,17 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                     );
                     let mut archive = tar::Builder::new(encoder);
                     archive.follow_symlinks(false);
-                    archive.append_dir_all(".", &payload)?;
+                    if request.compatibility {
+                        let application = crate::compatibility::linux_payload(
+                            &payload,
+                            &result_dir,
+                            plan.identifier(),
+                            name,
+                        )?;
+                        archive.append_dir_all(&selected.name, &application)?;
+                    } else {
+                        archive.append_dir_all(".", &payload)?;
+                    }
                     archive.into_inner()?.finish()?;
                     vec![path]
                 }
@@ -754,21 +813,36 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         };
         for path in paths {
             let (path, trust_record) = if plan.platform() == Platform::Macos {
+                let app = path.clone();
+                if request.compatibility {
+                    crate::compatibility::mac_icon(&app)?;
+                }
                 let entitlements = config
                     .macos
                     .entitlements
                     .as_ref()
                     .map(|path| files::confined(root, path))
                     .transpose()?;
-                rake_dist_macos::package(
+                let entitlements = request.entitlements.as_deref().or(entitlements.as_deref());
+                let packaged = rake_dist_macos::package(
                     &path,
                     item.format(),
                     &stage,
                     config.name.as_deref().unwrap_or(plan.name()),
                     &trust,
-                    entitlements.as_deref(),
+                    entitlements,
                 )
-                .map_err(|error| Error::Execution(error.to_string()))?
+                .map_err(|error| Error::Execution(error.to_string()))?;
+                if request.compatibility {
+                    let destination = result_dir.join("application").join(
+                        app.file_name()
+                            .ok_or_else(|| Error::Execution("app filename".into()))?,
+                    );
+                    files::copy(&app, &destination)?;
+                    rake_dist_macos::verify_artifact(&destination, Format::App, &packaged.1)
+                        .map_err(|error| Error::Execution(error.to_string()))?;
+                }
+                packaged
             } else if plan.platform() == Platform::Windows
                 && path.extension().is_some_and(|extension| {
                     matches!(extension.to_str(), Some("exe" | "msi" | "msix"))
@@ -873,7 +947,27 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     }
     files::write_json(&result_dir.join("components.lock.json"), &locks)?;
     files::write_json(&result_dir.join("distribution.json"), &result)?;
-    files::commit(&result_dir, &output, plan.identifier())?;
+    if request.compatibility {
+        crate::compatibility::write(
+            &plan,
+            &selected.name,
+            binary,
+            &result_dir,
+            &result.artifacts,
+            request.release,
+            &result.target,
+        )?;
+    }
+    if request.compatibility {
+        files::commit_compatible(
+            &result_dir,
+            &output,
+            plan.identifier(),
+            Some(&selected.name),
+        )?;
+    } else {
+        files::commit(&result_dir, &output, plan.identifier())?;
+    }
     Ok(result)
 }
 

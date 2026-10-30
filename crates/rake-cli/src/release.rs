@@ -117,6 +117,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
                 output: output.clone(),
                 binary: None,
                 release: true,
+                compatibility: false,
+                entitlements: None,
                 features: vec![],
                 offline_components: false,
                 locked_components: true,

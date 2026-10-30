@@ -72,6 +72,9 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         )
     });
     let mut output = PathBuf::from("dist");
+    let mut output_selected = false;
+    let mut compatibility = arguments.iter().any(|arg| arg == "--compat");
+    let mut entitlements = None;
     let mut binary = None;
     let mut release = true;
     let mut offline_components = false;
@@ -86,7 +89,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     let mut args = arguments.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
-            "--plan" | "--json" | "--native" => {}
+            "--plan" | "--json" | "--native" | "--compat" => {}
+            "--entitlements" => {
+                entitlements = Some(std::path::absolute(
+                    args.next().ok_or("--entitlements requires a value")?,
+                )?)
+            }
             "--release" => release = true,
             "--features" => features.extend(
                 args.next()
@@ -97,11 +105,8 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             ),
             "--trusted" => trust.required = true,
             "--sign-identity" => {
-                trust.macos_identity = Some(
-                    args.next()
-                        .ok_or("--sign-identity requires a value")?
-                        .clone(),
-                )
+                let identity = args.next().ok_or("--sign-identity requires a value")?;
+                trust.macos_identity = (identity != "-").then(|| identity.clone());
             }
             "--notary-profile" => {
                 trust.notary_profile = Some(
@@ -120,7 +125,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             "--offline-components" => offline_components = true,
             "--locked-components" => locked_components = true,
             "--debug" => release = false,
-            "--output" => output = args.next().ok_or("--output requires a value")?.into(),
+            "--output" => {
+                output = args.next().ok_or("--output requires a value")?.into();
+                output_selected = true;
+            }
             "--bin" => binary = Some(args.next().ok_or("--bin requires a value")?.clone()),
             "--manifest-path" => {
                 manifest = args
@@ -171,6 +179,13 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         None
     };
     let target = target.or(host.as_deref());
+    if compatibility && formats.is_empty() {
+        formats.push(match platform {
+            Platform::Macos => rake_dist::Format::Zip,
+            Platform::Linux => rake_dist::Format::Tar,
+            _ => return Err("legacy compatibility is available on macOS and Linux".into()),
+        });
+    }
     let plan = rake_dist::plan_with(
         &manifest,
         package,
@@ -182,6 +197,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             Some(&formats)
         },
     )?;
+    compatibility |= plan.is_legacy() && !explicit && platform != Platform::Windows;
     if planning {
         println!(
             "{}",
@@ -189,9 +205,48 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
                 &serde_json::json!({"plan": plan, "native_validation": "pending"})
             )?
         );
-    } else if plan.is_legacy() && !explicit {
-        return Ok(false);
     } else {
+        if compatibility && !output_selected {
+            let metadata = std::process::Command::new("cargo")
+                .args([
+                    "metadata",
+                    "--no-deps",
+                    "--format-version",
+                    "1",
+                    "--locked",
+                    "--offline",
+                    "--manifest-path",
+                ])
+                .arg(&manifest)
+                .output()?;
+            if !metadata.status.success() {
+                return Err("could not resolve legacy output root".into());
+            }
+            let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
+            let selected = metadata["packages"]
+                .as_array()
+                .ok_or("Cargo packages missing")?
+                .iter()
+                .find(|item| {
+                    metadata["workspace_members"]
+                        .as_array()
+                        .is_some_and(|members| members.contains(&item["id"]))
+                        && package.is_none_or(|name| item["name"] == name)
+                })
+                .ok_or("Cargo package missing")?;
+            output = PathBuf::from(
+                metadata["workspace_root"]
+                    .as_str()
+                    .ok_or("Cargo root missing")?,
+            )
+            .join("dist")
+            .join(
+                selected["name"]
+                    .as_str()
+                    .ok_or("Cargo package name missing")?,
+            )
+            .join("desktop-bundle");
+        }
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = cancelled.clone();
         ctrlc::set_handler(move || flag.store(true, std::sync::atomic::Ordering::Release))?;
@@ -204,13 +259,27 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             output,
             binary,
             release,
+            compatibility,
+            entitlements,
             features,
             offline_components,
             locked_components,
             trust,
         };
         let result = rake_dist::bundle(&request, &std::env::current_exe()?, &cancelled)?;
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        if compatibility {
+            let output = std::path::absolute(&request.output)?;
+            let manifest = output.join("bundle.json");
+            let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"artifact":output.join(value["artifact"].as_str().ok_or("legacy artifact missing")?),"archive":output.join(value["archive"]["path"].as_str().ok_or("legacy archive missing")?),"manifest":manifest,"sha256":value["archive"]["sha256"],"profile":value["profile"],"signing":value["signing"]})
+                )?
+            );
+        } else {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
     }
     Ok(true)
 }

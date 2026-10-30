@@ -61,7 +61,7 @@ class BundleTests(unittest.TestCase):
             (root / "web/loader.js").write_text("import init from '/pkg/bundle_fixture.js'; await init(); fetch('/assets/nested/message.txt');")
         else:
             if sys.platform == "darwin":
-                (root / "icon.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5l8AAAAASUVORK5CYII="))
+                (root / "icon.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSDjwHwAEJAJA6qdhxgAAAABJRU5ErkJggg=="))
             (root / "src/main.rs").write_text(source or '''fn main(){let exe=std::env::current_exe().unwrap();
 let prefix=exe.parent().unwrap().parent().unwrap();
 let assets=if cfg!(target_os="macos"){prefix.join("Resources/assets")}else{prefix.join("share/com.example.fixture/assets")};
@@ -109,6 +109,11 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
             failed_signing = subprocess.run([*command, "--entitlements", str(entitlements)], capture_output=True)
             self.assertNotEqual(failed_signing.returncode, 0)
             self.assertEqual(Path(result["archive"]).read_bytes(), archive_before)
+        # A previous Python bundle only has this exact legacy ownership marker.
+        (Path(result["manifest"]).parent / ".rake-distribution").unlink()
+        migrated = json.loads(run(command))
+        self.assertTrue((Path(migrated["manifest"]).parent / ".rake-distribution").is_file())
+        archive_before = Path(result["archive"]).read_bytes()
         (root / "src/main.rs").write_text('fn main(){does_not_compile}')
         failure = subprocess.run(command, capture_output=True, text=True)
         self.assertNotEqual(failure.returncode, 0)

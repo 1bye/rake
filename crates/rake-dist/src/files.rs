@@ -106,8 +106,18 @@ pub(crate) fn write_json(path: &Path, value: &impl serde::Serialize) -> Result<(
 }
 
 pub(crate) fn commit(staged: &Path, output: &Path, identifier: &str) -> Result<(), Error> {
+    commit_compatible(staged, output, identifier, None)
+}
+
+pub(crate) fn commit_compatible(
+    staged: &Path,
+    output: &Path,
+    identifier: &str,
+    legacy_package: Option<&str>,
+) -> Result<(), Error> {
     let marker = ".rake-distribution";
     if output.exists()
+        && !legacy_package.is_some_and(|package| crate::compatibility::owns(output, package))
         && (output.is_symlink()
             || fs::read_to_string(output.join(marker)).ok().as_deref() != Some(identifier))
     {

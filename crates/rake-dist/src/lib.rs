@@ -3,6 +3,7 @@
 //! Native execution is separate from the portable plan returned here.
 
 mod archives;
+mod compatibility;
 mod components;
 pub use components::ComponentLock;
 mod engine;
