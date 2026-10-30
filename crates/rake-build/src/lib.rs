@@ -209,8 +209,8 @@ pub fn generate_icons(
         }
         None => image::RgbaImage::from_pixel(256, 256, image::Rgba([42, 90, 70, 255])),
     };
-    if image.width() != image.height() || image.width() < 32 || image.width() > 8192 {
-        return Err("icon must be square, 32–8192 pixels".into());
+    if image.width() != image.height() || image.width() == 0 || image.width() > 8192 {
+        return Err("icon must be square, 1–8192 pixels".into());
     }
     let directory = output.join("icons");
     fs::create_dir_all(&directory)?;
