@@ -97,6 +97,11 @@ pub(crate) fn build_worker(output: &Path, args: &[String]) -> Result<()> {
             return Err("Cargo JSON message exceeds bound".into());
         }
         let message: serde_json::Value = serde_json::from_str(&line)?;
+        if message["reason"] == "compiler-message"
+            && let Some(rendered) = message["message"]["rendered"].as_str()
+        {
+            eprint!("{rendered}");
+        }
         if message["reason"] == "compiler-artifact"
             && let Some(path) = message["executable"].as_str()
         {

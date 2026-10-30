@@ -144,7 +144,7 @@ class Project:
         self.root = Path(metadata["workspace_root"])
         self.directory = Path(self.package["manifest_path"]).parent
         self.args = args
-        self.bundle = BundleConfig(self.package, self.directory)
+        self.bundle = BundleConfig(self.package, self.directory, native=args.target == "desktop")
         self.watch_roots = sorted({self.root, *(Path(item["manifest_path"]).parent for item in metadata["packages"] if item["source"] is None)})
         targets = [target for target in self.package["targets"] if
                    ("bin" in target["kind"] if args.target == "desktop" else "cdylib" in target["crate_types"])]
@@ -204,6 +204,20 @@ class Project:
         return ",".join(features)
 
     def build(self, processes, output):
+        if self.args.target == "desktop":
+            cli = os.environ.get("RAKE_CLI") or shutil.which("rake")
+            candidate = Path(__file__).resolve().parents[1] / "target/debug/rake"
+            if not cli and candidate.is_file():
+                cli = str(candidate)
+            if not cli:
+                raise RuntimeError("native builds require the Rust rake CLI; set RAKE_CLI or launch rake dev")
+            command = [cli, "bundle", "--native", "--compat", "--json", "--manifest-path", self.package["manifest_path"], "--package", self.package["name"], "--bin", self.target["name"], "--output", str(output), "--release" if self.args.release else "--debug"]
+            features = self.build_features()
+            if features:
+                command += ["--features", features]
+            result = json.loads(processes.output(command))
+            artifact = Path(result["artifact"])
+            return artifact / "Contents/MacOS" / self.target["name"] if sys.platform == "darwin" else artifact
         output.mkdir(parents=True)
         artifacts = []
         command = ["cargo", "build", "--locked", "--message-format=json-render-diagnostics",
@@ -213,16 +227,11 @@ class Project:
             command += ["--features", features]
         if self.args.release:
             command += ["--release"]
-        command += ["--bin", self.target["name"]] if self.args.target == "desktop" else ["--lib", "--target", "wasm32-unknown-unknown"]
+        command += ["--lib", "--target", "wasm32-unknown-unknown"]
         run_output(processes, command, cwd=self.root, artifact=lambda item: artifacts.append(item)
                    if item["package_id"] == self.package["id"] and item["target"]["name"] == self.target["name"] else None)
         if not artifacts:
             raise RuntimeError("cargo did not report an application artifact")
-        if self.args.target == "desktop":
-            source = Path(artifacts[-1]["executable"])
-            self.native_source = source
-            from bundle import native
-            return native(self, source, output)
         source = next((Path(name) for artifact in reversed(artifacts) for name in artifact["filenames"] if name.endswith(".wasm")), None)
         if source is None:
             raise RuntimeError("cargo did not report a Wasm artifact")
