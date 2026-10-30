@@ -84,6 +84,19 @@ fn dropping_a_helper_releases_its_descendants_lock() {
         .unwrap();
     assert!(lock.try_lock_exclusive().is_err());
     drop(helper);
-    lock.try_lock_exclusive()
-        .expect("dropping owner left descendant alive");
+    // Reaping the root does not synchronize an orphaned descendant's OS teardown.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match lock.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "dropping owner left descendant alive: {error}"
+                );
+                std::thread::yield_now();
+            }
+            Err(error) => panic!("could not inspect descendant lock: {error}"),
+        }
+    }
 }
