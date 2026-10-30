@@ -1,4 +1,4 @@
-//! Pure request-lifecycle translation. Headers, bodies and JS stacks are unavailable.
+//! Request-lifecycle translation; absent engine measurements remain unavailable.
 
 use super::wire::Event;
 use rake_diagnostics::Record;
@@ -30,7 +30,7 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
             json!({
             "requestId":request_id, "loaderId":"rake", "documentURL":"rake://runtime",
             "request":{"url":url,"method":f.get("method").and_then(Value::as_str).unwrap_or_default(),
-                "headers":{},"initialPriority":"Medium","referrerPolicy":"no-referrer"},
+                "headers":f.get("request_headers").cloned().unwrap_or(json!({})),"initialPriority":"Medium","referrerPolicy":"no-referrer"},
             "timestamp":timestamp,"initiator":{"type":"other"},"type":"Fetch","frameId":"rake",
             "hasUserGesture":false}),
         ),
@@ -38,7 +38,11 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
             "Network.responseReceived",
             json!({
             "requestId":request_id,"loaderId":"rake","timestamp":timestamp,"type":"Fetch",
-            "response":{"url":url,"status":f.get("status"),"statusText":"","headers":{},"mimeType":"",
+            "response":{"url":f.get("response_url").and_then(Value::as_str).unwrap_or(url),"status":f.get("status"),
+                "statusText":f.get("status_text").and_then(Value::as_str).unwrap_or_default(),
+                "headers":f.get("response_headers").cloned().unwrap_or(json!({})),
+                "mimeType":f.get("response_headers").and_then(|h| h["content-type"].as_str()).unwrap_or_default().split(';').next().unwrap_or_default(),
+                "protocol":f.get("protocol").and_then(Value::as_str).unwrap_or_default(),
                 "connectionReused":false,"connectionId":0,"encodedDataLength":0,"securityState":"unknown"},
             "hasExtraInfo":false,"frameId":"rake"}),
         ),

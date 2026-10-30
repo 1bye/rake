@@ -24,6 +24,7 @@ event-listener = "5.4"
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "stream"] }
 
 [features]
+devtools = ["rake-diagnostics/devtools"]
 task-errors = ["dep:rake-protocol"]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

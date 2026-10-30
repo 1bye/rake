@@ -20,6 +20,9 @@ use tracing::Instrument;
 use url::Url;
 use web_time::Instant;
 
+#[cfg(feature = "devtools")]
+mod inspection;
+
 use rake_diagnostics::Collector;
 
 /// A portable HTTP result.
@@ -326,8 +329,11 @@ impl Request {
         let _ = url.set_username("");
         let _ = url.set_password(None);
 
-        url.set_query(None);
         url.set_fragment(None);
+        #[cfg(not(feature = "devtools"))]
+        url.set_query(None);
+        #[cfg(feature = "devtools")]
+        let url = inspection::url(&url);
         let deadline = self
             .timeout
             .map(|timeout| {
@@ -351,6 +357,8 @@ impl Request {
             [
                 ("method", request.method().as_str().into()),
                 ("url", url.as_str().into()),
+                #[cfg(feature = "devtools")]
+                ("request_headers", inspection::headers(request.headers())),
             ],
         );
         let scope = Scope {
@@ -382,7 +390,32 @@ impl Request {
         let status = response.status().as_u16();
         let headers = response.headers().clone();
 
-        lifecycle.event("headers_received", [("status", status.into())]);
+        lifecycle.event(
+            "headers_received",
+            [
+                ("status", status.into()),
+                #[cfg(feature = "devtools")]
+                ("response_headers", inspection::headers(&headers)),
+                #[cfg(feature = "devtools")]
+                ("response_url", inspection::url(response.url()).into()),
+                #[cfg(feature = "devtools")]
+                (
+                    "status_text",
+                    response
+                        .status()
+                        .canonical_reason()
+                        .unwrap_or_default()
+                        .into(),
+                ),
+                #[cfg(feature = "devtools")]
+                (
+                    "protocol",
+                    format!("{:?}", response.version())
+                        .to_ascii_lowercase()
+                        .into(),
+                ),
+            ],
+        );
 
         Ok(Response {
             status,

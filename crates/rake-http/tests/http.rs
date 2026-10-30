@@ -322,12 +322,14 @@ fn request_body_abandonment_keeps_original_task_context_and_redacted_metadata() 
     assert_eq!(request.fields["status"], 200);
     assert_eq!(request.fields["received_bytes"], 0);
     assert!(request.span_id.is_some());
+    #[cfg(not(feature = "devtools"))]
     assert!(
         !request.fields["url"]
             .as_str()
             .unwrap()
             .contains("credential")
     );
+    assert!(!request.fields["url"].as_str().unwrap().contains("secret"));
     assert!(!request.fields["url"].as_str().unwrap().contains("private"));
     assert!(request.fields["duration_us"].is_u64());
 }
@@ -336,4 +338,50 @@ fn request_body_abandonment_keeps_original_task_context_and_redacted_metadata() 
 fn overflowing_timers_stay_pending_without_panicking() {
     use futures::FutureExt;
     assert!(rake_http::sleep(Duration::MAX).now_or_never().is_none());
+}
+
+#[cfg(feature = "devtools")]
+#[test]
+fn inspection_captures_headers_and_query_without_credentials() {
+    let (base, server) = server(
+        "HTTP/1.1 201 Created\r\nContent-Length: 2\r\nContent-Type: application/json; charset=utf-8\r\nX-Reply: one\r\nX-Reply: two\r\nSet-Cookie: private=value\r\nConnection: close\r\n\r\n{}",
+    );
+    let collector = Collector::default();
+    let client = HttpClient::with_collector(HttpConfig::new(), collector.clone()).unwrap();
+    block_on(
+        client
+            .post(&base)
+            .query(&[("q", "a b"), ("token", "secret")])
+            .header("authorization", "Bearer secret")
+            .header("x-fixture", "visible")
+            .json(&serde_json::json!({"title":"draft"}))
+            .send(),
+    )
+    .unwrap();
+    let request = server.join().unwrap();
+    assert!(
+        request.contains("token=secret"),
+        "capture must not modify transmission"
+    );
+    let records = collector.snapshot_after(0, Some("request")).records;
+    let started = &records[0].fields;
+    assert!(
+        started["url"]
+            .as_str()
+            .unwrap()
+            .contains("q=a+b&token=%5Bredacted%5D")
+    );
+    assert_eq!(started["request_headers"]["authorization"], "[redacted]");
+    assert_eq!(started["request_headers"]["x-fixture"], "visible");
+    let response = records
+        .iter()
+        .find(|r| r.fields["phase"] == "headers_received")
+        .unwrap();
+    assert_eq!(response.fields["response_headers"]["x-reply"], "one\ntwo");
+    assert_eq!(
+        response.fields["response_headers"]["set-cookie"],
+        "[redacted]"
+    );
+    assert_eq!(response.fields["status_text"], "Created");
+    assert!(!serde_json::to_string(&records).unwrap().contains("secret"));
 }
