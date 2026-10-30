@@ -212,6 +212,8 @@ pub struct MacosConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
 pub struct WindowsConfig {
+    /// DLL basenames explicitly supplied by an installed system prerequisite.
+    pub system_dlls: Vec<String>,
     /// Selected native formats.
     pub formats: Vec<Format>,
     /// Custom Win32 application manifest.
@@ -681,6 +683,15 @@ impl Config {
         ];
         for path in paths.into_iter().flatten() {
             validate_relative_path(path)?;
+        }
+        if self.windows.system_dlls.iter().any(|name| {
+            !name.to_ascii_lowercase().ends_with(".dll")
+                || name.starts_with('.')
+                || !name
+                    .bytes()
+                    .all(|value| value.is_ascii_alphanumeric() || b"._-".contains(&value))
+        }) {
+            return Err(Error::Field("windows.system_dlls basenames".into()));
         }
         let mut components = std::collections::BTreeSet::new();
         for component in &self.components {

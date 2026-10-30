@@ -142,3 +142,11 @@ native process group or Windows Job, including inherited descendants. Keep this
 owner with the registered application task. For GStreamer, prepare the command
 with `gstreamer_command` and pass it to `HelperProcess::spawn`. Blocking waits
 belong on an owned background worker; piped output must be drained concurrently.
+
+Windows native runtime groups also prepare private DLL loader directories before
+signing. Set `link_from_app = true` on a runtime used by the main executable;
+helper-only runtimes share their component identity with the helper. Separate
+helpers can carry different DLL versions with the same basename. Undeclared
+imports, architecture mismatches and conflicting versions in one process fail.
+`windows.system_dlls` declares explicit DLL prerequisites supplied by the target
+system; the adapter never discovers dependencies through the developer's PATH.

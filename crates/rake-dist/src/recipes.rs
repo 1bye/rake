@@ -135,7 +135,11 @@ fn inspect_tree(path: &Path, target: &str) -> Result<(), Error> {
             }
         }
     } else {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
         if name.ends_with(".dll")
             || name.ends_with(".dylib")
             || name.contains(".so")

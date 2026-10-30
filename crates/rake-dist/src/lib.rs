@@ -14,6 +14,7 @@ mod recipes;
 mod release;
 pub use release::{PublishedFile, PublishedRelease, ReleaseRequest, publish};
 mod sparkle;
+mod windows_dlls;
 pub use execution::{
     Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, execute_worker, host_target,
 };

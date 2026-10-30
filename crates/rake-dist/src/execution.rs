@@ -416,7 +416,13 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         };
         for helper in &config.sidecars {
             let path = PathBuf::from(helper.path.to_string_lossy().replace("{target}", &target));
-            let relative = PathBuf::from("rake/helpers").join(format!("{}{suffix}", helper.name));
+            let relative = if plan.platform() == Platform::Windows {
+                PathBuf::from("rake/helpers")
+                    .join(&helper.name)
+                    .join(format!("{}{suffix}", helper.name))
+            } else {
+                PathBuf::from("rake/helpers").join(format!("{}{suffix}", helper.name))
+            };
             let destination = resource_stage.join(&relative);
             let source_root = recipes::root(helper.component.as_deref(), &prepared.roots, root)?;
             files::copy(&files::confined(source_root, &path)?, &destination)?;
@@ -526,6 +532,15 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 .updates
                 .public_keys
                 .insert(provider.clone(), relative);
+        }
+        if plan.platform() == Platform::Windows {
+            crate::windows_dlls::prepare(
+                config,
+                &descriptor,
+                &resource_stage,
+                &bin.join(format!("{binary}{suffix}")),
+                &mut resources,
+            )?;
         }
         let descriptor_path = resource_stage.join("rake-installation.json");
         if descriptor_path.exists() {

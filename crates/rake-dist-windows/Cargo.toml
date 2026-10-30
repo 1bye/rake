@@ -10,6 +10,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+object = {version="0.37",default-features=false,features=["read","std"]}
+sha2 = "0.10"
 rake-dist-core = { path = "../rake-dist-core" }
 thiserror.workspace = true
 roxmltree = "0.20"

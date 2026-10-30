@@ -109,7 +109,7 @@ jobs:
       - name: Windows SDK signing, installation and upgrade
         timeout-minutes: 5
         if: always() && runner.os == 'Windows' && inputs.mode != 'velopack'
-        run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --locked
+        run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --test dll --locked
       - name: Install pinned native Velopack tool
         if: always() && runner.os == 'Windows'
         timeout-minutes: 3

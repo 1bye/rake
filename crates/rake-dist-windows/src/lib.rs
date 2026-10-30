@@ -1,5 +1,7 @@
 //! Replaces one staged Win32 manifest, preserving GPUI's required declarations.
+mod dll;
 mod packages;
+pub use dll::{DllDeployment, deploy_dlls, pe_imports};
 pub use packages::{
     Msix, certificate_subject, msix_manifest, package_msix, package_velopack, preflight, sign,
     verify_velopack_tool,

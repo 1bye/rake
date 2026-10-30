@@ -338,3 +338,13 @@ check completed. That compile check caught an unavailable values_mut method in
 the pinned TOML map; the retry was immediately cancelled. iter_mut is now used,
 and the vendor regression and strict dist-library Clippy both pass before the
 replacement retry. This extra cancelled run is recorded rather than omitted.
+
+P4 Windows DLL deployment: added PE import/architecture inspection and closure
+preparation from declared runtime groups. Main-process roots require
+link_from_app; helpers and runtime subprocesses have isolated loader directories.
+Conflicting same-name versions in one process and undeclared imports fail before
+signing. System DLL allowances are explicit; redistributable CRT DLLs are not
+silently considered OS libraries. Case-insensitive native file inspection is
+preserved. Portable core/dist/Windows tests, strict Clippy and rustdoc pass.
+A real MSVC DLL/helper relocation test is queued with the next consolidated
+Windows SDK gate; this commit does not claim that native test already passed.

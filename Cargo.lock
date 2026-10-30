@@ -6116,9 +6116,11 @@ name = "rake-dist-windows"
 version = "0.1.0"
 dependencies = [
  "dunce",
+ "object",
  "rake-build",
  "rake-dist-core",
  "roxmltree 0.20.0",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
  "url",
