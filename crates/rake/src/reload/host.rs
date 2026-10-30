@@ -1,6 +1,8 @@
 //! Explicit development-only checkpoint storage. Failed restoration never deletes it.
 
-use super::{MAX_CHECKPOINT_BYTES, WorkspaceCheckpoint};
+#[cfg(any(unix, target_family = "wasm"))]
+use super::MAX_CHECKPOINT_BYTES;
+use super::WorkspaceCheckpoint;
 use crate::control::ControlConfig;
 
 #[cfg(target_family = "wasm")]
@@ -11,7 +13,7 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
         return None;
     }
 
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(unix)]
     {
         use std::io::Read;
         use std::os::unix::fs::MetadataExt;
@@ -48,6 +50,12 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
         })())
     }
 
+    // Checkpoints are owned by the existing Unix development supervisor.
+    #[cfg(all(not(unix), not(target_family = "wasm")))]
+    {
+        None
+    }
+
     #[cfg(target_family = "wasm")]
     {
         match crate::control::WebBridgeConfig::from_document() {
@@ -62,6 +70,7 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
     }
 }
 
+#[cfg(any(unix, target_family = "wasm"))]
 fn decode(bytes: &[u8]) -> Result<WorkspaceCheckpoint, String> {
     if bytes.len() > MAX_CHECKPOINT_BYTES {
         return Err("reload checkpoint exceeds 512 KiB".into());
@@ -71,7 +80,7 @@ fn decode(bytes: &[u8]) -> Result<WorkspaceCheckpoint, String> {
 }
 
 pub(crate) fn clear() {
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(unix)]
     if std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
         && let Some(path) = std::env::var_os("RAKE_RELOAD_CHECKPOINT")
     {

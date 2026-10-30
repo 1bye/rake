@@ -180,3 +180,17 @@ connected GitHub tool return BlobNotFound for its job log. A fresh-runner build
 bug was independently corrected: ordinary locked Cargo builds may fetch missing
 dependencies instead of unconditionally forcing offline mode. This is a concrete
 fix, not verified attribution of the unavailable GPUI failure log.
+
+Windows checkpoint 41095152890: core and spawned CLI checks passed. Real GPUI
+compilation reached Rake and found existing Unix-only checkpoint filesystem calls
+in reload/host.rs; Windows distribution now bypasses that Unix dev-supervisor
+checkpoint path without weakening its Unix private-file checks. The Rust SDK
+startup call now explicitly names the external ::velopack crate, avoiding the
+private adapter module shadowing it on Windows. The pinned native vpk tool
+installed successfully. Test certificate creation also succeeded, but adding a
+current-user root still prompted and timed out. The disposable runner now imports
+only its public test trust into LocalMachine stores, and records the current-user
+signing thumbprint before trust setup so cleanup still runs after partial failure.
+The manual checkpoint saves dependency caches on failure to avoid rebuilding GPUI
+on each targeted follow-up. These fixes require a native follow-up, not an inferred
+Windows acceptance result.

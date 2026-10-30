@@ -50,6 +50,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Install Linux packaging prerequisites
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y patchelf rpm desktop-file-utils
@@ -71,14 +73,13 @@ jobs:
         shell: pwsh
         run: |
           $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Rake CI Distribution' -Provider 'Microsoft Software Key Storage Provider' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyProtection None -KeyExportPolicy NonExportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
+          "RAKE_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           $public = Join-Path $env:RUNNER_TEMP 'rake-test-public.cer'
           Export-Certificate -Cert $cert -FilePath $public | Out-Null
           Write-Host 'Created disposable software signing identity'
-          certutil.exe -user -f -addstore Root $public
-          if ($LASTEXITCODE -ne 0) { throw 'Root test trust installation failed' }
-          certutil.exe -user -f -addstore TrustedPeople $public
-          if ($LASTEXITCODE -ne 0) { throw 'Publisher test trust installation failed' }
-          "RAKE_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+          Write-Host 'Installed public root trust on the disposable runner'
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
       - name: Windows SDK signing, installation and upgrade
         timeout-minutes: 5
         if: always() && runner.os == 'Windows'
@@ -102,7 +103,8 @@ jobs:
         shell: pwsh
         run: |
           if ($env:RAKE_TEST_CERT_THUMBPRINT) {
-            foreach ($store in @('My', 'Root', 'TrustedPeople')) {
-              Remove-Item -LiteralPath "Cert:\CurrentUser\$store\$env:RAKE_TEST_CERT_THUMBPRINT" -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:RAKE_TEST_CERT_THUMBPRINT" -DeleteKey -ErrorAction SilentlyContinue
+            foreach ($store in @('Root', 'TrustedPeople')) {
+              Remove-Item -LiteralPath "Cert:\LocalMachine\$store\$env:RAKE_TEST_CERT_THUMBPRINT" -ErrorAction SilentlyContinue
             }
           }

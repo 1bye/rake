@@ -50,7 +50,7 @@ pub fn early_startup_for(embedded: Option<&str>) -> Result<(), Error> {
             .map_err(|error| Error::Policy(error.to_string()))?;
         #[cfg(all(windows, feature = "velopack"))]
         if binding.format == rake_dist_core::Format::Velopack {
-            velopack::VelopackApp::build()
+            ::velopack::VelopackApp::build()
                 .set_auto_apply_on_startup(false)
                 .run();
         }
