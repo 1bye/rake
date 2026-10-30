@@ -13,7 +13,14 @@ Each step is a separate commit. Stock Chrome is the supported frontend.
    Development launches default to `RUST_BACKTRACE=1` (an explicit user value wins).
    Native panic headers/backtraces are retained as process text; no panic hook,
    recovery mechanism or debugger is installed.
-3. Command discovery, completion and operation results: pending.
+3. Command discovery, completion and operation results: implemented. `rake.help()`
+   lists helpers, `rake.commands()` returns registered argument/result schemas, and
+   `rake.command("demo.echo")` describes one command. Read-only namespaces expose
+   member names to completion. Submission results label queued/running/decision/
+   committed/failed states and contain an `observe` token for
+   `rake.operation(token)`. Observation requires the same runtime UUID and never
+   resubmits a command. Standalone inspection hosts expose helpers and an empty
+   command list; this does not invent an application command registry.
 4. Clear, preserve-log lifecycle and retained objects: pending.
 5. Stock Chrome verification and repeatable native/CDP checks: pending.
 

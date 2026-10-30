@@ -198,6 +198,32 @@ impl Session {
                     )?;
                     return Ok(json!({"result":object["object"]}));
                 }
+                let read_only = if expression == "rake.help()" {
+                    Some(super::evaluate::help())
+                } else if expression == "rake.commands()" {
+                    Some(super::evaluate::registry(&self.instance)?)
+                } else if expression == "rake" {
+                    Some(super::evaluate::help())
+                } else if !expression.contains('(')
+                    && expression.split('.').all(|part| {
+                        !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    })
+                {
+                    super::evaluate::completion(
+                        expression,
+                        &super::evaluate::names(&self.instance)?,
+                    )
+                } else {
+                    None
+                };
+                if let Some(value) = read_only {
+                    let remote = if request.params["returnByValue"] == true {
+                        json!({"type":"object","value":value})
+                    } else {
+                        self.objects.remote(value)
+                    };
+                    return Ok(json!({"result":remote}));
+                }
                 if request.params["throwOnSideEffect"] == true {
                     return Err(Error::new(
                         -32000,
@@ -207,6 +233,30 @@ impl Session {
 
                 let outcome: std::result::Result<Value, Error> = (|| {
                     let value = if let Some(argument) = expression
+                        .strip_prefix("rake.command(")
+                        .and_then(|v| v.strip_suffix(')'))
+                    {
+                        let id: String = serde_json::from_str(argument).map_err(|_| {
+                            Error::new(-32602, "Command name must be a JSON string")
+                        })?;
+                        super::evaluate::registry(&self.instance)?
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|c| c["id"] == id)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::new(-32602, format!("Unregistered command: {id}"))
+                            })?
+                    } else if let Some(argument) = expression
+                        .strip_prefix("rake.operation(")
+                        .and_then(|v| v.strip_suffix(')'))
+                    {
+                        let token: Value = serde_json::from_str(argument).map_err(|_| {
+                            Error::new(-32602, "Operation observation requires a JSON token")
+                        })?;
+                        super::evaluate::observation(&self.instance, &token)?
+                    } else if let Some(argument) = expression
                         .trim()
                         .trim_end_matches(';')
                         .trim()
@@ -237,7 +287,16 @@ impl Session {
                     let remote = if request.params["returnByValue"] == true {
                         json!({"type":"object","value":value})
                     } else {
-                        self.objects.remote(value)
+                        let status = value["status"].as_str().map(str::to_owned);
+                        let id = value["observe"]["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned();
+                        let mut remote = self.objects.remote(value);
+                        if let Some(status) = status {
+                            remote["description"] = json!(format!("Command {status} · {id}"));
+                        }
+                        remote
                     };
 
                     Ok(json!({"result":remote}))
@@ -250,15 +309,43 @@ impl Session {
                     }
                 })
             }
-            "Runtime.globalLexicalScopeNames" => {
-                Ok(json!({"names":super::evaluate::names(&self.instance)?}))
-            }
+            "Runtime.globalLexicalScopeNames" => Ok(
+                json!({"names":super::evaluate::lexical_names(&super::evaluate::names(&self.instance)?)}),
+            ),
             "Runtime.compileScript" => {
                 let expression = request.params["expression"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "expression required"))?;
 
-                super::evaluate::validate(&self.instance, expression)?;
+                if !matches!(
+                    expression.trim(),
+                    "rake.help()"
+                        | "rake.commands()"
+                        | "rake.resetText($0)"
+                        | "rake.undoText($0)"
+                        | "rake.resetStyles($0)"
+                        | "rake.undoStyles($0)"
+                ) {
+                    if let Some(argument) = expression
+                        .trim()
+                        .strip_prefix("rake.command(")
+                        .and_then(|v| v.strip_suffix(')'))
+                    {
+                        serde_json::from_str::<String>(argument).map_err(|_| {
+                            Error::new(-32602, "Command name must be a JSON string")
+                        })?;
+                    } else if let Some(argument) = expression
+                        .trim()
+                        .strip_prefix("rake.operation(")
+                        .and_then(|v| v.strip_suffix(')'))
+                    {
+                        serde_json::from_str::<Value>(argument).map_err(|_| {
+                            Error::new(-32602, "Operation observation requires JSON")
+                        })?;
+                    } else {
+                        super::evaluate::validate(&self.instance, expression)?;
+                    }
+                }
 
                 if request.params["persistScript"] == true {
                     return Err(Error::new(
@@ -1302,6 +1389,36 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_console_has_discoverable_helpers_without_application_commands() {
+        let router =
+            rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default());
+        let mut info = router.client().info();
+        info.queries.retain(|q| q != "commands");
+        let instance = Instance {
+            application_id: "standalone".into(),
+            pid: 0,
+            info,
+            endpoint: rake_client::local::Endpoint::Local {
+                path: "/never-connect".into(),
+            },
+        };
+        let mut session = Session::new(instance, None);
+        let call = |expression| Request {
+            id: 1,
+            method: "Runtime.evaluate".into(),
+            params: json!({"expression":expression,"throwOnSideEffect":true,"returnByValue":true}),
+        };
+        let help = session.handle(&call("rake.help()")).unwrap();
+        assert_eq!(help["result"]["value"]["undoText"], "rake.undoText($0)");
+        let commands = session.handle(&call("rake.commands()")).unwrap();
+        assert_eq!(commands["result"]["value"], json!([]));
+        assert!(
+            session.handle(&call("rake.resetText($0)")).is_err(),
+            "eager mutation must remain disabled"
+        );
+    }
 
     #[test]
     fn evaluation_errors_are_visible_exceptions_and_crash_output_survives_dead_ipc() {

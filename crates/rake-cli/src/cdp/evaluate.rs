@@ -34,30 +34,99 @@ pub(super) fn parse(expression: &str) -> Result<(String, Value), Error> {
     Ok((id.into(), arguments))
 }
 
-pub(super) fn names(instance: &Instance) -> Result<Vec<String>, Error> {
+pub(super) fn registry(instance: &Instance) -> Result<Value, Error> {
     if !instance
         .info
         .queries
         .iter()
         .any(|query| query == "commands")
     {
-        return Ok(Vec::new());
+        return Ok(json!([]));
     }
-    let reply = crate::terminal::query(instance, Query::Commands {}, super::TIMEOUT)
-        .map_err(|e| Error::new(-32000, e.to_string()))?;
+    match crate::terminal::query(instance, Query::Commands {}, super::TIMEOUT)
+        .map_err(|e| Error::new(-32000, e.to_string()))?
+    {
+        Reply::Data(value) if value.is_array() => Ok(value),
+        _ => Err(Error::new(-32000, "Invalid command registry")),
+    }
+}
 
-    let Reply::Data(value) = reply else {
-        return Err(Error::new(-32000, "Unexpected command registry reply"));
-    };
-
-    let commands = value
+pub(super) fn names(instance: &Instance) -> Result<Vec<String>, Error> {
+    Ok(registry(instance)?
         .as_array()
-        .ok_or_else(|| Error::new(-32000, "Invalid command registry"))?;
-
-    Ok(commands
+        .unwrap()
         .iter()
         .filter_map(|c| c["id"].as_str().map(str::to_owned))
         .collect())
+}
+
+pub(super) fn help() -> Value {
+    json!({"help":"rake.help()", "commands":"rake.commands()", "command":"rake.command(\"demo.echo\") — argument/result schemas",
+        "operation":"rake.operation({\"runtimeId\":\"…\",\"id\":\"op-1\"}) — read a pending outcome without resubmitting",
+        "openSource":"rake.openSource($0)","resetStyles":"rake.resetStyles($0)","undoStyles":"rake.undoStyles($0)",
+        "resetText":"rake.resetText($0)","undoText":"rake.undoText($0)",
+        "evaluation":"Registered commands accept one JSON argument. General JavaScript and Rust evaluation are unavailable."})
+}
+
+pub(super) fn completion(expression: &str, names: &[String]) -> Option<Value> {
+    let helpers = help();
+    if expression == "rake" {
+        return Some(helpers);
+    }
+    let prefix = format!("{expression}.");
+    let mut properties = serde_json::Map::new();
+    for name in names {
+        if let Some(suffix) = name.strip_prefix(&prefix) {
+            let child = suffix.split('.').next().unwrap();
+            properties.insert(child.into(), json!(format!("{name}(JSON)")));
+        }
+    }
+    (!properties.is_empty()).then_some(Value::Object(properties))
+}
+
+pub(super) fn lexical_names(names: &[String]) -> Vec<String> {
+    let mut result = std::collections::BTreeSet::from(["rake".to_owned(), "$0".to_owned()]);
+    for name in names {
+        result.insert(name.split('.').next().unwrap().to_owned());
+    }
+    result.into_iter().collect()
+}
+
+pub(super) fn observation(instance: &Instance, argument: &Value) -> Result<Value, Error> {
+    if argument["runtimeId"].as_str() != Some(&instance.info.runtime_id.to_string()) {
+        return Err(Error::new(
+            -32602,
+            "Operation belongs to a different runtime; use the returned observation token",
+        ));
+    }
+    let operation = argument["id"]
+        .as_str()
+        .and_then(|id| id.parse().ok())
+        .ok_or_else(|| Error::new(-32602, "Expected {runtimeId,id:\"op-N\"}"))?;
+    match crate::terminal::query(instance, Query::Operation { operation }, super::TIMEOUT)
+        .map_err(|error| Error::new(-32000, error.to_string()))?
+    {
+        Reply::Operation(record) => Ok(outcome(instance, None, &record)),
+        _ => Err(Error::new(-32000, "Unexpected operation reply")),
+    }
+}
+
+fn outcome(
+    instance: &Instance,
+    key: Option<&str>,
+    record: &rake_protocol::control::OperationRecord,
+) -> Value {
+    use rake_protocol::router::OperationState;
+    let status = match &record.state {
+        OperationState::Committed => "committed",
+        OperationState::Queued => "queued",
+        OperationState::Running => "running",
+        OperationState::AwaitingDecision(_) => "awaiting decision",
+        OperationState::Cancelled(_) => "cancelled",
+        OperationState::Blocked(_) => "blocked",
+        OperationState::Failed(_) => "failed",
+    };
+    json!({"requestKey":key,"status":status,"operation":record,"observe":{"runtimeId":instance.info.runtime_id.to_string(),"id":record.operation_id.to_string()}})
 }
 
 pub(super) fn validate(instance: &Instance, expression: &str) -> Result<(String, Value), Error> {
@@ -103,7 +172,7 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
 
                 match record.state {
                     OperationState::Committed => {
-                        return Ok(json!({"requestKey":key,"operation":record}));
+                        return Ok(outcome(instance, Some(&key), &record));
                     }
                     OperationState::Queued | OperationState::Running
                         if Instant::now() < deadline => {}
@@ -140,6 +209,39 @@ fn delivery_error(message: impl std::fmt::Display, key: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_is_static_and_outcomes_carry_runtime_scoped_observation_tokens() {
+        let names = vec!["demo.echo".into(), "demo.files.list".into()];
+        assert_eq!(lexical_names(&names), ["$0", "demo", "rake"]);
+        let namespace = completion("demo", &names).unwrap();
+        assert_eq!(namespace["echo"], "demo.echo(JSON)");
+        assert!(namespace.get("files").is_some());
+        assert!(completion("demo.echo({})", &names).is_none());
+        assert!(help()["resetText"].as_str().unwrap().contains("$0"));
+        let router =
+            rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default());
+        let instance = Instance {
+            application_id: "observe".into(),
+            pid: 0,
+            info: router.client().info(),
+            endpoint: rake_client::local::Endpoint::Local {
+                path: "/never-connect".into(),
+            },
+        };
+        let record = rake_protocol::control::OperationRecord {
+            operation_id: rake_protocol::router::OperationId(3),
+            state: rake_protocol::router::OperationState::AwaitingDecision(
+                rake_protocol::router::DecisionId(9),
+            ),
+            result: None,
+        };
+        let result = outcome(&instance, Some("key"), &record);
+        assert_eq!(result["status"], "awaiting decision");
+        assert_eq!(result["observe"]["id"], "op-3");
+        assert_eq!(result["requestKey"], "key");
+        assert!(observation(&instance, &json!({"runtimeId":"old","id":"op-3"})).is_err());
+    }
 
     #[test]
     fn inspection_only_hosts_offer_no_typed_command_completion_or_evaluation() {
