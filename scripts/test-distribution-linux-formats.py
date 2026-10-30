@@ -117,10 +117,9 @@ flatpak run --user --no-documents-portal --no-a11y-bus --env=LIBGL_ALWAYS_SOFTWA
         runtime_dir.mkdir(mode=0o700)
         wayland = root / 'flatpak-wayland.sh'
         wayland.write_text(r"""set -eu
-unset DISPLAY
 export XDG_RUNTIME_DIR="$1"
 export WAYLAND_DISPLAY=rake-wayland
-weston --backend=headless-backend.so --use-pixman --socket="$WAYLAND_DISPLAY" --idle-time=0 --log="$2/weston.log" &
+weston --backend=x11-backend.so --use-pixman --socket="$WAYLAND_DISPLAY" --idle-time=0 --log="$2/weston.log" &
 manager=$!
 trap 'kill "$manager" 2>/dev/null || true' EXIT
 for attempt in $(seq 1 100); do
@@ -129,9 +128,9 @@ for attempt in $(seq 1 100); do
     sleep 0.05
 done
 test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
-flatpak run --user --no-documents-portal --no-a11y-bus --env=WAYLAND_DISPLAY="$WAYLAND_DISPLAY" --env=LIBGL_ALWAYS_SOFTWARE=1 dev.rake.desktop-example
+flatpak run --user --no-documents-portal --no-a11y-bus --env=DISPLAY= --env=WAYLAND_DISPLAY="$WAYLAND_DISPLAY" --env=LIBGL_ALWAYS_SOFTWARE=1 dev.rake.desktop-example
 """)
-        assert_frame(['dbus-run-session', '--', 'sh', str(wayland), str(runtime_dir), str(output)], output / 'native-wayland-frame.log')
+        assert_frame(['xvfb-run', '-a', 'dbus-run-session', '--', 'sh', str(wayland), str(runtime_dir), str(output)], output / 'native-wayland-frame.log')
         print('Flatpak pinned SDK source build, X11/Wayland sandbox GPUI frames and installed resource passed', flush=True)
     finally:
         run('flatpak', 'uninstall', '--user', '-y', '--noninteractive', identifier)
