@@ -218,7 +218,8 @@ same actions plus **Open Rust source**. In Chrome's Console, use
 `rake.openSource("routing.command-echo")` (or a retained numeric CDP node ID) to
 open the construction site using the system default editor. This explicit host
 action is restricted to existing Rust files inside `RAKE_SOURCE_ROOT` (default:
-the adapter host's current directory). No source contents are returned;
+the adapter host's current directory). The editor helper returns no source contents; captured diagnostic source links can
+read bounded workspace Rust files into Chrome’s Sources viewer.
 line/column remain metadata when the default editor cannot accept a location.
 For an attribute or registered handler site, use
 `rake.openSource($0, {"kind":"style","index":0})` or
@@ -365,3 +366,7 @@ Empty frame callback lists indicate unavailable attribution, including cached dr
 or evicted pending metadata; omission counts cover known observations only. Pending
 callbacks match the actual draw's time interval and cannot attach to a later frame.
 Recording adds instrumentation overhead.
+
+
+Console delivery progress and its verification are tracked in
+[the Console checklist](devtools-console.md).

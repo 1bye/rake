@@ -29,6 +29,7 @@ struct Session {
     dropped: u64,
     epoch_seconds: Option<f64>,
     objects: super::console::Objects,
+    sources: super::sources::Sources,
     loss: super::console::Loss,
     process_output: super::console::ProcessOutput,
     dom: super::dom::Dom,
@@ -53,6 +54,7 @@ impl Session {
             dropped: 0,
             epoch_seconds: None,
             objects: super::console::Objects::default(),
+            sources: super::sources::Sources::default(),
             loss: super::console::Loss::default(),
             process_output: super::console::ProcessOutput::new(output),
             dom: super::dom::Dom::default(),
@@ -156,7 +158,13 @@ impl Session {
                 self.event(Event::new("Tracing.tracingComplete", complete));
                 Ok(json!({}))
             }
-            "IO.read" => self.frame_trace.read(&request.params),
+            "IO.read"
+                if !request.params["handle"]
+                    .as_str()
+                    .is_some_and(|h| h.starts_with("rake-source-")) =>
+            {
+                self.frame_trace.read(&request.params)
+            }
             "IO.close" if request.params["handle"] == "rake-frames" => {
                 self.frame_trace.close();
                 Ok(json!({}))
@@ -622,7 +630,28 @@ impl Session {
 
                 Ok(json!({}))
             }
-            "Page.getResourceTree" => Ok(json!({"frameTree":{"frame":frame(),"resources":[]}})),
+            "Page.getResourceTree" => {
+                Ok(json!({"frameTree":{"frame":frame(),"resources":self.sources.resources()}}))
+            }
+            "Page.getResourceContent" => {
+                Ok(json!({"content":self.sources.content(&request.params)?,"base64Encoded":false}))
+            }
+            "Network.loadNetworkResource" => self.sources.load(&request.params),
+            "IO.read"
+                if request.params["handle"]
+                    .as_str()
+                    .is_some_and(|h| h.starts_with("rake-source-")) =>
+            {
+                self.sources.read(&request.params)
+            }
+            "IO.close"
+                if request.params["handle"]
+                    .as_str()
+                    .is_some_and(|h| h.starts_with("rake-source-")) =>
+            {
+                self.sources.close(&request.params);
+                Ok(json!({}))
+            }
             "Page.getFrameTree" => Ok(json!({"frameTree":{"frame":frame()}})),
             _ => Err(Error::new(
                 -32601,
@@ -672,7 +701,9 @@ impl Session {
             }
 
             for record in &snapshot.records {
+                self.sources.observe(record);
                 if self.domains.contains("Log")
+                    && !self.domains.contains("Runtime")
                     && let Some(event) =
                         super::console::translate(record, self.epoch_seconds.unwrap_or_default())
                 {
@@ -1253,6 +1284,74 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_logs_have_one_delivery_source_and_expandable_context() {
+        let record: rake_diagnostics::Record =
+            serde_json::from_value(json!({"sequence":1,"elapsed_us":0,
+            "level":"WARN","target":"app::export","kind":"event","spans":["export"],
+            "source":{"file":"app.rs","line":42},"fields":{"message":"export started","rows":3}}))
+            .unwrap();
+        let info = rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default())
+            .client()
+            .info();
+        let (instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::Info {}) => {
+                    let mut info = info.clone();
+                    info.runtime_id = request.runtime_id;
+                    Reply::Info(info)
+                }
+                RuntimeMessage::Query(Query::Diagnostics { after, .. }) => {
+                    Reply::Diagnostics(rake_diagnostics::Snapshot {
+                        records: if after == 0 {
+                            vec![record.clone()]
+                        } else {
+                            vec![]
+                        },
+                        dropped: 0,
+                        output_dropped: 0,
+                    })
+                }
+                _ => panic!("unexpected request"),
+            },
+            4,
+        );
+        let mut session = Session::new(instance, None);
+        session.domains.extend(["Log".into(), "Runtime".into()]);
+        session.poll().unwrap();
+        session.poll().unwrap();
+        assert_eq!(
+            session.outbound.len(),
+            1,
+            "Log and Runtime must not duplicate diagnostics"
+        );
+        let event = &session.outbound[0].0;
+        assert_eq!(event.method, "Runtime.consoleAPICalled");
+        assert_eq!(event.params["type"], "warning");
+        assert_eq!(
+            event.params["stackTrace"]["callFrames"][0]["lineNumber"],
+            41
+        );
+        let id = event.params["args"][1]["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let props = session.objects.properties(&id).unwrap();
+        assert!(
+            props["result"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "spans")
+        );
+        assert_eq!(
+            session.sources.resources()[0]["url"],
+            "rake://source/app.rs"
+        );
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn outbound_retention_is_bounded_by_count_and_bytes() {

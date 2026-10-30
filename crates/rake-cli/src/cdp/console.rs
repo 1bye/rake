@@ -56,12 +56,17 @@ pub(super) fn translate(record: &Record, epoch: f64) -> Option<Event> {
         text.push_str(&format!("{key}={}", display(value)));
     }
 
-    Some(entry(
+    let mut event = entry(
         level(&record.level),
         text,
         (epoch + record.elapsed_us as f64 / 1e6) * 1000.,
         &record.target,
-    ))
+    );
+    if let Some(source) = &record.source {
+        event.params["entry"]["url"] = json!(source_url(source));
+        event.params["entry"]["lineNumber"] = json!(source.line.saturating_sub(1));
+    }
+    Some(event)
 }
 
 #[derive(Default)]
@@ -175,7 +180,9 @@ impl Objects {
     }
 
     pub fn called(&mut self, record: &Record, epoch: f64) -> Event {
-        let fields = serde_json::to_value(&record.fields).unwrap_or_default();
+        let fields = json!({"fields":record.fields,"target":record.target,"spans":record.spans,
+            "spanId":record.span_id,"parentSpanId":record.parent_span_id,"sequence":record.sequence,
+            "source":record.source});
 
         let kind = match level(&record.level) {
             "verbose" => "debug",
@@ -190,11 +197,13 @@ impl Objects {
             .map(display)
             .unwrap_or_else(|| record.target.clone());
 
-        Event::new(
-            "Runtime.consoleAPICalled",
-            json!({"type":kind,"args":[self.remote(json!(message)),self.remote(fields)],
-            "executionContextId":1,"timestamp":(epoch+record.elapsed_us as f64/1e6)*1000.}),
-        )
+        let mut params = json!({"type":kind,"args":[self.remote(json!(message)),self.remote(fields)],
+            "executionContextId":1,"timestamp":(epoch+record.elapsed_us as f64/1e6)*1000.});
+        if let Some(source) = &record.source {
+            params["stackTrace"] = json!({"callFrames":[{"functionName":record.target,"scriptId":"",
+                "url":source_url(source),"lineNumber":source.line.saturating_sub(1),"columnNumber":0}]});
+        }
+        Event::new("Runtime.consoleAPICalled", params)
     }
 }
 
@@ -367,6 +376,11 @@ impl ProcessOutput {
 
         events
     }
+}
+
+pub(super) fn source_url(source: &rake_diagnostics::Source) -> String {
+    // Keep the advertised URL opaque: only captured paths may be read by Sources.
+    format!("rake://source/{}", source.file)
 }
 
 #[cfg(test)]

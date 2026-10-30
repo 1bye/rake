@@ -69,3 +69,28 @@ fn span_alias_includes_both_lifecycle_records_with_an_exclusive_cursor() {
     assert_eq!(collector.snapshot_after(1, Some("span")).records.len(), 1);
     assert_eq!(collector.snapshot_after(0, None).records.len(), 3);
 }
+
+#[test]
+fn tracing_retains_the_event_callsite_and_causal_context() {
+    use tracing_subscriber::prelude::*;
+    let collector = Collector::new(8);
+    let subscriber = tracing_subscriber::registry().with(collector.layer());
+    let mut event_line = 0;
+    tracing::subscriber::with_default(subscriber, || {
+        let span = tracing::info_span!("export", job = 42);
+        let _guard = span.enter();
+        event_line = line!() + 1;
+        tracing::warn!(rows = 3, "source fixture");
+    });
+    let event = collector.snapshot_after(0, Some("event")).records.remove(0);
+    let source = event.source.unwrap();
+    assert_eq!(source.file, file!());
+    assert_eq!(source.line, event_line);
+    assert_eq!(event.spans, ["export"]);
+    assert_eq!(event.fields["job"], 42);
+    assert_eq!(event.fields["rows"], 3);
+    let old: rake_diagnostics::Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":0,
+        "level":"INFO","target":"old","kind":"event","spans":[],"fields":{}}))
+    .unwrap();
+    assert!(old.source.is_none());
+}

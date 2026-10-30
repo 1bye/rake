@@ -9,6 +9,7 @@ mod frames;
 mod network;
 mod server;
 mod session;
+mod sources;
 mod styles;
 mod trace;
 mod wire;

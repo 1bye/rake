@@ -33,11 +33,23 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 use tracing_subscriber::{Layer, Registry};
 use web_time::Instant;
 
+/// A location reported by tracing metadata; never inferred from span names.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Source {
+    /// Rust source path, relative to the build workspace when available.
+    pub file: String,
+    /// One-based source line.
+    pub line: u32,
+}
+
 /// One owned diagnostic record. Values are retained as typed JSON where available.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Record {
     /// Monotonic sequence within this collector; not a router revision.
     pub sequence: u64,
+    /// Emitting tracing call site; absent for older or manually recorded events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
     /// Time since collector creation, in microseconds.
     pub elapsed_us: u64,
     /// Tracing severity or HTTP lifecycle severity.
@@ -234,6 +246,7 @@ impl Collector {
 
         buffer.records.push_back(Record {
             sequence,
+            source: context.source,
             elapsed_us: self.0.started.elapsed().as_micros().min(u64::MAX as u128) as u64,
             level: level.into(),
             target: target.into(),
@@ -283,6 +296,7 @@ pub struct CollectorLayer(Collector);
 /// Owned causal metadata captured before asynchronous work changes context.
 #[derive(Clone, Debug, Default)]
 pub struct CapturedContext {
+    source: Option<Source>,
     spans: Vec<String>,
     fields: BTreeMap<String, Value>,
     span_id: Option<u64>,
@@ -409,11 +423,20 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
         let mut fields = Fields::default();
 
         event.record(&mut fields);
-        let context = cx
+        let mut context = cx
             .event_span(event)
             .map(|span| capture(span, &self.0))
             .unwrap_or_default();
 
+        context.source =
+            event
+                .metadata()
+                .file()
+                .zip(event.metadata().line())
+                .map(|(file, line)| Source {
+                    file: file.into(),
+                    line,
+                });
         self.0.record_context(
             context,
             event.metadata().level().as_str(),

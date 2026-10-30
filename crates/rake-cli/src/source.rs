@@ -21,6 +21,22 @@ fn resolve(root: &Path, source: &SourceLocation) -> Result<PathBuf> {
     Ok(path)
 }
 
+pub(crate) fn read(source: &SourceLocation) -> Result<String> {
+    use std::io::Read;
+    let root = std::env::var_os("RAKE_SOURCE_ROOT")
+        .map(PathBuf::from)
+        .map_or_else(std::env::current_dir, Ok)?;
+    let path = resolve(&root, source)?;
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take(256 * 1024 + 1)
+        .read_to_string(&mut text)?;
+    if text.len() > 256 * 1024 {
+        return Err("Rust source exceeds 256 KiB".into());
+    }
+    Ok(text)
+}
+
 pub(crate) fn open(source: &SourceLocation) -> Result<serde_json::Value> {
     let root = std::env::var_os("RAKE_SOURCE_ROOT")
         .map(PathBuf::from)
