@@ -772,10 +772,7 @@ impl Session {
             }
             "Network.setCacheDisabled" if request.params["cacheDisabled"] == false => Ok(json!({})),
             "Network.setBypassServiceWorker" if request.params["bypass"] == false => Ok(json!({})),
-            "Inspector.enable"
-            | "Page.enable"
-            | "Page.disable"
-            | "Runtime.runIfWaitingForDebugger" => Ok(json!({})),
+            "Inspector.enable" | "Runtime.runIfWaitingForDebugger" => Ok(json!({})),
             "Network.enable" | "Log.enable" | "Runtime.enable" => {
                 let domain = method.split('.').next().unwrap_or_default();
                 let fresh = self.domains.insert(domain.into());
@@ -802,9 +799,28 @@ impl Session {
 
                 Ok(json!({}))
             }
-            "Page.getResourceTree" => Ok(
-                json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources()}}),
-            ),
+            "Page.enable" => {
+                self.domains.insert("Page".into());
+                Ok(json!({}))
+            }
+            "Page.disable" => {
+                self.domains.remove("Page");
+                Ok(json!({}))
+            }
+            "Page.getResourceTree" => {
+                if self
+                    .instance
+                    .info
+                    .queries
+                    .iter()
+                    .any(|q| q == "inspect_tree_page" || q == "inspect_tree")
+                {
+                    self.refresh_dom()?;
+                }
+                Ok(
+                    json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources(),"childFrames":self.sources.documents()}}),
+                )
+            }
             "Page.getResourceContent" => {
                 Ok(json!({"content":self.source_content(&request.params)?,"base64Encoded":false}))
             }
@@ -990,7 +1006,10 @@ impl Session {
             _ => return Err("runtime identity changed".into()),
         }
 
-        if self.domains.contains("DOM") || self.domains.contains("Accessibility") {
+        if self.domains.contains("DOM")
+            || self.domains.contains("Accessibility")
+            || self.domains.contains("Page")
+        {
             self.refresh_dom().map_err(|e| e.message)?;
         }
 
@@ -1010,6 +1029,11 @@ impl Session {
             }
         }
 
+        if self.domains.contains("Page") {
+            for event in self.sources.events() {
+                self.event(event);
+            }
+        }
         let console = self.domains.contains("Log") || self.domains.contains("Runtime");
         let network = self.domains.contains("Network");
         if !console && !network {
@@ -1330,6 +1354,16 @@ impl Session {
             snapshot
         };
 
+        for element in &snapshot.elements {
+            if let Some(source) = &element.source {
+                self.sources.admit(source);
+            }
+        }
+        if self.domains.contains("Page") {
+            for event in self.sources.events() {
+                self.event(event);
+            }
+        }
         let mut reset = if paged {
             self.dom.update_index(snapshot)?
         } else {
@@ -1601,6 +1635,10 @@ impl Session {
         self.epoch_seconds = None;
         self.objects.clear();
         self.sources.clear();
+        if let Some(base) = &self.source_base {
+            self.sources
+                .bind(base, &self.instance.info.runtime_id.to_string());
+        }
         self.discard_diagnostics = false;
         self.loss = super::console::Loss::default();
         self.dom.clear();
@@ -1697,6 +1735,9 @@ pub(super) fn run(
         .get_mut()
         .set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut session = Session::new(instance, output);
+    session
+        .sources
+        .bind(&source_base, &session.instance.info.runtime_id.to_string());
     session.source_base = Some(source_base);
     let mut next_poll = Instant::now();
     let mut missing_since: Option<Instant> = None;
