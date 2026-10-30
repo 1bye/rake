@@ -103,6 +103,8 @@ impl RouteViews<Destination> for AppRoutes {
             .map_err(|error| MountError(error.to_string()))?;
 
         let view = cx.new(|cx| Screen {
+            #[cfg(feature = "network-test")]
+            network: network_fixture::Panel::default(),
             navigation_focus: cx.focus_handle(),
             title,
             page: page.clone(),
@@ -162,6 +164,8 @@ impl RouteViews<Destination> for AppRoutes {
 }
 
 struct Screen {
+    #[cfg(feature = "network-test")]
+    network: network_fixture::Panel,
     navigation_focus: rake::gpui::FocusHandle,
     title: String,
     page: PageContext<Destination>,
@@ -190,12 +194,26 @@ impl Render for Screen {
         let forward = self.page.tab();
 
         div()
+            .id("routing-screen")
             .size_full()
             .flex()
             .flex_col()
             .justify_center()
             .items_center()
             .gap_4()
+            .when(cfg!(feature = "network-test"), |view| {
+                view.justify_start().overflow_y_scroll().p_4()
+            })
+            .children({
+                #[cfg(feature = "network-test")]
+                {
+                    Some(network_fixture::controls(self, cx))
+                }
+                #[cfg(not(feature = "network-test"))]
+                {
+                    None::<rake::gpui::AnyElement>
+                }
+            })
             .child(div().text_3xl().child(self.title.clone()))
             .child(format!(
                 "{} / {}",

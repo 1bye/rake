@@ -27,10 +27,10 @@ const http = createServer((request, response) => {
   request.on('end', () => {
     if (path === '/fail') { request.socket.destroy(); return; }
     if (path === '/redirect') { response.writeHead(302, {location:'/json'}); response.end(); return; }
-    if (path === '/slow') {
+    if (path === '/slow' || path === '/slow-ui') {
       response.writeHead(200, {'content-type':'text/plain', 'content-length':4});
       response.flushHeaders();
-      const timer = setTimeout(() => { timers.delete(timer); response.end('slow'); }, 300);
+      const timer = setTimeout(() => { timers.delete(timer); response.end('slow'); }, path === '/slow-ui' ? 5000 : 300);
       timers.add(timer); return;
     }
     const body = path === '/binary' ? Buffer.from([0,255,128,42]) :
@@ -46,7 +46,7 @@ const http = createServer((request, response) => {
 });
 await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${http.address().port}`;
-const supervisor = spawn(cli, ['dev','--target','desktop','--package','rake-routing','--features','network-test','--cdp','--no-open','--json'], {cwd:root,stdio:['ignore','pipe','pipe']});
+const supervisor = spawn(cli, ['dev','--target','desktop','--package','rake-routing','--features','network-test','--cdp','--no-open','--json'], {cwd:root,env:{...process.env,RAKE_NETWORK_FIXTURE_URL:base},stdio:['ignore','pipe','pipe']});
 supervisor.stderr.on('data', data => { stderr = (stderr + data).slice(-16000); });
 createInterface({input:supervisor.stdout}).on('line', line => {
   try {
@@ -119,7 +119,7 @@ try {
   socket.addEventListener('error',()=>{if(!closing)for(const item of pending.values())item.reject(new Error('WebSocket failed'));});
   await call('Network.enable');await call('Runtime.enable');
   if(serve) {
-    await seed();console.log('UI fixture ready. stdin: seed | restart | quit');
+    console.log('UI fixture ready. Click the HTTP request buttons in the app. stdin: seed | restart | quit');
     await new Promise(resolve=>{
       const input=createInterface({input:process.stdin});let work=Promise.resolve();
       input.on('line',line=>{work=work.then(async()=>{if(line==='seed')await seed();if(line==='restart')await restart();if(line==='quit')resolve();}).catch(error=>console.error(error));});

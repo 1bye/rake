@@ -87,8 +87,11 @@ Rust source reads, timings, redirects, HTTP/transport failures, cancellation,
 timeout, abandonment, recording pause/resume, independent Console Clear and
 preserved bodies/identities/timeline across checkpointed replacement. It cleans up
 only its own processes, trigger asset and isolated session directory. `--serve`
-prints a stock Chrome URL and accepts `seed`, `restart` and `quit` on stdin for
-repeating UI checks. This harness does not automate Chrome.
+prints a stock Chrome URL and starts with an empty log. Click GET JSON, POST JSON,
+GET binary, HTTP 503, Slow request or Timeout in the native example. Cancel request
+interrupts the slow request; the application displays its result. The demo server
+address is passed to the example by the harness. `seed`, `restart` and `quit` on
+stdin remain available for repeating automated fixture scenarios. This harness does not automate Chrome.
 
 Stock Chrome **156.0.8078.74**, on 2026-10-30, was exercised through its bundled
 DevTools UI against the native fixture:
