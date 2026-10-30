@@ -169,9 +169,9 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
         Format::Flatpak => {
             let repo = input.output.join("repo");
             run(Command::new("ostree")
-                .arg("--repo")
-                .arg(&repo)
-                .args(["init", "--mode=archive-z2"]))?;
+                .arg("init")
+                .arg(format!("--repo={}", repo.display()))
+                .arg("--mode=archive"))?;
             for package in &staged {
                 run(Command::new("flatpak")
                     .arg("build-import-bundle")
