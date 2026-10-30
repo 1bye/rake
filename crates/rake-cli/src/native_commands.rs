@@ -184,6 +184,16 @@ fn doctor(args: &[String]) -> Result<()> {
         use rake_dist::Format;
         let mut tools=vec!["cargo","rustc"];
         match item.format(){Format::App|Format::Zip if platform=="macos"=>tools.extend(["codesign","ditto"]),Format::Dmg=>tools.extend(["codesign","hdiutil"]),Format::Msix=>{tools.extend(["makeappx","signtool","mt"]);if !item.config().desktop.localizations.is_empty(){tools.push("makepri");}},Format::Velopack=>tools.extend(["dotnet","vpk","signtool"]),Format::Nsis=>tools.push("makensis"),Format::Msi=>tools.push("candle"),Format::Deb=>tools.extend(["dpkg-deb","readelf","patchelf"]),Format::Rpm=>tools.extend(["readelf","patchelf"]),Format::Arch=>tools.extend(["makepkg","readelf","patchelf"]),Format::Flatpak=>tools.extend(["flatpak","flatpak-builder"]),Format::Appimage=>tools.extend(["readelf","patchelf"]),_=>{}}
+        if item.config().release.repositories.values().any(|formats| formats.contains(&item.format())) {
+            tools.push("gpg");
+            match item.format() {
+                Format::Deb => tools.extend(["dpkg-scanpackages", "apt-ftparchive"]),
+                Format::Rpm => tools.extend(["rpmsign", "createrepo_c"]),
+                Format::Arch => tools.push("repo-add"),
+                Format::Flatpak => tools.push("ostree"),
+                _ => {}
+            }
+        }
         let tools=tools.into_iter().map(|name|serde_json::json!({"name":name,"on_path":tool_available(name)})).collect::<Vec<_>>();
         serde_json::json!({"format":item.format(),"update_owner":item.update_owner(),"native_host_required":platform,"host_matches":platform==std::env::consts::OS,"tools":tools,"native_validation":"see docs/distribution-native-tests.md; tool presence does not prove installation support"})
     }).collect::<Vec<_>>();

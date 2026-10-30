@@ -97,7 +97,7 @@ x86_64-unknown-linux-gnu = ["deb", "rpm", "arch", "flatpak"]
 ```
 
 The platform owner uses dpkg-scanpackages/apt-ftparchive/GPG, rpmsign/createrepo_c,
-repo-add/GPG and flatpak/OSTree. It exports public enrollment keys, signs native
+repo-add/GPG and flatpak/ostree. It exports public enrollment keys, signs native
 metadata, and builds repositories in isolated staging before promotion. Install
 those native tools on the Linux publication worker and enroll its signing profile
 once. The Flatpak repository exports `.flatpakrepo` and `.flatpakref` files.
