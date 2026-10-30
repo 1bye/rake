@@ -83,6 +83,11 @@ impl Sources {
         Ok(json!({"data":data,"base64Encoded":false,"eof":end==text.len()}))
     }
 
+    pub fn clear(&mut self) {
+        self.locations.clear();
+        self.streams.clear();
+    }
+
     pub fn close(&mut self, params: &Value) {
         self.streams
             .remove(params["handle"].as_str().unwrap_or_default());

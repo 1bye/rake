@@ -29,6 +29,7 @@ struct Session {
     dropped: u64,
     epoch_seconds: Option<f64>,
     exception_sequence: u64,
+    discard_diagnostics: bool,
     objects: super::console::Objects,
     sources: super::sources::Sources,
     loss: super::console::Loss,
@@ -55,6 +56,7 @@ impl Session {
             dropped: 0,
             epoch_seconds: None,
             exception_sequence: 0,
+            discard_diagnostics: false,
             objects: super::console::Objects::default(),
             sources: super::sources::Sources::default(),
             loss: super::console::Loss::default(),
@@ -220,7 +222,8 @@ impl Session {
                     let remote = if request.params["returnByValue"] == true {
                         json!({"type":"object","value":value})
                     } else {
-                        self.objects.remote(value)
+                        self.objects
+                            .remote_in(value, request.params["objectGroup"].as_str())
                     };
                     return Ok(json!({"result":remote}));
                 }
@@ -292,7 +295,9 @@ impl Session {
                             .as_str()
                             .unwrap_or_default()
                             .to_owned();
-                        let mut remote = self.objects.remote(value);
+                        let mut remote = self
+                            .objects
+                            .remote_in(value, request.params["objectGroup"].as_str());
                         if let Some(status) = status {
                             remote["description"] = json!(format!("Command {status} · {id}"));
                         }
@@ -698,8 +703,13 @@ impl Session {
                 if let Some(group) = request.params["objectGroup"].as_str() {
                     self.dom.release_node_group(group);
                 }
-                self.objects.clear();
-
+                if let Some(group) = request.params["objectGroup"].as_str() {
+                    self.objects.release_group(group);
+                }
+                Ok(json!({}))
+            }
+            "Runtime.discardConsoleEntries" | "Log.clear" => {
+                self.clear_console();
                 Ok(json!({}))
             }
             "Network.getResponseBody" | "Network.getRequestPostData" => Err(Error::new(
@@ -758,6 +768,39 @@ impl Session {
         }
     }
 
+    fn clear_console(&mut self) {
+        self.objects.release_group("console");
+        self.sources.clear();
+        self.discard_diagnostics = true;
+        // Advance the per-connection cursor, without deleting application diagnostics.
+        if let Ok(Reply::Diagnostics(snapshot)) = query(
+            &self.instance,
+            Query::Diagnostics {
+                after: self.cursor,
+                kind: None,
+            },
+            TIMEOUT,
+        ) {
+            self.accept_diagnostics(&snapshot);
+            self.discard_diagnostics = false;
+        }
+        self.process_output.poll(unix_seconds());
+        self.outbound.retain(|(event, _)| {
+            !matches!(
+                event.method.as_str(),
+                "Runtime.consoleAPICalled" | "Log.entryAdded"
+            )
+        });
+        self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
+    }
+
+    fn accept_diagnostics(&mut self, snapshot: &rake_diagnostics::Snapshot) {
+        self.loss.observe(snapshot, self.cursor);
+        if let Some(record) = snapshot.records.last() {
+            self.cursor = record.sequence;
+        }
+    }
+
     fn poll_output(&mut self) {
         if self.domains.contains("Log") || self.domains.contains("Runtime") {
             for event in self.process_output.poll(unix_seconds()) {
@@ -795,6 +838,7 @@ impl Session {
             return Err("unexpected diagnostics reply".into());
         };
 
+        let discard = std::mem::take(&mut self.discard_diagnostics);
         let warning = self.loss.observe(&snapshot, self.cursor);
 
         if let Some(record) = snapshot.records.last() {
@@ -803,7 +847,7 @@ impl Session {
             self.cursor = record.sequence;
         }
 
-        if self.domains.contains("Log") || self.domains.contains("Runtime") {
+        if !discard && (self.domains.contains("Log") || self.domains.contains("Runtime")) {
             if let Some(warning) = warning {
                 self.warning(warning);
             }
@@ -1228,12 +1272,17 @@ impl Session {
         self.cursor = 0;
         self.epoch_seconds = None;
         self.objects.clear();
+        self.sources.clear();
+        self.discard_diagnostics = false;
         self.loss = super::console::Loss::default();
         self.dom.clear();
         self.edit_sheets.clear();
         self.outbound.clear();
         self.outbound_bytes = 0;
         self.dropped = 0;
+        self.event(Event::new("Page.frameNavigated", json!({"frame": {"id":"rake","loaderId":self.instance.info.runtime_id.to_string(),
+            "url":"rake://runtime","domainAndRegistry":"","securityOrigin":"rake://runtime","mimeType":"text/plain",
+            "secureContextType":"Secure","crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]}, "type":"Navigation"})));
         self.event(Event::new("Runtime.executionContextsCleared", json!({})));
         self.event(Event::new("DOM.documentUpdated", json!({})));
         self.event(super::console::entry(
@@ -1389,6 +1438,67 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_advances_only_this_connection_and_replacement_expires_handles() {
+        let info = rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default())
+            .client()
+            .info();
+        let (instance, worker, path) = fixture(
+            move |request| {
+                match request.message {
+            RuntimeMessage::Query(Query::Info {}) => {let mut info=info.clone();info.runtime_id=request.runtime_id;Reply::Info(info)},
+            RuntimeMessage::Query(Query::Diagnostics {after,..}) => Reply::Diagnostics(rake_diagnostics::Snapshot {
+                records:vec![serde_json::from_value(json!({"sequence":after+1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"fields":{"message":format!("event-{}",after+1)}})).unwrap()],
+                dropped:0,output_dropped:0 }),
+            _=>panic!("unexpected request"),
+        }
+            },
+            5,
+        );
+        let mut session = Session::new(instance, None);
+        session.domains.insert("Runtime".into());
+        session.poll().unwrap();
+        let old = session.outbound[0].0.params["args"][1]["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        session
+            .handle(&Request {
+                id: 1,
+                method: "Runtime.discardConsoleEntries".into(),
+                params: json!({}),
+            })
+            .unwrap();
+        assert!(session.outbound.is_empty());
+        assert_eq!(session.cursor, 2);
+        assert!(session.objects.properties(&old).is_err());
+        session.poll().unwrap();
+        assert_eq!(session.outbound.len(), 1);
+        assert_eq!(session.outbound[0].0.params["args"][0]["value"], "event-3");
+        let retained = session.outbound[0].0.params["args"][1]["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut successor = session.instance.clone();
+        successor.info.runtime_id = rake_protocol::router::RuntimeId(uuid::Uuid::new_v4());
+        session.replace(successor);
+        assert!(session.objects.properties(&retained).is_err());
+        assert!(
+            session
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method == "Page.frameNavigated")
+        );
+        assert!(
+            session
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method == "Runtime.executionContextsCleared")
+        );
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn standalone_console_has_discoverable_helpers_without_application_commands() {

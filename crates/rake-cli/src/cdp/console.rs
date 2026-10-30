@@ -71,13 +71,13 @@ pub(super) fn translate(record: &Record, epoch: f64) -> Option<Event> {
 
 #[derive(Default)]
 pub(super) struct Objects {
-    values: VecDeque<(String, Value, usize)>,
+    values: VecDeque<(String, Value, usize, Option<String>)>,
     next: u64,
     bytes: usize,
 }
 
 impl Objects {
-    pub fn remote(&mut self, value: Value) -> Value {
+    pub fn remote_in(&mut self, value: Value, group: Option<&str>) -> Value {
         let kind = match &value {
             Value::Null => "object",
             Value::Bool(_) => "boolean",
@@ -129,10 +129,11 @@ impl Objects {
         let bytes = value.to_string().len();
 
         self.bytes += bytes;
-        self.values.push_back((id, value, bytes));
+        self.values
+            .push_back((id, value, bytes, group.map(str::to_owned)));
 
         while self.values.len() > 128 || self.bytes > 1024 * 1024 {
-            if let Some((_, _, bytes)) = self.values.pop_front() {
+            if let Some((_, _, bytes, _)) = self.values.pop_front() {
                 self.bytes -= bytes;
             }
         }
@@ -141,11 +142,11 @@ impl Objects {
     }
 
     pub fn properties(&mut self, id: &str) -> Result<Value, Error> {
-        let value = self
+        let (value, group) = self
             .values
             .iter()
-            .find(|(key, _, _)| key == id)
-            .map(|(_, v, _)| v.clone())
+            .find(|(key, _, _, _)| key == id)
+            .map(|(_, v, _, group)| (v.clone(), group.clone()))
             .ok_or_else(|| Error::new(-32000, "Object expired or belongs to another session"))?;
 
         let fields: Vec<(String, Value)> = match value {
@@ -161,7 +162,7 @@ impl Objects {
         let properties: Vec<_> = fields
             .into_iter()
             .map(|(name, value)| {
-                json!({"name":name,"value":self.remote(value),
+                json!({"name":name,"value":self.remote_in(value, group.as_deref()),
             "writable":false,"configurable":false,"enumerable":true,"isOwn":true})
             })
             .collect();
@@ -170,8 +171,14 @@ impl Objects {
     }
 
     pub fn release(&mut self, id: &str) {
-        self.values.retain(|(key, _, _)| key != id);
-        self.bytes = self.values.iter().map(|(_, _, n)| n).sum();
+        self.values.retain(|(key, _, _, _)| key != id);
+        self.bytes = self.values.iter().map(|(_, _, n, _)| n).sum();
+    }
+
+    pub fn release_group(&mut self, group: &str) {
+        self.values
+            .retain(|(_, _, _, owner)| owner.as_deref() != Some(group));
+        self.bytes = self.values.iter().map(|(_, _, bytes, _)| bytes).sum();
     }
 
     pub fn clear(&mut self) {
@@ -197,7 +204,7 @@ impl Objects {
             .map(display)
             .unwrap_or_else(|| record.target.clone());
 
-        let mut params = json!({"type":kind,"args":[self.remote(json!(message)),self.remote(fields)],
+        let mut params = json!({"type":kind,"args":[self.remote_in(json!(message), Some("console")),self.remote_in(fields, Some("console"))],
             "executionContextId":1,"timestamp":(epoch+record.elapsed_us as f64/1e6)*1000.});
         if let Some(source) = &record.source {
             params["stackTrace"] = json!({"callFrames":[{"functionName":record.target,"scriptId":"",
@@ -406,6 +413,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn releasing_groups_expires_nested_handles_without_touching_other_results() {
+        let mut objects = Objects::default();
+        let first = objects.remote_in(json!({"nested":{"text":"hello"}}), Some("console"));
+        let other = objects.remote_in(json!({"kept":true}), Some("watch"));
+        let first_id = first["objectId"].as_str().unwrap();
+        let nested = objects.properties(first_id).unwrap()["result"][0]["value"]["objectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        objects.release_group("console");
+        assert!(objects.properties(first_id).is_err());
+        assert!(objects.properties(&nested).is_err());
+        assert!(
+            objects
+                .properties(other["objectId"].as_str().unwrap())
+                .is_ok()
+        );
+        objects.clear();
+        let fresh = objects.remote_in(json!({"fresh":true}), None);
+        assert_ne!(
+            fresh["objectId"], first["objectId"],
+            "expired handles must never retarget"
+        );
+    }
+
+    #[test]
     fn levels_preview_expansion_and_eviction() {
         for (input, output) in [
             ("TRACE", "verbose"),
@@ -418,7 +451,7 @@ mod tests {
         }
 
         let mut objects = Objects::default();
-        let remote = objects.remote(json!({"count":3,"nested":{"yes":true}}));
+        let remote = objects.remote_in(json!({"count":3,"nested":{"yes":true}}), None);
 
         assert_eq!(remote["preview"]["properties"][0]["name"], "count");
         assert_eq!(
@@ -429,7 +462,7 @@ mod tests {
         );
 
         for _ in 0..128 {
-            objects.remote(json!({"next":true}));
+            objects.remote_in(json!({"next":true}), None);
         }
 
         assert!(

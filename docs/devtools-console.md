@@ -21,7 +21,13 @@ Each step is a separate commit. Stock Chrome is the supported frontend.
    `rake.operation(token)`. Observation requires the same runtime UUID and never
    resubmits a command. Standalone inspection hosts expose helpers and an empty
    command list; this does not invent an application command registry.
-4. Clear, preserve-log lifecycle and retained objects: pending.
+4. Clear, preserve-log lifecycle and retained objects: implemented. Clear advances
+   connection-local diagnostic/output cursors and releases Console objects, without
+   deleting application diagnostics. Nested objects inherit their parent’s group;
+   releasing a group leaves other results intact. Checkpointed replacement signals
+   a new virtual frame/context for Chrome’s Preserve log setting, and expires all
+   old runtime objects. Previously displayed objects may expire after the bounded
+   retention budget, Clear, release, disconnect or runtime replacement.
 5. Stock Chrome verification and repeatable native/CDP checks: pending.
 
 Source retention is bounded to 128 paths and eight concurrent source streams per
