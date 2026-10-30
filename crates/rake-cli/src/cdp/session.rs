@@ -854,6 +854,9 @@ impl Session {
     }
 
     fn source_content(&self, params: &Value) -> std::result::Result<String, Error> {
+        if params["url"] == "rake://runtime" {
+            return Ok("Rake native runtime. Captured Rust files are read-only source documents; JavaScript execution and Rust debugging are unavailable here.\n".into());
+        }
         if let (Some(base), Some(url)) = (&self.source_base, params["url"].as_str()) {
             let prefix = format!("{base}/{}/source/frame/", self.instance.info.runtime_id);
             if let Some(tail) = url.strip_prefix(&prefix) {
@@ -1727,6 +1730,7 @@ pub(super) fn run(
     output: Option<std::path::PathBuf>,
     directory: std::path::PathBuf,
     source_base: String,
+    access: &super::sources::Access,
 ) -> Result<()> {
     socket
         .get_mut()
@@ -1738,6 +1742,9 @@ pub(super) fn run(
     session
         .sources
         .bind(&source_base, &session.instance.info.runtime_id.to_string());
+    access
+        .register(&session.sources)
+        .map_err(|error| error.message)?;
     session.source_base = Some(source_base);
     let mut next_poll = Instant::now();
     let mut missing_since: Option<Instant> = None;

@@ -5,6 +5,49 @@ use super::wire::Event;
 use rake_protocol::inspection::SourceLocation;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex, Weak};
+
+type Catalog = Mutex<BTreeMap<String, SourceLocation>>;
+
+/// Weak grants expire when their owning WebSocket session is dropped.
+#[derive(Default)]
+pub(super) struct Access(Mutex<Vec<Weak<Catalog>>>);
+
+impl Access {
+    pub fn register(&self, sources: &Sources) -> Result<(), Error> {
+        let mut catalogs = self
+            .0
+            .lock()
+            .map_err(|_| Error::new(-32000, "Source access unavailable"))?;
+        catalogs.retain(|catalog| catalog.strong_count() > 0);
+        if catalogs.len() == 32 {
+            return Err(Error::new(-32000, "Source session limit reached"));
+        }
+        catalogs.push(Arc::downgrade(&sources.catalog));
+        Ok(())
+    }
+
+    pub fn content(&self, url: &str) -> Result<String, Error> {
+        let catalogs: Vec<_> = self
+            .0
+            .lock()
+            .map_err(|_| Error::new(-32000, "Source access unavailable"))?
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for catalog in catalogs {
+            let location = catalog
+                .lock()
+                .ok()
+                .and_then(|catalog| catalog.get(url).cloned());
+            if let Some(location) = location {
+                return crate::source::read(&location)
+                    .map_err(|e| Error::new(-32000, e.to_string()));
+            }
+        }
+        Err(Error::new(-32602, "Source URL expired or was not captured"))
+    }
+}
 
 #[derive(Default)]
 pub(super) struct Sources {
@@ -13,7 +56,7 @@ pub(super) struct Sources {
     next: u64,
     prefix: Option<String>,
     runtime: String,
-    catalog: BTreeMap<String, SourceLocation>,
+    catalog: Arc<Catalog>,
     file_urls: BTreeMap<String, String>,
     pending: BTreeSet<String>,
 }
@@ -29,22 +72,19 @@ impl Sources {
         if let Some(url) = self.file_urls.get(&location.file) {
             return Some(url.clone());
         }
-        if self.catalog.len() >= 128 || self.file_urls.len() >= 128 || location.file.len() > 4096 {
+        if self.catalog.lock().ok()?.len() >= 128
+            || self.file_urls.len() >= 128
+            || location.file.len() > 4096
+        {
             return None;
         }
         let prefix = self.prefix.as_ref()?;
         let path = crate::source::relative(location).ok()?;
-        let mut url = url::Url::parse(prefix).ok()?;
-        {
-            let mut segments = url.path_segments_mut().ok()?;
-            for part in path.split('/') {
-                segments.push(part);
-            }
-        }
-        let url = url.to_string();
+        let url = file_url(prefix, &path)?;
         self.file_urls.insert(location.file.clone(), url.clone());
-        if !self.catalog.contains_key(&url) {
-            self.catalog.insert(
+        let mut catalog = self.catalog.lock().ok()?;
+        if !catalog.contains_key(&url) {
+            catalog.insert(
                 url.clone(),
                 SourceLocation {
                     file: path,
@@ -59,16 +99,26 @@ impl Sources {
 
     pub fn documents(&mut self) -> Vec<Value> {
         self.pending.clear();
-        self.catalog
-            .keys()
+        let urls: Vec<_> = self
+            .catalog
+            .lock()
+            .map(|catalog| catalog.keys().cloned().collect())
+            .unwrap_or_default();
+        urls.iter()
             .map(|url| json!({"frame":self.document(url),"resources":[]}))
             .collect()
     }
 
     fn document(&self, url: &str) -> Value {
         // These are source-document projections, never native windows or executable scripts.
+        let path = self
+            .catalog
+            .lock()
+            .ok()
+            .and_then(|catalog| catalog.get(url).map(|site| site.file.clone()))
+            .unwrap_or_else(|| "Unavailable source".into());
         json!({"id":format!("rake-source:{url}"),"parentId":"rake","loaderId":self.runtime,
-            "name":format!("Rust: {}",self.catalog[url].file),"url":url,"securityOrigin":"rake://source",
+            "name":format!("Rust: {}",path),"url":url,"securityOrigin":"rake://source",
             "domainAndRegistry":"","mimeType":"text/plain","secureContextType":"Secure",
             "crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]})
     }
@@ -147,14 +197,21 @@ impl Sources {
     }
 
     pub fn content(&self, params: &Value) -> Result<String, Error> {
-        let location = params["url"]
-            .as_str()
-            .and_then(|url| self.catalog.get(url).or_else(|| self.locations.get(url)))
+        let url = params["url"].as_str().unwrap_or_default();
+        let location = self
+            .catalog
+            .lock()
+            .ok()
+            .and_then(|catalog| catalog.get(url).cloned())
+            .or_else(|| self.locations.get(url).cloned())
             .ok_or_else(|| Error::new(-32602, "Source URL was not captured in this session"))?;
-        crate::source::read(location).map_err(|error| Error::new(-32000, error.to_string()))
+        crate::source::read(&location).map_err(|error| Error::new(-32000, error.to_string()))
     }
 
     pub fn stream(&mut self, text: String) -> Result<Value, Error> {
+        if text.len() > 256 * 1024 {
+            return Err(Error::new(-32000, "Rust source exceeds 256 KiB"));
+        }
         if self.streams.len() == 8 {
             return Err(Error::new(
                 -32000,
@@ -173,19 +230,31 @@ impl Sources {
             .streams
             .get_mut(handle)
             .ok_or_else(|| Error::new(-32000, "Source stream expired"))?;
-        if let Some(offset) = params["offset"].as_u64() {
-            let offset = usize::try_from(offset)
-                .unwrap_or(usize::MAX)
-                .min(text.len());
-            if !text.is_char_boundary(offset) {
-                return Err(Error::new(-32602, "Source offset splits a UTF-8 character"));
-            }
-            *cursor = offset;
+        if let Some(offset) = params.get("offset") {
+            *cursor = offset
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .filter(|v| *v <= text.len() && text.is_char_boundary(*v))
+                .ok_or_else(|| {
+                    Error::new(-32602, "Invalid source offset or split UTF-8 character")
+                })?;
         }
-        let size = params["size"].as_u64().unwrap_or(65536).clamp(4, 65536) as usize;
+        let size = params
+            .get("size")
+            .map_or(Some(65536), Value::as_u64)
+            .filter(|size| *size > 0)
+            .ok_or_else(|| Error::new(-32602, "Invalid source stream size"))?
+            .min(65536) as usize;
         let mut end = cursor.saturating_add(size).min(text.len());
-        while !text.is_char_boundary(end) {
+        while end > *cursor && !text.is_char_boundary(end) {
             end -= 1;
+        }
+        if end == *cursor && end < text.len() {
+            end += text[end..]
+                .chars()
+                .next()
+                .expect("nonempty UTF-8 tail")
+                .len_utf8();
         }
         let data = &text[*cursor..end];
         *cursor = end;
@@ -194,7 +263,9 @@ impl Sources {
 
     pub fn clear(&mut self) {
         self.locations.clear();
-        self.catalog.clear();
+        if let Ok(mut catalog) = self.catalog.lock() {
+            catalog.clear();
+        }
         self.file_urls.clear();
         self.pending.clear();
         self.streams.clear();
@@ -206,9 +277,54 @@ impl Sources {
     }
 }
 
+fn file_url(prefix: &str, path: &str) -> Option<String> {
+    let mut url = url::Url::parse(prefix).ok()?;
+    {
+        let mut segments = url.path_segments_mut().ok()?;
+        for part in path.split('/') {
+            segments.push(part);
+        }
+    }
+    Some(url.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_grants_expire_and_streams_validate_unicode_offsets() {
+        let access = Access::default();
+        let mut sources = Sources::default();
+        sources.bind("http://127.0.0.1/token", "runtime");
+        access.register(&sources).unwrap();
+        let url = sources
+            .admit(&SourceLocation {
+                file: "src/cdp/sources.rs".into(),
+                line: 1,
+                column: 1,
+            })
+            .unwrap();
+        assert!(access.content(&url).unwrap().contains("struct Sources"));
+        assert!(
+            access
+                .content(&url.replace("sources.rs", "session.rs"))
+                .is_err()
+        );
+        let handle = sources.stream("é🙂文".into()).unwrap()["resource"]["stream"].clone();
+        assert_eq!(
+            sources.read(&json!({"handle":handle,"size":1})).unwrap()["data"],
+            "é"
+        );
+        assert!(sources.read(&json!({"handle":handle,"offset":1})).is_err());
+        assert!(sources.read(&json!({"handle":handle,"size":0})).is_err());
+        assert!(sources.stream("x".repeat(256 * 1024 + 1)).is_err());
+        let encoded = file_url("http://localhost/token/workspace", "src/café #?.rs").unwrap();
+        assert!(encoded.ends_with("src/caf%C3%A9%20%23%3F.rs"));
+        assert!(url::Url::parse(&encoded).unwrap().fragment().is_none());
+        drop(sources);
+        assert!(access.content(&url).is_err());
+    }
 
     #[test]
     fn unobserved_sources_are_rejected_and_streams_preserve_unicode() {

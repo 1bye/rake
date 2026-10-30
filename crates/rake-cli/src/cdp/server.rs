@@ -101,6 +101,7 @@ fn connection(
     options: &Options,
     authority: &str,
     token: &str,
+    sources: &super::sources::Access,
 ) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -217,7 +218,11 @@ fn connection(
     };
 
     if let Some(source) = source {
-        let content = if let Some(tail) = source.strip_prefix("frame/") {
+        let content = if source.starts_with("workspace/") {
+            sources
+                .content(&format!("http://{authority}/{token}/{id}/source/{source}"))
+                .map_err(|error| error.message.into())
+        } else if let Some(tail) = source.strip_prefix("frame/") {
             frame_source_content(&instance, tail)
         } else {
             source
@@ -252,6 +257,7 @@ fn connection(
         options.process_output.clone(),
         options.directory.clone(),
         format!("http://{authority}/{token}"),
+        sources,
     )
 }
 
@@ -300,6 +306,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
     }
 
     let active = AtomicUsize::new(0);
+    let sources = super::sources::Access::default();
 
     std::thread::scope(|scope| -> Result<()> {
         for stream in listener.incoming() {
@@ -310,10 +317,11 @@ pub(super) fn serve(options: Options) -> Result<()> {
             }
 
             active.fetch_add(1, Ordering::Relaxed);
-            let (options, authority, token, active) = (&options, &authority, &token, &active);
+            let (options, authority, token, active, sources) =
+                (&options, &authority, &token, &active, &sources);
 
             scope.spawn(move || {
-                if let Err(error) = connection(stream, options, authority, token) {
+                if let Err(error) = connection(stream, options, authority, token, sources) {
                     eprintln!("CDP connection: {error}");
                 }
 
