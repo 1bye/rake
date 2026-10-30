@@ -87,6 +87,9 @@ struct Prepared {
     state: PublishedRelease,
     objects: BTreeMap<String, PathBuf>,
 }
+#[path = "release_repositories.rs"]
+mod repositories;
+pub use repositories::prepare_repositories;
 fn fail(message: impl Into<String>) -> Error {
     Error::Execution(message.into())
 }
@@ -422,6 +425,13 @@ fn generated(prepared: &mut Prepared, name: String, bytes: &[u8], root: &str) ->
     add(prepared, name, &path, url)
 }
 fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Error> {
+    prepare_with_repositories(request, &[], flag)
+}
+fn prepare_with_repositories(
+    request: &ReleaseRequest,
+    repository_inputs: &[PathBuf],
+    flag: &AtomicBool,
+) -> Result<Prepared, Error> {
     let mut selected = inputs(request)?;
     let root = public_root(&request.config)?;
     let directory = tempfile::tempdir()?;
@@ -577,9 +587,32 @@ fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Erro
     for (target, items) in sparkle {
         prepare_sparkle(request, &mut prepared, &target, &items, &root, flag)?;
     }
+    let staged_repositories = repositories::load(request, &inputs, repository_inputs)?;
     for (target, formats) in &request.config.repositories {
         for format in formats {
             cancelled(flag)?;
+            if let Some(files) = staged_repositories.get(&(target.clone(), *format)) {
+                for (name, file) in files {
+                    let snapshot = prepared.directory.path().join("repositories").join(name);
+                    files::copy(&file.path, &snapshot)?;
+                    let hash = files::digest(&snapshot)?;
+                    if hash != file.sha256 || fs::metadata(&snapshot)?.len() != file.size {
+                        return Err(fail("prepared repository changed during copying"));
+                    }
+                    let filename = snapshot
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| fail("repository filename"))?;
+                    let url = format!("{root}/objects/{}", object_name(&hash, filename)?);
+                    add(&mut prepared, name.clone(), &snapshot, url)?;
+                }
+                continue;
+            }
+            if !repository_inputs.is_empty() {
+                return Err(fail(
+                    "prepared repository missing for required target/format",
+                ));
+            }
             let packages = inputs
                 .iter()
                 .filter(|input| {
@@ -884,6 +917,21 @@ fn run_tool(command: &mut Command, flag: &AtomicBool) -> Result<(), Error> {
 /// upload/readback failures and native metadata errors. Partial immutable uploads
 /// and GitHub drafts are retained for diagnosis; the previous channel stays live.
 pub fn publish(request: &ReleaseRequest, flag: &AtomicBool) -> Result<PublishedRelease, Error> {
+    publish_with_repositories(request, &[], flag)
+}
+/// Promotes a complete release using repositories prepared on native Linux workers.
+///
+/// Each directory comes from [`prepare_repositories`]. The full artifact matrix,
+/// input hashes and exported file hashes are rechecked before any publication.
+/// The CI transport and its native workers are trusted like bundle workers;
+/// detached native repository signatures remain part of the exported payload.
+/// # Errors
+/// Returns snapshot context/hash/coverage errors or any error from [`publish`].
+pub fn publish_with_repositories(
+    request: &ReleaseRequest,
+    repository_inputs: &[PathBuf],
+    flag: &AtomicBool,
+) -> Result<PublishedRelease, Error> {
     if matches!(&request.config.publisher, Some(Publisher::Github { .. }))
         && !request.config.repositories.is_empty()
     {
@@ -891,7 +939,11 @@ pub fn publish(request: &ReleaseRequest, flag: &AtomicBool) -> Result<PublishedR
             "Linux repositories need a directory/static HTTPS publisher",
         ));
     }
-    let mut prepared = prepare(request, flag)?;
+    let mut prepared = if repository_inputs.is_empty() {
+        prepare(request, flag)?
+    } else {
+        prepare_with_repositories(request, repository_inputs, flag)?
+    };
     match request
         .config
         .publisher

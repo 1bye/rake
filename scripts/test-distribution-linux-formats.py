@@ -198,7 +198,9 @@ x86_64-unknown-linux-gnu=["flatpak"]
             run('cargo', 'generate-lockfile', '--offline', '--manifest-path', manifest)
             output = root / f'flatpak-{version}'
             run(cli, 'bundle', '--native', '--package', 'rake-distribution-example', '--bin', 'rake-repository-smoke', '--manifest-path', manifest, '--output', output, '--json')
-            run(cli, 'release', '--package', 'rake-distribution-example', '--manifest-path', manifest, '--from', output, '--json')
+            exported = root / f'repositories-{version}'
+            run(cli, 'release', '--package', 'rake-distribution-example', '--manifest-path', manifest, '--from', output, '--prepare-repositories', exported, '--json')
+            run(cli, 'release', '--package', 'rake-distribution-example', '--manifest-path', manifest, '--from', output, '--repositories', exported, '--json')
             published = root / 'flatpak-published/stable/x86_64-unknown-linux-gnu/flatpak'
             if version == '1.0.0':
                 reference = (published / 'rake-flatpak.flatpakref').read_text()

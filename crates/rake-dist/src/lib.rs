@@ -17,7 +17,10 @@ mod linux;
 mod process;
 mod recipes;
 mod release;
-pub use release::{PublishedFile, PublishedRelease, ReleaseRequest, publish};
+pub use release::{
+    PublishedFile, PublishedRelease, ReleaseRequest, prepare_repositories, publish,
+    publish_with_repositories,
+};
 mod sparkle;
 mod windows_dlls;
 pub use execution::{

@@ -291,3 +291,71 @@ NSCameraUsageDescription='Capture a document image'
             .success()
     );
 }
+
+#[test]
+fn repository_export_and_promotion_use_the_owned_release_worker() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("src")).unwrap();
+    fs::write(root.path().join("src/main.rs"), "fn main(){}").unwrap();
+    fs::write(
+        root.path().join("Cargo.toml"),
+        r#"[workspace]
+[package]
+name="release-consumer"
+version="1.0.0"
+edition="2024"
+[package.metadata.rake.bundle]
+schema_version=1
+identifier="dev.rake.release-consumer"
+[package.metadata.rake.bundle.release.publisher]
+kind="directory"
+path="published"
+public_url="https://downloads.example.test"
+[package.metadata.rake.bundle.release.required]
+x86_64-unknown-linux-gnu=["tar"]
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new("cargo")
+            .args(["generate-lockfile", "--offline", "--manifest-path"])
+            .arg(root.path().join("Cargo.toml"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let input = root.path().join("input");
+    fs::create_dir(&input).unwrap();
+    fs::write(input.join("fixture.tar.gz"), []).unwrap();
+    fs::write(input.join("distribution.json"),serde_json::to_vec(&serde_json::json!({
+        "schema_version":1,"identifier":"dev.rake.release-consumer","version":"1.0.0","target":"x86_64-unknown-linux-gnu","engine":"protocol-fixture",
+        "artifacts":[{"path":"fixture.tar.gz","format":"tar","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","package_version":"1.0.0"}]
+    })).unwrap()).unwrap();
+    let export = root.path().join("repositories");
+    for flag in ["--prepare-repositories", "--repositories"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+            .args(["release", "--manifest-path"])
+            .arg(root.path().join("Cargo.toml"))
+            .arg("--from")
+            .arg(&input)
+            .arg(flag)
+            .arg(&export)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        if flag == "--prepare-repositories" {
+            assert_eq!(result["publication"], "not published");
+            assert!(export.join("repositories.json").is_file());
+            assert!(!root.path().join("published").exists());
+        } else {
+            assert_eq!(result["version"], "1.0.0");
+            assert!(root.path().join("published/stable/release.json").is_file());
+        }
+    }
+}

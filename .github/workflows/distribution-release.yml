@@ -29,7 +29,7 @@ jobs:
             platform: macos
           - runner: ' ["self-hosted", "Windows", "distribution"] '
             platform: windows
-          - runner: ' ["ubuntu-24.04"] '
+          - runner: ' ["self-hosted", "Linux", "distribution"] '
             platform: linux
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 45
@@ -45,6 +45,19 @@ jobs:
           import os, pathlib, subprocess
           cli = pathlib.Path('target/debug/rake' + ('.exe' if os.name == 'nt' else '')).resolve()
           subprocess.run([str(cli), 'bundle', '--native', '--package', os.environ['RELEASE_PACKAGE'], '--trusted', '--locked-components', '--output', 'release-output', '--json'], check=True)
+      - name: Prepare signed repositories on the native Linux worker
+        if: matrix.platform == 'linux'
+        shell: python
+        run: |
+          import os, pathlib, subprocess
+          cli = pathlib.Path('target/debug/rake').resolve()
+          subprocess.run([str(cli), 'release', '--package', os.environ['RELEASE_PACKAGE'], '--from', 'release-output', '--prepare-repositories', 'release-repositories', '--json'], check=True)
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'linux'
+        with:
+          name: repositories-linux
+          path: release-repositories
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: distribution-${{ matrix.platform }}
@@ -68,6 +81,10 @@ jobs:
         with:
           pattern: distribution-*
           path: native-artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: repositories-linux
+          path: native-repositories
       - run: cargo build -p rake-cli --locked
       - shell: python
         run: |
@@ -75,4 +92,5 @@ jobs:
           command = [str(pathlib.Path('target/debug/rake').resolve()), 'release', '--package', os.environ['RELEASE_PACKAGE'], '--channel', os.environ['RELEASE_CHANNEL'], '--json']
           for manifest in sorted(pathlib.Path('native-artifacts').glob('*/distribution.json')):
               command += ['--from', str(manifest.parent)]
+          command += ['--repositories', 'native-repositories']
           subprocess.run(command, check=True)

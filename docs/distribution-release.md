@@ -103,9 +103,26 @@ those native tools on the Linux publication worker and enroll its signing profil
 once. The Flatpak repository exports `.flatpakrepo` and `.flatpakref` files.
 Application signing and repository trust enrollment are distinct setup steps.
 
+For a combined native runner matrix, prepare repositories on the Linux worker:
+
+```sh
+rake release --from release-output --prepare-repositories release-repositories --json
+# Transfer the bundle directories and repository export through trusted CI storage.
+rake release --from mac-output --from windows-output --from linux-output \
+  --repositories release-repositories --json
+```
+
+Preparation never publishes and only prepares repositories for supplied targets.
+Final promotion still checks every required target/format, exact source package
+hashes, export identity/version/channel/destination and every repository file hash.
+The final publisher can run on macOS for Sparkle tooling while consuming the
+already signed Linux repositories. Native workers and artifact transport are
+trusted as they are for `distribution.json`; hashes detect altered payloads,
+and native signatures establish installed repository trust.
+
 `.github/workflows/distribution-release.yml` provides explicit manual native
-builds and serialized promotion. Signing jobs require enrolled self-hosted native
-runners; ordinary verification remains independent of production credentials.
+builds, Linux repository handoff and serialized promotion. Signing jobs require
+enrolled self-hosted native runners; ordinary verification remains independent of production credentials.
 Publishing defaults to false. This workflow has not been dispatched as a real
 release during implementation.
 
