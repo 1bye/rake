@@ -51,8 +51,11 @@ pub struct PublishedRelease {
     pub version: String,
     /// Release channel.
     pub channel: String,
-    /// Hash of the channel state replaced, or None for first publication.
+    /// Publisher digest/ETag of the replaced channel, or None for first publication.
     pub previous: Option<String>,
+    /// SHA-256 fingerprints of immutable provider trust keys in this update line.
+    #[serde(default)]
+    pub public_key_sha256: BTreeMap<String, String>,
     /// Every promoted native feed path and immutable object SHA-256.
     pub files: BTreeMap<String, PublishedFile>,
 }
@@ -327,6 +330,25 @@ fn decode_key(bytes: &[u8]) -> Result<[u8; 32], Error> {
         .try_into()
         .map_err(|_| fail("Ed25519 public key must contain 32 bytes"))
 }
+fn key_fingerprints(keys: &BTreeMap<String, Vec<u8>>) -> Result<BTreeMap<String, String>, Error> {
+    use sha2::Digest as _;
+    keys.iter()
+        .map(|(provider, key)| {
+            Ok((
+                provider.clone(),
+                hex::encode(sha2::Sha256::digest(decode_key(key)?)),
+            ))
+        })
+        .collect()
+}
+fn previous_keys(previous: &PublishedRelease, next: &PublishedRelease) -> Result<(), Error> {
+    if previous.public_key_sha256 != next.public_key_sha256 {
+        return Err(fail(
+            "update verification keys changed within channel; enroll a new channel with a signed installer",
+        ));
+    }
+    Ok(())
+}
 fn public_root(config: &ReleaseConfig) -> Result<String, Error> {
     match config
         .publisher
@@ -447,6 +469,7 @@ fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Erro
             version: request.version.clone(),
             channel: request.channel.clone(),
             previous: None,
+            public_key_sha256: key_fingerprints(&request.public_keys)?,
             files: BTreeMap::new(),
         },
         objects: BTreeMap::new(),
@@ -927,6 +950,7 @@ fn publish_directory(
         {
             return Err(fail("channel promotion must advance version"));
         }
+        previous_keys(&previous, &prepared.state)?;
         prepared.state.previous = Some(files::digest(&current.join("release.json"))?);
     }
     let objects = root.join("objects");
@@ -1062,6 +1086,7 @@ fn publish_github_with_program(
         {
             return Err(fail("GitHub channel identity/version conflict"));
         }
+        previous_keys(&state, &prepared.state)?;
         prepared.state.previous = Some(files::digest(&path)?);
     }
     // No tag creation and no replacement of existing published releases/assets.
@@ -1206,6 +1231,7 @@ fn publish_https_with_agent(
         {
             return Err(fail("HTTPS channel identity/version conflict"));
         }
+        previous_keys(&state, &prepared.state)?;
         prepared.state.previous = Some(etag.clone());
         Some(etag)
     } else if previous.status() == 404 {
@@ -1320,6 +1346,38 @@ mod tests {
             published_at: 1_800_000_000,
             updates_enabled: false,
             custom_verifiers: BTreeMap::new(),
+        }
+    }
+    #[test]
+    fn provider_key_changes_require_explicit_channel_reenrollment() {
+        for provider in ["sparkle", "velopack", "appimage"] {
+            let root = tempfile::tempdir().unwrap();
+            let flag = AtomicBool::new(false);
+            let mut first = fixture(root.path(), "1.0.0");
+            first.public_keys.insert(provider.into(), vec![7; 32]);
+            let initial = publish(&first, &flag).unwrap();
+            let previous = fs::read(root.path().join("published/stable/release.json")).unwrap();
+            let mut next = fixture(root.path(), "1.0.1");
+            // Different public-key encodings retain the same trust identity.
+            next.public_keys
+                .insert(provider.into(), hex::encode([7; 32]).into_bytes());
+            assert_eq!(
+                prepare(&next, &flag).unwrap().state.public_key_sha256,
+                initial.public_key_sha256
+            );
+            next.public_keys.insert(provider.into(), vec![9; 32]);
+            assert!(
+                publish(&next, &flag)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("enroll a new channel")
+            );
+            assert_eq!(
+                fs::read(root.path().join("published/stable/release.json")).unwrap(),
+                previous
+            );
+            next.channel = "rotated".into();
+            assert!(publish(&next, &flag).is_ok());
         }
     }
     #[test]

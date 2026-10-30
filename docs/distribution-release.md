@@ -103,3 +103,13 @@ builds and serialized promotion. Signing jobs require enrolled self-hosted nativ
 runners; ordinary verification remains independent of production credentials.
 Publishing defaults to false. This workflow has not been dispatched as a real
 release during implementation.
+
+Provider verification keys are immutable within an update channel. Publication
+records fingerprints of the actual decoded keys, accepts equivalent public-key
+encodings, and refuses silent replacement for Sparkle, Velopack and AppImage.
+To rotate a trust root, publish a new channel and enroll it through a normally
+signed installer. Keep the previous channel available for its installed users;
+installing that new build is the explicit trust transition. Automatic in-place
+key rotation is not claimed. GitHub latest-feed channels use separate repositories,
+as described above. Renewing a native code-signing certificate does not require
+replacing the provider's update-verification key.
