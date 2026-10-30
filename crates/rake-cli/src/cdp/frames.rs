@@ -21,6 +21,7 @@ pub(super) struct Trace {
     started: Option<std::time::Instant>,
     analysis: Analysis,
     pub source_prefix: Option<String>,
+    pub causal: super::causal::Causal,
 }
 
 impl Trace {
@@ -98,16 +99,30 @@ impl Trace {
         let elapsed = self
             .started
             .map_or(0, |start| start.elapsed().as_micros() as u64);
+        let incomplete = self.causal.finish(elapsed);
+        self.push(incomplete);
+        self.loss |= self.causal.loss;
         self.push(self.analysis.events(elapsed));
         self.push(vec![json!({"name":"Rake recording stopped","cat":"rake.recording","ph":"i","s":"g","pid":1,"tid":1,"ts":elapsed})]);
         if self.stream_mode {
             let document = json!({"traceEvents":std::mem::take(&mut self.events),"displayTimeUnit":"ms",
-                "metadata":{"clock":"recording monotonic microseconds","measurement":"GPUI draw and inclusive boundary CPU wall time; no GPU execution or CPU samples","dataLossOccurred":self.loss,"frames":self.summary()}});
+                "metadata":{"clock":"recording monotonic microseconds","measurement":"GPUI draw and inclusive boundary CPU wall time; no GPU execution or CPU samples","dataLossOccurred":self.loss,"frames":self.summary(),"causal":self.causal.metadata()}});
             self.stream = Some((document.to_string(), 0));
             json!({"dataLossOccurred":self.loss,"stream":self.handle,"traceFormat":"json","streamCompression":"none"})
         } else {
             json!({"dataLossOccurred":self.loss})
         }
+    }
+
+    pub fn diagnostics(
+        &mut self,
+        snapshot: &rake_diagnostics::Snapshot,
+        sources: &std::collections::BTreeMap<u64, String>,
+    ) -> Vec<Value> {
+        let events = self.causal.observe(snapshot, sources);
+        self.loss |= self.causal.loss;
+        self.push(events);
+        self.report()
     }
 
     pub fn summary(&self) -> Value {
@@ -447,6 +462,7 @@ mod tests {
         trace.begin(&json!({})).unwrap();
         trace.source_prefix = Some("http://127.0.0.1/token/runtime/source/frame".into());
         let events = trace.collect(&Frames {
+            clock: None,
             recording: true,
             frames: vec![frame.clone()],
             cursor: 1,
@@ -457,6 +473,7 @@ mod tests {
         frame.sequence = 2;
         frame.nodes[0].duration_us = 100;
         trace.collect(&Frames {
+            clock: None,
             recording: true,
             frames: vec![frame],
             cursor: 2,
@@ -492,6 +509,7 @@ mod tests {
         first.dirty_to_draw_us = Some(30000);
         first.omitted_nodes = 3;
         let events = trace.collect(&Frames {
+            clock: None,
             recording: true,
             frames: vec![first, sample(2, 30000, 10000)],
             cursor: 2,
@@ -553,6 +571,7 @@ mod tests {
             .begin(&json!({"transferMode":"ReturnAsStream"}))
             .unwrap();
         let frames = Frames {
+            clock: None,
             recording: true,
             frames: Vec::new(),
             cursor: 3,

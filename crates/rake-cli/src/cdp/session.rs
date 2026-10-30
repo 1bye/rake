@@ -157,6 +157,9 @@ impl Session {
                 match baseline {
                     Ok(Reply::Frames(baseline)) => {
                         self.frame_trace.cursor = baseline.cursor;
+                        if let Some(clock) = &baseline.clock {
+                            self.frame_trace.causal.calibrate(clock);
+                        }
                         self.frame_trace.source_prefix = self.source_base.as_ref().map(|base| {
                             format!("{base}/{}/source/frame", self.instance.info.runtime_id)
                         });
@@ -960,6 +963,8 @@ impl Session {
         self.poll_overlay().map_err(|error| error.message)?;
         if self.frame_trace.active {
             self.poll_frames(true).map_err(|error| error.message)?;
+            self.poll_performance_diagnostics()
+                .map_err(|error| error.message)?;
         }
 
         let console = self.domains.contains("Log") || self.domains.contains("Runtime");
@@ -1390,6 +1395,9 @@ impl Session {
                 }
             }
         }
+        if self.poll_performance_diagnostics().is_err() {
+            self.frame_trace.loss = true;
+        }
         let mut complete = self.frame_trace.end();
         let report = self.frame_trace.report();
         self.trace_events(report);
@@ -1403,6 +1411,35 @@ impl Session {
             self.event(Event::new("Tracing.dataCollected", json!({"value":chunk})));
             self.frame_trace.loss |= self.dropped != before;
         }
+    }
+
+    fn poll_performance_diagnostics(&mut self) -> std::result::Result<(), Error> {
+        if !self.frame_trace.causal.enabled() {
+            return Ok(());
+        }
+        let Reply::Diagnostics(snapshot) = query(
+            &self.instance,
+            Query::Diagnostics {
+                after: self.frame_trace.causal.cursor,
+                kind: None,
+            },
+            TIMEOUT,
+        )
+        .map_err(|error| Error::new(-32000, error.to_string()))?
+        else {
+            return Err(Error::new(-32000, "Unexpected performance diagnostics"));
+        };
+        let mut sources = std::collections::BTreeMap::new();
+        for record in &snapshot.records {
+            if record.source.is_some()
+                && let Some(url) = self.source_link(record)
+            {
+                sources.insert(record.sequence, url);
+            }
+        }
+        let events = self.frame_trace.diagnostics(&snapshot, &sources);
+        self.trace_events(events);
+        Ok(())
     }
 
     fn poll_frames(&mut self, renew: bool) -> std::result::Result<bool, Error> {
@@ -2020,6 +2057,7 @@ mod tests {
                             Reply::Data(json!("unexpected baseline"))
                         } else {
                             Reply::Frames(rake_protocol::inspection::Frames {
+                                clock: None,
                                 recording: true,
                                 frames: vec![],
                                 cursor: 0,
@@ -2069,6 +2107,7 @@ mod tests {
                 RuntimeMessage::Command(Command::RecordFrames { .. }) => Reply::Acknowledged,
                 RuntimeMessage::Query(Query::Frames { after }) => {
                     Reply::Frames(rake_protocol::inspection::Frames {
+                        clock: None,
                         recording: true,
                         frames: if after == 0 {
                             vec![rake_protocol::inspection::FrameTiming {

@@ -407,7 +407,9 @@ impl<R: Route> RuntimeClient<R> {
                     .inspection
                     .tree_page(generation.as_deref(), offset)?,
             )),
-            Query::Frames { after } => Ok(Reply::Frames(self.state.inspection.frames(after))),
+            Query::Frames { after } => Ok(Reply::Frames(
+                self.router.frame_records(&self.state.inspection, after),
+            )),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),

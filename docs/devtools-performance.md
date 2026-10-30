@@ -54,3 +54,23 @@ workspace confinement and 256 KiB source-file limit. Expired frames/runtimes or
 unknown indices cannot read files. A bounded connection source cache also supports
 Chrome's source-resource reads. Exported metadata keeps the Rust path/location;
 live loopback links depend on the development session and retained source data.
+
+## Commands, tasks, spans and HTTP
+
+Opted-in runtimes supply a local calibration between the frame recording clock
+and the diagnostic collector clock, including the sampling-window width and an
+independent sequence high-water mark. Performance polls its own cursor: Console
+Clear, Network pause and trace capture do not consume each other's observations.
+Older runtimes without calibration retain frame recording but omit causal tracks.
+
+Commands, tasks, tracing spans and HTTP lifecycles use separate custom tracks on
+the same calibrated timeline. Details retain actual operation/task/span/parent IDs
+and bounded diagnostic fields. Observed parent-span relationships also carry flow
+links. Span lifetimes include async waiting and are not main-thread CPU slices.
+HTTP lifetimes include application body consumption; time overlap with a draw does
+not prove that the request caused it. No redraw causality is invented.
+
+Work that started before the recording is marked and clipped to its beginning.
+Pending observations at Stop are explicitly incomplete. Pending state is bounded
+to 128 entries / 128 KiB, with retention loss reported. Diagnostic gaps and writer
+losses mark a partial recording; eviction of already-consumed history does not.

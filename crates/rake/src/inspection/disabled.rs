@@ -59,8 +59,9 @@ impl Store {
     pub(crate) fn record_frames(&self, _: bool, _: u64) -> Result<(), InspectionError> {
         Err(InspectionError::RecordingUnavailable)
     }
-    pub(crate) fn frames(&self, _: u64) -> Frames {
+    pub(crate) fn frames(&self, _: u64, _: &rake_diagnostics::Collector) -> Frames {
         Frames {
+            clock: None,
             recording: false,
             frames: Vec::new(),
             cursor: 0,

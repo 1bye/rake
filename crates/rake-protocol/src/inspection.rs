@@ -10,7 +10,7 @@ pub mod performance;
 pub mod styles;
 /// Bounded inspection paths, subtree text and synthetic markup for copy actions.
 pub mod tree;
-pub use performance::{FramePhase, FrameTiming, Frames, NodeTiming};
+pub use performance::{FrameClock, FramePhase, FrameTiming, Frames, NodeTiming};
 
 /// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.
 pub const MAX_ELEMENTS: usize = 8192;

@@ -158,6 +158,26 @@ impl Collector {
         self.0.started.elapsed().as_micros().min(u64::MAX as u128) as u64
     }
 
+    /// Samples elapsed microseconds, the sequence high-water mark and non-retention loss.
+    /// Used to calibrate development traces against other runtime-local clocks.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn clock_sample(&self) -> (u64, u64, u64) {
+        let buffer = self
+            .0
+            .buffer
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (
+            self.elapsed_us(),
+            buffer.sequence,
+            self.0
+                .dropped
+                .load(Ordering::Relaxed)
+                .saturating_sub(buffer.evicted),
+        )
+    }
+
     /// Begins bounded development body capture. Contention may omit capture without blocking HTTP.
     #[cfg(feature = "devtools")]
     pub fn begin_http(&self, id: u64, body: &[u8]) {
@@ -502,8 +522,22 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
             .0
             .push((Arc::downgrade(&self.0.0), data));
         drop(extensions);
+        #[allow(unused_mut)]
+        let mut context = capture(span, &self.0);
+        #[cfg(feature = "devtools")]
+        {
+            context.source =
+                attrs
+                    .metadata()
+                    .file()
+                    .zip(attrs.metadata().line())
+                    .map(|(file, line)| Source {
+                        file: file.into(),
+                        line,
+                    });
+        }
         self.0.record_context(
-            capture(span, &self.0),
+            context,
             attrs.metadata().level().as_str(),
             attrs.metadata().target(),
             "span_open",
@@ -572,7 +606,18 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
                 .map(|data| data.started.elapsed().as_micros().min(u64::MAX as u128) as u64);
 
             let metadata = span.metadata();
-            let context = capture(span, &self.0);
+            #[allow(unused_mut)]
+            let mut context = capture(span, &self.0);
+            #[cfg(feature = "devtools")]
+            {
+                context.source = metadata
+                    .file()
+                    .zip(metadata.line())
+                    .map(|(file, line)| Source {
+                        file: file.into(),
+                        line,
+                    });
+            }
 
             self.0.record_context(
                 context,

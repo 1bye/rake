@@ -694,6 +694,14 @@ impl<R: Route> Router<R> {
         self.0.state.borrow().results.get(&id).cloned()
     }
 
+    pub(crate) fn frame_records(
+        &self,
+        store: &crate::inspection::Store,
+        after: u64,
+    ) -> crate::inspection::Frames {
+        store.frames(after, &self.0.collector)
+    }
+
     pub(crate) fn http_body(&self, request_id: u64, response: bool) -> serde_json::Value {
         #[cfg(feature = "devtools")]
         {

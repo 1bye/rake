@@ -102,9 +102,27 @@ impl Store {
         Err(InspectionError::RecordingUnavailable)
     }
 
-    pub(crate) fn frames(&self, after: u64) -> Frames {
+    pub(crate) fn frames(&self, after: u64, collector: &rake_diagnostics::Collector) -> Frames {
         let mut state = self.0.borrow_mut();
         let recording = &mut state.frames;
+        #[cfg(feature = "gpui")]
+        let clock = {
+            let before = micros(recording.epoch.elapsed());
+            let (diagnostics_us, diagnostics_sequence, unrecorded) = collector.clock_sample();
+            let after = micros(recording.epoch.elapsed());
+            Some(super::FrameClock {
+                recording_us: before + (after - before) / 2,
+                diagnostics_us,
+                uncertainty_us: after - before,
+                diagnostics_sequence,
+                unrecorded,
+            })
+        };
+        #[cfg(not(feature = "gpui"))]
+        let clock = {
+            let _ = collector;
+            None
+        };
         #[cfg(feature = "gpui")]
         recording.collect();
         recording.expire(Instant::now());
@@ -125,6 +143,7 @@ impl Store {
             .last()
             .map_or(after.min(recording.sequence), |frame| frame.sequence);
         Frames {
+            clock,
             recording: recording.until.is_some(),
             more: recording
                 .frames
@@ -444,7 +463,7 @@ mod tests {
                 omitted_nodes: 0,
             });
         }
-        let page = store.frames(1);
+        let page = store.frames(1, &rake_diagnostics::Collector::default());
         assert!(page.gap);
         assert!(page.more);
         assert_eq!(page.dropped, 100);

@@ -129,7 +129,9 @@ impl super::host::Host for InspectionClient {
             Message::Query(Query::InspectTreePage { generation, offset }) => Ok(
                 Reply::ElementPage(store.tree_page(generation.as_deref(), offset)?),
             ),
-            Message::Query(Query::Frames { after }) => Ok(Reply::Frames(store.frames(after))),
+            Message::Query(Query::Frames { after }) => {
+                Ok(Reply::Frames(store.frames(after, &self.0.collector)))
+            }
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
             Message::Query(Query::InspectElement { id }) => Ok(Reply::Element(store.element(&id)?)),
             Message::Query(Query::InspectPick {}) => Ok(Reply::InspectPick(store.pick()?)),

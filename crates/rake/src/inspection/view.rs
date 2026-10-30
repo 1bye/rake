@@ -1438,6 +1438,8 @@ mod tests {
         let mut app = gpui::TestAppContext::single();
         let store = Store::default();
         store.attach();
+        let collector = rake_diagnostics::Collector::default();
+        collector.record("INFO", "test", "event", vec![], Default::default());
         let (_, cx) = app.add_window_view(|_, _| IdentityView {
             store: store.clone(),
             order: vec![1],
@@ -1450,13 +1452,23 @@ mod tests {
             })
         };
         draw(cx);
-        assert!(store.frames(0).frames.is_empty());
+        assert!(store.frames(0, &collector).frames.is_empty());
         assert!(store.record_frames(true, 5001).is_err());
         store.record_frames(true, 5000).unwrap();
         draw(cx);
         draw(cx);
-        let frames = store.frames(0);
+        let frames = store.frames(0, &collector);
         assert!(frames.recording);
+        let calibration = frames.clock.as_ref().unwrap();
+        assert_eq!(calibration.diagnostics_sequence, 1);
+        let later = store.frames(frames.cursor, &collector).clock.unwrap();
+        let first_offset =
+            i128::from(calibration.diagnostics_us) - i128::from(calibration.recording_us);
+        let later_offset = i128::from(later.diagnostics_us) - i128::from(later.recording_us);
+        assert!(
+            (first_offset - later_offset).unsigned_abs()
+                <= u128::from(calibration.uncertainty_us + later.uncertainty_us + 2)
+        );
         assert!(!frames.frames.is_empty());
         let nodes: Vec<_> = frames
             .frames
@@ -1472,10 +1484,10 @@ mod tests {
                 .any(|node| node.phase == super::super::FramePhase::Paint && node.source.line > 0)
         );
         store.record_frames(false, 0).unwrap();
-        let cursor = store.frames(0).cursor;
+        let cursor = store.frames(0, &collector).cursor;
         draw(cx);
-        assert!(!store.frames(cursor).recording);
-        assert!(store.frames(cursor).frames.is_empty());
+        assert!(!store.frames(cursor, &collector).recording);
+        assert!(store.frames(cursor, &collector).frames.is_empty());
     }
 
     #[test]

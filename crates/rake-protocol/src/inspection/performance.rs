@@ -55,9 +55,27 @@ pub struct FrameTiming {
     pub omitted_nodes: usize,
 }
 
+/// A runtime-local calibration of recording and diagnostic monotonic clocks.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FrameClock {
+    /// Recording clock sampled around the diagnostic clock observation, in microseconds.
+    pub recording_us: u64,
+    /// Collector clock at that observation, in microseconds.
+    pub diagnostics_us: u64,
+    /// Width of the recording-clock sample interval; not IPC latency.
+    pub uncertainty_us: u64,
+    /// Highest diagnostic sequence at the calibration point.
+    pub diagnostics_sequence: u64,
+    /// Writer/oversize losses, excluding eviction of previously retained history.
+    pub unrecorded: u64,
+}
+
 /// One bounded page of retained frame recordings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Frames {
+    /// Calibration supplied by opted-in runtimes; absent in older/disabled hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<FrameClock>,
     /// Whether the renewable recording lease is currently active.
     pub recording: bool,
     /// Chronological retained frames after the supplied cursor.
