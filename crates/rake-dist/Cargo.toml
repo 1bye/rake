@@ -17,7 +17,7 @@ thiserror.workspace = true
 
 schemars = "1.2.3"
 
-tauri-bundler = { version = "=2.10.4", default-features = false }
+tauri-bundler = { version = "=2.10.4", default-features = false, features = ["rustls"] }
 command-group = { version = "5.0.1", default-features = false }
 tempfile = "3"
 sha2 = "0.10"
