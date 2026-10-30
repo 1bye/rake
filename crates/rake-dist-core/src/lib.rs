@@ -30,6 +30,24 @@ pub enum Platform {
     Linux,
 }
 
+impl Platform {
+    /// Resolves a supported desktop OS from a Rust target triple.
+    /// # Errors
+    /// Rejects malformed triples and unsupported operating systems.
+    pub fn from_target(target: &str) -> Result<Self, Error> {
+        let triple = target
+            .parse::<target_lexicon::Triple>()
+            .map_err(|_| Error::Field("target triple".into()))?;
+        match triple.operating_system {
+            target_lexicon::OperatingSystem::Darwin(_)
+            | target_lexicon::OperatingSystem::MacOSX(_) => Ok(Self::Macos),
+            target_lexicon::OperatingSystem::Windows => Ok(Self::Windows),
+            target_lexicon::OperatingSystem::Linux => Ok(Self::Linux),
+            _ => Err(Error::Field("unsupported target operating system".into())),
+        }
+    }
+}
+
 /// Installation format, independent of build target and release channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -413,23 +431,9 @@ impl Config {
         formats: Option<&[Format]>,
     ) -> Result<Plan, Error> {
         let mut base = self.clone();
+        base.normalize_paths()?;
         if let Some(target) = target {
-            let triple = target
-                .parse::<target_lexicon::Triple>()
-                .map_err(|_| Error::Field("target triple".into()))?;
-            let matches_platform = match platform {
-                Platform::Macos => matches!(
-                    triple.operating_system,
-                    target_lexicon::OperatingSystem::Darwin(_)
-                        | target_lexicon::OperatingSystem::MacOSX(_)
-                ),
-                Platform::Windows => {
-                    triple.operating_system == target_lexicon::OperatingSystem::Windows
-                }
-                Platform::Linux => {
-                    triple.operating_system == target_lexicon::OperatingSystem::Linux
-                }
-            };
+            let matches_platform = Platform::from_target(target)? == platform;
             if !matches_platform {
                 return Err(Error::Field(
                     "Rust target triple does not match platform".into(),
@@ -437,6 +441,7 @@ impl Config {
             }
             if let Some(layer) = self.target_overrides.get(target) {
                 layer.apply(&mut base, platform);
+                base.normalize_paths()?;
             }
         } else if !self.target_overrides.is_empty() {
             return Err(Error::Field(
@@ -460,6 +465,7 @@ impl Config {
                     ));
                 }
                 layer.apply(&mut effective, platform);
+                effective.normalize_paths()?;
             }
             *effective.formats_mut(platform) = vec![format];
             for name in effective
@@ -764,6 +770,59 @@ impl Config {
             config: self.clone(),
             packages,
         })
+    }
+}
+
+/// Converts a generated/native relative path to a validated portable spelling.
+/// # Errors
+/// Rejects non-UTF8 paths, drive prefixes, absolute paths and traversal.
+pub fn portable_relative_path(path: &std::path::Path) -> Result<PathBuf, Error> {
+    let text = path.to_str().ok_or_else(|| Error::Path(path.into()))?;
+    let portable = PathBuf::from(text.replace('\\', "/"));
+    validate_relative_path(&portable)?;
+    Ok(portable)
+}
+
+impl Config {
+    fn normalize_paths(&mut self) -> Result<(), Error> {
+        for path in [
+            self.icon.as_mut(),
+            self.assets.as_mut(),
+            self.macos.info_plist.as_mut(),
+            self.macos.entitlements.as_mut(),
+            self.windows.manifest.as_mut(),
+            self.windows.msix.manifest.as_mut(),
+            self.linux.desktop_entry.as_mut(),
+            self.linux.appstream.as_mut(),
+            self.linux.flatpak.manifest.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *path = portable_relative_path(path)?;
+        }
+        for resource in &mut self.resources {
+            resource.from = portable_relative_path(&resource.from)?;
+            resource.to = portable_relative_path(&resource.to)?;
+        }
+        for sidecar in &mut self.sidecars {
+            sidecar.path = portable_relative_path(&sidecar.path)?;
+        }
+        for runtime in &mut self.runtimes {
+            runtime.source = portable_relative_path(&runtime.source)?;
+        }
+        for path in self.updates.public_keys.values_mut() {
+            *path = portable_relative_path(path)?;
+        }
+        for component in &mut self.components {
+            if let ComponentSource::Local { path } = &mut component.source {
+                *path = portable_relative_path(path)?;
+            }
+            for path in &mut component.licenses {
+                *path = portable_relative_path(path)?;
+            }
+        }
+        Ok(())
     }
 }
 

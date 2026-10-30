@@ -10,7 +10,7 @@ fn relocated_installation_resolves_without_the_build_directory() {
     fs::create_dir_all(root.path().join("rake/helpers")).unwrap();
     fs::write(root.path().join("rake/helpers/media"), "helper").unwrap();
     fs::write(root.path().join("message"), "hello").unwrap();
-    fs::write(root.path().join("rake-installation.json"), r#"{"schema_version":1,"identifier":"dev.rake.fixture","version":"1.0.0","target":"aarch64-apple-darwin","platform":"macos","format":"app","update_owner":"disabled","updates":{},"helpers":{"media":"rake/helpers/media"},"runtimes":{}}"#).unwrap();
+    fs::write(root.path().join("rake-installation.json"), r#"{"schema_version":1,"identifier":"dev.rake.fixture","version":"1.0.0","target":"aarch64-apple-darwin","platform":"macos","format":"app","update_owner":"disabled","updates":{},"helpers":{"media":"rake\\helpers\\media"},"runtimes":{}}"#).unwrap();
     let resources = Resources::load(root.path()).unwrap();
     assert_eq!(
         fs::read_to_string(resources.path("message").unwrap()).unwrap(),

@@ -214,7 +214,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         .parent()
         .ok_or_else(|| Error::Execution("output requires parent".into()))?;
     fs::create_dir_all(output_parent)?;
-    let output = fs::canonicalize(output_parent)?.join(
+    let output = dunce::canonicalize(output_parent)?.join(
         output
             .file_name()
             .ok_or_else(|| Error::Execution("output name".into()))?,
@@ -445,6 +445,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 "rake-installation.json is reserved".into(),
             ));
         }
+        descriptor.normalize_paths()?;
         files::write_json(&descriptor_path, &descriptor)?;
         resources.insert(
             descriptor_path.to_string_lossy().into_owned(),
@@ -550,13 +551,15 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             } else {
                 (path, rake_dist_core::TrustRecord::default())
             };
-            if !fs::canonicalize(&path)?.starts_with(fs::canonicalize(&stage)?) {
+            if !dunce::canonicalize(&path)?.starts_with(dunce::canonicalize(&stage)?) {
                 return Err(Error::Execution("engine output escaped job".into()));
             }
             let name = path
                 .file_name()
                 .ok_or_else(|| Error::Execution("artifact filename missing".into()))?;
-            let relative = PathBuf::from(format!("{index}")).join(name);
+            let relative = rake_dist_core::portable_relative_path(
+                &PathBuf::from(format!("{index}")).join(name),
+            )?;
             let destination = result_dir.join(&relative);
             fs::create_dir_all(
                 destination

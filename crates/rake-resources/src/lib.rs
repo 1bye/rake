@@ -64,8 +64,11 @@ impl Resources {
     /// Rejects unknown revisions, non-confined helper/runtime paths and invalid metadata.
     pub fn load(root: &Path) -> Result<Self, Error> {
         let root = fs::canonicalize(root)?;
-        let installation: Installation =
+        let mut installation: Installation =
             serde_json::from_slice(&fs::read(root.join("rake-installation.json"))?)?;
+        installation
+            .normalize_paths()
+            .map_err(|error| Error::Invalid(error.to_string()))?;
         if installation.schema_version != 1 {
             return Err(Error::Invalid("descriptor schema".into()));
         }
@@ -89,8 +92,8 @@ impl Resources {
     /// # Errors
     /// Returns errors for invalid, missing or escaping paths.
     pub fn path(&self, relative: impl AsRef<Path>) -> Result<PathBuf, Error> {
-        let relative = relative.as_ref();
-        validate_relative_path(relative).map_err(|e| Error::Invalid(e.to_string()))?;
+        let relative = rake_dist_core::portable_relative_path(relative.as_ref())
+            .map_err(|e| Error::Invalid(e.to_string()))?;
         let path = fs::canonicalize(self.root.join(relative))?;
         if !path.starts_with(&self.root) {
             return Err(Error::Invalid("symlink escapes resources".into()));

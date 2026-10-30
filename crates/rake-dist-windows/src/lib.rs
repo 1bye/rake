@@ -4,7 +4,12 @@ pub use packages::{
     Msix, certificate_subject, msix_manifest, package_msix, package_velopack, preflight, sign,
 };
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+    process::Command,
+};
 
 /// Native Windows metadata errors.
 #[derive(Debug, thiserror::Error)]
@@ -67,9 +72,14 @@ pub fn validate_manifest(xml: &str) -> Result<(), Error> {
 /// # Errors
 /// Requires Windows SDK mt.exe and a valid manifest retaining GPUI declarations.
 pub fn apply_manifest(binary: &Path, manifest: &Path) -> Result<(), Error> {
-    validate_manifest(&fs::read_to_string(manifest)?)?;
+    let xml = fs::read_to_string(manifest)?;
+    validate_manifest(&xml)?;
+    let xml = native_manifest(&xml, pe_architecture(binary)?)?;
+    let directory = tempfile::tempdir()?;
+    let manifest = directory.path().join("native.manifest");
+    fs::write(&manifest, xml)?;
     let binary = dunce::simplified(binary);
-    let manifest = dunce::simplified(manifest);
+    let manifest = dunce::simplified(&manifest);
     mt(Command::new("mt.exe")
         .arg("-nologo")
         .arg("-manifest")
@@ -78,7 +88,6 @@ pub fn apply_manifest(binary: &Path, manifest: &Path) -> Result<(), Error> {
     mt(Command::new("mt.exe")
         .args(["-nologo", "-validate_manifest", "-manifest"])
         .arg(manifest))?;
-    let directory = tempfile::tempdir()?;
     let extracted = directory.path().join("embedded.manifest");
     mt(Command::new("mt.exe")
         .arg("-nologo")
@@ -86,6 +95,55 @@ pub fn apply_manifest(binary: &Path, manifest: &Path) -> Result<(), Error> {
         .arg(format!("-out:{}", extracted.display())))?;
     validate_manifest(&fs::read_to_string(extracted)?)?;
     Ok(())
+}
+
+fn pe_architecture(binary: &Path) -> Result<&'static str, Error> {
+    let mut file = fs::File::open(binary)?;
+    let mut dos = [0_u8; 64];
+    file.read_exact(&mut dos)?;
+    if &dos[..2] != b"MZ" {
+        return Err(Error::Tool("manifest target is not a PE executable".into()));
+    }
+    let offset = u32::from_le_bytes(
+        dos[60..64]
+            .try_into()
+            .map_err(|_| Error::Tool("DOS header".into()))?,
+    );
+    file.seek(SeekFrom::Start(u64::from(offset)))?;
+    let mut pe = [0_u8; 6];
+    file.read_exact(&mut pe)?;
+    if &pe[..4] != b"PE\0\0" {
+        return Err(Error::Tool("invalid PE signature".into()));
+    }
+    match u16::from_le_bytes([pe[4], pe[5]]) {
+        0x8664 => Ok("amd64"),
+        0xaa64 => Ok("arm64"),
+        0x014c => Ok("x86"),
+        _ => Err(Error::Tool("unsupported PE processor architecture".into())),
+    }
+}
+
+fn native_manifest(xml: &str, architecture: &str) -> Result<String, Error> {
+    let document = roxmltree::Document::parse(xml).map_err(|_| Error::Manifest("valid XML"))?;
+    let identity = document
+        .root_element()
+        .children()
+        .find(|node| node.has_tag_name("assemblyIdentity"))
+        .ok_or(Error::Manifest("root assemblyIdentity"))?;
+    let mut text = xml.to_owned();
+    if let Some(attribute) = identity.attribute_node("processorArchitecture") {
+        if attribute.value() == "*" {
+            text.replace_range(
+                attribute.range(),
+                &format!("processorArchitecture=\"{architecture}\""),
+            );
+        } else if attribute.value() != architecture {
+            return Err(Error::Manifest(
+                "root processorArchitecture must match executable",
+            ));
+        }
+    }
+    Ok(text)
 }
 
 fn mt(command: &mut Command) -> Result<(), Error> {
@@ -134,6 +192,36 @@ pub fn apply_default_manifest(binary: &Path, identifier: &str, version: &str) ->
 #[cfg(test)]
 mod tests {
     use super::validate_manifest;
+    #[test]
+    fn root_architecture_is_native_while_dependency_wildcards_are_preserved() {
+        let xml = include_str!("../templates/default.manifest.xml");
+        let native = super::native_manifest(xml, "amd64").unwrap();
+        let parsed = roxmltree::Document::parse(&native).unwrap();
+        let root = parsed
+            .root_element()
+            .children()
+            .find(|node| node.has_tag_name("assemblyIdentity"))
+            .unwrap();
+        assert_eq!(root.attribute("processorArchitecture"), Some("amd64"));
+        let dependency = parsed
+            .descendants()
+            .find(|node| node.has_tag_name("dependentAssembly"))
+            .unwrap()
+            .children()
+            .find(|node| node.has_tag_name("assemblyIdentity"))
+            .unwrap();
+        assert_eq!(dependency.attribute("processorArchitecture"), Some("*"));
+        assert!(super::native_manifest(&native, "arm64").is_err());
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("fixture.exe");
+        let mut header = [0_u8; 70];
+        header[..2].copy_from_slice(b"MZ");
+        header[60..64].copy_from_slice(&64_u32.to_le_bytes());
+        header[64..68].copy_from_slice(b"PE\0\0");
+        header[68..70].copy_from_slice(&0x8664_u16.to_le_bytes());
+        std::fs::write(&binary, header).unwrap();
+        assert_eq!(super::pe_architecture(&binary).unwrap(), "amd64");
+    }
     #[test]
     fn custom_manifest_retains_gpui_settings_and_rejects_comment_spoofing() {
         let xml = include_str!("../templates/default.manifest.xml");

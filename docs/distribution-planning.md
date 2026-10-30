@@ -135,3 +135,8 @@ Velopack uses pinned vpk 1.2.161 and selects the matching Rake SDK feature for i
 build variant. `#[rake::app]` runs installer startup ahead of the app factory;
 manual entry points must call `rake::early_startup()` first. Automatic SDK
 application of downloaded updates on startup is disabled so restart can be guarded.
+
+Generated descriptors and multi-artifact paths use forward slashes on every host.
+Relative native Windows separators are normalized before confinement checks;
+traversal and drive/UNC prefixes remain rejected. Manifest root architecture is
+resolved from the staged PE header; dependency architecture wildcards are retained.

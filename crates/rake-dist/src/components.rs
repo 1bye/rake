@@ -382,27 +382,52 @@ pub(crate) fn architecture(path: &Path, target: &str) -> Result<(), Error> {
         value if value.starts_with("arm") => object::Architecture::Arm,
         _ => return Err(Error::Execution("unsupported component CPU".into())),
     };
+    let format = match rake_dist_core::Platform::from_target(target)? {
+        rake_dist_core::Platform::Macos => object::BinaryFormat::MachO,
+        rake_dist_core::Platform::Windows => object::BinaryFormat::Pe,
+        rake_dist_core::Platform::Linux => object::BinaryFormat::Elf,
+        _ => {
+            return Err(Error::Execution(
+                "unsupported native component platform".into(),
+            ));
+        }
+    };
     let result = match object::FileKind::parse(bytes.as_slice()) {
-        Ok(object::FileKind::MachOFat32) => {
+        Ok(object::FileKind::MachOFat32) if format == object::BinaryFormat::MachO => {
             object::read::macho::MachOFatFile32::parse(bytes.as_slice()).map(|fat| {
                 fat.arches().iter().any(|arch| {
-                    arch.architecture() == expected && arch.data(bytes.as_slice()).is_ok()
+                    arch.architecture() == expected
+                        && arch
+                            .data(bytes.as_slice())
+                            .ok()
+                            .and_then(|data| object::File::parse(data).ok())
+                            .is_some_and(|file| {
+                                file.architecture() == expected && file.format() == format
+                            })
                 })
             })
         }
-        Ok(object::FileKind::MachOFat64) => {
+        Ok(object::FileKind::MachOFat64) if format == object::BinaryFormat::MachO => {
             object::read::macho::MachOFatFile64::parse(bytes.as_slice()).map(|fat| {
                 fat.arches().iter().any(|arch| {
-                    arch.architecture() == expected && arch.data(bytes.as_slice()).is_ok()
+                    arch.architecture() == expected
+                        && arch
+                            .data(bytes.as_slice())
+                            .ok()
+                            .and_then(|data| object::File::parse(data).ok())
+                            .is_some_and(|file| {
+                                file.architecture() == expected && file.format() == format
+                            })
                 })
             })
         }
-        _ => object::File::parse(bytes.as_slice()).map(|file| file.architecture() == expected),
+        _ => object::File::parse(bytes.as_slice())
+            .map(|file| file.architecture() == expected && file.format() == format),
     }
     .map_err(|e| Error::Execution(format!("native component {}: {e}", path.display())))?;
     if !result {
         return Err(Error::Execution(format!(
-            "component architecture mismatch: {} for {target}",
+            "component target mismatch: {} for {target}",
             path.display()
         )));
     }
@@ -412,6 +437,17 @@ pub(crate) fn architecture(path: &Path, target: &str) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn matching_cpu_cannot_accept_another_operating_systems_binary() {
+        let executable = std::env::current_exe().unwrap();
+        let cpu = std::env::consts::ARCH;
+        let target = if cfg!(windows) {
+            format!("{cpu}-unknown-linux-gnu")
+        } else {
+            format!("{cpu}-pc-windows-msvc")
+        };
+        assert!(architecture(&executable, &target).is_err());
+    }
     #[test]
     fn archive_paths_and_cached_payloads_are_verified() {
         for path in ["../outside", "/absolute", "C:\\escape", "one/../../two"] {

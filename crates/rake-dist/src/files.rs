@@ -8,12 +8,12 @@ use std::{
 };
 
 pub(crate) fn copy(source: &Path, destination: &Path) -> Result<(), Error> {
-    let root = fs::canonicalize(source)?;
+    let root = dunce::canonicalize(source)?;
     copy_under(source, destination, &root)
 }
 
 fn copy_under(source: &Path, destination: &Path, root: &Path) -> Result<(), Error> {
-    let canonical = fs::canonicalize(source)?;
+    let canonical = dunce::canonicalize(source)?;
     if !canonical.starts_with(root) {
         return Err(Error::Execution(format!(
             "symlink escapes input: {}",
@@ -59,8 +59,8 @@ fn copy_under(source: &Path, destination: &Path, root: &Path) -> Result<(), Erro
 
 pub(crate) fn confined(root: &Path, path: &Path) -> Result<PathBuf, Error> {
     rake_dist_core::validate_relative_path(path)?;
-    let root = fs::canonicalize(root)?;
-    let resolved = fs::canonicalize(root.join(path))?;
+    let root = dunce::canonicalize(root)?;
+    let resolved = dunce::canonicalize(root.join(path))?;
     if !resolved.starts_with(&root) {
         return Err(Error::Execution(format!(
             "input escapes package root: {}",

@@ -246,3 +246,24 @@ fn universal_macos_accepts_only_explicit_universal_component_inputs() {
         )
         .unwrap();
 }
+
+#[test]
+fn native_relative_separators_are_canonical_and_cannot_hide_traversal() {
+    let settings =
+        config(json!({"resources":[{"from":"assets\\message.txt","to":"data\\message.txt"}]}));
+    let plan = settings.plan("notes", "1.0.0", Platform::Windows).unwrap();
+    assert_eq!(
+        plan.config().resources[0].to.to_str().unwrap(),
+        "data/message.txt"
+    );
+    for path in ["one\\..\\secret", "\\\\server\\share", "C:\\secret"] {
+        assert!(
+            config(json!({"assets":path}))
+                .plan("notes", "1.0.0", Platform::Linux)
+                .is_err()
+        );
+    }
+    let duplicate =
+        config(json!({"resources":[{"from":"a","to":"one\\two"},{"from":"b","to":"one/two"}]}));
+    assert!(duplicate.plan("notes", "1.0.0", Platform::Linux).is_err());
+}

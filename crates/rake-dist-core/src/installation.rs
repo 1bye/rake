@@ -37,3 +37,26 @@ pub struct Installation {
     #[serde(default)]
     pub native_groups: BTreeMap<String, Vec<PathBuf>>,
 }
+
+impl Installation {
+    /// Canonicalizes native-generated path separators and rejects escaping entries.
+    /// # Errors
+    /// Rejects absolute paths, traversal and nonportable path values.
+    pub fn normalize_paths(&mut self) -> Result<(), crate::Error> {
+        for path in self
+            .helpers
+            .values_mut()
+            .chain(self.runtimes.values_mut())
+            .chain(self.frameworks.values_mut())
+            .chain(self.updates.public_keys.values_mut())
+            .chain(
+                self.native_groups
+                    .values_mut()
+                    .flat_map(|members| members.iter_mut()),
+            )
+        {
+            *path = crate::portable_relative_path(path)?;
+        }
+        Ok(())
+    }
+}

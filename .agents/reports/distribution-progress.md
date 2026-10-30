@@ -95,3 +95,13 @@ codec, manifest-policy and descendant-cancellation tests passed; the CLI package
 failed at mt.exe resource replacement. Diagnostic capture and Windows verbatim
 path normalization were added. A Windows-only retry is reserved for the next
 consolidated native checkpoint. No broad push workflow ran on these pushes.
+
+Windows checkpoint 41077196757 isolated SDK error c10100b7: wildcard root
+processorArchitecture is invalid in a definition identity. The platform backend
+now maps that field to the actual PE machine, rejects conflicting explicit
+architectures, and preserves dependency wildcards. Portable regression tests cover
+the PE header and XML rewriting. Canonical native paths now avoid Windows verbatim
+prefixes at the engine boundary. Installation/artifact paths normalize separators
+before serialization and still reject traversal/drive prefixes; component CPU and
+OS binary format are both checked. The macOS media and CLI regressions pass after
+these changes. A targeted native retry is still required.

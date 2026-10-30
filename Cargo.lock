@@ -6040,6 +6040,7 @@ name = "rake-dist"
 version = "0.1.0"
 dependencies = [
  "command-group",
+ "dunce",
  "flate2",
  "fs2",
  "liblzma",
