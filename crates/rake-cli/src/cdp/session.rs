@@ -716,10 +716,26 @@ impl Session {
                 self.clear_console();
                 Ok(json!({}))
             }
-            "Network.getResponseBody" | "Network.getRequestPostData" => Err(Error::new(
-                -32000,
-                "Request and response bodies are not captured by Rake",
-            )),
+            "Network.getResponseBody" | "Network.getRequestPostData" => {
+                let id = request.params["requestId"]
+                    .as_str()
+                    .and_then(|id| id.parse().ok())
+                    .ok_or_else(|| Error::new(-32602, "Invalid request ID"))?;
+                let response = method == "Network.getResponseBody";
+                let Reply::Data(body) = query(
+                    &self.instance,
+                    Query::HttpBody {
+                        request_id: id,
+                        response,
+                    },
+                    TIMEOUT,
+                )
+                .map_err(|error| Error::new(-32000, error.to_string()))?
+                else {
+                    return Err(Error::new(-32000, "HTTP capture unavailable"));
+                };
+                super::network::body(body, response)
+            }
             "Inspector.enable"
             | "Page.enable"
             | "Page.disable"

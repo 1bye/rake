@@ -82,6 +82,7 @@ impl super::host::Host for InspectionClient {
                 "info",
                 "schema",
                 "diagnostics",
+                "http_body",
                 "inspect_tree",
                 "inspect_tree_page",
                 "frames",
@@ -114,6 +115,13 @@ impl super::host::Host for InspectionClient {
             Message::Query(Query::Info {}) => Ok(Reply::Info(self.info())),
             Message::Query(Query::Schema {}) => Ok(Reply::Data(
                 serde_json::json!({"protocol":PROTOCOL_VERSION,"runtime_id":self.0.id,"commands":self.info().commands,"queries":self.info().queries}),
+            )),
+            Message::Query(Query::HttpBody {
+                request_id,
+                response,
+            }) => Ok(Reply::Data(
+                serde_json::to_value(self.0.collector.http_body(request_id, response))
+                    .unwrap_or_default(),
             )),
             Message::Query(Query::Diagnostics { after, kind }) => Ok(Reply::Diagnostics(
                 self.0.collector.snapshot_after(after, kind.as_deref()),

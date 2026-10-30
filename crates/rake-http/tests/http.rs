@@ -385,3 +385,34 @@ fn inspection_captures_headers_and_query_without_credentials() {
     assert_eq!(response.fields["status_text"], "Created");
     assert!(!serde_json::to_string(&records).unwrap().contains("secret"));
 }
+
+#[cfg(feature = "devtools")]
+#[test]
+fn body_capture_tracks_consumption_eof_and_limits() {
+    for length in [0, 17, rake_diagnostics::http::BODY_LIMIT + 1] {
+        let body = "x".repeat(length);
+        let (base, server) = server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}"
+        ));
+        let collector = Collector::default();
+        let client = HttpClient::with_collector(HttpConfig::new(), collector.clone()).unwrap();
+        let response = block_on(client.post(&base).body(b"request".to_vec()).send()).unwrap();
+        let id = collector.snapshot_after(0, Some("request")).records[0].fields["request_id"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(collector.http_body(id, false).unwrap().bytes, b"request");
+        assert!(!collector.http_body(id, true).unwrap().complete);
+        assert_eq!(block_on(response.bytes()).unwrap(), body.as_bytes());
+        let capture = collector.http_body(id, true).unwrap();
+        assert!(capture.complete);
+        assert_eq!(
+            capture.truncated,
+            length > rake_diagnostics::http::BODY_LIMIT
+        );
+        assert_eq!(
+            capture.bytes.len(),
+            length.min(rake_diagnostics::http::BODY_LIMIT)
+        );
+        server.join().unwrap();
+    }
+}

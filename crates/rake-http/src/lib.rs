@@ -352,6 +352,14 @@ impl Request {
             lifecycle.context = lifecycle.collector.span_context(&span);
         }
 
+        #[cfg(feature = "devtools")]
+        lifecycle.collector.begin_http(
+            lifecycle.id,
+            request
+                .body()
+                .and_then(reqwest::Body::as_bytes)
+                .unwrap_or_default(),
+        );
         lifecycle.event(
             "started",
             [
@@ -359,6 +367,8 @@ impl Request {
                 ("url", url.as_str().into()),
                 #[cfg(feature = "devtools")]
                 ("request_headers", inspection::headers(request.headers())),
+                #[cfg(feature = "devtools")]
+                ("has_body", request.body().is_some().into()),
             ],
         );
         let scope = Scope {
@@ -485,7 +495,7 @@ impl Response {
     }
 
     /// Reads one chunk. `None` marks completion; errors terminate consumption.
-    /// No inspector buffering or body preview is performed.
+    /// Development capture retains at most 64 KiB when `devtools` is enabled; it never reads ahead.
     ///
     /// # Errors
     /// Returns [`Error::Cancelled`], [`Error::Timeout`] or [`Error::Body`]. After
@@ -503,6 +513,13 @@ impl Response {
 
         match result {
             Ok(Some(Ok(bytes))) => {
+                #[cfg(feature = "devtools")]
+                {
+                    self.lifecycle.capture_lost |= !self
+                        .lifecycle
+                        .collector
+                        .append_http(self.lifecycle.id, &bytes);
+                }
                 self.lifecycle
                     .event("body_progress", [("bytes", (bytes.len() as u64).into())]);
 
@@ -639,6 +656,8 @@ struct Lifecycle {
     started: Instant,
     bytes: u64,
     metadata: BTreeMap<String, Value>,
+    #[cfg(feature = "devtools")]
+    capture_lost: bool,
 }
 
 impl Lifecycle {
@@ -653,6 +672,8 @@ impl Lifecycle {
             started: Instant::now(),
             bytes: 0,
             metadata: BTreeMap::new(),
+            #[cfg(feature = "devtools")]
+            capture_lost: false,
         }
     }
 
@@ -694,6 +715,15 @@ impl Lifecycle {
 
     fn finish(&mut self, phase: &str) {
         self.finished = true;
+        #[cfg(feature = "devtools")]
+        self.collector.finish_http(
+            self.id,
+            if self.capture_lost {
+                "capture_lost"
+            } else {
+                phase
+            },
+        );
         self.event(phase, []);
     }
 }

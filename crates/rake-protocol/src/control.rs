@@ -305,6 +305,13 @@ pub enum Query {
         /// Last consumed cursor, or None for an initial snapshot.
         cursor: Option<EventCursor>,
     },
+    /// A retained development HTTP body; no capture is available in production.
+    HttpBody {
+        /// Collector-local request ID.
+        request_id: u64,
+        /// Selects the response rather than the request body.
+        response: bool,
+    },
     /// Bounded records for logs, requests and traces with observable loss counts.
     Diagnostics {
         /// Exclusive collector sequence.
@@ -340,6 +347,7 @@ impl Query {
             "decisions",
             "events",
             "diagnostics",
+            "http_body",
             "commands",
         ]
     }

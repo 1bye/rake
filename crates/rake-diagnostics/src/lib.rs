@@ -18,6 +18,9 @@
 //! assert_eq!(snapshot.records[0].fields["task"], "export");
 //! ```
 
+#[cfg(feature = "devtools")]
+pub mod http;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -88,6 +91,8 @@ pub struct Snapshot {
 struct Buffer {
     records: VecDeque<Record>,
     sequence: u64,
+    #[cfg(feature = "devtools")]
+    bytes: usize,
 }
 
 struct Inner {
@@ -97,6 +102,8 @@ struct Inner {
     output_dropped: AtomicU64,
     started: Instant,
     next_span: AtomicU64,
+    #[cfg(feature = "devtools")]
+    http: Mutex<http::Bodies>,
 }
 
 /// A cheap shared handle to bounded records. Producers never wait for its lock.
@@ -117,12 +124,16 @@ impl Collector {
             buffer: Mutex::new(Buffer {
                 records: VecDeque::new(),
                 sequence: 0,
+                #[cfg(feature = "devtools")]
+                bytes: 0,
             }),
             capacity,
             dropped: AtomicU64::new(0),
             output_dropped: AtomicU64::new(0),
             started: Instant::now(),
             next_span: AtomicU64::new(1),
+            #[cfg(feature = "devtools")]
+            http: Mutex::new(http::Bodies::default()),
         }))
     }
 
@@ -130,6 +141,44 @@ impl Collector {
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot_after(0, None)
+    }
+
+    /// Begins bounded development body capture. Contention may omit capture without blocking HTTP.
+    #[cfg(feature = "devtools")]
+    pub fn begin_http(&self, id: u64, body: &[u8]) {
+        if let Ok(mut bodies) = self.0.http.try_lock() {
+            bodies.begin(id, body);
+        }
+    }
+
+    /// Retains a prefix of consumed response bytes without reading ahead.
+    #[cfg(feature = "devtools")]
+    pub fn append_http(&self, id: u64, bytes: &[u8]) -> bool {
+        if let Ok(mut bodies) = self.0.http.try_lock() {
+            bodies.append(id, bytes);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Marks EOF or a terminal failure. Missing EOF stays explicitly incomplete.
+    #[cfg(feature = "devtools")]
+    pub fn finish_http(&self, id: u64, phase: &str) {
+        if let Ok(mut bodies) = self.0.http.try_lock() {
+            bodies.finish(id, phase);
+        }
+    }
+
+    /// Copies a retained body; absent after eviction, contention, or unsupported capture.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn http_body(&self, id: u64, response: bool) -> Option<http::Body> {
+        self.0
+            .http
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(id, response)
     }
 
     /// Copies matching records after an exclusive sequence cursor, in sequence order.
@@ -238,14 +287,23 @@ impl Collector {
         }
 
         if buffer.records.len() == self.0.capacity {
-            buffer.records.pop_front();
+            if let Some(old) = buffer.records.pop_front() {
+                #[cfg(feature = "devtools")]
+                {
+                    buffer.bytes = buffer
+                        .bytes
+                        .saturating_sub(serde_json::to_vec(&old).map_or(0, |bytes| bytes.len()));
+                }
+                #[cfg(not(feature = "devtools"))]
+                let _ = old;
+            }
             self.0.dropped.fetch_add(1, Ordering::Relaxed);
         }
 
         buffer.sequence += 1;
         let sequence = buffer.sequence;
 
-        buffer.records.push_back(Record {
+        let record = Record {
             sequence,
             #[cfg(feature = "devtools")]
             source: context.source,
@@ -258,7 +316,29 @@ impl Collector {
             span_id: context.span_id,
             parent_span_id: context.parent_span_id,
             duration_us,
-        });
+        };
+        #[cfg(feature = "devtools")]
+        {
+            // Keep IPC snapshots below their 1 MiB envelope even with rich HTTP metadata.
+            const LIMIT: usize = 512 * 1024;
+            let bytes = serde_json::to_vec(&record).map_or(LIMIT + 1, |bytes| bytes.len());
+            if bytes > LIMIT {
+                self.0.dropped.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            while buffer.bytes + bytes > LIMIT {
+                if let Some(old) = buffer.records.pop_front() {
+                    buffer.bytes = buffer
+                        .bytes
+                        .saturating_sub(serde_json::to_vec(&old).map_or(0, |bytes| bytes.len()));
+                    self.0.dropped.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    break;
+                }
+            }
+            buffer.bytes += bytes;
+        }
+        buffer.records.push_back(record);
     }
 }
 

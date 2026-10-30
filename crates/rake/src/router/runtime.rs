@@ -694,6 +694,19 @@ impl<R: Route> Router<R> {
         self.0.state.borrow().results.get(&id).cloned()
     }
 
+    pub(crate) fn http_body(&self, request_id: u64, response: bool) -> serde_json::Value {
+        #[cfg(feature = "devtools")]
+        {
+            serde_json::to_value(self.0.collector.http_body(request_id, response))
+                .unwrap_or_default()
+        }
+        #[cfg(not(feature = "devtools"))]
+        {
+            let _ = (request_id, response);
+            serde_json::Value::Null
+        }
+    }
+
     pub(crate) fn diagnostics(
         &self,
         after: u64,

@@ -472,6 +472,10 @@ impl<R: Route> RuntimeClient<R> {
 
                 Ok(Reply::Event(event))
             }
+            Query::HttpBody {
+                request_id,
+                response,
+            } => Ok(Reply::Data(self.router.http_body(request_id, response))),
             Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
                 self.router.diagnostics(after, kind.as_deref()),
             )),

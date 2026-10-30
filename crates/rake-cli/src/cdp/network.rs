@@ -1,8 +1,45 @@
 //! Request-lifecycle translation; absent engine measurements remain unavailable.
 
-use super::wire::Event;
+use super::wire::{Error, Event};
+use base64::Engine;
 use rake_diagnostics::Record;
 use serde_json::{Value, json};
+
+pub(super) fn body(value: Value, response: bool) -> Result<Value, Error> {
+    let body: rake_diagnostics::http::Body = serde_json::from_value(value).map_err(|_| {
+        Error::new(
+            -32000,
+            "Body capture unavailable or evicted (64 requests / 1 MiB)",
+        )
+    })?;
+    if body.truncated {
+        return Err(Error::new(-32000, "Body exceeds the 64 KiB capture limit"));
+    }
+    if !body.complete {
+        return Err(Error::new(
+            -32000,
+            format!(
+                "Body incomplete: {}",
+                body.failure.as_deref().unwrap_or("still being consumed")
+            ),
+        ));
+    }
+    if response {
+        let (body, encoded) = match String::from_utf8(body.bytes) {
+            Ok(text) => (text, false),
+            Err(error) => (
+                base64::engine::general_purpose::STANDARD.encode(error.as_bytes()),
+                true,
+            ),
+        };
+        Ok(json!({"body":body,"base64Encoded":encoded}))
+    } else {
+        let text = String::from_utf8(body.bytes).map_err(|_| {
+            Error::new(-32000, "Request body is binary; text post data unavailable")
+        })?;
+        Ok(json!({"postData":text}))
+    }
+}
 
 pub(super) fn translate(record: &Record) -> Vec<Event> {
     if record.kind != "request" {
@@ -30,6 +67,7 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
             json!({
             "requestId":request_id, "loaderId":"rake", "documentURL":"rake://runtime",
             "request":{"url":url,"method":f.get("method").and_then(Value::as_str).unwrap_or_default(),
+                "hasPostData":f.get("has_body").and_then(Value::as_bool).unwrap_or(false),
                 "headers":f.get("request_headers").cloned().unwrap_or(json!({})),"initialPriority":"Medium","referrerPolicy":"no-referrer"},
             "timestamp":timestamp,"initiator":{"type":"other"},"type":"Fetch","frameId":"rake",
             "hasUserGesture":false}),
@@ -71,6 +109,40 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bodies_preserve_bytes_and_reject_incomplete_captures() {
+        assert_eq!(
+            body(
+                json!({"bytes":[104,105],"complete":true,"truncated":false,"failure":null}),
+                true
+            )
+            .unwrap(),
+            json!({"body":"hi","base64Encoded":false})
+        );
+        assert_eq!(
+            body(
+                json!({"bytes":[0,255],"complete":true,"truncated":false,"failure":null}),
+                true
+            )
+            .unwrap(),
+            json!({"body":"AP8=","base64Encoded":true})
+        );
+        for (complete, truncated, failure) in [
+            (false, false, None),
+            (false, false, Some("cancelled")),
+            (true, true, None),
+        ] {
+            assert!(
+                body(
+                    json!({"bytes":[],"complete":complete,"truncated":truncated,"failure":failure}),
+                    true
+                )
+                .is_err()
+            );
+        }
+        assert!(body(Value::Null, false).is_err());
+    }
 
     #[test]
     fn every_phase_preserves_identity_time_and_cancellation() {
