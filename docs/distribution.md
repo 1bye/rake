@@ -162,6 +162,9 @@ velopack = "packaging/velopack.pub"
 appimage = "packaging/appimage.pub"
 ```
 
+Rake can generate update keys and sign feeds directly from protected files,
+environment references or the macOS Keychain. See [release signing](distribution-release.md#update-metadata-and-local-signing-profiles).
+
 Ownership is bound into the executable and signed installation descriptor.
 Sparkle, Velopack and standalone AppImage have provider-specific adapters; APT,
 RPM, pacman, Flatpak and MSIX remain managed by their installation channel.

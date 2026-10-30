@@ -18,6 +18,9 @@ pub struct ReleaseConfig {
     /// output is a raw 64-byte Ed25519 signature. Commands keep private keys in
     /// the selected local signing profile. No shell expansion occurs.
     pub signers: BTreeMap<String, Vec<String>>,
+    /// Built-in Ed25519 signing key references, keyed by `appimage` or `velopack`.
+    /// A provider cannot also have an external signer command.
+    pub signing_keys: BTreeMap<String, UpdateSigningKey>,
     /// Sparkle SDK generate_appcast executable, from the pinned SDK.
     pub sparkle_tool: Option<PathBuf>,
     /// Existing Sparkle Keychain account; defaults to the SDK's default account.
@@ -28,6 +31,55 @@ pub struct ReleaseConfig {
     pub repositories: BTreeMap<String, Vec<Format>>,
     /// Feed validity in seconds; default is seven days.
     pub feed_validity_seconds: Option<u64>,
+}
+/// A reference to a private Ed25519 seed; secret bytes never belong in metadata.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UpdateSigningKey {
+    /// A private file outside the distributable inputs, relative to the package or absolute.
+    File {
+        /// Raw 32-byte seed, or hex/base64 encoded seed.
+        path: PathBuf,
+    },
+    /// Secret-manager/CI injection containing a hex/base64 seed.
+    Environment {
+        /// Environment variable name; never its value.
+        variable: String,
+    },
+    /// An existing macOS generic-password Keychain item containing a seed.
+    Keychain {
+        /// Generic-password service.
+        service: String,
+        /// Generic-password account.
+        account: String,
+    },
+}
+impl UpdateSigningKey {
+    /// Validates a reference without accessing any secret storage.
+    /// # Errors
+    /// Rejects empty paths, invalid environment names and empty/NUL Keychain labels.
+    pub fn validate(&self) -> Result<(), Error> {
+        let valid = match self {
+            Self::File { path } => {
+                !path.as_os_str().is_empty() && !path.as_os_str().as_encoded_bytes().contains(&0)
+            }
+            Self::Environment { variable } => {
+                !variable.is_empty()
+                    && !variable.as_bytes()[0].is_ascii_digit()
+                    && variable
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            }
+            Self::Keychain { service, account } => [service, account]
+                .iter()
+                .all(|value| !value.is_empty() && !value.contains('\0')),
+        };
+        if !valid {
+            return Err(Error::Field("release.signing_keys reference".into()));
+        }
+        Ok(())
+    }
 }
 /// Explicit destinations. Remote destinations are never inferred from app identity.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,6 +156,17 @@ impl ReleaseConfig {
                     "release.repositories requires Linux formats and gpg_key".into(),
                 ));
             }
+        }
+        for (provider, key) in &self.signing_keys {
+            if !matches!(provider.as_str(), "appimage" | "velopack")
+                || self.signers.contains_key(provider)
+            {
+                return Err(Error::Field(
+                    "release.signing_keys requires appimage/velopack without a duplicate signer"
+                        .into(),
+                ));
+            }
+            key.validate()?;
         }
         for command in self.signers.values() {
             if command.is_empty() || command.iter().any(|arg| arg.contains('\0')) {

@@ -16,6 +16,9 @@ mod files;
 mod linux;
 mod process;
 mod recipes;
+mod signing;
+pub use rake_dist_core::UpdateSigningKey;
+pub use signing::{export_update_public_key, generate_update_key};
 mod release;
 pub use release::{
     PublishedFile, PublishedRelease, ReleaseRequest, prepare_repositories, publish,

@@ -44,7 +44,41 @@ verification.
 ## Update metadata and local signing profiles
 
 Enable updates in the bundle configuration and provide public-key files. Private
-keys remain in native signing stores or explicitly configured signing commands.
+keys remain in native signing stores, protected files or secret-manager environment
+variables. Rake signs AppImage and Velopack feeds directly; no custom script is
+required. Generate a key once, outside your resource/vendor/source trees:
+
+```sh
+rake update-key generate --private-key /secure/my-app-appimage.key --public-key packaging/appimage.pub
+rake update-key generate --private-key /secure/my-app-velopack.key --public-key packaging/velopack.pub
+# macOS: store the private seed directly in the default Keychain instead:
+rake update-key generate --keychain-service com.example.my-app.updates --keychain-account velopack --public-key packaging/velopack.pub
+```
+
+Choose one storage reference per provider:
+
+```toml
+[package.metadata.rake.bundle.release.signing_keys.appimage]
+kind = "file"
+path = "/secure/my-app-appimage.key"
+
+[package.metadata.rake.bundle.release.signing_keys.velopack]
+kind = "keychain"
+service = "com.example.my-app.updates"
+account = "velopack"
+# Or on any platform, use kind = "environment", variable = "MY_APP_VELOPACK_SEED".
+```
+
+Keys are 32-byte Ed25519 seeds (raw files or hex/base64 encoding; environment values
+are hex/base64). Generated private files are base64; public files are hex for native update clients.
+Private files use mode 0600 on Unix and owner-only ACLs
+on Windows. Unix signing refuses group/world-accessible key files. Rake refuses to
+overwrite existing private or public keys. `rake update-key public` accepts the
+same storage flags and a new `--public-key` output to recover/export the public
+key. Keep private seeds backed up in your signing store, outside bundled inputs;
+only commit public keys. Failed enrollment can leave a private key stored if the
+public output fails; export that key rather than generating a replacement.
+
 Sparkle uses the pinned SDK's `generate_appcast` with its existing Keychain account:
 
 ```toml
@@ -53,12 +87,13 @@ sparkle_tool = "/path/to/Sparkle-2.10.1/bin/generate_appcast"
 sparkle_account = "ed25519"
 feed_validity_seconds = 604800
 
-[package.metadata.rake.bundle.release.signers]
-appimage = ["tools/sign-appimage-feed"]
-velopack = ["tools/sign-velopack-feed"]
 ```
 
-A signer receives the exact bounded feed bytes on stdin and returns exactly 64 raw
+External signing stores/HSMs can still use `release.signers.appimage` or
+`release.signers.velopack` argv as an escape hatch. Configuring both a built-in
+key and an external command for one provider is rejected. Built-in signatures
+are verified against the app's configured public key before any promotion.
+A command signer receives the exact bounded feed bytes on stdin and returns exactly 64 raw
 Ed25519 signature bytes on stdout. It may use an existing local key profile; logs
 belong on stderr. Rake verifies its signature against the configured public key
 before uploading. Sparkle's native signed appcast is also verified against its

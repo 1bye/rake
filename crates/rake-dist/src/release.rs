@@ -276,32 +276,38 @@ fn signer(
     message: &[u8],
     flag: &AtomicBool,
 ) -> Result<Vec<u8>, Error> {
-    let argv = request.config.signers.get(provider).ok_or_else(|| {
-        fail(format!(
-            "release.signers.{provider} requires a local signing-profile command"
-        ))
-    })?;
-    let work = tempfile::tempdir()?;
-    let input = work.path().join("message");
-    let output = work.path().join("signature");
-    fs::write(&input, message)?;
-    let mut command = Command::new(&argv[0]);
-    command
-        .args(&argv[1..])
-        .current_dir(&request.package_root)
-        .stdin(fs::File::open(input)?)
-        .stdout(fs::File::create(&output)?)
-        .stderr(Stdio::inherit());
-    let mut worker = crate::Worker::spawn_with_io(&mut command)?;
-    if !worker.wait(flag, Duration::from_secs(120))?.success() {
-        return Err(fail("local release signing command failed"));
-    }
-    if fs::metadata(&output)?.len() != 64 {
-        return Err(fail(
-            "local signer must return exactly 64 raw Ed25519 signature bytes",
-        ));
-    }
-    let signature = fs::read(output)?;
+    cancelled(flag)?;
+    let signature = if let Some(key) = request.config.signing_keys.get(provider) {
+        crate::signing::sign(key, &request.package_root, message)?
+    } else if request.config.signers.contains_key(provider) {
+        let argv = &request.config.signers[provider];
+        let work = tempfile::tempdir()?;
+        let input = work.path().join("message");
+        let output = work.path().join("signature");
+        fs::write(&input, message)?;
+        let mut command = Command::new(&argv[0]);
+        command
+            .args(&argv[1..])
+            .current_dir(&request.package_root)
+            .stdin(fs::File::open(input)?)
+            .stdout(fs::File::create(&output)?)
+            .stderr(Stdio::inherit());
+        let mut worker = crate::Worker::spawn_with_io(&mut command)?;
+        if !worker.wait(flag, Duration::from_secs(120))?.success() {
+            return Err(fail("local release signing command failed"));
+        }
+        if fs::metadata(&output)?.len() != 64 {
+            return Err(fail(
+                "local signer must return exactly 64 raw Ed25519 signature bytes",
+            ));
+        }
+        fs::read(output)?
+    } else {
+        return Err(fail(format!(
+            "configure release.signing_keys.{provider} or release.signers.{provider}"
+        )));
+    };
+    cancelled(flag)?;
     let key = request
         .public_keys
         .get(provider)
@@ -1560,6 +1566,48 @@ mod tests {
             updates_enabled: false,
             custom_verifiers: BTreeMap::new(),
         }
+    }
+    #[test]
+    fn builtin_provider_signing_verifies_the_exact_message_and_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = fixture(root.path(), "1.0.0");
+        let key = rake_dist_core::UpdateSigningKey::File {
+            path: root.path().join("seed"),
+        };
+        crate::generate_update_key(&key, &root.path().join("public")).unwrap();
+        let public = fs::read(root.path().join("public")).unwrap();
+        let flag = AtomicBool::new(false);
+        for provider in ["appimage", "velopack"] {
+            request
+                .config
+                .signing_keys
+                .insert(provider.into(), key.clone());
+            request.public_keys.insert(provider.into(), public.clone());
+            let signature = signer(&request, provider, b"exact feed bytes", &flag).unwrap();
+            let verifying =
+                ed25519_dalek::VerifyingKey::from_bytes(&decode_key(&public).unwrap()).unwrap();
+            let signature = ed25519_dalek::Signature::from_slice(&signature).unwrap();
+            verifying
+                .verify_strict(b"exact feed bytes", &signature)
+                .unwrap();
+            assert!(
+                verifying
+                    .verify_strict(b"changed feed bytes", &signature)
+                    .is_err()
+            );
+            request.public_keys.insert(provider.into(), vec![7; 32]);
+            assert!(signer(&request, provider, b"exact feed bytes", &flag).is_err());
+        }
+        request
+            .config
+            .signers
+            .insert("velopack".into(), vec!["external".into()]);
+        assert!(
+            request.config.validate().is_err(),
+            "ambiguous profiles fail before publication"
+        );
+        flag.store(true, Ordering::Release);
+        assert!(signer(&request, "appimage", b"cancelled", &flag).is_err());
     }
     #[test]
     fn provider_key_changes_require_explicit_channel_reenrollment() {

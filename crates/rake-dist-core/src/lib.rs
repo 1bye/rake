@@ -14,7 +14,7 @@ pub use dependency::{BundledDependency, BundledLibraries};
 mod component;
 pub use component::{Archive, Component, ComponentSource};
 mod release;
-pub use release::{Publisher, ReleaseConfig, feed_url};
+pub use release::{Publisher, ReleaseConfig, UpdateSigningKey, feed_url};
 mod installation;
 mod update_binding;
 mod update_feed;
