@@ -52,14 +52,14 @@ prerequisites. Use local signing references, never serialized private keys.
 formats = ["zip", "dmg"]
 info_plist = "packaging/Info.plist"
 entitlements = "packaging/app.entitlements"
-# identity = "Developer ID Application: ..."
+# signing_identity = "Developer ID Application: ..."
 # notary_profile = "existing-keychain-profile"
 
 [package.metadata.rake.bundle.windows]
 formats = ["nsis", "msix", "velopack"]
 manifest = "packaging/app.manifest"
 # certificate_thumbprint = "..."
-# timestamp_url = "https://..."
+# timestamp_url = "http://timestamp.digicert.com"
 
 [package.metadata.rake.bundle.windows.msix]
 publisher = "CN=Publisher matching the signing certificate"

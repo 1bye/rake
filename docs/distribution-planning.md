@@ -1,9 +1,9 @@
 # Distribution planning
 
-The new Rust planner validates distribution configuration without invoking native
-packagers, building an app, signing, downloading or publishing. Native execution
-and update adapters remain in implementation; a valid plan is not a claim of
-native platform validation.
+The Rust planner validates distribution configuration without invoking native
+packagers, building an app, signing, downloading or publishing. A valid plan does
+not establish native platform availability; see the acceptance matrix in
+[Desktop distribution](distribution.md).
 
 ```sh
 cargo run -p rake-cli -- bundle --plan --package rake-foundation --json
@@ -20,7 +20,8 @@ Configuration lives under `package.metadata.rake.bundle`. Omitting
 `schema_version` retains the legacy host layout defaults; version 1 defaults to
 DMG, NSIS and AppImage on their respective platforms. The CLI returns
 `native_validation: "pending"` because native capability/trust checks are separate.
-Existing bundle commands without `--plan` still use the established pipeline.
+Native bundle commands execute through the Rust coordinator. Web bundling retains
+its existing Python pipeline.
 
 The planner validates the examples in the distribution implementation plan,
 relative input/destination paths, stable identity, semantic versions, duplicate
@@ -33,8 +34,8 @@ NSIS/MSI installers remain external/manual until a compatible updater is adopted
 The portable `rake-dist-core` crate has no packager, native-tool or GUI dependency.
 Its optional `schema` feature enables schema generation for the host-side
 `rake-dist` crate. That crate resolves Cargo package metadata and provides the
-public schema. Native tooling must pass the independent adoption gate before
-being added to this execution path.
+public schema. Engine types stay private to its pinned adapter; native platform
+tools run in an owned packaging worker.
 
 Target overrides apply after common/platform settings. Format overrides apply
 next; explicit CLI format selection replaces the requested output list. Arrays
@@ -58,8 +59,9 @@ prereleases require a monotonic numeric `build_number`.
 
 Schema 1 native bundling now runs in Rust. `rake bundle --format app --debug`
 uses an isolated worker, copies Cargo output, stages inputs, and writes
-`distribution.json`. `--native` opts a legacy configuration into that executor.
-Legacy commands and `--target web` retain their existing implementation.
+`distribution.json`. Legacy native commands use that executor with compatible
+layout, archives and JSON output. `--native` selects schema-1 output explicitly;
+`--target web` retains its existing implementation.
 
 Add this build script for link-time resources, including Windows icons/version:
 
@@ -113,7 +115,8 @@ All non-system macOS load commands must resolve within the staged inventory.
 
 Each distribution includes `components.lock.json`. Check it in as
 `rake-dist.lock` to reject changes to resolved inputs; `--locked-components`
-requires that lock. `--offline-components` prohibits component downloads and
+requires that lock when native components are selected. An empty component plan
+needs no lockfile. `--offline-components` prohibits component downloads and
 uses only verified cached bytes. Native installer engines can still require their
 own native tools; this flag applies specifically to component resolution.
 
@@ -128,12 +131,14 @@ helpers and native libraries must also contain both slices.
 
 Windows signing uses `windows.certificate_thumbprint` from the existing
 current-user My certificate store, with `windows.timestamp_url` for trusted
-releases. The signer verifies Authenticode after signing. MSIX requires a
+releases. The signer verifies Authenticode and an RFC3161 timestamp after signing.
+Timestamp services may use HTTP or HTTPS: trust comes from the signed timestamp
+token, verified by SignTool. MSIX requires a
 certificate-matching `windows.msix.publisher`; an optional full
 `windows.msix.manifest` must preserve generated identity and executable fields.
 Velopack uses pinned vpk 1.2.161 and selects the matching Rake SDK feature for its
 build variant. `#[rake::app]` runs installer startup ahead of the app factory;
-manual entry points must call `rake::early_startup()` first. Automatic SDK
+manual entry points must call `rake::early_startup!()` first. Automatic SDK
 application of downloaded updates on startup is disabled so restart can be guarded.
 
 Generated descriptors and multi-artifact paths use forward slashes on every host.

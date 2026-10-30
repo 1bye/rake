@@ -31,7 +31,8 @@ The release verifies every input hash, requires all configured targets at the
 selected version, and refuses older/replayed directory promotions. Failed builds,
 missing targets, signing errors and failed object readback prevent promotion.
 Native macOS releases require recorded Developer ID, notarization and stapling;
-Windows installer executables require recorded Authenticode verification.
+Windows installer executables require recorded Authenticode and RFC3161 timestamp
+verification.
 
 ## Update metadata and local signing profiles
 
