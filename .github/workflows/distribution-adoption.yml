@@ -56,16 +56,21 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Create a disposable local Windows signing profile
+        timeout-minutes: 2
         if: always() && runner.os == 'Windows'
         shell: pwsh
         run: |
-          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Rake CI Distribution' -KeyExportPolicy NonExportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Rake CI Distribution' -Provider 'Microsoft Software Key Storage Provider' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyProtection None -KeyExportPolicy NonExportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
           $public = Join-Path $env:RUNNER_TEMP 'rake-test-public.cer'
           Export-Certificate -Cert $cert -FilePath $public | Out-Null
-          Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-          Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+          Write-Host 'Created disposable software signing identity'
+          certutil.exe -user -f -addstore Root $public
+          if ($LASTEXITCODE -ne 0) { throw 'Root test trust installation failed' }
+          certutil.exe -user -f -addstore TrustedPeople $public
+          if ($LASTEXITCODE -ne 0) { throw 'Publisher test trust installation failed' }
           "RAKE_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
       - name: Windows SDK signing, installation and upgrade
+        timeout-minutes: 5
         if: always() && runner.os == 'Windows'
         run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --locked
       - name: Verify Velopack startup precedes the app factory
