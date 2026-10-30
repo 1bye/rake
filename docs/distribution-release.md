@@ -1,0 +1,105 @@
+# Releasing native applications
+
+`rake bundle` creates local artifacts. `rake release --plan --json` reports public
+configuration without loading signing credentials or publishing. An explicit
+`rake release` builds with release trust and locked native components, then
+publishes. Use repeated `--from <bundle-directory>` to promote a complete native
+runner matrix, including retained versions needed by standalone update feeds.
+
+```toml
+[package.metadata.rake.bundle.release.publisher]
+kind = "directory"
+path = "release-site"
+public_url = "https://downloads.example.com/my-app"
+
+[package.metadata.rake.bundle.release.required]
+aarch64-apple-darwin = ["zip", "dmg"]
+x86_64-pc-windows-msvc = ["msix", "velopack"]
+x86_64-unknown-linux-gnu = ["deb", "rpm", "appimage"]
+```
+
+Serve that directory through a static HTTPS server. Immutable content is stored
+under `objects/`; each native feed tree lives under `<channel>/<target>/`.
+Directory export owns its root and refuses an existing unrelated directory. On
+Unix, an atomic symlink replacement switches the whole channel tree while keeping
+previous generations and objects. Windows export uses the owned directory
+replacement transaction. Use a Unix static host for atomic reader visibility.
+No retention deletes happen automatically; keep prior versions needed for update
+ownership verification and compatible data recovery.
+
+The release verifies every input hash, requires all configured targets at the
+selected version, and refuses older/replayed directory promotions. Failed builds,
+missing targets, signing errors and failed object readback prevent promotion.
+Native macOS releases require recorded Developer ID, notarization and stapling;
+Windows installer executables require recorded Authenticode verification.
+
+## Update metadata and local signing profiles
+
+Enable updates in the bundle configuration and provide public-key files. Private
+keys remain in native signing stores or explicitly configured signing commands.
+Sparkle uses the pinned SDK's `generate_appcast` with its existing Keychain account:
+
+```toml
+[package.metadata.rake.bundle.release]
+sparkle_tool = "/path/to/Sparkle-2.10.1/bin/generate_appcast"
+sparkle_account = "ed25519"
+feed_validity_seconds = 604800
+
+[package.metadata.rake.bundle.release.signers]
+appimage = ["tools/sign-appimage-feed"]
+velopack = ["tools/sign-velopack-feed"]
+```
+
+A signer receives the exact bounded feed bytes on stdin and returns exactly 64 raw
+Ed25519 signature bytes on stdout. It may use an existing local key profile; logs
+belong on stderr. Rake verifies its signature against the configured public key
+before uploading. Sparkle's native signed appcast is also verified against its
+public key; the SDK obtains native build counters and enclosure metadata from the
+actual archives. Velopack keeps its native release JSON plus a context/expiry-bound
+signature sidecar. MSIX App Installer identity comes from the built artifact record.
+
+Supply retained N and N+1 distributions when generating AppImage or Velopack feeds.
+The AppImage adapter authenticates the installed N image against this history;
+removing that record prevents an old installation from authorizing replacement.
+
+## GitHub and HTTPS
+
+For GitHub Releases, configure `kind = "github"`, `repository = "owner/repo"`, and
+`tag = "v1.2.3"`. The tag must already exist. Rake uploads to a draft, downloads and
+hashes every asset, then publishes it as latest. Drafts remain available when an
+upload fails. Use the serialized release workflow for all publishers of a repo.
+Update roots use `https://github.com/owner/repo/releases/latest/download`; Rake
+maps native feed paths into GitHub's flat asset namespace. Keep channel series in
+separate repositories when using this latest-release endpoint. Linux repository
+trees require a directory or HTTPS publisher.
+
+The HTTPS publisher targets an explicitly enrolled object/promotion service. It
+requires a public static URL, an HTTPS API root and `token_env`, naming a scoped
+credential environment variable. It uploads immutable objects with If-None-Match,
+reads them back, then conditionally submits the entire channel state using the
+previous ETag. The service must implement atomic channel-tree promotion described
+in `Publisher::Https`; an ordinary HTTP file server is served from directory
+export instead. Signing profiles and tokens never enter artifact manifests.
+
+## Linux repositories
+
+```toml
+[package.metadata.rake.bundle.release]
+gpg_key = "0123456789ABCDEF0123456789ABCDEF01234567"
+
+[package.metadata.rake.bundle.release.repositories]
+x86_64-unknown-linux-gnu = ["deb", "rpm", "arch", "flatpak"]
+```
+
+The platform owner uses dpkg-scanpackages/apt-ftparchive/GPG, rpmsign/createrepo_c,
+repo-add/GPG and flatpak/OSTree. It exports public enrollment keys, signs native
+metadata, and builds repositories in isolated staging before promotion. Install
+those native tools on the Linux publication worker and enroll its signing profile
+once. The Flatpak repository exports `.flatpakrepo` and `.flatpakref` files.
+Application signing and repository trust enrollment are distinct setup steps.
+
+`.github/workflows/distribution-release.yml` provides explicit manual native
+builds and serialized promotion. Signing jobs require enrolled self-hosted native
+runners; ordinary verification remains independent of production credentials.
+Publishing defaults to false. This workflow has not been dispatched as a real
+release during implementation.

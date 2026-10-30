@@ -336,3 +336,32 @@ fn sparkle_sdk_baseline_and_universal_policy_are_explicit() {
             .is_err()
     );
 }
+
+#[test]
+fn publication_destinations_and_native_feed_paths_are_explicit() {
+    use rake_dist_core::{ReleaseConfig, feed_url};
+    assert_eq!(
+        feed_url(
+            "https://github.com/team/app/releases/latest/download",
+            "stable",
+            "x86_64-pc-windows-msvc",
+            "releases.stable.json"
+        )
+        .unwrap(),
+        "https://github.com/team/app/releases/latest/download/stable-x86_64-pc-windows-msvc-releases.stable.json"
+    );
+    assert!(
+        feed_url(
+            "https://updates.example.test",
+            "../beta",
+            "target",
+            "appcast.xml"
+        )
+        .is_err()
+    );
+    let invalid:ReleaseConfig=serde_json::from_value(json!({"publisher":{"kind":"https","url":"https://user:secret@example.test","public_url":"https://example.test","token_env":"UPLOAD_TOKEN"}})).unwrap();
+    assert!(invalid.validate().is_err());
+    let wrong: ReleaseConfig =
+        serde_json::from_value(json!({"required":{"x86_64-pc-windows-msvc":["dmg"]}})).unwrap();
+    assert!(wrong.validate().is_err());
+}

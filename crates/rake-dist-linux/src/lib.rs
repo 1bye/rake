@@ -5,11 +5,13 @@ pub use deb::build_deb;
 mod elf;
 mod flatpak;
 mod metadata;
+mod repository;
 mod rpm;
 pub use arch::{ArchPackage, build_arch};
 pub use elf::{ElfReport, normalize_elf};
 pub use flatpak::{FlatpakBuild, FlatpakTool, build_flatpak, flatpak_manifest};
 pub use metadata::{appstream, desktop_entry, validate_appstream};
+pub use repository::{Repository, build_repository};
 pub use rpm::build_rpm;
 
 use std::{path::PathBuf, process::Command};

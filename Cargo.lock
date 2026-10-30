@@ -6002,6 +6002,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "tempfile",
  "tungstenite",
  "url",
  "uuid",
@@ -6039,10 +6040,13 @@ dependencies = [
 name = "rake-dist"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "command-group",
  "dunce",
+ "ed25519-dalek",
  "flate2",
  "fs2",
+ "hex",
  "liblzma",
  "object",
  "rake-build",
@@ -6051,6 +6055,7 @@ dependencies = [
  "rake-dist-macos",
  "rake-dist-windows",
  "schemars 1.2.3",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6081,6 +6086,7 @@ dependencies = [
 name = "rake-dist-linux"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "flate2",
  "rake-dist-core",
  "roxmltree 0.20.0",

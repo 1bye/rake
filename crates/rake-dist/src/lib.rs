@@ -11,6 +11,8 @@ mod files;
 mod linux;
 mod process;
 mod recipes;
+mod release;
+pub use release::{PublishedFile, PublishedRelease, ReleaseRequest, publish};
 mod sparkle;
 pub use execution::{
     Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, execute_worker, host_target,

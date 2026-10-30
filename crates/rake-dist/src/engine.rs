@@ -61,82 +61,81 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         .iter()
         .map(|path| worker_relative(Path::new(path)))
         .collect::<Result<Vec<_>, _>>()?;
-    let settings = BundleSettings {
-        identifier: Some(plan.identifier().into()),
-        publisher: Some(plan.name().into()),
-        icon: (!icons.is_empty()).then_some(icons),
-        resources_map: Some(resources),
-        macos: tauri_bundler::MacOsSettings {
-            info_plist: if plan.platform() == crate::Platform::Macos {
-                let mut value = config
-                    .macos
-                    .info_plist
-                    .as_ref()
-                    .map(|path| {
-                        let path = crate::files::confined(root, path)?;
-                        rake_dist_macos::info_plist(
-                            &path,
-                            plan.identifier(),
-                            binary,
-                            &item.version().version,
-                            config
-                                .build_number
-                                .as_deref()
-                                .unwrap_or(&item.version().version),
-                        )
-                        .map_err(|error| Error::Execution(error.to_string()))
-                    })
-                    .transpose()?;
-                if item.update_owner() == rake_dist_core::UpdateOwner::Sparkle {
-                    let path = config
-                        .updates
-                        .public_keys
-                        .get("sparkle")
-                        .ok_or_else(|| Error::Execution("Sparkle public key missing".into()))?;
-                    let key = std::fs::read_to_string(crate::files::confined(root, path)?)?;
-                    let feed = format!(
-                        "{}/{}/{target}/appcast.xml",
-                        config
-                            .updates
-                            .base_url
-                            .as_deref()
-                            .ok_or_else(|| Error::Execution("Sparkle feed missing".into()))?
-                            .trim_end_matches('/'),
-                        config.updates.channel.as_deref().unwrap_or("stable")
-                    );
-                    value = Some(
-                        rake_dist_macos::sparkle_info_plist(
-                            value.unwrap_or_else(|| rake_dist_macos::empty_info_plist()),
-                            &feed,
-                            &key,
-                        )
-                        .map_err(|error| Error::Execution(error.to_string()))?,
-                    );
-                }
-                value.map(tauri_bundler::PlistKind::Plist)
-            } else {
-                None
+    let settings =
+        BundleSettings {
+            identifier: Some(plan.identifier().into()),
+            publisher: Some(plan.name().into()),
+            icon: (!icons.is_empty()).then_some(icons),
+            resources_map: Some(resources),
+            macos: tauri_bundler::MacOsSettings {
+                info_plist: if plan.platform() == crate::Platform::Macos {
+                    let mut value = config
+                        .macos
+                        .info_plist
+                        .as_ref()
+                        .map(|path| {
+                            let path = crate::files::confined(root, path)?;
+                            rake_dist_macos::info_plist(
+                                &path,
+                                plan.identifier(),
+                                binary,
+                                &item.version().version,
+                                config
+                                    .build_number
+                                    .as_deref()
+                                    .unwrap_or(&item.version().version),
+                            )
+                            .map_err(|error| Error::Execution(error.to_string()))
+                        })
+                        .transpose()?;
+                    if item.update_owner() == rake_dist_core::UpdateOwner::Sparkle {
+                        let path =
+                            config.updates.public_keys.get("sparkle").ok_or_else(|| {
+                                Error::Execution("Sparkle public key missing".into())
+                            })?;
+                        let key = std::fs::read_to_string(crate::files::confined(root, path)?)?;
+                        let feed =
+                            rake_dist_core::feed_url(
+                                config.updates.base_url.as_deref().ok_or_else(|| {
+                                    Error::Execution("Sparkle feed missing".into())
+                                })?,
+                                config.updates.channel.as_deref().unwrap_or("stable"),
+                                target,
+                                "appcast.xml",
+                            )?;
+                        value = Some(
+                            rake_dist_macos::sparkle_info_plist(
+                                value.unwrap_or_else(rake_dist_macos::empty_info_plist),
+                                &feed,
+                                &key,
+                            )
+                            .map_err(|error| Error::Execution(error.to_string()))?,
+                        );
+                    }
+                    value.map(tauri_bundler::PlistKind::Plist)
+                } else {
+                    None
+                },
+                bundle_version: config.build_number.clone(),
+                frameworks: (!frameworks.is_empty()).then(|| {
+                    frameworks
+                        .iter()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .collect()
+                }),
+                minimum_system_version: config.minimum_system_version.clone(),
+                ..Default::default()
             },
-            bundle_version: config.build_number.clone(),
-            frameworks: (!frameworks.is_empty()).then(|| {
-                frameworks
-                    .iter()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .collect()
-            }),
-            minimum_system_version: config.minimum_system_version.clone(),
+            appimage: tauri_bundler::AppImageSettings {
+                files: linux_files,
+                ..Default::default()
+            },
+            windows: tauri_bundler::WindowsSettings {
+                webview_install_mode: serde_json::from_value(serde_json::json!({"type":"skip"}))?,
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        appimage: tauri_bundler::AppImageSettings {
-            files: linux_files,
-            ..Default::default()
-        },
-        windows: tauri_bundler::WindowsSettings {
-            webview_install_mode: serde_json::from_value(serde_json::json!({"type":"skip"}))?,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+        };
     let mut binaries = vec![BundleBinary::new(binary.into(), true)];
     binaries.extend(
         helpers

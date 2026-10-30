@@ -90,12 +90,13 @@ impl UpdateService {
             .base_url
             .as_deref()
             .ok_or_else(|| Error::Policy("update URL missing".into()))?;
-        let url = format!(
-            "{}/{}/{}/appimage.json",
-            base.trim_end_matches('/'),
-            self.binding.channel,
-            self.binding.target
-        );
+        let url = rake_dist_core::feed_url(
+            base,
+            &self.binding.channel,
+            &self.binding.target,
+            "appimage.json",
+        )
+        .map_err(|error| Error::Policy(error.to_string()))?;
         let bytes = get(&url, MAX_FEED, cancelled)?;
         select(&self.binding, &bytes, now()?)
     }

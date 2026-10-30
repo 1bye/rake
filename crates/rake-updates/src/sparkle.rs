@@ -111,16 +111,16 @@ impl Sparkle {
             ));
         }
         let binding = &service.binding;
-        let feed = format!(
-            "{}/{}/{}/appcast.xml",
+        let feed = rake_dist_core::feed_url(
             binding
                 .base_url
                 .as_deref()
-                .ok_or_else(|| Error::Policy("Sparkle feed missing".into()))?
-                .trim_end_matches('/'),
-            binding.channel,
-            binding.target
-        );
+                .ok_or_else(|| Error::Policy("Sparkle feed missing".into()))?,
+            &binding.channel,
+            &binding.target,
+            "appcast.xml",
+        )
+        .map_err(|error| Error::Policy(error.to_string()))?;
         #[cfg(feature = "native-tests")]
         let feed = service.test_sparkle_feed.clone().unwrap_or(feed);
         let key = binding

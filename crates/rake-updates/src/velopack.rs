@@ -152,17 +152,17 @@ struct SignedSource {
     progress: Arc<dyn Fn(DownloadProgress) + Send + Sync>,
 }
 impl SignedSource {
-    fn base(&self) -> Result<String, Error> {
-        Ok(format!(
-            "{}/{}/{}/",
+    fn url(&self, file: &str) -> Result<String, Error> {
+        rake_dist_core::feed_url(
             self.binding
                 .base_url
                 .as_deref()
-                .ok_or_else(|| Error::Policy("Velopack feed URL missing".into()))?
-                .trim_end_matches('/'),
-            self.binding.channel,
-            self.binding.target
-        ))
+                .ok_or_else(|| Error::Policy("Velopack feed URL missing".into()))?,
+            &self.binding.channel,
+            &self.binding.target,
+            file,
+        )
+        .map_err(|error| Error::Policy(error.to_string()))
     }
 }
 impl UpdateSource for SignedSource {
@@ -178,7 +178,7 @@ impl UpdateSource for SignedSource {
                     "SDK channel conflicts with compiled policy".into(),
                 ));
             }
-            let url = format!("{}releases.{channel}.json", self.base()?);
+            let url = self.url(&format!("releases.{channel}.json"))?;
             let bytes = transport::get(&url, 1024 * 1024, &self.cancelled)?;
             let signature = transport::get(&format!("{url}.sig"), 1024, &self.cancelled)?;
             let key = self
@@ -226,7 +226,7 @@ impl UpdateSource for SignedSource {
     ) -> Result<(), ::velopack::Error> {
         let operation = || -> Result<(), Error> {
             validate_asset(&self.binding, asset)?;
-            let url = format!("{}{}", self.base()?, asset.FileName);
+            let url = self.url(&asset.FileName)?;
             let mut file = fs::File::create(local_file)?;
             transport::download(
                 &url,

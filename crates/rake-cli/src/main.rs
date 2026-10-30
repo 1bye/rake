@@ -10,11 +10,34 @@ mod source;
 mod terminal;
 
 mod distribution;
+mod release;
 
 fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     let json = arguments.iter().any(|argument| argument == "--json");
 
+    if arguments
+        .first()
+        .is_some_and(|command| matches!(command.as_str(), "release" | "__release-worker"))
+    {
+        let result = if arguments[0] == "release" {
+            release::run(&arguments[1..])
+        } else {
+            release::worker(&arguments[1..])
+        };
+        if let Err(error) = result {
+            if json {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"error":{"message":error.to_string()}})
+                );
+            } else {
+                eprintln!("rake: {error}");
+            }
+            std::process::exit(1);
+        }
+        return;
+    }
     if arguments
         .first()
         .is_some_and(|command| command == "__distribution-worker")

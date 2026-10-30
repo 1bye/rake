@@ -219,3 +219,31 @@ scripts/prepare-distribution-sparkle.py and docs/distribution-native-tests.md.
 Local portable policy (14), updater (7), guarded quit (14), full SDK Clippy and
 native facade updates-sparkle/devtools compilation passed. Linux/Windows N+1
 SDK acceptance and the remaining native format gates are still open.
+
+Windows checkpoint 41104892784: MSIX native signing, installation and upgrade now
+passed, along with real GPUI NSIS packaging and early startup. Velopack reached
+its native tool; pinned vpk rejects --version. The exact 1.2.161 tool was installed
+locally and its --help output/pack options inspected. The adapter now probes that
+versioned help and disables update checks/interactive console prompts. The first
+fixture build exceeded its old two-minute subprocess bound; bundle gets seven
+minutes within the existing eight-minute gate. A focused velopack-only mode
+skips already-passed GPUI/MSIX/core checks and reuses caches.
+
+P8 implementation: added explicit directory, GitHub draft-release and HTTPS
+transactional publishers; all-target/version/format gates, artifact readback,
+immutable objects, native feeds and public signing-profile commands. Directory
+promotion uses an atomic whole-channel symlink on Unix and retains old generations.
+Added SDK-signed Sparkle feed verification against the configured public key,
+Velopack native feed sidecars, signed AppImage history, MSIX App Installer metadata
+from actual build identity, and Linux repository generation through native GPG,
+APT/RPM/pacman/Flatpak tools. Added manual serialized release CI using enrolled
+local signing profiles; no real release has been published.
+
+P8 local tests: complete core/dist/Linux suites pass; focused strict Clippy and
+rustdoc pass. Real Sparkle 2.10.1 signed-feed fixture verifies and tampering/wrong
+keys fail. Publication regressions cover missing target, changed artifact, concurrent
+lease, replay/downgrade, unowned output, cancellation and retained immutable files.
+A spawned CLI release plan/export/replay check passed in an isolated directory.
+Native repository install/upgrade, remote publisher protocol tests and fresh native
+updater discovery against generated publications remain acceptance work. These
+are implementation commits, not a declaration that all phase gates are complete.

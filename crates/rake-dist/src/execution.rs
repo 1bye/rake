@@ -65,6 +65,12 @@ pub struct Artifact {
     /// Declared baseline and observed native ELF requirements.
     #[serde(default)]
     pub linux: Option<LinuxEvidence>,
+    /// Native build counter (Sparkle CFBundleVersion), when distinct from Cargo version.
+    #[serde(default)]
+    pub build_number: Option<String>,
+    /// Public managed package identity needed by native publication metadata.
+    #[serde(default)]
+    pub native_identity: std::collections::BTreeMap<String, String>,
 }
 
 /// Compatibility evidence from the actual Linux staged executable and libraries.
@@ -773,6 +779,14 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 components: prepared.locks.clone(),
                 trust: trust_record,
                 linux: linux_evidence.clone(),
+                build_number: config.build_number.clone(),
+                native_identity: [
+                    ("msix_name", Some(plan.identifier())),
+                    ("msix_publisher", config.windows.msix.publisher.as_deref()),
+                ]
+                .into_iter()
+                .filter_map(|(key, value)| value.map(|value| (key.into(), value.into())))
+                .collect(),
             });
         }
     }

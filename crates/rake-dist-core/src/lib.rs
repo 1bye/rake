@@ -4,6 +4,8 @@
 
 mod component;
 pub use component::{Archive, Component, ComponentSource};
+mod release;
+pub use release::{Publisher, ReleaseConfig, feed_url};
 mod installation;
 mod update_binding;
 mod update_feed;
@@ -171,6 +173,8 @@ pub struct Config {
     pub runtimes: Vec<Runtime>,
     /// Update settings shared across installation channels.
     pub updates: Updates,
+    /// Publication, signing references and required release targets.
+    pub release: ReleaseConfig,
 }
 
 /// Existing Web bundle options.
@@ -642,6 +646,7 @@ impl Config {
         {
             return Err(Error::Schema(schema));
         }
+        self.release.validate()?;
         let legacy = self.schema_version.is_none();
         let name = self.name.clone().unwrap_or_else(|| package.into());
         if name.trim().is_empty()

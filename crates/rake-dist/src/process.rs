@@ -23,6 +23,10 @@ impl Worker {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
+        Self::spawn_with_io(command)
+    }
+
+    pub(crate) fn spawn_with_io(command: &mut Command) -> io::Result<Self> {
         Ok(Self {
             child: command.group_spawn()?,
             finished: false,
