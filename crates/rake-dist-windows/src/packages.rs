@@ -57,7 +57,7 @@ pub fn certificate_subject(thumbprint: &str) -> Result<String, Error> {
         return Err(Error::Tool("invalid certificate thumbprint".into()));
     }
     let script = format!(
-        "$ErrorActionPreference='Stop'; $c=Get-Item -LiteralPath 'Cert:\\CurrentUser\\My\\{thumbprint}'; if (!$c.HasPrivateKey -or $c.NotAfter -lt (Get-Date)) {{throw 'signing certificate is unavailable or expired'}}; $c.Subject"
+        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=[Security.Cryptography.X509Certificates.X509Store]::new('My','CurrentUser'); try {{ $s.Open([Security.Cryptography.X509Certificates.OpenFlags]::OpenExistingOnly); $found=$s.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,'{thumbprint}',$false); if ($found.Count -ne 1) {{throw 'signing certificate is unavailable'}}; $c=$found[0]; if (!$c.HasPrivateKey -or $c.NotAfter -lt (Get-Date)) {{throw 'signing certificate is unavailable or expired'}}; [Console]::WriteLine($c.Subject) }} finally {{$s.Close()}}"
     );
     Ok(run(Command::new("powershell.exe").args([
         "-NoProfile",
