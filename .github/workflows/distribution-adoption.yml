@@ -1,12 +1,11 @@
 name: Distribution adoption
 on:
-  push:
-    branches: [codex/distribution]
-    paths:
-      - tests/distribution-adoption/**
-      - scripts/test-distribution-adoption.py
-      - .github/workflows/distribution-adoption.yml
   workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        options: [all, windows, linux, macos]
+        default: all
 concurrency:
   group: distribution-adoption-${{ github.ref }}
   cancel-in-progress: true
@@ -17,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-latest"]' || inputs.platform == 'macos' && '["macos-latest"]' || '["macos-latest","windows-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:

@@ -7,6 +7,7 @@ exercise packaging; they do not establish signing, installation or updater gates
 import argparse
 import hashlib
 import json
+import plistlib
 from pathlib import Path
 import shutil
 import struct
@@ -53,11 +54,29 @@ def probe(engine, build_dir):
             (root / 'assets').mkdir()
             (root / 'assets/message.txt').write_text('packaged resource')
             icon(root)
+            (root / 'extra.plist').write_bytes(plistlib.dumps({'RakeAdoptionProbe': 'custom metadata'}))
+            if sys.platform == 'darwin':
+                framework = root / 'FixtureRuntime.framework'
+                version = framework / 'Versions/A'
+                (version / 'Resources').mkdir(parents=True)
+                (version / 'Resources/Info.plist').write_bytes(plistlib.dumps({
+                    'CFBundleIdentifier': 'dev.rake.adoption.runtime', 'CFBundleExecutable': 'FixtureRuntime',
+                    'CFBundlePackageType': 'FMWK', 'CFBundleVersion': '1.0'}))
+                source = root / 'runtime.rs'
+                source.write_text('#[unsafe(no_mangle)] pub extern "C" fn adoption_value()->u32{42}')
+                run(['rustc', '--edition', '2024', '--crate-type', 'cdylib', source, '-o', version / 'FixtureRuntime'])
+                run(['install_name_tool', '-id', '@rpath/FixtureRuntime.framework/Versions/A/FixtureRuntime', version / 'FixtureRuntime'])
+                (framework / 'Versions/Current').symlink_to('A')
+                (framework / 'FixtureRuntime').symlink_to('Versions/Current/FixtureRuntime')
+                (framework / 'Resources').symlink_to('Versions/Current/Resources')
             for name, source in [('fixture', 'fn main(){let p=std::env::args_os().nth(1).expect("resource path"); print!("{}",std::fs::read_to_string(p).expect("packaged resource"));}'),
                                  ('fixture-helper', 'fn main(){print!("packaged helper");}')]:
-                path = root / f'{name}.rs'
+                if sys.platform == 'darwin' and name == 'fixture':
+                    source = '#[link(name="FixtureRuntime",kind="framework")] unsafe extern "C"{fn adoption_value()->u32;}' + source.replace('fn main(){', 'fn main(){assert_eq!(unsafe{adoption_value()},42);')
+                path = root / f'{name}.rs' 
                 path.write_text(source)
-                run(['rustc', '--edition', '2024', path, '-o', root / 'bin' / (name + ('.exe' if sys.platform == 'win32' else ''))])
+                flags = ['-L', f'framework={root}', '-C', 'link-arg=-Wl,-rpath,@executable_path/../Frameworks'] if sys.platform == 'darwin' and name == 'fixture' else []
+                run(['rustc', '--edition', '2024', path, *flags, '-o', root / 'bin' / (name + ('.exe' if sys.platform == 'win32' else ''))])
             before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (root / 'bin').iterdir()}
             # Windows engines may look for an ICO independently of the PNG list.
             (root / 'bin/icons').mkdir()
@@ -73,12 +92,20 @@ def probe(engine, build_dir):
                 app = next(p for p in paths if p.suffix == '.app')
                 relocated = root / 'relocated/App.app'
                 shutil.copytree(app, relocated, symlinks=True)
+                assert (relocated / 'Contents/Frameworks/FixtureRuntime.framework/Versions/Current').is_symlink()
+                info = plistlib.loads((relocated / 'Contents/Info.plist').read_bytes())
+                assert info['RakeAdoptionProbe'] == 'custom metadata'
+                framework = relocated / 'Contents/Frameworks/FixtureRuntime.framework'
+                for signable in [framework / 'Versions/A/FixtureRuntime', framework,
+                                 relocated / 'Contents/MacOS/fixture-helper', relocated]:
+                    run(['codesign', '--force', '--sign', '-', signable])
+                run(['codesign', '--verify', '--deep', '--strict', relocated])
                 resource = next(relocated.rglob('message.txt'))
                 binary = relocated / 'Contents/MacOS/fixture'
                 helper = relocated / 'Contents/MacOS/fixture-helper'
                 assert run([binary, resource], cwd='/') == 'packaged resource'
                 assert run([helper], cwd='/') == 'packaged helper'
-                verified += ['relocated binary runs', 'resource included', 'helper runs']
+                verified += ['relocated binary runs', 'resource included', 'helper runs', 'framework relocation', 'framework symlinks', 'custom plist', 'external ad-hoc signing verification']
             elif sys.platform == 'linux':
                 extracted = root / 'extracted'
                 run(['dpkg-deb', '--extract', next(p for p in paths if p.suffix == '.deb'), extracted])
@@ -89,7 +116,7 @@ def probe(engine, build_dir):
                 assert run([helper], cwd='/') == 'packaged helper'
                 verified += ['extracted binary runs', 'resource included', 'helper runs']
             results.append({'engine': engine, 'target': target, 'format': package_format, 'verified': verified,
-                            'pending': ['native installation/upgrade', 'signing', 'framework relocation', 'cancellation', 'update handoff']})
+                            'pending': ['native installation/upgrade', 'Developer ID/notarization', 'non-macOS library relocation', 'cancellation', 'update handoff']})
     return results
 
 

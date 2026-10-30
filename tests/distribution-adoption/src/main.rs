@@ -34,16 +34,22 @@ fn cargo_package(
 ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     use cargo_packager::{Config, PackageFormat};
     let format = PackageFormat::from_short_name(format).ok_or("unknown cargo-packager format")?;
-    let config: Config = serde_json::from_value(serde_json::json!({
+    let mut config: Config = serde_json::from_value(serde_json::json!({
         "productName": "Adoption Fixture", "version": "1.0.0",
         "identifier": "dev.rake.adoption", "publisher": "Rake",
         "description": "Native packaging adoption fixture",
         "authors": ["Rake <test@example.com>"], "outDir": root.join("packages"),
         "binariesDir": root.join("bin"), "targetTriple": target,
-        "binaries": [{"path": root.join("bin/fixture"), "main": true}, {"path": root.join("bin/fixture-helper")}],
-        "resources": [root.join("assets/message.txt")], "icons": [root.join("icon.png"), root.join("icon.ico")],
+        "binaries": [{"path": root.join("bin").join("fixture"), "main": true}, {"path": root.join("bin").join("fixture-helper")}],
+        "resources": [root.join("assets").join("message.txt")], "icons": [root.join("icon.png"), root.join("icon.ico")],
         "formats": [format]
     }))?;
+    if cfg!(target_os = "macos") {
+        config.macos = Some(serde_json::from_value(serde_json::json!({
+            "frameworks": [root.join("FixtureRuntime.framework")],
+            "infoPlistPath": root.join("extra.plist")
+        }))?);
+    }
     let packages = cargo_packager::package(&config)?;
     if packages.is_empty() {
         return Err("engine silently skipped requested format".into());
@@ -71,11 +77,25 @@ fn tauri_package(
             root.join("icon.ico").to_string_lossy().into_owned(),
         ]),
         resources_map: Some(std::collections::HashMap::from([(
-            root.join("assets/message.txt")
+            root.join("assets")
+                .join("message.txt")
                 .to_string_lossy()
                 .into_owned(),
             "assets/message.txt".into(),
         )])),
+        macos: tauri_bundler::MacOsSettings {
+            frameworks: if cfg!(target_os = "macos") {
+                Some(vec![
+                    root.join("FixtureRuntime.framework")
+                        .to_string_lossy()
+                        .into_owned(),
+                ])
+            } else {
+                None
+            },
+            info_plist: Some(tauri_bundler::PlistKind::Path(root.join("extra.plist"))),
+            ..Default::default()
+        },
         windows: tauri_bundler::WindowsSettings {
             webview_install_mode: serde_json::from_value(serde_json::json!({"type": "skip"}))?,
             ..Default::default()

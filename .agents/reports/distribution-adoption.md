@@ -31,3 +31,16 @@ framework/dylib relocation, signing, tool acquisition, cancellation and updater
 save/restart handoff need evidence. Tauri remains the proposed engine. No
 production engine dependency or claim of multi-platform distribution support
 has been added.
+
+## First native matrix
+
+Run https://github.com/1bye/rake/actions/runs/41057984993 passed on macOS and
+Ubuntu. Windows compiled both engines; the cargo-packager NSIS invocation failed
+because the adapter supplied mixed path separators. Normalize PathBuf components
+before passing them to the engine. Follow-up runs are manual and can select only
+the failing OS. No full matrix rerun is needed.
+
+Additional local macOS probes pass custom plist, relocated linked framework,
+internal framework symlinks, and external inside-out ad-hoc signing followed by
+strict signature verification for both engines. This does not establish
+Developer ID signing, notarization, or the SDK restart handoff.
