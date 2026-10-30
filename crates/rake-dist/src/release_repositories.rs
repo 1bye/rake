@@ -1,5 +1,14 @@
 //! Signed native repository handoff from Linux builders to the final publisher.
-use super::*;
+use super::{Input, ReleaseRequest, cancelled, fail, files, inputs, package_payload, public_root};
+use crate::{Distribution, Error, Format};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
+};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,6 +256,7 @@ pub(super) fn load(
 
 #[cfg(test)]
 mod tests {
+    use super::super::publish_with_repositories;
     use super::*;
     #[test]
     fn handoff_binds_context_packages_and_files_before_cross_host_promotion() {
