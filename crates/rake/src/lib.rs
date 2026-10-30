@@ -17,10 +17,21 @@ pub use rake_resources::{Resources, resources};
 pub use rake_updates as updates;
 
 /// Runs enabled native updater installer callbacks before constructing the app.
-/// Manual entry points call this first; `#[rake::app]` does so automatically.
-pub fn early_startup() {
+/// Manual entry points use `early_startup!()`; `#[rake::app]` does so automatically.
+/// # Panics
+/// Panics if a hand-written embedded policy is invalid; rake-build validates generated policy.
+pub fn early_startup_for(embedded: Option<&str>) {
     #[cfg(all(feature = "updates", not(target_family = "wasm")))]
-    rake_updates::early_startup();
+    rake_updates::early_startup_for(embedded).expect("generated Rake update policy must be valid");
+    #[cfg(any(not(feature = "updates"), target_family = "wasm"))]
+    let _ = embedded;
+}
+/// Initializes installer callbacks using policy embedded into the application crate.
+#[macro_export]
+macro_rules! early_startup {
+    () => {
+        $crate::early_startup_for(option_env!("RAKE_UPDATE_POLICY"))
+    };
 }
 
 pub mod control;

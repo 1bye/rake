@@ -52,6 +52,71 @@ impl<R: Route> Router<R> {
         self.0.quit_status(&self.0.tasks.snapshot())
     }
 
+    /// Attaches one staged update to a new guarded quit operation.
+    ///
+    /// Existing document, history, window and active-work guards run unchanged.
+    /// Decline/cancellation drops the handoff without installation. Hosts commit
+    /// it with `complete_update_restart` only after `QuitPhase::Ready`.
+    /// # Errors
+    /// Rejects concurrent quits or a quit that was not admitted.
+    #[cfg(feature = "updates")]
+    pub fn quit_for_update(
+        &self,
+        handoff: rake_updates::RestartHandoff,
+        options: QuitOptions,
+    ) -> Result<Operation<QuitResult>, rake_updates::Error> {
+        if self.quit_status().phase.blocks_navigation() {
+            return Err(rake_updates::Error::Policy(
+                "another quit already owns the application lifecycle".into(),
+            ));
+        }
+        let operation = self.quit(options);
+        if self.quit_status().operation_id != Some(operation.id())
+            || !self.quit_status().phase.is_pending()
+        {
+            return Err(rake_updates::Error::Policy(
+                "update quit was not admitted".into(),
+            ));
+        }
+        *self.0.update_handoff.borrow_mut() = Some(handoff);
+        *self.0.update_restart_error.borrow_mut() = None;
+        Ok(operation)
+    }
+
+    /// Runs a pending updater after all guards and managed work have completed.
+    /// Native Rake workspaces call this before host exit; custom hosts call it there too.
+    /// Returns false when no update handoff was attached.
+    /// # Errors
+    /// Rejects premature calls and preserves native handoff failures for manual restart.
+    #[cfg(feature = "updates")]
+    pub fn complete_update_restart(&self) -> Result<bool, rake_updates::Error> {
+        if self.quit_status().phase != QuitPhase::Ready {
+            return Err(rake_updates::Error::Policy(
+                "update restart requires a committed guarded quit".into(),
+            ));
+        }
+        if let Some(error) = self.update_restart_error() {
+            return Err(rake_updates::Error::Provider(error));
+        }
+        let Some(handoff) = self.0.update_handoff.borrow_mut().take() else {
+            return Ok(false);
+        };
+        match handoff.commit(true) {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                *self.0.update_restart_error.borrow_mut() = Some(error.to_string());
+                self.0.notify();
+                Err(error)
+            }
+        }
+    }
+
+    /// Returns the updater's failed restart diagnostic, for a manual-restart UI.
+    #[cfg(feature = "updates")]
+    pub fn update_restart_error(&self) -> Option<String> {
+        self.0.update_restart_error.borrow().clone()
+    }
+
     /// Eagerly submits one guarded quit. Concurrent requests join its operation;
     /// the first request's job policy wins. Dropping handles never cancels quit.
     pub fn quit(&self, options: QuitOptions) -> Operation<QuitResult> {
@@ -150,6 +215,10 @@ impl<R: Route> Router<R> {
                 _ => QuitPhase::Blocked,
             };
 
+            #[cfg(feature = "updates")]
+            if phase != QuitPhase::Ready {
+                core.update_handoff.borrow_mut().take();
+            }
             core.quit.borrow_mut().phase = phase;
             core.finish(id, &result);
             let _ = sender.send(result);

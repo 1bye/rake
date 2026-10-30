@@ -48,11 +48,39 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
             Some(&std::env::var("TARGET")?),
             (!selected.is_empty()).then_some(selected.as_slice()),
         )?;
-        plan.packages()
-            .first()
-            .ok_or("no selected package")?
-            .config()
-            .clone()
+        let package = plan.packages().first().ok_or("no selected package")?;
+        let mut public_keys = std::collections::BTreeMap::new();
+        for (provider, path) in &package.config().updates.public_keys {
+            println!("cargo:rerun-if-changed={}", root.join(path).display());
+            let bytes = fs::read(root.join(path))?;
+            if bytes.is_empty() || bytes.len() > 16 * 1024 {
+                return Err("update public keys must contain 1–16384 bytes".into());
+            }
+            public_keys.insert(provider.clone(), bytes);
+        }
+        let binding = rake_dist_core::UpdateBinding {
+            schema_version: 1,
+            identifier: plan.identifier().into(),
+            version: plan.version().into(),
+            package_version: package.version().version.clone(),
+            target: std::env::var("TARGET")?,
+            format: package.format(),
+            owner: package.update_owner(),
+            channel: package
+                .config()
+                .updates
+                .channel
+                .clone()
+                .unwrap_or_else(|| "stable".into()),
+            base_url: package.config().updates.base_url.clone(),
+            public_keys,
+        };
+        binding.validate()?;
+        println!(
+            "cargo:rustc-env=RAKE_UPDATE_POLICY={}",
+            serde_json::to_string(&binding)?
+        );
+        package.config().clone()
     } else {
         config
     };

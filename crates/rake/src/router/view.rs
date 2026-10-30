@@ -545,6 +545,12 @@ impl<R: Route> Workspace<R> {
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
                                 closing.responses_idle().await;
+                                #[cfg(feature="updates")]
+                                if let Err(error)=observed.complete_update_restart() {
+                                    tracing::error!(%error,"update handoff failed; manual restart required");
+                                    let _=_view.update(cx,|_,cx|cx.notify());
+                                    break;
+                                }
                                 cx.update(|cx| cx.quit());
 
                                 break;
@@ -626,6 +632,12 @@ impl<R: Route> Render for Workspace<R> {
             snapshot.quit.phase,
             crate::quit::QuitPhase::Stopping | crate::quit::QuitPhase::Ready
         ) {
+            #[cfg(feature = "updates")]
+            if let Some(error) = self.router.update_restart_error() {
+                return div().size_full().bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8)).p_4()
+                    .child(format!("The update could not restart the app: {error}. The app finished shutting down. Restart manually to continue."))
+                    .child(div().id("update-quit-manually").px_3().py_2().cursor_pointer().child("Quit").on_click(|_,_,cx|cx.quit()));
+            }
             return div()
                 .size_full()
                 .bg(rgb(0x18232b))

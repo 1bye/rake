@@ -660,3 +660,77 @@ fn dropping_a_pending_observer_does_not_cancel_quit_but_driver_teardown_does() {
         Err(OperationError::RuntimeShutdown)
     );
 }
+
+#[cfg(feature = "updates")]
+#[test]
+fn update_handoff_waits_for_committed_quit_and_can_fail_without_forcing_exit() {
+    let (router, mut pool) = harness();
+    let invoked = Rc::new(Cell::new(false));
+    let observed = Rc::clone(&invoked);
+    let handoff = rake::updates::RestartHandoff::new(move || {
+        observed.set(true);
+        Ok(())
+    });
+    assert!(router.complete_update_restart().is_err());
+    let quit = router
+        .quit_for_update(handoff, QuitOptions::default())
+        .unwrap();
+    assert!(!invoked.get());
+    commit(&mut pool, quit);
+    assert!(!invoked.get());
+    assert!(router.complete_update_restart().unwrap());
+    assert!(invoked.get());
+    assert!(!router.complete_update_restart().unwrap());
+    let (router, mut pool) = harness();
+    let handoff = rake::updates::RestartHandoff::new(|| {
+        Err(rake::updates::Error::Provider(
+            "native installer unavailable".into(),
+        ))
+    });
+    let quit = router
+        .quit_for_update(handoff, QuitOptions::default())
+        .unwrap();
+    commit(&mut pool, quit);
+    assert!(router.complete_update_restart().is_err());
+    assert!(
+        router
+            .update_restart_error()
+            .unwrap()
+            .contains("native installer unavailable")
+    );
+}
+
+#[cfg(feature = "updates")]
+#[test]
+fn dirty_document_cancellation_discards_the_update_handoff() {
+    let (router, mut pool) = harness();
+    let entry = open(&router, &mut pool, 1);
+    entry.set_dirty(true).unwrap();
+    let installed = Rc::new(Cell::new(false));
+    let invoked = Rc::clone(&installed);
+    let quit = router
+        .quit_for_update(
+            rake::updates::RestartHandoff::new(move || {
+                invoked.set(true);
+                Ok(())
+            }),
+            QuitOptions::default(),
+        )
+        .unwrap();
+    pool.run_until_stalled();
+    respond(&router, "cancel");
+    assert!(matches!(
+        pool.run_until(quit.wait()).unwrap(),
+        Outcome::Cancelled(_)
+    ));
+    assert!(!installed.get());
+    assert!(entry.id().is_ok());
+    assert!(router.complete_update_restart().is_err());
+    // A later ordinary quit cannot accidentally revive the declined installer.
+    let quit = router.quit(QuitOptions::default());
+    pool.run_until_stalled();
+    respond(&router, "discard");
+    commit(&mut pool, quit);
+    assert!(!router.complete_update_restart().unwrap());
+    assert!(!installed.get());
+}

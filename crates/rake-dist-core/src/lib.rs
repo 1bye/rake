@@ -5,7 +5,11 @@
 mod component;
 pub use component::{Archive, Component, ComponentSource};
 mod installation;
+mod update_binding;
+mod update_feed;
 pub use installation::Installation;
+pub use update_binding::UpdateBinding;
+pub use update_feed::{NativeFeedSignature, SignedUpdateFeed, UpdateFeed, UpdateRelease};
 mod overrides;
 mod trust;
 pub use trust::{TrustOptions, TrustRecord};
@@ -784,23 +788,12 @@ impl Config {
             let owner = if !self.updates.enabled {
                 UpdateOwner::Disabled
             } else {
-                match format {
-                    Format::App | Format::Dmg | Format::Zip if platform == Platform::Macos => {
-                        UpdateOwner::Sparkle
-                    }
-                    Format::Msix => UpdateOwner::AppInstaller,
-                    Format::Velopack => UpdateOwner::Velopack,
-                    Format::Deb => UpdateOwner::Apt,
-                    Format::Rpm => UpdateOwner::RpmRepository,
-                    Format::Arch => UpdateOwner::Pacman,
-                    Format::Flatpak => UpdateOwner::Flatpak,
-                    Format::Appimage => UpdateOwner::Appimage,
-                    _ => UpdateOwner::External,
-                }
+                format.update_owner(platform)
             };
             let key = match owner {
                 UpdateOwner::Sparkle => Some("sparkle"),
                 UpdateOwner::Appimage => Some("appimage"),
+                UpdateOwner::Velopack => Some("velopack"),
                 _ => None,
             };
             if let Some(key) = key

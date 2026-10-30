@@ -300,7 +300,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 binary,
                 target,
                 request.release,
-                item.format(),
+                item,
                 selected
                     .dependencies
                     .iter()
@@ -766,9 +766,10 @@ fn build(
     binary: &str,
     target: &str,
     release: bool,
-    format: Format,
+    package_plan: &rake_dist_core::PackagePlan,
     facade: Option<&str>,
 ) -> Result<PathBuf, Error> {
+    let format = package_plan.format();
     let mut command = Command::new("cargo");
     command.current_dir(
         manifest
@@ -784,13 +785,24 @@ fn build(
         ])
         .arg(manifest)
         .args(["--package", package, "--bin", binary, "--target", target]);
-    if format == Format::Velopack {
-        let facade = facade.ok_or_else(|| {
-            Error::Execution("Velopack requires the Rake facade's early startup integration".into())
-        })?;
-        command
-            .arg("--features")
-            .arg(format!("{facade}/updates-velopack"));
+    let feature = if format == Format::Velopack {
+        Some("updates-velopack")
+    } else if package_plan.update_owner() == rake_dist_core::UpdateOwner::Appimage {
+        Some("updates-appimage")
+    } else if package_plan.config().updates.enabled {
+        Some("updates")
+    } else {
+        None
+    };
+    if let Some(feature) = feature
+        && let Some(facade) = facade
+    {
+        command.arg("--features").arg(format!("{facade}/{feature}"));
+    }
+    if format == Format::Velopack && facade.is_none() {
+        return Err(Error::Execution(
+            "Velopack requires the Rake facade's early startup integration".into(),
+        ));
     }
     command.env(
         "RAKE_DISTRIBUTION_FORMAT",

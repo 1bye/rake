@@ -266,6 +266,7 @@ base_url = "https://updates.example.com/media-studio/"
 [package.metadata.rake.bundle.updates.public_keys]
 sparkle = "packaging/keys/sparkle.pub"
 appimage = "packaging/keys/appimage.pub"
+velopack = "packaging/keys/velopack.pub"
 ~~~
 
 The advanced example deliberately selects update-capable Windows channels.
@@ -302,7 +303,7 @@ Configuration rules:
 
 One-time update setup creates/imports provider keys and records public-key files
 and credential references in a dedicated distribution configuration section.
-For example, updates.public_keys can map sparkle and appimage to checked-in
+For example, updates.public_keys can map sparkle, appimage and velopack to checked-in
 public-key files. Private keys stay in the selected credential store. An
 updates-enabled plan must resolve its required public keys; it never substitutes
 a new key silently. Define and test provider-specific key rotation before

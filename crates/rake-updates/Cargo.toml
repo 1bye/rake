@@ -10,12 +10,24 @@ publish.workspace = true
 workspace = true
 
 [features]
-velopack = ["dep:velopack"]
+appimage = ["dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:fs2", "dep:tempfile"]
+velopack = ["dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
 
 [dependencies]
 rake-resources = { path = "../rake-resources" }
 rake-dist-core = { path = "../rake-dist-core" }
 thiserror.workspace = true
+serde_json.workspace = true
+semver = "1"
+url = "2.5"
+sha2 = { version = "0.10", optional = true }
+ed25519-dalek = { version = "2.2", optional = true }
+hex = { version = "0.4", optional = true }
+fs2 = { version = "0.4", optional = true }
+tempfile = { version = "3", optional = true }
+ureq = { version = "3.5", default-features = false, features = ["rustls"], optional = true }
 
-[target.'cfg(windows)'.dependencies]
-velopack = { version = "=1.2.161", optional = true }
+velopack = { version = "=1.2.161", optional = true, features = ["public-utils"] }
+
+[dev-dependencies]
+serde.workspace = true

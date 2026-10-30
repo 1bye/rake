@@ -83,11 +83,19 @@ jobs:
         timeout-minutes: 5
         if: always() && runner.os == 'Windows'
         run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --locked
+      - name: Install pinned native Velopack tool
+        if: always() && runner.os == 'Windows'
+        timeout-minutes: 3
+        run: dotnet tool install --global vpk --version 1.2.161
+      - name: Velopack native install, upgrade and uninstall
+        if: always() && runner.os == 'Windows'
+        timeout-minutes: 8
+        run: python scripts/test-distribution-velopack.py --cli target/debug/rake.exe
       - name: Verify Velopack startup precedes the app factory
         if: always() && runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo run -p rake-updates --features velopack --example velopack-startup --locked -- --veloapp-version
+          cargo run -p rake-updates --features velopack --example velopack-startup --locked -- --veloapp-install 1.0.0
           if ($LASTEXITCODE -ne 0) { throw 'Velopack installer startup failed' }
       - name: Remove disposable signing profile
         if: always() && runner.os == 'Windows'

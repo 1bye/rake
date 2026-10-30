@@ -6229,9 +6229,19 @@ dependencies = [
 name = "rake-updates"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
+ "fs2",
+ "hex",
  "rake-dist-core",
  "rake-resources",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.21",
+ "ureq",
+ "url",
  "velopack",
 ]
 

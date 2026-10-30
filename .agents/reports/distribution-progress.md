@@ -139,3 +139,44 @@ to stop wasted runner minutes; diagnostics await job completion. The test trust
 step now has an explicit software key provider, noninteractive trust installation
 and a two-minute timeout; SDK tests have a five-minute timeout. No production
 Windows certificate/private key has been introduced.
+
+P6 native checkpoint 41091230341 passed on Ubuntu 24.04, including real ELF
+relocation and baseline rejection, spawned CLI packaging, and Debian/Fedora
+installation, relocated launch, upgrade and uninstall. Fedora runs in an isolated
+Fedora 43 container. Arch makepkg and the actual Flatpak GPUI sandbox remain open.
+
+P7 first implementation: rake-build embeds immutable update identity, native/Cargo
+versions, target, packaging owner, channel, HTTPS root and verification key bytes.
+Installed descriptors must match and cannot turn a managed package into an
+AppImage. Installer startup captures policy in the consuming application crate;
+Velopack auto-application remains disabled. Its Rust SDK startup probe now uses
+--veloapp-install 1.0.0 (the earlier --veloapp-version flag is not a Rust SDK hook).
+
+The updater crate now has bounded/cancellable HTTPS transport, authenticated full
+AppImage feeds, installed-image ownership verification, verified sibling staging,
+exclusive locks, atomic replacement and trusted previous-image recovery. The
+pinned Velopack SDK has a signed native-feed transport with contextual signature
+and expiry, full-package staging, cancellation/progress and independent cached
+package checksum verification. This adds a public updates.public_keys.velopack
+reference to configuration; private update-signing keys are never serialized.
+
+Restart handoffs are owned and inert until committed. Router::quit_for_update
+uses existing document/history/window/work guards; cancellation discards the
+installer and preserves admission. Native workspaces invoke the handoff only at
+Ready, and keep a failed restart visible for manual exit. Multiple windows cannot
+bypass that failure. Standalone/custom hosts have the same explicit callback
+handoff contract. This does not yet establish the OS-quit bridge or Sparkle SDK.
+
+Local evidence: 14 guarded-quit tests including dirty cancellation and failed
+restart, seven update tests including signature/channel/expiry/downgrade/recovery
+and cached corruption, core tests, native facade consumers, strict Clippy and
+rustdoc pass. Real signed N-to-N+1 updater acceptance remains open. A Windows
+native Velopack packaging/install/upgrade/uninstall fixture is prepared for the
+next consolidated checkpoint. P7 is not complete; Sparkle, OS-initiated quit and
+native provider restart acceptance still require implementation/validation.
+
+Windows run 41086364202 was cancelled after trust setup stalled. Both gh and the
+connected GitHub tool return BlobNotFound for its job log. A fresh-runner build
+bug was independently corrected: ordinary locked Cargo builds may fetch missing
+dependencies instead of unconditionally forcing offline mode. This is a concrete
+fix, not verified attribution of the unavailable GPUI failure log.

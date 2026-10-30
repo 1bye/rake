@@ -89,7 +89,7 @@ fn self_managed_updates_require_keys_and_a_valid_https_origin() {
         );
     }
     let settings = config(
-        json!({"schema_version":1,"updates":{"enabled":true,"base_url":"https://example.com/"}}),
+        json!({"schema_version":1,"updates":{"enabled":true,"base_url":"https://example.com/","public_keys":{"velopack":"keys/updates.pub"}}}),
     );
     assert!(matches!(
         settings.plan("notes", "1.2.3", Platform::Macos),
@@ -100,7 +100,7 @@ fn self_managed_updates_require_keys_and_a_valid_https_origin() {
 #[test]
 fn windows_channels_and_numeric_version_limits_are_explicit() {
     let settings = config(
-        json!({"schema_version":1,"windows":{"formats":["msix","velopack","msi"],"msix":{"publisher":"CN=Example"}},"updates":{"enabled":true,"base_url":"https://example.com/"}}),
+        json!({"schema_version":1,"windows":{"formats":["msix","velopack","msi"],"msix":{"publisher":"CN=Example"}},"updates":{"enabled":true,"base_url":"https://example.com/","public_keys":{"velopack":"keys/updates.pub"}}}),
     );
     let plan = settings.plan("notes", "1.2.3", Platform::Windows).unwrap();
     let owners: Vec<_> = plan.packages().iter().map(|p| p.update_owner()).collect();

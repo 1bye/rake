@@ -13,6 +13,7 @@ workspace = true
 [features]
 default = ["gpui"]
 updates = ["dep:rake-updates"]
+updates-appimage = ["updates", "rake-updates/appimage"]
 updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
