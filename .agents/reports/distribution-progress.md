@@ -298,3 +298,13 @@ without changing system trust or reading production keys. A real AppImage N/N+1
 publication/update fixture is prepared for the consolidated Linux checkpoint.
 The facade now reexports the updates! macro as well as the updates module, and
 its no-default-features/updates-appimage consumer compiles.
+
+P6 remaining-gate fixtures: added native Arch makepkg/install/upgrade/uninstall and
+signed pacman repository discovery in an isolated official Arch container. Added a
+real GPUI Flatpak source build with installed SDK/runtime commit pins and a frame
+callback that verifies the installed resource after rendering. Flatpak vendoring
+now fetches missing locked sources rather than forcing offline resolution on a
+fresh runner. Source compile features and the Flatpak policy stay SDK-owned.
+Local Linux package tests and strict dist/Linux/example Clippy pass. The actual
+Arch/Flatpak native gates remain pending the single consolidated Linux checkpoint,
+which also exercises signed APT/RPM repositories and real AppImage HTTPS updates.

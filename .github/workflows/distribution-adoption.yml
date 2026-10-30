@@ -4,14 +4,14 @@ on:
     inputs:
       mode:
         type: choice
-        options: [acceptance, comparison, velopack]
+        options: [acceptance, comparison, velopack, linux-deep]
         default: acceptance
       platform:
         type: choice
         options: [all, windows, linux, macos]
         default: all
 concurrency:
-  group: distribution-adoption-${{ github.ref }}
+  group: distribution-adoption-${{ github.ref }}-${{ inputs.platform }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -37,13 +37,13 @@ jobs:
           name: adoption-${{ matrix.os }}
           path: adoption-results.json
   acceptance:
-    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack'
+    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'linux-deep'
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-latest","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.mode == 'linux-deep' && 45 || 30 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -52,18 +52,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Install deep Linux prerequisites
+        if: runner.os == 'Linux' && inputs.mode == 'linux-deep'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder xvfb xauth libfuse2
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build CLI for deep Linux acceptance
+        if: inputs.mode == 'linux-deep'
+        run: cargo build -p rake-cli --locked
+      - name: Signed Linux repository install and upgrade
+        if: runner.os == 'Linux' && inputs.mode == 'linux-deep'
+        timeout-minutes: 10
+        run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install --repositories
+      - name: Signed AppImage HTTPS publication and native update
+        if: always() && runner.os == 'Linux' && inputs.mode == 'linux-deep'
+        timeout-minutes: 8
+        run: python3 scripts/test-distribution-appimage.py --cli target/debug/rake
+      - name: Arch repository and Flatpak sandbox GPU render
+        if: always() && runner.os == 'Linux' && inputs.mode == 'linux-deep'
+        timeout-minutes: 25
+        run: python3 scripts/test-distribution-linux-formats.py --cli target/debug/rake
       - name: Install Linux packaging prerequisites
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.mode != 'linux-deep'
         run: sudo apt-get update && sudo apt-get install -y patchelf rpm desktop-file-utils
-      - if: inputs.mode != 'velopack'
+      - if: inputs.mode == 'acceptance'
         run: cargo test -p rake-dist-core -p rake-dist -p rake-build -p rake-resources -p rake-dist-macos -p rake-dist-windows -p rake-dist-linux --locked
       - name: Verify real ELF relocation and Debian tool consumption
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.mode != 'linux-deep'
         run: cargo test -p rake-dist-linux --features native-tests --test native --locked
-      - if: inputs.mode != 'velopack'
+      - if: inputs.mode == 'acceptance'
         run: cargo test -p rake-cli --test distribution_bundle --test distribution_plan --locked
       - name: Debian and Fedora install, upgrade and uninstall
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.mode != 'linux-deep'
         timeout-minutes: 8
         run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install
       - name: Build and package the real GPUI application with custom manifest

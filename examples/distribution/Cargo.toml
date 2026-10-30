@@ -9,6 +9,9 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+native-acceptance = []
+
 [dependencies]
 rake = { workspace = true, features = ["experimental-view"] }
 

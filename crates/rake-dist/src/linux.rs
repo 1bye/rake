@@ -317,13 +317,7 @@ fn source_files(root: &Path, directory: &Path) -> Result<Vec<PathBuf>, Error> {
 fn vendor(manifest: &Path, source: &Path) -> Result<(), Error> {
     let output = Command::new("cargo")
         .current_dir(manifest.parent().ok_or(Error::Package)?)
-        .args([
-            "vendor",
-            "--locked",
-            "--offline",
-            "--versioned-dirs",
-            "--manifest-path",
-        ])
+        .args(["vendor", "--locked", "--versioned-dirs", "--manifest-path"])
         .arg(manifest)
         .arg(source.join("vendor"))
         .output()?;
