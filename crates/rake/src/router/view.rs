@@ -98,6 +98,7 @@ impl<R: Route> PageContext<R> {
         let tab_id = entry
             .tab_id()
             .map_err(|error| MountError(error.to_string()))?;
+
         Ok(Self {
             navigator,
             entry,
@@ -112,6 +113,20 @@ impl<R: Route> PageContext<R> {
     #[cfg(feature = "updates")]
     pub fn bind_updates<V: 'static>(&self, cx: &mut Context<V>) -> crate::UpdateHandle {
         crate::updates_binding::bind_page_updates(self.clone(), cx)
+    }
+
+    /// Binds an initiated user action as view/entry-owned finite work. Browser
+    /// requests needing a user gesture must start before calling this method.
+    pub fn action<V: 'static, T: 'static, E, Fut>(
+        &self,
+        cx: &mut Context<V>,
+        future: Fut,
+    ) -> crate::loading::AsyncAction<T, E>
+    where
+        E: std::error::Error + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + 'static,
+    {
+        crate::loading::AsyncAction::new(self.tasks(), self.services(), future, cx)
     }
 
     /// Starts entry-owned asynchronous data with automatic redraw and checked retries.
@@ -266,8 +281,10 @@ impl<R: Route> Router<R> {
 
         let preparing_views = views.clone();
         let preparing_services = services.clone();
+
         let prepare: Prepare<R> = Rc::new(move |destination, _entry, _navigator, cancellation| {
             let views = preparing_views.clone();
+
             let context = crate::loading::LoadContext::new(
                 preparing_services.clone(),
                 cancellation,
@@ -441,6 +458,7 @@ impl<R: Route> RouteOutlet<R> {
 impl<R: Route> RenderOnce for RouteOutlet<R> {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let router = self.navigator.runtime().ok();
+
         let view = router.as_ref().and_then(|router| {
             router
                 .resource(self.window)
@@ -470,6 +488,7 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
                 outlet
             }
         }
+
         #[cfg(not(feature = "devtools"))]
         {
             outlet
@@ -555,6 +574,7 @@ fn notify_workspace<R: Route>(
 ) -> bool {
     view.update(cx, |workspace, cx| {
         cx.notify();
+
         if let Some(layout) = &workspace.layout {
             gpui::App::notify(cx, layout.entity_id());
         }
@@ -589,6 +609,7 @@ impl<R: Route> Workspace<R> {
             layout,
             new_window_options,
         } = root;
+
         #[cfg(target_family = "wasm")]
         let _ = new_window_options;
 
@@ -601,6 +622,7 @@ impl<R: Route> Workspace<R> {
         let contexts = Rc::new(RefCell::new(BTreeMap::new()));
 
         let layout_services = services.clone();
+
         let router = Router::with_views(
             config,
             services,
@@ -634,11 +656,14 @@ impl<R: Route> Workspace<R> {
                 .quit_guard(move |context| guard(context))
                 .map_err(|error| MountError(error.to_string()))?;
         }
+
         router.install_quit_action(cx);
+
         #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
         if let Err(error) = router.install_sparkle() {
             tracing::error!(%error,"native updater could not start");
         }
+
         router.client().set_commands(commands);
 
         #[cfg(feature = "devtools")]
@@ -720,12 +745,14 @@ impl<R: Route> Workspace<R> {
                         loop {
                             #[cfg(all(feature="updates",not(target_family="wasm")))]
                             let changed=Box::pin(observed.changed_with_updates(revision));
+
                             #[cfg(all(
                                 not(feature="updates"),
                                 feature="native-lifecycle",
                                 target_os="macos"
                             ))]
                             let changed=Box::pin(observed.changed_with_native_quit(revision));
+
                             #[cfg(not(any(
                                 all(feature="updates",not(target_family="wasm")),
                                 all(
@@ -735,9 +762,11 @@ impl<R: Route> Workspace<R> {
                                 )
                             )))]
                             let changed=Box::pin(observed.changed(revision));
+
                             #[cfg(feature="devtools")]
                             {
                                 let inspection=observed.client().inspection().listen();
+
                                 if let futures::future::Either::Left((next,_))=futures::future::select(changed,Box::pin(inspection)).await {revision=next;}
                             }
                             #[cfg(not(feature="devtools"))]
@@ -748,6 +777,7 @@ impl<R: Route> Workspace<R> {
                                 closing.responses_idle().await;
                                 #[cfg(all(feature="native-lifecycle",target_os="macos"))]
                                 observed.prepare_native_exit(true);
+
                                 #[cfg(feature="updates")]
                                 match observed.complete_update_restart() {
                                     Ok(rake_updates::RestartDisposition::ProviderHandlesExit)=>continue,
@@ -757,9 +787,11 @@ impl<R: Route> Workspace<R> {
                                         {observed.reply_native_quit(false);observed.prepare_native_exit(true);}
                                         tracing::error!(%error,"update handoff failed; manual restart required");
                                         let _=_view.update(cx,|_,cx|cx.notify());
+
                                         break;
                                     }
                                 }
+
                                 #[cfg(all(feature="native-lifecycle",target_os="macos"))]
                                 observed.reply_native_quit(true);
                                 cx.update(|cx| cx.quit());
@@ -853,6 +885,7 @@ impl<R: Route> Render for Workspace<R> {
                     .inspect("rake.update.restart_error")
                     .root(crate::__rake_inspection!(self.router.client().inspection(),crate::inspection::Store::default()),snapshot.revision,self.window);
             }
+
             return div()
                 .size_full()
                 .bg(rgb(0x18232b))
@@ -948,6 +981,7 @@ impl<R: Route> Render for Workspace<R> {
             let choices = decision.choices.into_iter().map(|choice| {
                 let navigator = navigator.clone();
                 let id = decision.id;
+
                 #[cfg(feature = "devtools")]
                 let semantic_id = format!("rake.decision.{id}.{}", choice.id);
 
@@ -1060,6 +1094,7 @@ impl<R: Route> Render for Workspace<R> {
         let quit_controls = if let Some(updates) = self.router.updates() {
             use rake_updates::UpdateState;
             let state = updates.state();
+
             let label = match &state {
                 UpdateState::Available(info) => Some(format!("Update {} available…", info.version)),
                 UpdateState::Downloading { progress, .. } if progress.total_bytes > 0 => {
@@ -1085,6 +1120,7 @@ impl<R: Route> Render for Workspace<R> {
                 UpdateState::ManagedExternally(_) => Some("Updates managed by your system".into()),
                 _ => None,
             };
+
             let actionable = matches!(
                 state,
                 UpdateState::Idle
@@ -1095,7 +1131,9 @@ impl<R: Route> Render for Workspace<R> {
                     | UpdateState::Downloading { .. }
                     | UpdateState::Failed { .. }
             );
+
             let router = self.router.clone();
+
             if let Some(label) = label {
                 quit_controls.child(div().id("update-status").px_3().py_2().child(label).when(
                     actionable,
@@ -1108,6 +1146,7 @@ impl<R: Route> Render for Workspace<R> {
                                     .map(|_| ()),
                                 UpdateState::Checking | UpdateState::Downloading { .. } => {
                                     updates.cancel();
+
                                     Ok(())
                                 }
                                 UpdateState::Idle
@@ -1115,6 +1154,7 @@ impl<R: Route> Render for Workspace<R> {
                                 | UpdateState::Failed { .. } => router.check_for_updates(),
                                 _ => Ok(()),
                             };
+
                             if let Err(error) = result {
                                 tracing::error!(%error, "update action failed");
                             }
@@ -1224,11 +1264,13 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
             let navigation_feedback = host.navigation_feedback;
             let setup_error = Rc::new(RefCell::new(None));
             let callback_error = setup_error.clone();
+
             let mut options = host
                 .new_window_options
                 .as_ref()
                 .map(|factory| factory(id))
                 .unwrap_or_default();
+
             // Navigation decides activation, while the application factory owns
             // every other option (bounds, titlebar, kind, and visibility).
             options.focus = activation == Activation::Activate;
@@ -1238,6 +1280,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                     if let Err(error) = router.attach_window(id, window, cx) {
                         *callback_error.borrow_mut() = Some(MountError(error.to_string()));
                         window.remove_window();
+
                         return cx.new(|_| Workspace {
                             chrome,
                             navigation_feedback,
@@ -1264,6 +1307,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                             // the just-created host immediately as well so a
                             // failed layout never becomes visible.
                             window.remove_window();
+
                             return cx.new(|_| Workspace {
                                 chrome,
                                 navigation_feedback,

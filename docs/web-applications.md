@@ -42,6 +42,11 @@ routing = "path"
 offline = true
 ```
 
+The same application can keep macOS/Windows/Linux signing, installer and update
+sections in this manifest. Native sections are consumed by the native Rust pipeline;
+browser payloads use the explicit Web directory and common `assets` tree. Declaring
+a native resource/helper does not make it executable or accessible in a browser.
+
 Offline bundles place payloads below `rake-builds/<content-id>/`. The generated page
 base points at that immutable payload while route URLs keep the configured app root.
 The service worker precaches a complete immutable build; installation failure
@@ -56,6 +61,9 @@ headers. Host the version/worker/index endpoints with revalidation/no-store poli
 Use HTTPS (localhost is allowed for development). Offline readiness is exposed on
 the document as `data-rake-offline=ready`; registration/cache failures do not prevent
 online startup and remain visible in the console.
+Ready means installation/caching completed. The first, uncontrolled page gains a
+service-worker controller on its next navigation; its existing requests are not
+retroactively controlled.
 
 There is no automatic `skipWaiting`, `clients.claim` or forced reload of other tabs.
 An old tab keeps its build resources; another tab may load the new network deployment.

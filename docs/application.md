@@ -27,6 +27,11 @@ keep a closed runtime alive. `services()` returns shared application handles;
 restart. A routed page obtains these capabilities from `page.runtime()` and keeps
 entry-specific navigation, activities, and guards on `PageContext`.
 
+Inside a user event, `runtime.action(cx, initiated_future)` binds one finite action
+with automatic redraw/cancellation; `page.action` provides the entry-owned version.
+Start gesture-sensitive browser operations before handing their future to Rake.
+Actions do not automatically retry. See [platform services](platform-services.md).
+
 Inside an entity constructor, `runtime.load(cx, factory)` binds an arbitrary
 async value to that view; `runtime.bind_updates(cx)` observes the shared updates
 controller. Both arrange redraws and cancellation internally. Routed pages can

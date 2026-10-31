@@ -35,6 +35,7 @@ impl Runtime<NoRoute> {
                 Box::pin(async { Ok(Rc::new(()) as crate::router::runtime::Resource) })
             }),
         );
+
         router.client().set_services(services.registry());
 
         Self { router, services }
@@ -89,19 +90,23 @@ impl<R: Route> Runtime<R> {
     pub async fn run(&self) -> Result<(), OperationError> {
         let driver = Box::pin(self.router.run());
         let runtime = self.router.clone();
+
         let ready = Box::pin(async move {
             loop {
                 if runtime.quit_status().phase == QuitPhase::Ready {
                     runtime.shutdown();
+
                     return;
                 }
 
                 let revision = runtime.snapshot().revision;
+
                 runtime.changed(revision).await;
             }
         });
 
         futures::pin_mut!(driver, ready);
+
         match select(driver, ready).await {
             Either::Left((result, _)) => result,
             Either::Right(((), driver)) => driver.await,
@@ -150,6 +155,22 @@ pub struct RuntimeContext<R: Route = NoRoute> {
 }
 
 impl<R: Route> RuntimeContext<R> {
+    /// Binds an initiated user-action future to this view, with automatic redraw,
+    /// cancellation and finite-work quit tracking. Start gesture-sensitive browser
+    /// requests before calling this method. For reusable preparation, use `load`.
+    #[cfg(feature = "gpui")]
+    pub fn action<V: 'static, T: 'static, E, Fut>(
+        &self,
+        cx: &mut gpui::Context<V>,
+        future: Fut,
+    ) -> crate::loading::AsyncAction<T, E>
+    where
+        E: std::error::Error + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + 'static,
+    {
+        crate::loading::AsyncAction::new(Ok(self.tasks()), self.services(), future, cx)
+    }
+
     /// Observes the shared update controller and redraws this view automatically.
     /// Dropping the handle/view stops observation, without stopping provider work.
     /// Missing policy and action failures are represented in the returned handle.
@@ -244,11 +265,14 @@ impl<R: Route> RuntimeContext<R> {
         deployment.check().await?.ok_or_else(|| {
             crate::web::Error::Invalid("no changed deployment is available".into())
         })?;
+
         #[cfg(target_family = "wasm")]
         return self.router()?.request_browser_reload(options);
+
         #[cfg(not(target_family = "wasm"))]
         {
             let _ = options;
+
             Err(crate::web::Error::Unsupported("browser deployment reload"))
         }
     }

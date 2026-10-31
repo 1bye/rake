@@ -9,6 +9,21 @@ intended for click/key handlers, not automatic route loaders, because browser us
 activation may expire before an asynchronous task starts. Await the returned request
 in view/application-owned work. Dropping observation cannot undo an OS action.
 
+`runtime.action(cx, future)` and `page.action(cx, future)` return an `AsyncAction`
+with `state(cx)`, `is_running(cx)` and `cancel(cx)`. Rake handles redraw, owner
+cancellation and finite-work quit tracking. An action has no automatic retry: a
+new browser picker/clipboard attempt needs a fresh user event. For example:
+
+```rust
+// Inside a click handler; `copy` is an Option<AsyncAction<(), platform::Error>>.
+let request = this.runtime.services().platform().write_clipboard("Hello", cx);
+this.copy = Some(this.runtime.action(cx, request));
+```
+
+Use `load` for a reusable factory and retry. Do not await guarded quit inside an
+action: quit waits for that action to finish. Submit the quit/reload operation,
+then finish the action and let the runtime own the handoff.
+
 | Service | Native | Browser |
 | --- | --- | --- |
 | `pick_file` / `FileHandle::read(limit)` | System picker, bounded off-thread read | File input, bounded Blob read; cancel returns `None` |

@@ -19,8 +19,9 @@ use std::fmt;
 
 #[cfg(feature = "gpui")]
 mod binding;
+
 #[cfg(feature = "gpui")]
-pub use binding::{LoadContext, LoadError, Loader};
+pub use binding::{AsyncAction, LoadContext, LoadError, Loader};
 
 /// One private generation identity returned by [`LoadState::begin`].
 ///
@@ -91,7 +92,9 @@ impl<T, E> LoadState<T, E> {
             owner: self.owner,
             generation: self.generation,
         };
+
         self.status = LoadStatus::Loading(token);
+
         token
     }
 
@@ -109,6 +112,7 @@ impl<T, E> LoadState<T, E> {
             Ok(value) => LoadStatus::Ready(value),
             Err(error) => LoadStatus::Failed(error),
         };
+
         true
     }
 
@@ -167,9 +171,11 @@ mod tests {
     fn failed_load_can_retry_with_a_fresh_token() {
         let mut state = LoadState::<u32>::default();
         let first = state.begin();
+
         assert!(state.complete(first, Err("temporary".to_owned())));
 
         let retry = state.begin();
+
         assert_ne!(first, retry);
         assert!(state.complete(retry, Ok(7)));
         assert!(matches!(state.state(), LoadStatus::Ready(7)));
@@ -179,12 +185,14 @@ mod tests {
     fn reset_rejects_old_results_and_returns_to_idle() {
         let mut state = LoadState::<u32>::default();
         let old = state.begin();
+
         state.reset();
 
         assert!(matches!(state.state(), LoadStatus::Idle));
         assert!(!state.complete(old, Ok(1)));
 
         let fresh = state.begin();
+
         assert_ne!(old, fresh);
         assert!(state.complete(fresh, Ok(2)));
     }
@@ -204,22 +212,28 @@ mod tests {
     #[test]
     fn supports_move_only_values_and_errors() {
         struct Value(String);
+
         struct Failure(String);
 
         let mut state = LoadState::<Value, Failure>::default();
         let token = state.begin();
+
         assert!(state.complete(token, Ok(Value("loaded".into()))));
 
         let LoadStatus::Ready(value) = state.state() else {
             panic!("expected ready");
         };
+
         assert_eq!(value.0, "loaded");
 
         let retry = state.begin();
+
         assert!(state.complete(retry, Err(Failure("offline".into()))));
+
         let LoadStatus::Failed(error) = state.state() else {
             panic!("expected failed");
         };
+
         assert_eq!(error.0, "offline");
     }
 }

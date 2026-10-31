@@ -25,6 +25,7 @@ pub use rake_updates::updates;
 pub fn early_startup_for(embedded: Option<&str>) {
     early_startup_with_desktop(embedded, None);
 }
+
 /// Runs installer startup with common desktop metadata captured by [`early_startup!`].
 /// # Panics
 /// Panics if hand-written embedded metadata is invalid; rake-build validates generated metadata.
@@ -35,6 +36,7 @@ pub fn early_startup_with_desktop(embedded: Option<&str>, desktop: Option<&str>)
     #[cfg(any(not(feature = "updates"), target_family = "wasm"))]
     let _ = (embedded, desktop);
 }
+
 /// Initializes installer callbacks using policy embedded into the application crate.
 #[macro_export]
 macro_rules! early_startup {
@@ -69,6 +71,7 @@ pub mod web;
 
 #[cfg(all(feature = "gpui", feature = "updates"))]
 mod updates_binding;
+
 #[cfg(all(feature = "gpui", feature = "updates"))]
 pub use updates_binding::{UpdateHandle, UpdateHandleState};
 
@@ -277,17 +280,20 @@ pub mod prelude {
         ApplicationCommand, CommandContext, CommandDescriptor, CommandError, Commands,
         ControlConfig, ExecutionCapability, RuntimeClient,
     };
+
     #[cfg(all(feature = "gpui", feature = "updates"))]
     pub use crate::{UpdateHandle, UpdateHandleState};
 
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
     #[cfg(feature = "gpui")]
-    pub use crate::loading::{LoadContext, LoadError, Loader};
+    pub use crate::loading::{AsyncAction, LoadContext, LoadError, Loader};
     pub use crate::loading::{LoadState, LoadStatus, LoadToken};
+
     pub use crate::quit::{
         QuitGuardContext, QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus,
     };
+
     pub use crate::reload::{Checkpoint, ReloadError, ReloadState};
     pub use crate::runtime::{Runtime, RuntimeContext};
     pub use crate::services::{ServiceError, ServiceRegistry, Services};
@@ -303,11 +309,13 @@ pub mod prelude {
     pub use crate::App;
     #[cfg(feature = "gpui")]
     pub use crate::inspection::InspectElement;
+
     #[cfg(feature = "gpui")]
     pub use crate::router::{
         LayoutContext, LoadedPage, NavigationBoundary, Page, PageContext, RouteOutlet, RouteViews,
         TabBar,
     };
+
     pub use rake_macros::{Command, Route};
 }
 
@@ -316,12 +324,14 @@ pub mod __private {
     pub use crate::__rake_inspection as inspection;
     #[cfg(feature = "gpui")]
     pub use crate::application::{AppFactoryOutput, run_app_factory};
+
     #[cfg(all(feature = "experimental-view", feature = "devtools"))]
     pub use crate::inspection::authored::{
         Definition as ViewDefinition, HandlerSite as ViewHandlerSite, StyleSite as ViewStyleSite,
         child as view_inspect_child, component as view_inspect_component,
         component_key as view_component_key, styled as view_inspect,
     };
+
     #[cfg(feature = "experimental-view")]
     pub use crate::theme::apply::{
         ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeRunFont, ThemeRunText, ThemeText,

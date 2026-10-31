@@ -9,6 +9,7 @@ pub(crate) struct Home {
     welcome: String,
     edits: u32,
     error: Option<String>,
+    copy: Option<AsyncAction<(), rake::platform::Error>>,
 }
 
 impl LoadedPage<Destination> for Home {
@@ -34,6 +35,7 @@ impl LoadedPage<Destination> for Home {
             welcome,
             edits: 0,
             error: None,
+            copy: None,
         }))
     }
 }
@@ -50,9 +52,21 @@ fn load_welcome() -> Result<String, rake::resources::Error> {
 
 impl Render for Home {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let copied = self.copy.as_ref().map(|action| match action.state(cx) {
+            LoadStatus::Ready(()) => "Welcome text copied".into(),
+            LoadStatus::Failed(error) => error.to_string(),
+            _ => "Copying…".into(),
+        });
+
         rake::view! {
             <section class="gap-3">
                 <p>{self.welcome.clone()}</p>
+                <button disabled={!self.page.services().platform().capabilities().clipboard_write.supported}
+                    on:click={cx.listener(|this, _, _, cx| {
+                        let request = this.page.services().platform().write_clipboard(&this.welcome, cx);
+                        this.copy = Some(this.page.action(cx, request));
+                    })}>"Copy welcome text"</button>
+                if let Some(status) = copied { <p>{status}</p> }
                 <p>{format!("Retained local edits: {}", self.edits)}</p>
                 <button on:click={cx.listener(|this, _, _, cx| {
                     this.error = this.page.entry().set_dirty(true).err().map(|e| e.to_string());

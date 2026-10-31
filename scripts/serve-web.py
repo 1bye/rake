@@ -18,7 +18,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--example", choices=["foundation", "routing", "routing-hash", "notes", "view", "inspector"], default="routing")
+parser.add_argument("--example", choices=["foundation", "routing", "routing-hash", "notes", "view", "inspector", "files"], default="routing")
 parser.add_argument("--port", type=int, default=8081)
 parser.add_argument("--control", action="store_true", help="Enable authenticated browser-to-CLI development control")
 parser.add_argument("--directory", type=Path, help="Serve another built application directory")

@@ -1,0 +1,35 @@
+[package]
+name = "rake-files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "rake-files"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rake = { workspace = true, features = ["experimental-view", "updates"] }
+thiserror.workspace = true
+
+[build-dependencies]
+rake-build = { path = "../../crates/rake-build" }
+
+[package.metadata.rake.bundle]
+name = "Text Toolkit"
+identifier = "dev.rake.text-toolkit"
+icon = "assets/icon.svg"
+
+[package.metadata.rake.bundle.web]
+offline = true
+
+[package.metadata.rake.bundle.windows]
+manifest = "windows.manifest.xml"

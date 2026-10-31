@@ -59,6 +59,14 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "boolean"):
                 BundleConfig({"name": "a", "version": "1.0.0", "metadata": {"rake": {"bundle": {"web": {"offline": "yes"}}}}}, Path(directory))
 
+    def test_shared_application_metadata_accepts_native_sections_on_web(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = {"name": "example", "version": "1.0.0", "metadata": {"rake": {"bundle": {
+                "schema_version": 1, "web": {"offline": True}, "windows": {"manifest": "windows.manifest.xml"},
+                "macos": {"formats": ["dmg"]}, "linux": {"formats": ["deb"]}, "resources": [], "updates": {"enabled": False},
+            }}}}
+            self.assertTrue(BundleConfig(package, Path(directory)).offline)
+
     def test_generated_names_cannot_collide_with_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "site"

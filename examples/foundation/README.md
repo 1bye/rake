@@ -7,8 +7,9 @@ See [browser applications](../../docs/web-applications.md) for deployment order,
 retaining old build assets, worker execution and offline lifecycle.
 
 The **Copy message** button uses `runtime.services().platform()`. It initiates the
-clipboard request inside the click handler, retains the observing task in the view,
-and displays permission failures. Browser availability is detected at runtime.
+clipboard request inside the click handler and passes it to `runtime.action(cx, request)`.
+Rake tracks the finite work, redraws the view and retains typed permission failures;
+the example needs no weak-reference or observer task wiring. Browser availability is detected at runtime.
 See [platform services](../../docs/platform-services.md) for file and preference APIs.
 
 This route-free `rake::view!` app constructs two view-bound handles:

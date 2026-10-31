@@ -39,7 +39,13 @@ class BundleConfig:
     def __init__(self, package, directory, native=False):
         self.directory = directory.resolve()
         config = (package.get("metadata") or {}).get("rake", {}).get("bundle", {})
-        if not isinstance(config, dict) or (not native and config.keys() - {"name", "identifier", "assets", "icon", "build_number", "minimum_system_version", "web"}):
+        # The same Cargo application can declare native installers and a Web build.
+        # Native sections remain owned/validated by the Rust distribution pipeline;
+        # they do not become browser assets, helper processes or update providers.
+        native_fields = {"schema_version", "package_version", "target_overrides", "format_overrides",
+            "desktop", "macos", "windows", "linux", "dependencies", "components", "resources",
+            "sidecars", "runtimes", "updates", "release", "custom_formats", "component_recipes"}
+        if not isinstance(config, dict) or (not native and config.keys() - {"name", "identifier", "assets", "icon", "build_number", "minimum_system_version", "web"} - native_fields):
             raise ValueError("unknown or invalid package.metadata.rake.bundle configuration")
         self.name = config.get("name", package["name"])
         self.identifier = config.get("identifier", "dev.rake." + package["name"].replace("_", "-"))

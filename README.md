@@ -61,6 +61,10 @@ with search, pinned notes, an editor, autosave and crash recovery. Run
 `cargo run -p rake-notes`. Its [typed service composition](docs/services.md) keeps
 GUI edits, CLI commands and lifecycle guards on the same notebook instance.
 
+[Text Toolkit](examples/files/README.md) demonstrates a route-free file utility:
+pick/import, native/browser worker processing, clipboard/export, preferences,
+guarded shutdown and deployment updates. Run `cargo run -p rake-files --locked`.
+
 Shared [platform services](docs/platform-services.md) expose files, clipboard,
 preferences and URL activations. [Browser applications](docs/web-applications.md)
 cover owned Web Workers, offline bundles and guarded deployment reload. See

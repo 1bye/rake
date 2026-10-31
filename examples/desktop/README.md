@@ -1,5 +1,9 @@
 # Small desktop application
 
+For a route-free file workflow with pickers, clipboard, preferences, native worker
+execution and browser deployment updates, see [Text Toolkit](../files/README.md).
+This example keeps the routed shape: loaders, persistent layout and navigation recovery.
+
 A compact native application showing the complete path from a `rake::view!` UI
 to distribution. Run commands below from the repository root.
 

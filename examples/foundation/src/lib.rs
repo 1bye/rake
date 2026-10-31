@@ -14,7 +14,8 @@ struct Foundation {
     updates: UpdateHandle,
     status: String,
     runtime: RuntimeContext,
-    action: Option<rake::gpui::Task<()>>,
+    clipboard: Option<AsyncAction<(), rake::platform::Error>>,
+    reload: Option<AsyncAction<(), rake::web::Error>>,
     deployment: Option<rake::web::Deployment>,
     web_updates: Option<Loader<Option<rake::web::DeploymentVersion>, rake::web::Error>>,
 }
@@ -31,16 +32,36 @@ async fn load_message(load: LoadContext) -> rake::http::Result<Message> {
 impl Render for Foundation {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let loading = self.message.is_loading(cx);
+
         let message = match self.message.state(cx) {
             LoadStatus::Idle | LoadStatus::Loading(_) => "Loading…".into(),
             LoadStatus::Ready(message) => message.title.clone(),
             LoadStatus::Failed(error) => error.to_string(),
         };
+
         let version = self.updates.available_version(cx);
         let update_error = self.updates.error(cx);
         let can_check = self.updates.can_check(cx);
         let can_download = self.updates.can_download(cx);
         let can_restart = self.updates.can_restart(cx);
+
+        let clipboard_status = self
+            .clipboard
+            .as_ref()
+            .map(|action| match action.state(cx) {
+                LoadStatus::Ready(()) => "Copied to clipboard".into(),
+                LoadStatus::Failed(error) => error.to_string(),
+                _ => "Copying…".into(),
+            });
+
+        let reload_error = self
+            .reload
+            .as_ref()
+            .and_then(|action| match action.state(cx) {
+                LoadStatus::Failed(error) => Some(error.to_string()),
+                _ => None,
+            });
+
         let update_status = match self.updates.state(cx) {
             UpdateHandleState::Unavailable => "Updates unavailable in this build",
             UpdateHandleState::Observed(state) => match state {
@@ -57,6 +78,7 @@ impl Render for Foundation {
                 _ => "Updates",
             },
         };
+
         let web_version = self
             .web_updates
             .as_ref()
@@ -68,6 +90,7 @@ impl Render for Foundation {
                 LoadStatus::Failed(error) => error.to_string(),
                 _ => "Checking Web deployment…".into(),
             });
+
         let can_reload_web = self
             .web_updates
             .as_ref()
@@ -101,17 +124,9 @@ impl Render for Foundation {
                             _ => "Rake".into(),
                         };
                         let request = this.runtime.services().platform().write_clipboard(&text, cx);
-                        this.action = Some(cx.spawn(async move |view, cx| {
-                            let result = request.await;
-                            let _ = view.update(cx, |this, cx| {
-                                this.status = match result {
-                                    Ok(()) => "Copied to clipboard".into(),
-                                    Err(error) => error.to_string(),
-                                };
-                                cx.notify();
-                            });
-                        }));
+                        this.clipboard = Some(this.runtime.action(cx, request));
                     })}>"Copy message"</button>
+                if let Some(status) = clipboard_status { <p>{status}</p> }
                 <p>{update_status}</p>
                 if let Some(version) = version { <p>{format!("Version {version}")}</p> }
                 <div class="flex flex-row gap-3">
@@ -137,17 +152,12 @@ impl Render for Foundation {
                     <button disabled={!can_reload_web} on:click={cx.listener(|this, _, _, cx| {
                         let Some(deployment) = this.deployment.clone() else { return; };
                         let runtime = this.runtime.clone();
-                        this.action = Some(cx.spawn(async move |view, cx| {
-                            let result = runtime.reload_web_update(&deployment, QuitOptions::default()).await;
-                            let _ = view.update(cx, |this, cx| {
-                                this.status = match result {
-                                    Ok(_) => "Reload requested; waiting for work and save approval".into(),
-                                    Err(error) => error.to_string(),
-                                };
-                                cx.notify();
-                            });
+                        this.reload = Some(this.runtime.action(cx, async move {
+                            drop(runtime.reload_web_update(&deployment, QuitOptions::default()).await?);
+                            Ok(())
                         }));
                     })}>"Reload to update"</button>
+                    if let Some(error) = reload_error { <p>{error}</p> }
                 }
             </main>
         }
@@ -164,18 +174,22 @@ pub fn application() -> App {
                     Ok(deployment) => (deployment, "Portable application foundation".into()),
                     Err(error) => (None, error.to_string()),
                 };
+
                 let web_updates = deployment.clone().map(|deployment| {
                     runtime.load(cx, move |_| {
                         let deployment = deployment.clone();
+
                         async move { deployment.check().await }
                     })
                 });
+
                 Foundation {
                     message: runtime.load(cx, load_message),
                     updates: runtime.bind_updates(cx),
                     status,
                     runtime,
-                    action: None,
+                    clipboard: None,
+                    reload: None,
                     deployment,
                     web_updates,
                 }

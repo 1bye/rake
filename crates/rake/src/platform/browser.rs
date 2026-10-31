@@ -103,11 +103,10 @@ pub(super) fn preference_set(namespace: &str, key: &str, value: Option<&str>) ->
 
 #[cfg(feature = "gpui")]
 pub(super) fn pick_file() -> Request<Option<super::FileHandle>> {
-    let request = select_file(); // Initiate before yielding the event handler.
+    // Observe rejections even if work admission fails and the request is never polled.
+    let request = JsFuture::from(select_file());
     Box::pin(async move {
-        let file = JsFuture::from(request)
-            .await
-            .map_err(|value| error("file import", value))?;
+        let file = request.await.map_err(|value| error("file import", value))?;
         if file.is_null() || file.is_undefined() {
             return Ok(None);
         }
@@ -148,9 +147,9 @@ pub(super) fn export_file(name: &str, bytes: &[u8]) -> Result<(), Error> {
 
 #[cfg(feature = "gpui")]
 pub(super) fn read_clipboard() -> Request<Option<String>> {
-    let request = clipboard_read();
+    let request = JsFuture::from(clipboard_read());
     Box::pin(async move {
-        let value = JsFuture::from(request)
+        let value = request
             .await
             .map_err(|value| error("clipboard read", value))?;
         Ok(value.as_string())
@@ -159,9 +158,9 @@ pub(super) fn read_clipboard() -> Request<Option<String>> {
 
 #[cfg(feature = "gpui")]
 pub(super) fn write_clipboard(text: &str) -> Request<()> {
-    let request = clipboard_write(text);
+    let request = JsFuture::from(clipboard_write(text));
     Box::pin(async move {
-        JsFuture::from(request)
+        request
             .await
             .map(|_| ())
             .map_err(|value| error("clipboard write", value))

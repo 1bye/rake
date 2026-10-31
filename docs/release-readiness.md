@@ -49,7 +49,9 @@ python3 scripts/serve-web.py --example foundation --port 8080
 
 Use the [standalone example](../examples/foundation/README.md),
 [desktop example](../examples/desktop/README.md), and
-[Notes reference application](notes.md) as executable starting points.
+[Notes reference application](notes.md) as executable starting points. The
+[Text Toolkit utility](../examples/files/README.md) exercises common platform
+services and explicit native/browser processing without routes.
 
 ## Release gates and evidence
 

@@ -103,7 +103,7 @@ pub struct Loader<T: 'static, E: Error + 'static> {
     model: Entity<Model<T, E>>,
     scope: Result<TaskScope, TaskError>,
     services: Services,
-    factory: Factory<T, E>,
+    factory: Option<Factory<T, E>>,
     _observe: Subscription,
     _release: Subscription,
 }
@@ -119,24 +119,49 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
         F: Fn(LoadContext) -> Fut + 'static,
         Fut: Future<Output = Result<T, E>> + 'static,
     {
+        let mut loader = Self::bound(
+            scope,
+            services,
+            Some(Rc::new(move |context| Box::pin(factory(context)))),
+            cx,
+        );
+
+        loader.retry(cx);
+
+        loader
+    }
+
+    fn bound<V: 'static>(
+        scope: Result<TaskScope, TaskError>,
+        services: Services,
+        factory: Option<Factory<T, E>>,
+        cx: &mut Context<V>,
+    ) -> Self {
         let model = cx.new(|_| Model {
             load: LoadState::new(),
             task: None,
             terminal: None,
             released: false,
         });
+
         let observe = cx.observe(&model, |_, _, cx| cx.notify());
+
         let release = cx.on_release({
             let weak = model.downgrade();
+
             move |_, cx| {
                 let _ = weak.update(cx, |model, cx| {
                     model.released = true;
+
                     if let Some(task) = model.task.take() {
                         let _ = task.cancel();
                     }
+
                     model.terminal = None;
+
                     if let LoadStatus::Loading(token) = model.load.state() {
                         let token = *token;
+
                         model
                             .load
                             .complete(token, Err(LoadError::Task(TaskError::OwnerDisposed)));
@@ -145,16 +170,15 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
                 });
             }
         });
-        let mut loader = Self {
+
+        Self {
             model,
             scope,
             services,
-            factory: Rc::new(move |context| Box::pin(factory(context))),
+            factory,
             _observe: observe,
             _release: release,
-        };
-        loader.retry(cx);
-        loader
+        }
     }
 
     /// Borrows the current value or typed failure without cloning its payload.
@@ -170,34 +194,52 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
     /// Cancels the previous attempt and starts the reusable factory again.
     /// Admission and source errors become [`Self::state`] failures.
     pub fn retry(&mut self, cx: &mut App) {
+        let factory = self.factory.clone().expect("public Loader handles always have a retry factory; one-shot handles expose AsyncAction");
+
+        self.start(cx, move |load| factory(load));
+    }
+
+    fn start<F, Fut>(&mut self, cx: &mut App, factory: F)
+    where
+        F: FnOnce(LoadContext) -> Fut + 'static,
+        Fut: Future<Output = Result<T, E>> + 'static,
+    {
         let token = self.model.update(cx, |model, cx| {
             if let Some(task) = model.task.take() {
                 let _ = task.cancel();
             }
+
             model.terminal = None;
             let token = model.load.begin();
+
             cx.notify();
+
             if model.released {
                 model
                     .load
                     .complete(token, Err(LoadError::Task(TaskError::OwnerDisposed)));
+
                 None
             } else {
                 Some(token)
             }
         });
+
         let Some(token) = token else { return };
-        let factory = self.factory.clone();
+
         let services = self.services.clone();
         let background = cx.background_executor().clone();
         let weak = self.model.downgrade();
         let mut context = cx.to_async();
+
         let admitted = self.scope.clone().and_then(|scope| {
             scope.spawn_with("load", move |run| async move {
                 let load = LoadContext::new(services, run.cancellation(), background);
                 let result = factory(load).await;
+
                 run.check()?;
                 let failure = result.as_ref().err().map(ToString::to_string);
+
                 weak.update(&mut context, |model, cx| {
                     if model
                         .load
@@ -207,6 +249,7 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
                     }
                 })
                 .map_err(|_| TaskError::OwnerDisposed)?;
+
                 match failure {
                     Some(error) => Err(TaskError::Failed(error)),
                     None => Ok(()),
@@ -217,15 +260,19 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
         match admitted {
             Ok(task) => {
                 let observed = task.clone();
+
                 let terminal = cx.spawn({
                     let weak = self.model.downgrade();
+
                     async move |cx| {
                         let terminal = observed.wait().await;
+
                         let error = match terminal {
                             Ok(TaskState::Cancelled) => LoadError::Cancelled,
                             Ok(TaskState::Failed(error)) | Err(error) => LoadError::Task(error),
                             Ok(_) => return,
                         };
+
                         let _ = weak.update(cx, |model, cx| {
                             if model.load.complete(token, Err(error)) {
                                 cx.notify();
@@ -233,6 +280,7 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
                         });
                     }
                 });
+
                 self.model.update(cx, |model, _| {
                     model.task = Some(task);
                     model.terminal = Some(terminal);
@@ -252,12 +300,59 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
             if let Some(task) = model.task.take() {
                 let _ = task.cancel();
             }
+
             model.terminal = None;
+
             if let LoadStatus::Loading(token) = model.load.state() {
                 let token = *token;
+
                 model.load.complete(token, Err(LoadError::Cancelled));
                 cx.notify();
             }
         });
+    }
+}
+
+/// A view-bound, one-shot user action tracked as finite managed work.
+///
+/// Initiate browser picker/clipboard requests inside the event handler, then pass
+/// the returned future to `runtime.action` or `page.action`. Changes redraw the
+/// view; dropping/cancelling the handle stops observation and managed work. An
+/// external OS action already initiated cannot be undone. There is no automatic
+/// retry: a browser operation may require a fresh user gesture.
+pub struct AsyncAction<T: 'static, E: Error + 'static> {
+    loader: Loader<T, E>,
+}
+
+impl<T: 'static, E: Error + 'static> AsyncAction<T, E> {
+    pub(crate) fn new<V: 'static, Fut>(
+        scope: Result<TaskScope, TaskError>,
+        services: Services,
+        future: Fut,
+        cx: &mut Context<V>,
+    ) -> Self
+    where
+        Fut: Future<Output = Result<T, E>> + 'static,
+    {
+        let mut loader = Loader::bound(scope, services, None, cx);
+
+        loader.start(cx, move |_| future);
+
+        Self { loader }
+    }
+
+    /// Borrows the completed value, typed failure or current loading status.
+    pub fn state<'a>(&'a self, cx: &'a App) -> &'a LoadStatus<T, LoadError<E>> {
+        self.loader.state(cx)
+    }
+
+    /// Whether managed work is still pending.
+    pub fn is_running(&self, cx: &App) -> bool {
+        self.loader.is_loading(cx)
+    }
+
+    /// Cancels observation/work; external effects cannot be rolled back.
+    pub fn cancel(&mut self, cx: &mut App) {
+        self.loader.cancel(cx);
     }
 }
