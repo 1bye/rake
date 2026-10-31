@@ -42,6 +42,7 @@ pub struct ServiceRegistry {
 struct StandardServices {
     http: HttpClient,
     collector: Collector,
+    platform: crate::platform::Platform,
 }
 
 impl Default for ServiceRegistry {
@@ -81,8 +82,17 @@ impl ServiceRegistry {
             .ok_or(ServiceError::Missing(type_name::<T>()))
     }
 
-    pub(crate) fn with_standard(mut self, http: HttpClient, collector: Collector) -> Self {
-        self.standard = Some(Rc::new(StandardServices { http, collector }));
+    pub(crate) fn with_standard(
+        mut self,
+        http: HttpClient,
+        collector: Collector,
+        platform: crate::platform::Platform,
+    ) -> Self {
+        self.standard = Some(Rc::new(StandardServices {
+            http,
+            collector,
+            platform,
+        }));
 
         self
     }
@@ -112,6 +122,16 @@ impl ServiceRegistry {
             .ok_or(ServiceError::Missing(type_name::<Collector>()))
     }
 
+    /// Returns shared host services, or a missing-service error on a bare registry.
+    pub fn platform(&self) -> Result<crate::platform::Platform, ServiceError> {
+        self.standard
+            .as_ref()
+            .map(|standard| standard.platform.clone())
+            .ok_or(ServiceError::Missing(
+                type_name::<crate::platform::Platform>(),
+            ))
+    }
+
     /// Reconstructs the standard service view represented by this registry.
     ///
     /// This is a cheap clone of the shared service handles. Custom typed values and
@@ -123,6 +143,7 @@ impl ServiceRegistry {
         Ok(Services {
             http: self.http()?,
             collector: self.diagnostics()?,
+            platform: self.platform()?,
             registry: self.clone(),
         })
     }
@@ -134,17 +155,33 @@ pub struct Services {
     http: HttpClient,
     collector: Collector,
     registry: ServiceRegistry,
+    platform: crate::platform::Platform,
 }
 
 impl Services {
     /// Constructs standard service handles with an explicit application composition.
     pub fn new(http: HttpClient, collector: Collector, registry: ServiceRegistry) -> Self {
-        let registry = registry.with_standard(http.clone(), collector.clone());
+        Self::with_platform(
+            http,
+            collector,
+            registry,
+            crate::platform::Platform::default(),
+        )
+    }
+
+    pub(crate) fn with_platform(
+        http: HttpClient,
+        collector: Collector,
+        registry: ServiceRegistry,
+        platform: crate::platform::Platform,
+    ) -> Self {
+        let registry = registry.with_standard(http.clone(), collector.clone(), platform.clone());
 
         Self {
             http,
             collector,
             registry,
+            platform,
         }
     }
 
@@ -170,6 +207,11 @@ impl Services {
     /// Returns the bounded diagnostic collector.
     pub fn diagnostics(&self) -> Collector {
         self.collector.clone()
+    }
+
+    /// Returns shared file, clipboard, preferences and URL activation capabilities.
+    pub fn platform(&self) -> crate::platform::Platform {
+        self.platform.clone()
     }
 
     /// Resolves the same typed service used by command handlers and other views.

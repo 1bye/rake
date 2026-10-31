@@ -1,5 +1,10 @@
 # Standalone loading and updates
 
+The **Copy message** button uses `runtime.services().platform()`. It initiates the
+clipboard request inside the click handler, retains the observing task in the view,
+and displays permission failures. Browser availability is detected at runtime.
+See [platform services](../../docs/platform-services.md) for file and preference APIs.
+
 This route-free `rake::view!` app constructs two view-bound handles:
 
 ```rust

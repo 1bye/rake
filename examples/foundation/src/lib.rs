@@ -14,6 +14,7 @@ struct Foundation {
     updates: UpdateHandle,
     status: String,
     runtime: RuntimeContext,
+    action: Option<rake::gpui::Task<()>>,
 }
 
 #[rake::instrument(skip_all)]
@@ -76,6 +77,24 @@ impl Render for Foundation {
                     cx.notify();
                 })}>"Run managed job"</button>
                 <p>{self.status.clone()}</p>
+                <button id="copy-message" disabled={!self.runtime.services().platform().capabilities().clipboard_write.supported}
+                    on:click={cx.listener(|this, _, _, cx| {
+                        let text = match this.message.state(cx) {
+                            LoadStatus::Ready(message) => message.title.clone(),
+                            _ => "Rake".into(),
+                        };
+                        let request = this.runtime.services().platform().write_clipboard(&text, cx);
+                        this.action = Some(cx.spawn(async move |view, cx| {
+                            let result = request.await;
+                            let _ = view.update(cx, |this, cx| {
+                                this.status = match result {
+                                    Ok(()) => "Copied to clipboard".into(),
+                                    Err(error) => error.to_string(),
+                                };
+                                cx.notify();
+                            });
+                        }));
+                    })}>"Copy message"</button>
                 <p>{update_status}</p>
                 if let Some(version) = version { <p>{format!("Version {version}")}</p> }
                 <div class="flex flex-row gap-3">
@@ -108,6 +127,7 @@ pub fn application() -> App {
                 updates: runtime.bind_updates(cx),
                 status: "Portable application foundation".into(),
                 runtime,
+                action: None,
             })
             .into()
         })

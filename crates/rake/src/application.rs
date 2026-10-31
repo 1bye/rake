@@ -74,6 +74,7 @@ pub struct App<R: Route = NoRoute> {
     navigation_feedback: bool,
     http: HttpConfig,
     http_client: RefCell<Option<HttpClient>>,
+    platform: crate::platform::Platform,
     layout: Option<crate::router::layout::LayoutFactory<R>>,
     new_window_options: Option<Rc<dyn Fn(crate::router::WindowId) -> WindowOptions>>,
     configuration_error: Option<&'static str>,
@@ -109,6 +110,7 @@ impl App<NoRoute> {
             navigation_feedback: true,
             http: HttpConfig::new(),
             http_client: RefCell::new(None),
+            platform: crate::platform::Platform::default(),
             layout: None,
             new_window_options: None,
             configuration_error: None,
@@ -166,6 +168,7 @@ impl App<NoRoute> {
             navigation_feedback: self.navigation_feedback,
             http: self.http,
             http_client: self.http_client,
+            platform: self.platform,
             layout: None,
             new_window_options: self.new_window_options,
             configuration_error,
@@ -533,10 +536,11 @@ impl<R: Route> App<R> {
             *self.http_client.borrow_mut() = Some(http.clone());
             http
         };
-        Ok(Services::new(
+        Ok(Services::with_platform(
             http,
             self.diagnostics.shared_collector(),
             self.services.clone(),
+            self.platform.clone(),
         ))
     }
 
@@ -690,6 +694,15 @@ impl<R: Route> App<R> {
             follow: services.http(),
             manual: services.http().without_redirects()?,
         }));
+
+        let activations = services.platform();
+        application.on_open_urls(move |urls| {
+            for url in urls {
+                if let Err(error) = activations.receive_open_url(&url) {
+                    crate::warn!(%error, "host URL activation rejected");
+                }
+            }
+        });
 
         let startup_errors = startup::StartupErrors::default();
         let errors = startup_errors.clone();
