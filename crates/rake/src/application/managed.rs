@@ -37,13 +37,14 @@ pub(super) fn mount(
     config: ManagedConfig,
     window: &mut Window,
     cx: &mut gpui::App,
-) -> AnyView {
+) -> Result<AnyView, crate::router::MountError> {
     let runtime = prepare(&services, &config, window, cx);
     let context = runtime.context();
-    let content = content(context, window, cx);
+    let content = content(context, window, cx)?;
 
-    cx.new(|cx| ManagedRoot::new(content, runtime, config, cx))
-        .into()
+    Ok(cx
+        .new(|cx| ManagedRoot::new(content, runtime, config, cx))
+        .into())
 }
 
 pub(super) fn background(
@@ -438,7 +439,9 @@ mod tests {
     use crate::router::OperationError;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
+    #[cfg(feature = "devtools")]
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     #[derive(Serialize, Deserialize)]

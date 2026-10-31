@@ -19,13 +19,12 @@ struct AppInfo {
 }
 
 #[rake::app]
-fn application() -> App<pages::Destination> {
-    App::new("dev.rake.starter")
+fn application() -> Result<App<pages::Destination>, rake::ServiceError> {
+    Ok(App::new("dev.rake.starter")
         .service(AppInfo {
             name: "Rake Starter",
             version: env!("CARGO_PKG_VERSION"),
-        })
-        .expect("AppInfo is registered once")
+        })?
         .theme(Colors {
             surface: rake::gpui::rgb(0x18232b),
             ink: rake::gpui::rgb(0xf0f4e8),
@@ -37,5 +36,5 @@ fn application() -> App<pages::Destination> {
         })
         .initial(pages::Destination::Home)
         .workspace_chrome(false)
-        .control(rake::control::ControlConfig::FromEnvironment)
+        .control(rake::control::ControlConfig::FromEnvironment))
 }

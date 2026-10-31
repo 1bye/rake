@@ -12,6 +12,7 @@ struct State {
     changed: event_listener::Event,
 }
 unsafe extern "C" {
+    fn rake_native_app_stop() -> bool;
     fn rake_native_quit_create(
         callback: extern "C" fn(*mut c_void),
         context: *mut c_void,
@@ -21,6 +22,23 @@ unsafe extern "C" {
     fn rake_native_quit_reply(handle: *mut c_void, approved: bool);
     fn rake_native_quit_destroy(handle: *mut c_void);
 }
+
+/// Requests the running AppKit event loop to return without terminating the process.
+///
+/// # Errors
+/// Returns an error when AppKit is not initialized or the caller is not the main thread.
+pub fn stop_application_run_loop() -> Result<(), Error> {
+    // SAFETY: the native helper checks AppKit initialization and main-thread ownership before
+    // calling `-[NSApplication stop:]` and posting its wake event.
+    if unsafe { rake_native_app_stop() } {
+        Ok(())
+    } else {
+        Err(Error::Policy(
+            "AppKit application loop stop requires the initialized main thread".into(),
+        ))
+    }
+}
+
 extern "C" fn request(context: *mut c_void) {
     let _ = std::panic::catch_unwind(|| {
         // SAFETY: creation retains this stable Box allocation until the proxy is

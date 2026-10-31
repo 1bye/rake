@@ -60,3 +60,25 @@ discard choices continue to belong to `page.entry()`.
 
 See [routing](routing.md), [managed work](managed-work.md),
 [guarded quit](guarded-quit.md), and [distribution](distribution.md).
+
+## Fallible startup
+
+`#[rake::app]` accepts either `App<R>` or `Result<App<R>, E>` where `E` implements
+`Display`. A factory can use `?` for opening settings, registering services, or
+other initialization. Existing infallible factories continue to work.
+
+Use `try_root` or `try_root_with` when constructing the initial view can fail;
+the callback returns `Result<AnyView, MountError>`. Native root/workspace and
+initial-window failures return `AppError::Mount` or `AppError::Window` after the
+host shuts down, so the generated entry point exits unsuccessfully. Invalid
+explicit initial destinations fail validation before the UI starts. Initial page
+mount failures remain navigation failures and use the routing recovery UI.
+
+Browser graphics startup is asynchronous. When a document is available, failed
+factory/root/window startup displays an alert with a reload button, including when
+no GPUI surface could be created. Later rendering/GPU failures remain platform
+runtime errors rather than synchronous `App::run` errors.
+
+Run `python3 scripts/test-app-startup.py` on a native desktop session to verify the
+real event-loop failure boundary. It intentionally launches a failing fixture and
+checks the error and exit status; it is separate from the portable unit suite.

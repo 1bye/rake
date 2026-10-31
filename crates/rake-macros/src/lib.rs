@@ -278,7 +278,11 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
         /// Runs the application on the native host.
         pub fn main() {
             #rake::early_startup!();
-            if let Err(error) = #factory().distribution_policy(option_env!("RAKE_UPDATE_POLICY"),option_env!("RAKE_RESOURCE_DIRECTORY").unwrap_or(env!("CARGO_PKG_NAME"))).run() {
+            if let Err(error) = #rake::__private::run_app_factory(
+                #factory,
+                option_env!("RAKE_UPDATE_POLICY"),
+                option_env!("RAKE_RESOURCE_DIRECTORY").unwrap_or(env!("CARGO_PKG_NAME")),
+            ) {
                 eprintln!("Rake startup failed: {error}");
                 ::std::process::exit(1);
             }
@@ -290,8 +294,12 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
             start, wasm_bindgen = #rake::__private::wasm_bindgen
         )]
         pub fn rake_start() -> ::std::result::Result<(), #rake::__private::wasm_bindgen::JsValue> {
-            #factory().run().map_err(|error| {
-                #rake::__private::wasm_bindgen::JsValue::from_str(&error.to_string())
+            #rake::__private::run_app_factory(
+                #factory,
+                option_env!("RAKE_UPDATE_POLICY"),
+                option_env!("RAKE_RESOURCE_DIRECTORY").unwrap_or(env!("CARGO_PKG_NAME")),
+            ).map_err(|error| {
+                #rake::__private::wasm_bindgen::JsValue::from_str(&error)
             })
         }
     }

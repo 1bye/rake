@@ -1,6 +1,21 @@
 #import <Cocoa/Cocoa.h>
 
 typedef void (*RakeQuitRequest)(void *context);
+typedef void (*RakeStopRequest)(void);
+
+bool rake_native_app_stop(void) {
+    if (![NSThread isMainThread] || !NSApp) return false;
+    NSApplication *app=NSApp;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [app stop:nil];
+        NSEvent *wake=[NSEvent otherEventWithType:NSEventTypeApplicationDefined
+            location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:0 context:nil
+            subtype:0 data1:0 data2:0];
+        [app postEvent:wake atStart:YES];
+    });
+    return true;
+}
+
 @interface RakeQuitDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic,strong) id original;
 @property(nonatomic,assign) RakeQuitRequest callback;
@@ -83,6 +98,10 @@ void rake_native_quit_test_request(void) {
         rake_native_quit_reply((__bridge void *)NSApp.delegate, false);
     });
     [NSApp terminate:nil];
+}
+void rake_native_quit_test_run_stop(RakeStopRequest callback) {
+    dispatch_async(dispatch_get_main_queue(), ^{ callback(); });
+    [NSApp run];
 }
 long rake_native_quit_test_reply(void) {return [NSApp.delegate applicationShouldTerminate:NSApp];}
 long rake_native_quit_test_forward(void) {return [(id)NSApp.delegate rakeForwardingProbe];}

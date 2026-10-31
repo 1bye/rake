@@ -16,8 +16,16 @@ use crate::router::{
 
 use std::rc::Rc;
 
-type Root = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut Window, &mut gpui::App) -> AnyView>;
-type WindowRoot = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
+type Root = Box<
+    dyn FnOnce(
+        crate::runtime::RuntimeContext,
+        &mut Window,
+        &mut gpui::App,
+    ) -> Result<AnyView, crate::router::MountError>,
+>;
+type WindowRoot = Box<
+    dyn FnOnce(Services, &mut Window, &mut gpui::App) -> Result<AnyView, crate::router::MountError>,
+>;
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
 
 /// What closing a standalone application's window requests.
@@ -30,7 +38,11 @@ pub enum ClosePolicy {
     KeepRunning,
 }
 
+mod factory;
 mod managed;
+#[doc(hidden)]
+pub use factory::{AppFactoryOutput, run_app_factory};
+mod startup;
 
 #[cfg(feature = "experimental-view")]
 type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
@@ -305,7 +317,7 @@ impl<R: Route> App<R> {
         mount: impl FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView + 'static,
     ) -> Self {
         self.root = Some(Box::new(move |runtime, window, cx| {
-            mount(runtime.services(), window, cx)
+            Ok(mount(runtime.services(), window, cx))
         }));
 
         self
@@ -317,6 +329,41 @@ impl<R: Route> App<R> {
     pub fn root_with(
         mut self,
         mount: impl FnOnce(crate::runtime::RuntimeContext, &mut Window, &mut gpui::App) -> AnyView
+        + 'static,
+    ) -> Self {
+        self.root = Some(Box::new(move |runtime, window, cx| {
+            Ok(mount(runtime, window, cx))
+        }));
+        self
+    }
+
+    /// Mounts a services-only root whose initialization can fail without panicking.
+    #[must_use]
+    pub fn try_root(
+        mut self,
+        mount: impl FnOnce(
+            Services,
+            &mut Window,
+            &mut gpui::App,
+        ) -> Result<AnyView, crate::router::MountError>
+        + 'static,
+    ) -> Self {
+        self.root = Some(Box::new(move |runtime, window, cx| {
+            mount(runtime.services(), window, cx)
+        }));
+        self
+    }
+
+    /// Mounts a managed root whose initialization can fail without panicking.
+    /// Native startup returns `AppError::Mount`; browser hosts show a recovery view.
+    #[must_use]
+    pub fn try_root_with(
+        mut self,
+        mount: impl FnOnce(
+            crate::runtime::RuntimeContext,
+            &mut Window,
+            &mut gpui::App,
+        ) -> Result<AnyView, crate::router::MountError>
         + 'static,
     ) -> Self {
         self.root = Some(Box::new(mount));
@@ -376,9 +423,9 @@ impl<R: Route> App<R> {
 
     /// Installs services and launches the selected GPUI platform.
     ///
-    /// Startup validation and subscriber conflicts return errors. Window creation
-    /// failures are emitted as runtime errors and request application shutdown;
-    /// browser graphics initialization occurs asynchronously after this returns.
+    /// Validation, subscriber conflicts and synchronous native UI startup failures
+    /// return errors. Browser graphics initialization is asynchronous; startup
+    /// failures show a recovery view when a document is available.
     pub fn run(mut self) -> Result<(), AppError> {
         #[cfg(target_family = "wasm")]
         if BROWSER_APP.with(|app| app.borrow().is_some()) {
@@ -458,6 +505,9 @@ impl<R: Route> App<R> {
         let root: Option<WindowRoot> = if let Some(routes) = self.routes.take() {
             #[cfg(not(target_family = "wasm"))]
             let initial = {
+                if let Some(initial) = &self.initial {
+                    initial.to_uri()?;
+                }
                 let destination = self
                     .initial
                     .take()
@@ -506,14 +556,7 @@ impl<R: Route> App<R> {
                     quit_guards,
                 };
 
-                match crate::router::view::Workspace::mount(services, root, window, cx) {
-                    Ok(view) => view,
-                    Err(error) => {
-                        crate::error!(%error, "Router host mount failed");
-
-                        cx.new(|_| gpui::Empty).into()
-                    }
-                }
+                crate::router::view::Workspace::mount(services, root, window, cx)
             }))
         } else if let Some(mount) = self.root.take() {
             Some(Box::new(move |services, window, cx| {
@@ -542,6 +585,8 @@ impl<R: Route> App<R> {
             manual: services.http().without_redirects()?,
         }));
 
+        let startup_errors = startup::StartupErrors::default();
+        let errors = startup_errors.clone();
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
 
@@ -574,16 +619,29 @@ impl<R: Route> App<R> {
                 }
                 return;
             };
-            match cx.open_window(self.window_options, move |window, cx| {
-                let view = root(services, window, cx);
-
+            let mount_errors = errors.clone();
+            let opened = cx.open_window(self.window_options, move |window, cx| {
+                let view = match root(services, window, cx) {
+                    Ok(view) => view,
+                    Err(error) => {
+                        let error = AppError::Mount(error);
+                        mount_errors.record(error);
+                        cx.new(|_| gpui::Empty).into()
+                    }
+                };
                 cx.new(|_| RootView(view))
-            }) {
-                Ok(_) => cx.activate(true),
-                Err(error) => {
-                    crate::error!(%error, "Initial window creation failed");
-                    cx.quit();
-                }
+            });
+            if let Err(error) = opened {
+                errors.record(AppError::Window(error.to_string()));
+            }
+            if errors.failed() {
+                #[cfg(target_os = "macos")]
+                rake_updates::stop_application_run_loop()
+                    .expect("native GPUI startup runs on the initialized AppKit main thread");
+                #[cfg(all(not(target_family = "wasm"), not(target_os = "macos")))]
+                cx.quit();
+            } else {
+                cx.activate(true);
             }
         };
 
@@ -594,13 +652,26 @@ impl<R: Route> App<R> {
             *app.borrow_mut() = Some(application.run_embedded(launch));
         });
 
-        Ok(())
+        let result = startup_errors.finish();
+        #[cfg(target_family = "wasm")]
+        if result.is_err() {
+            BROWSER_APP.with(|app| {
+                app.borrow_mut().take();
+            });
+        }
+        result
     }
 }
 
-/// Application bootstrap errors before the host event loop starts.
+/// Application configuration and synchronous host initialization failures.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// The initial root or workspace could not initialize.
+    #[error("application root initialization failed: {0}")]
+    Mount(#[from] crate::router::MountError),
+    /// The host could not create its initial window.
+    #[error("initial window creation failed: {0}")]
+    Window(String),
     /// Installed update metadata disagrees with the compiled application policy.
     #[cfg(feature = "updates")]
     #[error(transparent)]
@@ -696,6 +767,26 @@ mod theme_tests {
     //! Covers: deferred app themes, routing composition and owned non-Clone values.
     //! Real: application configuration and theme globals. Doubles: GPUI TestPlatform.
     use super::*;
+
+    #[test]
+    fn fallible_root_reports_service_initialization_failure() {
+        struct MissingService;
+        let mut app = App::new("example.fallible-root").try_root(|services, _, _| {
+            services
+                .get::<MissingService>()
+                .map_err(|error| crate::router::MountError(error.to_string()))?;
+            unreachable!("the service is deliberately missing")
+        });
+        let services = app.services().unwrap();
+        let runtime = crate::runtime::Runtime::new(RouterConfig::default(), services);
+        let mount = app.root.take().unwrap();
+        let mut cx = gpui::TestAppContext::single();
+        cx.add_window(|window, cx| {
+            let result = mount(runtime.context(), window, cx);
+            assert!(matches!(result, Err(error) if error.0.contains("MissingService")));
+            gpui::Empty
+        });
+    }
 
     #[test]
     fn app_themes_are_deferred_preserved_by_routes_and_installed_in_order() {

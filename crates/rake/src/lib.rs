@@ -298,6 +298,8 @@ pub mod prelude {
 #[doc(hidden)]
 pub mod __private {
     pub use crate::__rake_inspection as inspection;
+    #[cfg(feature = "gpui")]
+    pub use crate::application::{AppFactoryOutput, run_app_factory};
     #[cfg(all(feature = "experimental-view", feature = "devtools"))]
     pub use crate::inspection::authored::{
         Definition as ViewDefinition, HandlerSite as ViewHandlerSite, StyleSite as ViewStyleSite,

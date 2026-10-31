@@ -2,13 +2,22 @@
 #[cfg(target_os = "macos")]
 fn main() {
     use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, Ordering};
     unsafe extern "C" {
         fn rake_native_quit_test_app_create() -> *mut c_void;
         fn rake_native_quit_test_app_destroy(handle: *mut c_void);
         fn rake_native_quit_test_request();
+        fn rake_native_quit_test_run_stop(callback: extern "C" fn());
         fn rake_native_quit_test_reply() -> std::ffi::c_long;
         fn rake_native_quit_test_forward() -> std::ffi::c_long;
         fn rake_native_quit_test_restored(handle: *mut c_void) -> bool;
+    }
+    static STOPPED: AtomicBool = AtomicBool::new(false);
+    extern "C" fn stop_callback() {
+        STOPPED.store(
+            rake_updates::stop_application_run_loop().is_ok(),
+            Ordering::Release,
+        );
     }
     struct App(*mut c_void);
     impl Drop for App {
@@ -46,8 +55,12 @@ fn main() {
     drop(bridge);
     // SAFETY: the test delegate remains retained by app until the end of main.
     assert!(unsafe { rake_native_quit_test_restored(app.0) });
+    eprintln!("stopping isolated AppKit run loop");
+    // SAFETY: the isolated probe dispatches this callback onto AppKit's main run loop.
+    unsafe { rake_native_quit_test_run_stop(stop_callback) };
+    assert!(STOPPED.load(Ordering::Acquire));
     println!(
-        "AppKit quit deferred, cancellation preserved the app, approval and delegate restoration passed"
+        "AppKit quit deferred, cancellation preserved the app, delegate restoration and run-loop stop passed"
     );
 }
 #[cfg(not(target_os = "macos"))]

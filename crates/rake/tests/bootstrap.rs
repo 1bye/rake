@@ -61,3 +61,21 @@ fn standalone_route_options_fail_instead_of_being_ignored() {
         .unwrap();
     assert!(matches!(app.run(), Err(AppError::RoutingRequiresRoutes)));
 }
+
+#[derive(Clone, rake::Route)]
+enum Destination {
+    #[route(id = "document", path = "/documents/{id}")]
+    Document(String),
+}
+
+#[test]
+fn invalid_explicit_destination_fails_before_ui_startup() {
+    let views = rake::router::__routes(|_: &Destination, _, _, _| {
+        Err(rake::router::MountError("unused factory".into()))
+    });
+    let app = App::new("example.invalid-destination")
+        .routes(views)
+        .initial(Destination::Document(String::new()));
+
+    assert!(matches!(app.run(), Err(AppError::Route(_))));
+}

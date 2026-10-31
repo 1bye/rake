@@ -6,7 +6,7 @@ pub use appimage::{ImageUpdate, StagedImage};
 #[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
 mod macos_lifecycle;
 #[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
-pub use macos_lifecycle::NativeQuitBridge;
+pub use macos_lifecycle::{NativeQuitBridge, stop_application_run_loop};
 #[cfg(all(target_os = "macos", feature = "sparkle"))]
 mod sparkle;
 #[cfg(all(target_os = "macos", feature = "sparkle"))]

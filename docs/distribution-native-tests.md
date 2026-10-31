@@ -31,7 +31,9 @@ Launch the installed v1 through LaunchServices, then:
    improperly signed feed. Restore its signed bytes and retry.
 5. Exercise an OS quit and confirm the native termination request enters the
    same guard. The `native-quit` example separately sends actual AppKit terminate
-   requests, tests deferred cancellation/approval and restores the prior delegate.
+   requests, tests deferred cancellation/approval, restores the prior delegate and
+   proves the fatal-startup AppKit run-loop stop returns without terminating the
+   probe process.
 
 A local run on 2026-10-30 completed steps 1–4 using Sparkle 2.10.1, including the
 cached installation path. Version 1.0.1 wrote its startup marker before any UI

@@ -207,12 +207,12 @@ pub struct Description {
 }
 
 #[framework::app]
-fn app() -> App {
-    App::new("com.example.renamed")
+fn app() -> Result<App, std::io::Error> {
+    Ok(App::new("com.example.renamed")
         .theme(ViewTheme {
             surface: gpui::rgb(0x18232b),
         })
-        .root(|_, _, cx| framework::gpui::AppContext::new(cx, |_| framework::gpui::Empty).into())
+        .root(|_, _, cx| framework::gpui::AppContext::new(cx, |_| framework::gpui::Empty).into()))
 }
 
 impl Default for ComponentPanel {
