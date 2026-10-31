@@ -116,6 +116,20 @@ fn non_elements_queries_are_rejected_without_network_access() {
     ));
 
     assert!(result.unwrap_err().contains("only supports Elements"));
+    let result = futures::executor::block_on(connection.control(
+        runtime,
+        rake::control::Command::Run {
+            id: "not.allowed".into(),
+            arguments: serde_json::json!({}),
+        },
+        CancellationToken::new(),
+    ));
+
+    assert!(
+        result
+            .unwrap_err()
+            .contains("only supports development inspection controls")
+    );
 }
 
 #[test]

@@ -1,5 +1,14 @@
 //! Typed routing with independently retained drafts and structured save/discard decisions.
 
+#[cfg(feature = "console-test")]
+mod console_fixture;
+#[cfg(all(feature = "memory-test", unix))]
+mod memory_fixture;
+#[cfg(feature = "network-test")]
+mod network_fixture;
+#[cfg(feature = "performance-test")]
+mod performance_fixture;
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -97,7 +106,10 @@ impl RouteViews<Destination> for AppRoutes {
             })
             .map_err(|error| MountError(error.to_string()))?;
 
-        let view = cx.new(|_| Screen {
+        let view = cx.new(|cx| Screen {
+            #[cfg(feature = "network-test")]
+            network: network_fixture::Panel::default(),
+            navigation_focus: cx.focus_handle(),
             title,
             page: page.clone(),
             edits,
@@ -156,6 +168,9 @@ impl RouteViews<Destination> for AppRoutes {
 }
 
 struct Screen {
+    #[cfg(feature = "network-test")]
+    network: network_fixture::Panel,
+    navigation_focus: rake::gpui::FocusHandle,
     title: String,
     page: PageContext<Destination>,
     edits: Rc<Cell<u32>>,
@@ -183,12 +198,45 @@ impl Render for Screen {
         let forward = self.page.tab();
 
         div()
+            .id("routing-screen")
             .size_full()
             .flex()
             .flex_col()
             .justify_center()
             .items_center()
             .gap_4()
+            .when(cfg!(feature = "network-test"), |view| {
+                view.justify_start().overflow_y_scroll().p_4()
+            })
+            .children({
+                #[cfg(feature = "network-test")]
+                {
+                    Some(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_2()
+                            .child(network_fixture::controls(self, cx))
+                            .children({
+                                #[cfg(feature = "performance-test")]
+                                {
+                                    Some(performance_fixture::probe(cx))
+                                }
+
+                                #[cfg(not(feature = "performance-test"))]
+                                {
+                                    None::<rake::gpui::AnyElement>
+                                }
+                            }),
+                    )
+                }
+
+                #[cfg(not(feature = "network-test"))]
+                {
+                    None::<rake::gpui::AnyElement>
+                }
+            })
             .child(div().text_3xl().child(self.title.clone()))
             .child(format!(
                 "{} / {}",
@@ -209,6 +257,7 @@ impl Render for Screen {
                                 .id("new-window")
                                 .p_2()
                                 .bg(rgb(0x29424b))
+                                .hover(|style| style.bg(rgb(0x365849)))
                                 .cursor_pointer()
                                 .child("Open A in new window")
                                 .on_click(move |_, _, _| {
@@ -236,6 +285,7 @@ impl Render for Screen {
             .child(
                 div()
                     .id("command-echo")
+                    .track_focus(&self.navigation_focus)
                     .px_3()
                     .py_2()
                     .bg(rgb(0x365849))
@@ -263,7 +313,8 @@ impl Render for Screen {
                             .err();
                         cx.notify();
                     }))
-                    .inspect("routing.command-echo"),
+                    .inspect("routing.command-echo")
+                    .focus_handle(&self.navigation_focus),
             )
             .child(format!("Draft edits: {}", self.edits.get()))
             .child(format!(
@@ -627,6 +678,18 @@ fn app() -> App<Destination> {
             }
         })
         .expect("fetch registration");
+
+    #[cfg(feature = "console-test")]
+    console_fixture::register(&commands);
+
+    #[cfg(all(feature = "memory-test", unix))]
+    memory_fixture::register(&commands);
+
+    #[cfg(feature = "network-test")]
+    network_fixture::register(&commands, app.services().expect("fixture services").http());
+
+    #[cfg(feature = "performance-test")]
+    performance_fixture::register(&commands, app.services().expect("fixture services").http());
 
     app.commands(commands)
 }

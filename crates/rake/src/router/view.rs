@@ -1,6 +1,8 @@
 //! GPUI mounting and presentation; retained entries own independent view entities.
 
 use crate::inspection::InspectElement as _;
+#[cfg(not(feature = "devtools"))]
+use crate::inspection::InspectRoot as _;
 
 #[cfg(not(target_family = "wasm"))]
 use futures::FutureExt as _;
@@ -259,6 +261,7 @@ impl<R: Route> RenderOnce for TabBar<R> {
                 let id = tab.id;
 
                 div()
+                    .id(ElementId::NamedInteger("rake.tab".into(), id.value()))
                     .flex()
                     .gap_1()
                     .items_center()
@@ -278,7 +281,7 @@ impl<R: Route> RenderOnce for TabBar<R> {
                             .on_click(move |_, _, _| {
                                 drop(select.tab(id).select());
                             })
-                            .inspect(format!("rake.tab.select.{id}")),
+                            .inspect_with(|| format!("rake.tab.select.{id}")),
                     )
                     .child(
                         div()
@@ -290,9 +293,9 @@ impl<R: Route> RenderOnce for TabBar<R> {
                             .on_click(move |_, _, _| {
                                 drop(close.tab(id).close());
                             })
-                            .inspect(format!("rake.tab.close.{id}")),
+                            .inspect_with(|| format!("rake.tab.close.{id}")),
                     )
-                    .inspect(format!("rake.tab.{id}"))
+                    .inspect_with(|| format!("rake.tab.{id}"))
             }))
             .inspect("rake.tab-strip")
     }
@@ -330,6 +333,7 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
             .resource(self.window)
             .and_then(|resource| resource.downcast_ref::<AnyView>().cloned());
 
+        #[cfg(feature = "devtools")]
         let snapshot = self.router.presented_snapshot(self.window);
 
         let outlet = div()
@@ -337,13 +341,21 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
             .children(view)
             .inspect("rake.route-outlet");
 
-        if let Some(tab) = snapshot
-            .tabs
-            .iter()
-            .find(|tab| Some(tab.id) == snapshot.selected)
+        #[cfg(feature = "devtools")]
         {
-            outlet.owner(tab.id, tab.entries[tab.cursor].id)
-        } else {
+            if let Some(tab) = snapshot
+                .tabs
+                .iter()
+                .find(|tab| Some(tab.id) == snapshot.selected)
+            {
+                outlet.owner(tab.id, tab.entries[tab.cursor].id)
+            } else {
+                outlet
+            }
+        }
+
+        #[cfg(not(feature = "devtools"))]
+        {
             outlet
         }
     }
@@ -370,6 +382,13 @@ pub(crate) struct Workspace<R: Route> {
     window: WindowId,
     #[cfg(target_family = "wasm")]
     _browser: super::web::browser::BrowserHistory,
+}
+
+#[cfg(feature = "devtools")]
+impl<R: Route> Drop for Workspace<R> {
+    fn drop(&mut self) {
+        self.router.client().inspection().detach_window(self.window);
+    }
 }
 
 pub(crate) struct RoutingRoot<R: Route> {
@@ -443,6 +462,7 @@ impl<R: Route> Workspace<R> {
         router.install_quit_action(cx);
         router.client().set_commands(commands);
 
+        #[cfg(feature = "devtools")]
         if control.inspection_enabled() {
             router.client().inspection().attach();
         }
@@ -504,7 +524,24 @@ impl<R: Route> Workspace<R> {
                         let mut revision = u64::MAX;
 
                         loop {
-                            revision = observed.changed(revision).await;
+                            #[cfg(feature = "devtools")]
+                            {
+                                let inspection = observed.client().inspection().listen();
+
+                                if let futures::future::Either::Left((next, _)) =
+                                    futures::future::select(
+                                        Box::pin(observed.changed(revision)),
+                                        Box::pin(inspection),
+                                    )
+                                    .await
+                                {
+                                    revision = next;
+                                }
+                            }
+                            #[cfg(not(feature = "devtools"))]
+                            {
+                                revision = observed.changed(revision).await;
+                            }
 
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
@@ -601,7 +638,14 @@ impl<R: Route> Render for Workspace<R> {
                     "Stopping managed work…"
                 })
                 .inspect("rake.quit")
-                .root(self.router.client().inspection(), snapshot.revision);
+                .root(
+                    crate::__rake_inspection!(
+                        self.router.client().inspection(),
+                        crate::inspection::Store::default()
+                    ),
+                    snapshot.revision,
+                    self.window,
+                );
         }
 
         if snapshot.reload.request.is_some() {
@@ -621,7 +665,14 @@ impl<R: Route> Render for Workspace<R> {
                 .p_4()
                 .child("Preparing development reload…")
                 .inspect("rake.reload")
-                .root(self.router.client().inspection(), snapshot.revision);
+                .root(
+                    crate::__rake_inspection!(
+                        self.router.client().inspection(),
+                        crate::inspection::Store::default()
+                    ),
+                    snapshot.revision,
+                    self.window,
+                );
         }
 
         if snapshot.reload.phase == crate::reload::ReloadPhase::RestoreFailed {
@@ -655,7 +706,14 @@ impl<R: Route> Render for Workspace<R> {
                         .inspect("rake.restart-workspace"),
                 )
                 .inspect("rake.restore-failed")
-                .root(self.router.client().inspection(), snapshot.revision);
+                .root(
+                    crate::__rake_inspection!(
+                        self.router.client().inspection(),
+                        crate::inspection::Store::default()
+                    ),
+                    snapshot.revision,
+                    self.window,
+                );
         }
 
         let mut decision_area = div().flex().flex_col().gap_2();
@@ -664,6 +722,8 @@ impl<R: Route> Render for Workspace<R> {
             let choices = decision.choices.into_iter().map(|choice| {
                 let navigator = navigator.clone();
                 let id = decision.id;
+
+                #[cfg(feature = "devtools")]
                 let semantic_id = format!("rake.decision.{id}.{}", choice.id);
 
                 div()
@@ -677,18 +737,19 @@ impl<R: Route> Render for Workspace<R> {
                     .on_click(move |_, _, _| {
                         let _ = navigator.respond(id, &choice.id);
                     })
-                    .inspect(semantic_id)
+                    .inspect(crate::__rake_inspection!(semantic_id, ""))
             });
 
             decision_area = decision_area.child(
                 div()
+                    .id(format!("rake.decision.{}", decision.id))
                     .flex()
                     .gap_3()
                     .p_3()
                     .bg(rgb(0x59462c))
                     .child(decision.message)
                     .children(choices)
-                    .inspect(format!("rake.decision.{}", decision.id)),
+                    .inspect_with(|| format!("rake.decision.{}", decision.id)),
             );
         }
 
@@ -805,7 +866,14 @@ impl<R: Route> Render for Workspace<R> {
                     .inspect("rake.content"),
             )
             .inspect("rake.workspace")
-            .root(self.router.client().inspection(), snapshot.revision)
+            .root(
+                crate::__rake_inspection!(
+                    self.router.client().inspection(),
+                    crate::inspection::Store::default()
+                ),
+                snapshot.revision,
+                self.window,
+            )
     }
 }
 

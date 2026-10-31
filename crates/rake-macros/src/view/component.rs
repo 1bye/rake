@@ -3,7 +3,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 
-use super::{Element, expand_children};
+use super::{AttributeValue, Element, expand_children_into};
 
 impl Element {
     pub(super) fn expand_component(
@@ -11,6 +11,17 @@ impl Element {
         rake: &TokenStream,
         next: &mut usize,
     ) -> syn::Result<TokenStream> {
+        let index = *next;
+
+        *next += 1;
+        let definition = self.inspection_definition(rake, index);
+
+        let key = if self.attribute("id").is_some() {
+            quote!(|component| #rake::__private::view_component_key(&component.id))
+        } else {
+            quote!(|_| None)
+        };
+
         let path = &self.tag;
         let mut fields = TokenStream::new();
 
@@ -30,18 +41,27 @@ impl Element {
             })?;
 
             name.set_span(attribute.span);
-            let value = &attribute.value;
+            let value = match &attribute.value {
+                AttributeValue::Expression(value) => quote!(#value),
+                AttributeValue::Markup(element) => {
+                    let element = element.expand(rake, next)?;
+
+                    quote!(#rake::gpui::IntoElement::into_any_element(#element))
+                }
+            };
 
             fields.extend(quote_spanned!(attribute.span=> #name: #value,));
         }
 
+        let defaults = self.defaults.as_ref().map(|value| quote!(..#value));
+
         if self.self_closing {
-            return Ok(quote!(#path { #fields }));
+            return Ok(quote!(#rake::__private::inspection!(
+                #path { #fields #defaults },
+                |__rake_component| #rake::__private::view_inspect_component(__rake_component, #definition, #key)
+            )));
         }
 
-        let index = *next;
-
-        *next += 1;
         let children = format_ident!(
             "__rake_component_children_{index}",
             span = Span::mixed_site()
@@ -52,10 +72,10 @@ impl Element {
             span = Span::mixed_site()
         );
 
-        let body = expand_children(&self.children, &children, &siblings, rake, next)?;
+        let body = expand_children_into(&self.children, &children, &siblings, rake, next)?;
 
         // Rust evaluates explicit properties before the children field, exactly once.
-        Ok(quote!(#path {
+        let component = quote!(#path {
             #fields
             children: {
                 let mut #children = #rake::__private::ViewComponentChildren::default();
@@ -63,6 +83,12 @@ impl Element {
                 #body
                 #children.into_vec()
             },
-        }))
+            #defaults
+        });
+
+        Ok(quote!(#rake::__private::inspection!(
+            #component,
+            |__rake_component| #rake::__private::view_inspect_component(__rake_component, #definition, #key)
+        )))
     }
 }

@@ -1,0 +1,5 @@
+error: markup property values are supported only on components
+ --> tests/ui/view/markup_property_builtin.rs:2:32
+  |
+2 |     let _ = rake::view! { <div style={<h2>Title</h2>}/> };
+  |                                ^^^^^

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, LitStr, Type};
 
@@ -113,6 +113,7 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }
 
         let variant_name = variant.ident;
+        let mut field_names = Vec::new();
         let mut bindings = Vec::new();
         let mut names = Vec::new();
         let mut parameters = Vec::new();
@@ -120,10 +121,11 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         let mut parses = Vec::new();
 
         for (index, field) in variant.fields.iter().enumerate() {
-            let binding = field
-                .ident
-                .clone()
-                .unwrap_or_else(|| format_ident!("parameter_{index}"));
+            let binding = format_ident!("__rake_parameter_{index}", span = Span::mixed_site());
+
+            if let Some(name) = &field.ident {
+                field_names.push(name.clone());
+            }
 
             let parameter = match &field.ident {
                 Some(name) => name.to_string(),
@@ -180,8 +182,8 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 quote!(Self::#variant_name(#(#parses),*)),
             ),
             Fields::Named(_) => (
-                quote!(Self::#variant_name { #(#bindings),* }),
-                quote!(Self::#variant_name { #(#bindings: #parses),* }),
+                quote!(Self::#variant_name { #(#field_names: #bindings),* }),
+                quote!(Self::#variant_name { #(#field_names: #parses),* }),
             ),
         };
 

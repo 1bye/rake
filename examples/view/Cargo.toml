@@ -16,6 +16,10 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+devtools = ["rake/devtools"]
+view-test-support = ["rake/view-test-support"]
+
 [dependencies]
 rake = { workspace = true, features = ["experimental-view"] }
 

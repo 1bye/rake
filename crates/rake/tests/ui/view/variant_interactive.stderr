@@ -1,0 +1,5 @@
+error: 1st class `hover:overflow-scroll`: this utility sets interactivity and cannot be used inside variants
+ --> tests/ui/view/variant_interactive.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="hover:overflow-scroll"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^

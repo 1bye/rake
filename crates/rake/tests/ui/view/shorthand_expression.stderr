@@ -1,0 +1,5 @@
+error: prop shorthand requires a bare identifier
+ --> tests/ui/view/shorthand_expression.rs:2:38
+  |
+2 |     let _ = rake::view! { <Card {self.id}/> };
+  |                                      ^

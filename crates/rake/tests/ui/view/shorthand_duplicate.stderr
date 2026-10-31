@@ -1,0 +1,5 @@
+error: duplicate attribute `id`
+ --> tests/ui/view/shorthand_duplicate.rs:2:40
+  |
+2 |     let _ = rake::view! { <div id="a" {id}/> };
+  |                                        ^^

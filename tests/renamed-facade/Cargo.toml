@@ -14,3 +14,6 @@ workspace = true
 
 [dependencies]
 framework = { package = "rake", path = "../../crates/rake", features = ["experimental-view"] }
+
+[features]
+devtools = ["framework/devtools"]

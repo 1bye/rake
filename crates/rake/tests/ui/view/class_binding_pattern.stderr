@@ -1,0 +1,5 @@
+error: class patterns cannot bind variables; use `_`, a constant or unit variant (`None`, `Mode::Dark`), or a plain comparison
+ --> tests/ui/view/class_binding_pattern.rs:2:51
+  |
+2 |     let _ = rake::view! { <div class={if let Some(value) = Some(1) { "p-4" } else { "p-2" }}/> };
+  |                                                   ^^^^^

@@ -1,0 +1,5 @@
+error: component defaults must be the last attribute
+ --> tests/ui/view/defaults_order.rs:2:34
+  |
+2 |     let _ = rake::view! { <Card {..Default::default()} id={"id".into()}/> };
+  |                                  ^

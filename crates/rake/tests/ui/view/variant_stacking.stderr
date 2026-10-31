@@ -1,0 +1,5 @@
+error: 1st class `hover:active:bg-[#fff]`: variants can't be stacked; GPUI applies one interaction state per style block
+ --> tests/ui/view/variant_stacking.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="hover:active:bg-[#fff]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^

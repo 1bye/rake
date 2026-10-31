@@ -9,14 +9,48 @@ use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 
 mod command;
 mod route;
+#[cfg(feature = "view")]
 mod view;
 
 /// Builds a GPUI element tree from experimental HTML-like markup.
 ///
 /// Exposed as `rake::view!` with Rake's `experimental-view` feature. Supports
-/// quoted text, `{expression}` children, `if`/`else`, and `for` children.
-/// `class` accepts a checked utility subset; `style={|s| ...}` applies GPUI
-/// builder methods. Events use GPUI callbacks, including `cx.listener(...)`.
+/// unquoted/quoted text, `{expression}` children, `if`/`else`, `for`, and guarded `match`
+/// children with braced arm bodies. Untaken branches are not evaluated.
+/// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
+/// conditionally in attribute order (layout tags only); `style={|s| ...}` applies
+/// GPUI builder methods.
+/// Class expressions can choose literal leaves using lazy if/if-let/match branches.
+/// Conditions and scrutinees evaluate once; let chains short-circuit left to right.
+/// Patterns cannot bind variables.
+/// Bare uppercase unit variants/constants (for example None) are accepted. Inline runs also
+/// accept literal branches, restricted to text-run utilities.
+/// Ambient themes are installed with `rake::theme::install(cx, theme)` on the UI
+/// thread; current/try_current expose Rc handles and ThemeGlobal is observable.
+/// Declare the app-owned Clone theme type once at the crate root with
+/// `rake::theme!(Colors)` and validate its field names with `#[derive(rake::Theme)]`.
+/// Named text/bg/border/font/rounded classes read its fields (hyphens become
+/// underscores); built-in values win. Inline text themes accept colors, not
+/// TextToken sizes. Each invocation captures one ambient Rc at construction.
+/// `#[rake::style("px-2 hover:opacity-50")] fn control();` defines a reusable
+/// style function for `style={control}`. Presets support themes and variants,
+/// but no conditions; indirect refinement conflicts remain GPUI debug assertions.
+/// Utilities include half-step spacing, unit lengths, fractions, literal hex colors,
+/// font families and opacity; negative lengths are limited to margins and inset.
+/// Numeric border widths are pixels. Text sizes and radii use names, theme fields
+/// or explicit bracketed lengths, rather than numeric text-N/rounded-N.
+/// Interaction variants merge into one GPUI call per kind: hover, active, focus,
+/// focus-visible, in-focus and named group-hover/group-active. disabled is button-only.
+/// Variants cannot stack or configure interactivity. Conflicting calls inside style
+/// closures are detected heuristically; indirect calls remain GPUI's responsibility.
+/// Errors identify each bad class by ordinal position and suggest nearby utility
+/// names or variants. All literal leaves are checked, including untaken branches.
+/// Utility strings are checked and lowered to ordered GPUI style calls at compile time.
+/// Canonical events use `on:click`, `on:key-down`, mouse-button, outside-pointer,
+/// hover, wheel, drop and drag names with GPUI callbacks.
+/// `tooltip` accepts a GPUI tooltip builder even on disabled buttons. Legacy
+/// event aliases remain accepted with deprecation warnings. Drag takes a
+/// `(payload, constructor)` tuple; drop callbacks need a typed first parameter.
 /// Repeated element roots require explicit, stable `id` attributes.
 /// `<view entity={&self.editor}/>` mounts a retained entity by borrowing its handle.
 /// `focus` and `scroll` borrow stored GPUI handles; inline constructors are rejected.
@@ -25,18 +59,36 @@ mod view;
 /// Buttons support `disabled`, retained focus, and keyboard activation; style their
 /// focus-visible and disabled appearance with GPUI builders.
 /// Uppercase component tags (`<ui::Card ...>...</ui::Card>`) construct typed Rust
-/// structs; paired tags collect `children: Vec<gpui::AnyElement>`. Slots are ordinary
+/// structs; paired tags collect `children: Vec<gpui::AnyElement>`. Bare boolean
+/// properties mean true; `{id}` is shorthand for `id={id}`. A final `{..expr}`
+/// supplies component defaults through Rust struct update, after explicit fields
+/// and paired children. Built-in bare booleans are limited to disabled, wrap,
+/// ellipsis, tab-navigation and aria-expanded. Slots are ordinary
 /// properties. Components own their root IDs and render through GPUI's `RenderOnce`.
-/// Paragraphs compose string-like values and inline `span`/`strong`/`em`/`br` into
-/// one styled text layout, with `wrap`, `ellipsis`, and `max-lines` controls.
-/// Paragraphs reject layout/widget children; inline `style` takes `gpui::HighlightStyle`.
+/// Paragraphs and h1–h6 headings compose string-like values and inline
+/// `span`/`strong`/`em`/`br` into one styled text layout, with `wrap`, `ellipsis`,
+/// and `max-lines` controls.
+/// Both reject layout/widget children; use a div with a heading role for rich content.
+/// Headings expose the full composed text as their name; explicit aria-label wins.
+/// Inline `style` takes `gpui::HighlightStyle`.
+/// Semantic nav/header/footer/main/aside/article tags set AccessKit roles; hr is
+/// a one-point rule without a separator role in the pinned AccessKit version.
+/// SVG leaves use path, styling and optional image labels; they have no macro ID
+/// and are exempt from loop IDs. Wrap SVGs for identity, focus and events.
+/// Independent local diagnostics are combined. Attribute parsing recovers at the
+/// next attribute/tag boundary, and valid builder contexts remain type-checked
+/// beside macro errors. Malformed markup structure can still stop parsing.
 /// Debug builds diagnose duplicate direct sibling IDs visible at construction.
+/// Rustfmt does not format view! bodies; put longer attribute lists on separate
+/// lines and extract long style/listener expressions into named bindings.
+/// A dedicated macro formatter remains a follow-up.
 /// See `docs/experimental-view.md` in the repository for the full contract.
 ///
 #[proc_macro]
+#[cfg(feature = "view")]
 pub fn view(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as view::View);
-    let expanded = facade().and_then(|rake| input.expand(&rake));
+    let expanded = facade().and_then(|rake| input.expand_resilient(&rake));
 
     expanded
         .unwrap_or_else(|error| error.to_compile_error())
@@ -243,4 +295,30 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+/// Validates app-owned theme field names and requires Clone.
+#[proc_macro_derive(Theme)]
+#[cfg(feature = "view")]
+pub fn derive_theme(input: TokenStream) -> TokenStream {
+    view::theme::derive(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Defines a reusable GPUI style function from a checked utility string.
+/// Write `#[rake::style("px-2 hover:opacity-50")] pub fn control();` and use
+/// `style={control}`. Presets accept themes and variants, but no conditions.
+/// GPUI permits one refinement per interaction kind: do not combine a preset's
+/// hover/focus style with classes setting the same kind on the same element.
+#[proc_macro_attribute]
+#[cfg(feature = "view")]
+pub fn style(attributes: TokenStream, input: TokenStream) -> TokenStream {
+    let classes = parse_macro_input!(attributes as syn::LitStr);
+    let item = parse_macro_input!(input as syn::ForeignItemFn);
+
+    facade()
+        .and_then(|rake| view::preset::expand(classes, item, &rake))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }

@@ -1,0 +1,4 @@
+Locked
+Counter locked. Increment and Reset are disabled.
+Show history
+Unlock counter

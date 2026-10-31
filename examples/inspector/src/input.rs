@@ -18,6 +18,7 @@ pub(crate) struct FilterInput {
     changed: Changed,
     bounds: Bounds<Pixels>,
     light: bool,
+    _focus_observers: [Subscription; 2],
 }
 
 fn byte_index(text: &str, offset: usize) -> usize {
@@ -39,8 +40,16 @@ impl FilterInput {
         label: &'static str,
         placeholder: &'static str,
         changed: impl Fn(String, &mut App) + 'static,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus = cx.focus_handle();
+
+        let focus_observers = [
+            cx.on_focus(&focus, window, |_, _, cx| cx.notify()),
+            cx.on_blur(&focus, window, |_, _, cx| cx.notify()),
+        ];
+
         Self {
             text: String::new(),
             label,
@@ -48,10 +57,11 @@ impl FilterInput {
             cursor: 0,
             anchor: 0,
             marked: None,
-            focus: cx.focus_handle(),
+            focus,
             changed: Rc::new(changed),
             bounds: Bounds::default(),
             light: true,
+            _focus_observers: focus_observers,
         }
     }
 
@@ -317,13 +327,13 @@ impl Render for FilterInput {
             .line_height(px(22.))
             .rounded(px(12.))
             .border_1()
-            .border_color(rgb(if focused { 0x8ab4f8 } else { colors.field }))
-            .bg(rgb(colors.field))
-            .text_color(rgb(if self.text.is_empty() {
+            .border_color(if focused { rgb(0x8ab4f8) } else { colors.field })
+            .bg(colors.field)
+            .text_color(if self.text.is_empty() {
                 colors.muted
             } else {
                 colors.ink
-            }))
+            })
             .overflow_hidden()
             .on_key_down(cx.listener(Self::key))
             .on_mouse_down(

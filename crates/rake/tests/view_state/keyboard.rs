@@ -53,8 +53,8 @@ impl Render for KeyboardHost {
                 style={|s| s.size_full()}
                 on:Save={cx.listener(Self::save)}
                 on:Cancel={cx.listener(Self::cancel)}
-                onclick={cx.listener(|this, _, _, cx| { this.parent_clicks += 1; cx.notify(); })}
-                onkeydown={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                on:click={cx.listener(|this, _, _, cx| { this.parent_clicks += 1; cx.notify(); })}
+                on:key-down={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "tab" {
                         if this.consume_tab { cx.stop_propagation(); }
                         if this.consume_default { window.prevent_default(); }
@@ -65,14 +65,14 @@ impl Render for KeyboardHost {
                         .text_color(gpui::rgb(0x111111))
                         .focus_visible(|s| s.text_color(gpui::rgb(0xff0000)))}
                     on:Local={cx.listener(|this, _, _, cx| { this.local += 1; cx.notify(); })}
-                    onclick={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
+                    on:click={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
                     {gpui::canvas(move |_, window, _| focused_color.set(window.text_style().color), |_, _, _, _| {}).size_full()}
                 </button>
                 <button id="middle" tabindex={self.middle_index} focus={&self.middle}
                     style={|s| s.w(gpui::px(160.)).h(gpui::px(40.))}>"Middle"</button>
                 <button id="last" focus={&self.last}
                     style={|s| s.w(gpui::px(160.)).h(gpui::px(40.))}
-                    onclick={|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)}>"Cancel"</button>
+                    on:click={|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)}>"Cancel"</button>
             </section>
         }
     }

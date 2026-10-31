@@ -191,13 +191,26 @@ class Project:
                         digest.update(b"deleted-during-scan")
         return digest.digest()
 
+    def build_features(self):
+        features = [self.args.features] if self.args.features else []
+        # Development builds opt in; ordinary cargo/release builds remain clean.
+        if self.args.command == "dev":
+            if "devtools" in self.package["features"]:
+                features.append("devtools")
+            else:
+                for dependency in self.package["dependencies"]:
+                    if dependency["name"] == "rake" and dependency["kind"] is None:
+                        features.append((dependency["rename"] or "rake") + "/devtools")
+        return ",".join(features)
+
     def build(self, processes, output):
         output.mkdir(parents=True)
         artifacts = []
         command = ["cargo", "build", "--locked", "--message-format=json-render-diagnostics",
                    "--manifest-path", self.package["manifest_path"], "--package", self.package["name"]]
-        if self.args.features:
-            command += ["--features", self.args.features]
+        features = self.build_features()
+        if features:
+            command += ["--features", features]
         if self.args.release:
             command += ["--release"]
         command += ["--bin", self.target["name"]] if self.args.target == "desktop" else ["--lib", "--target", "wasm32-unknown-unknown"]
@@ -288,19 +301,41 @@ class Supervisor:
         waiting = self.session / "waiting"
         waiting.mkdir()
         (waiting / "index.html").write_text("<!doctype html><html><head><title>Rake development</title></head><body>Waiting for the first successful build…</body></html>")
-        env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control)}
+        env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control),
+               "RAKE_SOURCE_ROOT": os.environ.get("RAKE_SOURCE_ROOT", str(self.project.root))}
+        cdp_url = None
+        preview_helper = None
+        if getattr(self.project.args, "preview", False):
+            preview_helper = self.session / "preview-capture"
+            run_output(self.processes, ["xcrun", "swiftc", str(Path(__file__).with_name("preview.swift")),
+                "-module-cache-path", str(self.session / "swift-cache"), "-o", str(preview_helper)])
+        if self.project.args.cdp:
+            executable = os.environ.get("RAKE_CLI") or shutil.which("rake")
+            if not executable:
+                raise RuntimeError("--cdp requires the rake CLI (or RAKE_CLI)")
+            cdp = self.processes.start([executable, "cdp", "--session", str(self.session), "--no-open", "--json"],
+                env=env, stdout=subprocess.PIPE, text=True)
+            ready = json.loads(cdp.stdout.readline())
+            if ready.get("event") != "cdp_listening":
+                raise RuntimeError("CDP adapter could not start")
+            cdp_url = ready["url"]
+            cdp.stdout.close()
+            private_json(self.session / "cdp.json", {"url": cdp_url})
+            print(json.dumps(ready) if self.project.args.json else f"Chrome DevTools discovery: {cdp_url}/json/list", flush=True)
         self.server = self.processes.start([sys.executable, str(Path(__file__).with_name("serve-web.py")),
             "--control", "--port", str(self.project.args.port), "--directory", str(waiting),
             "--development-state", str(self.status_path), "--build-root", str(self.builds),
             "--process-output", str(self.session / "output.json"),
-            *(["--inspector-only"] if self.project.args.target == "desktop" else [])],
+            *(["--inspector-only"] if self.project.args.target == "desktop" else []),
+            *(["--preview-helper", str(preview_helper)] if preview_helper else []),
+            *(["--cdp-url", cdp_url] if cdp_url else [])],
             env=env, stdout=subprocess.PIPE, text=True)
         # Server writes its private launch URL after binding, before serving requests.
         line = self.server.stdout.readline()
         if not line.startswith("Serving "):
             raise RuntimeError("development server could not start")
         url = line.split(" at ", 1)[1].strip()
-        print(json.dumps({"event": "web_listening" if self.project.args.target == "web" else "inspector_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
+        print(json.dumps({"event": "preview_listening" if preview_helper else "web_listening" if self.project.args.target == "web" else "inspector_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
               f"{line.strip()}\nSession: {self.session}", flush=True)
         self.server.stdout.close()
         if not self.project.args.no_open:
@@ -320,6 +355,9 @@ class Supervisor:
 
     def launch(self, artifact):
         env = {**os.environ, "RAKE_DEV_CONTROL": "1", "RAKE_CONTROL_DIR": str(self.control)}
+        if getattr(self.project.args, "preview", False):
+            env["RAKE_DEV_PREVIEW"] = "1"
+        env.setdefault("RUST_BACKTRACE", "1")
         if self.checkpoint.exists():
             env["RAKE_RELOAD_CHECKPOINT"] = str(self.checkpoint)
         self.app = self.processes.start([str(artifact)], cwd=self.project.root, env=env,
@@ -329,7 +367,10 @@ class Supervisor:
             def collect(pipe=pipe, label=label, pid=self.app.pid):
                 with pipe:
                     while chunk := pipe.readline(2048):
-                        self.output.append(chunk, pid, label)
+                        structured = chunk.startswith("\x1eRAKE_DIAGNOSTIC ")
+                        if structured:
+                            chunk = chunk[len("\x1eRAKE_DIAGNOSTIC "):]
+                        self.output.append(chunk, pid, label, structured=structured)
                         print(chunk, file=sys.stderr, end="", flush=True)
             reader = threading.Thread(target=collect, daemon=True)
             reader.start()
@@ -463,6 +504,8 @@ class Supervisor:
                 worker = threading.Thread(target=build, daemon=True)
                 worker.start()
             if self.app and self.app.poll() is not None and self.status.get("app_running"):
+                self.output.append(f"Application exited with code {self.app.returncode}", self.app.pid,
+                    "lifecycle", level="error" if self.app.returncode else "info")
                 self.record("app_exited", app_running=False, exit_code=self.app.returncode)
             # Surface replacement compatibility outcomes while keeping the supervisor alive.
             if self.app and self.app.poll() is None and self.status["phase"] in {"watching", "running", "restore_failed"}:
@@ -521,6 +564,8 @@ def main():
     parser.add_argument("--restart-without-state", action="store_true", help="Explicitly allow restarting apps without a control endpoint")
     parser.add_argument("--port", type=int)
     parser.add_argument("--instance", help="Initial inspector runtime UUID or application ID")
+    parser.add_argument("--cdp", action="store_true", help="Expose opted-in runtimes to stock Chrome DevTools")
+    parser.add_argument("--preview", action="store_true", help="macOS 14+: stream the native window to a local browser with pointer input and element selection")
     parser.add_argument("--elements", action="store_true", help="Launch the Elements-only Rake Inspector; --target selects desktop or Web")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -531,6 +576,10 @@ def main():
     parser.add_argument("--sign-identity", help="macOS bundle signing identity; default '-' uses ad-hoc signing")
     parser.add_argument("--entitlements", type=Path, help="macOS signing entitlements plist")
     args = parser.parse_args()
+    if args.preview and (args.command != "dev" or args.target != "desktop" or sys.platform != "darwin"):
+        parser.error("--preview requires rake dev --target desktop on macOS 14 or later")
+    if args.cdp and args.command != "dev":
+        parser.error("--cdp applies to dev")
     if args.elements and args.command != "inspect":
         parser.error("--elements applies to inspect")
     args.release = args.release if args.release is not None else args.command == "bundle"
@@ -589,6 +638,10 @@ def main():
             if args.elements and args.target == "web":
                 command += ["--inspector-app", str(elements_artifact)]
             if args.session:
+                cdp_metadata = args.session / "cdp.json"
+                if cdp_metadata.is_file():
+                    from inspector import private_read
+                    command += ["--cdp-url", private_read(cdp_metadata)["url"]]
                 command += ["--development-state", str(args.session.resolve() / "status.json"),
                             "--build-root", str(args.session.resolve() / "builds"),
                             "--process-output", str(args.session.resolve() / "output.json")]

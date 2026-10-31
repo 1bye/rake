@@ -1,0 +1,5 @@
+error: theme field collides with a built-in utility value; choose a descriptive name
+ --> tests/ui/view/theme_reserved_scale.rs:2:17
+  |
+2 | struct Colors { t_13: rake::gpui::Rgba }
+  |                 ^^^^

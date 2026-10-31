@@ -2,212 +2,913 @@
 //!
 //! GPUI's public API does not enumerate arbitrary descendants. Rake captures its
 //! shell and application-supplied inspection boundaries, preserving their nearest
-//! inspected ancestor. Layout is measured by GPUI; styles are authored base
-//! refinements, not computed/hover styles. No views or source contents are retained.
+//! inspected ancestor. Layout is measured by GPUI. Authored refinements and live
+//! resolved styles are separate; opaque custom elements may not expose resolution.
+//! Rendered text and accessibility metadata are bounded owned strings. Editable
+//! control values, views and source contents are not retained.
 
+mod budget;
+mod editing;
+#[path = "inspection/preview.rs"]
+mod native_preview;
+mod recording;
+mod snapshot;
+
+use snapshot::Captured;
+
+mod text_editing;
 #[cfg(feature = "gpui")]
 mod view;
+#[cfg(feature = "experimental-view")]
+pub(crate) use view::authored;
 
 #[cfg(feature = "gpui")]
 pub use view::{InspectElement, Inspected, inspect};
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::Duration;
+use web_time::Instant;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::router::WindowId;
 
-use crate::router::{EntryId, TabId};
-
-/// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.
-pub const MAX_ELEMENTS: usize = 256;
-/// Maximum serialized snapshot size, below the transport's 1 MiB limit.
-pub const MAX_SNAPSHOT_BYTES: usize = 512 * 1024;
-
-/// Window-local logical pixels, after layout and element offsets; not screen pixels.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Layout {
-    /// Horizontal origin.
-    pub x: f32,
-    /// Vertical origin.
-    pub y: f32,
-    /// Laid-out width before clipping.
-    pub width: f32,
-    /// Laid-out height before clipping.
-    pub height: f32,
-}
-
-/// Construction site of an inspection boundary; no file access is provided.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SourceLocation {
-    /// Compiler-supplied source path, possibly relative or remapped.
-    pub file: String,
-    /// One-based line.
-    pub line: u32,
-    /// One-based column.
-    pub column: u32,
-}
-
-/// One boundary in prepaint traversal order. Semantic IDs may repeat in a tree.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Element {
-    /// Opaque identity scoped to the runtime and this capture; never a semantic selector.
-    pub id: String,
-    /// Nearest retained inspected ancestor; uninstrumented intermediates are omitted.
-    pub parent: Option<String>,
-    /// Rust element type, without a promise of a stable wire spelling.
-    pub kind: String,
-    /// Application-supplied identity, distinct from GPUI state identity.
-    pub semantic_id: Option<String>,
-    /// Construction site of the boundary, when supplied.
-    pub source: Option<SourceLocation>,
-    /// Actual GPUI layout, or None for invalid/non-finite geometry.
-    pub layout: Option<Layout>,
-    /// Serialized GPUI base style refinement; None for custom unstyled elements.
-    pub styles: Option<Value>,
-    /// Whether a metadata field exceeded its capture limit.
-    pub metadata_truncated: bool,
-    /// Presented route owner; None for the workspace shell.
-    pub tab_id: Option<TabId>,
-    /// Presented route entry, never a hidden retained history entry.
-    pub entry_id: Option<EntryId>,
-}
-
-/// Coverage and availability, independent of whether the current tree is empty.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    /// No mounted inspection host (including headless runtimes).
-    #[default]
-    Unavailable,
-    /// Attached host has not completed a capture yet.
-    Waiting,
-    /// A completed prepaint traversal is available.
-    Captured,
-}
-
-/// Latest completed tree. Replacing a capture invalidates every previous element ID.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Snapshot {
-    /// Explicit availability.
-    pub status: Status,
-    /// Monotonic capture identity, encoded as a string for JavaScript precision.
-    pub capture: String,
-    /// Router revision at the start of the captured render, not a live revision.
-    pub router_revision: u64,
-    /// Captured boundaries in depth-first order.
-    pub elements: Vec<Element>,
-    /// Inspected boundaries omitted by count/byte limits. Opaque descendants are uncounted.
-    pub omitted: usize,
-    /// Human-readable coverage including opaque/cached subtrees and style limitations.
-    pub coverage: String,
-}
-
-/// Exact lookup failure. Clients refresh the tree after stale captures.
-#[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
-pub enum InspectionError {
-    /// No suitable mounted host.
-    #[error("element inspection is unavailable for this runtime")]
-    Unavailable,
-    /// Host is waiting for its first completed capture.
-    #[error("element inspection is waiting for a completed frame")]
-    Waiting,
-    /// ID is invalid, omitted, or belongs to a replaced capture.
-    #[error("element identity is not retained; refresh the inspected tree")]
-    NotRetained,
-}
+pub use rake_protocol::inspection::*;
 
 #[derive(Clone)]
-pub(crate) struct Store(Rc<RefCell<Snapshot>>);
+pub(crate) struct Store(Rc<RefCell<State>>);
+
+struct State {
+    latest: Rc<Captured>,
+    edits: BTreeMap<String, editing::History>,
+    text_edits: BTreeMap<String, text_editing::History>,
+    frames: recording::Recording,
+    pages: BTreeMap<String, (Rc<Captured>, Instant)>,
+    #[cfg(any(feature = "gpui", test))]
+    next_capture: u64,
+    #[cfg(feature = "gpui")]
+    next_boundary: u64,
+    windows: BTreeMap<WindowId, WindowState>,
+    mode_until: Option<Instant>,
+    pick: Pick,
+    pick_window: Option<WindowId>,
+    #[cfg(any(feature = "gpui", test))]
+    suppress_up: bool,
+    changed: event_listener::Event,
+}
+
+struct WindowState {
+    #[cfg(all(feature = "gpui", target_os = "macos"))]
+    preview: Option<native_preview::native::Target>,
+    snapshot: Rc<Captured>,
+    #[cfg(feature = "gpui")]
+    identities: view::BoundaryIndex,
+    #[cfg(feature = "gpui")]
+    caches: std::collections::HashMap<String, Rc<RefCell<view::BoundaryCache>>>,
+    #[cfg(feature = "gpui")]
+    navigation: BTreeMap<String, view::NavigationTarget>,
+    #[cfg(feature = "gpui")]
+    pending_focus: Option<(String, gpui::FocusHandle)>,
+    highlight: Option<(Element, Instant)>,
+    #[cfg(any(feature = "gpui", test))]
+    pointer: Option<(f32, f32)>,
+    #[cfg(feature = "gpui")]
+    timer: Option<(Instant, gpui::Task<()>)>,
+    #[cfg(feature = "gpui")]
+    escape: Option<gpui::Subscription>,
+}
 
 impl Default for Store {
     fn default() -> Self {
-        Self(Rc::new(RefCell::new(Snapshot {
-            status: Status::Unavailable,
-            capture: "0".into(),
-            router_revision: 0,
-            elements: Vec::new(),
-            omitted: 0,
-            coverage: "Rake inspection boundaries only; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; styles are authored base refinements, not computed, inherited or interaction styles. Text content is not captured.".into(),
+        Self(Rc::new(RefCell::new(State {
+            latest: Rc::new(Captured::from(Snapshot {
+                status: Status::Unavailable,
+                capture: "0".into(),
+                router_revision: 0,
+                elements: Vec::new(),
+                omitted: 0,
+                coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Rendered text is captured at text boundaries (16 KiB UTF-8 prefix); editable control values are excluded. Bounded accessibility labels and descriptions include macro-generated control names.".into(),
+            })),
+            edits: BTreeMap::new(),
+            text_edits: BTreeMap::new(),
+            frames: recording::Recording::default(),
+            pages: BTreeMap::new(),
+            #[cfg(any(feature = "gpui",test))]
+            next_capture: 0,
+            #[cfg(feature = "gpui")]
+            next_boundary: 0,
+            windows: BTreeMap::new(),
+            mode_until: None,
+            pick: Pick::default(),
+            pick_window: None,
+            #[cfg(any(feature = "gpui",test))]
+            suppress_up: false,
+            changed: event_listener::Event::new(),
         })))
     }
 }
 
 impl Store {
+    pub(crate) fn navigate(
+        &self,
+        id: &str,
+        generation: &str,
+        action: NavigationAction,
+    ) -> Result<(), InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+        let host = state
+            .windows
+            .values_mut()
+            .find(|host| host.snapshot.capture == generation)
+            .ok_or(InspectionError::StaleGeneration)?;
+        let element = host
+            .snapshot
+            .elements
+            .iter()
+            .find(|element| element.id == id)
+            .ok_or(InspectionError::NotRetained)?;
+        let supported = match action {
+            NavigationAction::Focus => element.navigation.focus,
+            NavigationAction::ScrollIntoView => element.navigation.scroll_into_view,
+        };
+        if !supported {
+            return Err(InspectionError::NavigationUnavailable);
+        }
+
+        #[cfg(feature = "gpui")]
+        {
+            let target = host
+                .navigation
+                .get(id)
+                .ok_or(InspectionError::NavigationUnavailable)?;
+            match action {
+                NavigationAction::Focus => {
+                    host.pending_focus = Some((
+                        id.into(),
+                        target
+                            .focus
+                            .clone()
+                            .ok_or(InspectionError::NavigationUnavailable)?,
+                    ));
+                }
+                NavigationAction::ScrollIntoView => {
+                    target.reveal(
+                        element
+                            .layout
+                            .ok_or(InspectionError::NavigationUnavailable)?,
+                    );
+                }
+            }
+            state.changed.notify(usize::MAX);
+            Ok(())
+        }
+        #[cfg(not(feature = "gpui"))]
+        Err(InspectionError::NavigationUnavailable)
+    }
+
+    #[cfg(feature = "gpui")]
+    fn take_focus(&self, window: WindowId) -> Option<gpui::FocusHandle> {
+        let mut state = self.0.borrow_mut();
+        let host = state.windows.get_mut(&window)?;
+        let (id, focus) = host.pending_focus.take()?;
+        host.snapshot
+            .elements
+            .iter()
+            .any(|element| element.id == id)
+            .then_some(focus)
+    }
+
+    fn full_snapshot(&self) -> Rc<Captured> {
+        let state = self.0.borrow();
+
+        state
+            .pick_window
+            .and_then(|id| state.windows.get(&id))
+            .map(|host| &host.snapshot)
+            .unwrap_or(&state.latest)
+            .clone()
+    }
+
+    pub(crate) fn tree_revision(&self) -> TreeRevision {
+        let snapshot = self.full_snapshot();
+        TreeRevision {
+            capture: snapshot.capture.clone(),
+            metadata: Some(snapshot.index_revision.clone()),
+            status: snapshot.status,
+        }
+    }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
-        self.0.borrow().clone()
+        let full = self.full_snapshot();
+        let mut snapshot = Snapshot {
+            status: full.status,
+            capture: full.capture.clone(),
+            router_revision: full.router_revision,
+            elements: Vec::new(),
+            omitted: full.omitted + full.elements.len().saturating_sub(TREE_PAGE_SIZE),
+            coverage: full.coverage.clone(),
+        };
+        let mut bytes = 4096;
+        for (index, element) in full.elements.iter().take(TREE_PAGE_SIZE).enumerate() {
+            let size = budget::size(element, MAX_SNAPSHOT_BYTES)
+                + full.details.get(index).map_or(0, snapshot::Details::bytes)
+                + 1;
+
+            if bytes + size >= MAX_SNAPSHOT_BYTES {
+                break;
+            }
+
+            bytes += size;
+            snapshot.elements.push(full.element(index));
+        }
+
+        snapshot.omitted += full.elements.len().min(TREE_PAGE_SIZE) - snapshot.elements.len();
+
+        snapshot
+    }
+
+    pub(crate) fn window_page(
+        &self,
+        window: WindowId,
+        presentation: Option<&str>,
+        offset: usize,
+    ) -> Result<WindowPage, InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+        let now = Instant::now();
+        state.pages.retain(|_, (_, until)| *until > now);
+        let prefix = format!("window-{}-frame-", window.0);
+        let (lease, full) = if let Some(lease) = presentation {
+            if !lease.starts_with(&prefix) {
+                return Err(InspectionError::StaleGeneration);
+            }
+            let full = state
+                .pages
+                .get(lease)
+                .map(|(capture, _)| capture.clone())
+                .ok_or(InspectionError::StaleGeneration)?;
+            (lease.to_owned(), full)
+        } else {
+            let full = state
+                .windows
+                .get(&window)
+                .map(|host| host.snapshot.clone())
+                .ok_or(InspectionError::NotRetained)?;
+            let lease = format!("{prefix}{}", full.frame_sequence);
+            if !state.pages.contains_key(&lease) {
+                if state.pages.len() >= 4 {
+                    let oldest = state
+                        .pages
+                        .iter()
+                        .min_by_key(|(_, (_, until))| *until)
+                        .map(|(key, _)| key.clone());
+                    if let Some(key) = oldest {
+                        state.pages.remove(&key);
+                    }
+                }
+                state
+                    .pages
+                    .insert(lease.clone(), (full.clone(), now + Duration::from_secs(5)));
+            }
+            (lease, full)
+        };
+        drop(state);
+        Ok(WindowPage {
+            window,
+            presentation: lease,
+            frame_sequence: full.frame_sequence.clone(),
+            metadata_revision: full.index_revision.clone(),
+            page: index_page(&full, offset)?,
+        })
+    }
+
+    pub(crate) fn tree_page(
+        &self,
+        generation: Option<&str>,
+        offset: usize,
+    ) -> Result<TreePage, InspectionError> {
+        let current = self.full_snapshot();
+        let mut state = self.0.borrow_mut();
+        let now = Instant::now();
+        state.pages.retain(|_, (_, until)| *until > now);
+        let full = if let Some(generation) = generation {
+            if generation == current.capture {
+                current
+            } else {
+                state
+                    .pages
+                    .get(generation)
+                    .map(|(capture, _)| capture.clone())
+                    .ok_or(InspectionError::StaleGeneration)?
+            }
+        } else {
+            if !state.pages.contains_key(&current.capture) {
+                if state.pages.len() >= 4 {
+                    let oldest = state
+                        .pages
+                        .iter()
+                        .min_by_key(|(_, (_, until))| *until)
+                        .map(|(id, _)| id.clone());
+                    if let Some(oldest) = oldest {
+                        state.pages.remove(&oldest);
+                    }
+                }
+                state.pages.insert(
+                    current.capture.clone(),
+                    (current.clone(), now + Duration::from_secs(5)),
+                );
+            }
+            current
+        };
+        drop(state);
+        index_page(&full, offset)
     }
 
     pub(crate) fn element(&self, id: &str) -> Result<Element, InspectionError> {
-        let snapshot = self.0.borrow();
+        let state = self.0.borrow();
 
-        match snapshot.status {
+        match state.latest.status {
             Status::Unavailable => Err(InspectionError::Unavailable),
             Status::Waiting => Err(InspectionError::Waiting),
-            Status::Captured => snapshot
-                .elements
-                .iter()
-                .find(|element| element.id == id)
-                .cloned()
-                .ok_or(InspectionError::NotRetained),
+            Status::Captured => {
+                let mut element = state
+                    .windows
+                    .values()
+                    .map(|host| &host.snapshot)
+                    .chain(std::iter::once(&state.latest))
+                    .chain(
+                        state
+                            .pages
+                            .values()
+                            .filter(|(_, until)| *until > Instant::now())
+                            .map(|(snapshot, _)| snapshot),
+                    )
+                    .find_map(|snapshot| {
+                        snapshot
+                            .elements
+                            .iter()
+                            .position(|element| element.id == id)
+                            .map(|index| snapshot.element(index))
+                    })
+                    .ok_or(InspectionError::NotRetained)?;
+                if let Some(history) = element
+                    .stable_id
+                    .as_ref()
+                    .and_then(|id| state.edits.get(id))
+                {
+                    element.style_overrides.clone_from(&history.current);
+                }
+                Ok(element)
+            }
         }
     }
 
     pub(crate) fn status(&self) -> Status {
-        self.0.borrow().status
+        self.0.borrow().latest.status
+    }
+
+    pub(crate) fn highlight(
+        &self,
+        id: Option<&str>,
+        generation: &str,
+    ) -> Result<(), InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+
+        if let Some(id) = id {
+            let host = state
+                .windows
+                .values_mut()
+                .find(|host| host.snapshot.capture == generation)
+                .ok_or(InspectionError::StaleGeneration)?;
+
+            let element = host
+                .snapshot
+                .elements
+                .iter()
+                .find(|element| element.id == id)
+                .ok_or(InspectionError::NotRetained)?
+                .clone();
+
+            host.highlight = Some((element, Instant::now() + Duration::from_secs(2)));
+        } else {
+            for host in state.windows.values_mut() {
+                host.highlight = None;
+            }
+        }
+
+        state.changed.notify(usize::MAX);
+
+        Ok(())
     }
 
     #[cfg(feature = "gpui")]
+    pub(crate) fn listen(&self) -> impl std::future::Future<Output = ()> + use<> {
+        let state = self.0.borrow();
+        let changed = state.changed.listen();
+        let deadline = state.frames.until;
+        let store = self.clone();
+        async move {
+            if let Some(deadline) = deadline {
+                let timer = crate::tasks::sleep(deadline.saturating_duration_since(Instant::now()));
+                futures::future::select(Box::pin(changed), Box::pin(timer)).await;
+                // Lease cleanup must run even when a hidden window never draws again.
+                store.0.borrow_mut().expire(Instant::now());
+            } else {
+                changed.await;
+            }
+        }
+    }
+
+    fn available(&self) -> Result<(), InspectionError> {
+        match self.status() {
+            Status::Unavailable => Err(InspectionError::Unavailable),
+            Status::Waiting => Err(InspectionError::Waiting),
+            Status::Captured => Ok(()),
+        }
+    }
+
+    pub(crate) fn inspect_mode(&self, enabled: bool, lease_ms: u64) -> Result<(), InspectionError> {
+        self.available()?;
+
+        if enabled && !(1..=2000).contains(&lease_ms) {
+            return Err(InspectionError::InvalidLease);
+        }
+
+        let mut state = self.0.borrow_mut();
+
+        if enabled {
+            if !state.mode_active(Instant::now()) {
+                state.pick.hovered = None;
+                state.pick.picked = None;
+                state.pick_window = None;
+            }
+
+            state.mode_until = Some(Instant::now() + Duration::from_millis(lease_ms));
+
+            for host in state.windows.values_mut() {
+                if let Some((_, until)) = &mut host.highlight {
+                    *until = Instant::now() + Duration::from_secs(2);
+                }
+            }
+        } else {
+            state.cancel();
+        }
+
+        state.changed.notify(usize::MAX);
+
+        Ok(())
+    }
+
+    pub(crate) fn pick(&self) -> Result<Pick, InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+
+        state.expire(Instant::now());
+        let mut pick = state.pick.clone();
+
+        pick.mode = state.mode_active(Instant::now());
+
+        Ok(pick)
+    }
+
+    #[cfg(any(feature = "gpui", test))]
+    fn pointer(&self, window: WindowId, x: f32, y: f32, click: bool) -> bool {
+        let mut state = self.0.borrow_mut();
+        let now = Instant::now();
+
+        state.expire(now);
+
+        if !state.mode_active(now) {
+            return false;
+        }
+
+        state.hover(window, x, y, now);
+
+        if click {
+            state.pick.picked = state.pick.hovered.clone();
+            state.pick.pick_sequence = state.pick.pick_sequence.saturating_add(1);
+            state.mode_until = None;
+            state.suppress_up = true;
+        }
+
+        true
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn detach_window(&self, window: WindowId) {
+        let mut state = self.0.borrow_mut();
+
+        state.windows.remove(&window);
+        let alive: std::collections::BTreeSet<_> = state
+            .windows
+            .values()
+            .flat_map(|host| &host.snapshot.elements)
+            .filter_map(|e| e.stable_id.clone())
+            .collect();
+        state.text_edits.retain(|stable, _| alive.contains(stable));
+        state.frames.detach(window);
+
+        if state.pick_window == Some(window) {
+            state.pick_window = None;
+            state.cancel();
+        }
+    }
+
+    #[cfg(any(feature = "gpui", test))]
     pub(crate) fn begin(&self, revision: u64) -> Snapshot {
-        let snapshot = self.0.borrow();
+        let mut state = self.0.borrow_mut();
+
+        state.next_capture = state
+            .next_capture
+            .checked_add(1)
+            .expect("inspection capture overflow");
 
         Snapshot {
-            capture: snapshot
-                .capture
-                .parse::<u64>()
-                .expect("internal capture identity")
-                .checked_add(1)
-                .expect("inspection capture overflow")
-                .to_string(),
+            capture: state.next_capture.to_string(),
             status: Status::Captured,
             router_revision: revision,
             elements: Vec::new(),
             omitted: 0,
-            coverage: snapshot.coverage.clone(),
+            coverage: state.latest.coverage.clone(),
         }
     }
 
     #[cfg(feature = "gpui")]
     pub(crate) fn attach(&self) {
-        self.0.borrow_mut().status = Status::Waiting;
+        Rc::make_mut(&mut self.0.borrow_mut().latest).status = Status::Waiting;
     }
 
-    #[cfg(feature = "gpui")]
-    pub(crate) fn publish(&self, snapshot: Snapshot) {
-        *self.0.borrow_mut() = snapshot;
+    #[cfg(test)]
+    pub(crate) fn publish(&self, window: WindowId, snapshot: Snapshot) {
+        self.publish_captured(window, snapshot.into());
+    }
+
+    #[cfg(any(feature = "gpui", test))]
+    fn publish_captured(&self, window: WindowId, mut snapshot: Captured) {
+        let mut state = self.0.borrow_mut();
+
+        if let Some(host) = state.windows.get(&window) {
+            // Style-only redraws keep stable identities without copying style payloads.
+            let old = &host.snapshot;
+
+            let same_boundaries = snapshot.elements.len() == old.elements.len()
+                && snapshot.omitted == old.omitted
+                && snapshot.elements.iter().zip(&old.elements).enumerate().all(
+                    |(index, (element, old))| {
+                        old.id
+                            .strip_prefix("element-")
+                            .and_then(|id| id.rsplit_once('-'))
+                            == Some((host.snapshot.capture.as_str(), index.to_string().as_str()))
+                            && same_parent(
+                                element.parent.as_deref(),
+                                old.parent.as_deref(),
+                                &host.snapshot.capture,
+                            )
+                            && element.kind == old.kind
+                            && element.text == old.text
+                            && element.text_editable == old.text_editable
+                            && element.stable_id == old.stable_id
+                            && (match (&element.accessibility, &old.accessibility) {
+                                (Some(a), Some(b)) => a.same_properties(b),
+                                (None, None) => true,
+                                _ => false,
+                            })
+                            && element.handlers == old.handlers
+                            && element.navigation.focus == old.navigation.focus
+                            && element.navigation.scroll_into_view
+                                == old.navigation.scroll_into_view
+                            && element.semantic_id == old.semantic_id
+                            && element.source == old.source
+                            && element.view == old.view
+                            && element.layout == old.layout
+                            && element.box_model == old.box_model
+                            && element.content_mask == old.content_mask
+                            && element.tab_id == old.tab_id
+                            && element.entry_id == old.entry_id
+                    },
+                );
+
+            if same_boundaries {
+                // Live focus invalidates the index without expiring control IDs or edits.
+                if snapshot
+                    .elements
+                    .iter()
+                    .zip(&old.elements)
+                    .all(|(a, b)| a.accessibility == b.accessibility)
+                {
+                    snapshot.index_revision.clone_from(&old.index_revision);
+                }
+                snapshot.capture.clone_from(&old.capture);
+
+                for (element, old) in snapshot.elements.iter_mut().zip(&old.elements) {
+                    element.id.clone_from(&old.id);
+                    element.parent.clone_from(&old.parent);
+                }
+            }
+        }
+
+        let snapshot = Rc::new(snapshot);
+
+        let host = state.windows.entry(window).or_insert_with(|| WindowState {
+            #[cfg(all(feature = "gpui", target_os = "macos"))]
+            preview: None,
+            snapshot: Rc::clone(&snapshot),
+            #[cfg(feature = "gpui")]
+            identities: view::BoundaryIndex::new(),
+            #[cfg(feature = "gpui")]
+            caches: std::collections::HashMap::new(),
+            #[cfg(feature = "gpui")]
+            navigation: BTreeMap::new(),
+            #[cfg(feature = "gpui")]
+            pending_focus: None,
+            highlight: None,
+            pointer: None,
+            #[cfg(feature = "gpui")]
+            timer: None,
+            #[cfg(feature = "gpui")]
+            escape: None,
+        });
+
+        if host.snapshot.capture != snapshot.capture {
+            host.highlight = host.highlight.as_ref().and_then(|(highlight, until)| {
+                highlight.stable_id.as_ref().and_then(|stable| {
+                    snapshot
+                        .elements
+                        .iter()
+                        .find(|element| element.stable_id.as_ref() == Some(stable))
+                        .map(|element| (element.clone(), *until))
+                })
+            });
+        }
+
+        host.snapshot = Rc::clone(&snapshot);
+        let pointer = host.pointer;
+
+        state.latest = snapshot;
+        let alive: std::collections::BTreeSet<_> = state
+            .windows
+            .values()
+            .flat_map(|host| &host.snapshot.elements)
+            .filter_map(|e| e.stable_id.clone())
+            .collect();
+        state.edits.retain(|stable, _| alive.contains(stable));
+        state.text_edits.retain(|stable, _| alive.contains(stable));
+
+        if state.mode_active(Instant::now())
+            && state.pick_window == Some(window)
+            && let Some((x, y)) = pointer
+        {
+            state.hover(window, x, y, Instant::now());
+        }
+    }
+}
+
+impl State {
+    fn mode_active(&self, now: Instant) -> bool {
+        self.mode_until.is_some_and(|until| until > now)
+    }
+
+    fn cancel(&mut self) {
+        self.mode_until = None;
+        self.pick.hovered = None;
+
+        for host in self.windows.values_mut() {
+            host.highlight = None;
+        }
+    }
+
+    fn expire(&mut self, now: Instant) {
+        self.frames.expire(now);
+        if self.mode_until.is_some_and(|until| until <= now) {
+            self.cancel();
+        }
+
+        for host in self.windows.values_mut() {
+            if host
+                .highlight
+                .as_ref()
+                .is_some_and(|(_, until)| *until <= now)
+            {
+                host.highlight = None;
+            }
+        }
+    }
+
+    #[cfg(any(feature = "gpui", test))]
+    fn hover(&mut self, window: WindowId, x: f32, y: f32, now: Instant) {
+        if let Some(previous) = self.pick_window.filter(|previous| *previous != window)
+            && let Some(host) = self.windows.get_mut(&previous)
+        {
+            host.highlight = None;
+        }
+
+        let Some(host) = self.windows.get_mut(&window) else {
+            return;
+        };
+
+        host.pointer = Some((x, y));
+        let element = hit_test(&host.snapshot, x, y).cloned();
+        let id = element.as_ref().map(|e| e.id.clone());
+
+        if self.pick.hovered != id || self.pick.generation != host.snapshot.capture {
+            host.highlight = element.map(|e| (e, now + Duration::from_secs(2)));
+        }
+
+        self.pick.generation = host.snapshot.capture.clone();
+        self.pick.hovered = id;
+        self.pick_window = Some(window);
     }
 }
 
 #[cfg(any(feature = "gpui", test))]
-impl Snapshot {
-    // Leaves room for envelope, coverage and JSON separators below the wire limit.
-    fn retain(&mut self, element: Element, bytes: &mut usize) -> Option<String> {
-        let size = serde_json::to_vec(&element).map_or(MAX_SNAPSHOT_BYTES, |value| value.len());
+fn hit_test(snapshot: &Snapshot, x: f32, y: f32) -> Option<&Element> {
+    let painted = snapshot
+        .elements
+        .iter()
+        .any(|element| element.paint_order.is_some());
+    let mut hidden = std::collections::BTreeSet::new();
+    snapshot
+        .elements
+        .iter()
+        .enumerate()
+        .filter(|&(_, element)| {
+            let invisible = element.accessibility.as_ref().is_some_and(|a| a.hidden)
+                || element
+                    .parent
+                    .as_deref()
+                    .is_some_and(|parent| hidden.contains(parent));
+            if invisible {
+                hidden.insert(element.id.as_str());
+            }
+            !invisible
+                && (!painted || element.paint_order.is_some())
+                && element
+                    .layout
+                    .zip(element.content_mask)
+                    .is_some_and(|(bounds, mask)| contains(bounds, x, y) && contains(mask, x, y))
+        })
+        .max_by_key(|(index, element)| element.paint_order.unwrap_or(*index))
+        .map(|(_, element)| element)
+}
 
-        if self.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_SNAPSHOT_BYTES - 4096 {
-            self.omitted += 1;
+#[cfg(any(feature = "gpui", test))]
+fn contains(bounds: Layout, x: f32, y: f32) -> bool {
+    x >= bounds.x
+        && y >= bounds.y
+        && x < bounds.x + bounds.width
+        && y < bounds.y + bounds.height
+        && bounds.width > 0.
+        && bounds.height > 0.
+}
 
-            return None;
-        }
-
-        *bytes += size;
-        let id = element.id.clone();
-
-        self.elements.push(element);
-
-        Some(id)
+fn tree_entry(element: &Element) -> Element {
+    Element {
+        id: element.id.clone(),
+        stable_id: element.stable_id.clone(),
+        navigation: element.navigation.clone(),
+        parent: element.parent.clone(),
+        kind: element.kind.clone(),
+        text: element.text.clone(),
+        text_editable: element.text_editable,
+        semantic_id: element.semantic_id.clone(),
+        source: element.source.clone(),
+        view: element.view.as_ref().map(|view| ViewMetadata {
+            tag: view.tag.clone(),
+            style_sources: Vec::new(),
+        }),
+        paint_order: element.paint_order,
+        style_editable: element.style_editable,
+        style_overrides: Vec::new(),
+        accessibility: element.accessibility.clone(),
+        handlers: Vec::new(),
+        layout: element.layout,
+        box_model: None,
+        content_mask: element.content_mask,
+        styles: None,
+        resolved: None,
+        metadata_truncated: element.metadata_truncated,
+        tab_id: element.tab_id,
+        entry_id: element.entry_id,
     }
+}
+
+#[cfg(all(feature = "gpui", test))]
+fn bound_resolved_styles(snapshot: &mut Snapshot) {
+    let mut base_bytes = 0;
+
+    for element in &mut snapshot.elements {
+        let resolved = element.resolved.take();
+
+        base_bytes += budget::size(&*element, MAX_CAPTURE_BYTES);
+        element.resolved = resolved;
+    }
+
+    let mut remaining = (MAX_CAPTURE_BYTES - 4096).saturating_sub(base_bytes);
+
+    for element in &mut snapshot.elements {
+        if let Some(resolved) = &element.resolved {
+            let bytes = budget::size(resolved, MAX_RESOLVED_STYLE_BYTES) + 16;
+
+            if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
+                element.resolved = None;
+                element.metadata_truncated = true;
+            } else {
+                remaining -= bytes;
+            }
+        }
+    }
+}
+
+// Leaves room for envelope, coverage and JSON separators below the wire limit.
+#[cfg(test)]
+fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Option<String> {
+    let size = budget::size(&element, MAX_CAPTURE_BYTES);
+
+    retain_with_size(snapshot, element, bytes, size)
+}
+
+#[cfg(any(feature = "gpui", test))]
+fn retain_with_size(
+    snapshot: &mut Snapshot,
+    element: Element,
+    bytes: &mut usize,
+    estimated: usize,
+) -> Option<String> {
+    // Presentation identities are assigned after traversal; reserve their maximum wire size.
+    // Reserve the worst-case escaped name derived after descendants have been captured.
+    let name_reserve = if element
+        .accessibility
+        .as_ref()
+        .is_some_and(|a| a.role.is_some() && a.name.is_none())
+    {
+        2048
+    } else {
+        0
+    };
+    let size = estimated + 128 + name_reserve;
+
+    if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_CAPTURE_BYTES - 4096 {
+        snapshot.omitted += 1;
+
+        return None;
+    }
+
+    *bytes += size;
+    let id = element.id.clone();
+
+    snapshot.elements.push(element);
+
+    Some(id)
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(feature = "gpui", test))]
+fn same_parent(parent: Option<&str>, old: Option<&str>, capture: &str) -> bool {
+    match parent.and_then(|parent| parent.rsplit_once('-')) {
+        Some((_, index)) => {
+            old.and_then(|old| old.strip_prefix("element-"))
+                .and_then(|old| old.rsplit_once('-'))
+                == Some((capture, index))
+        }
+        None => parent == old,
+    }
+}
+
+fn index_page(full: &Captured, offset: usize) -> Result<TreePage, InspectionError> {
+    if offset > full.elements.len() {
+        return Err(InspectionError::InvalidPage);
+    }
+    let end = offset
+        .saturating_add(TREE_PAGE_SIZE)
+        .min(full.elements.len());
+    let mut snapshot = Snapshot {
+        elements: Vec::new(),
+        status: full.status,
+        capture: full.capture.clone(),
+        router_revision: full.router_revision,
+        omitted: full.omitted,
+        coverage: full.coverage.clone(),
+    };
+    snapshot.elements = full.elements[offset..end].iter().map(tree_entry).collect();
+    let mut bytes = 4096;
+    let count = snapshot
+        .elements
+        .iter()
+        .take_while(|element| {
+            bytes += budget::size(element, MAX_SNAPSHOT_BYTES) + 1;
+
+            bytes < MAX_SNAPSHOT_BYTES
+        })
+        .count();
+    snapshot.elements.truncate(count);
+    let end = offset + count;
+    Ok(TreePage {
+        snapshot,
+        next: (end < full.elements.len()).then_some(end),
+        total: full.elements.len(),
+    })
+}

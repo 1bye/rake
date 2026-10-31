@@ -1,0 +1,5 @@
+error: 1st class `disabled:opacity-50`: disabled: classes are supported only on buttons
+ --> tests/ui/view/variant_disabled.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="disabled:opacity-50"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^

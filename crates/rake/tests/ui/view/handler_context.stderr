@@ -1,0 +1,13 @@
+error: 1st class `unknown-utility`: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/handler_context.rs:6:20
+  |
+6 |         <div class="unknown-utility">
+  |                    ^^^^^^^^^^^^^^^^^
+
+error[E0609]: no field `missing` on type `&mut Host`
+ --> tests/ui/view/handler_context.rs:8:22
+  |
+8 |                 this.missing = 1;
+  |                      ^^^^^^^ unknown field
+  |
+  = note: available field is: `count`

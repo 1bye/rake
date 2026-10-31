@@ -23,16 +23,31 @@ from dev_bridge import BridgeError, DevBridge
 class BrokerHTTP(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="rake-broker-")
+        self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         (self.directory / "index.html").write_text('<html lang="en"><meta charset="utf-8"><body>test</body></html>')
         self.discovery = self.directory / "control"
         env = dict(os.environ, RAKE_CONTROL_DIR=str(self.discovery))
-        self.process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("serve-web.py")), "--directory", str(self.directory), "--port", "0", "--control"], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        selector = selectors.DefaultSelector()
-        selector.register(self.process.stdout, selectors.EVENT_READ)
-        self.assertTrue(selector.select(10), "server failed to start")
-        line = self.process.stdout.readline()
-        selector.close()
+        # A private loopback server must become ready without reverse DNS.
+        bootstrap = """import runpy, sys
+from pathlib import Path
+from unittest.mock import patch
+sys.argv.pop(0)
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parent))
+with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must not resolve DNS')):
+    runpy.run_path(sys.argv[0], run_name='__main__')
+"""
+        self.server_log = (self.directory / "server.log").open("w+")
+        self.process = subprocess.Popen([sys.executable, "-c", bootstrap, str(Path(__file__).with_name("serve-web.py")), "--directory", str(self.directory), "--port", "0", "--control"], env=env, stdout=subprocess.PIPE, stderr=self.server_log, text=True)
+        self.addCleanup(self.stop_server)
+        with selectors.DefaultSelector() as selector:
+            selector.register(self.process.stdout, selectors.EVENT_READ)
+            ready = bool(selector.select(10))
+            line = self.process.stdout.readline() if ready else ""
+        if not line.startswith("Serving "):
+            self.process.poll()
+            self.server_log.seek(0)
+            self.fail("server failed to start: " + self.server_log.read(16384))
         launch = urllib.parse.urlsplit(line.strip().split()[-1])
         self.url = urllib.parse.urlunsplit(launch._replace(fragment="")).rstrip("/")
         self.config = {"url": self.url, "token": launch.fragment.removeprefix("__rake_control=")}
@@ -43,18 +58,19 @@ class BrokerHTTP(unittest.TestCase):
         with urllib.request.urlopen(self.url + "/__rake/bootstrap.js") as response:
             self.assertNotIn(self.config["token"], response.read().decode())
         self.runtime = str(uuid.uuid4())
-        self.info = {"element_inspection": "unavailable", "protocol": 1, "runtime_id": self.runtime, "platform": "web", "commands": [], "queries": ["info"], "supported_targets": ["CurrentTab", "NewTab"], "idempotency_capacity": 1024, "completed_operations": 256, "pending_operations": 1024}
+        self.info = {"element_inspection": "unavailable", "element_interaction": False, "protocol": 1, "runtime_id": self.runtime, "platform": "web", "commands": [], "queries": ["info"], "supported_targets": ["CurrentTab", "NewTab"], "idempotency_capacity": 1024, "completed_operations": 256, "pending_operations": 1024}
 
-    def tearDown(self):
+    def stop_server(self):
         try:
-            self.process.send_signal(signal.SIGINT)
-            self.process.wait(timeout=10)
+            if self.process.poll() is None:
+                self.process.send_signal(signal.SIGINT)
+                self.process.wait(timeout=10)
         finally:
             if self.process.poll() is None:
                 self.process.kill()
                 self.process.wait(timeout=5)
             self.process.stdout.close()
-            self.temporary.cleanup()
+            self.server_log.close()
 
     def post(self, path, body, token=None, origin=None):
         headers = {"Content-Type": "application/json", "X-Rake-Token": self.config["token"] if token is None else token}

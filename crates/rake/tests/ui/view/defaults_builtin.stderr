@@ -1,0 +1,5 @@
+error: default fields are supported only on components
+ --> tests/ui/view/defaults_builtin.rs:2:33
+  |
+2 |     let _ = rake::view! { <div {..Default::default()}/> };
+  |                                 ^

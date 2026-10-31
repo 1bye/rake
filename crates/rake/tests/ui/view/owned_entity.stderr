@@ -1,0 +1,5 @@
+error: entity must borrow stored state, e.g. entity={&self.entity}; construct it once outside render
+ --> tests/ui/view/owned_entity.rs:2:41
+  |
+2 |     let _ = rake::view! { <view entity={entity}/> };
+  |                                         ^^^^^^

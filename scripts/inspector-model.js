@@ -1,4 +1,11 @@
 // Pure projections of shared runtime replies. Authoritative state only comes from snapshots.
+export function elementName(kind) {
+  while (/^(?:\w+::)*(?:Stateful|ViewElement)</.test(kind) && kind.endsWith('>')) {
+    kind = kind.slice(kind.indexOf('<') + 1, -1);
+  }
+  return kind.split('<')[0].split('::').at(-1);
+}
+
 export function safeJSON(text) {
   return JSON.parse(text, (_key, value) => {
     if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {
@@ -15,7 +22,7 @@ export function request(runtime, message, key = null) {
       const value = message.value[name];
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) throw new Error(`Invalid ${name} identity.`);
     }
-    if (!key) throw new Error('Commands require a stable request key.');
+    if (!key && !['highlight_element', 'inspect_mode', 'navigate_element', 'edit_element_style', 'record_frames'].includes(message.value.type)) throw new Error('Commands require a stable request key.');
   }
   return {protocol: 1, runtime_id: runtime, key, message};
 }
@@ -162,4 +169,67 @@ export function commandArguments(schema, root = schema, depth = 0) {
   if (type === 'boolean') return false;
   if (type === 'integer' || type === 'number') return schema.minimum ?? Math.min(0, schema.maximum ?? 0);
   return null;
+}
+
+// Captured hierarchy only; these are inspection paths, not executable selectors.
+export function elementSubtree(elements, id) {
+  const index = new Map(elements.map(node => [node.id, node]));
+  if (index.size !== elements.length || !index.has(id)) return null;
+  const children = new Map();
+  for (const node of elements) { if (!children.has(node.parent)) children.set(node.parent, []); children.get(node.parent).push(node); }
+  const stack = [[index.get(id), false]], seen = new Set(), rows = [];
+  while (stack.length) {
+    const [node, closing] = stack.pop();
+    if (closing) { rows.push([node, true]); continue; }
+    if (seen.has(node.id)) return null;
+    seen.add(node.id); rows.push([node, false]); stack.push([node, true]);
+    for (const child of [...children.get(node.id) || []].reverse()) stack.push([child, false]);
+  }
+  return rows;
+}
+export function elementPath(elements, id) {
+  const index = new Map(elements.map(node => [node.id, node])), counts = new Map(), positions = new Map();
+  if (index.size !== elements.length) return null;
+  for (const node of elements) {
+    const key = JSON.stringify([node.parent, node.view?.tag || elementName(node.kind)]), position = (counts.get(key) || 0) + 1;
+    counts.set(key, position); positions.set(node.id, position);
+  }
+  const path = [], seen = new Set(); let node = index.get(id), bytes = 0;
+  if (!node) return null;
+  while (node) {
+    if (seen.has(node.id)) return null;
+    seen.add(node.id);
+    const segment = `${node.view?.tag || elementName(node.kind)}[${positions.get(node.id)}]${node.semantic_id == null ? '' : `[@id=${JSON.stringify(node.semantic_id)}]`}`;
+    bytes += new TextEncoder().encode(segment).length + 1; if (bytes > 512 * 1024) return null; path.push(segment);
+    if (node.parent != null && !index.has(node.parent)) return null;
+    node = index.get(node.parent);
+  }
+  const value = '/' + path.reverse().join('/');
+  return new TextEncoder().encode(value).length <= 512 * 1024 ? value : null;
+}
+export function elementText(elements, id) {
+  const nodes = elementSubtree(elements, id);
+  if (!nodes) return null;
+  let value = '', bytes = 0;
+  for (const [node, closing] of nodes) {
+    if (closing || node.text == null) continue;
+    bytes += new TextEncoder().encode(node.text).length; if (bytes > 512 * 1024) return null; value += node.text;
+  }
+  return value;
+}
+export function elementMarkup(elements, id) {
+  const nodes = elementSubtree(elements, id);
+  if (!nodes) return null;
+  const escape = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  let value = '', bytes = 0;
+  for (const [node, closing] of nodes) {
+    let chunk = '';
+    if (node.text != null) { if (!closing) chunk = escape(node.text); }
+    else {
+      const name = escape(node.view?.tag || elementName(node.kind));
+      chunk = closing ? `</${name}>` : `<${name}${node.semantic_id == null ? '' : ` id="${escape(node.semantic_id)}"`}>`;
+    }
+    bytes += new TextEncoder().encode(chunk).length; if (bytes > 512 * 1024 - 4096) return null; value += chunk;
+  }
+  return new TextEncoder().encode(JSON.stringify(value)).length < 512 * 1024 - 4096 ? value : null;
 }

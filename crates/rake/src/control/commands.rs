@@ -128,28 +128,7 @@ pub struct CommandContext {
     pub cancellation: CancellationToken,
 }
 
-/// Command registration, typed argument, capability or handler failure.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
-pub enum CommandError {
-    /// The stable command key was never registered.
-    #[error("unknown application command: {0}")]
-    Unknown(String),
-    /// Stable key invalid or duplicated.
-    #[error("invalid or duplicate application command: {0}")]
-    Registration(String),
-    /// Typed argument decoding failed.
-    #[error("invalid command arguments: {0}")]
-    Arguments(String),
-    /// A UI-dependent handler cannot execute headlessly.
-    #[error("this command requires a window")]
-    RequiresWindow,
-    /// The handler deliberately reported an application failure.
-    #[error("application command failed: {0}")]
-    Failed(String),
-    /// Typed result could not be serialized.
-    #[error("command result serialization failed: {0}")]
-    Result(String),
-}
+use rake_protocol::control::CommandError;
 
 type Handler = Rc<
     dyn Fn(

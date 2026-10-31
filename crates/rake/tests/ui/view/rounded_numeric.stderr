@@ -1,0 +1,5 @@
+error: 1st class `rounded-4`: radius uses a name (`rounded-md`), a theme field or `[4px]`
+ --> tests/ui/view/rounded_numeric.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="rounded-4"/> };
+  |                                      ^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: 1st class `bg-[#ggg]`: invalid hex color; expected #rgb, #rrggbb or #rrggbbaa
+ --> tests/ui/view/arbitrary_bad_hex.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="bg-[#ggg]"/> };
+  |                                      ^^^^^^^^^^^

@@ -2,31 +2,56 @@
 //!
 //! Default builds include the pinned GPUI native/browser adapters. Disable default
 //! features for HTTP, data and diagnostics consumers that do not need a UI.
+//! Inspection and temporary style editing require the opt-in `devtools` feature;
+//! ordinary native and WASM builds omit their instrumentation and retained state.
 
 extern crate self as rake;
 
+#[path = "inspection/macros.rs"]
+mod inspection_macros;
+
 pub mod control;
-pub mod diagnostics;
-pub mod http;
+
+#[cfg(all(feature = "devtools-memory", unix))]
+pub mod memory;
+
+pub use rake_diagnostics as diagnostics;
+
+pub use rake_http as http;
+
+#[cfg(feature = "devtools")]
+pub mod inspection;
+#[cfg(not(feature = "devtools"))]
+#[path = "inspection/disabled.rs"]
 pub mod inspection;
 pub mod quit;
 pub mod reload;
 pub mod router;
 pub mod services;
+pub mod storage;
 pub mod tasks;
 
 #[cfg(feature = "gpui")]
 mod application;
 
 #[cfg(feature = "experimental-view")]
-mod view;
+use rake_ui::view;
+
+#[cfg(feature = "experimental-view")]
+pub mod overlay;
+
+#[cfg(feature = "experimental-view")]
+pub use rake_ui::theme;
 
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError};
 #[cfg(feature = "gpui")]
 pub use gpui;
+pub use rake_macros::{Command, Route, app, data, instrument};
 #[cfg(feature = "experimental-view")]
 /// Builds GPUI views from experimental HTML-like markup.
+/// With `devtools`, nodes expose bounded inspection and authored style sources.
+/// Without it, inspection wrappers and source descriptors are removed at expansion.
 ///
 /// ```
 /// let rows = ["One", "Two"];
@@ -43,6 +68,41 @@ pub use gpui;
 ///     </div>
 /// };
 /// ```
+///
+/// Classes support explicit units, interaction variants and literal branches:
+///
+/// ```
+/// let selected = true;
+/// let _ = rake::view! {
+///     <button class="h-[24px] px-2 hover:opacity-50"
+///         class:font-bold={selected}>Save</button>
+/// };
+/// ```
+///
+/// App-owned themes and reusable style functions keep views concise:
+///
+/// ```
+/// use rake::gpui::{self, IntoElement};
+/// #[derive(Clone, rake::Theme)]
+/// struct Colors { surface: gpui::Rgba, ink: gpui::Rgba }
+/// rake::theme!(Colors);
+/// #[rake::style("px-2 rounded-sm hover:bg-surface")]
+/// fn control();
+/// fn panel() -> impl IntoElement {
+///     rake::view! { <button class="text-ink" style={control}>Save</button> }
+/// }
+/// fn setup(cx: &mut gpui::App) {
+///     rake::theme::install(cx, Colors { surface: gpui::rgb(0x223344), ink: gpui::rgb(0xffffff) });
+/// }
+/// # fn main() {}
+/// ```
+///
+/// Declare the theme at the crate root and install it on the UI thread before
+/// constructing views. Built-in utility values take precedence over theme fields;
+/// hyphens in field names become underscores. Inline theme text accepts colors,
+/// while `TextToken` typography belongs on the paragraph. Each invocation reads
+/// one theme handle at construction. Presets and classes cannot both set the same
+/// interaction kind; named functions are opaque to the conflict heuristic.
 ///
 /// Mount stateful views by borrowing an entity retained by their owner:
 ///
@@ -63,7 +123,7 @@ pub use gpui;
 ///         <section focus={&focus} key-context="Editor" tab-navigation={true}
 ///             on:Save={|_: &Save, _, _| {}}>
 ///             <button disabled={busy} aria-keyshortcuts="Control+S"
-///                 onclick={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
+///                 on:click={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
 ///                 "Save"
 ///             </button>
 ///         </section>
@@ -90,24 +150,26 @@ pub use gpui;
 /// #[derive(IntoElement)]
 /// struct Stack {
 ///     id: gpui::ElementId,
+///     header: gpui::AnyElement,
 ///     children: Vec<gpui::AnyElement>,
 /// }
 /// impl RenderOnce for Stack {
 ///     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
-///         gpui::div().id(self.id).flex().flex_col().children(self.children)
+///         gpui::div().id(self.id).flex().flex_col()
+///             .child(self.header).children(self.children)
 ///     }
 /// }
 /// let _stack = rake::view! {
-///     <Stack id={"stack".into()}>
-///         <h2>"Typed children"</h2>
-///         <p>"Ordinary GPUI elements."</p>
+///     <Stack id={"stack".into()} header={<h2>Typed children</h2>}>
+///         <p>Ordinary GPUI elements.</p>
 ///     </Stack>
 /// };
 /// ```
 ///
 /// Component properties follow Rust field types, visibility, and ownership rules.
-/// No property defaults or implicit conversions are added; component root IDs must
-/// be forwarded to the rendered GPUI root. Retain state in caller-owned entities.
+/// Markup-valued properties such as `header={<h2>Title</h2>}` produce `AnyElement`.
+/// Expression properties retain their types without implicit conversions. Component
+/// root IDs must be forwarded to the rendered GPUI root. Retain state in caller-owned entities.
 ///
 /// ```compile_fail
 /// struct Badge { label: String }
@@ -160,8 +222,7 @@ pub use gpui;
 /// ```compile_fail
 /// let _ = rake::view! { <p><button>"A widget"</button></p> };
 /// ```
-pub use rake_macros::view;
-pub use rake_macros::{Command, Route, app, data, instrument};
+pub use rake_macros::{Theme, style, view};
 pub use router::Route;
 pub use schemars;
 pub use serde;
@@ -200,15 +261,62 @@ pub mod prelude {
 
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::__rake_inspection as inspection;
+
+    #[cfg(all(feature = "experimental-view", feature = "devtools"))]
+    pub use crate::inspection::authored::{
+        Definition as ViewDefinition, HandlerSite as ViewHandlerSite, StyleSite as ViewStyleSite,
+        child as view_inspect_child, component as view_inspect_component,
+        component_key as view_component_key, styled as view_inspect,
+    };
+
+    #[cfg(feature = "experimental-view")]
+    pub use crate::theme::apply::{
+        ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeRunFont, ThemeRunText, ThemeText,
+    };
+
     #[cfg(feature = "experimental-view")]
     pub use crate::view::{
         Children as ViewChildren, ComponentChildren as ViewComponentChildren,
         ParagraphContent as ViewParagraphContent, RunStyle as ViewRunStyle, button as view_button,
-        entity as view_entity, focus as view_focus, image as view_image,
+        entity as view_entity, focus as view_focus, image as view_image, svg as view_svg,
         tab_index as view_tab_index, tab_navigation as view_tab_navigation,
     };
+
+    /// Deprecated macro event aliases; referenced at the authored attribute span.
+    #[cfg(feature = "experimental-view")]
+    pub mod view_legacy {
+        #[deprecated(note = "use on:click")]
+        pub const ONCLICK: () = ();
+
+        #[deprecated(note = "use on:key-down")]
+        pub const ONKEYDOWN: () = ();
+
+        #[deprecated(note = "use on:key-up")]
+        pub const ONKEYUP: () = ();
+
+        #[deprecated(note = "use on:mouse-move")]
+        pub const ONMOUSEMOVE: () = ();
+
+        #[deprecated(note = "use on:mouse-down")]
+        pub const ONMOUSEDOWN: () = ();
+
+        #[deprecated(note = "use on:mouse-up")]
+        pub const ONMOUSEUP: () = ();
+    }
 
     pub use tracing;
     #[cfg(target_family = "wasm")]
     pub use wasm_bindgen;
+}
+
+/// Declares this crate's ambient view theme; invoke once at the crate root.
+/// Install the value with [`theme::install`] before building themed views.
+#[cfg(feature = "experimental-view")]
+#[macro_export]
+macro_rules! theme {
+    ($theme:path) => {
+        #[doc(hidden)]
+        pub(crate) type __RakeTheme = $theme;
+    };
 }

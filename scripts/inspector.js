@@ -1,16 +1,21 @@
-import {InspectorState, commandArguments, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
+import {InspectorState, commandArguments, elementName, elementSubtree, elementPath, elementText, elementMarkup, identity, matches, request, requests, safeJSON, stateName, traces} from '/__rake/inspector-model.js';
 
 const $ = id => document.getElementById(id);
-const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Elements', 'Reload'];
+const panels = ['Workspace', 'Routes', 'Tasks', 'Operations', 'Decisions', 'Console', 'Requests', 'Traces', 'Frames', 'Elements', 'Reload'];
 const model = new InspectorState();
 let panel = 'Workspace', instances = [], routes = [], commands = [], info = null, development = null;
 let filter = {}, search = '', page = 0, paused = false, polling = false, mutating = false, connected = false;
 let receipt = null, operation = null, selectedOperation = null, output = {records: [], dropped: 0}, level = 'ALL', source = 'Structured', taskOwner = 'All';
 const expanded = new Set(), drafts = new Map();
+let frameState = null, frameRecords = [], frameAfter = 0, recordingFrames = false;
+const elementCollapsed = new Set();
+let elementMenu = null;
 let elements = null, selectedElement = null, elementDetail = null, elementError = null;
 let rendered = null, workspaceFocus = null, elementTab = 'Styles', resizing = false;
+let pointerHeld = false, pointerReleaseTimer = null;
 const paneSizes = new Map(), scrollPositions = new Map();
 let awaitingSuccessor = null;
+let picking = false, pickSequence = 0, hoveredBoundary = null, highlightSent = false, inspectionBusy = false;
 const parameters = new URLSearchParams(location.search);
 const secret = location.hash.startsWith('#__rake_control=') ? location.hash.slice('#__rake_control='.length) : null;
 if (secret && /^[A-Za-z0-9_-]{32,128}$/.test(secret)) sessionStorage.setItem('rake-dev-control-token', secret);
@@ -86,8 +91,8 @@ function table(headers, rows) {
   table.append(body);
   return append(el('div', null, 'table-wrap'), table);
 }
-function paged(items, renderer, size = 100) {
-  const matched = items.filter(item => !search || JSON.stringify(item).toLowerCase().includes(search.toLowerCase()));
+function paged(items, renderer, size = 100, filterBySearch = true) {
+  const matched = items.filter(item => !filterBySearch || !search || JSON.stringify(item).toLowerCase().includes(search.toLowerCase()));
   page = Math.min(page, Math.max(0, Math.ceil(matched.length / size) - 1));
   const start = page * size;
   const content = renderer(matched.slice(start, start + size));
@@ -97,6 +102,7 @@ function paged(items, renderer, size = 100) {
   return append(el('div'), content, pager);
 }
 function switchPanel(name) {
+  if (panel === 'Elements') stopInspection();
   panel = name; page = 0; selectedOperation = null; operation = null;
   for (const control of $('panels').children) {
     const active = control.dataset.panel === name;
@@ -160,8 +166,12 @@ function treeRow(name, kind, id, depth, active, onInspect, meta = '') {
   return control;
 }
 function choose(runtime) {
+  stopInspection(); pickSequence = 0;
+  if (recordingFrames && model.runtime) inspectionControl({type: 'record_frames', enabled: false, lease_ms: 0}).catch(() => {});
+  frameState = null; frameRecords = []; frameAfter = 0; recordingFrames = false;
   awaitingSuccessor = null;
   model.reset(runtime); info = null; routes = []; commands = []; connected = false;
+  elementCollapsed.clear(); elementMenu = null;
   elements = null; selectedElement = null; elementDetail = null; elementError = null;
   selectedOperation = null; operation = null; filter = {}; drafts.clear(); expanded.clear(); scrollPositions.clear(); workspaceFocus = null; elementTab = 'Styles'; page = 0;
   $('runtime').value = runtime || ''; showError(null);
@@ -237,6 +247,12 @@ async function refresh() {
         choose(next?.info.runtime_id || null);
       }
     }
+    const cdpTargets = await rpc('inspect_cdp', {});
+    const cdpTarget = cdpTargets.find(target => target.id === model.runtime);
+    $('open-cdp').hidden = !cdpTarget;
+    if (cdpTarget && /^devtools:\/\/devtools\/bundled\/devtools_app\.html\?ws=127\.0\.0\.1:[0-9]+\/[a-f0-9]+\/[a-f0-9-]+$/.test(cdpTarget.devtoolsFrontendUrl)) {
+      $('open-cdp').href = cdpTarget.devtoolsFrontendUrl;
+    } else { $('open-cdp').hidden = true; $('open-cdp').removeAttribute('href'); }
     development = await rpc('development', {});
     if (panel === 'Console') {
       const delta = await rpc('inspect_output', {after: output.records.at(-1)?.sequence || 0});
@@ -244,15 +260,24 @@ async function refresh() {
     }
     if (runtime && runtime === model.runtime) {
       if (!info) {
-        const metadata = await Promise.all([query('info'), query('routes'), query('commands')]);
+        const metadata = (await query('info')).value;
         if (runtime !== model.runtime) return;
-        [info, routes, commands] = metadata.map(reply => reply.value);
+        const descriptors = await Promise.all(['routes', 'commands'].map(name => metadata.queries.includes(name) ? query(name, {}, runtime) : {value: []}));
+        if (runtime !== model.runtime) return;
+        info = metadata;
+        [routes, commands] = descriptors.map(reply => reply.value);
+        if (!info.queries.includes('events') && info.queries.includes('inspect_tree') && panel === 'Workspace') switchPanel('Elements');
       }
-      const event = await query('events', {cursor: model.cursor}, runtime);
-      if (runtime !== model.runtime) return;
-      model.event(event.value);
-      const diagnostics = await query('diagnostics', {after: model.after, kind: null}, runtime);
-      model.diagnostics(diagnostics.value, runtime);
+      if (info.queries.includes('events')) {
+        const event = await query('events', {cursor: model.cursor}, runtime);
+        if (runtime !== model.runtime) return;
+        model.event(event.value);
+      }
+      if (info.queries.includes('diagnostics')) {
+        const diagnostics = await query('diagnostics', {after: model.after, kind: null}, runtime);
+        if (runtime !== model.runtime) return;
+        model.diagnostics(diagnostics.value, runtime);
+      }
       if (selectedOperation != null && (panel === 'Operations' || receipt?.envelope.runtime_id === runtime)) {
         const selected = selectedOperation;
         try {
@@ -266,10 +291,31 @@ async function refresh() {
           }
         }
       }
-      if (panel === 'Elements' && info?.queries?.includes('inspect_tree')) {
-        const tree = await query('inspect_tree', {}, runtime);
+      if ((panel === 'Frames' || recordingFrames) && info.queries.includes('frames')) {
+        if (recordingFrames) await inspectionControl({type: 'record_frames', enabled: true, lease_ms: 5000}, runtime);
+        const frames = (await query('frames', {after: frameAfter}, runtime)).value;
         if (runtime !== model.runtime) return;
-        elements = tree.value;
+        frameState = frames; frameAfter = frames.cursor;
+        frameRecords.push(...frames.frames); frameRecords = frameRecords.slice(-200);
+      }
+      if (panel === 'Elements' && info?.queries?.includes('inspect_tree')) {
+        const tree = await inspectionTree(runtime);
+        if (runtime !== model.runtime) return;
+        elements = tree;
+        const keys = new Set(tree.elements.map(element => element.stable_id || element.id));
+        for (const key of elementCollapsed) if (!keys.has(key)) elementCollapsed.delete(key);
+        if (elementMenu) {
+          const target = tree.elements.find(node => node.id === elementMenu.id) || (elementMenu.stable && tree.elements.find(node => node.stable_id === elementMenu.stable));
+          if (target) elementMenu.id = target.id; else elementMenu = null;
+        }
+        const stable = elementDetail?.stable_id;
+        const current = elements.elements.find(element => element.id === selectedElement)
+          || (stable && elements.elements.filter(element => element.stable_id === stable).length === 1
+            ? elements.elements.find(element => element.stable_id === stable) : null);
+        if (current) selectedElement = current.id;
+        if (current) elementDetail = info.queries.includes('inspect_tree_page')
+          ? (await query('inspect_element', {id: current.id}, runtime)).value : current;
+        if (hoveredBoundary && hoveredBoundary.generation !== elements.capture) hoveredBoundary = null;
       }
       if (!connected) message('Connected to ' + (info?.platform || 'application') + ' runtime.');
       connected = true; showError(null);
@@ -286,7 +332,7 @@ async function refresh() {
 
 function workspace() {
   const snapshot = model.snapshot;
-  if (!snapshot) return empty('No workspace snapshot yet. The inspector stays available while the application starts or restarts.');
+  if (!snapshot) return empty(info && !info.queries.includes('events') ? 'This standalone host exposes Elements and diagnostics. Router workspace controls are unavailable.' : 'No workspace snapshot yet. The inspector stays available while the application starts or restarts.');
   const hosts = snapshot.windows || [{id: snapshot.window_id, selected: snapshot.selected}];
   const selectedTabs = new Set(hosts.map(host => host.selected));
   const currentTab = snapshot.tabs.find(tab => selectedTabs.has(tab.id)) || snapshot.tabs[0];
@@ -486,6 +532,61 @@ function tracePanel() {
       node.duration == null ? 'No duration observed' : `${(node.duration / 1000).toFixed(3)} ms`, row(badge(!node.opened || node.missingParent ? 'Partial ancestry' : node.closed ? 'Closed' : 'No close observed'),
         related(node.fields, 'Tasks'), related(node.fields, 'Requests'), related(node.fields, 'Console'), details('Span fields', node, `span:${node.id}`))]))));
 }
+async function inspectionTree(runtime) {
+  if (!info?.queries?.includes('inspect_tree_page')) return (await query('inspect_tree', {}, runtime)).value;
+  let tree = null, offset = 0;
+  do {
+    const page = (await query('inspect_tree_page', {generation: tree?.capture ?? null, offset}, runtime)).value;
+    if (page.total > 8192 || page.snapshot.elements.length > 256 || (tree && tree.capture !== page.snapshot.capture)) throw new Error('Invalid tree page');
+    if (tree) tree.elements.push(...page.snapshot.elements); else tree = page.snapshot;
+    if (page.next == null) break;
+    if (page.next <= offset || page.next > page.total) throw new Error('Invalid tree cursor');
+    offset = page.next;
+  } while (true);
+  return tree;
+}
+function inspectionControl(value, runtime = model.runtime) {
+  return exchange(request(runtime, {type: 'command', value}));
+}
+function stopInspection() {
+  const runtime = model.runtime;
+  const used = picking || highlightSent || hoveredBoundary;
+  picking = false; hoveredBoundary = null; highlightSent = false;
+  if (runtime && used) {
+    inspectionControl({type: 'inspect_mode', enabled: false, lease_ms: 0}, runtime).catch(() => {});
+    inspectionControl({type: 'highlight_element', id: null, generation: ''}, runtime).catch(() => {});
+  }
+}
+async function inspectionLoop() {
+  if (!inspectionBusy && connected && info?.element_interaction) {
+    const runtime = model.runtime;
+    inspectionBusy = true;
+    try {
+      if (picking) {
+        const pick = (await query('inspect_pick', {}, runtime)).value;
+        if (runtime === model.runtime) {
+          picking = pick.mode;
+          if (pick.picked && pick.pick_sequence > pickSequence) {
+            pickSequence = pick.pick_sequence;
+            if (elements?.capture !== pick.generation) elements = await inspectionTree(runtime);
+            await inspectElement(pick.picked);
+          }
+          if (picking) await inspectionControl({type: 'inspect_mode', enabled: true, lease_ms: 1000}, runtime);
+          render(true);
+        }
+      } else if (hoveredBoundary) {
+        const hover = hoveredBoundary;
+        await inspectionControl({type: 'highlight_element', ...hover}, runtime);
+        highlightSent = true;
+      } else if (highlightSent) {
+        await inspectionControl({type: 'highlight_element', id: null, generation: ''}, runtime);
+        highlightSent = false;
+      }
+    } catch (error) { stopInspection(); showError(error); }
+    finally { inspectionBusy = false; }
+  }
+  setTimeout(inspectionLoop, 100);
+}
 async function inspectElement(id) {
   const runtime = model.runtime;
   selectedElement = id; elementDetail = null; elementError = null;
@@ -511,6 +612,65 @@ function styleValue(value, key) {
   }
   return el('span', text(value) + ';', 'value');
 }
+function styleEditor(selected, stale) {
+  const editor = el('div', null, 'style-block');
+  const disabled = stale || !connected || !selected.style_editable || !info.commands.includes('edit_element_style');
+  const edit = async value => {
+    try {
+      const matches = elements.elements.filter(element => selected.stable_id ? element.stable_id === selected.stable_id : element.id === selected.id);
+      if (matches.length !== 1) throw new Error('The edited boundary is no longer mounted.');
+      await inspectionControl({type: 'edit_element_style', id: matches[0].id, generation: elements.capture, edit: value});
+      await refresh();
+      if (selectedElement) await inspectElement(selectedElement);
+    } catch (error) { showError(error); }
+  };
+  editor.append(el('h3', 'Temporary base overrides'), el('p', 'Interaction styles can override these values. Rust source is unchanged.', 'hint'));
+  for (const declaration of selected.style_overrides || []) {
+    const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = declaration.enabled; toggle.disabled = disabled;
+    toggle.setAttribute('aria-label', 'Enable ' + declaration.property);
+    toggle.addEventListener('change', () => edit({action: 'set', declaration: {...declaration, enabled: toggle.checked}}));
+    editor.append(row(toggle, el('code', `${declaration.property}: ${declaration.value};`)));
+  }
+  const form = el('form'), property = el('input'), value = el('input');
+  property.placeholder = 'padding-left'; property.setAttribute('aria-label', 'Override property'); property.maxLength = 64;
+  value.placeholder = '12px'; value.setAttribute('aria-label', 'Override value'); value.maxLength = 128;
+  property.disabled = value.disabled = disabled;
+  const apply = el('button', 'Apply override'); apply.type = 'submit'; apply.disabled = disabled;
+  form.append(row(label('Property', property), label('Value', value), apply));
+  form.addEventListener('submit', event => { event.preventDefault(); edit({action: 'set', declaration: {property: property.value.trim(), value: value.value.trim(), enabled: true}}); });
+  editor.append(form, row(button('Reset overrides', () => edit({action: 'reset'}), disabled), button('Undo style edit', () => edit({action: 'undo'}), disabled)));
+  return editor;
+}
+async function elementTreeAction(action, id = selectedElement) {
+  elementMenu = null;
+  const nodes = elements?.elements || [], node = nodes.find(node => node.id === id);
+  try {
+    if (action.startsWith('copy-')) {
+      const value = action === 'copy-path' ? elementPath(nodes, id) : action === 'copy-text' ? elementText(nodes, id) : elementMarkup(nodes, id);
+      if (value == null) throw new Error('Copy unavailable for a stale, invalid or oversized subtree.');
+      await navigator.clipboard.writeText(value); message('Copied ' + action.slice(5) + '.');
+    } else if (action === 'expand-all') elementCollapsed.clear();
+    else if (action === 'collapse-all' || action.endsWith('-branch')) {
+      const targets = action === 'collapse-all' ? nodes : (elementSubtree(nodes, id) || []).filter(([, closing]) => !closing).map(([node]) => node);
+      for (const target of targets) action === 'expand-branch' ? elementCollapsed.delete(target.stable_id || target.id) : elementCollapsed.add(target.stable_id || target.id);
+      if (action === 'collapse-all' && node) {
+        let root = node; const seen = new Set();
+        while (root.parent && !seen.has(root.id)) { seen.add(root.id); const parent = nodes.find(n => n.id === root.parent); if (!parent) break; root = parent; }
+        await inspectElement(root.id);
+      }
+    } else if (node && (action === 'focus' || action === 'scroll')) {
+      await inspectionControl({type: 'navigate_element', id, generation: elements.capture, action: action === 'focus' ? 'focus' : 'scroll_into_view'});
+    } else if (node && action === 'source') await rpc('inspect_source', {runtime_id: model.runtime, id});
+  } catch (error) { showError(error); }
+  render(true);
+}
+function focusElementControl(id) {
+  [...$('content').querySelectorAll('[data-focus]')].find(control => control.dataset.focus === 'element:' + id)?.focus();
+}
+function openElementMenu(id, x = 16, y = 64) {
+  elementMenu = {id, x, y, stable: elements?.elements.find(node => node.id === id)?.stable_id}; render(true);
+  [...$('content').querySelectorAll('[data-focus]')].find(control => control.dataset.focus === 'element-menu:0' && !control.disabled)?.focus();
+}
 function elementsPanel() {
   if (!info?.queries?.includes('inspect_tree')) return empty('This runtime does not expose element inspection.');
   if (!elements) return empty('Waiting for the inspected tree.');
@@ -518,24 +678,109 @@ function elementsPanel() {
   for (const element of elements.elements) depths.set(element.id, element.parent ? (depths.get(element.parent) ?? 0) + 1 : 0);
   const selected = elementDetail;
   const replaced = selectedElement && !elements.elements.some(element => element.id === selectedElement);
-  const tree = paged(elements.elements, items => append(el('div', null, 'element-tree'), ...items.map(element => {
+  const index = new Map(elements.elements.map(node => [node.id, node]));
+  const branches = new Set(elements.elements.map(node => node.parent));
+  const included = new Set();
+  if (search) for (const node of elements.elements.filter(node => JSON.stringify(node).toLowerCase().includes(search.toLowerCase()))) {
+    const seen = new Set(); let current = node;
+    while (current && !seen.has(current.id)) { seen.add(current.id); included.add(current.id); current = index.get(current.parent); }
+  }
+  const visible = elements.elements.filter(node => {
+    if (search) return included.has(node.id);
+    const seen = new Set(); let parent = index.get(node.parent);
+    while (parent) { if (seen.has(parent.id)) return false; seen.add(parent.id); if (elementCollapsed.has(parent.stable_id || parent.id)) return false; parent = index.get(parent.parent); }
+    return true;
+  });
+  const tree = paged(visible, items => append(el('div', null, 'element-tree'), ...items.map(element => {
     const control = button('', () => inspectElement(element.id), !connected, 'tree-row');
+    const line = el('div', null, 'element-tree-line'); line.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
+    const key = element.stable_id || element.id, branch = branches.has(element.id);
+    const toggle = () => {
+      if (elementCollapsed.has(key)) elementCollapsed.delete(key);
+      else {
+        elementCollapsed.add(key);
+        if (selectedElement !== element.id && elementSubtree(elements.elements, element.id)?.some(([node]) => node.id === selectedElement)) inspectElement(element.id);
+      }
+      render(true);
+    };
+    const isExpanded = search || !elementCollapsed.has(key);
+    const disclose = button(branch ? (isExpanded ? '▾' : '▸') : '', toggle, !branch, 'element-disclosure');
+    disclose.tabIndex = -1; disclose.setAttribute('aria-label', (elementCollapsed.has(key) ? 'Expand ' : 'Collapse ') + element.id);
+    if (branch) { control.setAttribute('aria-expanded', String(Boolean(isExpanded))); disclose.setAttribute('aria-expanded', String(Boolean(isExpanded))); }
+    control.setAttribute('role', 'treeitem'); control.setAttribute('aria-level', String((depths.get(element.id) || 0) + 1));
+    control.tabIndex = selectedElement === element.id || (!selectedElement && element === visible[0]) ? 0 : -1;
+    line.append(disclose, control);
+    control.addEventListener('contextmenu', async event => { event.preventDefault(); await inspectElement(element.id); openElementMenu(element.id, event.clientX, event.clientY); });
+    control.addEventListener('keydown', async event => {
+      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) { event.preventDefault(); openElementMenu(element.id); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') { event.preventDefault(); await elementTreeAction('copy-markup', element.id); return; }
+      if (!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const matched = visible;
+      let target = null, position = matched.findIndex(node => node.id === element.id);
+      if (event.key === 'ArrowUp') target = matched[Math.max(0, position - 1)];
+      if (event.key === 'ArrowDown') target = matched[Math.min(matched.length - 1, position + 1)];
+      if (event.key === 'Home') target = matched[0];
+      if (event.key === 'End') target = matched.at(-1);
+      if (event.key === 'ArrowRight') { if (branch && elementCollapsed.has(key)) toggle(); else target = matched.find(node => node.parent === element.id); }
+      if (event.key === 'ArrowLeft') { if (branch && !elementCollapsed.has(key)) toggle(); else target = index.get(element.parent); }
+      if (target) {
+        if (search && !matched.includes(target)) { search = ''; $('search').value = ''; }
+        page = Math.max(0, Math.floor(matched.indexOf(target) / 100)); await inspectElement(target.id); focusElementControl(target.id);
+      }
+    });
+    control.addEventListener('pointerenter', () => { if (info?.element_interaction) hoveredBoundary = {id: element.id, generation: elements.capture}; });
+    control.addEventListener('pointerleave', () => { if (hoveredBoundary?.id === element.id) hoveredBoundary = null; });
     control.dataset.focus = 'element:' + element.id;
     control.setAttribute('aria-label', 'Inspect ' + element.id);
     control.setAttribute('aria-pressed', String(selectedElement === element.id));
-    control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Workspace shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
-    control.style.setProperty('--depth', Math.min(depths.get(element.id), 16));
-    const kind = element.kind.replace(/\b(?:[a-z_]\w*::)+/g, '');
+    control.setAttribute('aria-selected', String(selectedElement === element.id));
+    control.title = `${element.kind} · ${element.id} · ${element.entry_id == null ? 'Application shell' : `tab-${element.tab_id} / entry-${element.entry_id}`}`;
+    control.style.setProperty('--depth', 0);
+    const kind = element.view?.tag || elementName(element.kind);
+    if (element.text != null) {
+      control.append(el('span', JSON.stringify(element.text), 'syntax-value'));
+      return line;
+    }
     control.append(el('span', '<', 'muted'), el('span', kind, 'syntax-tag'));
     if (element.semantic_id != null) control.append(el('span', 'id=', 'syntax-attribute'), el('span', '"' + element.semantic_id + '"', 'syntax-value'));
     control.append(el('span', '>', 'muted'));
-    return control;
-  })));
-  const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), tree,
+    return line;
+  })), 100, false);
+  tree.firstChild.setAttribute('role', 'tree'); tree.firstChild.setAttribute('aria-label', 'Element tree');
+  const treeActions = row(button('Expand all', () => elementTreeAction('expand-all')), button('Collapse all', () => elementTreeAction('collapse-all')), button('Element actions', () => openElementMenu(selectedElement), !selectedElement));
+  treeActions.classList.add('element-tree-actions');
+  const master = append(el('div'), append(el('div', null, 'capture-strip'), badge(elements.status), button(picking ? 'Cancel picking' : 'Pick element in app', async () => {
+      if (picking) stopInspection();
+      else {
+        try { await inspectionControl({type: 'inspect_mode', enabled: true, lease_ms: 1000}); picking = true; }
+        catch (error) { showError(error); }
+      }
+      render(true);
+    }, !info?.element_interaction), el('span', `${elements.elements.length} boundaries · ${elements.omitted} omitted · capture ${elements.capture}`)), treeActions, tree,
     details('Inspection coverage', elements.coverage, 'inspection-coverage'));
+  if (elementMenu) {
+    const menu = el('div', null, 'element-menu'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Element actions');
+    menu.style.left = Math.max(0, Math.min(elementMenu.x, (globalThis.innerWidth || 800) - 240)) + 'px';
+    menu.style.top = Math.max(0, Math.min(elementMenu.y, (globalThis.innerHeight || 600) - 320)) + 'px';
+    const target = index.get(elementMenu.id), controls = [];
+    for (const [action, label] of [['copy-path','Copy inspection path'],['copy-text','Copy text'],['copy-markup','Copy markup'],['expand-branch','Expand subtree'],['collapse-branch','Collapse subtree'],['focus','Focus element'],['scroll','Scroll into view'],['source','Open Rust source']]) {
+      const disabled = !target || (action === 'focus' && !target.navigation?.focus) || (action === 'scroll' && !target.navigation?.scroll_into_view) || (action === 'source' && !target.source);
+      const item = button(label, () => elementTreeAction(action, elementMenu.id), disabled);
+      item.setAttribute('role', 'menuitem'); item.dataset.focus = 'element-menu:' + controls.length; item.tabIndex = controls.length ? -1 : 0; controls.push(item); menu.append(item);
+    }
+    menu.addEventListener('keydown', event => {
+      if (['Escape','Tab'].includes(event.key)) { const id = elementMenu.id; elementMenu = null; render(true); focusElementControl(id); if (event.key === 'Escape') event.preventDefault(); return; }
+      if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
+      event.preventDefault(); const enabled = controls.filter(item => !item.disabled), position = enabled.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length - 1 : (position + (event.key === 'ArrowUp' ? -1 : 1) + enabled.length) % enabled.length;
+      enabled[next]?.focus();
+    });
+    master.append(menu);
+  }
   const detail = el('div');
   const tabs = el('div', null, 'inspector-tabs');
-  for (const name of ['Styles', 'Layout', 'Source']) {
+  for (const name of ['Styles', 'Computed', 'Layout', 'Accessibility', 'Events', 'Source']) {
     const control = button(name, () => { elementTab = name; render(true); });
     control.dataset.focus = 'element-tab:' + name;
     control.setAttribute('aria-pressed', String(elementTab === name)); tabs.append(control);
@@ -548,23 +793,102 @@ function elementsPanel() {
     const layout = selected.layout, source = selected.source;
     detail.append(append(el('div', null, 'element-identity'), el('span', selected.kind, 'syntax-tag'), el('p', selected.semantic_id ?? 'Semantic ID not supplied', 'syntax-value'),
       el('p', selected.id, 'muted'), el('p', source ? `${source.file}:${source.line}:${source.column}` : 'Source location unavailable.', 'muted')));
-    if (elementTab === 'Styles') {
-      if (selected.styles) {
-        const styles = append(el('div', null, 'style-block'), el('span', 'Authored base styles {', 'muted'));
-        for (const [property, value] of Object.entries(selected.styles)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
+    const navigate = action => async () => {
+      try { await inspectionControl({type: 'navigate_element', id: selected.id, generation: elements.capture, action}); }
+      catch (error) { showError(error); }
+    };
+    detail.append(row(
+      button('Scroll into view', navigate('scroll_into_view'), replaced || !connected || !selected.navigation?.scroll_into_view),
+      button('Focus element', navigate('focus'), replaced || !connected || !selected.navigation?.focus),
+      button('Open Rust source', async () => {
+        try { await rpc('inspect_source', {runtime_id: model.runtime, id: selected.id}); }
+        catch (error) { showError(error); }
+      }, replaced || !connected || !source)
+    ));
+    if (elementTab === 'Styles' || elementTab === 'Computed') {
+      if (selected.style_editable) detail.append(styleEditor(selected, replaced));
+      const values = elementTab === 'Computed' ? selected.resolved?.properties : selected.styles;
+      if (values) {
+        const heading = elementTab === 'Computed' ? `Resolved GPUI styles${selected.resolved.hovered ? ' · hovered' : ''} {` : 'Authored base styles {';
+        const styles = append(el('div', null, 'style-block'), el('span', heading, 'muted'));
+        for (const [property, value] of Object.entries(values)) styles.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `style:${selected.id}:${property}`)));
         styles.append(el('span', '}', 'muted')); detail.append(styles);
-      } else detail.append(empty('Style refinements unavailable for this boundary.'));
+        if (elementTab === 'Computed') {
+          const labels = {default:'GPUI defaults', inherited:'Inherited text context', authored:'Authored base', override:'DevTools base override', interaction:'Active interaction change', layout:'Measured layout'};
+          for (const layer of selected.resolved.layers || []) {
+            const group = append(el('div', null, 'style-block'), el('h3', labels[layer.origin] || layer.origin));
+            for (const [property, value] of Object.entries(layer.properties)) group.append(append(el('div', null, 'style-rule'), el('span', property + ':', 'property'), styleValue(value, `origin:${selected.id}:${layer.origin}:${property}`)));
+            detail.append(group);
+          }
+          detail.append(el('p', 'Origins describe observed values. Equal-valued interaction declarations and individual Rust declaration locations are unavailable. Inherited text may pass through uninspected ancestors.', 'hint'));
+        }
+      } else detail.append(empty(elementTab === 'Computed' ? 'Resolved styles unavailable for this boundary. Rebuild the app if it predates resolved capture.' : 'Style refinements unavailable for this boundary.'));
     }
-    if (elementTab !== 'Source') {
+    if (['Styles', 'Computed', 'Layout'].includes(elementTab)) {
       detail.append(el('h3', 'Layout', 'pane-heading'));
       if (layout) detail.append(append(el('div', null, 'box-model'), el('span', `x: ${layout.x} · y: ${layout.y}`), el('div', `${layout.width} × ${layout.height}`, 'box-size')),
         el('p', `Layout in window logical pixels: x ${layout.x}, y ${layout.y}, width ${layout.width}, height ${layout.height}. Before clipping.`, 'hint'));
       else detail.append(el('p', 'Layout unavailable.', 'hint'));
-    } else detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Workspace shell' : 'entry-' + selected.entry_id]]));
+      const boxes = selected.box_model;
+      if (boxes) {
+        const bounds = value => value ? `x ${value.x}, y ${value.y} · ${value.width} × ${value.height}` : 'Unavailable';
+        detail.append(properties([['Margin box', bounds(boxes.margin)], ['Border box', bounds(boxes.border)], ['Padding box', bounds(boxes.padding)], ['Content box', bounds(boxes.content)], ['Visible intersection', bounds(selected.content_mask)]]));
+        for (const reason of boxes.unavailable || []) detail.append(el('p', reason, 'hint'));
+      } else detail.append(el('p', 'Resolved box geometry unavailable for this boundary/runtime.', 'hint'));
+    } else if (elementTab === 'Source') {
+      detail.append(properties([['Source file', source?.file], ['Line', source?.line], ['Column', source?.column], ['Authored tag', selected.view?.tag], ['Inspected parent', selected.parent || 'Root inspection boundary'], ['Entry', selected.entry_id == null ? 'Application shell' : 'entry-' + selected.entry_id]]));
+      for (const [index, style] of (selected.view?.style_sources || []).entries()) detail.append(card(`${style.scope} · ${style.attribute}`, el('pre', style.expression),
+        button(`Open style source ${index + 1}: ${style.source.file}:${style.source.line}:${style.source.column}`, async () => {
+          try { await rpc('inspect_source', {runtime_id: model.runtime, id: selected.id, target: {kind: 'style', index}}); } catch (error) { showError(error); }
+        }, replaced || !connected)));
+      if (selected.view) detail.append(el('p', 'Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures.', 'hint'));
+    }
+    if (elementTab === 'Accessibility') {
+      const a11y = selected.accessibility;
+      if (!a11y) detail.append(empty('Accessibility metadata unavailable for this boundary/runtime.'));
+      else detail.append(properties([['GPUI role', a11y.role ?? 'No semantic role'], ['Accessible name', a11y.name ?? a11y.label], ['Name source', a11y.name_source], ['Captured states', JSON.stringify(a11y.states ?? {})], ['Explicit accessible label', a11y.label], ['Description', a11y.description], ['Disabled', a11y.disabled], ['Hidden', a11y.hidden], ['Focusable', a11y.focusable], ['Focused', a11y.focused], ['Contains focus', a11y.contains_focus], ['Tab index', a11y.tab_index], ['Tab stop', a11y.tab_stop], ['Captured tab order', a11y.captured_tab_order], ['Actions', a11y.actions.join(', ')]]));
+      const stops = elements.elements.filter(element => element.accessibility?.captured_tab_order != null).sort((a,b) => a.accessibility.captured_tab_order - b.accessibility.captured_tab_order);
+      detail.append(el('h3', 'Known tab stops'), table(['Order', 'Element', 'Tab index'], stops.map(element => [element.accessibility.captured_tab_order, button(element.semantic_id || element.view?.tag || elementName(element.kind), () => inspectElement(element.id)), element.accessibility.tab_index])),
+        el('p', 'Order covers inspected handles, sorted by GPUI tab index and paint order. Private tab groups and opaque nodes are unavailable. Names use explicit labels or captured text. Relationship-derived names and opaque descendants remain unavailable.', 'hint'));
+    }
+    if (elementTab === 'Events') {
+      detail.append(table(['Handler', 'Origin', 'Rust registration site'], (selected.handlers || []).map((handler, index) => [handler.name, handler.origin,
+        button(`Open handler source ${index + 1}: ${handler.source.file}:${handler.source.line}:${handler.source.column}`, async () => {
+          try { await rpc('inspect_source', {runtime_id: model.runtime, id: selected.id, target: {kind: 'handler', index}}); } catch (error) { showError(error); }
+        }, replaced || !connected)])),
+        el('p', 'Macro bindings and explicitly registered metadata. GPUI private listeners, closure bodies and captured state are not enumerated. No handlers are invoked by inspection.', 'hint'));
+    }
     detail.append(el('p', selected.metadata_truncated ? 'Some metadata exceeded capture limits.' : 'Metadata within capture limits.', 'hint'),
       append(el('div', null, 'pane-actions'), related(selected, 'Tasks'), related(selected, 'Requests')));
   }
   return splitView(master, detail, 'elements');
+}
+
+function framesPanel() {
+  if (!info?.queries?.includes('frames')) return empty('Frame recording is unavailable for this runtime.');
+  const record = async enabled => {
+    try { await inspectionControl({type: 'record_frames', enabled, lease_ms: enabled ? 5000 : 0}); recordingFrames = enabled; await refresh(); }
+    catch (error) { recordingFrames = false; showError(error); }
+  };
+  const latest = frameRecords.at(-1);
+  const result = append(el('div'), row(button(recordingFrames ? 'Stop frame recording' : 'Record frames', () => record(!recordingFrames), !connected),
+    badge(frameState?.recording ? 'Recording' : 'Stopped')),
+    el('p', 'Window draw and inclusive boundary callback CPU wall times. Nested durations overlap. GPU execution and presentation latency are unavailable.', 'hint'),
+    el('p', `${frameRecords.length} frames shown · ${frameState?.dropped || 0} runtime evictions${frameState?.gap ? ' · recording history gap' : ''}`, 'hint'),
+    table(['Frame', 'Window', 'Draw (ms)', 'Dirty → draw end (ms)', 'Invalidations'], frameRecords.slice(-100).reverse().map(frame =>
+      [frame.sequence, frame.window, (frame.draw_us / 1000).toFixed(3), frame.dirty_to_draw_us == null ? 'Unavailable' : (frame.dirty_to_draw_us / 1000).toFixed(3), frame.invalidations])));
+  if (latest) {
+    if (!latest.nodes.length) result.append(el('p', 'Callback attribution is unavailable for this frame (cached, unobserved or evicted metadata).', 'hint'));
+    result.append(el('h3', 'Latest frame: slowest inclusive callbacks'), table(['Boundary', 'Phase', 'Time (ms)', 'Rust source'], latest.nodes.map(node => [node.name, node.phase, (node.duration_us / 1000).toFixed(3),
+      button(`${node.source.file}:${node.source.line}`, async () => {
+        try {
+          const tree = await inspectionTree(model.runtime), matches = tree.elements.filter(element => node.stable_id && element.stable_id === node.stable_id);
+          if (matches.length !== 1) throw new Error('The recorded boundary is no longer mounted.');
+          await rpc('inspect_source', {runtime_id: model.runtime, id: matches[0].id});
+        } catch (error) { showError(error); }
+      }, !node.stable_id)])), el('p', `${latest.omitted_nodes} callback records omitted. Component rendering inside request-layout is included; this is not an isolated layout-solver measurement.`, 'hint'));
+  }
+  return result;
 }
 
 function reloadPanel() {
@@ -605,13 +929,16 @@ function render(force = false) {
   $('loss-summary').textContent = `${model.diagnosticsRecords.length} records · ${model.dropped + model.outputDropped + model.evicted + output.dropped} drops`;
   $('export').hidden = !['Console', 'Requests', 'Traces'].includes(panel);
   $('export').disabled = !model.runtime;
-  if (resizing || (!force && document.activeElement?.closest('form'))) return;
-  const signature = JSON.stringify([panel, model.runtime, model.cursor, model.after, connected, mutating,
-    receipt, operation, development, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
+  if (resizing || (panel === 'Elements' && pointerHeld) || (!force && document.activeElement?.closest('form'))) return;
+  // Unrelated log traffic must not replace pressed/focused Elements controls mid-click.
+  const signature = JSON.stringify(panel === 'Elements'
+    ? [panel, model.runtime, connected, mutating, info, receipt, operation, elements, selectedElement, elementDetail, elementError, elementTab, picking, elementMenu, [...elementCollapsed]]
+    : [panel, model.runtime, model.cursor, model.after, connected, mutating,
+    receipt, operation, development, frameState, frameRecords.at(-1)?.sequence, recordingFrames, elements, selectedElement, elementDetail, elementError, output.records.at(-1)?.sequence, output.dropped]);
   if (!force && signature === rendered) return;
   rendered = signature;
   const content = ({Workspace: workspace, Routes: routing, Tasks: tasksPanel, Operations: operationsPanel, Decisions: decisionsPanel,
-    Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Elements: elementsPanel, Reload: reloadPanel})[panel]();
+    Console: consolePanel, Requests: requestsPanel, Traces: tracePanel, Frames: framesPanel, Elements: elementsPanel, Reload: reloadPanel})[panel]();
   content.classList.add('panel-body');
   if (!content.classList.contains('split-view')) rememberScroll(content, 'panel:' + panel);
   const focused = document.activeElement?.dataset.focus;
@@ -649,4 +976,19 @@ $('search').addEventListener('input', () => { search = $('search').value; page =
 $('clear-context').addEventListener('click', () => { filter = {}; render(true); });
 $('pause').addEventListener('click', () => { paused = !paused; $('pause').textContent = paused ? 'Resume updates' : 'Pause updates'; $('pause').setAttribute('aria-pressed', String(paused)); $('pause').title = $('pause').textContent; message(paused ? 'Automatic observation paused. The runtime and its operations continue.' : 'Automatic observation resumed.'); if (!paused) refresh(); });
 async function loop() { if (!paused) await refresh(); setTimeout(loop, 750); }
-render(true); loop();
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => {
+  if (!model.runtime || !info?.element_interaction) return;
+  for (const value of [{type: 'inspect_mode', enabled: false, lease_ms: 0}, {type: 'highlight_element', id: null, generation: ''}]) {
+    fetch('/__rake/inspect', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json', 'X-Rake-Token': token}, body: JSON.stringify({request: request(model.runtime, {type: 'command', value})})}).catch(() => {});
+  }
+});
+render(true); loop(); inspectionLoop();
+
+document.addEventListener?.('pointerdown', event => { if (elementMenu && !event.target.closest('.element-menu')) { elementMenu = null; render(true); } });
+document.addEventListener?.('pointerdown', () => { clearTimeout(pointerReleaseTimer); pointerHeld = true; }, true);
+// Keep the pressed node through click dispatch, even when mouseup and click use separate tasks.
+document.addEventListener?.('pointerup', () => { pointerReleaseTimer = setTimeout(() => { pointerHeld = false; render(); }, 250); }, true);
+document.addEventListener?.('click', () => { clearTimeout(pointerReleaseTimer); pointerHeld = false; setTimeout(() => render(), 0); }, true);
+document.addEventListener?.('contextmenu', () => { clearTimeout(pointerReleaseTimer); pointerHeld = false; }, true);
+document.addEventListener?.('pointercancel', () => { pointerHeld = false; render(); }, true);
+if (typeof window !== 'undefined') window.addEventListener('blur', () => { pointerHeld = false; render(); });

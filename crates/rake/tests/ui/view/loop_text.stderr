@@ -1,0 +1,5 @@
+error: text and expressions in a for loop require an element wrapper with an explicit stable id
+ --> tests/ui/view/loop_text.rs:2:50
+  |
+2 |     let _ = rake::view! { <div>for row in rows { "text" }</div> };
+  |                                                  ^^^^^^

@@ -1,0 +1,5 @@
+error: disabled is supported only on button
+ --> tests/ui/view/disabled_container.rs:2:32
+  |
+2 |     let _ = rake::view! { <div disabled={true}/> };
+  |                                ^^^^^^^^

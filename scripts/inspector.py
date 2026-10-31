@@ -1,10 +1,11 @@
-"""Authenticated inspector access to existing runtime transports, without host commands."""
+"""Authenticated runtime inspection and explicit workspace-confined Rust source opening."""
 
 import json
 import os
 from pathlib import Path
 import socket
 import stat
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,11 +32,12 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Inspector:
-    def __init__(self, bridge, output=None, allow_native=False):
+    def __init__(self, bridge, output=None, allow_native=False, cdp_url=None):
         self.bridge = bridge
         self.directory = bridge.directory
         self.output = output
         self.allow_native = allow_native
+        self.cdp_url = cdp_url
 
     def manifest(self, runtime):
         try:
@@ -74,6 +76,48 @@ class Inspector:
         return values
 
     def handle(self, action, body):
+        if action == "inspect_source":
+            runtime, element = body.get("runtime_id"), body.get("id")
+            manifest = self.manifest(runtime)
+            if manifest["endpoint"]["type"] == "local" and not self.allow_native:
+                raise BridgeError(403, "Web application origins cannot open native runtime source")
+            if not isinstance(element, str) or not 1 <= len(element.encode()) <= 256 or not element.startswith("element-") or not all(c.isascii() and (c.isalnum() or c == "-") for c in element):
+                raise BridgeError(400, "invalid exact element ID")
+            target = body.get("target", {"kind": "boundary"})
+            if not isinstance(target, dict) or target.get("kind") not in {"boundary", "style", "handler"}:
+                raise BridgeError(400, "invalid captured source target")
+            arguments = []
+            if target["kind"] == "boundary":
+                if set(target) != {"kind"}: raise BridgeError(400, "invalid boundary source target")
+            else:
+                index = target.get("index")
+                if set(target) != {"kind", "index"} or type(index) is not int or not 0 <= index < 256:
+                    raise BridgeError(400, "invalid captured source index")
+                arguments = ["--" + target["kind"], str(index)]
+            try:
+                result = subprocess.run([os.environ.get("RAKE_CLI", "rake"), "ctl", "--instance", runtime,
+                    "inspect", "source", element, *arguments, "--json"],
+                    env={**os.environ, "RAKE_CONTROL_DIR": str(self.directory)},
+                    capture_output=True, timeout=10, check=False)
+                if result.returncode:
+                    raise BridgeError(400, result.stderr.decode(errors="replace")[:2048] or "Cannot open source")
+                return json.loads(result.stdout[:MAX_BYTES])
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                raise BridgeError(502, "Source opener unavailable; check RAKE_CLI and RAKE_SOURCE_ROOT") from error
+        if action == "inspect_cdp":
+            if not self.cdp_url:
+                return []
+            parsed = urllib.parse.urlsplit(self.cdp_url)
+            if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+                raise BridgeError(403, "CDP discovery must use IPv4 loopback HTTP")
+            try:
+                with urllib.request.build_opener(NoRedirect).open(self.cdp_url.rstrip("/") + "/json/list", timeout=3) as response:
+                    data = response.read(MAX_BYTES + 1)
+                if len(data) > MAX_BYTES:
+                    raise BridgeError(413, "CDP discovery exceeds 1 MiB")
+                return json.loads(data)
+            except (OSError, ValueError):
+                return []
         if action == "inspect_instances":
             return self.instances()
         if action == "inspect_output":
@@ -144,7 +188,7 @@ class ProcessOutput:
         self.dropped = 0
         self.started = time.monotonic()
 
-    def append(self, text, pid, stream):
+    def append(self, text, pid, stream, level=None, structured=False):
         import time
         encoded = text.encode("utf-8", errors="replace")
         with self.lock:
@@ -152,7 +196,7 @@ class ProcessOutput:
                 self.dropped += 1
             self.sequence += 1
             self.records.append({"sequence": self.sequence, "elapsed_us": int((time.monotonic() - self.started) * 1000000),
-                "pid": pid, "stream": stream, "text": encoded[:2048].decode("utf-8", errors="ignore"),
+                "pid": pid, "stream": stream, "level": level, "structured": structured, "text": encoded[:2048].decode("utf-8", errors="ignore"),
                 "truncated": len(encoded) > 2048})
 
     def snapshot(self):

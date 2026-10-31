@@ -22,10 +22,21 @@ use rake::prelude::*;
 // App::new("example.notes").routes(Views).control(ControlConfig::FromEnvironment)
 ```
 
-The current runner adapter requires `App::routes`; configuring control or commands
-on a root-only `App::root` returns `ControlRequiresRouter` before host startup.
-Headless hosts can construct a `Router<NoRoute>`, register handlers and drive it
-without a GUI.
+`App::root(...).control(ControlConfig::FromEnvironment)` opts a standalone root into
+inspection using the same native environment flag or authenticated Web metadata.
+It advertises only Info, Schema, diagnostics and element tree/lookup/picking queries,
+plus transient highlight, picker and registered focus/scroll actions. It creates
+no router workspace, application operations or retry-key registry. Unsupported
+requests return `ControlError::Unsupported`; clients must use the advertised
+capabilities. The HTML inspector opens Elements for these hosts and omits queries
+for absent workspace state. Native root disposal removes its discovery files and
+socket; Web disposal aborts its authenticated bridge and outstanding I/O.
+
+Registering application commands on `App::root` still returns
+`ControlRequiresRouter` before startup. Use `App::routes` for managed application
+commands, guards, tabs and checkpointed restoration. Headless hosts can construct a
+`Router<NoRoute>`, register handlers and drive it without a GUI. All hosts remain
+disabled by default, in debug and release builds.
 
 Build and run the terminal client locally:
 
@@ -154,7 +165,14 @@ Cancellation takes priority over simultaneously ready work before commit. After
 commit cancellation returns false. Cancellation cannot undo external side effects
 already performed by an application handler.
 
-Every mutation requires a 1–128 byte request key. The CLI generates one and includes
+Application/router mutations require a 1–128 byte request key. Transient
+development-only `highlight_element` and `inspect_mode` commands instead use
+bounded leases, return acknowledgements, and retain no operation or key entry.
+`navigate_element` is also a transient development control: exact ID/generation
+plus `action: focus|scroll_into_view`. It returns an acknowledgement without a
+retry-key/operation entry; clients never replay it automatically after uncertain
+delivery. Unsupported handles and stale captures return typed inspection errors.
+See [highlight and picking](element-inspection.md#development-highlight-and-picking). The CLI generates one and includes
 it in its submission/result output, or in an uncertain-response error. Supply
 `--request-key KEY` to retry explicitly. An identical request returns its original
 reply; reusing its key for another payload returns `KeyConflict`. Keys and failures

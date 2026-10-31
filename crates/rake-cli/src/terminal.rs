@@ -1,8 +1,12 @@
 //! Converts terminal arguments to the same owned commands/queries as Rust clients.
 
-use rake::control::local::{self, Endpoint, Instance};
-use rake::control::{Command, Message, PROTOCOL_VERSION, Query, Reply, Request};
-use rake::router::{Activation, OpenOptions, OpenTarget, OperationState, RouteAddress, TabMode};
+use rake_client::local::{self, Instance};
+use rake_protocol::control::{Command, Message, PROTOCOL_VERSION, Query, Reply, Request};
+
+use rake_protocol::router::{
+    Activation, OpenOptions, OpenTarget, OperationState, RouteAddress, TabMode,
+};
+
 use serde_json::json;
 use std::error::Error;
 use std::str::FromStr;
@@ -11,9 +15,14 @@ use std::time::{Duration, Instant};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const HELP: &str = "rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
+rake agent --url URL [--target ID] [--window ID] JSON_ACTION (Node 22+; see docs/cdp-agents.md)
+rake cdp [--session PATH] [--instance UUID|application-id] [--port PORT] [--no-open] [--json] [--export-trace FILE]
+rake highlight ID|none [--generation CAPTURE] [--instance UUID|application-id]
+rake inspect pick [--instance UUID|application-id]
 rake instances [--json]
 rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
-  inspect tree | inspect element ELEMENT_ID
+  inspect tree | inspect element ELEMENT_ID | inspect pick | inspect mode on|off [--lease-ms MS]
+  inspect focus|scroll ELEMENT_ID [--generation CAPTURE] | inspect source ELEMENT_ID [--style INDEX|--handler INDEX]
   info | schema | snapshot | events [--follow]
   quit [--jobs wait|cancel] | quit status
   reload status | reload checkpoint APPLICATION_ID
@@ -131,13 +140,13 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
         ("quit", "status") => Message::Query(Query::Quit {}),
         ("quit", "" | "--jobs") => {
             let jobs = match option(&mut args, "--jobs")?.as_deref().unwrap_or("wait") {
-                "wait" => rake::quit::QuitJobs::Wait,
-                "cancel" => rake::quit::QuitJobs::Cancel,
+                "wait" => rake_protocol::quit::QuitJobs::Wait,
+                "cancel" => rake_protocol::quit::QuitJobs::Cancel,
                 _ => return Err("quit jobs must be wait or cancel".into()),
             };
 
             Message::Command(Command::Quit {
-                options: rake::quit::QuitOptions { jobs },
+                options: rake_protocol::quit::QuitOptions { jobs },
             })
         }
         ("reload", "status") => Message::Query(Query::Reload {}),
@@ -152,7 +161,7 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
             }
 
             Message::Command(Command::PrepareReload {
-                request: rake::reload::ReloadRequest {
+                request: rake_protocol::reload::ReloadRequest {
                     id: args.remove(0),
                     mechanism: serde_json::from_value(json!(mechanism))?,
                 },
@@ -164,7 +173,44 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                 applied: action == "apply",
             })
         }
+        ("highlight", _) if !action.is_empty() => Message::Command(Command::HighlightElement {
+            id: (action != "none").then_some(action),
+            generation: option(&mut args, "--generation")?.unwrap_or_default(),
+        }),
+        ("inspect", "pick") => Message::Query(Query::InspectPick {}),
+        ("inspect", "focus" | "scroll") => {
+            let generation = option(&mut args, "--generation")?.unwrap_or_default();
+
+            if args.len() != 1 {
+                return Err("inspect focus|scroll requires one exact element ID".into());
+            }
+
+            Message::Command(Command::NavigateElement {
+                id: args.remove(0),
+                generation,
+                action: if action == "focus" {
+                    rake_protocol::inspection::NavigationAction::Focus
+                } else {
+                    rake_protocol::inspection::NavigationAction::ScrollIntoView
+                },
+            })
+        }
+        ("inspect", "mode") if !args.is_empty() => {
+            let enabled = match args.remove(0).as_str() {
+                "on" => true,
+                "off" => false,
+                _ => return Err("inspect mode expects on or off".into()),
+            };
+
+            let lease_ms = option(&mut args, "--lease-ms")?
+                .map(|value| value.parse())
+                .transpose()?
+                .unwrap_or(1000);
+
+            Message::Command(Command::InspectMode { enabled, lease_ms })
+        }
         ("inspect", "tree") => Message::Query(Query::InspectTree {}),
+        ("inspect", "revision") => Message::Query(Query::InspectRevision {}),
         ("inspect", "element") if args.len() == 1 => {
             Message::Query(Query::InspectElement { id: args.remove(0) })
         }
@@ -196,13 +242,13 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
         ("decisions", "list") => Message::Query(Query::Decisions {}),
         ("tasks", "list") => {
             let owner = option(&mut args, "--owner")?
-                .map(|owner| -> Result<rake::tasks::TaskOwner> {
+                .map(|owner| -> Result<rake_protocol::tasks::TaskOwner> {
                     if owner == "application" {
-                        Ok(rake::tasks::TaskOwner::Application)
+                        Ok(rake_protocol::tasks::TaskOwner::Application)
                     } else if owner.starts_with("tab-") {
-                        Ok(rake::tasks::TaskOwner::Tab(parse_id(&owner)?))
+                        Ok(rake_protocol::tasks::TaskOwner::Tab(parse_id(&owner)?))
                     } else {
-                        Ok(rake::tasks::TaskOwner::Entry(parse_id(&owner)?))
+                        Ok(rake_protocol::tasks::TaskOwner::Entry(parse_id(&owner)?))
                     }
                 })
                 .transpose()?;
@@ -253,8 +299,8 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                         .as_deref()
                         .unwrap_or("application")
                     {
-                        "application" => rake::router::RevealScope::Application,
-                        "window" => rake::router::RevealScope::Window,
+                        "application" => rake_protocol::router::RevealScope::Application,
+                        "window" => rake_protocol::router::RevealScope::Window,
                         _ => return Err("unknown reveal scope".into()),
                     },
                     destination,
@@ -373,52 +419,15 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
     Ok((message, follow))
 }
 
-fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply> {
-    let reply = match &instance.endpoint {
-        Endpoint::Local { path } => local::exchange(path, request, timeout)?,
-        Endpoint::Web { url, token } => {
-            let parsed = url.parse::<url::Url>()?;
-
-            if parsed.scheme() != "http"
-                || !matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
-                || parsed.path() != "/"
-                || parsed.query().is_some()
-                || parsed.fragment().is_some()
-                || !parsed.username().is_empty()
-                || parsed.password().is_some()
-            {
-                return Err("discovery advertised an invalid loopback broker URL".into());
-            }
-
-            futures::executor::block_on(async {
-                rake::http::HttpClient::new(rake::http::HttpConfig::new())?
-                    .post(&format!("{url}/__rake/client"))
-                    .header("X-Rake-Token", token)
-                    .timeout(timeout)
-                    .json(&json!({"runtime_id": instance.info.runtime_id, "request": request}))
-                    .send_json::<std::result::Result<Reply, rake::control::ControlError>>()
-                    .await
-            })?
-        }
-    };
-
-    Ok(reply?)
+pub(crate) fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply> {
+    Ok(rake_client::exchange(instance, request, timeout)?)
 }
 
-fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Reply> {
-    exchange(
-        instance,
-        &Request {
-            protocol: PROTOCOL_VERSION,
-            runtime_id: instance.info.runtime_id,
-            key: None,
-            message: Message::Query(query),
-        },
-        timeout,
-    )
+pub(crate) fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Reply> {
+    Ok(rake_client::query(instance, query, timeout)?)
 }
 
-fn print(value: &impl rake::serde::Serialize, compact: bool) -> Result<()> {
+fn print(value: &impl serde::Serialize, compact: bool) -> Result<()> {
     if compact {
         println!("{}", serde_json::to_string(value)?);
     } else {
@@ -452,7 +461,18 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         return Err(HELP.into());
     }
 
-    let instances = local::discover(&local::directory())?;
+    if args
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "highlight" | "inspect"))
+    {
+        args.insert(0, "ctl".into());
+    }
+
+    let directory = option(&mut args, "--session")?
+        .map(|path| std::path::PathBuf::from(path).join("control"))
+        .unwrap_or_else(local::directory);
+
+    let instances = local::discover(&directory)?;
     let topic = args.remove(0);
     let selector = option(&mut args, "--instance")?;
 
@@ -482,7 +502,36 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
     let key =
         option(&mut args, "--request-key")?.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let (message, follow) = parse_message(args)?;
+    let friendly_highlight = args.first().is_some_and(|arg| arg == "highlight");
+
+    let friendly_navigation = args.first().is_some_and(|arg| arg == "inspect")
+        && args
+            .get(1)
+            .is_some_and(|arg| matches!(arg.as_str(), "focus" | "scroll"));
+
+    let source = args.first().is_some_and(|arg| arg == "inspect")
+        && args.get(1).is_some_and(|arg| arg == "source");
+
+    let mut source_target = rake_protocol::inspection::SourceTarget::Boundary {};
+
+    if source {
+        let style = option(&mut args, "--style")?;
+        let handler = option(&mut args, "--handler")?;
+
+        source_target = match (style, handler) {
+            (Some(_), Some(_)) => return Err("choose either --style or --handler".into()),
+            (Some(index), None) => rake_protocol::inspection::SourceTarget::Style {
+                index: index.parse()?,
+            },
+            (None, Some(index)) => rake_protocol::inspection::SourceTarget::Handler {
+                index: index.parse()?,
+            },
+            _ => rake_protocol::inspection::SourceTarget::Boundary {},
+        };
+        args[1] = "element".into();
+    }
+
+    let (mut message, follow) = parse_message(args)?;
 
     let candidates: Vec<_> = instances
         .iter()
@@ -502,6 +551,39 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         _ => return Err("ambiguous instance; select a RuntimeId using --instance".into()),
     };
 
+    if let Message::Command(Command::HighlightElement {
+        id: Some(id),
+        generation,
+    }) = &mut message
+        && generation.is_empty()
+        && friendly_highlight
+    {
+        let Reply::Elements(tree) = query(instance, Query::InspectTree {}, timeout)? else {
+            return Err("unexpected inspection reply".into());
+        };
+
+        if !tree.elements.iter().any(|element| element.id == *id) {
+            return Err("element is stale; refresh inspect tree".into());
+        }
+
+        *generation = tree.capture;
+    }
+
+    if let Message::Command(Command::NavigateElement { id, generation, .. }) = &mut message
+        && generation.is_empty()
+        && friendly_navigation
+    {
+        let Reply::Elements(tree) = query(instance, Query::InspectTree {}, timeout)? else {
+            return Err("Unexpected inspection reply".into());
+        };
+
+        if !tree.elements.iter().any(|element| element.id == *id) {
+            return Err("Element is stale; refresh inspect tree".into());
+        }
+
+        *generation = tree.capture;
+    }
+
     let request = Request {
         protocol: PROTOCOL_VERSION,
         runtime_id: instance.info.runtime_id,
@@ -513,6 +595,18 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         if matches!(message, Message::Command(_)) { format!("{error}; request key {key}; retry the identical payload and key if the response was lost") }
         else { error.to_string() }
     })?;
+
+    if source {
+        let Reply::Element(element) = reply else {
+            return Err("Unexpected source lookup reply".into());
+        };
+
+        let location = element
+            .source_location(&source_target)
+            .ok_or("Source location unavailable")?;
+
+        return print(&crate::source::open(location)?, compact);
+    }
 
     let deadline = Instant::now() + timeout;
 
@@ -594,7 +688,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
             last_reply = query(instance, next_query.clone(), timeout)?;
             let value = serde_json::to_value(&last_reply)?;
 
-            let quiet = matches!(&last_reply, Reply::Event(event) if event.kind == rake::control::EventKind::Unchanged)
+            let quiet = matches!(&last_reply, Reply::Event(event) if event.kind == rake_protocol::control::EventKind::Unchanged)
                 || matches!(&last_reply, Reply::Diagnostics(snapshot) if snapshot.records.is_empty());
 
             if !quiet && value != previous {
@@ -663,11 +757,14 @@ mod tests {
         assert!(parse_message(["inspect", "element"].map(String::from).to_vec()).is_err());
 
         for (arguments, jobs) in [
-            (vec!["quit"], rake::quit::QuitJobs::Wait),
-            (vec!["quit", "--jobs", "wait"], rake::quit::QuitJobs::Wait),
+            (vec!["quit"], rake_protocol::quit::QuitJobs::Wait),
+            (
+                vec!["quit", "--jobs", "wait"],
+                rake_protocol::quit::QuitJobs::Wait,
+            ),
             (
                 vec!["quit", "--jobs", "cancel"],
-                rake::quit::QuitJobs::Cancel,
+                rake_protocol::quit::QuitJobs::Cancel,
             ),
         ] {
             assert!(
@@ -697,22 +794,75 @@ mod tests {
         let tab = "tab-1".parse().unwrap();
         let operation = "op-1".parse().unwrap();
 
+        let preview_point = rake_protocol::inspection::preview::Point {
+            window: "window-1".parse().unwrap(),
+            native_id: 42,
+            generation: "capture-1".into(),
+            geometry: None,
+            x: 10,
+            y: 20,
+        };
+
         let destination = RouteAddress {
             route: "home".into(),
             params: Default::default(),
         };
 
         let commands = vec![
+            Command::PreviewInput {
+                point: preview_point.clone(),
+                input: rake_protocol::inspection::preview::Input::Click,
+            },
+            Command::EditStorage {
+                edit: rake_protocol::storage::Edit {
+                    store: "preferences".into(),
+                    key: "theme".into(),
+                    value: Some("\"dark\"".into()),
+                },
+            },
+            Command::RecordMemory {
+                owner: "test".into(),
+                enabled: false,
+                interval: 32768,
+                lease_ms: 0,
+            },
+            Command::EditElementText {
+                id: "boundary".into(),
+                generation: "1".into(),
+                edit: rake_protocol::inspection::TextEdit::Reset {},
+            },
+            Command::RecordFrames {
+                enabled: false,
+                lease_ms: 0,
+            },
+            Command::EditElementStyle {
+                id: "boundary".into(),
+                generation: "1".into(),
+                edit: rake_protocol::inspection::StyleEdit::Reset,
+            },
+            Command::NavigateElement {
+                id: "element-1-0".into(),
+                generation: "1".into(),
+                action: rake_protocol::inspection::NavigationAction::Focus,
+            },
+            Command::HighlightElement {
+                id: None,
+                generation: String::new(),
+            },
+            Command::InspectMode {
+                enabled: false,
+                lease_ms: 0,
+            },
             Command::CloseWindow {
                 window: "window-1".parse().unwrap(),
             },
             Command::Quit {
-                options: rake::quit::QuitOptions::default(),
+                options: rake_protocol::quit::QuitOptions::default(),
             },
             Command::PrepareReload {
-                request: rake::reload::ReloadRequest {
+                request: rake_protocol::reload::ReloadRequest {
                     id: "test".into(),
-                    mechanism: rake::reload::ReloadMechanism::NativeRestart,
+                    mechanism: rake_protocol::reload::ReloadMechanism::NativeRestart,
                 },
             },
             Command::FinishReload {
@@ -731,7 +881,7 @@ mod tests {
             },
             Command::Reveal {
                 window: None,
-                scope: rake::router::RevealScope::Application,
+                scope: rake_protocol::router::RevealScope::Application,
                 destination,
             },
             Command::Select { tab },
@@ -757,12 +907,35 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Preview {},
+            Query::PreviewElement {
+                point: preview_point,
+            },
+            Query::Storage {
+                read: rake_protocol::storage::Read::Stores,
+            },
+            Query::Memory {
+                owner: "test".into(),
+                include_freed: false,
+            },
+            Query::InspectPick {},
+            Query::Frames { after: 0 },
             Query::Windows {},
             Query::Window {
                 window: "window-1".parse().unwrap(),
             },
             Query::Quit {},
             Query::InspectTree {},
+            Query::InspectRevision {},
+            Query::InspectWindow {
+                window: "window-1".parse().unwrap(),
+                presentation: None,
+                offset: 0,
+            },
+            Query::InspectTreePage {
+                generation: None,
+                offset: 0,
+            },
             Query::InspectElement {
                 id: "element-1-0".into(),
             },
@@ -781,6 +954,10 @@ mod tests {
             Query::Operation { operation },
             Query::Decisions {},
             Query::Events { cursor: None },
+            Query::HttpBody {
+                request_id: 1,
+                response: true,
+            },
             Query::Diagnostics {
                 after: 0,
                 kind: None,

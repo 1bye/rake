@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `__RakeTheme` in the crate root
+ --> tests/ui/view/theme_missing.rs:1:46
+  |
+1 | fn main() { let _ = rake::view! { <div class="bg-surface"/> }; }
+  |                                              ^^^^^^^^^^^^ not found in the crate root

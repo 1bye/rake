@@ -1,6 +1,6 @@
 //! Browser-initiated, same-origin development bridge over authenticated HTTP polling.
 
-use super::{MAX_MESSAGE_BYTES, Request, RuntimeClient};
+use super::{HostClient, MAX_MESSAGE_BYTES, Request, RuntimeClient};
 use crate::http::HttpClient;
 use crate::router::Route;
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,7 @@ impl WebBridge {
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())
     }
 
-    async fn reload<R: Route>(
+    pub(super) async fn reload_runtime<R: Route>(
         &self,
         client: &RuntimeClient<R>,
         application_id: &str,
@@ -188,9 +188,35 @@ impl WebBridge {
     /// Reconnects after transient errors under the same RuntimeId. Duplicate broker
     /// deliveries use the runtime's request keys; the broker cannot add host privileges.
     pub async fn run<R: Route>(&self, client: RuntimeClient<R>, application_id: &str) {
+        self.run_host(HostClient::new(client), application_id).await;
+    }
+
+    #[cfg(feature = "devtools")]
+    pub(super) async fn reload_standalone(
+        &self,
+        runtime: crate::router::RuntimeId,
+        build: u64,
+    ) -> Result<(), String> {
+        let _: serde_json::Value = self
+            .post(
+                "reload_result",
+                &serde_json::json!({
+                    "runtime_id":runtime,"build_id":build,"error":null,"reload":null
+                }),
+            )
+            .await?;
+        web_sys::window()
+            .ok_or("browser window unavailable")?
+            .location()
+            .reload()
+            .map_err(|error| format!("{error:?}"))?;
+        futures::future::pending::<Result<(), String>>().await
+    }
+
+    pub(crate) async fn run_host(&self, client: HostClient, application_id: &str) {
         loop {
             let session = async {
-                let _: serde_json::Value = self.post("connect", &serde_json::json!({"application_id": application_id, "info": client.info(), "build_id": self.config.build_id, "reload": client.router().reload_status()})).await?;
+                let _: serde_json::Value = self.post("connect", &serde_json::json!({"application_id": application_id, "info": client.info(), "build_id": self.config.build_id, "reload": client.reload_status()})).await?;
 
                 if let Some(document) = web_sys::window().and_then(|window| window.document())
                     && let Some(root) = document.document_element()
@@ -209,18 +235,24 @@ impl WebBridge {
 
                     for delivery in deliveries {
                         if let Some(build) = delivery.reload_build {
-                            let result = self.reload(&client, application_id, build).await;
-                            let _: serde_json::Value = self.post("reload_result", &serde_json::json!({
-                                "runtime_id": client.info().runtime_id, "build_id": build,
-                                "error": result.err(), "reload": client.router().reload_status(),
-                            })).await?;
+                            let result = client.reload(self, application_id, build).await;
+                            let _: serde_json::Value = self
+                                .post(
+                                    "reload_result",
+                                    &serde_json::json!({
+                                        "runtime_id": client.info().runtime_id, "build_id": build,
+                                        "error": result.err(), "reload": client.reload_status(),
+                                    }),
+                                )
+                                .await?;
 
                             continue;
                         }
 
                         let _response = client.begin_response();
-                        let result =
-                            client.request(delivery.request.ok_or("missing development request")?);
+                        let result = client
+                            .request_async(delivery.request.ok_or("missing development request")?)
+                            .await;
                         let _: serde_json::Value = self.post("reply", &serde_json::json!({"runtime_id": client.info().runtime_id, "ticket": delivery.ticket, "result": result})).await?;
                     }
                 }

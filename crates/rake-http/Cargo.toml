@@ -1,0 +1,39 @@
+[package]
+name = "rake-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Executor-portable HTTP with bounded deadlines and diagnostics"
+
+[lints]
+workspace = true
+
+[dependencies]
+rake-diagnostics.workspace = true
+rake-protocol = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+web-time.workspace = true
+url = "2.5"
+event-listener = "5.4"
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "stream"] }
+
+[features]
+devtools = ["rake-diagnostics/devtools"]
+task-errors = ["dep:rake-protocol"]
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+async-compat = "0.2.5"
+async-io = "2.6"
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

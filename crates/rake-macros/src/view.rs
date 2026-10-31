@@ -9,23 +9,57 @@ use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Pat, Token, braced};
 
+use self::classes::{class_methods, expression_plan, utility_plan};
+use self::style_plan::StylePlan;
+use self::tag::{Tag, display_name};
+
+#[derive(Clone)]
 pub(super) struct View(Element);
 
+#[derive(Clone)]
 struct Element {
     tag: syn::Path,
+    resolved: Tag,
+    display_name: String,
     self_closing: bool,
     attributes: Vec<Attribute>,
     children: Vec<Node>,
+    parse_errors: Vec<syn::Error>,
+    defaults: Option<Expr>,
 }
 
+#[derive(Clone)]
 struct Attribute {
     name: String,
     action: Option<syn::Path>,
     span: Span,
-    value: Expr,
+    value: AttributeValue,
 }
 
+#[derive(Clone)]
+enum AttributeValue {
+    Expression(Box<Expr>),
+    Markup(Box<Element>),
+}
+
+impl Attribute {
+    fn expression(&self) -> syn::Result<&Expr> {
+        match &self.value {
+            AttributeValue::Expression(value) => Ok(value),
+            AttributeValue::Markup(_) => Err(syn::Error::new(
+                self.span,
+                "markup property values are supported only on components",
+            )),
+        }
+    }
+}
+
+#[derive(Clone)]
 enum Node {
+    Match {
+        expression: Expr,
+        arms: Vec<MatchArm>,
+    },
     Element(Element),
     Text(LitStr),
     Expression(Expr),
@@ -39,6 +73,45 @@ enum Node {
         iterator: Expr,
         children: Vec<Node>,
     },
+}
+
+#[derive(Clone)]
+struct MatchArm {
+    pattern: Pat,
+    guard: Option<Expr>,
+    children: Vec<Node>,
+}
+
+enum ParsedAttribute {
+    Named(Attribute),
+    Defaults(Expr, Span),
+}
+
+#[derive(Default)]
+struct Diagnostics(Option<syn::Error>);
+
+impl Diagnostics {
+    #[cfg(test)]
+    fn finish(mut self, result: syn::Result<TokenStream>) -> syn::Result<TokenStream> {
+        let root = match result {
+            Ok(root) => root,
+            Err(error) => {
+                self.push(error);
+
+                TokenStream::new()
+            }
+        };
+
+        self.0.map_or(Ok(root), Err)
+    }
+
+    fn push(&mut self, error: syn::Error) {
+        if let Some(errors) = &mut self.0 {
+            errors.combine(error);
+        } else {
+            self.0 = Some(error);
+        }
+    }
 }
 
 impl Parse for View {
@@ -57,64 +130,86 @@ impl Parse for Element {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         input.parse::<Token![<]>()?;
         let tag = input.call(syn::Path::parse_mod_style)?;
-        let tag_name = quote!(#tag).to_string().replace(' ', "");
+        let tag_name = display_name(&tag);
+        let resolved = Tag::resolve(&tag);
         let mut attributes = Vec::new();
         let mut names = BTreeSet::new();
+        let mut parse_errors = Vec::new();
+        let mut defaults = None;
 
         while !input.peek(Token![>]) && !input.peek(Token![/]) {
-            let name = input.call(Ident::parse_any)?;
-            let span = name.span();
-            let mut name = name.to_string();
-            let mut action = None;
+            if input.is_empty() {
+                return Err(input.error("expected `>` after attributes"));
+            }
 
-            if input.peek(Token![:]) {
-                if name != "on" {
-                    return Err(syn::Error::new(
-                        span,
-                        "typed actions use on:Action={handler}",
-                    ));
+            match parse_attribute(input, resolved) {
+                Ok(ParsedAttribute::Defaults(value, span)) => {
+                    if resolved != Tag::Component {
+                        parse_errors.push(syn::Error::new(
+                            span,
+                            "default fields are supported only on components",
+                        ));
+                    } else if !input.peek(Token![>]) && !input.peek(Token![/]) {
+                        parse_errors.push(syn::Error::new(
+                            span,
+                            "component defaults must be the last attribute",
+                        ));
+                    } else if defaults.is_some() {
+                        parse_errors.push(syn::Error::new(span, "duplicate component defaults"));
+                    } else {
+                        defaults = Some(value);
+                    }
                 }
+                Ok(ParsedAttribute::Named(attribute)) => {
+                    if names.insert(attribute.name.clone()) {
+                        attributes.push(attribute);
+                    } else {
+                        parse_errors.push(syn::Error::new(
+                            attribute.span,
+                            format!("duplicate attribute `{}`", attribute.name),
+                        ));
+                    }
+                }
+                Err(error) => {
+                    parse_errors.push(error);
 
-                input.parse::<Token![:]>()?;
-                let path = input.call(syn::Path::parse_mod_style)?;
+                    while !input.is_empty() && !input.peek(Token![>]) && !input.peek(Token![/]) {
+                        if input.peek(syn::token::Brace) {
+                            let fork = input.fork();
+                            let _: proc_macro2::TokenTree = fork.parse()?;
 
-                name = format!("on:{}", quote!(#path).to_string().replace(' ', ""));
-                action = Some(path);
+                            if !fork.peek(Token![=]) {
+                                break;
+                            }
+
+                            // A dynamic name such as class:{name}={value} is one
+                            // invalid attribute, not two shorthand properties.
+                            input.parse::<proc_macro2::TokenTree>()?;
+                            input.parse::<Token![=]>()?;
+
+                            if !input.is_empty() && !input.peek(Token![>]) && !input.peek(Token![/])
+                            {
+                                input.parse::<proc_macro2::TokenTree>()?;
+                            }
+
+                            continue;
+                        }
+
+                        let fork = input.fork();
+
+                        if let Ok(name) = fork.call(Ident::parse_any)
+                            && (fork.peek(Token![=])
+                                || fork.peek(Token![:])
+                                || fork.peek(Token![-])
+                                || boolean_attribute(resolved, &name.to_string()))
+                        {
+                            break;
+                        }
+
+                        input.parse::<proc_macro2::TokenTree>()?;
+                    }
+                }
             }
-
-            while action.is_none() && input.peek(Token![-]) {
-                input.parse::<Token![-]>()?;
-                name.push('-');
-                name.push_str(&input.call(Ident::parse_any)?.to_string());
-            }
-
-            if !names.insert(name.clone()) {
-                return Err(syn::Error::new(
-                    span,
-                    format!("duplicate attribute `{name}`"),
-                ));
-            }
-
-            input.parse::<Token![=]>()?;
-            let value = if input.peek(LitStr) {
-                Expr::Lit(syn::ExprLit {
-                    attrs: Vec::new(),
-                    lit: syn::Lit::Str(input.parse()?),
-                })
-            } else if input.peek(syn::token::Brace) {
-                parse_expression_block(input)?
-            } else {
-                return Err(
-                    input.error("attribute values must be quoted strings or {Rust expressions}")
-                );
-            };
-
-            attributes.push(Attribute {
-                name,
-                action,
-                span,
-                value,
-            });
         }
 
         let self_closing = input.peek(Token![/]);
@@ -123,8 +218,9 @@ impl Parse for Element {
             input.parse::<Token![/]>()?;
         }
 
-        input.parse::<Token![>]>()?;
+        let opening: Token![>] = input.parse()?;
         let mut children = Vec::new();
+        let mut previous = opening.span();
 
         if !self_closing {
             while !(input.peek(Token![<]) && input.peek2(Token![/])) {
@@ -135,7 +231,7 @@ impl Parse for Element {
                     ));
                 }
 
-                children.push(input.parse()?);
+                text::push_node(input, &mut children, &mut previous)?;
             }
 
             input.parse::<Token![<]>()?;
@@ -154,11 +250,221 @@ impl Parse for Element {
 
         Ok(Self {
             tag,
+            resolved,
+            display_name: tag_name,
             self_closing,
             attributes,
             children,
+            parse_errors,
+            defaults,
         })
     }
+}
+
+fn parse_attribute(input: ParseStream<'_>, tag: Tag) -> syn::Result<ParsedAttribute> {
+    if input.peek(syn::token::Brace) {
+        let content;
+
+        braced!(content in input);
+
+        if content.peek(Token![..]) {
+            let dots: Token![..] = content.parse()?;
+            let expression = content.parse()?;
+
+            if !content.is_empty() {
+                let error = content.error("expected one component defaults expression");
+                let _: TokenStream = content.parse()?;
+
+                return Err(error);
+            }
+
+            return Ok(ParsedAttribute::Defaults(expression, dots.span()));
+        }
+
+        let name = content.call(Ident::parse_any)?;
+
+        if !content.is_empty() {
+            let error = content.error("prop shorthand requires a bare identifier");
+            let _: TokenStream = content.parse()?;
+
+            return Err(error);
+        }
+
+        return Ok(ParsedAttribute::Named(Attribute {
+            span: name.span(),
+            name: name.to_string(),
+            action: None,
+            value: AttributeValue::Expression(syn::parse_quote!(#name)),
+        }));
+    }
+
+    let name = input.call(Ident::parse_any)?;
+    let span = name.span();
+    let mut name = name.to_string();
+    let mut action = None;
+
+    if input.peek(Token![:]) {
+        input.parse::<Token![:]>()?;
+
+        if name == "class" {
+            name.push(':');
+            name.push_str(&parse_class_name(input)?);
+        } else if name == "on" {
+            let path = input.call(syn::Path::parse_mod_style)?;
+
+            name = format!("on:{}", display_name(&path));
+
+            if path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident.to_string().starts_with(char::is_uppercase))
+            {
+                action = Some(path);
+            }
+        } else {
+            return Err(syn::Error::new(
+                span,
+                "typed actions use on:Action={handler}",
+            ));
+        }
+    }
+
+    while action.is_none() && input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        name.push('-');
+        let part = if input.peek(syn::LitInt) {
+            input.parse::<syn::LitInt>()?.to_string()
+        } else {
+            input.call(Ident::parse_any)?.to_string()
+        };
+
+        name.push_str(&part);
+    }
+
+    let value = if !input.peek(Token![=]) {
+        if !boolean_attribute(tag, &name) {
+            return Err(syn::Error::new(
+                span,
+                format!("attribute `{name}` requires a value"),
+            ));
+        }
+
+        AttributeValue::Expression(syn::parse_quote!(true))
+    } else {
+        input.parse::<Token![=]>()?;
+
+        if input.peek(LitStr) {
+            AttributeValue::Expression(Box::new(Expr::Lit(syn::ExprLit {
+                attrs: Vec::new(),
+                lit: syn::Lit::Str(input.parse()?),
+            })))
+        } else if input.peek(syn::token::Brace) {
+            let fork = input.fork();
+            let content;
+
+            braced!(content in fork);
+
+            // Qualified Rust paths such as <T as Trait>::value() stay expressions.
+            let expression = content.fork();
+
+            let markup = content.peek(Token![<])
+                && !(expression.parse::<Expr>().is_ok() && expression.is_empty());
+
+            if markup {
+                let content;
+
+                braced!(content in input);
+                let element = match content.parse() {
+                    Ok(element) => element,
+                    Err(error) => {
+                        let _: TokenStream = content.parse()?;
+
+                        return Err(error);
+                    }
+                };
+
+                if !content.is_empty() {
+                    let error = content.error("markup properties require exactly one root element");
+                    let _: TokenStream = content.parse()?;
+
+                    return Err(error);
+                }
+
+                if tag != Tag::Component {
+                    return Err(syn::Error::new(
+                        span,
+                        "markup property values are supported only on components",
+                    ));
+                }
+
+                AttributeValue::Markup(Box::new(element))
+            } else {
+                AttributeValue::Expression(Box::new(parse_expression_block(input)?))
+            }
+        } else {
+            return Err(
+                input.error("attribute values must be quoted strings or {Rust expressions}")
+            );
+        }
+    };
+
+    Ok(ParsedAttribute::Named(Attribute {
+        name,
+        action,
+        span,
+        value,
+    }))
+}
+
+fn boolean_attribute(tag: Tag, name: &str) -> bool {
+    tag == Tag::Component
+        || matches!(
+            name,
+            "disabled" | "wrap" | "ellipsis" | "tab-navigation" | "aria-expanded"
+        )
+}
+
+fn parse_class_name(input: ParseStream<'_>) -> syn::Result<String> {
+    let mut name = String::new();
+
+    if input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        name.push('-');
+    }
+
+    loop {
+        if input.peek(syn::token::Bracket) {
+            let content;
+
+            syn::bracketed!(content in input);
+            let tokens: TokenStream = content.parse()?;
+
+            name.push('[');
+            name.push_str(&tokens.to_string().replace(' ', ""));
+            name.push(']');
+        } else if input.peek(syn::LitFloat) {
+            name.push_str(&input.parse::<syn::LitFloat>()?.to_string());
+        } else if input.peek(syn::LitInt) {
+            name.push_str(&input.parse::<syn::LitInt>()?.to_string());
+        } else {
+            name.push_str(&input.call(Ident::parse_any)?.to_string());
+        }
+
+        if !(input.peek(Token![-]) || input.peek(Token![:]) || input.peek(Token![/])) {
+            break;
+        }
+
+        let punctuation: proc_macro2::Punct = input.parse()?;
+
+        name.push(punctuation.as_char());
+
+        if punctuation.as_char() == ':' && input.peek(Token![-]) {
+            input.parse::<Token![-]>()?;
+            name.push('-');
+        }
+    }
+
+    Ok(name)
 }
 
 impl Parse for Node {
@@ -175,7 +481,43 @@ impl Parse for Node {
             return parse_expression_block(input).map(Self::Expression);
         }
 
-        if input.peek(Token![if]) {
+        if input.peek(Token![match]) && text::starts_control(input) {
+            input.parse::<Token![match]>()?;
+            let expression = input.call(Expr::parse_without_eager_brace)?;
+            let content;
+
+            braced!(content in input);
+            let mut arms = Vec::new();
+
+            while !content.is_empty() {
+                let pattern = content.call(Pat::parse_multi_with_leading_vert)?;
+
+                let guard = if content.peek(Token![if]) {
+                    content.parse::<Token![if]>()?;
+
+                    Some(content.call(Expr::parse_without_eager_brace)?)
+                } else {
+                    None
+                };
+
+                content.parse::<Token![=>]>()?;
+                let children = parse_nodes(&content)?;
+
+                if content.peek(Token![,]) {
+                    content.parse::<Token![,]>()?;
+                }
+
+                arms.push(MatchArm {
+                    pattern,
+                    guard,
+                    children,
+                });
+            }
+
+            return Ok(Self::Match { expression, arms });
+        }
+
+        if input.peek(Token![if]) && text::starts_control(input) {
             input.parse::<Token![if]>()?;
             let condition = input.call(Expr::parse_without_eager_brace)?;
             let then_nodes = parse_nodes(input)?;
@@ -198,7 +540,7 @@ impl Parse for Node {
             });
         }
 
-        if input.peek(Token![for]) {
+        if input.peek(Token![for]) && text::starts_control(input) {
             input.parse::<Token![for]>()?;
             let pattern = input.call(Pat::parse_single)?;
 
@@ -213,7 +555,7 @@ impl Parse for Node {
             });
         }
 
-        Err(input.error("expected an element, quoted text, {expression}, if, or for"))
+        text::parse(input).map(Self::Text)
     }
 }
 
@@ -222,9 +564,10 @@ fn parse_nodes(input: ParseStream<'_>) -> syn::Result<Vec<Node>> {
 
     braced!(content in input);
     let mut nodes = Vec::new();
+    let mut previous = content.span();
 
     while !content.is_empty() {
-        nodes.push(content.parse()?);
+        text::push_node(&content, &mut nodes, &mut previous)?;
     }
 
     Ok(nodes)
@@ -248,7 +591,8 @@ fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
     for node in nodes {
         match node {
             Node::Element(element)
-                if !element.tag.is_ident("view") && element.attribute("id").is_none() =>
+                if !matches!(element.resolved, Tag::Entity | Tag::Svg)
+                    && element.attribute("id").is_none() =>
             {
                 return Err(syn::Error::new(
                     element.tag.span(),
@@ -263,17 +607,14 @@ fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
                 require_loop_ids(then_nodes)?;
                 require_loop_ids(else_nodes)?;
             }
-            Node::For { children, .. } => require_loop_ids(children)?,
-            Node::Text(_) | Node::Expression(_) => {
-                return Err(syn::Error::new(
-                    match node {
-                        Node::Text(text) => text.span(),
-                        Node::Expression(expression) => syn::spanned::Spanned::span(expression),
-                        _ => unreachable!(),
-                    },
-                    "text and expressions in a for loop require an element wrapper with an explicit stable id",
-                ));
+            Node::Match { arms, .. } => {
+                for arm in arms {
+                    require_loop_ids(&arm.children)?;
+                }
             }
+            Node::For { children, .. } => require_loop_ids(children)?,
+            Node::Text(text) => return Err(loop_text_error(text.span())),
+            Node::Expression(expression) => return Err(loop_text_error(expression.span())),
             _ => {}
         }
     }
@@ -281,15 +622,24 @@ fn require_loop_ids(nodes: &[Node]) -> syn::Result<()> {
     Ok(())
 }
 
+fn loop_text_error(span: Span) -> syn::Error {
+    syn::Error::new(
+        span,
+        "text and expressions in a for loop require an element wrapper with an explicit stable id",
+    )
+}
+
 impl View {
-    pub(super) fn expand(self, rake: &TokenStream) -> syn::Result<TokenStream> {
+    fn emit(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
         let root = self.0.expand(rake, &mut 0)?;
+        let theme = theme::used(&self.0).map(|span| theme::binding(span, rake));
 
         Ok(quote!({
             use #rake::gpui::prelude::{
                 FluentBuilder as _, InteractiveElement as _, ParentElement as _,
                 StatefulInteractiveElement as _, Styled as _, StyledImage as _,
             };
+            #theme
             #root
         }))
     }
@@ -297,10 +647,7 @@ impl View {
 
 impl Element {
     fn is_component(&self) -> bool {
-        self.tag
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident.to_string().starts_with(char::is_uppercase))
+        self.resolved == Tag::Component
     }
 
     fn attribute(&self, name: &str) -> Option<&Attribute> {
@@ -309,9 +656,42 @@ impl Element {
             .find(|attribute| attribute.name == name)
     }
 
+    fn required_attribute(&self, name: &str) -> syn::Result<&Attribute> {
+        self.attribute(name).ok_or_else(|| {
+            let (_, message) = self
+                .resolved
+                .required_attributes()
+                .iter()
+                .find(|(required, _)| *required == name)
+                .expect("tag defines the required attribute");
+
+            syn::Error::new(self.tag.span(), message)
+        })
+    }
+
+    fn reject_leaf_children(&self) -> syn::Result<()> {
+        if let Some(message) = self.resolved.leaf_message()
+            && !self.children.is_empty()
+        {
+            return Err(syn::Error::new(self.tag.span(), message));
+        }
+
+        Ok(())
+    }
+
     fn expand(&self, rake: &TokenStream, next: &mut usize) -> syn::Result<TokenStream> {
-        if self.tag.is_ident("view") {
-            return self.expand_entity(rake);
+        if self.resolved == Tag::Entity {
+            let index = *next;
+
+            *next += 1;
+            let element = self.expand_entity(rake)?;
+            let definition = self.inspection_definition(rake, index);
+
+            return Ok(quote!(#rake::__private::inspection!(
+                #element,
+                |__rake_entity| #rake::__private::view_inspect_component(__rake_entity, #definition,
+                |entity| Some(#rake::gpui::ElementId::View(entity.entity_id())))
+            )));
         }
 
         if self.is_component() {
@@ -325,9 +705,7 @@ impl Element {
         let siblings = format_ident!("__rake_view_children_{index}", span = Span::mixed_site());
         let disabled = format_ident!("__rake_view_disabled_{index}", span = Span::mixed_site());
         let mapped = format_ident!("__rake_view_builder_{index}", span = Span::mixed_site());
-        let path = &self.tag;
-        let tag = quote!(#path).to_string().replace(' ', "");
-        let is_button = tag == "button";
+        let is_button = self.resolved.supports_disabled();
         let mut setup = TokenStream::new();
 
         if let Some(attribute) = self.attribute("disabled")
@@ -340,13 +718,20 @@ impl Element {
         }
 
         if is_button {
-            let value = self.attribute("disabled").map(|attribute| &attribute.value);
+            let value = self
+                .attribute("disabled")
+                .map(Attribute::expression)
+                .transpose()?;
+
             let value = value.map_or_else(|| quote!(false), |value| quote!(#value));
 
             setup.extend(quote!(let #disabled: bool = #value;));
         }
 
-        let id = self.attribute("id").map(|attribute| &attribute.value);
+        let id = self
+            .attribute("id")
+            .map(Attribute::expression)
+            .transpose()?;
 
         let id = id.map_or_else(
             || {
@@ -357,59 +742,10 @@ impl Element {
             |value| quote!(#value),
         );
 
-        let mut builder = match tag.as_str() {
-            "div" | "section" | "span" => quote!(#rake::gpui::div().id(#id).flex().flex_col()),
-            "p" => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
-                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                let level = tag.as_bytes()[1] as usize - b'0' as usize;
+        let mut builder = self.base_builder(&id, rake)?;
 
-                let size = match level {
-                    1 => 30.0_f32,
-                    2 => 24.0,
-                    3 => 20.0,
-                    _ => 16.0,
-                };
-
-                quote!(#rake::gpui::div().id(#id).flex().flex_col()
-                    .role(#rake::gpui::accesskit::Role::Heading).aria_level(#level)
-                    .text_size(#rake::gpui::px(#size)).font_weight(#rake::gpui::FontWeight::BOLD))
-            }
-            "ul" | "ol" => quote!(#rake::gpui::div().id(#id).flex().flex_col()
-                .role(#rake::gpui::accesskit::Role::List)),
-            "li" => quote!(#rake::gpui::div().id(#id).flex().flex_col()
-                .role(#rake::gpui::accesskit::Role::ListItem)),
-            "button" => quote!(#rake::gpui::div().id(#id).flex().items_center().justify_center()
-                .role(#rake::gpui::accesskit::Role::Button).cursor_pointer()),
-            "img" => {
-                let source = self
-                    .attribute("src")
-                    .ok_or_else(|| syn::Error::new(self.tag.span(), "img requires src"))?;
-
-                if self.attribute("alt").is_none() {
-                    return Err(syn::Error::new(self.tag.span(), "img requires alt text"));
-                }
-
-                if !self.children.is_empty() {
-                    return Err(syn::Error::new(self.tag.span(), "img cannot have children"));
-                }
-
-                let source = &source.value;
-
-                quote!(#rake::__private::view_image(#source, #id))
-            }
-            _ => {
-                return Err(syn::Error::new(
-                    self.tag.span(),
-                    format!("unsupported view element <{tag}>"),
-                ));
-            }
-        };
-
-        if matches!(
-            tag.as_str(),
-            "button" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-        ) && self.attribute("aria-label").is_none()
+        if self.resolved.auto_label()
+            && self.attribute("aria-label").is_none()
             && !self.children.is_empty()
         {
             let labels: Option<Vec<_>> = self
@@ -428,10 +764,134 @@ impl Element {
             }
         }
 
-        for attribute in &self.attributes {
-            let value = &attribute.value;
+        builder = self.apply_attributes(builder, rake, index, &disabled, &mapped, &mut setup)?;
 
-            if tag == "img"
+        builder = self.apply_focus(builder, rake, &disabled, &mapped)?;
+
+        if self.resolved.composes_text() {
+            let paragraph = self.expand_paragraph(builder, rake, next)?;
+            let output = self.inspect_output(paragraph, rake, index);
+
+            return Ok(quote!({ #setup #output }));
+        }
+
+        let children = expand_children_into(&self.children, &node, &siblings, rake, next)?;
+
+        let output = if self.children.is_empty() {
+            builder
+        } else {
+            quote!({
+                let mut #node = #builder;
+                let mut #siblings = #rake::__private::ViewChildren::default();
+                #children
+                #node
+            })
+        };
+
+        let output = self.inspect_output(output, rake, index);
+
+        Ok(quote!({ #setup #output }))
+    }
+
+    fn base_builder(&self, id: &TokenStream, rake: &TokenStream) -> syn::Result<TokenStream> {
+        Ok(match self.resolved {
+            Tag::Container(role) => {
+                let mut builder = quote!(#rake::gpui::div().id(#id).flex().flex_col());
+
+                if let Some(role) = role {
+                    let role = format_ident!("{role}");
+
+                    builder.extend(quote!(.role(#rake::gpui::accesskit::Role::#role)));
+                }
+
+                builder
+            }
+            Tag::Paragraph => quote!(#rake::gpui::div().id(#id).flex().flex_col().min_w_0()
+                .whitespace_normal().role(#rake::gpui::accesskit::Role::Paragraph)),
+            Tag::Heading(level) => {
+                let level = level as usize;
+
+                let size = match level {
+                    1 => 30.0_f32,
+                    2 => 24.0,
+                    3 => 20.0,
+                    _ => 16.0,
+                };
+
+                quote!(#rake::gpui::div().id(#id).flex().flex_col()
+                    .role(#rake::gpui::accesskit::Role::Heading).aria_level(#level)
+                    .text_size(#rake::gpui::px(#size)).font_weight(#rake::gpui::FontWeight::BOLD)
+                    .min_w_0().whitespace_normal())
+            }
+            Tag::List => quote!(#rake::gpui::div().id(#id).flex().flex_col()
+                .role(#rake::gpui::accesskit::Role::List)),
+            Tag::ListItem => quote!(#rake::gpui::div().id(#id).flex().flex_col()
+                .role(#rake::gpui::accesskit::Role::ListItem)),
+            Tag::Button => quote!(#rake::gpui::div().id(#id).flex().items_center().justify_center()
+                .role(#rake::gpui::accesskit::Role::Button).cursor_pointer()),
+            Tag::Svg => {
+                let path = self.required_attribute("path")?;
+
+                self.reject_leaf_children()?;
+
+                let path = path.expression()?;
+
+                quote!(#rake::__private::view_svg(#path))
+            }
+            Tag::Rule => {
+                self.reject_leaf_children()?;
+
+                quote!(#rake::gpui::div().id(#id).w_full().h(#rake::gpui::px(1.)))
+            }
+            Tag::Image => {
+                let source = self.required_attribute("src")?;
+
+                self.required_attribute("alt")?;
+
+                self.reject_leaf_children()?;
+
+                let source = source.expression()?;
+
+                quote!(#rake::__private::view_image(#source, #id))
+            }
+            _ => {
+                return Err(syn::Error::new(
+                    self.tag.span(),
+                    format!("unsupported view element <{}>", self.display_name),
+                ));
+            }
+        })
+    }
+
+    fn apply_attributes(
+        &self,
+        mut builder: TokenStream,
+        rake: &TokenStream,
+        index: usize,
+        disabled: &Ident,
+        mapped: &Ident,
+        setup: &mut TokenStream,
+    ) -> syn::Result<TokenStream> {
+        let is_button = self.resolved.supports_disabled();
+        let mut variants = StylePlan::default();
+
+        for (position, attribute) in self.attributes.iter().enumerate() {
+            let value = attribute.expression()?;
+
+            if self.resolved == Tag::Svg
+                && !matches!(
+                    attribute.name.as_str(),
+                    "path" | "class" | "style" | "aria-label" | "aria-description"
+                )
+                && !attribute.name.starts_with("class:")
+            {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "svg supports path, class, conditional classes, style, aria-label and aria-description; put identity, focus and events on a surrounding element",
+                ));
+            }
+
+            if self.resolved == Tag::Image
                 && matches!(
                     attribute.name.as_str(),
                     "role" | "aria-keyshortcuts" | "aria-expanded"
@@ -456,11 +916,73 @@ impl Element {
                 continue;
             }
 
+            if events::is_event(&attribute.name) {
+                let method = events::expand(attribute, rake, index)?;
+
+                let method = if is_button {
+                    quote!(.when(!#disabled, |#mapped| #mapped #method))
+                } else {
+                    method
+                };
+
+                builder.extend(quote_spanned!(attribute.span=> #method));
+                continue;
+            }
+
+            if attribute.name == "class" || attribute.name.starts_with("class:") {
+                let mut plan = if let Some(class) = attribute.name.strip_prefix("class:") {
+                    utility_plan(class, attribute.span, rake, is_button.then_some(disabled))?
+                } else if matches!(
+                    value,
+                    Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(_),
+                        ..
+                    })
+                ) {
+                    class_methods(value, rake, is_button.then_some(disabled))?
+                } else {
+                    let selector = format_ident!(
+                        "__rake_class_branch_{index}_{position}",
+                        span = Span::mixed_site()
+                    );
+
+                    setup.extend(quote!(let #mapped = #builder;));
+                    builder = quote!(#mapped);
+
+                    expression_plan(value, rake, is_button.then_some(disabled), &selector, setup)?
+                };
+
+                if plan.interactive && self.resolved == Tag::Svg {
+                    return Err(syn::Error::new(
+                        attribute.span,
+                        "SVG interaction classes require a surrounding container",
+                    ));
+                }
+
+                if attribute.name.starts_with("class:") {
+                    let condition = format_ident!(
+                        "__rake_class_cond_{index}_{position}",
+                        span = Span::mixed_site()
+                    );
+
+                    // Evaluate preceding attributes before binding this condition.
+                    setup.extend(quote!(let #mapped = #builder; let #condition: bool = #value;));
+                    builder = quote!(#mapped);
+                    plan.gate(&condition, setup);
+                }
+
+                builder.extend(plan.emit_base(mapped));
+                plan.base.clear();
+                variants.extend(plan, attribute.span)?;
+                continue;
+            }
+
             let method = match attribute.name.as_str() {
                 "id" => continue,
                 "disabled" | "focus" | "tabindex" | "tab-navigation" => continue,
-                "src" if tag == "img" => continue,
-                "alt" if tag == "img" => quote!(.aria_label(#value)),
+                "src" if self.resolved == Tag::Image => continue,
+                "path" if self.resolved == Tag::Svg => continue,
+                "alt" if self.resolved == Tag::Image => quote!(.aria_label(#value)),
                 "aria-label" => quote!(.aria_label(#value)),
                 "aria-description" => quote!(.aria_description(#value)),
                 "aria-keyshortcuts" => quote!(.aria_keyshortcuts(#value)),
@@ -472,63 +994,101 @@ impl Element {
 
                     quote!(.track_scroll(#value))
                 }
-                "wrap" if tag == "p" => quote!(.when_else(#value,
+                "wrap" if self.resolved.composes_text() => quote!(.when_else(#value,
                     |#mapped| #mapped.whitespace_normal(),
                     |#mapped| #mapped.whitespace_nowrap())),
-                "ellipsis" if tag == "p" => quote!(.when(#value,
+                "ellipsis" if self.resolved.composes_text() => quote!(.when(#value,
                     |#mapped| #mapped.overflow_hidden().text_ellipsis())),
-                "max-lines" if tag == "p" => {
+                "max-lines" if self.resolved.composes_text() => {
                     let limit =
                         format_ident!("__rake_paragraph_limit_{index}", span = Span::mixed_site());
 
                     quote!(.line_clamp({ let #limit: usize = #value; #limit.max(1) }))
                 }
-                "class" => class_methods(value, rake)?,
                 "style" => quote!(.map(#value)),
-                "onclick" => quote!(.on_click(#value)),
-                "onkeydown" => quote!(.on_key_down(#value)),
-                "onkeyup" => quote!(.on_key_up(#value)),
-                "onmousemove" => quote!(.on_mouse_move(#value)),
-                "onmousedown" => quote!(.on_mouse_down(#rake::gpui::MouseButton::Left, #value)),
-                "onmouseup" => quote!(.on_mouse_up(#rake::gpui::MouseButton::Left, #value)),
+                "tooltip" => quote!(.tooltip(#value)),
                 _ => {
                     return Err(syn::Error::new(
                         attribute.span,
-                        format!("unsupported attribute `{}` on <{tag}>", attribute.name),
+                        format!(
+                            "unsupported attribute `{}` on <{}>",
+                            attribute.name, self.display_name
+                        ),
                     ));
                 }
-            };
-
-            let method = if is_button && attribute.name.starts_with("on") {
-                quote!(.when(!#disabled, |#mapped| #mapped #method))
-            } else {
-                method
             };
 
             builder.extend(quote_spanned!(attribute.span=> #method));
         }
 
-        let focus = self.attribute("focus").map(|attribute| &attribute.value);
+        for attribute in self
+            .attributes
+            .iter()
+            .filter(|attribute| attribute.name == "style")
+        {
+            let value = attribute.expression()?;
+            let calls = style_calls(quote!(#value));
+
+            for variant in variants.variants.keys() {
+                if calls.contains(variant.method()) {
+                    return Err(syn::Error::new_spanned(
+                        value,
+                        format!(
+                            "`{}:` classes and `.{}(..)` in style both set GPUI's single {} style; move one into the other",
+                            variant.name(),
+                            variant.method(),
+                            variant.name()
+                        ),
+                    ));
+                }
+            }
+        }
+
+        builder.extend(variants.emit_variants(mapped));
+
+        Ok(builder)
+    }
+
+    fn apply_focus(
+        &self,
+        mut builder: TokenStream,
+        rake: &TokenStream,
+        disabled: &Ident,
+        mapped: &Ident,
+    ) -> syn::Result<TokenStream> {
+        let is_button = self.resolved.supports_disabled();
+
+        let focus = self
+            .attribute("focus")
+            .map(Attribute::expression)
+            .transpose()?;
 
         if let Some(focus) = focus {
             require_borrowed_place(focus, "focus")?;
         }
 
-        let tabindex = self.attribute("tabindex").map(|attribute| &attribute.value);
+        let tabindex = self
+            .attribute("tabindex")
+            .map(Attribute::expression)
+            .transpose()?;
+
         let tabindex = tabindex.map_or_else(|| quote!(None), |value| quote!(Some(#value)));
 
         if !is_button {
             if let Some(focus) = focus {
                 builder = quote!(#rake::__private::view_focus(#builder, #focus, #tabindex));
             } else if self.attribute("tabindex").is_some() {
-                let value = &self.attribute("tabindex").expect("checked tabindex").value;
+                let value = self
+                    .attribute("tabindex")
+                    .expect("checked tabindex")
+                    .expression()?;
 
                 builder = quote!(#rake::__private::view_tab_index(#builder, #value));
             }
         }
 
         if let Some(navigation) = self.attribute("tab-navigation") {
-            let value = &navigation.value;
+            let value = navigation.expression()?;
 
             builder.extend(quote!(.when(#value, |#mapped| #mapped.on_key_down(#rake::__private::view_tab_navigation))));
         }
@@ -539,33 +1099,11 @@ impl Element {
             builder = quote!(#rake::__private::view_button(#builder, #disabled, #focus, #tabindex));
         }
 
-        if tag == "p" {
-            return self.expand_paragraph(builder, rake, next);
-        }
-
-        let children = expand_children(&self.children, &node, &siblings, rake, next)?;
-
-        let output = if self.children.is_empty() {
-            builder
-        } else {
-            quote!({
-                let mut #node = #builder;
-                let mut #siblings = #rake::__private::ViewChildren::default();
-                #children
-                #node
-            })
-        };
-
-        Ok(quote!({ #setup #output }))
+        Ok(builder)
     }
 
     fn expand_entity(&self, rake: &TokenStream) -> syn::Result<TokenStream> {
-        if !self.children.is_empty() {
-            return Err(syn::Error::new(
-                self.tag.span(),
-                "view mounts a retained entity and cannot have children",
-            ));
-        }
+        self.reject_leaf_children()?;
 
         for attribute in &self.attributes {
             if attribute.name != "entity" {
@@ -576,15 +1114,36 @@ impl Element {
             }
         }
 
-        let entity = self.attribute("entity").ok_or_else(|| {
-            syn::Error::new(self.tag.span(), "view requires entity={&stored_entity}")
-        })?;
+        let entity = self.required_attribute("entity")?;
 
-        require_borrowed_place(&entity.value, "entity")?;
-        let value = &entity.value;
+        let value = entity.expression()?;
+
+        require_borrowed_place(value, "entity")?;
 
         Ok(quote_spanned!(entity.span=> #rake::__private::view_entity(#value)))
     }
+}
+
+fn style_calls(tokens: TokenStream) -> BTreeSet<String> {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let mut calls = BTreeSet::new();
+
+    for window in tokens.windows(3) {
+        if matches!(&window[0], proc_macro2::TokenTree::Punct(p) if p.as_char() == '.')
+            && let proc_macro2::TokenTree::Ident(name) = &window[1]
+            && matches!(&window[2], proc_macro2::TokenTree::Group(g) if g.delimiter() == proc_macro2::Delimiter::Parenthesis)
+        {
+            calls.insert(name.to_string());
+        }
+    }
+
+    for token in tokens {
+        if let proc_macro2::TokenTree::Group(group) = token {
+            calls.extend(style_calls(group.stream()));
+        }
+    }
+
+    calls
 }
 
 fn require_borrowed_place(value: &Expr, attribute: &str) -> syn::Result<()> {
@@ -613,7 +1172,7 @@ fn require_borrowed_place(value: &Expr, attribute: &str) -> syn::Result<()> {
     ))
 }
 
-fn expand_children(
+fn expand_children_into(
     nodes: &[Node],
     parent: &Ident,
     siblings: &Ident,
@@ -630,30 +1189,24 @@ fn expand_children(
 
                 quote_spanned!(source=> #siblings.push(&mut #parent, #element);)
             }
-            Node::Text(_) | Node::Expression(_) => {
-                let (value, source) = match node {
-                    Node::Text(text) => (quote!(#text), text.span()),
-                    Node::Expression(expression) => {
-                        (quote!(#expression), syn::spanned::Spanned::span(expression))
-                    }
-                    _ => unreachable!(),
-                };
-
-                let index = *next;
-
-                *next += 1;
-
-                quote_spanned!(source=> #siblings.push_child(
-                    &mut #parent, #value, #rake::gpui::ElementId::from(("rake::view:child", #index))
-                );)
+            Node::Text(text) => {
+                expand_text_child(quote!(#text), text.span(), parent, siblings, rake, next)
             }
+            Node::Expression(expression) => expand_text_child(
+                quote!(#expression),
+                expression.span(),
+                parent,
+                siblings,
+                rake,
+                next,
+            ),
             Node::If {
                 condition,
                 then_nodes,
                 else_nodes,
             } => {
-                let then_nodes = expand_children(then_nodes, parent, siblings, rake, next)?;
-                let else_nodes = expand_children(else_nodes, parent, siblings, rake, next)?;
+                let then_nodes = expand_children_into(then_nodes, parent, siblings, rake, next)?;
+                let else_nodes = expand_children_into(else_nodes, parent, siblings, rake, next)?;
 
                 if else_nodes.is_empty() {
                     quote!(if #condition { #then_nodes })
@@ -661,13 +1214,29 @@ fn expand_children(
                     quote!(if #condition { #then_nodes } else { #else_nodes })
                 }
             }
+            Node::Match { expression, arms } => {
+                let arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let pattern = &arm.pattern;
+                        let guard = arm.guard.as_ref().map(|guard| quote!(if #guard));
+
+                        let body =
+                            expand_children_into(&arm.children, parent, siblings, rake, next)?;
+
+                        Ok(quote!(#pattern #guard => { #body },))
+                    })
+                    .collect::<syn::Result<Vec<_>>>()?;
+
+                quote!(match #expression { #(#arms)* })
+            }
             Node::For {
                 pattern,
                 iterator,
                 children,
             } => {
                 require_loop_ids(children)?;
-                let children = expand_children(children, parent, siblings, rake, next)?;
+                let children = expand_children_into(children, parent, siblings, rake, next)?;
 
                 quote!(for #pattern in #iterator { #children })
             }
@@ -677,153 +1246,46 @@ fn expand_children(
     Ok(output)
 }
 
-fn class_methods(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
-    let Expr::Lit(syn::ExprLit {
-        lit: syn::Lit::Str(classes),
-        ..
-    }) = value
-    else {
-        return Err(syn::Error::new_spanned(
-            value,
-            "class requires a literal utility string; use style={|s| ...} for dynamic styles",
-        ));
+fn expand_text_child(
+    value: TokenStream,
+    source: Span,
+    parent: &Ident,
+    siblings: &Ident,
+    rake: &TokenStream,
+    next: &mut usize,
+) -> TokenStream {
+    let index = *next;
+
+    *next += 1;
+
+    let tag = if matches!(
+        syn::parse2::<syn::Expr>(value.clone()),
+        Ok(syn::Expr::Lit(_))
+    ) {
+        "Text"
+    } else {
+        "Expression"
     };
 
-    let mut methods = TokenStream::new();
+    let definition = inspection::definition(tag, source, index, TokenStream::new(), rake);
 
-    for class in classes.value().split_whitespace() {
-        if let Some(weight) = match class {
-            "font-normal" => Some("NORMAL"),
-            "font-medium" => Some("MEDIUM"),
-            "font-semibold" => Some("SEMIBOLD"),
-            "font-bold" => Some("BOLD"),
-            _ => None,
-        } {
-            let weight = format_ident!("{weight}");
-
-            methods.extend(quote!(.font_weight(#rake::gpui::FontWeight::#weight)));
-            continue;
-        }
-
-        if let Some(columns) = class
-            .strip_prefix("grid-cols-")
-            .and_then(|value| value.parse::<u16>().ok())
-            && (1..=12).contains(&columns)
-        {
-            methods.extend(quote!(.grid_cols(#columns)));
-            continue;
-        }
-
-        let fixed = matches!(
-            class,
-            "flex"
-                | "block"
-                | "grid"
-                | "hidden"
-                | "flex-col"
-                | "flex-row"
-                | "flex-wrap"
-                | "flex-1"
-                | "items-start"
-                | "items-center"
-                | "items-end"
-                | "justify-start"
-                | "justify-center"
-                | "justify-end"
-                | "justify-between"
-                | "w-full"
-                | "h-full"
-                | "size-full"
-                | "min-w-0"
-                | "min-h-0"
-                | "overflow-hidden"
-                | "overflow-scroll"
-                | "overflow-x-scroll"
-                | "overflow-y-scroll"
-                | "rounded-none"
-                | "rounded-sm"
-                | "rounded-md"
-                | "rounded-lg"
-                | "rounded-xl"
-                | "rounded-full"
-                | "border-0"
-                | "border-1"
-                | "border-2"
-                | "shadow-sm"
-                | "shadow-md"
-                | "shadow-lg"
-                | "cursor-pointer"
-                | "text-xs"
-                | "text-sm"
-                | "text-base"
-                | "text-lg"
-                | "text-xl"
-                | "text-2xl"
-                | "text-3xl"
-                | "text-left"
-                | "text-center"
-                | "text-right"
-        );
-
-        let spacing = class.rsplit_once('-').is_some_and(|(prefix, value)| {
-            matches!(
-                prefix,
-                "p" | "px"
-                    | "py"
-                    | "pt"
-                    | "pb"
-                    | "pl"
-                    | "pr"
-                    | "m"
-                    | "mx"
-                    | "my"
-                    | "mt"
-                    | "mb"
-                    | "ml"
-                    | "mr"
-                    | "gap"
-            ) && matches!(
-                value,
-                "0" | "1"
-                    | "2"
-                    | "3"
-                    | "4"
-                    | "5"
-                    | "6"
-                    | "7"
-                    | "8"
-                    | "12"
-                    | "16"
-                    | "20"
-                    | "24"
-                    | "32"
-            )
-        });
-
-        let method = match class {
-            "rounded" => "rounded_md".to_string(),
-            "border" => "border_1".to_string(),
-            _ if fixed || spacing => class.replace('-', "_"),
-            _ => {
-                return Err(syn::Error::new(
-                    classes.span(),
-                    format!(
-                        "unsupported utility class `{class}`; use style={{|s| ...}} for GPUI styling"
-                    ),
-                ));
-            }
-        };
-
-        let method = format_ident!("{method}", span = classes.span());
-
-        methods.extend(quote!(.#method()));
-    }
-
-    Ok(methods)
+    quote_spanned!(source=> #rake::__private::inspection!(#value, |__rake_child| #rake::__private::view_inspect_child(
+        &mut #siblings, &mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index)), #definition
+    ), |__rake_child| #siblings.push_child(&mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index))));)
 }
 
+mod classes;
 mod component;
+mod diagnostics;
+mod events;
+mod inspection;
 mod paragraph;
+mod style_plan;
+mod tag;
+mod text;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod preset;
+pub(crate) mod theme;

@@ -1,0 +1,5 @@
+error: inline text supports only class, style={gpui::HighlightStyle}, and font-family; inline IDs, layout and events are unsupported
+ --> tests/ui/view/paragraph_id.rs:2:36
+  |
+2 |     let _ = rake::view! { <p><span id="text">"Text"</span></p> };
+  |                                    ^^

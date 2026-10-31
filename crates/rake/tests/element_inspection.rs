@@ -30,6 +30,23 @@ fn headless_queries_report_coverage_without_inventing_a_tree() {
     assert!(snapshot.elements.is_empty());
     assert!(!snapshot.coverage.is_empty());
     assert_eq!(client.info().element_inspection, Status::Unavailable);
+    assert!(!client.info().element_interaction);
+    assert!(matches!(
+        client.request(request(Query::InspectPick {})),
+        Err(ControlError::Inspection(InspectionError::Unavailable))
+    ));
+    assert!(matches!(
+        client.request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: router.runtime_id(),
+            key: None,
+            message: Message::Command(rake::control::Command::HighlightElement {
+                id: None,
+                generation: String::new()
+            })
+        }),
+        Err(ControlError::Inspection(InspectionError::Unavailable))
+    ));
     assert!(matches!(
         client.request(request(Query::InspectElement {
             id: "element-1-0".into()
@@ -50,4 +67,18 @@ fn headless_queries_report_coverage_without_inventing_a_tree() {
         )
         .is_err()
     );
+}
+
+#[cfg(all(feature = "gpui", feature = "devtools"))]
+#[test]
+fn manual_handler_metadata_is_available_through_the_public_builder_api() {
+    use rake::gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
+    use rake::inspection::InspectElement as _;
+    let element = rake::gpui::div()
+        .id("save")
+        .on_click(|_, _, _| {})
+        .inspect("save")
+        .inspect_handler("click");
+
+    assert!(rake::gpui::Element::id(&element.into_inner()).is_some());
 }

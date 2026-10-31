@@ -1,0 +1,12 @@
+HTML-like views. Native GPUI.
+Typed components. Retained state. Native actions.
+Card header and footer are typed slots; its body contains retained history views.
+Count: {count}
+Rich text preview. Count {count}: styled runs wrap together in one paragraph, including italic text and Unicode such as café, 你好 and 🙂. This preview stops at two lines, while the complete text remains available to accessibility. More content demonstrates the ellipsis.
+Single-line title: A deliberately long document title that demonstrates truncation without splitting the text into separate layout elements or cutting through UTF-8 characters.
+Increment
+Reset
+More actions
+⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock
+Existing GPUI elements embed with {expression}.
+Switch theme

@@ -18,9 +18,14 @@ workspace = true
 
 [dependencies]
 rake.workspace = true
+tracing = { workspace = true, optional = true }
 
 [features]
 hash-routing = []
+console-test = ["rake/devtools"]
+network-test = ["rake/devtools"]
+performance-test = ["network-test", "console-test", "dep:tracing"]
+memory-test = ["rake/devtools-memory"]
 
 [package.metadata.rake.bundle]
 name = "Rake Routing"

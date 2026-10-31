@@ -1,0 +1,5 @@
+error: 1st class `group-hover:bg-[#fff]`: group variants require a name, such as group-hover/card:
+ --> tests/ui/view/variant_group_name.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="group-hover:bg-[#fff]"/> };
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^

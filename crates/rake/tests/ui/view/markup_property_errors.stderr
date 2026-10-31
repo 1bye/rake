@@ -1,0 +1,17 @@
+error: img requires src
+ --> tests/ui/view/markup_property_errors.rs:7:42
+  |
+7 |     let _ = rake::view! { <Card header={<img/>} footer={<svg/>}/> };
+  |                                          ^^^
+
+error: img requires alt text
+ --> tests/ui/view/markup_property_errors.rs:7:42
+  |
+7 |     let _ = rake::view! { <Card header={<img/>} footer={<svg/>}/> };
+  |                                          ^^^
+
+error: svg requires path
+ --> tests/ui/view/markup_property_errors.rs:7:58
+  |
+7 |     let _ = rake::view! { <Card header={<img/>} footer={<svg/>}/> };
+  |                                                          ^^^

@@ -1,0 +1,5 @@
+error: conditional inline text classes are unsupported; select a HighlightStyle with style={...}
+ --> tests/ui/view/conditional_inline.rs:2:36
+  |
+2 |     let _ = rake::view! { <p><span class:font-bold={true}>"Text"</span></p> };
+  |                                    ^^^^^

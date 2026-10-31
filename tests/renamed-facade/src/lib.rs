@@ -10,6 +10,7 @@ use framework::prelude::*;
 struct ComponentPanel {
     id: gpui::ElementId,
     title: gpui::SharedString,
+    header: gpui::AnyElement,
     footer: Option<gpui::AnyElement>,
     children: Vec<gpui::AnyElement>,
 }
@@ -18,6 +19,7 @@ impl gpui::RenderOnce for ComponentPanel {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl gpui::IntoElement {
         framework::view! {
             <section id={self.id}>
+                {self.header}
                 <h2>{self.title}</h2>
                 <div style={|s| s.children(self.children)}/>
                 if let Some(footer) = self.footer {
@@ -31,9 +33,9 @@ impl gpui::RenderOnce for ComponentPanel {
 /// Typed components and their children also work through a renamed Rake dependency.
 pub fn component_markup() -> impl gpui::IntoElement {
     framework::view! {
-        <self::ComponentPanel id={"panel".into()} title={"Components".into()} footer={None}>
-            <p>"A typed child"</p>
-            <button onclick={|_, _, _| {}}>"Accept"</button>
+        <self::ComponentPanel id={"panel".into()} title={"Components".into()} header={<h2>Markup through a renamed facade</h2>} footer={None}>
+            <p>A typed child</p>
+            <button on:click={|_, _, _| {}}>"Accept"</button>
         </self::ComponentPanel>
     }
 }
@@ -52,6 +54,36 @@ pub fn paragraph_markup(labels: &[&str]) -> impl gpui::IntoElement {
     }
 }
 
+/// Overlay components are ordinary typed tags through a renamed facade, too.
+pub fn overlay_markup(
+    state: framework::overlay::OverlayHostState,
+    anchor: framework::overlay::AnchorState,
+    popup: framework::overlay::OverlayState,
+    dialog: framework::overlay::OverlayState,
+) -> impl gpui::IntoElement {
+    use framework::overlay::{Dialog, OverlayAnchor, OverlayHost, Popover};
+    use gpui::IntoElement;
+
+    let open_popup = popup.clone();
+
+    let body = framework::view! {
+        <OverlayAnchor state={anchor.clone()}>
+            <button on:click={move |_, window, cx| { open_popup.open(window, cx); }}>"Actions"</button>
+        </OverlayAnchor>
+    }.into_any_element();
+
+    framework::view! {
+        <OverlayHost state={state} body={body}>
+            <Popover state={popup} anchor={anchor}>
+                <p>"Controls"</p>
+            </Popover>
+            <Dialog state={dialog} title={"Documents".into()} footer={None}>
+                <p>"Retained content can be mounted here."</p>
+            </Dialog>
+        </OverlayHost>
+    }
+}
+
 gpui::actions!(
     renamed_view,
     [
@@ -66,7 +98,7 @@ pub fn keyboard_markup(focus: &gpui::FocusHandle, disabled: bool) -> impl gpui::
         <section focus={&focus} key-context="Renamed" tab-navigation={true}
             role={gpui::accesskit::Role::Group} on:Accept={|_, _, _| {}}>
             <button disabled={disabled} tabindex={0} aria-keyshortcuts="Control+Enter"
-                onclick={|_, window, cx| window.dispatch_action(Box::new(Accept), cx)}>
+                on:click={|_, window, cx| window.dispatch_action(Box::new(Accept), cx)}>
                 "Accept"
             </button>
         </section>
@@ -81,7 +113,7 @@ pub fn markup() -> impl framework::gpui::IntoElement {
             for index in 0..2usize {
                 <p id={("row", index)}>{format!("Row {index}")}</p>
             }
-            <button onclick={|_, _, _| {}}>"Save"</button>
+            <button on:click={|_, _, _| {}}>"Save"</button>
         </div>
     }
 }
@@ -146,6 +178,34 @@ pub struct Description {
 fn app() -> App {
     App::new("com.example.renamed")
         .root(|_, _, cx| framework::gpui::AppContext::new(cx, |_| framework::gpui::Empty).into())
+}
+
+impl Default for ComponentPanel {
+    fn default() -> Self {
+        Self {
+            id: "defaults".into(),
+            title: "Panel".into(),
+            header: gpui::IntoElement::into_any_element(gpui::div()),
+            footer: None,
+            children: Vec::new(),
+        }
+    }
+}
+
+/// Shorthand, defaults, booleans and match arms also resolve through a renamed facade.
+pub fn syntax_markup(id: gpui::ElementId, selected: Option<String>) -> impl gpui::IntoElement {
+    framework::view! {
+        <self::ComponentPanel {id} {..Default::default()}>
+            <main>
+                <h2 ellipsis>
+                    match selected {
+                        Some(label) if !label.is_empty() => { <strong>{label}</strong> }
+                        _ => { "Nothing selected" }
+                    }
+                </h2>
+            </main>
+        </self::ComponentPanel>
+    }
 }
 
 #[cfg(test)]
@@ -231,4 +291,24 @@ mod tests {
             framework::tasks::TaskState::Queued
         );
     }
+}
+
+#[derive(Clone, framework::Theme)]
+struct ViewTheme {
+    surface: gpui::Rgba,
+}
+
+framework::theme!(ViewTheme);
+
+/// Theme paths also resolve through a renamed facade.
+pub fn themed_markup() -> impl gpui::IntoElement {
+    framework::view! { <div class="bg-surface hover:bg-surface"/> }
+}
+
+#[framework::style("p-2 hover:bg-surface")]
+fn themed_control();
+
+/// Presets resolve their helpers through the renamed facade.
+pub fn preset_markup() -> impl gpui::IntoElement {
+    framework::view! { <div style={themed_control}/> }
 }

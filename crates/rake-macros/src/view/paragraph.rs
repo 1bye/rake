@@ -5,6 +5,8 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, Lit};
 
+use super::style_plan::StylePlan;
+use super::tag::{PARAGRAPH_CONTENT, Tag};
 use super::{Element, Node};
 
 impl Element {
@@ -31,12 +33,36 @@ impl Element {
 
         let children = inline_children(&self.children, &content, &style, rake, next)?;
 
+        let heading_text = format_ident!("__rake_heading_text_{index}", span = Span::mixed_site());
+
+        let siblings = format_ident!(
+            "__rake_paragraph_children_{index}",
+            span = Span::mixed_site()
+        );
+
+        let definition =
+            super::inspection::definition("Text", self.tag.span(), index, TokenStream::new(), rake);
+
+        let label =
+            if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
+                quote!(#node = #node.aria_label(#heading_text.full_text());)
+            } else {
+                TokenStream::new()
+            };
+
         Ok(quote!({
-            let #node = #builder;
+            let mut #node = #builder;
             let mut #content = #rake::__private::ViewParagraphContent::default();
             let #style = #rake::__private::ViewRunStyle::default();
             #children
-            #node.child(#content.finish())
+            let #heading_text = #content.finish();
+            #label
+            let mut #siblings = #rake::__private::ViewChildren::default();
+            #rake::__private::inspection!(#heading_text, |__rake_text| #rake::__private::view_inspect_child(
+                &mut #siblings, &mut #node, __rake_text,
+                #rake::gpui::ElementId::from(("rake::view:paragraph-text", #index)), #definition
+            ), |__rake_text| #siblings.push(&mut #node, __rake_text));
+            #node
         }))
     }
 }
@@ -66,6 +92,20 @@ fn inline_children(
 
                 quote!(if #condition { #then_nodes } else { #else_nodes })
             }
+            Node::Match { expression, arms } => {
+                let arms = arms
+                    .iter()
+                    .map(|arm| {
+                        let pattern = &arm.pattern;
+                        let guard = arm.guard.as_ref().map(|guard| quote!(if #guard));
+                        let body = inline_children(&arm.children, content, inherited, rake, next)?;
+
+                        Ok(quote!(#pattern #guard => { #body },))
+                    })
+                    .collect::<syn::Result<Vec<_>>>()?;
+
+                quote!(match #expression { #(#arms)* })
+            }
             Node::For {
                 pattern,
                 iterator,
@@ -82,13 +122,17 @@ fn inline_children(
     Ok(output)
 }
 
-fn inline_element(
+pub(super) fn inline_element(
     element: &Element,
     content: &Ident,
     inherited: &Ident,
     rake: &TokenStream,
     next: &mut usize,
 ) -> syn::Result<TokenStream> {
+    if !Tag::is_inline_name(&element.tag) {
+        return Err(syn::Error::new(element.tag.span(), PARAGRAPH_CONTENT));
+    }
+
     if element.tag.is_ident("br") {
         if !element.attributes.is_empty() || !element.children.is_empty() {
             return Err(syn::Error::new(
@@ -107,21 +151,56 @@ fn inline_element(
     } else if element.tag.is_ident("em") {
         quote!(#inherited.clone().highlight(#rake::gpui::FontStyle::Italic.into()))
     } else {
-        return Err(syn::Error::new(
-            element.tag.span(),
-            "paragraphs accept text, span, strong, em, br, if and for; place layout elements, components and widgets outside p",
-        ));
+        unreachable!("Tag::is_inline_name admitted an inline tag without a style")
     };
 
     let mut style = base;
 
     for attribute in &element.attributes {
-        let value = &attribute.value;
+        let value = attribute.expression()?;
 
         let method = match attribute.name.as_str() {
+            "class"
+                if !matches!(
+                    value,
+                    Expr::Lit(syn::ExprLit {
+                        lit: Lit::Str(_),
+                        ..
+                    })
+                ) || super::theme::expression_use(value).is_some() =>
+            {
+                let local = format_ident!(
+                    "__rake_inline_class_branch_{}",
+                    *next,
+                    span = Span::mixed_site()
+                );
+
+                let mut setup = TokenStream::new();
+                let literal = |value: &Expr| inline_classes(value, rake).map(StylePlan::always);
+
+                let plan = super::classes::expression_plan_with(
+                    value,
+                    &local,
+                    &mut setup,
+                    &literal,
+                    "inline class requires a literal text utility string; class expressions may only choose between string literals",
+                )?;
+
+                let mapped = format_ident!("{local}_style", span = Span::mixed_site());
+                let body = plan.emit_refinement(&mapped);
+
+                style = quote!({ let #mapped = #style; #setup #body #mapped });
+                continue;
+            }
             "class" => inline_classes(value, rake)?,
             "style" => quote!(.highlight(#value)),
             "font-family" => quote!(.font_family(#value)),
+            name if name.starts_with("class:") => {
+                return Err(syn::Error::new(
+                    attribute.span,
+                    "conditional inline text classes are unsupported; select a HighlightStyle with style={...}",
+                ));
+            }
             _ => {
                 return Err(syn::Error::new(
                     attribute.span,
@@ -158,8 +237,9 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
     };
 
     let mut methods = TokenStream::new();
+    let mut errors = super::Diagnostics::default();
 
-    for class in classes.value().split_whitespace() {
+    for (index, class) in classes.value().split_whitespace().enumerate() {
         let style = match class {
             "font-normal" => quote!(#rake::gpui::FontWeight::NORMAL.into()),
             "font-medium" => quote!(#rake::gpui::FontWeight::MEDIUM.into()),
@@ -172,18 +252,79 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                     thickness: #rake::gpui::px(1.), color: None, wavy: false,
                 }), ..Default::default()
             }),
+            _ if class.starts_with("text-[#") && class.ends_with(']') => {
+                let color = match super::classes::literal_color(
+                    &class[6..class.len() - 1],
+                    classes.span(),
+                    rake,
+                ) {
+                    Ok(color) => color,
+                    Err(error) => {
+                        errors.push(super::classes::error::position(error, index, class));
+                        continue;
+                    }
+                };
+
+                quote!(#rake::gpui::HighlightStyle::color(#rake::gpui::rgb_to_hsla(#color)))
+            }
+            _ if class.starts_with("font-[") && class.ends_with(']') => {
+                let font = class[6..class.len() - 1].replace('_', " ");
+
+                if font.is_empty() {
+                    errors.push(super::classes::error::position(
+                        syn::Error::new(classes.span(), "font family cannot be empty"),
+                        index,
+                        class,
+                    ));
+                    continue;
+                }
+
+                methods.extend(quote!(.font_family(#font)));
+                continue;
+            }
+            _ if super::theme::field(class)
+                .is_some_and(|(kind, _)| kind == "ThemeText" || kind == "ThemeFont") =>
+            {
+                let (kind, field) = super::theme::field(class).expect("checked theme class");
+
+                let kind = format_ident!(
+                    "{}",
+                    if kind == "ThemeText" {
+                        "ThemeRunText"
+                    } else {
+                        "ThemeRunFont"
+                    },
+                    span = classes.span()
+                );
+
+                let field = format_ident!("{field}", span = classes.span());
+                let theme = super::theme::local();
+
+                methods.extend(quote_spanned!(classes.span()=> .map(|s| #rake::__private::#kind::apply(#theme.#field.clone(), s))));
+                continue;
+            }
             _ => {
-                return Err(syn::Error::new(
+                let error = syn::Error::new(
                     classes.span(),
                     format!(
                         "unsupported inline text utility `{class}`; font size, line height, alignment and layout belong on p"
                     ),
-                ));
+                );
+
+                errors.push(super::classes::error::position(error, index, class));
+
+                continue;
             }
         };
 
         methods.extend(quote!(.highlight(#style)));
     }
 
-    Ok(methods)
+    if let Some(errors) = errors.0 {
+        return Err(errors);
+    }
+
+    let mapped = format_ident!("__rake_inline_builder", span = Span::mixed_site());
+
+    Ok(StylePlan::always(methods).emit_base(&mapped))
 }

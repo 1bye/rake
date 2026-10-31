@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 import uuid
 
 from dev_bridge import DevBridge
@@ -45,6 +46,20 @@ def alive(pid):
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_only_dev_auto_enables_inspection_including_renamed_dependencies(self):
+        project = object.__new__(dev.Project)
+        project.package = {"features": {}, "dependencies": [{"name": "rake", "rename": "framework", "kind": None}]}
+        for command in ["build", "bundle", "dev"]:
+            project.args = SimpleNamespace(command=command, features=None)
+            self.assertEqual(project.build_features(), "framework/devtools" if command == "dev" else "")
+        project.args = SimpleNamespace(command="bundle", features="devtools,theme")
+        self.assertEqual(project.build_features(), "devtools,theme")
+        project.args = SimpleNamespace(command="dev", features="theme")
+        project.package["features"] = {"devtools": ["framework/devtools"]}
+        self.assertEqual(project.build_features(), "theme,devtools")
+        project.package = {"features": {}, "dependencies": []}
+        self.assertEqual(project.build_features(), "theme")
+
     def test_real_cli_watches_keeps_old_app_on_compile_failure_restarts_and_survives_crash(self):
         with tempfile.TemporaryDirectory(prefix="rake-supervisor-test-") as temporary:
             root = Path(temporary)

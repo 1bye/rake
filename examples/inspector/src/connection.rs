@@ -1,7 +1,8 @@
-//! Read-only, bounded HTTP client shared by native and Wasm inspector frontends.
+//! Bounded inspection HTTP client shared by native and Wasm inspector frontends.
 
 use rake::control::{
-    ControlError, MAX_MESSAGE_BYTES, Message, PROTOCOL_VERSION, Query, Reply, Request, RuntimeInfo,
+    Command, ControlError, MAX_MESSAGE_BYTES, Message, PROTOCOL_VERSION, Query, Reply, Request,
+    RuntimeInfo,
 };
 
 use rake::http::{CancellationToken, HttpClient, HttpConfig};
@@ -126,7 +127,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Creates a cancellable local client; it only sends inspection queries.
+    /// Creates a cancellable local client for inspection queries and leased controls.
     pub fn new(config: ConnectionConfig) -> Result<Self, String> {
         Ok(Self {
             config,
@@ -151,6 +152,72 @@ impl Connection {
         Ok(instances)
     }
 
+    /// Loads a bounded lightweight index, pinning every page to one capture.
+    pub async fn tree(
+        &self,
+        runtime: RuntimeId,
+        cancellation: CancellationToken,
+    ) -> Result<rake::inspection::Snapshot, String> {
+        let Reply::Info(info) = self
+            .query(runtime, Query::Info {}, cancellation.clone())
+            .await?
+        else {
+            return Err("Unexpected info reply".into());
+        };
+
+        if !info.queries.iter().any(|q| q == "inspect_tree_page") {
+            return match self
+                .query(runtime, Query::InspectTree {}, cancellation)
+                .await?
+            {
+                Reply::Elements(tree) => Ok(tree),
+                _ => Err("Unexpected tree reply".into()),
+            };
+        }
+
+        let mut tree: Option<rake::inspection::Snapshot> = None;
+        let mut offset = 0;
+
+        loop {
+            let Reply::ElementPage(page) = self
+                .query(
+                    runtime,
+                    Query::InspectTreePage {
+                        generation: tree.as_ref().map(|tree| tree.capture.clone()),
+                        offset,
+                    },
+                    cancellation.clone(),
+                )
+                .await?
+            else {
+                return Err("Unexpected page reply".into());
+            };
+
+            if page.total > rake::inspection::MAX_ELEMENTS
+                || page.snapshot.elements.len() > rake::inspection::TREE_PAGE_SIZE
+                || tree
+                    .as_ref()
+                    .is_some_and(|tree| tree.capture != page.snapshot.capture)
+            {
+                return Err("Invalid tree page".into());
+            }
+
+            if let Some(tree) = &mut tree {
+                tree.elements.extend(page.snapshot.elements);
+            } else {
+                tree = Some(page.snapshot);
+            }
+
+            match page.next {
+                Some(next) if next > offset && next <= page.total => offset = next,
+                Some(_) => return Err("Invalid tree cursor".into()),
+                None => break,
+            }
+        }
+
+        tree.ok_or_else(|| "Missing tree metadata".into())
+    }
+
     /// Submits a shared owned query to an exact runtime. It never submits mutations.
     pub async fn query(
         &self,
@@ -160,7 +227,11 @@ impl Connection {
     ) -> Result<Reply, String> {
         if !matches!(
             query,
-            Query::InspectTree {} | Query::InspectElement { .. } | Query::Info {}
+            Query::InspectTree {}
+                | Query::InspectTreePage { .. }
+                | Query::InspectElement { .. }
+                | Query::InspectPick {}
+                | Query::Info {}
         ) {
             return Err("This Inspector only supports Elements queries.".into());
         }
@@ -181,6 +252,79 @@ impl Connection {
             .await?;
 
         reply.map_err(|error| error.to_string())
+    }
+
+    /// Executes development inspection controls; application mutations are rejected.
+    pub async fn control(
+        &self,
+        runtime: RuntimeId,
+        command: Command,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
+        if !matches!(
+            command,
+            Command::HighlightElement { .. }
+                | Command::InspectMode { .. }
+                | Command::NavigateElement { .. }
+                | Command::EditElementStyle { .. }
+        ) {
+            return Err("This Inspector only supports development inspection controls.".into());
+        }
+
+        let request = Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: runtime,
+            key: None,
+            message: Message::Command(command),
+        };
+
+        let reply: Result<Reply, ControlError> = self
+            .post(
+                "inspect",
+                &serde_json::json!({"request":request}),
+                cancellation,
+            )
+            .await?;
+
+        match reply.map_err(|e| e.to_string())? {
+            Reply::Acknowledged => Ok(()),
+            _ => Err("Unexpected inspection control response.".into()),
+        }
+    }
+
+    /// Opens one captured Rust construction site through the authenticated local host.
+    pub async fn open_source(
+        &self,
+        runtime: RuntimeId,
+        id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
+        self.open_source_target(
+            runtime,
+            id,
+            &rake::inspection::SourceTarget::Boundary {},
+            cancellation,
+        )
+        .await
+    }
+
+    /// Opens a captured style attribute or handler registration through the authenticated host.
+    pub async fn open_source_target(
+        &self,
+        runtime: RuntimeId,
+        id: &str,
+        target: &rake::inspection::SourceTarget,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
+        let _: serde_json::Value = self
+            .post(
+                "inspect_source",
+                &serde_json::json!({"runtime_id":runtime,"id":id,"target":target}),
+                cancellation,
+            )
+            .await?;
+
+        Ok(())
     }
 
     async fn post<T: Serialize, U: DeserializeOwned>(

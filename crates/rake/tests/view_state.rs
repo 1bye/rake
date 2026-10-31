@@ -20,6 +20,23 @@ mod components;
 #[path = "view_state/paragraphs.rs"]
 mod paragraphs;
 
+#[path = "view_state/overlays.rs"]
+mod overlays;
+
+#[path = "view_state/lists.rs"]
+mod lists;
+
+#[path = "view_state/events.rs"]
+mod events;
+
+#[path = "view_state/classes.rs"]
+mod classes;
+
+#[path = "view_state/theme.rs"]
+mod theme;
+
+rake::theme!(theme::Palette);
+
 struct Draft {
     text: String,
     selection: Range<usize>,

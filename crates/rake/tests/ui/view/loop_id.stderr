@@ -1,0 +1,5 @@
+error: element roots in a for loop require an explicit stable id
+ --> tests/ui/view/loop_id.rs:2:51
+  |
+2 |     let _ = rake::view! { <div>for row in rows { <span/> }</div> };
+  |                                                   ^^^^

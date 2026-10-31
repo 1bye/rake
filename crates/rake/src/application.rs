@@ -18,6 +18,9 @@ use std::rc::Rc;
 
 type Root = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
 
+#[cfg(feature = "devtools")]
+mod standalone;
+
 #[cfg(target_family = "wasm")]
 thread_local! {
     // The browser owns the event loop; retaining the handle owns GPUI until page disposal.
@@ -95,6 +98,16 @@ impl<R: Route> App<R> {
         Ok(self)
     }
 
+    /// Explicitly exposes registered typed stores to development transports.
+    /// Available only with `devtools`; duplicate registries fail before startup.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_storage(
+        self,
+        storage: crate::storage::devtools::Storage,
+    ) -> Result<Self, ServiceError> {
+        self.service(storage)
+    }
+
     /// Configures the initial GPUI window; browser hosts apply supported options.
     pub fn window_options(mut self, options: WindowOptions) -> Self {
         self.window_options = options;
@@ -145,7 +158,9 @@ impl<R: Route> App<R> {
         self
     }
 
-    /// Opts into development control. Both release and debug builds default to disabled.
+    /// Opts into development control. Standalone roots expose inspection/diagnostics;
+    /// routed applications also expose workspace operations and registered commands.
+    /// Both release and debug builds default to disabled.
     pub fn control(mut self, config: crate::control::ControlConfig) -> Self {
         self.control = config;
 
@@ -202,8 +217,8 @@ impl<R: Route> App<R> {
         }
 
         Ok(Services::new(
-            HttpClient::with_collector(self.http.clone(), self.diagnostics.collector.clone())?,
-            self.diagnostics.collector.clone(),
+            HttpClient::with_collector(self.http.clone(), self.diagnostics.shared_collector())?,
+            self.diagnostics.shared_collector(),
             self.services.clone(),
         ))
     }
@@ -225,10 +240,7 @@ impl<R: Route> App<R> {
             return Err(AppError::ConflictingRoots);
         }
 
-        if self.routes.is_none()
-            && (!self.commands.descriptors().is_empty()
-                || !matches!(self.control, crate::control::ControlConfig::Disabled))
-        {
+        if self.routes.is_none() && !self.commands.descriptors().is_empty() {
             return Err(AppError::ControlRequiresRouter);
         }
 
@@ -237,7 +249,10 @@ impl<R: Route> App<R> {
             self.web = crate::router::web::browser::configuration(self.web)?;
         }
 
-        let checkpoint = crate::reload::host::load(self.control);
+        let checkpoint = self
+            .routes
+            .as_ref()
+            .and_then(|_| crate::reload::host::load(self.control));
 
         let root: Root = if let Some(routes) = self.routes.take() {
             #[cfg(not(target_family = "wasm"))]
@@ -298,7 +313,27 @@ impl<R: Route> App<R> {
                 }
             })
         } else {
-            self.root.take().ok_or(AppError::MissingRoot)?
+            let mount = self.root.take().ok_or(AppError::MissingRoot)?;
+
+            #[cfg(feature = "devtools")]
+            let control = self.control;
+
+            #[cfg(feature = "devtools")]
+            let application_id = self.id.clone();
+
+            Box::new(move |services, window, cx| {
+                #[cfg(feature = "devtools")]
+                {
+                    let content = mount(services.clone(), window, cx);
+
+                    standalone::mount(content, &services, control, application_id, cx)
+                }
+
+                #[cfg(not(feature = "devtools"))]
+                {
+                    mount(services, window, cx)
+                }
+            })
         };
 
         self.diagnostics.install()?;
@@ -348,8 +383,8 @@ impl<R: Route> App<R> {
 /// Application bootstrap errors before the host event loop starts.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    /// The initial runtime control adapter requires a typed router owner.
-    #[error("runtime control and application commands require App::routes")]
+    /// Registered application commands require a typed router operation owner.
+    #[error("application commands require App::routes; App::root supports inspection only")]
     ControlRequiresRouter,
     /// Configure a root-only view or a typed route registry, rather than both.
     #[error("App::root and App::routes cannot both own the root")]

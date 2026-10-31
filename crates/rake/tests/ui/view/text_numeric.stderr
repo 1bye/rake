@@ -1,0 +1,5 @@
+error: 1st class `text-13`: text sizes use a name (`text-sm`), a theme field or `[11px]`; numeric text-N isn't supported
+ --> tests/ui/view/text_numeric.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class="text-13"/> };
+  |                                      ^^^^^^^^^

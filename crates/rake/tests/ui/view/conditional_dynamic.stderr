@@ -1,0 +1,5 @@
+error: expected ident
+ --> tests/ui/view/conditional_dynamic.rs:2:38
+  |
+2 |     let _ = rake::view! { <div class:{utility}={true}/> };
+  |                                      ^

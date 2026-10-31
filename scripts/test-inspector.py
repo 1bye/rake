@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -147,6 +148,30 @@ class InspectorHTTP(unittest.TestCase):
 
 
 class ElementsHosting(unittest.TestCase):
+    def test_source_opening_uses_an_exact_runtime_id_and_never_accepts_paths_or_cli_options(self):
+        with tempfile.TemporaryDirectory(prefix="rake-source-host-", dir="/tmp") as temporary:
+            bridge = DevBridge("http://127.0.0.1:8081", directory=Path(temporary))
+            runtime = str(uuid.uuid4())
+            bridge.handle("connect", {"application_id": "test.web", "info": {"runtime_id": runtime, "protocol": 1, "platform": "web"}})
+            host = Inspector(bridge)
+            with patch("inspector.subprocess.run", return_value=subprocess.CompletedProcess([], 0, b'{"path":"/workspace/app.rs","line":3,"column":4}', b"")) as opener:
+                result = host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "file": "/outside.rs"})
+                self.assertEqual(result["line"], 3)
+                self.assertEqual(opener.call_args.args[0][1:], ["ctl", "--instance", runtime, "inspect", "source", "element-1-0", "--json"])
+                self.assertEqual(opener.call_args.kwargs["env"]["RAKE_CONTROL_DIR"], temporary)
+                for value in ["--session", "../app.rs", "element-1-0;touch", 1, ""]:
+                    with self.assertRaises(BridgeError):
+                        host.handle("inspect_source", {"runtime_id": runtime, "id": value})
+                self.assertEqual(opener.call_count, 1)
+                for kind in ["style", "handler"]:
+                    host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "target": {"kind": kind, "index": 0}})
+                    self.assertEqual(opener.call_args.args[0][-3:], ["--" + kind, "0", "--json"])
+                for target in [{"kind":"style","index":-1}, {"kind":"style","index":True}, {"kind":"handler","index":"--help"}, {"kind":"boundary","file":"/secret.rs"}, {"kind":"other"}]:
+                    with self.assertRaises(BridgeError):
+                        host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "target": target})
+                self.assertEqual(opener.call_count, 3)
+            bridge.close()
+
     def test_frontend_is_scoped_to_the_dedicated_inspector_origin(self):
         with tempfile.TemporaryDirectory(prefix="rake-elements-test-", dir="/tmp") as temporary:
             root = Path(temporary)
@@ -184,6 +209,19 @@ class ElementsHosting(unittest.TestCase):
 
 
 class Bounds(unittest.TestCase):
+    def test_cdp_discovery_rejects_non_loopback_and_defaults_to_disabled(self):
+        with tempfile.TemporaryDirectory(prefix="rake-cdp-link-", dir="/tmp") as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            bridge = DevBridge("http://127.0.0.1:1", root)
+            try:
+                self.assertEqual(Inspector(bridge).handle("inspect_cdp", {}), [])
+                for url in ["https://example.test", "http://127.0.0.1:9/other", "http://user@127.0.0.1:9", "http://localhost:9"]:
+                    with self.assertRaises(BridgeError):
+                        Inspector(bridge, cdp_url=url).handle("inspect_cdp", {})
+            finally:
+                bridge.close()
+
     def test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime(self):
         with tempfile.TemporaryDirectory(prefix="rake-lineage-", dir="/tmp") as temporary:
             root = Path(temporary)

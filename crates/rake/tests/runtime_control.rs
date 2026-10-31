@@ -60,6 +60,67 @@ fn query(client: &RuntimeClient<Destination>, query: Query) -> Reply {
     request(client, None, Message::Query(query)).unwrap()
 }
 
+#[test]
+fn diagnostic_queries_preserve_cursor_kind_and_lifetime_loss_semantics() {
+    let (router, client, mut pool) = harness(RouterConfig::default());
+
+    open(&client, "diagnostic-fixture");
+    router
+        .app()
+        .tasks()
+        .spawn("fixture", async { Ok(()) })
+        .unwrap();
+    pool.run_until_stalled();
+
+    let Reply::Diagnostics(all) = query(
+        &client,
+        Query::Diagnostics {
+            after: 0,
+            kind: None,
+        },
+    ) else {
+        panic!("diagnostic snapshot expected")
+    };
+
+    assert!(all.records.iter().any(|record| record.kind == "work"));
+    let after = all.records[0].sequence;
+
+    let Reply::Diagnostics(operations) = query(
+        &client,
+        Query::Diagnostics {
+            after,
+            kind: Some("operation".into()),
+        },
+    ) else {
+        panic!("filtered diagnostic snapshot expected")
+    };
+
+    assert!(!operations.records.is_empty());
+    assert!(
+        operations
+            .records
+            .iter()
+            .all(|record| { record.sequence > after && record.kind == "operation" })
+    );
+    assert_eq!(operations.dropped, all.dropped);
+    assert_eq!(operations.output_dropped, all.output_dropped);
+
+    let Reply::Diagnostics(idle) = query(
+        &client,
+        Query::Diagnostics {
+            after: all.records.last().unwrap().sequence,
+            kind: None,
+        },
+    ) else {
+        panic!("idle diagnostic snapshot expected")
+    };
+
+    assert!(idle.records.is_empty());
+    assert_eq!(idle.dropped, all.dropped);
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
 fn submitted(reply: Reply) -> OperationId {
     let Reply::Submitted { operation_id } = reply else {
         panic!("expected submission")
@@ -569,4 +630,200 @@ fn queue_rejection_never_invokes_application_handlers_and_failures_are_queryable
     ));
     assert!(status(&client, operation).result.is_none());
     router.shutdown();
+}
+
+#[test]
+fn targeted_queries_match_snapshot_fields_without_encoding_unrelated_routes() {
+    thread_local! { static ENCODED: Cell<usize> = const { Cell::new(0) }; }
+    #[derive(Clone)]
+    struct Counted(Destination);
+
+    impl Route for Counted {
+        fn encode(&self) -> RouteAddress {
+            ENCODED.with(|count| count.set(count.get() + 1));
+
+            self.0.encode()
+        }
+
+        fn decode(address: &RouteAddress) -> Result<Self, RouteDecodeError> {
+            Destination::decode(address).map(Self)
+        }
+
+        fn descriptors() -> &'static [RouteDescriptor] {
+            Destination::descriptors()
+        }
+    }
+
+    struct Host;
+
+    impl WindowHost for Host {
+        fn open(
+            &self,
+            _: WindowId,
+            _: Activation,
+        ) -> futures::future::LocalBoxFuture<'static, Result<(), MountError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn close(&self, _: WindowId) {}
+
+        fn activate(&self, _: WindowId) {}
+    }
+    let router = Router::new(RouterConfig::default());
+
+    router.window_host(Host).unwrap();
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+
+    pool.spawner()
+        .spawn_local(async move {
+            driven.run().await.unwrap();
+        })
+        .unwrap();
+
+    let Outcome::Committed(opened) = pool
+        .run_until(
+            router
+                .navigator()
+                .open(Counted(Destination::Home), OpenTarget::NewTab)
+                .wait(),
+        )
+        .unwrap()
+    else {
+        panic!("fixture open")
+    };
+
+    router
+        .app()
+        .tasks()
+        .spawn("application", futures::future::pending())
+        .unwrap();
+    router
+        .navigator()
+        .tab(opened.tab_id)
+        .tasks()
+        .spawn("tab", futures::future::pending())
+        .unwrap();
+    let snapshot = router.snapshot();
+    let client = router.client();
+
+    let current_cursor = EventCursor {
+        runtime_id: snapshot.runtime_id,
+        epoch: 1,
+        revision: snapshot.revision,
+    };
+
+    ENCODED.with(|count| count.set(0));
+
+    let Reply::Event(idle) = client
+        .request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: router.runtime_id(),
+            key: None,
+            message: Message::Query(Query::Events {
+                cursor: Some(current_cursor),
+            }),
+        })
+        .unwrap()
+    else {
+        panic!("event reply")
+    };
+
+    assert_eq!(idle.kind, EventKind::Unchanged);
+    assert_eq!(idle.cursor, current_cursor);
+    assert!(idle.snapshot.is_none());
+    ENCODED.with(|count| assert_eq!(count.get(), 0, "idle polls must not encode routes"));
+    let tab_owner = rake::tasks::TaskOwner::Tab(opened.tab_id);
+
+    let filtered: Vec<_> = snapshot
+        .work
+        .tasks
+        .iter()
+        .filter(|task| task.owner == tab_owner)
+        .cloned()
+        .collect();
+
+    assert_eq!(filtered.len(), 1);
+
+    for (query, expected) in [
+        (
+            Query::Windows {},
+            serde_json::to_value(&snapshot.windows).unwrap(),
+        ),
+        (
+            Query::Operations {},
+            serde_json::to_value(&snapshot.operations).unwrap(),
+        ),
+        (
+            Query::Decisions {},
+            serde_json::to_value(&snapshot.decisions).unwrap(),
+        ),
+        (
+            Query::Tasks { owner: None },
+            serde_json::to_value(&snapshot.work.tasks).unwrap(),
+        ),
+        (
+            Query::Tasks {
+                owner: Some(tab_owner),
+            },
+            serde_json::to_value(&filtered).unwrap(),
+        ),
+    ] {
+        ENCODED.with(|count| count.set(0));
+        let reply = client
+            .request(Request {
+                protocol: PROTOCOL_VERSION,
+                runtime_id: router.runtime_id(),
+                key: None,
+                message: Message::Query(query),
+            })
+            .unwrap();
+
+        let Reply::Data(actual) = reply else {
+            panic!("data reply")
+        };
+
+        assert_eq!(actual, expected);
+        ENCODED.with(|count| assert_eq!(count.get(), 0, "unrelated routes must not be encoded"));
+    }
+
+    let Reply::Data(tabs) = client
+        .request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: router.runtime_id(),
+            key: None,
+            message: Message::Query(Query::Tabs {}),
+        })
+        .unwrap()
+    else {
+        panic!("tabs reply")
+    };
+
+    assert_eq!(tabs, serde_json::to_value(&snapshot.tabs).unwrap());
+    pool.run_until(
+        router
+            .navigator()
+            .open(Counted(Destination::Document(2)), OpenTarget::NewWindow)
+            .wait(),
+    )
+    .unwrap();
+    ENCODED.with(|count| count.set(0));
+
+    let Reply::Snapshot(window) = client
+        .request(Request {
+            protocol: PROTOCOL_VERSION,
+            runtime_id: router.runtime_id(),
+            key: None,
+            message: Message::Query(Query::Window {
+                window: opened.window_id,
+            }),
+        })
+        .unwrap()
+    else {
+        panic!("window snapshot")
+    };
+
+    assert_eq!(window.tabs.len(), 1);
+    assert_eq!(window.tabs[0].id, opened.tab_id);
+    ENCODED.with(|count| assert_eq!(count.get(), 1, "only this window's history must be encoded"));
 }

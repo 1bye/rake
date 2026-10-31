@@ -1,0 +1,17 @@
+error: unsupported attribute `title` on <div>
+ --> tests/ui/view/multiple_errors.rs:3:14
+  |
+3 |         <div title="invalid">
+  |              ^^^^^
+
+error: 1st class `unknown-utility`: unsupported utility class `unknown-utility`; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/multiple_errors.rs:4:25
+  |
+4 |             <span class="unknown-utility"/>
+  |                         ^^^^^^^^^^^^^^^^^
+
+error: img requires alt text
+ --> tests/ui/view/multiple_errors.rs:5:14
+  |
+5 |             <img src="icon.png"/>
+  |              ^^^

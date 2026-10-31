@@ -1,0 +1,5 @@
+error: svg supports path, class, conditional classes, style, aria-label and aria-description; put identity, focus and events on a surrounding element
+ --> tests/ui/view/svg_identity.rs:2:50
+  |
+2 |     let _ = rake::view! { <svg path="search.svg" id="icon"/> };
+  |                                                  ^^

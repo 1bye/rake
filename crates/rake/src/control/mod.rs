@@ -16,7 +16,12 @@
 //! ```
 
 mod commands;
-mod protocol;
+mod host;
+mod memory;
+#[cfg(all(feature = "gpui", feature = "devtools"))]
+pub(crate) mod standalone;
+
+pub(crate) use host::HostClient;
 
 pub use commands::*;
 
@@ -25,7 +30,7 @@ pub mod local;
 #[cfg(target_family = "wasm")]
 mod web;
 
-pub use protocol::*;
+pub use rake_protocol::control::*;
 #[cfg(target_family = "wasm")]
 pub use web::{WebBridge, WebBridgeConfig};
 
@@ -124,6 +129,8 @@ impl<R: Route> RuntimeClient<R> {
 
         RuntimeInfo {
             element_inspection: self.state.inspection.status(),
+            element_interaction: self.state.inspection.status()
+                != crate::inspection::Status::Unavailable,
             protocol: PROTOCOL_VERSION,
             runtime_id: self.router.runtime_id(),
             platform: if cfg!(target_family = "wasm") {
@@ -132,8 +139,22 @@ impl<R: Route> RuntimeClient<R> {
                 "native"
             }
             .into(),
-            commands: Command::names().iter().map(|name| (*name).into()).collect(),
-            queries: Query::names().iter().map(|name| (*name).into()).collect(),
+            commands: Command::names()
+                .iter()
+                .filter(|name| **name != "record_memory" || memory::available())
+                .filter(|name| **name != "edit_storage" || cfg!(feature = "devtools"))
+                .filter(|name| **name != "preview_input" || self.state.inspection.preview_enabled())
+                .map(|name| (*name).into())
+                .collect(),
+            queries: Query::names()
+                .iter()
+                .filter(|name| **name != "memory" || memory::available())
+                .filter(|name| **name != "storage" || cfg!(feature = "devtools"))
+                .filter(|name| {
+                    !name.starts_with("preview") || self.state.inspection.preview_enabled()
+                })
+                .map(|name| (*name).into())
+                .collect(),
             supported_targets: self.router.supported_targets(),
             completed_operations,
             pending_operations,
@@ -141,7 +162,8 @@ impl<R: Route> RuntimeClient<R> {
         }
     }
 
-    /// Validates the protocol/runtime before dispatch. Every mutation requires a key.
+    /// Validates protocol/runtime before dispatch. Application mutations require a key.
+    /// Leased development highlight/picker commands are transient and do not retain keys.
     /// Keys are retained for this runtime's entire lifetime, including failures.
     /// Exhaustion rejects new keys instead of silently allowing duplicate retries.
     pub fn request(&self, request: Request) -> Result<Reply, ControlError> {
@@ -162,6 +184,21 @@ impl<R: Route> RuntimeClient<R> {
         match request.message {
             Message::Query(query) => self.query(query),
             Message::Command(command) => {
+                // Transient inspection controls must not fill the lifetime mutation-key registry.
+                if matches!(
+                    command,
+                    Command::PreviewInput { .. }
+                        | Command::HighlightElement { .. }
+                        | Command::InspectMode { .. }
+                        | Command::NavigateElement { .. }
+                        | Command::EditElementStyle { .. }
+                        | Command::EditElementText { .. }
+                        | Command::RecordFrames { .. }
+                        | Command::RecordMemory { .. }
+                ) {
+                    return self.command(&command);
+                }
+
                 let key = request
                     .key
                     .filter(|key| !key.is_empty() && key.len() <= 128)
@@ -192,6 +229,80 @@ impl<R: Route> RuntimeClient<R> {
                 reply
             }
         }
+    }
+
+    /// Dispatches async storage inspection as well as ordinary runtime requests.
+    /// Backend I/O runs on the caller's local executor; transports use this path.
+    #[cfg(feature = "devtools")]
+    pub async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
+        use crate::storage::devtools::Storage;
+
+        if !Storage::accepts(&request) {
+            return self.request(request);
+        }
+
+        self.request(Request {
+            message: Message::Query(Query::Info {}),
+            ..request.clone()
+        })?;
+        let storage = self
+            .services()
+            .get::<Storage>()
+            .map(|storage| storage.as_ref().clone())
+            .unwrap_or_default();
+
+        let Message::Command(command) = &request.message else {
+            return storage.request(request).await;
+        };
+
+        let key = request
+            .key
+            .as_ref()
+            .filter(|key| !key.is_empty() && key.len() <= 128)
+            .ok_or(ControlError::InvalidRequestKey)?
+            .clone();
+
+        {
+            let requests = self.state.requests.borrow();
+
+            if let Some(saved) = requests.get(&key) {
+                return if saved.command == *command {
+                    saved.reply.clone()
+                } else {
+                    Err(ControlError::KeyConflict)
+                };
+            }
+
+            if requests.len() >= self.state.capacity {
+                return Err(ControlError::RequestCapacity);
+            }
+        }
+        let command = command.clone();
+
+        // Reserve in the same lifetime key space as all other app mutations.
+        // Cancellation retains uncertainty instead of admitting a duplicate write.
+        self.state.requests.borrow_mut().insert(
+            key.clone(),
+            SavedRequest {
+                command: command.clone(),
+                reply: Err(ControlError::Storage {
+                    reason:
+                        "edit pending or response cancelled; inspect storage before another write"
+                            .into(),
+                }),
+            },
+        );
+        let reply = storage.request(request).await;
+
+        self.state.requests.borrow_mut().insert(
+            key,
+            SavedRequest {
+                command,
+                reply: reply.clone(),
+            },
+        );
+
+        reply
     }
 
     /// Captures an initial snapshot and revision atomically on the local event loop.
@@ -245,6 +356,69 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::EditStorage { .. } => {
+                return Err(ControlError::Unsupported {
+                    operation:
+                        "async storage dispatch; use request_async or the development transport"
+                            .into(),
+                });
+            }
+            Command::RecordMemory {
+                owner,
+                enabled,
+                interval,
+                lease_ms,
+            } => {
+                return memory::record(owner, *enabled, *interval, *lease_ms);
+            }
+            Command::RecordFrames { enabled, lease_ms } => {
+                self.state.inspection.record_frames(*enabled, *lease_ms)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::EditElementText {
+                id,
+                generation,
+                edit,
+            } => {
+                self.state.inspection.edit_text(id, generation, edit)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::EditElementStyle {
+                id,
+                generation,
+                edit,
+            } => {
+                self.state.inspection.edit_style(id, generation, edit)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::NavigateElement {
+                id,
+                generation,
+                action,
+            } => {
+                self.state.inspection.navigate(id, generation, *action)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::PreviewInput { point, input } => {
+                self.state.inspection.preview_input(point, input)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::HighlightElement { id, generation } => {
+                self.state.inspection.highlight(id.as_deref(), generation)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::InspectMode { enabled, lease_ms } => {
+                self.state.inspection.inspect_mode(*enabled, *lease_ms)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+
             Command::CloseWindow { window } => self.router.close_window(*window).id(),
             Command::Quit { options } => self.router.quit(*options).id(),
             Command::PrepareReload { request } => {
@@ -326,22 +500,58 @@ impl<R: Route> RuntimeClient<R> {
         Ok(Reply::Submitted { operation_id: id })
     }
 
-    #[cfg(feature = "gpui")]
+    #[cfg(all(feature = "gpui", feature = "devtools"))]
     pub(crate) fn inspection(&self) -> crate::inspection::Store {
         self.state.inspection.clone()
     }
 
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
+            Query::Storage { .. } => Err(ControlError::Unsupported {
+                operation: "async storage dispatch; use request_async or the development transport"
+                    .into(),
+            }),
             Query::Windows {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().windows)
+                serde_json::to_value(self.router.window_snapshots())
                     .expect("window snapshots serialize"),
             )),
             Query::Window { window } => {
                 Ok(Reply::Snapshot(self.router.snapshot_in_window(window)?))
             }
             Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
+            Query::InspectPick {} => Ok(Reply::InspectPick(self.state.inspection.pick()?)),
+            Query::Preview {} => Ok(Reply::Data(
+                serde_json::to_value(self.state.inspection.preview_windows())
+                    .expect("preview windows serialize"),
+            )),
+            Query::PreviewElement { point } => Ok(Reply::Element(
+                self.state.inspection.preview_element(&point)?,
+            )),
+            Query::InspectTreePage { generation, offset } => Ok(Reply::ElementPage(
+                self.state
+                    .inspection
+                    .tree_page(generation.as_deref(), offset)?,
+            )),
+            Query::Frames { after } => Ok(Reply::Frames(
+                self.router.frame_records(&self.state.inspection, after),
+            )),
+            Query::Memory {
+                owner,
+                include_freed,
+            } => memory::snapshot(&owner, include_freed),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
+            Query::InspectWindow {
+                window,
+                presentation,
+                offset,
+            } => Ok(Reply::InspectionWindow(self.state.inspection.window_page(
+                window,
+                presentation.as_deref(),
+                offset,
+            )?)),
+            Query::InspectRevision {} => Ok(Reply::InspectionRevision(
+                self.state.inspection.tree_revision(),
+            )),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),
             Query::Checkpoint { application_id } => Ok(Reply::Checkpoint(
@@ -364,19 +574,17 @@ impl<R: Route> RuntimeClient<R> {
             )),
             Query::Snapshot {} => Ok(Reply::Snapshot(self.router.snapshot())),
             Query::Tabs {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().tabs).expect("tab serialization"),
+                serde_json::to_value(self.router.tab_snapshots()).expect("tab serialization"),
             )),
             Query::Tasks { owner } => {
-                let mut tasks = self.router.snapshot().work.tasks;
-
-                tasks.retain(|task| owner.is_none_or(|owner| owner == task.owner));
+                let tasks = self.router.task_snapshots(owner);
 
                 Ok(Reply::Data(
                     serde_json::to_value(tasks).expect("task serialization"),
                 ))
             }
             Query::Operations {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().operations)
+                serde_json::to_value(self.router.operation_snapshots())
                     .expect("status serialization"),
             )),
             Query::Operation { operation } => Ok(Reply::Operation(OperationRecord {
@@ -385,26 +593,35 @@ impl<R: Route> RuntimeClient<R> {
                 result: self.router.operation_result(operation),
             })),
             Query::Decisions {} => Ok(Reply::Data(
-                serde_json::to_value(self.router.snapshot().decisions)
+                serde_json::to_value(self.router.decision_snapshots())
                     .expect("decision serialization"),
             )),
-            Query::Events { cursor } => Ok(Reply::Event(event(self.router.snapshot(), cursor))),
-            Query::Diagnostics { after, kind } => {
-                let mut snapshot = self.router.diagnostics();
+            Query::Events { cursor } => {
+                let current = EventCursor {
+                    runtime_id: self.router.runtime_id(),
+                    epoch: 1,
+                    revision: self.router.revision(),
+                };
 
-                snapshot.records.retain(|record| {
-                    record.sequence > after
-                        && kind.as_ref().is_none_or(|kind| {
-                            if kind == "span" {
-                                record.kind == "span_open" || record.kind == "span_close"
-                            } else {
-                                record.kind == *kind
-                            }
-                        })
-                });
+                let event = if cursor == Some(current) {
+                    RuntimeEvent {
+                        cursor: current,
+                        kind: EventKind::Unchanged,
+                        snapshot: None,
+                    }
+                } else {
+                    event(self.router.snapshot(), cursor)
+                };
 
-                Ok(Reply::Diagnostics(snapshot))
+                Ok(Reply::Event(event))
             }
+            Query::HttpBody {
+                request_id,
+                response,
+            } => Ok(Reply::Data(self.router.http_body(request_id, response))),
+            Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
+                self.router.diagnostics(after, kind.as_deref()),
+            )),
         }
     }
 }
@@ -479,28 +696,40 @@ pub enum ControlConfig {
     #[default]
     Disabled,
     /// Native requires `RAKE_DEV_CONTROL=1`; Web requires injected same-origin metadata.
+    /// Element inspection additionally requires the opt-in `devtools` Cargo feature.
     FromEnvironment,
 }
 
 #[cfg(feature = "gpui")]
 impl ControlConfig {
+    #[cfg(any(feature = "devtools", test))]
     pub(crate) fn inspection_enabled(self) -> bool {
-        if !matches!(self, Self::FromEnvironment) {
-            return false;
-        }
+        #[cfg(not(feature = "devtools"))]
+        {
+            let _ = self;
 
-        #[cfg(unix)]
-        {
-            std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            WebBridgeConfig::from_document().is_ok_and(|config| config.is_some())
-        }
-
-        #[cfg(not(any(unix, target_family = "wasm")))]
-        {
             false
+        }
+
+        #[cfg(feature = "devtools")]
+        {
+            if !matches!(self, Self::FromEnvironment) {
+                return false;
+            }
+
+            #[cfg(unix)]
+            {
+                std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                WebBridgeConfig::from_document().is_ok_and(|config| config.is_some())
+            }
+
+            #[cfg(not(any(unix, target_family = "wasm")))]
+            {
+                false
+            }
         }
     }
 }
@@ -511,12 +740,21 @@ pub(crate) async fn run_host<R: Route>(
     client: RuntimeClient<R>,
     application_id: String,
 ) {
+    run_host_client(config, HostClient::new(client), application_id).await;
+}
+
+#[cfg(feature = "gpui")]
+pub(crate) async fn run_host_client(
+    config: ControlConfig,
+    client: HostClient,
+    application_id: String,
+) {
     if matches!(config, ControlConfig::FromEnvironment) {
         #[cfg(unix)]
         if std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1") {
-            match local::LocalServer::bind(&client, &application_id, &local::directory()) {
+            match local::LocalServer::bind_host(&client, &application_id, &local::directory()) {
                 Ok(server) => {
-                    if let Err(error) = server.run(client).await {
+                    if let Err(error) = server.run_host(client).await {
                         crate::error!(%error, "Development control stopped");
                     }
                 }
@@ -527,7 +765,7 @@ pub(crate) async fn run_host<R: Route>(
         #[cfg(target_family = "wasm")]
         match WebBridgeConfig::from_document() {
             Ok(Some(config)) => match WebBridge::new(config) {
-                Ok(bridge) => bridge.run(client, &application_id).await,
+                Ok(bridge) => bridge.run_host(client, &application_id).await,
                 Err(error) => crate::error!(%error, "Development bridge could not start"),
             },
             Ok(None) => {}
@@ -539,4 +777,44 @@ pub(crate) async fn run_host<R: Route>(
     let _ = (client, application_id);
 
     futures::future::pending::<()>().await;
+}
+
+#[cfg(test)]
+#[cfg(feature = "devtools")]
+mod inspection_control_tests {
+    //! Covers: leased commands bypass operation/key retention while preserving runtime validation.
+    //! Real: shared client dispatcher and inspection store. Doubles: an empty captured host.
+    use super::*;
+    use crate::router::{NoRoute, RouterConfig, WindowId};
+
+    #[test]
+    fn development_lease_renewals_never_fill_application_retry_capacity() {
+        let router = Router::<NoRoute>::new(RouterConfig::default());
+        let client = router.client();
+
+        assert!(!client.info().element_interaction);
+        let snapshot = client.state.inspection.begin(0);
+
+        client.state.inspection.publish(WindowId(1), snapshot);
+
+        for _ in 0..2048 {
+            let reply = client
+                .request(Request {
+                    protocol: PROTOCOL_VERSION,
+                    runtime_id: router.runtime_id(),
+                    key: None,
+                    message: Message::Command(Command::InspectMode {
+                        enabled: true,
+                        lease_ms: 1000,
+                    }),
+                })
+                .unwrap();
+
+            assert!(matches!(reply, Reply::Acknowledged));
+        }
+
+        assert!(client.state.requests.borrow().is_empty());
+        assert!(router.snapshot().operations.is_empty());
+        assert!(client.info().element_interaction);
+    }
 }

@@ -1,0 +1,5 @@
+error: attribute `class` requires a value
+ --> tests/ui/view/boolean_value.rs:2:32
+  |
+2 |     let _ = rake::view! { <div class/> };
+  |                                ^^^^^

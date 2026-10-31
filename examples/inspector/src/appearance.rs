@@ -10,63 +10,87 @@ pub(crate) const CODE_FONT: &str = if cfg!(target_family = "wasm") {
     "monospace"
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, rake::Theme)]
 pub(crate) struct Palette {
-    pub background: u32,
-    pub bar: u32,
-    pub field: u32,
-    pub line: u32,
-    pub guide: u32,
-    pub ink: u32,
-    pub muted: u32,
-    pub accent: u32,
-    pub tag: u32,
-    pub attribute: u32,
-    pub value: u32,
-    pub property: u32,
-    pub selection: u32,
-    pub hover: u32,
+    pub matched: Rgba,
+    pub warning: Rgba,
+    pub warning_surface: Rgba,
+    pub status_success: Rgba,
+    pub code: &'static str,
+    pub background: Rgba,
+    pub bar: Rgba,
+    pub field: Rgba,
+    pub line: Rgba,
+    pub guide: Rgba,
+    pub ink: Rgba,
+    pub muted: Rgba,
+    pub accent: Rgba,
+    pub tag: Rgba,
+    pub attribute: Rgba,
+    pub value: Rgba,
+    pub property: Rgba,
+    pub selection: Rgba,
+    pub inactive_selection: Rgba,
+    pub focus: Rgba,
+    pub hover: Rgba,
 }
 
 impl Palette {
     pub fn new(light: bool) -> Self {
         if light {
             Self {
-                background: 0xfdfcfb,
-                bar: 0xf0f0ed,
-                field: 0xe8e8e5,
-                line: 0xdedfd9,
-                guide: 0xecece7,
-                ink: 0x292a28,
-                muted: 0x777b74,
-                accent: 0x46634f,
-                tag: 0x881280,
-                attribute: 0x994500,
-                value: 0x1a1aa6,
-                property: 0xd33422,
-                selection: 0xdce8f5,
-                hover: 0xf0f0ed,
+                code: CODE_FONT,
+                matched: rgb(0xffedb1),
+                warning: rgb(0x826113),
+                warning_surface: rgb(0xfff6d9),
+                status_success: rgb(0x6d9668),
+                background: rgb(0xfdfcfb),
+                bar: rgb(0xf0f0ed),
+                field: rgb(0xe8e8e5),
+                line: rgb(0xdedfd9),
+                guide: rgb(0xecece7),
+                ink: rgb(0x292a28),
+                muted: rgb(0x777b74),
+                accent: rgb(0x46634f),
+                tag: rgb(0x881280),
+                attribute: rgb(0x994500),
+                value: rgb(0x1a1aa6),
+                property: rgb(0xd33422),
+                selection: rgb(0xdce8f5),
+                inactive_selection: rgb(0xe7e7e4),
+                focus: rgb(0x1a73e8),
+                hover: rgb(0xf0f0ed),
             }
         } else {
             Self {
-                background: 0x202124,
-                bar: 0x292a2d,
-                field: 0x35363a,
-                line: 0x3c4043,
-                guide: 0x303236,
-                ink: 0xe8eaed,
-                muted: 0x9aa0a6,
-                accent: 0xa8c7fa,
-                tag: 0xc58af9,
-                attribute: 0xd4a469,
-                value: 0x9dc7f5,
-                property: 0xf28b82,
-                selection: 0x354b69,
-                hover: 0x2c2e32,
+                code: CODE_FONT,
+                matched: rgb(0x614c2b),
+                warning: rgb(0xfdd663),
+                warning_surface: rgb(0x3b3321),
+                status_success: rgb(0x6d9668),
+                background: rgb(0x202124),
+                bar: rgb(0x292a2d),
+                field: rgb(0x35363a),
+                line: rgb(0x3c4043),
+                guide: rgb(0x303236),
+                ink: rgb(0xe8eaed),
+                muted: rgb(0x9aa0a6),
+                accent: rgb(0xa8c7fa),
+                tag: rgb(0xc58af9),
+                attribute: rgb(0xd4a469),
+                value: rgb(0x9dc7f5),
+                property: rgb(0xf28b82),
+                selection: rgb(0x354b69),
+                inactive_selection: rgb(0x3a3d42),
+                focus: rgb(0x8ab4f8),
+                hover: rgb(0x2c2e32),
             }
         }
     }
 }
+
+#[rake::style("focus-visible:bg-selection focus-visible:text-ink")]
+pub(crate) fn control();
 
 #[derive(Clone, Copy)]
 pub(crate) enum Icon {
@@ -78,9 +102,10 @@ pub(crate) enum Icon {
     Play,
     Theme,
     Code,
+    Reveal,
 }
 
-pub(crate) fn icon(kind: Icon, color: u32) -> impl IntoElement {
+pub(crate) fn icon(kind: Icon, color: Rgba) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
@@ -148,6 +173,14 @@ pub(crate) fn icon(kind: Icon, color: u32) -> impl IntoElement {
                     &[(6., 4.), (2., 8.), (6., 12.)],
                     &[(10., 4.), (14., 8.), (10., 12.)],
                 ],
+                Icon::Reveal => &[
+                    &[(6., 2.), (2., 2.), (2., 6.)],
+                    &[(10., 2.), (14., 2.), (14., 6.)],
+                    &[(2., 10.), (2., 14.), (6., 14.)],
+                    &[(14., 10.), (14., 14.), (10., 14.)],
+                    &[(5., 8.), (11., 8.)],
+                    &[(8., 5.), (8., 11.)],
+                ],
             };
 
             for line in lines {
@@ -159,7 +192,7 @@ pub(crate) fn icon(kind: Icon, color: u32) -> impl IntoElement {
             }
 
             if let Ok(path) = path.build() {
-                window.paint_path(path, rgb(color));
+                window.paint_path(path, color);
             }
         },
     )

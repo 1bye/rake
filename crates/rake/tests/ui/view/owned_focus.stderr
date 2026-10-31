@@ -1,0 +1,5 @@
+error: focus must borrow stored state, e.g. focus={&self.focus}; construct it once outside render
+ --> tests/ui/view/owned_focus.rs:2:39
+  |
+2 |     let _ = rake::view! { <div focus={focus}/> };
+  |                                       ^^^^^

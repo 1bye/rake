@@ -15,6 +15,7 @@ from dev_bridge import BridgeError, DevBridge, MAX_BYTES
 from inspector import Inspector
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -27,7 +28,11 @@ parser.add_argument("--build-root", type=Path, help="Immutable published Web bui
 parser.add_argument("--inspector-only", action="store_true", help="Serve native runtime inspection without application assets")
 parser.add_argument("--process-output", type=Path, help="Private supervisor output snapshot")
 parser.add_argument("--inspector-app", type=Path, help="Serve the built Rake Elements Wasm frontend on the dedicated inspector origin")
+parser.add_argument("--cdp-url", help="Private loopback CDP discovery endpoint")
+parser.add_argument("--preview-helper", type=Path, help="Compiled macOS capture helper, used only on the native preview origin")
 args = parser.parse_args()
+if args.preview_helper and not (args.inspector_only and args.control and args.development_state):
+    parser.error("--preview-helper requires native inspection and supervisor state")
 if args.inspector_app:
     if not args.inspector_only or not args.control:
         parser.error("--inspector-app requires --inspector-only --control")
@@ -36,10 +41,16 @@ if args.inspector_app:
         parser.error("--inspector-app must contain a built Rake Inspector")
 if bool(args.development_state) != bool(args.build_root) or (args.development_state and not args.control):
     parser.error("development state/build root require each other and --control")
+if args.cdp_url and not args.control:
+    parser.error("--cdp-url requires --control")
 if args.inspector_only and not args.control:
     parser.error("--inspector-only requires --control")
 bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
-inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only) if bridge else None
+inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only, cdp_url=args.cdp_url) if bridge else None
+preview = None
+if args.preview_helper:
+    from preview import Preview
+    preview = Preview(inspector, args.preview_helper)
 directory = args.directory or Path(__file__).resolve().parents[1] / "dist" / args.example
 
 if not args.inspector_only and not (directory / "index.html").is_file():
@@ -157,7 +168,13 @@ class AppHandler(SimpleHTTPRequestHandler):
             if not self.path.startswith("/__rake/"):
                 raise BridgeError(404, "unknown development endpoint")
             action = self.path.removeprefix("/__rake/")
-            result = inspector.handle(action, body) if action.startswith("inspect") else bridge.handle(action, body)
+            if action == "preview_video" and preview:
+                preview.video(self, body)
+                return
+            if action.startswith("preview") and preview:
+                result = preview.handle(action, body)
+            else:
+                result = inspector.handle(action, body) if action.startswith("inspect") else bridge.handle(action, body)
             encoded = json.dumps(result).encode()
             if len(encoded) > MAX_BYTES:
                 raise BridgeError(413, "development response too large")
@@ -174,11 +191,34 @@ class AppHandler(SimpleHTTPRequestHandler):
         except BridgeError as error:
             self.send_error(error.status, str(error))
 
+    def do_GET(self):
+        if preview and self.path == "/__rake/preview_control":
+            if not self._valid_host():
+                self.send_error(403, "invalid development host")
+                return
+            try:
+                preview.control(self, bridge.token)
+            except BridgeError as error:
+                self.send_error(error.status, str(error))
+            return
+        super().do_GET()
+
     def send_head(self):
         if bridge and not self._valid_host():
             self.send_error(403, "invalid development host")
             return None
         route = self.path.split("?", 1)[0]
+        if preview and route in {"/__rake/preview", "/__rake/preview.js", "/__rake/preview-stream.js", "/__rake/preview-annotations.js", "/__rake/preview.css"}:
+            filename = {"/__rake/preview": "preview.html", "/__rake/preview.js": "preview.js", "/__rake/preview-stream.js": "preview-stream.js", "/__rake/preview-annotations.js": "preview-annotations.js", "/__rake/preview.css": "preview.css"}[route]
+            encoded = Path(__file__).with_name(filename).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8" if filename.endswith(".html") else "text/css; charset=utf-8" if filename.endswith(".css") else "text/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            return io.BytesIO(encoded)
         if bridge and route in {"/__rake/inspector", "/__rake/inspector.js", "/__rake/inspector-model.js", "/__rake/inspector.css"}:
             filename = {"/__rake/inspector": "inspector.html", "/__rake/inspector.js": "inspector.js",
                         "/__rake/inspector-model.js": "inspector-model.js", "/__rake/inspector.css": "inspector.css"}[route]
@@ -257,6 +297,11 @@ class AppHandler(SimpleHTTPRequestHandler):
 class BoundedServer(ThreadingHTTPServer):
     slots = threading.BoundedSemaphore(64)
 
+    def server_bind(self):
+        # The listener is numeric loopback; startup must not depend on reverse DNS.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
             request.close()
@@ -280,7 +325,7 @@ if bridge:
     bridge.url = f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
-    launch_url += f"{'/__rake/elements/' if args.inspector_app else '/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
+    launch_url += f"{'/__rake/preview' if preview else '/__rake/elements/' if args.inspector_app else '/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
 print(f"Serving {args.example} at {launch_url}", flush=True)
 
 stopping = False
@@ -301,5 +346,7 @@ try:
         server.handle_request()
 finally:
     server.server_close()
+    if preview:
+        preview.close()
     if bridge:
         bridge.close()

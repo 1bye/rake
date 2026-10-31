@@ -1,0 +1,7 @@
+error[E0308]: mismatched types
+ --> tests/ui/view/markup_property_type.rs:6:13
+  |
+6 |     let _ = rake::view! { <Card header={<h2>Profile</h2>}/> };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `String`, found `AnyElement`
+  |
+  = note: this error originates in the macro `rake::view` (in Nightly builds, run with -Z macro-backtrace for more info)

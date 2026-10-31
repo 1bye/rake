@@ -1,0 +1,5 @@
+error: 1st class `justify-betwen`: unsupported utility class `justify-betwen`; did you mean `justify-between`?; use style={|s| ...} for GPUI styling
+ --> tests/ui/view/preset_bad_class.rs:1:15
+  |
+1 | #[rake::style("justify-betwen")]
+  |               ^^^^^^^^^^^^^^^^

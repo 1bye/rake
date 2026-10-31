@@ -1,0 +1,8 @@
+Editing enabled
+Click Increment to get started.
+Hide history
+Lock counter
+Recent counts
+Reverse order
+Click a row, then press R: its state and focus follow it. B activates the focused row.
+No entries yet.

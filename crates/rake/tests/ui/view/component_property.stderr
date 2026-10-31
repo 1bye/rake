@@ -1,0 +1,5 @@
+error: component properties must be Rust field names; pass callbacks and styling as ordinary typed properties
+ --> tests/ui/view/component_property.rs:2:33
+  |
+2 |     let _ = rake::view! { <Card aria-label="Card"/> };
+  |                                 ^^^^

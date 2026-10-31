@@ -3,7 +3,13 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const code = readFileSync(new URL('./inspector-model.js', import.meta.url), 'utf8');
-const {InspectorState, commandArguments, matches, request, requests, safeJSON, traces} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const {InspectorState, commandArguments, elementName, matches, request, requests, safeJSON, traces} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+for (const [kind, expected] of [
+  ['gpui::elements::div::Stateful<gpui::elements::div::Div>', 'Div'],
+  ['gpui::ViewElement<rake::TabBar<app::Destination>>', 'TabBar'],
+  ['app::List<app::Item>', 'List'],
+  ['Button', 'Button'],
+]) assert.equal(elementName(kind), expected);
 const state = new InspectorState(2, 4096);
 state.reset('old');
 const snapshot = {runtime_id: 'old', tabs: [{id: 7}], operations: [[9, 'Committed']]};
@@ -64,3 +70,13 @@ assert.equal(commandArguments({type: 'null'}), null);
 assert.equal(commandArguments({$ref: '#/$defs/Loop', $defs: {Loop: {$ref: '#/$defs/Loop'}}}), null);
 assert.equal(commandArguments({$ref: 'https://example.invalid/schema'}), null);
 assert.deepEqual(commandArguments({default: {a: false}}), {a: false});
+
+const {elementSubtree, elementPath, elementText, elementMarkup} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const copyNodes = [{id:'p', kind:'p', parent:null, semantic_id:'a"<&'}, {id:'text', kind:'Text', parent:'p', text:'<script>世界</script>'}];
+assert.equal(elementText(copyNodes, 'p'), '<script>世界</script>');
+assert.equal(elementMarkup(copyNodes, 'p'), '<p id="a&quot;&lt;&amp;">&lt;script&gt;世界&lt;/script&gt;</p>');
+assert.equal(elementPath(copyNodes, 'text'), '/p[1][@id="a\\"<&"]/Text[1]');
+assert.equal(elementSubtree(copyNodes, 'p').length, 4);
+assert.equal(elementMarkup([...copyNodes, copyNodes[0]], 'p'), null);
+assert.equal(elementPath([{...copyNodes[0], parent:'text'}, copyNodes[1]], 'p'), null);
+assert.equal(elementMarkup([copyNodes[0], {...copyNodes[1], text:'\u0001'.repeat(128*1024)}], 'p'), null);

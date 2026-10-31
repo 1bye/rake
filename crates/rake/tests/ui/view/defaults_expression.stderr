@@ -1,0 +1,5 @@
+error: unexpected end of input, expected an expression
+ --> tests/ui/view/defaults_expression.rs:2:36
+  |
+2 |     let _ = rake::view! { <Card {..}/> };
+  |                                    ^

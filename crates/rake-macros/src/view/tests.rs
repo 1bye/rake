@@ -27,7 +27,7 @@ fn accepts_nested_markup_and_rust_control_flow() {
                 }
             }
             <img src={source()} alt="Preview" />
-            <button onclick={cx.listener(|this, _, _, cx| this.save(cx))}>"Save"</button>
+            <button on:click={cx.listener(|this, _, _, cx| this.save(cx))}>"Save"</button>
         </section>
     "#,
     )
@@ -43,15 +43,14 @@ fn reports_bad_markup_at_compile_time() {
         ("<div>", "missing closing </div>"),
         ("<div></span>", "expected closing </div>"),
         ("<div/><p/>", "exactly one root"),
-        ("<div>unquoted</div>", "quoted text"),
         ("<input/>", "unsupported view element <input>"),
         ("<div id=\"a\" id=\"b\"/>", "duplicate attribute `id`"),
         ("<div title=\"x\"/>", "unsupported attribute `title`"),
         ("<div tabindex=0/>", "quoted strings or {Rust expressions}"),
         ("<div class={classes}/>", "literal utility string"),
         (
-            "<div class=\"bg-red-500\"/>",
-            "unsupported utility class `bg-red-500`",
+            "<div class=\"unknown-utility\"/>",
+            "unsupported utility class `unknown-utility`",
         ),
         ("<img alt=\"x\"/>", "img requires src"),
         ("<img src=\"x\"/>", "img requires alt"),
@@ -172,7 +171,7 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
             on:Save={cx.listener(Self::save)}
             on:crate::actions::Cancel={cx.listener(Self::cancel)}>
             <button disabled={self.busy} tabindex={-1} focus={&self.save_focus}
-                aria-keyshortcuts="Control+S" onclick={|_, _, _| {}}>"Save"</button>
+                aria-keyshortcuts="Control+S" on:click={|_, _, _| {}}>"Save"</button>
             <div role={Role::Status}/>
         </section>
     "#,
@@ -192,7 +191,7 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
         ),
         ("<div onclick:Save={a}/>", "typed actions use on:Action"),
         ("<div on:={a}/>", "expected identifier"),
-        ("<div on:Save-extra={a}/>", "expected `=`"),
+        ("<div on:Save-extra={a}/>", "requires a value"),
         (
             "<img src=\"icon.png\" alt=\"Icon\" role={Role::Button}/>",
             "this attribute requires a container or button",
@@ -276,4 +275,415 @@ fn paragraphs_compose_inline_content_and_reject_layout_or_interactive_children()
 
         assert!(error.contains(expected), "{source}: {error}");
     }
+}
+
+#[test]
+fn expansion_snapshots() {
+    let mut fixtures = vec![
+        ("containers", r#"<section id="root" class="flex flex-col"><div/><span>{label}</span></section>"#.to_owned()),
+        ("paragraph", r#"<p wrap={true} ellipsis={true} max-lines={2}>"Hi "<strong>{name}</strong><em>"!"</em><br/><span class="underline" style={highlight}>"More"</span></p>"#.to_owned()),
+        ("headings", r#"<div><h1>"Title"</h1><h2>"Count: "{count.to_string()}</h2><h3/><h4/><h5/><h6/></div>"#.to_owned()),
+        ("button", r#"<button disabled={busy} focus={&self.focus} tabindex={-1} on:click={handler} style={style}>"Save"</button>"#.to_owned()),
+        ("image", r#"<img id="preview" src={path} alt="Preview" style={style}/>"#.to_owned()),
+        ("entity", r#"<view entity={&self.editor}/>"#.to_owned()),
+        ("component", r#"<ui::Badge id={id} label={label} highlighted={true}/>"#.to_owned()),
+        ("slots", r#"<Card id={id} header={header} footer={None}><p>"Body"</p>{widget}</Card>"#.to_owned()),
+        ("branches", r#"<div>if let Some(value) = selected { <p>{value}</p> } else if busy { "Loading" } else { <span/> }</div>"#.to_owned()),
+        ("loops", r#"<ul>for row in rows { if row.visible { <li id={row.id}>{row.label}</li> } }</ul>"#.to_owned()),
+        ("actions", r#"<section key-context="Editor" on:Save={save} on:crate::actions::Cancel={cancel}><button on:click={click}>"Save"</button></section>"#.to_owned()),
+        ("syntax", r#"<Card {id} compact {..Default::default()}><p ellipsis>match value { Some(text) if !text.is_empty() => { <strong>{text}</strong> } _ => { "Empty" } }</p></Card>"#.to_owned()),
+        ("semantic_elements", r#"<main><nav/><header/><article/><aside/><footer/><hr/><svg path="icons/search.svg" aria-label="Search" class="size-4"/></main>"#.to_owned()),
+        ("events", r#"<div on:click={handler} on:key-down={handler} on:key-up={handler} on:mouse-move={handler} on:mouse-down={handler} on:mouse-up={handler} on:right-mouse-down={handler} on:right-mouse-up={handler} on:middle-mouse-down={handler} on:middle-mouse-up={handler} on:any-mouse-down={handler} on:mouse-down-out={handler} on:mouse-up-out={handler} on:hover={handler} on:scroll-wheel={handler} on:drop={handler} on:drag={(value, constructor)} tooltip={help}/>"#.to_owned()),
+        ("conditional_classes", r#"<div class="relative" class:shrink-0={fixed} class:font-bold={selected}/>"#.to_owned()),
+        ("navigation", r#"<section focus={&self.focus} scroll={&self.scroll} tab-navigation={true}><button tabindex={0}/></section>"#.to_owned()),
+        ("variants", r#"<div class="p-4 group/card hover:bg-[#fff] hover:opacity-50 focus-visible:border-2 group-hover/card:text-[#000]" class:hover:font-bold={selected} style={|s| s.rounded_md()}/>"#.to_owned()),
+        ("disabled_classes", r#"<button disabled={busy} class="disabled:opacity-35 opacity-100" class:disabled:font-bold={selected}/>"#.to_owned()),
+        ("theme", r#"<div class="bg-surface text-body hover:bg-hover border-line font-ui rounded-control"><p><span class="text-ink font-ui">Themed</span></p></div>"#.to_owned()),
+        ("class_if", r#"<div class={if selected { "p-4 hover:opacity-50" } else { "p-2 hover:opacity-100" }}/>"#.to_owned()),
+        ("class_if_let", r#"<div class={if let Some(_) = value { "font-bold" }}/>"#.to_owned()),
+        ("class_match", r#"<div class={match value { Some(_) if active => "p-4 hover:opacity-50", Option::None => "p-0", _ => "p-2" }}/>"#.to_owned()),
+    ];
+
+    let mut utilities = "flex block grid hidden flex-col flex-row flex-wrap flex-1 items-start items-center items-end justify-start justify-center justify-end justify-between w-full h-full size-full min-w-0 min-h-0 overflow-hidden overflow-scroll overflow-x-scroll overflow-y-scroll rounded rounded-none rounded-sm rounded-md rounded-lg rounded-xl rounded-full border border-0 border-1 border-2 shadow-sm shadow-md shadow-lg cursor-pointer text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-left text-center text-right font-normal font-medium font-semibold font-bold".to_owned();
+
+    for columns in 1..=12 {
+        utilities.push_str(&format!(" grid-cols-{columns}"));
+    }
+
+    for prefix in [
+        "p", "px", "py", "pt", "pb", "pl", "pr", "m", "mx", "my", "mt", "mb", "ml", "mr", "gap",
+    ] {
+        for scale in [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32] {
+            utilities.push_str(&format!(" {prefix}-{scale}"));
+        }
+    }
+
+    fixtures.push(("utilities", format!("<div class={utilities:?}/>")));
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/view/snapshots");
+
+    for (name, source) in fixtures {
+        let expanded = expand(&source).expect(name).to_string() + "\n";
+        let path = directory.join(format!("{name}.txt"));
+
+        if std::env::var_os("RAKE_UPDATE_SNAPSHOTS").is_some() {
+            std::fs::write(&path, &expanded).expect("write snapshot");
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(path).expect("snapshot exists"),
+            expanded,
+            "snapshot {name}; review changes before running RAKE_UPDATE_SNAPSHOTS=1"
+        );
+    }
+}
+
+#[test]
+fn collects_independent_errors_and_recovers_attribute_boundaries() {
+    let error = expand(r#"<div class=42 title="invalid"><img src="icon.png"/></div>"#).unwrap_err();
+
+    let errors = error
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 3);
+    assert!(errors[0].contains("quoted strings"));
+    assert!(errors[1].contains("unsupported attribute `title`"));
+    assert!(errors[2].contains("img requires alt"));
+}
+
+#[test]
+fn documented_utilities_match_the_checked_table() {
+    use super::classes::{FIXED, PREFIXES, SCALES};
+
+    let docs = include_str!("../../../../docs/experimental-view.md");
+
+    let list = docs
+        .split("<!-- view-utilities:start -->")
+        .nth(1)
+        .unwrap()
+        .split("<!-- view-utilities:end -->")
+        .next()
+        .unwrap();
+
+    let names = list
+        .split('`')
+        .enumerate()
+        .filter_map(|(index, value)| (index % 2 == 1).then_some(value))
+        .collect::<Vec<_>>();
+
+    for (utility, _) in FIXED {
+        assert!(
+            names.contains(utility),
+            "missing documented utility {utility}"
+        );
+    }
+
+    for prefix in PREFIXES {
+        assert!(names.contains(&format!("{prefix}-N").as_str()));
+    }
+
+    for name in names {
+        let utilities = if name == "grid-cols-N" {
+            (1..=12)
+                .map(|n| format!("grid-cols-{n}"))
+                .collect::<Vec<_>>()
+        } else if let Some(prefix) = name.strip_suffix("-N") {
+            SCALES.iter().map(|n| format!("{prefix}-{n}")).collect()
+        } else {
+            vec![name.to_owned()]
+        };
+
+        for utility in utilities {
+            let tag = if utility.starts_with("disabled:") {
+                "button"
+            } else {
+                "div"
+            };
+
+            expand(&format!("<{tag} class={utility:?}/>")).expect(&utility);
+        }
+    }
+}
+
+#[test]
+fn final_emission_errors_keep_previously_collected_diagnostics() {
+    let mut diagnostics = super::Diagnostics::default();
+
+    diagnostics.push(syn::Error::new(
+        proc_macro2::Span::call_site(),
+        "recovery error",
+    ));
+    let result = diagnostics.finish(Err(syn::Error::new(
+        proc_macro2::Span::call_site(),
+        "emission error",
+    )));
+
+    let messages = result
+        .unwrap_err()
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(messages, ["recovery error", "emission error"]);
+}
+
+#[test]
+fn variant_conflicts_keep_recovered_errors_and_merge_one_call() {
+    let expanded =
+        expand("<div class=\"hover:opacity-50 hover:border-2\" class:hover:font-bold={selected}/>")
+            .expect("merged hover")
+            .to_string();
+
+    assert_eq!(expanded.matches(". hover (").count(), 1);
+    assert!(expanded.contains("if __rake_class_cond"));
+    let errors = expand("<div class=\"hover:opacity-50\" class:unknown={true} style={|s| s.hover(|s| s.opacity(1.))}/>")
+        .expect_err("independent and emission errors").into_iter().map(|error| error.to_string()).collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 2);
+    assert!(errors[0].contains("unknown"));
+    assert!(errors[1].contains("both set GPUI's single hover style"));
+}
+
+#[test]
+fn arbitrary_classes_report_every_bad_value_and_reject_inline_sizes() {
+    let errors = expand("<div class=\"w-[320] bg-[#ggg] -p-2 w-1/0 opacity-[1.2]\"/>")
+        .expect_err("invalid values")
+        .into_iter()
+        .count();
+
+    assert_eq!(errors, 5);
+
+    for source in [
+        "<p><span class=\"text-[11px]\"/></p>",
+        "<p><span class=\"leading-[20px]\"/></p>",
+    ] {
+        assert!(
+            expand(source)
+                .expect_err(source)
+                .to_string()
+                .contains("belong on p")
+        );
+    }
+
+    assert_eq!(
+        expand("<p><span class=\"text-[#badhex] font-[]\"/></p>")
+            .expect_err("invalid inline values")
+            .into_iter()
+            .count(),
+        2
+    );
+
+    for source in ["<div class=\"-mx-[-4px]\"/>", "<div class=\"-mt-[-5px]\"/>"] {
+        assert!(
+            expand(source)
+                .expect_err("two negative signs")
+                .to_string()
+                .contains("use only one negative sign")
+        );
+    }
+
+    assert!(expand("<div class=\"rounded-[50%]\"/>").is_err());
+}
+
+#[test]
+fn unquoted_text_preserves_punctuation_and_normalizes_source_whitespace() {
+    for (source, expected) in [
+        ("<p>Save changes</p>", vec!["Save changes"]),
+        (
+            "<p>Hello, <strong>{name}</strong>!</p>",
+            vec!["Hello, ", "!"],
+        ),
+        ("<p>Hello {name} world!</p>", vec!["Hello ", " world!"]),
+        ("<p>\n    Hello,\n      world!\n</p>", vec!["Hello, world!"]),
+        (
+            "<p>Use if, for and match here.</p>",
+            vec!["Use if, for and match here."],
+        ),
+        ("<p>for everyone</p>", vec!["for everyone"]),
+        ("<p>1 + 2 = 3; a-b/c.</p>", vec!["1 + 2 = 3; a-b/c."]),
+        (
+            "<p>Hello (world!), items[0].</p>",
+            vec!["Hello (world!), items[0]."],
+        ),
+        ("<p>你好 世界</p>", vec!["你好 世界"]),
+        ("<p>Hello /* comment */ world</p>", vec!["Hello world"]),
+        ("<p>\" exact   spacing \"</p>", vec![" exact   spacing "]),
+    ] {
+        let view = syn::parse_str::<View>(source).expect(source);
+
+        let texts = view
+            .0
+            .children
+            .iter()
+            .filter_map(|node| match node {
+                super::Node::Text(text) => Some(text.value()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(texts, expected, "{source}");
+        syn::parse2::<syn::Expr>(view.expand(&quote!(::renamed)).expect(source))
+            .expect("one Rust expression");
+    }
+
+    let view = syn::parse2::<View>(quote!(<p>Hello world!</p>)).expect("synthesized tokens");
+
+    let super::Node::Text(text) = &view.0.children[0] else {
+        panic!("expected text");
+    };
+
+    assert_eq!(text.value(), "Hello world!");
+}
+
+#[test]
+fn markup_properties_recover_nested_errors_and_require_one_component_slot_root() {
+    let expanded = expand("<Card header={<h2>Profile</h2>}><p>Account details</p></Card>")
+        .expect("markup slot");
+
+    syn::parse2::<syn::Expr>(expanded).expect("one Rust expression");
+
+    for source in [
+        "<Card header={<T as Trait>::header()}/>",
+        "<div role={<T as Trait>::role()}/>",
+    ] {
+        syn::parse2::<syn::Expr>(expand(source).expect(source))
+            .expect("qualified Rust paths remain expressions");
+    }
+
+    for (source, expected) in [
+        ("<div style={<p>Wrong</p>}/>", "only on components"),
+        ("<Card header={<h2/><p/>}/>", "exactly one root element"),
+        ("<Card header={<h2></p>}/>", "expected closing </h2>"),
+        ("<Card header={<p><div/></p>}/>", "place layout elements"),
+        ("<Card header={<img/>}/>", "img requires src"),
+    ] {
+        let errors = expand(source)
+            .expect_err(source)
+            .into_iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(
+            errors.iter().any(|error| error.contains(expected)),
+            "{source}: {errors:?}"
+        );
+    }
+
+    let errors = expand("<Card header={<img/>} footer={<svg/>}/>")
+        .expect_err("independent slot diagnostics")
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        [
+            "img requires src",
+            "img requires alt text",
+            "svg requires path"
+        ]
+    );
+}
+
+#[test]
+fn numeric_border_widths_use_pixels() {
+    for (class, expected) in [
+        ("border-3", ". border (:: renamed :: gpui :: px (3f32))"),
+        (
+            "border-t-1.5",
+            ". border_t (:: renamed :: gpui :: px (1.5f32))",
+        ),
+    ] {
+        let expanded = expand(&format!("<div class={class:?}/>"))
+            .expect("numeric border")
+            .to_string();
+
+        assert!(expanded.contains(expected), "{class}: {expanded}");
+    }
+}
+
+#[test]
+fn class_patterns_accept_bare_uppercase_names_and_reject_bindings() {
+    for pattern in ["None", "Ready", "READY"] {
+        expand(&format!(
+            "<div class={{if let {pattern} = value {{ \"p-1\" }}}}/>"
+        ))
+        .expect("unit variant or constant");
+    }
+
+    for pattern in ["value", "ref Ready", "mut Ready", "Ready @ _"] {
+        assert!(
+            expand(&format!(
+                "<div class={{if let {pattern} = value {{ \"p-1\" }}}}/>"
+            ))
+            .expect_err("binding")
+            .to_string()
+            .contains("class patterns cannot bind variables")
+        );
+    }
+}
+
+#[test]
+fn let_chain_patterns_follow_the_binding_restriction() {
+    let error =
+        expand(r#"<div class={if ready && let Some(value) = selected { "p-1" } else { "p-2" }}/>"#)
+            .expect_err("chain binding");
+
+    assert!(
+        error
+            .to_string()
+            .contains("class patterns cannot bind variables")
+    );
+}
+
+#[test]
+fn conditional_negative_utilities_accept_a_variant_prefix() {
+    let expanded = expand(r#"<div class:-mt-1={enabled} class:hover:-mt-1={enabled} class:hover:-mx-[4px]={enabled}/>"#)
+        .expect("conditional negative classes").to_string().replace(' ', "");
+
+    assert_eq!(
+        expanded
+            .matches(".mt(::renamed::gpui::rems(-0.25f32))")
+            .count(),
+        2
+    );
+    assert!(expanded.contains(".mx(::renamed::gpui::px(-4f32))"));
+    assert_eq!(expanded.matches(".hover(").count(), 1);
+
+    for source in [
+        "<div class:hover/-mt-1={enabled}/>",
+        "<div class:mt--1={enabled}/>",
+    ] {
+        assert!(expand(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn signed_bracket_values_explain_where_negatives_belong() {
+    let errors = expand(r#"<div class="mt-[-5px] w-[-5px]"/>"#)
+        .expect_err("signed bracket values")
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        errors,
+        [
+            "1st class `mt-[-5px]`: write negative values with a leading `-`, such as `-mt-[5px]`",
+            "2nd class `w-[-5px]`: negative values are supported only for margins and inset",
+        ]
+    );
+    assert!(
+        expand(r#"<div class="w-[+5px]"/>"#)
+            .expect_err("signed width")
+            .to_string()
+            .contains("negative values are supported only for margins and inset")
+    );
+    let expanded = expand(r#"<div class="-mt-[5px]"/>"#)
+        .expect("negative margin")
+        .to_string()
+        .replace(' ', "");
+
+    assert!(expanded.contains(".mt(::renamed::gpui::px(-5f32))"));
 }

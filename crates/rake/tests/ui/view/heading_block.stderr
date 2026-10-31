@@ -1,0 +1,5 @@
+error: headings compose text like p; use a div with role={Role::Heading} for rich content
+ --> tests/ui/view/heading_block.rs:2:32
+  |
+2 |     let _ = rake::view! { <h2><div/></h2> };
+  |                                ^^^

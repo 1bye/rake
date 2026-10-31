@@ -1,0 +1,5 @@
+error: element roots in a for loop require an explicit stable id
+ --> tests/ui/view/match_loop_id.rs:2:65
+  |
+2 |     let _ = rake::view! { <div>for n in [1] { match n { _ => { <span/> } } }</div> };
+  |                                                                 ^^^^
