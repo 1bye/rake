@@ -104,6 +104,7 @@ impl super::host::Host for InspectionClient {
                 "http_body",
                 "inspect_tree",
                 "inspect_revision",
+                "inspect_window",
                 "inspect_tree_page",
                 "frames",
                 "inspect_element",
@@ -166,6 +167,15 @@ impl super::host::Host for InspectionClient {
                 lease_ms,
             }) => super::memory::record(&owner, enabled, interval, lease_ms),
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
+            Message::Query(Query::InspectWindow {
+                window,
+                presentation,
+                offset,
+            }) => Ok(Reply::InspectionWindow(store.window_page(
+                window,
+                presentation.as_deref(),
+                offset,
+            )?)),
             Message::Query(Query::InspectRevision {}) => {
                 Ok(Reply::InspectionRevision(store.tree_revision()))
             }

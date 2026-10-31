@@ -364,6 +364,21 @@ pub struct TreePage {
     pub total: usize,
 }
 
+/// A window-specific page pinned to one completed draw, including unchanged-tree draws.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WindowPage {
+    /// Exact runtime-scoped window.
+    pub window: crate::router::WindowId,
+    /// Opaque five-second page lease; pass it unchanged for subsequent offsets.
+    pub presentation: String,
+    /// Monotonic draw sequence as a decimal string, independent of control capture IDs.
+    pub frame_sequence: String,
+    /// Index metadata identity, including focus changes.
+    pub metadata_revision: String,
+    /// Bounded lightweight metadata page.
+    pub page: TreePage,
+}
+
 /// Exact lookup failure. Clients refresh the tree after stale captures.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum InspectionError {

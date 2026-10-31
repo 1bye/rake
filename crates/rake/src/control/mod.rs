@@ -527,6 +527,15 @@ impl<R: Route> RuntimeClient<R> {
                 include_freed,
             } => memory::snapshot(&owner, include_freed),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
+            Query::InspectWindow {
+                window,
+                presentation,
+                offset,
+            } => Ok(Reply::InspectionWindow(self.state.inspection.window_page(
+                window,
+                presentation.as_deref(),
+                offset,
+            )?)),
             Query::InspectRevision {} => Ok(Reply::InspectionRevision(
                 self.state.inspection.tree_revision(),
             )),

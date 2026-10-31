@@ -78,6 +78,7 @@ impl Details {
 
 #[derive(Clone)]
 pub(super) struct Captured {
+    pub frame_sequence: String,
     pub tree: Snapshot,
     pub index_revision: String,
     pub details: Vec<Details>,
@@ -103,6 +104,7 @@ impl From<Snapshot> for Captured {
             .collect();
 
         Self {
+            frame_sequence: tree.capture.clone(),
             index_revision: tree.capture.clone(),
             tree,
             details,

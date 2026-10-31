@@ -16,6 +16,7 @@ mod native_input;
 mod network;
 mod params;
 mod screenshot;
+mod semantic;
 mod server;
 mod session;
 mod sources;

@@ -6,6 +6,49 @@ use super::*;
 use serde_json::Value;
 
 #[test]
+fn window_pages_pin_draws_without_expiring_control_ids_and_reject_other_windows() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut first = store.begin(0);
+    first
+        .elements
+        .push(boundary("element-1-0", None, bounds, bounds));
+    store.publish(WindowId(1), first);
+    let pinned = store.window_page(WindowId(1), None, 0).unwrap();
+    let revision = store.tree_revision();
+    let mut next = store.begin(0);
+    next.elements
+        .push(boundary("element-2-0", None, bounds, bounds));
+    store.publish(WindowId(1), next);
+    let current = store.window_page(WindowId(1), None, 0).unwrap();
+    assert_eq!(store.tree_revision(), revision);
+    assert_eq!(current.page.snapshot.capture, pinned.page.snapshot.capture);
+    assert_ne!(current.frame_sequence, pinned.frame_sequence);
+    assert_eq!(
+        store
+            .window_page(WindowId(1), Some(&pinned.presentation), 0)
+            .unwrap()
+            .frame_sequence,
+        pinned.frame_sequence
+    );
+    assert!(
+        store
+            .window_page(WindowId(2), Some(&pinned.presentation), 0)
+            .is_err()
+    );
+    assert!(
+        store
+            .window_page(WindowId(1), Some(&pinned.presentation), 2)
+            .is_err()
+    );
+}
+
+#[test]
 fn display_names_hide_wrappers_paths_and_generic_arguments() {
     for (kind, expected) in [
         ("gpui::elements::div::Div", "Div"),

@@ -228,6 +228,61 @@ impl Store {
         snapshot
     }
 
+    pub(crate) fn window_page(
+        &self,
+        window: WindowId,
+        presentation: Option<&str>,
+        offset: usize,
+    ) -> Result<WindowPage, InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+        let now = Instant::now();
+        state.pages.retain(|_, (_, until)| *until > now);
+        let prefix = format!("window-{}-frame-", window.0);
+        let (lease, full) = if let Some(lease) = presentation {
+            if !lease.starts_with(&prefix) {
+                return Err(InspectionError::StaleGeneration);
+            }
+            let full = state
+                .pages
+                .get(lease)
+                .map(|(capture, _)| capture.clone())
+                .ok_or(InspectionError::StaleGeneration)?;
+            (lease.to_owned(), full)
+        } else {
+            let full = state
+                .windows
+                .get(&window)
+                .map(|host| host.snapshot.clone())
+                .ok_or(InspectionError::NotRetained)?;
+            let lease = format!("{prefix}{}", full.frame_sequence);
+            if !state.pages.contains_key(&lease) {
+                if state.pages.len() >= 4 {
+                    let oldest = state
+                        .pages
+                        .iter()
+                        .min_by_key(|(_, (_, until))| *until)
+                        .map(|(key, _)| key.clone());
+                    if let Some(key) = oldest {
+                        state.pages.remove(&key);
+                    }
+                }
+                state
+                    .pages
+                    .insert(lease.clone(), (full.clone(), now + Duration::from_secs(5)));
+            }
+            (lease, full)
+        };
+        drop(state);
+        Ok(WindowPage {
+            window,
+            presentation: lease,
+            frame_sequence: full.frame_sequence.clone(),
+            metadata_revision: full.index_revision.clone(),
+            page: index_page(&full, offset)?,
+        })
+    }
+
     pub(crate) fn tree_page(
         &self,
         generation: Option<&str>,
@@ -267,38 +322,7 @@ impl Store {
             current
         };
         drop(state);
-        if offset > full.elements.len() {
-            return Err(InspectionError::InvalidPage);
-        }
-        let end = offset
-            .saturating_add(TREE_PAGE_SIZE)
-            .min(full.elements.len());
-        let mut snapshot = Snapshot {
-            elements: Vec::new(),
-            status: full.status,
-            capture: full.capture.clone(),
-            router_revision: full.router_revision,
-            omitted: full.omitted,
-            coverage: full.coverage.clone(),
-        };
-        snapshot.elements = full.elements[offset..end].iter().map(tree_entry).collect();
-        let mut bytes = 4096;
-        let count = snapshot
-            .elements
-            .iter()
-            .take_while(|element| {
-                bytes += budget::size(element, MAX_SNAPSHOT_BYTES) + 1;
-
-                bytes < MAX_SNAPSHOT_BYTES
-            })
-            .count();
-        snapshot.elements.truncate(count);
-        let end = offset + count;
-        Ok(TreePage {
-            snapshot,
-            next: (end < full.elements.len()).then_some(end),
-            total: full.elements.len(),
-        })
+        index_page(&full, offset)
     }
 
     pub(crate) fn element(&self, id: &str) -> Result<Element, InspectionError> {
@@ -852,4 +876,39 @@ fn same_parent(parent: Option<&str>, old: Option<&str>, capture: &str) -> bool {
         }
         None => parent == old,
     }
+}
+
+fn index_page(full: &Captured, offset: usize) -> Result<TreePage, InspectionError> {
+    if offset > full.elements.len() {
+        return Err(InspectionError::InvalidPage);
+    }
+    let end = offset
+        .saturating_add(TREE_PAGE_SIZE)
+        .min(full.elements.len());
+    let mut snapshot = Snapshot {
+        elements: Vec::new(),
+        status: full.status,
+        capture: full.capture.clone(),
+        router_revision: full.router_revision,
+        omitted: full.omitted,
+        coverage: full.coverage.clone(),
+    };
+    snapshot.elements = full.elements[offset..end].iter().map(tree_entry).collect();
+    let mut bytes = 4096;
+    let count = snapshot
+        .elements
+        .iter()
+        .take_while(|element| {
+            bytes += budget::size(element, MAX_SNAPSHOT_BYTES) + 1;
+
+            bytes < MAX_SNAPSHOT_BYTES
+        })
+        .count();
+    snapshot.elements.truncate(count);
+    let end = offset + count;
+    Ok(TreePage {
+        snapshot,
+        next: (end < full.elements.len()).then_some(end),
+        total: full.elements.len(),
+    })
 }

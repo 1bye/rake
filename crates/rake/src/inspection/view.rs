@@ -997,6 +997,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 store.publish_captured(
                     *host,
                     super::snapshot::Captured {
+                        frame_sequence: completed.snapshot.capture.clone(),
                         index_revision: completed.snapshot.capture.clone(),
                         tree: completed.snapshot,
                         details: completed.details,

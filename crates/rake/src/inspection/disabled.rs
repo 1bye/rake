@@ -9,6 +9,14 @@ pub use rake_protocol::inspection::*;
 pub(crate) struct Store {}
 
 impl Store {
+    pub(crate) fn window_page(
+        &self,
+        _: crate::router::WindowId,
+        _: Option<&str>,
+        _: usize,
+    ) -> Result<WindowPage, InspectionError> {
+        Err(InspectionError::Unavailable)
+    }
     pub(crate) fn preview_enabled(&self) -> bool {
         false
     }

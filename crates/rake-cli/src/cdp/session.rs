@@ -182,7 +182,21 @@ impl Session {
             "Rake.getWindows" => {
                 Ok(json!({"windows":super::native_input::windows(&self.instance)?}))
             }
-            "Rake.selectWindow" => self.native_input.select(&self.instance, &request.params),
+            "Rake.selectWindow" => {
+                let before = self.native_input.window;
+                let result = self.native_input.select(&self.instance, &request.params)?;
+                if before != self.native_input.window {
+                    self.dom.clear();
+                    self.index_revision = None;
+                    self.tracked_style_node = None;
+                    self.edit_sheets.clear();
+                    if self.domains.contains(&Domain::Dom) {
+                        self.event(Event::new("DOM.documentUpdated", json!({})));
+                    }
+                }
+                Ok(result)
+            }
+            "Rake.getSnapshot" | "Rake.findElements" => self.agent_snapshot(&request.params),
             "Input.dispatchMouseEvent" | "Input.dispatchKeyEvent" | "Input.insertText" => {
                 let command = self
                     .native_input
@@ -1763,6 +1777,10 @@ impl Session {
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
+        if let Some(window) = self.native_input.window {
+            self.refresh_window(window)?;
+            return Ok(());
+        }
         let paged = self
             .instance
             .info
@@ -1824,6 +1842,49 @@ impl Session {
         }
         self.index_revision = revision;
         self.deliver_dom_updates(reset)
+    }
+
+    fn refresh_window(
+        &mut self,
+        window: rake_protocol::router::WindowId,
+    ) -> std::result::Result<super::semantic::Presentation, Error> {
+        let presentation = super::semantic::read(&self.instance, &self.captures, window)?;
+        let reset = if self.index_revision.as_ref() != Some(&presentation.revision) {
+            for element in &presentation.tree.elements {
+                if let Some(source) = &element.source {
+                    self.sources.admit(source);
+                }
+            }
+            self.publish_sources();
+            self.dom
+                .update_shared_index(std::sync::Arc::clone(&presentation.tree))?
+        } else {
+            false
+        };
+        self.index_revision = Some(presentation.revision.clone());
+        self.deliver_dom_updates(reset)?;
+        Ok(presentation)
+    }
+
+    fn agent_snapshot(&mut self, params: &Value) -> std::result::Result<Value, Error> {
+        // Validate filters before performing runtime work.
+        super::semantic::selector(params)?;
+        let window = self.native_input.target(&self.instance)?.window;
+        self.native_input.window = Some(window);
+        let presentation = self.refresh_window(window)?;
+        let mut result = super::semantic::project(&presentation, &self.dom, params)?;
+        result["runtimeId"] = json!(self.instance.info.runtime_id);
+        if let Some(elements) = result["elements"].as_array_mut() {
+            for element in elements {
+                if !element["source"].is_null() {
+                    let source: rake_protocol::inspection::SourceLocation =
+                        serde_json::from_value(element["source"].clone())
+                            .map_err(|e| Error::new(-32000, e.to_string()))?;
+                    element["source"] = self.source_descriptor(&source);
+                }
+            }
+        }
+        Ok(result)
     }
 
     fn read_index(&self) -> std::result::Result<rake_protocol::inspection::Snapshot, Error> {

@@ -913,6 +913,11 @@ mod tests {
             Query::Quit {},
             Query::InspectTree {},
             Query::InspectRevision {},
+            Query::InspectWindow {
+                window: "window-1".parse().unwrap(),
+                presentation: None,
+                offset: 0,
+            },
             Query::InspectTreePage {
                 generation: None,
                 offset: 0,

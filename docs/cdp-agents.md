@@ -53,3 +53,26 @@ image budget; oversized PNGs report an error suggesting JPEG or a smaller window
 The server owns the temporary helper; capture/compiler subprocesses have finite
 deadlines, bounded output and process-group cancellation. No image is captured
 and no helper is compiled in production builds or ordinary CDP startup.
+
+## Semantic snapshots
+
+`Rake.getSnapshot` and `Rake.findElements` return compact captured nodes for the
+selected window. `query` accepts exact `id`, `stableId`, `nodeId`, `name`,
+case-insensitive `role`, literal `textContains`, `enabled` and `visible` filters.
+Unknown filters fail explicitly. Defaults return at most 100 nodes; `limit` is
+bounded to 256. Continue with `offset` and the returned revision as
+`expectedRevision`; changed/missing revisions reject continuation.
+
+Results include runtime/window identity, draw sequence, capture/metadata revision,
+node/parent/stable IDs, type, role/name/text, sampled bounds/clipping, enabled/focus
+state and workspace-confined Rust source URLs. Text previews stop at 512 UTF-8
+bytes without splitting characters; `textTruncated`, omission counts and engine
+coverage remain explicit. Detailed text/styles use the existing DOM/CSS methods.
+Visibility describes captured layout, clipping and accessibility; final GPU
+occlusion and opaque descendants remain outside coverage.
+
+The runtime pins all pages to one inspection draw for five seconds, with at most
+four retained page leases shared with ordinary tree paging. Unchanged semantic
+indexes reuse the existing shared immutable cache; a separate draw sequence
+advances without invalidating stable control IDs or unchanged-tree caching.
+Switching windows retires old CDP node handles; runtime replacement clears selection.

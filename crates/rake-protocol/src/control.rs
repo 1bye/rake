@@ -263,6 +263,15 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Lightweight inspection of one concrete window, pinned across pagination.
+    InspectWindow {
+        /// Runtime-scoped target.
+        window: WindowId,
+        /// None starts a new presentation; continue with the returned lease.
+        presentation: Option<String>,
+        /// Depth-first offset within that presentation.
+        offset: usize,
+    },
     /// Describes inspected windows opted into the macOS development preview.
     Preview {},
     /// Hit-tests an exact inspected presentation without activating the element.
@@ -383,6 +392,7 @@ impl Query {
             "inspect_pick",
             "inspect_tree",
             "inspect_revision",
+            "inspect_window",
             "inspect_tree_page",
             "frames",
             "inspect_element",
@@ -485,6 +495,8 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    /// A window-specific, draw-pinned inspection page.
+    InspectionWindow(crate::inspection::WindowPage),
     /// Native allocation samples, without ownership graph or exact heap claims.
     Memory(crate::inspection::memory::Snapshot),
     /// Capture generation, hover and sequenced click selection.
