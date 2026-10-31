@@ -94,8 +94,8 @@ Hover or focus the toolbar's comments badge to see saved annotations. Hover or
 focus a note to outline its element. Clicking a note/pin edits it; the remove
 button deletes it. Clicking the badge copies all comments in the same plain-text
 format as a direct element copy, with each comment above its bracketed reference.
-Only after copying succeeds, a small popover offers **Keep comments** and
-**Clear comments**. Clear removes the copied notes; notes added or edited after
+Only after copying succeeds, a small popover offers **Keep** and
+**Clear**. Clear removes the copied notes; notes added or edited after
 the copy are kept. Keep, Escape or clicking outside dismisses the question without
 clearing. Failed copies leave all notes intact. An empty badge cannot copy.
 Hovering a note also supports `Cmd/Ctrl+C` for copying just that note.
