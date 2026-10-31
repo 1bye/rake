@@ -53,6 +53,24 @@ fn main(){
         println!("{}:installed resource",env!("CARGO_PKG_VERSION"));return;
     }
     let service=rake::updates!().unwrap().testing_loopback_tls(&std::fs::read(resources.path("ca.pem").unwrap()).unwrap()).unwrap();
+    if matches!(mode.as_str(),"--check"|"--decline"|"--update") {
+        let updates=rake::updates::UpdateController::new(service);
+        let execute=|updates:&rake::updates::UpdateController| {
+            let work=updates.take_work().expect("queued provider work");
+            std::thread::scope(|scope|scope.spawn(move||work.run()).join().unwrap());
+        };
+        updates.check().unwrap();execute(&updates);
+        let rake::updates::UpdateState::Available(info)=updates.state() else {panic!("expected update availability, got {:?}",updates.state());};
+        assert_eq!(info.version,"1.0.1");
+        if mode=="--check" {println!("available:{}",info.version);return;}
+        updates.download().unwrap();execute(&updates);
+        assert!(matches!(updates.state(),rake::updates::UpdateState::ReadyToRestart(_)),"{:?}",updates.state());
+        let handoff=updates.restart_handoff(vec!["--after-update".into()]).unwrap();
+        assert!(matches!(updates.state(),rake::updates::UpdateState::AwaitingApproval(_)));
+        if mode=="--decline" {assert!(handoff.commit(false).is_err());assert_eq!(updates.state(),rake::updates::UpdateState::Idle);return;}
+        handoff.commit(true).unwrap();return;
+    }
+
     let cancelled=AtomicBool::new(false);
     let update=service.check_appimage(&cancelled).unwrap().expect("N+1 update");
     if mode=="--check" {println!("available:{}",update.release().version);return;}

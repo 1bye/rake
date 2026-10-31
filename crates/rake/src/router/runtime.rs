@@ -33,6 +33,8 @@ use super::{
 
 mod quit;
 mod reload;
+#[cfg(feature = "updates")]
+mod updates;
 mod windows;
 
 #[cfg(test)]
@@ -255,8 +257,8 @@ struct Core<R: Route> {
     update_exit: Cell<rake_updates::RestartDisposition>,
     #[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
     native_quit: RefCell<Option<Rc<rake_updates::NativeQuitBridge>>>,
-    #[cfg(all(feature = "updates-sparkle", feature = "gpui", target_os = "macos"))]
-    sparkle: RefCell<Option<rake_updates::Sparkle>>,
+    #[cfg(all(feature = "updates", feature = "gpui", not(target_family = "wasm")))]
+    update_revision: Cell<u64>,
     reload: RefCell<crate::reload::ReloadStatus>,
     reload_ui_ready: RefCell<BTreeSet<WindowId>>,
     #[cfg(target_family = "wasm")]
@@ -483,8 +485,8 @@ impl<R: Route> Router<R> {
             update_exit: Cell::new(rake_updates::RestartDisposition::ExitHost),
             #[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
             native_quit: RefCell::new(None),
-            #[cfg(all(feature = "updates-sparkle", feature = "gpui", target_os = "macos"))]
-            sparkle: RefCell::new(None),
+            #[cfg(all(feature = "updates", feature = "gpui", not(target_family = "wasm")))]
+            update_revision: Cell::new(u64::MAX),
             has_window: Cell::new(false),
             shutdown: Cell::new(false),
         }))

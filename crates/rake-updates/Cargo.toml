@@ -12,7 +12,7 @@ workspace = true
 [features]
 sparkle = ["native-lifecycle"]
 native-tests = ["native-lifecycle"]
-native-lifecycle = ["dep:cc", "dep:event-listener"]
+native-lifecycle = ["dep:cc"]
 appimage = ["dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:fs2", "dep:tempfile"]
 velopack = ["dep:winreg", "dep:windows-sys", "dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
 
@@ -22,7 +22,7 @@ rake-resources = { path = "../rake-resources" }
 rake-dist-core = { path = "../rake-dist-core" }
 thiserror.workspace = true
 serde_json.workspace = true
-event-listener = { version = "5.4", optional = true }
+event-listener = "5.4"
 semver = "1"
 url = "2.5"
 sha2 = { version = "0.10", optional = true }
@@ -48,3 +48,7 @@ required-features = ["native-tests"]
 [target.'cfg(windows)'.dependencies]
 winreg = { version = "0.56", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell"], optional = true }
+
+[[example]]
+name = "sparkle-state"
+required-features = ["native-tests", "sparkle"]

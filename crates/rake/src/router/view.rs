@@ -434,8 +434,6 @@ impl<R: Route> Workspace<R> {
 
         let contexts = Rc::new(RefCell::new(BTreeMap::new()));
 
-        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
-        let update_service = services.get::<rake_updates::UpdateService>().ok();
         let router = Router::with_views(
             config,
             services,
@@ -462,9 +460,7 @@ impl<R: Route> Workspace<R> {
 
         router.install_quit_action(cx);
         #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
-        if let Some(service) = update_service
-            && let Err(error) = router.install_sparkle(&service)
-        {
+        if let Err(error) = router.install_sparkle() {
             tracing::error!(%error,"native updater could not start");
         }
         router.client().set_commands(commands);
@@ -531,9 +527,9 @@ impl<R: Route> Workspace<R> {
                         let mut revision = u64::MAX;
 
                         loop {
-                            #[cfg(all(feature="updates",target_os="macos"))]
-                            let changed=Box::pin(observed.changed_with_native_quit(revision));
-                            #[cfg(not(all(feature="updates",target_os="macos")))]
+                            #[cfg(all(feature="updates",not(target_family="wasm")))]
+                            let changed=Box::pin(observed.changed_with_updates(revision));
+                            #[cfg(not(all(feature="updates",not(target_family="wasm"))))]
                             let changed=Box::pin(observed.changed(revision));
                             #[cfg(feature="devtools")]
                             {
@@ -791,8 +787,6 @@ impl<R: Route> Render for Workspace<R> {
         let cancel_jobs_router = self.router.clone();
         let quit_id = snapshot.quit.operation_id;
 
-        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
-        let update_router = self.router.clone();
         let quit_controls = div()
             .flex()
             .gap_3()
@@ -865,20 +859,77 @@ impl<R: Route> Render for Workspace<R> {
                 )
             });
 
-        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
-        let quit_controls = quit_controls.child(
-            div()
-                .id("check-for-updates")
-                .px_3()
-                .py_2()
-                .cursor_pointer()
-                .child("Check for updates…")
-                .on_click(move |_, _, _| {
-                    if let Err(error) = update_router.check_for_updates() {
-                        tracing::error!(%error,"could not check for updates");
-                    }
-                }),
-        );
+        #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+        let quit_controls = if let Some(updates) = self.router.updates() {
+            use rake_updates::UpdateState;
+            let state = updates.state();
+            let label = match &state {
+                UpdateState::Available(info) => Some(format!("Update {} available…", info.version)),
+                UpdateState::Downloading { progress, .. } if progress.total_bytes > 0 => {
+                    Some(format!(
+                        "Downloading {}% — Cancel",
+                        progress
+                            .received_bytes
+                            .saturating_mul(100)
+                            .checked_div(progress.total_bytes)
+                            .unwrap_or(0)
+                            .min(100)
+                    ))
+                }
+                UpdateState::Downloading { .. } => Some("Downloading… — Cancel".into()),
+                UpdateState::Checking => Some("Checking… — Cancel".into()),
+                UpdateState::Idle | UpdateState::UpToDate => Some("Check for updates…".into()),
+                UpdateState::Extracting { .. } => Some("Preparing update…".into()),
+                UpdateState::ReadyToRestart(_) => Some("Restart to update".into()),
+                UpdateState::Cancelling => Some("Cancelling update…".into()),
+                UpdateState::AwaitingApproval(_) => Some("Waiting to restart…".into()),
+                UpdateState::Restarting(_) => Some("Restarting for update…".into()),
+                UpdateState::Failed { .. } => Some("Update failed — Retry".into()),
+                UpdateState::ManagedExternally(_) => Some("Updates managed by your system".into()),
+                _ => None,
+            };
+            let actionable = matches!(
+                state,
+                UpdateState::Idle
+                    | UpdateState::UpToDate
+                    | UpdateState::Available(_)
+                    | UpdateState::ReadyToRestart(_)
+                    | UpdateState::Checking
+                    | UpdateState::Downloading { .. }
+                    | UpdateState::Failed { .. }
+            );
+            let router = self.router.clone();
+            if let Some(label) = label {
+                quit_controls.child(div().id("update-status").px_3().py_2().child(label).when(
+                    actionable,
+                    |control| {
+                        control.cursor_pointer().on_click(move |_, _, _| {
+                            let result = match updates.state() {
+                                UpdateState::Available(_) => router.download_update(),
+                                UpdateState::ReadyToRestart(_) => router
+                                    .restart_for_update(crate::quit::QuitOptions::default())
+                                    .map(|_| ()),
+                                UpdateState::Checking | UpdateState::Downloading { .. } => {
+                                    updates.cancel();
+                                    Ok(())
+                                }
+                                UpdateState::Idle
+                                | UpdateState::UpToDate
+                                | UpdateState::Failed { .. } => router.check_for_updates(),
+                                _ => Ok(()),
+                            };
+                            if let Err(error) = result {
+                                tracing::error!(%error, "update action failed");
+                            }
+                        })
+                    },
+                ))
+            } else {
+                quit_controls
+            }
+        } else {
+            quit_controls
+        };
 
         div()
             .size_full()

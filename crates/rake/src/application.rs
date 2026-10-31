@@ -270,6 +270,20 @@ impl<R: Route> App<R> {
                 }
             }
         }
+        #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+        if self
+            .services
+            .get::<rake_updates::UpdateController>()
+            .is_err()
+            && let Ok(service) = self.services.get::<rake_updates::UpdateService>()
+        {
+            self.services = self
+                .services
+                .with(rake_updates::UpdateController::new((*service).clone()))
+                .map_err(|error| {
+                    AppError::Updates(rake_updates::Error::Policy(error.to_string()))
+                })?;
+        }
         let services = self.services()?;
 
         if self.root.is_some() && self.routes.is_some() {
@@ -387,6 +401,24 @@ impl<R: Route> App<R> {
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
 
+            #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+            if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
+                #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
+                if let Err(error) = updates.initialize_sparkle_checks() {
+                    tracing::error!(%error, "native update checks could not start");
+                }
+                let executor = cx.background_executor().clone();
+                let task = cx.spawn(async move |_| {
+                    updates
+                        .run(move |work| {
+                            executor.spawn(async move {
+                                work.run();
+                            })
+                        })
+                        .await;
+                });
+                cx.set_global(UpdatesDriver { _task: task });
+            }
             match cx.open_window(self.window_options, move |window, cx| {
                 let view = root(services, window, cx);
 
@@ -488,3 +520,10 @@ impl Render for RootView {
         self.0.clone()
     }
 }
+
+#[cfg(all(feature = "updates", not(target_family = "wasm")))]
+struct UpdatesDriver {
+    _task: gpui::Task<()>,
+}
+#[cfg(all(feature = "updates", not(target_family = "wasm")))]
+impl gpui::Global for UpdatesDriver {}

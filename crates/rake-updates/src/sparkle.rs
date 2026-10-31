@@ -14,12 +14,14 @@ unsafe extern "C" {
         identifier: *const c_char,
         feed: *const c_char,
         key: *const c_char,
+        installation_allowed: bool,
         notify: extern "C" fn(*mut c_void),
         context: *mut c_void,
         error: *mut c_char,
         capacity: usize,
     ) -> *mut c_void;
     fn rake_sparkle_check(handle: *mut c_void);
+    fn rake_sparkle_probe(handle: *mut c_void) -> bool;
     fn rake_sparkle_pending(handle: *mut c_void) -> bool;
     fn rake_sparkle_take(handle: *mut c_void) -> bool;
     fn rake_sparkle_reply(handle: *mut c_void, approved: bool) -> bool;
@@ -32,6 +34,8 @@ unsafe extern "C" {
         extraction: *mut f64,
         error: *mut c_char,
         capacity: usize,
+        version: *mut c_char,
+        version_capacity: usize,
     );
     fn rake_sparkle_destroy(handle: *mut c_void);
 }
@@ -45,7 +49,7 @@ extern "C" fn notify(context: *mut c_void) {
 struct Inner {
     handle: NonNull<c_void>,
     signal: Box<Signal>,
-    quit: Rc<NativeQuitBridge>,
+    quit: Option<Rc<NativeQuitBridge>>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -60,6 +64,10 @@ pub enum SparkleStage {
     Idle,
     /// Fetching and authenticating the native appcast.
     Checking,
+    /// An eligible version is available for application UI.
+    Available,
+    /// A cancelled information check is finishing inside the SDK.
+    Cancelling,
     /// Downloading an authenticated release.
     Downloading,
     /// Verifying/extracting through Sparkle's installer.
@@ -78,6 +86,8 @@ pub enum SparkleStage {
 pub struct SparkleStatus {
     /// Current SDK/user-driver stage.
     pub stage: SparkleStage,
+    /// Eligible display version supplied by Sparkle, retained through staging.
+    pub available_version: Option<String>,
     /// Bytes downloaded so far.
     pub downloaded_bytes: u64,
     /// Expected bytes; zero means unknown.
@@ -110,6 +120,26 @@ impl Sparkle {
                 "Sparkle requires its compiled owner and an active native quit guard".into(),
             ));
         }
+        Self::from_service(service, Some(quit))
+    }
+    pub(crate) fn probe(service: &UpdateService) -> Result<Self, Error> {
+        Self::from_service(service, None)
+    }
+    pub(crate) fn guarded(&self) -> bool {
+        self.inner
+            .quit
+            .as_ref()
+            .is_some_and(|quit| quit.is_active())
+    }
+    fn from_service(
+        service: &UpdateService,
+        quit: Option<Rc<NativeQuitBridge>>,
+    ) -> Result<Self, Error> {
+        if service.binding.owner != UpdateOwner::Sparkle {
+            return Err(Error::Policy(
+                "this installation does not use Sparkle".into(),
+            ));
+        }
         let binding = &service.binding;
         let feed = rake_dist_core::feed_url(
             binding
@@ -134,7 +164,7 @@ impl Sparkle {
         identifier: &str,
         feed: &str,
         key: &str,
-        quit: Rc<NativeQuitBridge>,
+        quit: Option<Rc<NativeQuitBridge>>,
     ) -> Result<Self, Error> {
         let identifier =
             CString::new(identifier).map_err(|error| Error::Policy(error.to_string()))?;
@@ -151,6 +181,7 @@ impl Sparkle {
                 identifier.as_ptr(),
                 feed.as_ptr(),
                 key.as_ptr(),
+                quit.is_some(),
                 notify,
                 (&*signal as *const Signal).cast_mut().cast(),
                 error.as_mut_ptr(),
@@ -174,6 +205,22 @@ impl Sparkle {
         // SAFETY: the owned !Send controller remains on the AppKit main thread.
         unsafe { rake_sparkle_check(self.inner.handle.as_ptr()) };
         Ok(())
+    }
+    /// Probes the signed appcast without opening Sparkle's update dialog.
+    /// # Errors
+    /// Rejects an inactive guard or another native update session.
+    pub fn check_for_update_information(&self) -> Result<(), Error> {
+        if self.inner.quit.is_some() {
+            self.ensure_guard()?;
+        }
+        // SAFETY: the controller owns this live main-thread SDK bridge.
+        if !unsafe { rake_sparkle_probe(self.inner.handle.as_ptr()) } {
+            return Err(Error::Busy);
+        }
+        Ok(())
+    }
+    pub(crate) fn listen(&self) -> event_listener::EventListener {
+        self.inner.signal.changed.listen()
     }
     /// Waits for native progress/restart events without polling or borrowing the controller.
     pub fn changed(&self) -> impl std::future::Future<Output = ()> + use<> {
@@ -201,10 +248,13 @@ impl Sparkle {
             committed: false,
         };
         Ok(Some(RestartHandoff::native_provider(move || {
-            if !pending.inner.quit.is_active() {
-                return Err(Error::Policy("native quit guard lease was lost".into()));
-            }
-            pending.inner.quit.prepare_exit(true);
+            let quit = pending
+                .inner
+                .quit
+                .as_ref()
+                .filter(|quit| quit.is_active())
+                .ok_or_else(|| Error::Policy("native quit guard lease was lost".into()))?;
+            quit.prepare_exit(true);
             pending.committed = true;
             // SAFETY: pending retains the native bridge and commits its current callback once.
             if !unsafe { rake_sparkle_reply(pending.inner.handle.as_ptr(), true) } {
@@ -225,6 +275,7 @@ impl Sparkle {
     pub fn status(&self) -> SparkleStatus {
         let (mut stage, mut received, mut total, mut extraction) = (0, 0, 0, 0.0_f64);
         let mut error = [0; c_char_buffer_size()];
+        let mut version = [0; c_char_buffer_size()];
         // SAFETY: all output references/buffer are valid, uniquely borrowed and bounded.
         unsafe {
             rake_sparkle_status(
@@ -235,9 +286,12 @@ impl Sparkle {
                 &mut extraction,
                 error.as_mut_ptr(),
                 error.len(),
+                version.as_mut_ptr(),
+                version.len(),
             )
         };
         let error = diagnostic(&error);
+        let version = diagnostic(&version);
         SparkleStatus {
             stage: match stage {
                 1 => SparkleStage::Checking,
@@ -247,8 +301,11 @@ impl Sparkle {
                 5 => SparkleStage::Failed,
                 6 => SparkleStage::NoUpdate,
                 7 => SparkleStage::Installing,
+                8 => SparkleStage::Available,
+                9 => SparkleStage::Cancelling,
                 _ => SparkleStage::Idle,
             },
+            available_version: (!version.is_empty()).then_some(version),
             downloaded_bytes: received,
             total_bytes: total,
             extraction_fraction: if extraction.is_finite() {
@@ -260,7 +317,12 @@ impl Sparkle {
         }
     }
     fn ensure_guard(&self) -> Result<(), Error> {
-        if self.inner.quit.is_active() {
+        if self.inner.quit.is_none() {
+            return Err(Error::Policy(
+                "installation requires the host's native quit guard".into(),
+            ));
+        }
+        if self.guarded() {
             Ok(())
         } else {
             self.cancel();

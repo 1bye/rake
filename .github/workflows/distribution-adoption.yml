@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [acceptance, comparison, velopack, velopack-update, linux-deep, flatpak, windows-update, linux-final, windows-final, appinstaller]
+        options: [acceptance, comparison, velopack, velopack-update, updates-controller, linux-deep, flatpak, windows-update, linux-final, windows-final, appinstaller]
         default: acceptance
       fixture_run:
         type: string
@@ -42,7 +42,7 @@ jobs:
           name: adoption-${{ matrix.os }}
           path: adoption-results.json
   acceptance:
-    if: inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
+    if: inputs.mode == 'updates-controller' || inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
     strategy:
       fail-fast: false
       matrix:
@@ -70,8 +70,21 @@ jobs:
         if: runner.os == 'Linux' && inputs.mode == 'linux-deep'
         timeout-minutes: 10
         run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install --repositories
+      - name: Shared update controller tests and native host checks
+        if: inputs.mode == 'updates-controller'
+        timeout-minutes: 8
+        shell: python
+        run: |
+          import os, subprocess
+          feature = 'velopack' if os.name == 'nt' else 'appimage'
+          if os.name != 'nt':
+              subprocess.run(['sudo', 'apt-get', 'update'], check=True)
+              subprocess.run(['sudo', 'apt-get', 'install', '-y', 'patchelf', 'desktop-file-utils', 'libfuse2'], check=True)
+              subprocess.run(['cargo', 'build', '-p', 'rake-cli', '--locked'], check=True)
+          subprocess.run(['cargo', 'test', '-p', 'rake-updates', '--features', feature, '--locked'], check=True)
+          subprocess.run(['cargo', 'check', '-p', 'rake', '--features', 'updates-' + feature, *([] if os.name == 'nt' else ['--no-default-features']), '--locked'], check=True)
       - name: Signed AppImage HTTPS publication and native update
-        if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
+        if: always() && runner.os == 'Linux' && ((inputs.mode == 'updates-controller' && success()) || inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
         timeout-minutes: 8
         run: python3 scripts/test-distribution-appimage.py --cli target/debug/rake
       - uses: actions/download-artifact@v4
@@ -116,7 +129,7 @@ jobs:
         if: runner.os == 'Windows' && inputs.mode == 'acceptance'
         run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Build CLI for focused Velopack acceptance
-        if: inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
+        if: (inputs.mode == 'updates-controller' && runner.os == 'Windows') || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
         run: cargo build -p rake-cli --locked
       - name: Create a disposable local Windows signing profile
         timeout-minutes: 2
@@ -151,7 +164,7 @@ jobs:
           cargo test -p rake-cli --test update_key --locked
           cargo test -p rake-dist-core --locked
       - name: Velopack native install, upgrade and uninstall
-        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-update' && inputs.mode != 'velopack-update' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller' && (inputs.mode != 'velopack' || success())
+        if: always() && runner.os == 'Windows' && inputs.mode != 'updates-controller' && inputs.mode != 'windows-update' && inputs.mode != 'velopack-update' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller' && (inputs.mode != 'velopack' || success())
         timeout-minutes: 8
         run: python scripts/test-distribution-velopack.py --cli target/debug/rake.exe
       - name: Native private DLL isolation
@@ -159,7 +172,7 @@ jobs:
         timeout-minutes: 3
         run: cargo test -p rake-dist-windows --features native-signing-tests --test dll --locked
       - name: Velopack signed HTTPS feed and guarded SDK restart
-        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || ((inputs.mode == 'velopack' || inputs.mode == 'velopack-update') && success()))
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || ((inputs.mode == 'updates-controller' || inputs.mode == 'velopack' || inputs.mode == 'velopack-update') && success()))
         timeout-minutes: 12
         run: python scripts/test-distribution-velopack-update.py --cli target/debug/rake.exe
       - name: Managed metadata and localized PRI SDK acceptance

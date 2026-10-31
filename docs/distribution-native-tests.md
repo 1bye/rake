@@ -109,3 +109,22 @@ native frame and read its installed resource on 2026-10-30. Running it requires
 WindowServer access outside the filesystem sandbox. The same `native-acceptance`
 feature is used on all three initial platforms. Production trust and Sparkle
 acceptance above remain separate from this development UI fixture.
+
+## Shared updates controller
+
+The `updates-controller` mode of `distribution-adoption.yml` runs only Linux and
+Windows controller tests, native host compilation, and the existing signed HTTPS
+AppImage/Velopack N→N+1 fixtures. Their check, download, decline and restart paths
+use `UpdateController`; provider-specific corruption/cancellation cases remain in
+the same fixtures. No engine comparison or Flatpak/installer matrix is required.
+
+On macOS, `scripts/test-distribution-sparkle-state.py --cli target/debug/rake
+--appcast /path/to/signed/appcast.xml --public-key /path/to/sparkle.pub` builds
+isolated bundled probes against an existing Sparkle 2.10.1 signed feed advertising
+1.0.1. It checks availability from 1.0.0, UpToDate from 1.0.1, cancellation and
+signature rejection, plus zero native windows and no payload download. Run outside
+the sandbox with an active graphical login. It also verifies checking without a
+quit guard, rejecting installation without one, and attaching a guard afterward.
+This probe does not install an update
+or alter signing profiles. The existing native Sparkle installation gate remains
+responsible for full SDK installation and guarded termination.

@@ -67,6 +67,7 @@ void rake_native_quit_destroy(void *handle) {
 @implementation RakeTestQuitDelegate
 - (NSInteger)rakeForwardingProbe {return 42;}
 @end
+size_t rake_native_quit_test_window_count(void) {return NSApp.windows.count;}
 void *rake_native_quit_test_app_create(void) {
     [NSApplication sharedApplication];
     RakeTestQuitDelegate *delegate=[RakeTestQuitDelegate new];

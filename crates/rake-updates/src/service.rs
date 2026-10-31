@@ -4,7 +4,7 @@ use rake_dist_core::{Installation, UpdateBinding, UpdateOwner};
 use rake_resources::Resources;
 
 /// Bytes transferred by a bounded update download.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DownloadProgress {
     /// Verified upper bound from the signed feed.
     pub total_bytes: u64,
@@ -28,7 +28,7 @@ pub enum Capability {
 }
 
 /// Owns embedded verification policy and the installation it authorizes.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UpdateService {
     pub(crate) binding: UpdateBinding,
     #[cfg(all(
@@ -174,8 +174,8 @@ pub enum RestartDisposition {
 
 /// A pending handoff owned by the application lifecycle; dropping it never installs.
 pub struct RestartHandoff {
-    action: Option<Box<dyn FnOnce() -> Result<(), Error>>>,
-    disposition: RestartDisposition,
+    pub(crate) action: Option<Box<dyn FnOnce() -> Result<(), Error>>>,
+    pub(crate) disposition: RestartDisposition,
 }
 impl std::fmt::Debug for RestartHandoff {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -29,6 +29,11 @@ typedef void (*RakeSparkleNotify)(void *context);
 @property(nonatomic,strong) RakeSparkleDriver *driver;
 @property(nonatomic,copy) NSString *feed;
 @property(nonatomic,copy) NSString *lastError;
+@property(nonatomic,copy) NSString *availableVersion;
+@property(nonatomic,assign) BOOL probing;
+@property(nonatomic,assign) BOOL cancelledProbe;
+@property(nonatomic,assign) BOOL guardDeclined;
+@property(nonatomic,assign) BOOL installationAllowed;
 @property(nonatomic,copy) void (^pending)(BOOL);
 @property(nonatomic,strong) RakeSparkleChoice *choice;
 @property(nonatomic,copy) void (^onQuit)(void);
@@ -47,14 +52,43 @@ typedef void (*RakeSparkleNotify)(void *context);
 @implementation RakeSparkleBridge
 - (void)changed {if (self.notify) self.notify(self.context);}
 - (void)queue:(void (^)(BOOL))resume {
-    if (!self.notify) {resume(NO);return;}
+    if (!self.notify || !self.installationAllowed) {resume(NO);return;}
     if (self.pending) {resume(NO);return;}
     self.pending=resume;
+    self.guardDeclined=NO;
     self.taken=NO;
     self.stage=4;
     [self changed];
 }
+- (BOOL)updater:(SPUUpdater *)updater mayPerformUpdateCheck:(SPUUpdateCheck)check error:(NSError * __autoreleasing *)error {
+    if (self.installationAllowed || check==SPUUpdateCheckUpdateInformation) return YES;
+    if (error) *error=[NSError errorWithDomain:@"dev.rake.updates" code:1 userInfo:@{NSLocalizedDescriptionKey:@"The application has not configured guarded update installation."}];
+    return NO;
+}
+- (BOOL)updater:(SPUUpdater *)updater shouldProceedWithUpdate:(SUAppcastItem *)item updateCheck:(SPUUpdateCheck)check error:(NSError * __autoreleasing *)error {
+    return [self updater:updater mayPerformUpdateCheck:check error:error];
+}
 - (NSString *)feedURLStringForUpdater:(SPUUpdater *)updater {return self.feed;}
+- (void)updater:(SPUUpdater *)updater didFindValidUpdate:(SUAppcastItem *)item {
+    if (self.cancelledProbe) return;
+    self.availableVersion=item.displayVersionString ?: item.versionString;
+    if (!self.probing) self.stage=8;
+    [self changed];
+}
+- (void)updaterDidNotFindUpdate:(SPUUpdater *)updater {
+    if (self.cancelledProbe) return;
+    self.availableVersion=nil;self.stage=6;[self changed];
+}
+- (void)updater:(SPUUpdater *)updater didFinishUpdateCycleForUpdateCheck:(SPUUpdateCheck)check error:(NSError *)error {
+    if (self.probing) {
+        if (self.cancelledProbe) {self.stage=0;self.availableVersion=nil;}
+        else if (self.stage==1) {
+            if (error) {self.stage=5;self.lastError=error.localizedDescription;}
+            else self.stage=self.availableVersion ? 8 : 6;
+        }
+        self.probing=NO;self.cancelledProbe=NO;[self changed];
+    }
+}
 - (BOOL)updaterShouldPromptForPermissionToCheckForUpdates:(SPUUpdater *)updater {return NO;}
 - (BOOL)updater:(SPUUpdater *)updater shouldPostponeRelaunchForUpdate:(SUAppcastItem *)item untilInvokingBlock:(void (^)(void))handler {
     if (self.authorized) return NO;
@@ -62,10 +96,10 @@ typedef void (*RakeSparkleNotify)(void *context);
     return YES;
 }
 - (BOOL)updater:(SPUUpdater *)updater willInstallUpdateOnQuit:(SUAppcastItem *)item immediateInstallationBlock:(void (^)(void))handler {
-    self.onQuit=handler;
+    if (self.installationAllowed) self.onQuit=handler;
     return YES;
 }
-- (BOOL)updaterShouldRelaunchApplication:(SPUUpdater *)updater {return self.authorized;}
+- (BOOL)updaterShouldRelaunchApplication:(SPUUpdater *)updater {return self.installationAllowed && self.authorized;}
 @end
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wprotocol"
@@ -73,6 +107,8 @@ typedef void (*RakeSparkleNotify)(void *context);
 - (BOOL)respondsToSelector:(SEL)selector {return [super respondsToSelector:selector] || [self.standard respondsToSelector:selector];}
 - (id)forwardingTargetForSelector:(SEL)selector {return [self.standard respondsToSelector:selector] ? self.standard : [super forwardingTargetForSelector:selector];}
 - (void)showUpdateFoundWithAppcastItem:(SUAppcastItem *)item state:(SPUUserUpdateState *)state reply:(void (^)(SPUUserUpdateChoice))reply {
+    self.owner.availableVersion=item.displayVersionString ?: item.versionString;
+    self.owner.stage=8;[self.owner changed];
     RakeSparkleChoice *continuation=[RakeSparkleChoice new];
     continuation.reply=reply;
     self.owner.choice=continuation;
@@ -99,7 +135,7 @@ typedef void (*RakeSparkleNotify)(void *context);
     }];
 }
 - (void)showUserInitiatedUpdateCheckWithCancellation:(void (^)(void))cancellation {
-    self.owner.stage=1;
+    self.owner.stage=1;self.owner.lastError=nil;self.owner.availableVersion=nil;
     self.owner.cancelDownload=cancellation;
     [self.owner changed];
     [self.standard showUserInitiatedUpdateCheckWithCancellation:cancellation];
@@ -124,11 +160,11 @@ typedef void (*RakeSparkleNotify)(void *context);
     self.owner.stage=5;self.owner.lastError=error.localizedDescription;[self.owner changed];[self.standard showUpdaterError:error acknowledgement:acknowledgement];
 }
 - (void)showUpdateNotFoundWithError:(NSError *)error acknowledgement:(void (^)(void))acknowledgement {self.owner.stage=6;[self.owner changed];[self.standard showUpdateNotFoundWithError:error acknowledgement:acknowledgement];}
-- (void)dismissUpdateInstallation {self.owner.cancelDownload=nil;if (self.owner.stage!=5 && self.owner.stage!=6) self.owner.stage=0;[self.owner changed];[self.standard dismissUpdateInstallation];}
+- (void)dismissUpdateInstallation {self.owner.cancelDownload=nil;if (self.owner.stage!=5 && self.owner.stage!=6) self.owner.stage=(self.owner.guardDeclined && self.owner.availableVersion) ? 8 : 0;[self.owner changed];[self.standard dismissUpdateInstallation];}
 @end
 #pragma clang diagnostic pop
 
-void *rake_sparkle_create(const char *identifier,const char *feed,const char *key,RakeSparkleNotify notify,void *context,char *error,size_t capacity) {
+void *rake_sparkle_create(const char *identifier,const char *feed,const char *key,bool installationAllowed,RakeSparkleNotify notify,void *context,char *error,size_t capacity) {
     @try {
         if (![NSThread isMainThread] || !NSApp) {snprintf(error,capacity,"Sparkle requires a running AppKit main thread");return NULL;}
         NSBundle *bundle=NSBundle.mainBundle;
@@ -138,7 +174,7 @@ void *rake_sparkle_create(const char *identifier,const char *feed,const char *ke
             snprintf(error,capacity,"Sparkle bundle verification policy conflicts with compiled policy");return NULL;
         }
         RakeSparkleBridge *bridge=[RakeSparkleBridge new];
-        bridge.feed=[NSString stringWithUTF8String:feed];bridge.notify=notify;bridge.context=context;
+        bridge.feed=[NSString stringWithUTF8String:feed];bridge.notify=notify;bridge.context=context;bridge.installationAllowed=installationAllowed;
         bridge.driver=[RakeSparkleDriver new];bridge.driver.owner=bridge;
         bridge.driver.standard=[[SPUStandardUserDriver alloc] initWithHostBundle:bundle delegate:nil];
         bridge.updater=[[SPUUpdater alloc] initWithHostBundle:bundle applicationBundle:bundle userDriver:bridge.driver delegate:bridge];
@@ -151,25 +187,43 @@ void *rake_sparkle_create(const char *identifier,const char *feed,const char *ke
         return (__bridge_retained void *)bridge;
     } @catch (NSException *exception) {snprintf(error,capacity,"%s",exception.reason.UTF8String);return NULL;}
 }
+bool rake_sparkle_probe(void *handle) {
+    RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;
+    if (bridge.updater.sessionInProgress) return false;
+    bridge.probing=YES;bridge.cancelledProbe=NO;bridge.availableVersion=nil;bridge.lastError=nil;bridge.stage=1;
+    [bridge changed];[bridge.updater checkForUpdateInformation];return true;
+}
 void rake_sparkle_check(void *handle) {RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;[bridge.updater checkForUpdates];}
 bool rake_sparkle_pending(void *handle) {RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;return bridge.pending && !bridge.taken;}
 bool rake_sparkle_take(void *handle) {RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;if (!bridge.pending || bridge.taken) return false;bridge.taken=YES;return true;}
 bool rake_sparkle_reply(void *handle,bool approved) {
     RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;
-    if (!bridge.pending) return false;
+    if (!bridge.pending || (approved && !bridge.installationAllowed)) return false;
     void (^resume)(BOOL)=bridge.pending;bridge.pending=nil;bridge.taken=NO;bridge.authorized=approved;
-    resume(approved);return true;
+    if (!approved) {bridge.guardDeclined=YES;bridge.stage=bridge.availableVersion ? 8 : 0;}
+    resume(approved);[bridge changed];return true;
 }
-void rake_sparkle_cancel(void *handle) {RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;void (^cancel)(void)=bridge.cancelDownload;bridge.cancelDownload=nil;if (cancel) cancel();rake_sparkle_reply(handle,false);[bridge.choice finish:SPUUserUpdateChoiceSkip];bridge.choice=nil;}
-void rake_sparkle_status(void *handle,uint32_t *stage,uint64_t *received,uint64_t *total,double *extraction,char *error,size_t capacity) {
+void rake_sparkle_cancel(void *handle) {
     RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;
+    if (bridge.probing) {bridge.cancelledProbe=YES;bridge.stage=9;[bridge changed];return;}
+    if (bridge.stage==3 || bridge.stage==7) return;
+    void (^cancel)(void)=bridge.cancelDownload;bridge.cancelDownload=nil;
+    if (cancel) cancel();
+    rake_sparkle_reply(handle,false);
+    [bridge.choice finish:SPUUserUpdateChoiceSkip];bridge.choice=nil;
+    bridge.guardDeclined=NO;bridge.availableVersion=nil;bridge.stage=0;[bridge changed];
+}
+void rake_sparkle_status(void *handle,uint32_t *stage,uint64_t *received,uint64_t *total,double *extraction,char *error,size_t capacity,char *version,size_t versionCapacity) {
+    RakeSparkleBridge *bridge=(__bridge RakeSparkleBridge *)handle;
+    snprintf(version,versionCapacity,"%s",bridge.availableVersion ? bridge.availableVersion.UTF8String : "");
     *stage=bridge.stage;*received=bridge.received;*total=bridge.total;*extraction=bridge.extraction;
     snprintf(error,capacity,"%s",bridge.lastError ? bridge.lastError.UTF8String : "");
 }
 void rake_sparkle_destroy(void *handle) {
     RakeSparkleBridge *bridge=(__bridge_transfer RakeSparkleBridge *)handle;
     bridge.notify=NULL;bridge.context=NULL;
-    rake_sparkle_cancel((__bridge void *)bridge);
+    rake_sparkle_reply((__bridge void *)bridge,false);
+    [bridge.choice finish:SPUUserUpdateChoiceSkip];bridge.choice=nil;
     bridge.updater.automaticallyChecksForUpdates=NO;
     bridge.driver.owner=nil;
 }

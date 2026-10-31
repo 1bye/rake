@@ -180,6 +180,56 @@ staging alone never authorizes their shutdown. Blocking network/SDK operations
 belong on an application-owned background worker. Sparkle remains main-thread
 owned and its SDK UI is integrated with routed workspace update controls.
 
+### In-app update state
+
+Native `App` instances register one shared `rake::updates::UpdateController` when
+installed policy is available. The application owns its foreground driver and
+background work. No periodic checks or downloads start automatically. Routed
+workspace chrome shows availability/progress and offers check, download/cancel,
+and guarded restart actions through the same controller on each platform.
+
+Custom views resolve the same service through `page.services()` or root `Services`:
+
+```rust
+use rake::updates::{UpdateController, UpdateState};
+
+// Inside a mounted view with access to Services:
+let updates = services.get::<UpdateController>()?;
+let label = match updates.state() {
+    UpdateState::Available(info) => format!("Update {} available", info.version),
+    UpdateState::ReadyToRestart(_) => "Restart to update".into(),
+    _ => "Check for updates".into(),
+};
+```
+
+Keep a view-owned task awaiting `updates.changed(snapshot.revision)` and notify
+the view on each new snapshot. Registering the listener before reading the state
+prevents missed events. Controller clones share policy, selection and staging;
+one operation owns the provider at a time. `cancel()` requests bounded cleanup;
+`Cancelling` prevents a new download from racing that cleanup. Dropping a driver
+cancels work, and late results cannot replace newer state.
+
+`check()` probes eligibility; `download()` starts verified staging. Sparkle checks
+use the native information-only API, so an availability badge does not open a
+native dialog. Its display version comes from the SDK's eligible appcast item.
+`download()` on macOS opens Sparkle's native review/confirmation flow; Sparkle
+still owns download, extraction and installation. Windows and AppImage publish
+transfer progress directly into the shared model.
+
+`router.restart_for_update(options)` submits ready staging through existing
+save/work/window guards. Custom hosts take `updates.restart_handoff(args)` and
+commit it only after their own approval; dropping or declining it does not install.
+Package-manager builds report `ManagedExternally`, and unbundled development apps
+normally have no installed update service.
+
+Custom non-GPUI hosts own a future running `updates.run(execute)`, where `execute`
+dispatches `UpdateWork::run` to a blocking executor and returns its owned completion
+future. Rake does not create detached threads. Standalone Sparkle hosts additionally
+can check availability without a quit guard: Rake initializes an information-only
+SDK on the AppKit thread. `can_install()` remains false until an active
+`NativeQuitBridge` is attached. Custom hosts then honor native termination and
+approval; routed workspaces provide that installation integration automatically.
+
 See [release configuration](distribution-release.md) for one-command publication,
 local signing profiles, required native runner gates and Linux repositories.
 See [native acceptance](distribution-native-tests.md) for the repeatable tests.

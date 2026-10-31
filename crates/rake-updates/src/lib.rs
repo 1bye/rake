@@ -11,6 +11,8 @@ pub use macos_lifecycle::NativeQuitBridge;
 mod sparkle;
 #[cfg(all(target_os = "macos", feature = "sparkle"))]
 pub use sparkle::{Sparkle, SparkleStage, SparkleStatus};
+mod controller;
+pub use controller::{UpdateController, UpdateInfo, UpdateSnapshot, UpdateState, UpdateWork};
 mod service;
 #[cfg(all(windows, feature = "velopack"))]
 mod windows_registrations;
@@ -46,6 +48,9 @@ pub enum Error {
     /// The application's quit guards declined this restart.
     #[error("update restart was declined")]
     Declined,
+    /// Another check, download or restart already owns the controller.
+    #[error("an update operation is already active")]
+    Busy,
     /// The user cancelled an update operation.
     #[error("update operation cancelled")]
     Cancelled,
