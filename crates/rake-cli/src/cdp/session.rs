@@ -31,6 +31,7 @@ fn encoded_bytes(events: &[Option<EncodedEvent>]) -> usize {
 }
 
 struct Session {
+    screenshots: Option<std::sync::Arc<super::screenshot::Screenshots>>,
     native_input: super::native_input::NativeInput,
     captures: std::sync::Arc<super::captures::Captures>,
     index_revision: Option<rake_protocol::inspection::TreeRevision>,
@@ -71,6 +72,7 @@ struct Session {
 impl Session {
     fn new(instance: Instance, output: Option<std::path::PathBuf>) -> Self {
         Self {
+            screenshots: None,
             native_input: Default::default(),
             captures: std::sync::Arc::default(),
             index_revision: None,
@@ -153,6 +155,30 @@ impl Session {
             return Ok(result);
         }
         match method {
+            "Rake.getCaptureStatus" => Ok(
+                json!({"enabled":self.screenshots.is_some(),"helperReady":self.screenshots.as_ref().is_some_and(|s|s.available()),"error":self.screenshots.as_ref().and_then(|s|s.error()),"permission":"checked by ScreenCaptureKit during capture"}),
+            ),
+            "Page.captureScreenshot" => {
+                let target = self.native_input.target(&self.instance)?;
+                let screenshots = self.screenshots.as_ref().ok_or_else(|| {
+                    Error::new(
+                        -32000,
+                        "Start the CDP adapter with --capture to enable native screenshots",
+                    )
+                })?;
+                let result = screenshots.capture(&self.instance, &target, &request.params)?;
+                let after = self.native_input.target(&self.instance)?;
+                if after.native_id != target.native_id
+                    || after.frame != target.frame
+                    || after.content != target.content
+                {
+                    return Err(Error::new(
+                        -32000,
+                        "Native window geometry changed during capture; request a fresh screenshot",
+                    ));
+                }
+                Ok(result)
+            }
             "Rake.getWindows" => {
                 Ok(json!({"windows":super::native_input::windows(&self.instance)?}))
             }
@@ -2268,10 +2294,11 @@ pub(super) fn run(
     directory: std::path::PathBuf,
     source_base: String,
     access: &super::sources::Access,
-    captures: std::sync::Arc<super::captures::Captures>,
+    resources: super::ServerResources,
 ) -> Result<()> {
     let mut session = Session::new(instance, output);
-    session.captures = captures;
+    session.captures = resources.captures;
+    session.screenshots = resources.screenshots;
     session
         .sources
         .bind(&source_base, &session.instance.info.runtime_id.to_string());

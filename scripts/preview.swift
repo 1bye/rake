@@ -26,6 +26,7 @@ final class Frames: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
     private let codec: String
     private let width: Int
     private let height: Int
+    private let quality: Double
     private var session: VTCompressionSession?
     private var last: CVPixelBuffer?
     private var sequence = 0
@@ -33,10 +34,11 @@ final class Frames: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
     private let context = CIContext(options: [.cacheIntermediates: false])
     private let color = CGColorSpace(name: CGColorSpace.sRGB)!
 
-    init(codec: String, width: Int, height: Int) {
+    init(codec: String, width: Int, height: Int, quality: Double = 0.8) {
         self.codec = codec
         self.width = width
         self.height = height
+        self.quality = quality
         super.init()
         if codec == "h264" {
             var created: VTCompressionSession?
@@ -135,11 +137,15 @@ final class Frames: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
             if status != noErr { capacity.signal(); fail("H.264 submission failed: \(status)") }
         } else {
             autoreleasepool {
-                guard let jpeg = context.jpegRepresentation(of: CIImage(cvPixelBuffer: image), colorSpace: color,
-                    options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.8]) else { fail("JPEG encoding failed") }
+                let png = codec == "png"
+                let encoded = png ? context.pngRepresentation(of: CIImage(cvPixelBuffer: image), format: .RGBA8, colorSpace: color) :
+                    context.jpegRepresentation(of: CIImage(cvPixelBuffer: image), colorSpace: color,
+                    options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality])
+                guard let encoded else { fail("Image encoding failed") }
                 writer.lock()
                 defer { writer.unlock() }
-                packet(["kind": "jpeg"], jpeg)
+                packet(["kind": png ? "png" : "jpeg", "capturedAt": Date().timeIntervalSince1970], encoded)
+                if png || codec == "snapshot-jpeg" { exit(0) }
             }
         }
     }
@@ -160,12 +166,14 @@ final class Frames: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
 
 @available(macOS 14.0, *)
 func run() async {
-    guard CommandLine.arguments.count == 6,
+    guard (6...7).contains(CommandLine.arguments.count),
         let pid = Int32(CommandLine.arguments[1]), let id = UInt32(CommandLine.arguments[2]),
         let width = Double(CommandLine.arguments[3]), let height = Double(CommandLine.arguments[4]),
         width.isFinite, height.isFinite, width > 0, height > 0,
-        ["h264", "jpeg"].contains(CommandLine.arguments[5]) else { fail("Expected PID, window ID, frame dimensions and codec") }
+        ["h264", "jpeg", "png", "snapshot-jpeg"].contains(CommandLine.arguments[5]) else { fail("Expected PID, window ID, frame dimensions and codec") }
     let codec = CommandLine.arguments[5]
+    let quality = CommandLine.arguments.count == 7 ? Double(CommandLine.arguments[6]) ?? -1 : 0.8
+    guard quality >= 0 && quality <= 1 else { fail("Image quality must be within 0–1") }
     do {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
         guard let window = content.windows.first(where: { $0.windowID == id && $0.owningApplication?.processID == pid }) else { fail("Native window unavailable; restore it on this desktop") }
@@ -182,7 +190,7 @@ func run() async {
         config.minimumFrameInterval = CMTime(value: 1, timescale: codec == "h264" ? 60 : 30)
         config.queueDepth = 3
         config.capturesAudio = false
-        let frames = Frames(codec: codec, width: config.width, height: config.height)
+        let frames = Frames(codec: codec, width: config.width, height: config.height, quality: quality)
         let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: window), configuration: config, delegate: frames)
         try stream.addStreamOutput(frames, type: .screen, sampleHandlerQueue: frames.queue)
         // New/lagging viewers can request an IDR even while the app is idle.

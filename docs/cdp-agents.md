@@ -32,3 +32,24 @@ and Alt/Control/Meta/Shift are supported. Multiple simultaneous mouse buttons,
 modified wheel gestures and IME composition remain explicitly unsupported.
 Text is bounded to 16 KiB. Window identity and viewport geometry are validated
 again at runtime admission; an uncertain action is never automatically retried.
+
+## Screenshots
+
+Start `rake cdp --session SESSION --capture --no-open --json` to prepare capture
+once for the server. This opt-in keeps ordinary inspector startup free of Swift
+compilation and screen-recording setup. It requires macOS 14+, Xcode command-line
+tools and Screen Recording permission. `Rake.getCaptureStatus` reports helper
+preparation failures; permission is checked when capture runs.
+
+`Page.captureScreenshot { format: "png" | "jpeg", quality?: 0..100 }` returns
+base64 `data` and additional `rake` metadata: native window/content rectangles,
+pixel dimensions, scale, timestamp and the independently sampled inspection
+generation. It captures the selected whole native window, including window
+chrome, on the active desktop. It does not claim exact GPU-frame/tree correlation.
+Viewport clipping and capture beyond the window are rejected. Resize/replacement
+during capture invalidates the result. Images fit 1920×1440 and a 750 KiB encoded
+image budget; oversized PNGs report an error suggesting JPEG or a smaller window.
+
+The server owns the temporary helper; capture/compiler subprocesses have finite
+deadlines, bounded output and process-group cancellation. No image is captured
+and no helper is compiled in production builds or ordinary CDP startup.

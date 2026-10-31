@@ -15,6 +15,7 @@ mod memory;
 mod native_input;
 mod network;
 mod params;
+mod screenshot;
 mod server;
 mod session;
 mod sources;
@@ -32,9 +33,16 @@ use std::time::Duration;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const TIMEOUT: Duration = Duration::from_secs(2);
-const HELP: &str = "rake cdp [--session PATH] [--instance UUID|APPLICATION_ID] [--port PORT] [--no-open] [--json] [--export-trace FILE]\nDefault port: OS-assigned. Paste the printed devtools:// URL into Chrome, or use chrome://inspect.";
+const HELP: &str = "rake cdp [--session PATH] [--instance UUID|APPLICATION_ID] [--port PORT] [--no-open] [--json] [--capture] [--export-trace FILE]\n--capture prepares native screenshots (macOS 14+, Xcode tools, Screen Recording permission).\nDefault port: OS-assigned. Paste the printed devtools:// URL into Chrome, or use chrome://inspect.";
+
+#[derive(Clone)]
+struct ServerResources {
+    captures: std::sync::Arc<captures::Captures>,
+    screenshots: Option<std::sync::Arc<screenshot::Screenshots>>,
+}
 
 struct Options {
+    capture: bool,
     directory: PathBuf,
     selector: Option<String>,
     port: u16,
@@ -48,6 +56,7 @@ impl Options {
     fn parse(mut args: Vec<String>) -> Result<Self> {
         args.remove(0);
         let mut options = Self {
+            capture: false,
             directory: local::directory(),
             selector: None,
             port: 0,
@@ -61,6 +70,7 @@ impl Options {
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--capture" => options.capture = true,
                 "--export-trace" => {
                     options.export_trace = Some(PathBuf::from(
                         args.next().ok_or("--export-trace requires a file")?,

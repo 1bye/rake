@@ -102,7 +102,7 @@ fn connection(
     authority: &str,
     token: &str,
     sources: &super::sources::Access,
-    captures: std::sync::Arc<super::captures::Captures>,
+    resources: super::ServerResources,
 ) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -260,7 +260,7 @@ fn connection(
         options.directory.clone(),
         format!("http://{authority}/{token}"),
         sources,
-        captures,
+        resources,
     )
 }
 
@@ -268,6 +268,12 @@ pub(super) fn serve(options: Options) -> Result<()> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, options.port))?;
     let authority = listener.local_addr()?.to_string();
     let token = uuid::Uuid::new_v4().simple().to_string();
+    let resources = super::ServerResources {
+        captures: std::sync::Arc::new(super::captures::Captures::default()),
+        screenshots: options
+            .capture
+            .then(|| std::sync::Arc::new(super::screenshot::Screenshots::prepare())),
+    };
 
     let targets: Vec<_> = discover(&options.directory, options.selector.as_deref())?
         .iter()
@@ -310,7 +316,6 @@ pub(super) fn serve(options: Options) -> Result<()> {
 
     let active = AtomicUsize::new(0);
     let sources = super::sources::Access::default();
-    let captures = std::sync::Arc::new(super::captures::Captures::default());
 
     std::thread::scope(|scope| -> Result<()> {
         for stream in listener.incoming() {
@@ -323,10 +328,11 @@ pub(super) fn serve(options: Options) -> Result<()> {
             active.fetch_add(1, Ordering::Relaxed);
             let (options, authority, token, active, sources) =
                 (&options, &authority, &token, &active, &sources);
-            let captures = std::sync::Arc::clone(&captures);
+            let resources = resources.clone();
 
             scope.spawn(move || {
-                if let Err(error) = connection(stream, options, authority, token, sources, captures)
+                if let Err(error) =
+                    connection(stream, options, authority, token, sources, resources)
                 {
                     eprintln!("CDP connection: {error}");
                 }
