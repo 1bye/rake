@@ -1,0 +1,51 @@
+Blaze 0.20261027.0 (49ca152) — 2026-10-28
+Rake 543ed762c5272b62abf99280bc7ca9a6ab5dabc5
+
+=== rake-foundation: blaze build -p rake-foundation; exit 101; wall 148.320 s ===
+note: blaze builds with its own toolchain, blaze-2026-10-27, not rustc 1.95.0 (59807616e 2026-04-14), the toolchain cargo was started with. blaze is its own Rust toolchain whatever the project pins (docs/toolchain.md); the project's toolchain and its CI stay the final word
+   Compiling rake-foundation v0.1.0 (/Users/yuriihulyk/Documents/GitHub/rake/examples/foundation)
+error: could not build `librake_foundation.dylib`, `rake-foundation`: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+  blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
+  blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
+    clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
+(what blaze said is in /Users/yuriihulyk/.cache/ra-jit/workers/f950877dd5bc0e0f/log)
+real 148.32
+user 0.29
+sys 0.29
+
+=== rake-view: blaze build -p rake-view; exit 101; wall 27.510 s ===
+error: could not build `librake_view.dylib`, `rake-view`: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+  blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
+  blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
+    clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
+(what blaze said is in /Users/yuriihulyk/.cache/ra-jit/workers/b5ff2bfc5290178d/log)
+
+=== rake-routing: blaze build -p rake-routing; exit 101; wall 24.602 s ===
+error: could not build `librake_routing.dylib`, `rake-routing`: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+  blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
+  blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
+    clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
+(what blaze said is in /Users/yuriihulyk/.cache/ra-jit/workers/e0b27acd0df8d63d/log)
+
+=== rake-notes: blaze build -p rake-notes; exit 101; wall 23.733 s ===
+error: could not build `librake_notes.dylib`, `rake-notes`: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+  blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
+  blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
+    clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
+(what blaze said is in /Users/yuriihulyk/.cache/ra-jit/workers/971b4e03a5705306/log)
+
+=== rake-inspector: blaze build -p rake-inspector; exit 101; wall 23.421 s ===
+error: could not build `librake_inspector.dylib`, `rake-inspector`: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+  blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
+  blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
+    clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
+(what blaze said is in /Users/yuriihulyk/.cache/ra-jit/workers/67521f08d1d39b68/log)
+
+=== Foundation worker diagnostic ===
+symbols: 0 in 705.2µs
+Error: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+
+Caused by:
+    0: blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
+    1: blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
+         clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
