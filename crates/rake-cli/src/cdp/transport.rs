@@ -22,6 +22,8 @@ pub(super) struct Worker {
     input: mpsc::Receiver<Work>,
     output: mpsc::SyncSender<Output>,
     closed: Arc<AtomicBool>,
+    #[cfg(test)]
+    before_receive: Option<Arc<(std::sync::Barrier, std::sync::Barrier)>>,
 }
 
 impl Worker {
@@ -29,7 +31,17 @@ impl Worker {
         if self.closed.load(Ordering::Acquire) {
             return Err(mpsc::RecvTimeoutError::Disconnected);
         }
-        self.input.recv_timeout(Duration::from_millis(20))
+        // A per-worker scheduling point lets tests close during the blocking receive.
+        #[cfg(test)]
+        if let Some(gates) = &self.before_receive {
+            gates.0.wait();
+            gates.1.wait();
+        }
+        let work = self.input.recv_timeout(Duration::from_millis(20));
+        if self.closed.load(Ordering::Acquire) {
+            return Err(mpsc::RecvTimeoutError::Disconnected);
+        }
+        work
     }
 
     pub fn send(&self, message: Message) -> Result<()> {
@@ -69,6 +81,8 @@ pub(super) fn serve(
         input: requests,
         output: events,
         closed: Arc::clone(&closed),
+        #[cfg(test)]
+        before_receive: None,
     };
     let thread = std::thread::spawn(move || work(worker).map_err(|error| error.to_string()));
     let mut peer_closed = false;

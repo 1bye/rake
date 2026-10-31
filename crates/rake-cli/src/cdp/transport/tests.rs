@@ -5,6 +5,47 @@
 use super::*;
 
 #[test]
+fn disconnect_during_receive_cancels_queued_mutations_and_idle_polling() {
+    for queued in [true, false] {
+        let gates = Arc::new((std::sync::Barrier::new(2), std::sync::Barrier::new(2)));
+        let (input, requests) = mpsc::sync_channel(4);
+        let (events, _output) = mpsc::sync_channel(2);
+        let closed = Arc::new(AtomicBool::new(false));
+        let worker = Worker {
+            input: requests,
+            output: events,
+            closed: Arc::clone(&closed),
+            before_receive: Some(Arc::clone(&gates)),
+        };
+        let reader = std::thread::spawn(move || worker.read());
+
+        gates.0.wait();
+        if queued {
+            input
+                .send(Work {
+                    request: Request {
+                        id: 1,
+                        method: "DOM.setNodeValue".into(),
+                        params: serde_json::json!({"nodeId":2,"value":"changed"}),
+                    },
+                    deadline: Instant::now() + Duration::from_secs(2),
+                })
+                .unwrap();
+        }
+        closed.store(true, Ordering::Release);
+        gates.1.wait();
+
+        assert!(
+            matches!(
+                reader.join().unwrap(),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            ),
+            "disconnect must stop both queued mutations and polling after an idle receive"
+        );
+    }
+}
+
+#[test]
 fn busy_worker_preserves_ping_startup_ack_and_bounded_admission() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
