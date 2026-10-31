@@ -15,6 +15,8 @@ and DOM diffing; the selected element's live styles still refresh independently.
 The optional metadata revision invalidates live accessibility without changing
 control capture IDs, so focus changes do not expire in-flight edits. Cache keys
 include both identities; older hosts can omit the additive metadata field.
+Revision skipping and shared caching require paged indexes. Full-capture fallback
+continues polling complete snapshots because they also carry live style values.
 The shared index cache retains at most four runtimes and 32 MiB of serialized
 metadata. Source grants, selected nodes, object handles, editing and cursors stay
 connection-local. Simultaneous cold misses may read the same capture; no socket

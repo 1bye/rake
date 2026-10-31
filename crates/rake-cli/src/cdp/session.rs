@@ -1692,12 +1692,20 @@ impl Session {
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
-        let revision = if self
+        let paged = self
             .instance
             .info
             .queries
             .iter()
-            .any(|q| q == "inspect_revision")
+            .any(|q| q == "inspect_tree_page");
+        // Full captures contain live styles; their index identity cannot cache those details.
+        let revision = if paged
+            && self
+                .instance
+                .info
+                .queries
+                .iter()
+                .any(|q| q == "inspect_revision")
         {
             let Reply::InspectionRevision(revision) =
                 query(&self.instance, Query::InspectRevision {}, TIMEOUT)
@@ -1737,13 +1745,7 @@ impl Session {
                 }
             }
             self.publish_sources();
-            reset = if self
-                .instance
-                .info
-                .queries
-                .iter()
-                .any(|q| q == "inspect_tree_page")
-            {
+            reset = if paged {
                 self.dom.update_shared_index(snapshot)?
             } else {
                 self.dom.update((*snapshot).clone())?
@@ -3513,6 +3515,80 @@ mod tests {
     }
 
     #[test]
+    fn full_capture_fallback_refreshes_hover_styles_without_sharing_stale_details() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let hovered = Arc::new(AtomicBool::new(false));
+        let app = Arc::clone(&hovered);
+        let (mut instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectRevision {}) => {
+                    Reply::InspectionRevision(rake_protocol::inspection::TreeRevision {
+                        metadata: None,
+                        capture: "fallback".into(),
+                        status: rake_protocol::inspection::Status::Captured,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectTree {}) => {
+                    let mut snapshot = capture("fallback");
+                    snapshot.elements[0].styles =
+                        Some(json!({"opacity":if app.load(Ordering::Acquire) {0.75} else {0.25}}));
+                    Reply::Elements(snapshot)
+                }
+                _ => panic!("unexpected fallback query"),
+            },
+            3,
+        );
+        // The revision capability alone does not provide independent live details.
+        instance.info.queries.push("inspect_revision".into());
+        let mut first = Session::new(instance.clone(), None);
+        first.domains.insert(Domain::Css);
+        first.refresh_dom().unwrap();
+        first.dom.document(&json!({"depth":-1})).unwrap();
+        let node = first.dom.node_id("element-fallback-0").unwrap();
+        let styles = |session: &mut Session, node| {
+            session
+                .handle(&Request {
+                    id: 1,
+                    method: "CSS.getInlineStylesForNode".into(),
+                    params: json!({"nodeId":node}),
+                })
+                .unwrap()
+        };
+        let before = styles(&mut first, node);
+
+        hovered.store(true, Ordering::Release);
+        first.refresh_dom().unwrap();
+        let after = styles(&mut first, node);
+        assert_ne!(
+            after, before,
+            "full captures must continue sampling live styles"
+        );
+        assert_eq!(first.dom.node_id("element-fallback-0"), Some(node));
+        assert!(
+            first
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method == "CSS.styleSheetChanged")
+        );
+
+        let mut second = Session::new(instance, None);
+        second.captures = Arc::clone(&first.captures);
+        second.refresh_dom().unwrap();
+        let second_node = second.dom.node_id("element-fallback-0").unwrap();
+        assert_eq!(
+            styles(&mut second, second_node),
+            after,
+            "a new client must not reuse a full snapshot with stale styles"
+        );
+        assert_eq!(after["inlineStyle"]["cssProperties"][0]["value"], "0.75");
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn metadata_revisions_refresh_focus_without_replacing_control_ids_or_reusing_old_indexes() {
         use std::sync::{
             Arc,
@@ -3607,12 +3683,23 @@ mod tests {
                         status: rake_protocol::inspection::Status::Captured,
                     })
                 }
-                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(snapshot.clone()),
+                RuntimeMessage::Query(Query::InspectTreePage { generation, offset }) => {
+                    assert!(generation.is_none());
+                    assert_eq!(offset, 0);
+                    Reply::ElementPage(rake_protocol::inspection::TreePage {
+                        snapshot: snapshot.clone(),
+                        total: 1,
+                        next: None,
+                    })
+                }
                 _ => panic!("unexpected revision read"),
             },
             5,
         );
-        instance.info.queries.push("inspect_revision".into());
+        instance
+            .info
+            .queries
+            .extend(["inspect_tree_page".into(), "inspect_revision".into()]);
         let mut first = Session::new(instance.clone(), None);
         let mut second = Session::new(instance, None);
         second.captures = std::sync::Arc::clone(&first.captures);
