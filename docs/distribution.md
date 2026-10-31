@@ -4,6 +4,10 @@ The smallest distributable application is [the desktop example](../examples/dist
 It uses `rake::view!`, one SVG icon and `rake-build` in build.rs. Application code
 imports the Rake facade; installer engines remain CLI dependencies.
 
+For navigation, retained `PageContext`, shared services, in-app update controls,
+dirty-state guards and a publishing configuration together, see the
+[small desktop app](../examples/desktop/README.md).
+
 ```toml
 [package.metadata.rake.bundle]
 schema_version = 1

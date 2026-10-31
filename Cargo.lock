@@ -6024,6 +6024,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-desktop-example"
+version = "0.1.0"
+dependencies = [
+ "rake",
+ "rake-build",
+]
+
+[[package]]
 name = "rake-diagnostics"
 version = "0.1.0"
 dependencies = [

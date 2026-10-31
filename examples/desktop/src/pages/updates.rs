@@ -1,0 +1,151 @@
+//! One shared controller, with a redraw task owned by each retained view.
+use super::Destination;
+use crate::{AppInfo, shell::Shell};
+use rake::gpui::{self, Context, Entity, Task, Window, prelude::*};
+use rake::prelude::*;
+use rake::router::MountError;
+use rake::updates::{Error, UpdateController, UpdateState};
+use std::rc::Rc;
+
+pub(crate) struct Updates {
+    page: PageContext<Destination>,
+    app: Rc<AppInfo>,
+    controller: Option<Rc<UpdateController>>,
+    error: Option<String>,
+    _watch: Option<Task<()>>,
+}
+
+impl Page<Destination> for Updates {
+    fn mount(
+        _: &Destination,
+        page: PageContext<Destination>,
+        _: &mut Window,
+        cx: &mut gpui::App,
+    ) -> Result<Entity<Self>, MountError> {
+        let app = page
+            .services()
+            .get::<AppInfo>()
+            .map_err(|error| MountError(error.to_string()))?;
+        Ok(cx.new(|cx| Self::new(page, app, cx)))
+    }
+}
+
+impl Updates {
+    fn new(page: PageContext<Destination>, app: Rc<AppInfo>, cx: &mut Context<Self>) -> Self {
+        let controller = page.services().get::<UpdateController>().ok();
+        let watch = controller.clone().map(|updates| {
+            cx.spawn(async move |view, cx| {
+                let mut snapshot = updates.snapshot();
+
+                loop {
+                    snapshot = updates.changed(snapshot.revision).await;
+                    if view.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            })
+        });
+
+        Self {
+            page,
+            app,
+            controller,
+            error: None,
+            _watch: watch,
+        }
+    }
+
+    fn request(
+        &mut self,
+        action: fn(&UpdateController) -> Result<(), Error>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(updates) = &self.controller {
+            self.error = action(updates).err().map(|error| error.to_string());
+        }
+        cx.notify();
+    }
+}
+
+impl Render for Updates {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.controller.as_ref().map(|updates| updates.state());
+        let label = match &state {
+            Some(UpdateState::Idle) => "Check for a new version".into(),
+            Some(UpdateState::Checking) => "Checking…".into(),
+            Some(UpdateState::Available(info)) => format!("Version {} is available", info.version),
+            Some(UpdateState::Downloading { progress, .. }) => {
+                format!(
+                    "Downloading: {} / {} bytes",
+                    progress.received_bytes, progress.total_bytes
+                )
+            }
+            Some(UpdateState::Extracting { .. }) => "Preparing update…".into(),
+            Some(UpdateState::ReadyToRestart(info)) => {
+                format!("Version {} is ready to install", info.version)
+            }
+            Some(UpdateState::AwaitingApproval(_)) => "Waiting for save/quit approval…".into(),
+            Some(UpdateState::Restarting(_)) => "Restarting…".into(),
+            Some(UpdateState::Cancelling) => "Cancelling…".into(),
+            Some(UpdateState::UpToDate) => "You're up to date".into(),
+            Some(UpdateState::Failed { message }) => message.clone(),
+            Some(UpdateState::ManagedExternally(_)) => {
+                "Updates managed by your package manager".into()
+            }
+            Some(UpdateState::Disabled) => "Updates are disabled in this build".into(),
+            _ => "Updates are unavailable in this build".into(),
+        };
+        let can_check = matches!(
+            state,
+            Some(UpdateState::Idle | UpdateState::UpToDate | UpdateState::Failed { .. })
+        );
+        let can_download = matches!(state, Some(UpdateState::Available(_)))
+            && self
+                .controller
+                .as_ref()
+                .is_some_and(|updates| updates.can_install());
+        let can_restart = matches!(state, Some(UpdateState::ReadyToRestart(_)));
+        let can_cancel = matches!(
+            state,
+            Some(UpdateState::Checking | UpdateState::Downloading { .. })
+        );
+
+        let body = rake::view! {
+            <section class="gap-3">
+                <h2>"Updates"</h2>
+                <p>{label}</p>
+                <div class="flex flex-row gap-3">
+                    <button disabled={!can_check} class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| {
+                            this.request(UpdateController::check, cx);
+                        })}>"Check for updates"</button>
+                    <button disabled={!can_download} class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| {
+                            this.request(UpdateController::download, cx);
+                        })}>"Download"</button>
+                    <button disabled={!can_cancel} class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| {
+                            if let Some(updates) = &this.controller { updates.cancel(); }
+                            this.error = None;
+                            cx.notify();
+                        })}>"Cancel"</button>
+                    <button disabled={!can_restart} class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| {
+                            if let Some(router) = this.page.navigator().router() {
+                                this.error = router.restart_for_update(QuitOptions::default())
+                                    .err().map(|error| error.to_string());
+                            }
+                            cx.notify();
+                        })}>"Restart to update"</button>
+                </div>
+                if let Some(error) = &self.error {
+                    <p>{error.clone()}</p>
+                }
+            </section>
+        };
+
+        rake::view! {
+            <Shell page={self.page.clone()} app={Rc::clone(&self.app)} body={body.into_any_element()}/>
+        }
+    }
+}

@@ -34,11 +34,37 @@ ones. Values shadowed by another pattern, empty path values and dot segments are
 rejected when encoding, so a successful encoding round-trips to the same route.
 `descriptors` exposes the closed registry and parameter schema.
 
-`App::new(...).routes(AppRoutes).initial(Destination::Home)` installs the default
-tab strip, route outlet and decision presenter. `RouteViews::mount` receives a
-destination and owned `PageContext`, and creates a fresh `AnyView`. Domain models
-may be shared, but each retained entry owns its own view and local state. The
-browser's URL takes precedence over `initial`. A custom GPUI host can use
+Register page types with an exhaustive destination match:
+
+```rust
+App::new("example.notes")
+    .theme(Colors::dark())
+    .routes(rake::routes! {
+        Destination::Home => Home,
+        Destination::Document(..) => DocumentPage,
+    })
+    .initial(Destination::Home)
+```
+
+`Home` and `DocumentPage` implement `Page<Destination>` alongside GPUI `Render`.
+`Page::mount(destination, page, window, cx)` returns `Result<Entity<Self>, MountError>`;
+it owns that page's service resolution, typed parameters and initialization.
+Register parameters with `(..)` or `{ .. }`, then read the full destination in
+the page constructor. Registration expands to a checked Rust match and static
+page calls, with no implicit fallback. A missing destination fails compilation.
+The result implements the existing `RouteViews` interface, which remains available
+for custom dispatchers and hosts.
+
+`App::theme` installs each owned theme once on the UI thread before the first
+window or route mounts. It is available with `experimental-view`; registering
+before or after `.routes` is equivalent. Navigation never reinstalls a theme.
+Ordinary shared components only implement `Render` or `RenderOnce` and need not
+depend on `PageContext`. See the [small desktop app](../examples/desktop/README.md)
+for complete, compiled page implementations and app setup.
+
+The runner installs the default tab strip, route outlet and decision presenter.
+Domain models may be shared, but each retained entry owns its own view and local
+state. The browser's URL takes precedence over `initial`. A custom GPUI host can use
 `Router::in_window`, own its `run` future, observe `changed`, and compose `TabBar`
 and `RouteOutlet`. `Router::new` is a headless state model without GPUI resources.
 
