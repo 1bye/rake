@@ -16,6 +16,7 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tungstenite::{Message, WebSocket};
 
+mod actionability;
 mod evidence;
 
 const INTERVAL: Duration = Duration::from_millis(250);
@@ -166,6 +167,7 @@ impl Session {
             return Ok(result);
         }
         match method {
+            "Rake.getActionability" => self.actionability(&request.params),
             "Rake.getEvidence" => self.evidence(&request.params),
             "Rake.getCapabilities" => {
                 let Reply::Info(info) = query(&self.instance, Query::Info {}, TIMEOUT)

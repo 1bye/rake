@@ -44,6 +44,13 @@ export interface Evidence {
   startedAtUnixMs: number; durationMs: number; complete: boolean; sampling: string;
   sections: Record<'tree' | 'selected' | 'source' | 'diagnostics' | 'screenshot', {status: 'ok' | 'partial' | 'error' | 'truncated' | 'omitted'; data?: unknown; error?: {code: number; message: string}}>;
 }
+export interface Actionability {
+  runtimeId: string; windowId: number; frameSequence: string; revision: Revision;
+  element: Element; canDispatch: boolean; point: {x: number; y: number} | null;
+  blockers: {code: string; message: string}[]; notes: {code: string; message: string}[];
+  occlusion: {status: 'unknown'; scope: string; capturedHit?: {nodeId: number | null; id: string | null; type: string; relation: 'self' | 'descendant' | 'other'}; error?: string};
+}
+export class ActionabilityError extends Error {code: number; report: Actionability}
 export class ProtocolError extends Error {code: number; method: string}
 export class RakeAgent {
   private constructor();
@@ -56,6 +63,7 @@ export class RakeAgent {
   snapshot(query?: Query, options?: {limit?: number; offset?: number; expectedRevision?: Revision}): Promise<Snapshot>;
   /** Rejects missing and ambiguous matches. */
   find(query: Query): Promise<ElementReference>;
+  actionability(reference: ElementReference): Promise<Actionability>;
   hover(reference: ElementReference): Promise<{accepted: true; beforeFrame: string}>;
   click(reference: ElementReference): Promise<{accepted: true; beforeFrame: string}>;
   scroll(reference: ElementReference, deltaY: number, deltaX?: number): Promise<{accepted: true; beforeFrame: string}>;

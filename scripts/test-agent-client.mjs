@@ -48,3 +48,12 @@ test('ambiguous semantic lookup and foreign source URLs cannot trigger input or 
   await assert.rejects(source,/another server/);
   assert.ok(socket.sent.every(request=>request.method==='Rake.getSnapshot'));client.close();
 });
+test('known actionability blockers stop a click before native mouse dispatch',async()=>{
+  const socket=new Socket(),client=new RakeAgent(socket,'http://127.0.0.1:1');
+  client.runtimeId='runtime';client.windowId=1;
+  client.capabilities={methods:{'Rake.getSnapshot':{supported:true},'Rake.getActionability':{supported:true},'Input.dispatchMouseEvent':{supported:true}}};
+  const send=socket.send.bind(socket);
+  socket.send=text=>{send(text);const request=JSON.parse(text);queueMicrotask(()=>socket.reply(request.method==='Rake.getSnapshot' ? {runtimeId:'runtime',windowId:1,totalMatches:1,elements:[{nodeId:2}]} : {canDispatch:false,blockers:[{code:'disabled',message:'Disabled control'}]}));};
+  await assert.rejects(client.click({runtimeId:'runtime',windowId:1,nodeId:2}),e=>e.code===-32011 && e.report.blockers[0].code==='disabled');
+  assert.ok(socket.sent.every(request=>!request.method.startsWith('Input.')));client.close();
+});

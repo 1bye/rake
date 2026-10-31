@@ -46,6 +46,9 @@ try {
   await client.waitFor({text:'Count: 1'},{afterFrame:accepted.beforeFrame});
   assert.equal((await client.find({id:'agent-increment'})).stableId,increment.stableId);
   console.log('Semantic lookup → native click → later rendered count; stable identity retained');
+  const disabled=await client.find({id:'agent-disabled'});
+  assert.equal((await client.actionability(disabled)).blockers[0].code,'disabled');
+  await assert.rejects(client.click(disabled),e=>e.report?.blockers.some(b=>b.code==='disabled'));
   const input=await client.find({role:'TextInput',name:'Message'});
   await client.click(input);await client.typeText('café 你好 🙂');
   await client.waitFor({text:'Text: café 你好 🙂'});
@@ -60,7 +63,14 @@ try {
   const scrolled=await client.scroll(scroll,140);
   await client.waitFor({id:'agent-row-1',visible:false},{afterFrame:scrolled.beforeFrame});
   assert.ok((await client.find({id:'agent-row-1'})).bounds.y < row.bounds.y);
-  console.log('Native drag and scrolling changed captured geometry/clipping');
+  assert.ok((await client.actionability(row)).blockers.some(b=>b.code==='fully_clipped'));
+  await assert.rejects(client.click(row),e=>e.report?.blockers.some(b=>b.code==='fully_clipped'));
+  await client.key('F6');
+  const covered=await client.actionability(increment);
+  assert.equal(covered.occlusion.status,'unknown');assert.equal(covered.occlusion.capturedHit.relation,'other');
+  assert.ok(covered.notes.some(n=>n.code==='possibly_covered'));
+  await client.key('F6');
+  console.log('Native drag, clipping, disabled-target checks and explicit occlusion uncertainty passed');
   const source=await client.source(increment);
   assert.ok(source.text.includes('agent-increment'),JSON.stringify(source));
   const image=await client.screenshot({format:'png'});

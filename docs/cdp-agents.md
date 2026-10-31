@@ -217,3 +217,27 @@ The native suite issues an actual request to its own local HTTP 503 fixture and
 verifies that the bundle contains the resulting diagnostic, failure metadata,
 Rust source, tree/selection revision and a native image. Missing selections and
 truncated tree prefixes remain explicit partial evidence.
+
+## Actionability diagnostics
+
+`Rake.getActionability { query }` resolves exactly one captured element and reports
+`canDispatch`, a whole-logical-point dispatch location, `blockers`, `notes`,
+runtime/window identity and the checked revision/draw. The SDK exposes
+`app.actionability(reference)` and runs it before pointer actions. Known blockers
+raise `ActionabilityError` before mouse dispatch: hidden/disabled elements or
+ancestors, missing/zero geometry, full clipping, or a visible area without a valid
+integer input point. Partial clipping uses the visible intersection and remains a
+note. Missing clipping/enabled metadata stays explicit uncertainty.
+
+The report includes the existing runtime picker's captured hit and its relationship
+to the target. Another painted boundary produces `possibly_covered`; occlusion
+remains `unknown`. Opaque native hitboxes, pointer pass-through and final GPU
+occlusion are not exposed by this GPUI adapter, so that hint does not block input.
+WindowServer's whole-window occlusion is informational because synthetic input
+can still drive an occluded app. A check is a sampled preflight; guarded admission
+and a condition wait remain necessary to observe the actual application result.
+
+The native suite verifies disabled-target rejection, clipped rows, and a captured
+overlay whose pointer interception remains unknown. CPU/client tests cover hidden
+states, fractional edge coordinates and the absence of native mouse dispatch when
+a known blocker is present.

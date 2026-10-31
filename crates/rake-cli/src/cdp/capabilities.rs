@@ -22,6 +22,7 @@ pub(super) fn describe(
         ("Rake.selectWindow", native),
         ("Rake.getSnapshot", inspection && native),
         ("Rake.getEvidence", inspection && native),
+        ("Rake.getActionability", inspection && native),
         ("Rake.findElements", inspection && native),
         ("Rake.waitFor", inspection && native),
         ("Rake.getWait", inspection && native),

@@ -7,6 +7,7 @@ struct Demo {
     count: usize,
     keys: usize,
     ticks: usize,
+    covered: bool,
     http: Option<rake::http::HttpClient>,
     http_status: String,
     network: Option<Task<()>>,
@@ -38,6 +39,7 @@ impl Demo {
             count: 0,
             keys: 0,
             ticks: 0,
+            covered: false,
             http: None,
             http_status: "idle".into(),
             network: None,
@@ -168,6 +170,7 @@ impl Render for Demo {
         let keys = self.keys;
         let drags = self.drags;
         let ticks = self.ticks;
+        let covered = self.covered;
         let http_status = self.http_status.clone();
         let text = self.text.clone();
         let entity = cx.entity();
@@ -185,6 +188,7 @@ impl Render for Demo {
             <div id="agent-root" class="size-full flex flex-col p-4 gap-2" style={|s|s.bg(rgb(0x172330)).text_color(rgb(0xffffff))}
                 on:key-down={cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key == "f2" { this.keys += 1; cx.notify(); }
+                    if event.keystroke.key == "f6" { this.covered = !this.covered;cx.notify(); }
                     if event.keystroke.key == "f3" { window.resize(size(px(700.),px(740.))); }
                     if event.keystroke.key == "f4" {
                         this.ticks = 0;
@@ -209,8 +213,14 @@ impl Render for Demo {
                     if event.keystroke.modifiers.platform && event.keystroke.key == "a" { this.selection = 0..this.text.len(); cx.stop_propagation(); }
                 })}>
                 <h1>"Native agent workflow"</h1>
-                <button id="agent-increment" aria-label="Increment counter" class="p-2 rounded-md" style={|s|s.bg(rgb(0x2857a4))}
+                <div id="agent-button-stack" class="relative">
+                <button id="agent-increment" aria-label="Increment counter" class="w-full p-2 rounded-md" style={|s|s.bg(rgb(0x2857a4))}
                     on:click={cx.listener(|this, _, _, cx| {this.count+=1;cx.notify();})}>"Increment"</button>
+                if covered {
+                    <div id="agent-cover" class="absolute inset-0 flex items-center justify-center" style={|s|s.bg(rgb(0x665533))}>"Cover (pointer interception unknown)"</div>
+                }
+                </div>
+                <button id="agent-disabled" disabled={true} class="px-2 py-1">"Disabled target"</button>
                 <p id="agent-count">{format!("Count: {count}")}</p>
                 <div id="agent-input" role={gpui::accesskit::Role::TextInput} aria-label="Message" focus={&self.focus}
                     class="relative p-2 rounded-md" style={|s|s.bg(rgb(0x304766))}

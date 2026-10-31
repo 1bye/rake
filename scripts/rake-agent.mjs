@@ -26,6 +26,9 @@ async function fetchBounded(url, limit, timeoutMs = 5000) {
 export class ProtocolError extends Error {
   constructor(method, error) { super(`${method}: ${error.message}`); this.code = error.code; this.method = method; }
 }
+export class ActionabilityError extends Error {
+  constructor(report) { super(report.blockers.map(b=>`${b.code}: ${b.message}`).join('; ')); this.report=report; this.code=-32011; }
+}
 export class RakeAgent {
   #socket; #pending = new Map(); #sequence = 0; #closed = false; #origin;
   capabilities; runtimeId; windowId;
@@ -111,34 +114,37 @@ export class RakeAgent {
       throw new Error('Element belongs to another runtime or window');
     return this.find(reference.stableId ? {stableId:reference.stableId} : {nodeId:reference.nodeId});
   }
-  #point(element) {
-    if (element.visible !== true || element.enabled === false) throw new Error('Element is not visibly actionable');
-    const b = element.visibleBounds ?? element.bounds;
-    if (!b || b.width < 1 || b.height < 1) throw new Error('Element has no actionable bounds');
-    return {x:b.x + b.width / 2, y:b.y + b.height / 2};
+  async actionability(reference) {
+    const e=await this.#resolve(reference); this.#require('Rake.getActionability');
+    return this.call('Rake.getActionability',{query:{nodeId:e.nodeId}});
+  }
+  async #target(reference) {
+    const report=await this.actionability(reference);
+    if(!report.canDispatch) throw new ActionabilityError(report);
+    return report;
   }
   async #mouse(type, point, extra = {}, capture) {
     this.#require('Input.dispatchMouseEvent'); this.#window();
     return this.call('Input.dispatchMouseEvent', {type, ...point, ...extra, rakeWindowId:this.windowId, ...(capture ? {rakeCapture:capture} : {})});
   }
   async hover(reference) {
-    const e = await this.#resolve(reference);
-    await this.#mouse('mouseMoved', this.#point(e), {}, e.revision.capture); return {accepted:true, beforeFrame:e.frameSequence};
+    const e = await this.#target(reference);
+    await this.#mouse('mouseMoved', e.point, {}, e.revision.capture); return {accepted:true, beforeFrame:e.frameSequence};
   }
   async click(reference) {
-    await this.hover(reference); const e = await this.#resolve(reference), point = this.#point(e);
+    await this.hover(reference); const e = await this.#target(reference), point = e.point;
     await this.#mouse('mousePressed', point, {button:'left', clickCount:1}, e.revision.capture);
     await this.#mouse('mouseReleased', point, {button:'left', clickCount:1});
     return {accepted:true, beforeFrame:e.frameSequence};
   }
   async scroll(reference, deltaY, deltaX = 0) {
-    const e = await this.#resolve(reference);
-    await this.#mouse('mouseWheel', this.#point(e), {deltaX, deltaY}, e.revision.capture);
+    const e = await this.#target(reference);
+    await this.#mouse('mouseWheel', e.point, {deltaX, deltaY}, e.revision.capture);
     return {accepted:true, beforeFrame:e.frameSequence};
   }
   async drag(reference, dx, dy) {
     if (![dx,dy].every(Number.isFinite)) throw new Error('Finite drag offsets required');
-    await this.hover(reference); const e = await this.#resolve(reference), point = this.#point(e);
+    await this.hover(reference); const e = await this.#target(reference), point = e.point;
     const target = (await this.windows()).find(w=>w.window===this.windowId);
     if (!target || point.x+dx<0 || point.y+dy<0 || point.x+dx>=target.content.width || point.y+dy>=target.content.height)
       throw new Error('Drag endpoint is outside the selected content viewport');
@@ -203,7 +209,7 @@ export async function cli(args) {
     else if(arg==='--target') targetId=args.shift();
     else if(arg==='--window') windowId=Number(args.shift());
     else if(arg==='--json') continue;
-    else if(arg==='--help') { console.log('rake agent --url http://127.0.0.1:PORT/TOKEN [--target ID] [--window ID] JSON_ACTION\nActions: capabilities, windows, snapshot, find, click, hover, scroll, drag, key, typeText, waitFor, evidence, screenshot, source. Screenshot requires path.'); return; }
+    else if(arg==='--help') { console.log('rake agent --url http://127.0.0.1:PORT/TOKEN [--target ID] [--window ID] JSON_ACTION\nActions: capabilities, windows, snapshot, find, click, hover, scroll, drag, key, typeText, waitFor, evidence, actionability, screenshot, source. Screenshot requires path.'); return; }
     else if(!action) action=JSON.parse(arg); else throw new Error('Unexpected argument');
   }
   if(!endpoint || !action) throw new Error('--url and one JSON action are required');
@@ -217,7 +223,7 @@ export async function cli(args) {
       case 'evidence': result=await client.evidence({...action.options,query:action.query}); break;
       case 'snapshot': result=await client.snapshot(action.query,action.options); break;
       case 'find': result=await ref(); break;
-      case 'click': case 'hover': case 'source': result=await client[action.action](await ref()); break;
+      case 'click': case 'hover': case 'source': case 'actionability': result=await client[action.action](await ref()); break;
       case 'scroll': result=await client.scroll(await ref(),action.deltaY,action.deltaX); break;
       case 'drag': result=await client.drag(await ref(),action.dx,action.dy); break;
       case 'key': result=await client.key(action.key,action.modifiers); break;
