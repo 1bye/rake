@@ -17,6 +17,15 @@ metadata. Source grants, selected nodes, object handles, editing and cursors sta
 connection-local. Simultaneous cold misses may read the same capture; no socket
 I/O occurs under the cache lock.
 
+Socket I/O has one owner. A connection admits four queued requests and two encoded
+outbound messages in addition to the existing session byte budget. Its ordered
+worker performs runtime operations, while ping, close and stateless startup
+acknowledgements remain responsive. Queued requests expire before execution;
+executing operations share a two-second blocking-exchange deadline. Mutations
+are never replayed by the transport. Disconnect cancels queued work. Explicit
+worker shutdown gets one 100 ms cleanup budget; inspection leases cover lost
+cleanup acknowledgements. Dropping session state performs no socket I/O.
+
 ## Baseline
 
 Run the generated-input projection benchmark explicitly:

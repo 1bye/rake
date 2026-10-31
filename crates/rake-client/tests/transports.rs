@@ -13,6 +13,25 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+#[test]
+fn nested_deadlines_cannot_extend_or_leak_into_later_operations() {
+    use std::time::Instant;
+    let instance = instance(Endpoint::Local {
+        path: PathBuf::from("/unused-expired-deadline.sock"),
+    });
+    let expired = Instant::now() - Duration::from_secs(1);
+    rake_client::with_deadline(expired, || {
+        rake_client::with_deadline(Instant::now() + Duration::from_secs(10), || {
+            assert!(
+                matches!(query(&instance, Query::Info {}, Duration::from_secs(2)), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut)
+            );
+        });
+    });
+    assert!(
+        matches!(query(&instance, Query::Info {}, Duration::from_secs(2)), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
+    );
+}
+
 struct Directory(PathBuf);
 
 impl Directory {

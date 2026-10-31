@@ -1632,7 +1632,7 @@ impl Session {
         Ok(())
     }
 
-    fn flush(&mut self, socket: &mut WebSocket<TcpStream>) -> Result<()> {
+    fn flush(&mut self, socket: &mut super::transport::Worker) -> Result<()> {
         while let Some((event, bytes)) = self.outbound.pop_front() {
             self.outbound_bytes -= bytes;
             socket.send(Message::text(serde_json::to_string(&event)?))?;
@@ -2160,12 +2160,6 @@ impl Session {
     }
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.cleanup();
-    }
-}
-
 fn edit_node(value: &Value) -> std::result::Result<i32, Error> {
     value
         .as_str()
@@ -2188,7 +2182,7 @@ fn frame(runtime: &str) -> Value {
 }
 
 pub(super) fn run(
-    mut socket: WebSocket<TcpStream>,
+    socket: WebSocket<TcpStream>,
     instance: Instance,
     output: Option<std::path::PathBuf>,
     directory: std::path::PathBuf,
@@ -2196,12 +2190,6 @@ pub(super) fn run(
     access: &super::sources::Access,
     captures: std::sync::Arc<super::captures::Captures>,
 ) -> Result<()> {
-    socket
-        .get_mut()
-        .set_read_timeout(Some(Duration::from_millis(20)))?;
-    socket
-        .get_mut()
-        .set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut session = Session::new(instance, output);
     session.captures = captures;
     session
@@ -2211,47 +2199,66 @@ pub(super) fn run(
         .register(&session.sources)
         .map_err(|error| error.message)?;
     session.source_base = Some(source_base);
+    super::transport::serve(socket, move |mut socket| {
+        let result = run_worker(&mut socket, &mut session, directory);
+        rake_client::with_deadline(Instant::now() + Duration::from_millis(100), || {
+            session.cleanup()
+        });
+        result
+    })
+}
+
+fn run_worker(
+    socket: &mut super::transport::Worker,
+    session: &mut Session,
+    directory: std::path::PathBuf,
+) -> Result<()> {
     let mut next_poll = Instant::now();
     let mut missing_since: Option<Instant> = None;
 
     loop {
         match socket.read() {
-            Ok(Message::Text(text)) => {
-                let response = match serde_json::from_str::<Request>(&text) {
-                    Ok(request) => Response::new(Some(request.id), session.handle(&request)),
-                    Err(error) => Response::new(None, Err(Error::new(-32600, error.to_string()))),
+            Ok(work) => {
+                let result = if Instant::now() >= work.deadline {
+                    Err(Error::new(
+                        -32000,
+                        "CDP request expired before execution; no operation was started",
+                    ))
+                } else {
+                    rake_client::with_deadline(work.deadline, || session.handle(&work.request))
                 };
-
-                session.flush(&mut socket)?;
-                socket.send(Message::text(response.encode()?))?;
+                session.flush(socket)?;
+                socket.reply(Response::new(Some(work.request.id), result))?;
             }
-            Ok(Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => return Ok(()),
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(error) => return Err(error.into()),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
         }
 
         if session.detached.is_none()
             && (!session.domains.is_empty() || session.frame_trace.active)
             && Instant::now() >= next_poll
         {
-            match session.poll() {
+            match rake_client::with_deadline(Instant::now() + TIMEOUT, || session.poll()) {
                 Ok(()) => missing_since = None,
                 Err(error) => {
-                    if let Some(successor) = session.successor(&directory) {
-                        session.replace(successor);
+                    if let Some(successor) =
+                        rake_client::with_deadline(Instant::now() + TIMEOUT, || {
+                            session.successor(&directory)
+                        })
+                    {
+                        rake_client::with_deadline(Instant::now() + TIMEOUT, || {
+                            session.replace(successor)
+                        });
                         missing_since = None;
                     } else if missing_since.get_or_insert_with(Instant::now).elapsed()
                         >= Duration::from_secs(5)
                     {
                         if session.frame_trace.active || session.pending_trace_complete.is_some() {
-                            session.finish_trace(Some("runtime disconnected"));
+                            rake_client::with_deadline(Instant::now() + TIMEOUT, || {
+                                session.finish_trace(Some("runtime disconnected"))
+                            });
                             session.detached = Some(error.to_string());
-                            session.flush(&mut socket)?;
+                            session.flush(socket)?;
                             continue;
                         }
                         session.poll_output(true);
@@ -2268,12 +2275,11 @@ pub(super) fn run(
                         } else if session.domains.contains("Runtime") {
                             session.event(Event::new("Runtime.consoleAPICalled",json!({"type":"error","args":[{"type":"string","value":text}],"executionContextId":1,"timestamp":unix_seconds()*1000.})));
                         }
-                        session.flush(&mut socket)?;
+                        session.flush(socket)?;
                         socket.send(Message::text(serde_json::to_string(&Event::new(
                             "Inspector.detached",
                             json!({"reason":error.to_string()}),
                         ))?))?;
-                        let _ = socket.close(None);
 
                         return Ok(());
                     }
@@ -2288,7 +2294,7 @@ pub(super) fn run(
                 };
         }
 
-        session.flush(&mut socket)?;
+        session.flush(socket)?;
         if let Some(reason) = &session.detached
             && !session.frame_trace.has_stream()
             && session.pending_trace_complete.is_none()
@@ -3344,6 +3350,7 @@ mod tests {
                 params: json!({"mode":"searchForNode"}),
             })
             .unwrap();
+        session.cleanup();
         drop(session);
         worker.join().unwrap();
         assert_eq!(
