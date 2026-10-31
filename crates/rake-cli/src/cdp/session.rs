@@ -1,6 +1,7 @@
 //! One connection owns its cursors, enabled domains and bounded event queue.
 
-use super::wire::{EncodedEvent, Error, Event, Request, Response};
+use super::compatibility::Domain;
+use super::wire::{EncodedEvent, Error, ErrorKind, Event, Request, Response};
 use super::{Result, TIMEOUT};
 use crate::terminal::query;
 use rake_client::local::Instance;
@@ -37,7 +38,7 @@ struct Session {
     network_paused: bool,
     network_epoch: Option<f64>,
     network_bodies: super::network::Bodies,
-    domains: BTreeSet<String>,
+    domains: BTreeSet<Domain>,
     outbound: VecDeque<(EncodedEvent, usize)>,
     outbound_bytes: usize,
     dropped: u64,
@@ -131,6 +132,7 @@ impl Session {
         }
 
         let method = request.method.as_str();
+        super::params::validate(method, &request.params)?;
         if let Some(reason) = &self.detached
             && !matches!(
                 method,
@@ -143,13 +145,16 @@ impl Session {
             ));
         }
 
+        if let Some(result) = super::compatibility::handle(method) {
+            return Ok(result);
+        }
         match method {
             "DOMStorage.enable" => {
-                self.domains.insert("DOMStorage".into());
+                self.domains.insert(Domain::DomStorage);
                 Ok(json!({}))
             }
             "DOMStorage.disable" => {
-                self.domains.remove("DOMStorage");
+                self.domains.remove(&Domain::DomStorage);
                 self.storage.clear();
                 Ok(json!({}))
             }
@@ -176,7 +181,7 @@ impl Session {
                                 let events = self
                                     .storage
                                     .recover_mutation(&self.instance, &request.params);
-                                if self.domains.contains("DOMStorage") {
+                                if self.domains.contains(&Domain::DomStorage) {
                                     for event in events {
                                         self.event(event);
                                     }
@@ -186,7 +191,7 @@ impl Session {
                             return Err(error);
                         }
                     };
-                if self.domains.contains("DOMStorage") {
+                if self.domains.contains(&Domain::DomStorage) {
                     for event in events {
                         self.event(event);
                     }
@@ -278,11 +283,11 @@ impl Session {
                 "Rust memory is released by its owners; garbage collection is unavailable",
             )),
             "Accessibility.enable" => {
-                self.domains.insert("Accessibility".into());
+                self.domains.insert(Domain::Accessibility);
                 Ok(json!({}))
             }
             "Accessibility.disable" => {
-                self.domains.remove("Accessibility");
+                self.domains.remove(&Domain::Accessibility);
                 Ok(json!({}))
             }
             "Accessibility.getRootAXNode"
@@ -595,7 +600,7 @@ impl Session {
             "DOM.enable" | "CSS.enable" => {
                 let fresh = self
                     .domains
-                    .insert(method.split('.').next().unwrap_or_default().into());
+                    .insert(Domain::of(method).expect("matched supported domain"));
 
                 if method == "CSS.enable" && fresh {
                     self.event(Event::new("CSS.styleSheetAdded", json!({"header":{
@@ -614,13 +619,13 @@ impl Session {
             }
             "DOM.disable" | "CSS.disable" => {
                 self.domains
-                    .remove(method.split('.').next().unwrap_or_default());
+                    .remove(&Domain::of(method).expect("matched supported domain"));
 
                 Ok(json!({}))
             }
             "DOM.getDocument" => {
                 self.refresh_dom()?;
-                self.domains.insert("DOM".into());
+                self.domains.insert(Domain::Dom);
 
                 Ok(json!({"root":self.dom.document(&request.params)?}))
             }
@@ -710,11 +715,8 @@ impl Session {
             | "CSS.getInlineStylesForNode"
             | "CSS.getMatchedStylesForNode"
             | "CSS.getComputedStyleForNode" => {
-                if let Some(node) = request.params["nodeId"]
-                    .as_i64()
-                    .and_then(|id| i32::try_from(id).ok())
-                    && node != 1
-                {
+                let node = super::params::node_id(&request.params)?;
+                if node != 1 {
                     self.load_details(node)?;
                 }
                 if method == "CSS.getMatchedStylesForNode"
@@ -877,7 +879,7 @@ impl Session {
                     self.interaction_used = true;
                 }
 
-                self.domains.insert("Overlay".into());
+                self.domains.insert(Domain::Overlay);
 
                 match command {
                     Command::HighlightElement { id, .. } => {
@@ -893,13 +895,13 @@ impl Session {
                 Ok(json!({}))
             }
             "Overlay.enable" => {
-                self.domains.insert("Overlay".into());
+                self.domains.insert(Domain::Overlay);
 
                 Ok(json!({}))
             }
             "Overlay.disable" => {
                 self.cleanup_overlay();
-                self.domains.remove("Overlay");
+                self.domains.remove(&Domain::Overlay);
 
                 Ok(json!({}))
             }
@@ -969,15 +971,15 @@ impl Session {
             "Network.setBypassServiceWorker" if request.params["bypass"] == false => Ok(json!({})),
             "Inspector.enable" | "Runtime.runIfWaitingForDebugger" => Ok(json!({})),
             "Network.enable" | "Log.enable" | "Runtime.enable" => {
-                let domain = method.split('.').next().unwrap_or_default();
-                let fresh = self.domains.insert(domain.into());
+                let domain = Domain::of(method).expect("matched supported domain");
+                let fresh = self.domains.insert(domain);
 
-                if domain == "Network" && fresh && self.network_paused {
+                if domain == Domain::Network && fresh && self.network_paused {
                     self.skip_network_backlog()
                         .map_err(|error| Error::new(-32000, error.to_string()))?;
                     self.network_paused = false;
                 }
-                if domain == "Runtime" && fresh {
+                if domain == Domain::Runtime && fresh {
                     self.event(Event::new("Runtime.executionContextCreated", json!({"context":{
                         "id":1, "origin":"rake://runtime", "name":self.instance.application_id,
                         "uniqueId":self.instance.info.runtime_id.to_string(), "auxData":{"isDefault":true,"frameId":"rake"}}})));
@@ -990,16 +992,16 @@ impl Session {
                     self.network_paused = true;
                 }
                 self.domains
-                    .remove(method.split('.').next().unwrap_or_default());
+                    .remove(&Domain::of(method).expect("matched supported domain"));
 
                 Ok(json!({}))
             }
             "Page.enable" => {
-                self.domains.insert("Page".into());
+                self.domains.insert(Domain::Page);
                 Ok(json!({}))
             }
             "Page.disable" => {
-                self.domains.remove("Page");
+                self.domains.remove(&Domain::Page);
                 self.source_tree_loaded = false;
                 Ok(json!({}))
             }
@@ -1177,7 +1179,7 @@ impl Session {
     }
 
     fn publish_sources(&mut self) {
-        if self.domains.contains("Page")
+        if self.domains.contains(&Domain::Page)
             && self.source_tree_loaded
             && self.outbound.len() + 32 < QUEUE_LIMIT
             && self.outbound_bytes < 512 * 1024
@@ -1242,7 +1244,7 @@ impl Session {
     }
 
     fn poll_output(&mut self, include_mirrors: bool) {
-        if self.domains.contains("Log") || self.domains.contains("Runtime") {
+        if self.domains.contains(&Domain::Log) || self.domains.contains(&Domain::Runtime) {
             for event in self.process_output.poll(unix_seconds(), include_mirrors) {
                 self.event(event);
             }
@@ -1250,7 +1252,7 @@ impl Session {
     }
 
     fn poll(&mut self) -> Result<()> {
-        if self.domains.contains("DOMStorage") {
+        if self.domains.contains(&Domain::DomStorage) {
             match self.storage.poll(&self.instance) {
                 Ok(events) => {
                     for event in events {
@@ -1288,9 +1290,9 @@ impl Session {
             }
         }
 
-        if self.domains.contains("DOM")
-            || self.domains.contains("Accessibility")
-            || self.domains.contains("Page")
+        if self.domains.contains(&Domain::Dom)
+            || self.domains.contains(&Domain::Accessibility)
+            || self.domains.contains(&Domain::Page)
         {
             self.refresh_dom().map_err(|e| e.message)?;
         }
@@ -1301,9 +1303,10 @@ impl Session {
                 .poll_frames(true)
                 .and_then(|_| self.poll_performance_diagnostics());
             if let Err(error) = result {
-                if error.message == "Recording lease expired"
-                    || error.message.starts_with("Recording clock restarted")
-                {
+                if matches!(
+                    error.kind,
+                    ErrorKind::RecordingLeaseExpired | ErrorKind::RecordingClockRestarted
+                ) {
                     self.finish_trace(Some("capture became unavailable"));
                 } else {
                     return Err(error.message.into());
@@ -1312,8 +1315,9 @@ impl Session {
         }
 
         self.publish_sources();
-        let console = self.domains.contains("Log") || self.domains.contains("Runtime");
-        let network = self.domains.contains("Network");
+        let console =
+            self.domains.contains(&Domain::Log) || self.domains.contains(&Domain::Runtime);
+        let network = self.domains.contains(&Domain::Network);
         if !console && !network {
             return Ok(());
         }
@@ -1341,7 +1345,9 @@ impl Session {
                 .get_or_insert_with(|| unix_seconds() - record.elapsed_us as f64 / 1e6);
         }
 
-        if !discard && (self.domains.contains("Log") || self.domains.contains("Runtime")) {
+        if !discard
+            && (self.domains.contains(&Domain::Log) || self.domains.contains(&Domain::Runtime))
+        {
             if let Some(warning) = warning {
                 self.warning(warning);
             }
@@ -1355,7 +1361,7 @@ impl Session {
                 if record.sequence <= self.cursor || record.kind != "event" {
                     continue;
                 }
-                let mut event = if self.domains.contains("Log") {
+                let mut event = if self.domains.contains(&Domain::Log) {
                     self.objects
                         .logged(record, self.epoch_seconds.unwrap_or_default())
                 } else {
@@ -1376,7 +1382,7 @@ impl Session {
             self.cursor = record.sequence;
         }
 
-        if self.domains.contains("Network") {
+        if self.domains.contains(&Domain::Network) {
             for record in &snapshot.records {
                 if record.sequence <= self.network_cursor {
                     continue;
@@ -1830,10 +1836,10 @@ impl Session {
             reset = true;
         }
 
-        if reset && self.domains.contains("DOM") {
+        if reset && self.domains.contains(&Domain::Dom) {
             self.tracked_style_node = None;
             self.event(Event::new("DOM.documentUpdated", json!({})));
-        } else if self.domains.contains("DOM") {
+        } else if self.domains.contains(&Domain::Dom) {
             for event in updates {
                 self.encoded_event(event);
             }
@@ -1845,7 +1851,7 @@ impl Session {
             self.load_details(node)?;
         }
         let accessibility = self.dom.take_accessibility_updates();
-        if self.domains.contains("Accessibility") {
+        if self.domains.contains(&Domain::Accessibility) {
             let bytes = serde_json::to_vec(&accessibility).map_or(usize::MAX, |value| value.len());
             if reset || bytes > 256 * 1024 {
                 if let Ok(root) = self
@@ -1866,7 +1872,7 @@ impl Session {
         }
         let changed = self.dom.take_style_updates();
 
-        if !changed.is_empty() && self.domains.contains("CSS") {
+        if !changed.is_empty() && self.domains.contains(&Domain::Css) {
             self.event(Event::new(
                 "CSS.styleSheetChanged",
                 json!({"styleSheetId":"rake-resolved"}),
@@ -1978,15 +1984,18 @@ impl Session {
             return Err(Error::new(-32000, "Unexpected frames reply"));
         };
         if renew && !frames.recording {
-            return Err(Error::new(-32000, "Recording lease expired"));
+            return Err(Error::recording(
+                ErrorKind::RecordingLeaseExpired,
+                "Recording lease expired",
+            ));
         }
         if frames
             .clock
             .as_ref()
             .is_some_and(|clock| !self.frame_trace.causal.consistent(clock))
         {
-            return Err(Error::new(
-                -32000,
+            return Err(Error::recording(
+                ErrorKind::RecordingClockRestarted,
                 "Recording clock restarted; ending partial capture",
             ));
         }
@@ -2105,12 +2114,12 @@ impl Session {
         self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
         self.dropped = 0;
         self.event(Event::new("HeapProfiler.resetProfiles", json!({})));
-        if self.domains.contains("DOMStorage") {
+        if self.domains.contains(&Domain::DomStorage) {
             for event in self.storage.reset() {
                 self.event(event);
             }
         }
-        if self.domains.contains("Page") && self.source_tree_loaded {
+        if self.domains.contains(&Domain::Page) && self.source_tree_loaded {
             for document in old_sources {
                 self.event(Event::new(
                     "Page.frameDetached",
@@ -2130,7 +2139,7 @@ impl Session {
             "rake://adapter",
         ));
 
-        if self.domains.contains("Runtime") {
+        if self.domains.contains(&Domain::Runtime) {
             self.event(Event::new("Runtime.executionContextCreated",json!({"context":{"id":1,"origin":"rake://runtime","name":self.instance.application_id,
                 "uniqueId":self.instance.info.runtime_id.to_string(),"auxData":{"isDefault":true,"frameId":"rake"}}})));
         }
@@ -2152,14 +2161,14 @@ impl Session {
     }
 
     fn warning(&mut self, text: String) {
-        if self.domains.contains("Log") {
+        if self.domains.contains(&Domain::Log) {
             self.event(super::console::entry(
                 "warning",
                 text,
                 unix_seconds() * 1000.,
                 "rake://adapter",
             ));
-        } else if self.domains.contains("Runtime") {
+        } else if self.domains.contains(&Domain::Runtime) {
             self.event(Event::new("Runtime.consoleAPICalled",json!({"type":"warning","args":[{"type":"string","value":text}],"executionContextId":1,"timestamp":unix_seconds()*1000.})));
         }
     }
@@ -2270,14 +2279,14 @@ fn run_worker(
                         let text = format!(
                             "Runtime disconnected: {error}. Retained supervisor output is shown above."
                         );
-                        if session.domains.contains("Log") {
+                        if session.domains.contains(&Domain::Log) {
                             session.event(super::console::entry(
                                 "error",
                                 text,
                                 unix_seconds() * 1000.,
                                 "rake://adapter",
                             ));
-                        } else if session.domains.contains("Runtime") {
+                        } else if session.domains.contains(&Domain::Runtime) {
                             session.event(Event::new("Runtime.consoleAPICalled",json!({"type":"error","args":[{"type":"string","value":text}],"executionContextId":1,"timestamp":unix_seconds()*1000.})));
                         }
                         session.flush(socket)?;
@@ -2312,7 +2321,8 @@ fn run_worker(
         }
 
         if session.dropped > 0
-            && (session.domains.contains("Log") || session.domains.contains("Runtime"))
+            && (session.domains.contains(&Domain::Log)
+                || session.domains.contains(&Domain::Runtime))
         {
             let dropped = std::mem::take(&mut session.dropped);
 
@@ -2324,6 +2334,42 @@ fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_navigation_never_queries_runtime_and_unknown_domains_stay_unsupported() {
+        let (instance, worker, path) = fixture(|_| panic!("invalid request reached runtime"), 0);
+        let mut session = Session::new(instance, None);
+        for (method, params) in [
+            ("DOM.requestChildNodes", json!({"nodeId":2,"depth":-3})),
+            (
+                "CSS.getComputedStyleForNode",
+                json!({"nodeId":2147483648u64}),
+            ),
+            (
+                "DOM.getSearchResults",
+                json!({"searchId":"search-1","fromIndex":2,"toIndex":1}),
+            ),
+        ] {
+            let error = session
+                .handle(&Request {
+                    id: 1,
+                    method: method.into(),
+                    params,
+                })
+                .unwrap_err();
+            assert_eq!(error.code, -32602);
+        }
+        let error = session
+            .handle(&Request {
+                id: 2,
+                method: "Debugger.enable".into(),
+                params: json!({}),
+            })
+            .unwrap_err();
+        assert_eq!(error.code, -32601);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn memory_snapshots_are_atomic_and_console_preview_never_stops_capture() {
@@ -2448,7 +2494,7 @@ mod tests {
             5,
         );
         let mut session = Session::new(instance, None);
-        session.domains.insert("Runtime".into());
+        session.domains.insert(Domain::Runtime);
         session.poll().unwrap();
         let old = session.outbound[0].0.params["args"][1]["objectId"]
             .as_str()
@@ -2544,7 +2590,7 @@ mod tests {
             },
         };
         let mut session = Session::new(instance, Some(path.clone()));
-        session.domains.insert("Log".into());
+        session.domains.insert(Domain::Log);
         assert!(session.poll().is_err());
         assert_eq!(session.outbound.len(), 1);
         assert_eq!(session.outbound[0].0.params["entry"]["level"], "error");
@@ -2605,7 +2651,7 @@ mod tests {
             4,
         );
         let mut session = Session::new(instance, None);
-        session.domains.extend(["Log".into(), "Runtime".into()]);
+        session.domains.extend([Domain::Log, Domain::Runtime]);
         session.poll().unwrap();
         session.poll().unwrap();
         assert_eq!(
@@ -2743,7 +2789,7 @@ mod tests {
         session
             .sources
             .bind("http://localhost/token", &info.runtime_id.to_string());
-        session.domains.insert("Page".into());
+        session.domains.insert(Domain::Page);
         let mut record: rake_diagnostics::Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"source":{"file":"src/cdp/session.rs","line":2},"fields":{}})).unwrap();
         let first = session.source_link(&record).unwrap();
         assert!(
@@ -3314,7 +3360,7 @@ mod tests {
         session.refresh_dom().unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
         session.tracked_style_node = Some(2);
-        session.domains.insert("CSS".into());
+        session.domains.insert(Domain::Css);
         session.refresh_dom().unwrap();
         assert!(
             session
@@ -3406,7 +3452,7 @@ mod tests {
 
         let root = doc["root"]["children"][0]["nodeId"].as_i64().unwrap();
 
-        assert!(session.domains.contains("DOM"));
+        assert!(session.domains.contains(&Domain::Dom));
         session
             .handle(&request("DOM.requestChildNodes", json!({"nodeId":root})))
             .unwrap();
@@ -3608,7 +3654,7 @@ mod tests {
         session.dom.update(initial).unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
         let root = session.dom.node_id("element-1-0").unwrap();
-        session.domains.extend(["DOM".into(), "CSS".into()]);
+        session.domains.extend([Domain::Dom, Domain::Css]);
         session.tracked_style_node = Some(root);
         session.highlight = Some(root);
 
@@ -3649,7 +3695,7 @@ mod tests {
         let mut session = Session::new(instance, None);
         session.dom.update(initial).unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
-        session.domains.insert("DOM".into());
+        session.domains.insert(Domain::Dom);
         for _ in 0..QUEUE_LIMIT {
             session.event(Event::new("Log.entryAdded", json!({})));
         }
@@ -3692,7 +3738,7 @@ mod tests {
         let mut session = Session::new(instance, None);
 
         session.dom.update(capture("1")).unwrap();
-        session.domains.insert("DOM".into());
+        session.domains.insert(Domain::Dom);
         session.picking = true;
         session.poll_overlay().unwrap();
         let events: Vec<_> = session

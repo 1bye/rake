@@ -115,13 +115,38 @@ pub(super) struct Response {
 
 #[derive(Debug, Serialize)]
 pub(super) struct Error {
+    #[serde(skip)]
+    pub kind: ErrorKind,
     pub code: i32,
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ErrorKind {
+    Protocol,
+    RecordingLeaseExpired,
+    RecordingClockRestarted,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+impl std::error::Error for Error {}
+
 impl Error {
+    pub fn recording(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            code: -32000,
+            message: message.into(),
+        }
+    }
+
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
+            kind: ErrorKind::Protocol,
             code,
             message: message.into(),
         }

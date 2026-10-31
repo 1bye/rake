@@ -177,7 +177,7 @@ fn connection(
 
     if matches!(path, "/json" | "/json/list" | "/json/version") {
         let body = if path == "/json/version" {
-            json!({"Browser":"Rake/0.1", "Protocol-Version":"1.3"})
+            json!({"Browser":super::compatibility::PRODUCT, "Protocol-Version":super::compatibility::VERSION})
         } else {
             json!(
                 discover(&options.directory, options.selector.as_deref())?

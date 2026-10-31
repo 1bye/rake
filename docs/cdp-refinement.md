@@ -33,6 +33,26 @@ encoding. Responses stop encoding at 1 MiB while preserving mutation retry keys.
 Cache byte accounting uses a counting writer. The socket owner flushes at most
 32 queued messages together before returning to input.
 
+## Compatibility contract
+
+The tested subset is pinned to [CDP protocol r1695952](https://github.com/ChromeDevTools/devtools-protocol/tree/9b417d8a187ae7ecff367d9a9741d564658029b2)
+(version 1.3). `crates/rake-cli/src/cdp/contract.json` contains the upstream
+field/type definitions used by contract tests, with descriptions removed.
+It is a compatibility reference, not a claim of full protocol implementation.
+
+Common DOM parameters decode through borrowed, typed structures before runtime
+I/O. Positive checked CDP node IDs stay distinct from opaque runtime IDs. Depth
+and search ranges reject invalid numeric values; newer optional fields remain
+accepted. Enabled domains are an enum. Recording expiry/restart uses typed error
+categories while preserving the CDP error payload. `Browser.getVersion` and
+`Schema.getDomains` expose this native adapter's identity and domain subset.
+Unsupported methods still return -32601, including JavaScript debugging.
+
+When updating the pin, refresh the extracted definitions from the upstream JSON,
+run parameter/return contract tests and the stock Chrome workflow checks. The
+locally installed showcase browser is Chrome 156.0.8078.74; a browser version is
+not proof that every domain is implemented.
+
 ## Baseline
 
 Run the generated-input projection benchmark explicitly:

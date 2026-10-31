@@ -1,5 +1,6 @@
 //! Incremental DOM/CSS projection. Presentation identities survive consecutive captures.
 
+use super::params::{depth, node_id};
 use super::wire::{Error, Event};
 use rake_protocol::inspection::{Element, Snapshot};
 use serde_json::{Value, json};
@@ -398,15 +399,8 @@ impl Dom {
             .searches
             .get(&search)
             .ok_or_else(|| Error::new(-32000, "Search expired; repeat the search"))?;
-        let from = params["fromIndex"]
-            .as_u64()
-            .and_then(|v| usize::try_from(v).ok());
-        let to = params["toIndex"]
-            .as_u64()
-            .and_then(|v| usize::try_from(v).ok());
-        let (Some(from), Some(to)) = (from, to) else {
-            return Err(Error::new(-32602, "Search range requires integer indices"));
-        };
+        let range: super::params::SearchRange = super::params::decode(params)?;
+        let (from, to) = (range.from_index, range.to_index);
         if from >= to || to > results.len() {
             return Err(Error::new(-32602, "Invalid search result range"));
         }
@@ -1111,9 +1105,7 @@ impl Dom {
     }
 
     pub fn push_nodes(&mut self, params: &Value) -> Result<(Value, Vec<Value>), Error> {
-        let ids = params["backendNodeIds"]
-            .as_array()
-            .ok_or_else(|| Error::new(-32602, "backendNodeIds required"))?;
+        let ids: Vec<super::params::NodeId> = super::params::decode(&params["backendNodeIds"])?;
 
         if !self.sent.contains(&1) {
             return Err(Error::new(-32000, "Request the document first"));
@@ -1124,10 +1116,7 @@ impl Dom {
         let nodes: Vec<_> = ids
             .iter()
             .map(|value| {
-                let id = value
-                    .as_i64()
-                    .and_then(|id| i32::try_from(id).ok())
-                    .unwrap_or(0);
+                let id = value.get();
 
                 if id == 1 || self.nodes.contains_key(&id) {
                     self.send_path(id, &mut events)?;
@@ -1298,30 +1287,6 @@ fn attributes(element: &Element) -> Vec<String> {
     }
 
     attrs
-}
-
-fn node_id(params: &Value) -> Result<i32, Error> {
-    params["nodeId"]
-        .as_i64()
-        .or_else(|| params["backendNodeId"].as_i64())
-        .and_then(|id| i32::try_from(id).ok())
-        .ok_or_else(|| Error::new(-32602, "nodeId required"))
-}
-
-fn depth(params: &Value, default: i64) -> Result<usize, Error> {
-    let depth = if params.get("depth").is_some() {
-        params["depth"]
-            .as_i64()
-            .ok_or_else(|| Error::new(-32602, "depth must be an integer"))?
-    } else {
-        default
-    };
-
-    match depth {
-        -1 => Ok(rake_protocol::inspection::MAX_ELEMENTS + 1),
-        0.. => Ok((depth as usize).min(rake_protocol::inspection::MAX_ELEMENTS + 1)),
-        _ => Err(Error::new(-32602, "depth must be -1 or nonnegative")),
-    }
 }
 
 #[cfg(test)]
