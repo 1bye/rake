@@ -1,5 +1,6 @@
 //! External configuration consumers for common native desktop metadata.
 use rake_dist_core::{Config, DesktopOverrides, Format, LocalizedMetadata, Overrides, Platform};
+
 const CONFIG: &str = r#"
 schema_version=1
 identifier='dev.rake.labels'
@@ -17,12 +18,15 @@ formats=['msix']
 [windows.msix]
 publisher='CN=Rake SDK Test'
 "#;
+
 #[test]
 fn common_metadata_plans_natively_and_partial_overrides_preserve_unspecified_lists() {
     let mut config: Config = toml::from_str(CONFIG).unwrap();
+
     for platform in [Platform::Macos, Platform::Windows, Platform::Linux] {
         config.plan("labels", "1.0.0", platform).unwrap();
     }
+
     config.target_overrides.insert(
         "x86_64-unknown-linux-gnu".into(),
         Overrides {
@@ -49,6 +53,7 @@ fn common_metadata_plans_natively_and_partial_overrides_preserve_unspecified_lis
             Some(&[Format::Deb]),
         )
         .unwrap();
+
     assert_eq!(plan.config().desktop.url_schemes, ["rake-notes"]);
     assert_eq!(plan.config().desktop.localizations.len(), 2);
     assert!(
@@ -65,6 +70,7 @@ fn common_metadata_plans_natively_and_partial_overrides_preserve_unspecified_lis
             .contains("localized OS display labels")
     );
 }
+
 #[test]
 fn metadata_rejects_path_and_desktop_injection_before_native_tools() {
     for replacement in [
@@ -75,6 +81,7 @@ fn metadata_rejects_path_and_desktop_injection_before_native_tools() {
         CONFIG.replace("application/x-rake-note", "bad mime/type"),
     ] {
         let config: Config = toml::from_str(&replacement).unwrap();
+
         assert!(
             config.plan("labels", "1.0.0", Platform::Macos).is_err(),
             "invalid input {replacement}"
@@ -85,6 +92,7 @@ fn metadata_rejects_path_and_desktop_injection_before_native_tools() {
 #[test]
 fn velopack_accepts_common_registrations_without_custom_callbacks() {
     let config: Config = toml::from_str(&CONFIG.replace("formats=['msix']", "formats=['velopack']").replace("[desktop.localizations.fr]\nname='Notes françaises'\ndescription='Documents & notes'\n", "")).unwrap();
+
     let plan = config
         .plan_for(
             "labels",
@@ -94,6 +102,7 @@ fn velopack_accepts_common_registrations_without_custom_callbacks() {
             None,
         )
         .unwrap();
+
     assert_eq!(plan.packages()[0].format(), Format::Velopack);
     assert_eq!(
         plan.packages()[0].config().desktop.url_schemes,

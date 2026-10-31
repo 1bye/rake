@@ -57,6 +57,7 @@ impl Installation {
         {
             *path = crate::portable_relative_path(path)?;
         }
+
         Ok(())
     }
 }

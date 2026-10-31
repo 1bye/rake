@@ -117,6 +117,7 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
         }
 
         let parameter_count = pattern.iter().filter(|segment| segment.is_none()).count();
+
         if patterns.iter().any(|previous| {
             previous.len() == pattern.len()
                 && previous.iter().filter(|segment| segment.is_none()).count() == parameter_count

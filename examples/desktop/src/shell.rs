@@ -21,6 +21,7 @@ impl Shell {
             .services()
             .get::<AppInfo>()
             .map_err(|error| MountError(error.to_string()))?;
+
         Ok(cx.new(|_| Self {
             layout,
             app,

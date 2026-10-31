@@ -216,6 +216,7 @@ impl Inspector {
                             .detail
                             .as_ref()
                             .and_then(|element| element.stable_id.as_ref());
+
                         let current = self
                             .selected
                             .as_ref()
@@ -226,13 +227,17 @@ impl Inspector {
                                         .elements
                                         .iter()
                                         .filter(|e| e.stable_id.as_ref() == Some(stable));
+
                                     let first = matches.next()?;
+
                                     matches.next().is_none().then_some(first)
                                 })
                             });
+
                         if let Some(current) = current {
                             self.selected = Some(current.id.clone());
                             self.detail_pending = true;
+
                             if current.styles.is_some() || current.resolved.is_some() {
                                 self.detail = Some(current.clone());
                             }

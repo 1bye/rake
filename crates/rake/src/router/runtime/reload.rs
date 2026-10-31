@@ -481,6 +481,7 @@ impl<R: Route> Router<R> {
         // route loader failure must not create a physical window or partially
         // restore the workspace.
         let mut prepared_tabs = Vec::new();
+
         for (tab, destinations) in checkpoint.tabs.iter().zip(decoded) {
             let scope = self.0.tasks.scope(TaskOwner::Tab(tab.id));
             let mut entries = Vec::new();
@@ -521,7 +522,9 @@ impl<R: Route> Router<R> {
                     navigator.clone(),
                     entry.cancellation.clone(),
                 );
+
                 let stopped = navigator.stopped();
+
                 let prepared = match select(Box::pin(loading), Box::pin(stopped)).await {
                     Either::Left((result, _)) => {
                         result.map_err(|error| ReloadError::State(error.to_string()))?
@@ -547,6 +550,7 @@ impl<R: Route> Router<R> {
             if self.0.shutdown.get() {
                 return Err(ReloadError::State("routing runtime stopped".into()));
             }
+
             if window.id != self.0.initial_window.get() {
                 let mut host = super::windows::ProvisionalWindow::new(
                     self.0.clone(),
@@ -732,10 +736,12 @@ mod tests {
     use super::*;
     use crate::diagnostics::Collector;
     use crate::reload::{EntryCheckpoint, WindowCheckpoint};
+
     use crate::router::{
         EntryId, GenerationId, MountError, OpenOptions, Outcome, RouterConfig, RuntimeId, TabId,
         TabMode, WindowHost, WindowId,
     };
+
     use futures::executor::{LocalPool, block_on};
     use futures::task::LocalSpawnExt;
 
@@ -883,6 +889,7 @@ mod tests {
                 _: super::super::Activation,
             ) -> futures::future::LocalBoxFuture<'static, Result<(), MountError>> {
                 self.0.set(self.0.get() + 1);
+
                 Box::pin(async { Ok(()) })
             }
 
@@ -892,24 +899,30 @@ mod tests {
         }
 
         let opened = Rc::new(Cell::new(0));
+
         let prepare: super::super::Prepare<Destination> = Rc::new(|_, _, _, _| {
             Box::pin(async { Err(MountError("checkpoint loader failed".into())) })
         });
+
         let mount: super::super::PreparedMount<Destination> = Rc::new(|_, _, _, prepared| {
             Box::pin(async move {
                 prepared.downcast::<()>()?;
+
                 Ok(Rc::new(()) as super::super::Resource)
             })
         });
+
         let router = Router::with_prepared_mount(
             RouterConfig::default(),
             Collector::default(),
             prepare,
             mount,
         );
+
         router.window_host(Host(opened.clone())).unwrap();
 
         let tab = TabId(2);
+
         let checkpoint = WorkspaceCheckpoint {
             windows: vec![
                 WindowCheckpoint {
@@ -952,26 +965,33 @@ mod tests {
         let stop = Rc::new(RefCell::new(
             None::<std::rc::Weak<super::super::Core<Destination>>>,
         ));
+
         let signal = stop.clone();
+
         let prepare = Rc::new(move |_, _, _, _| {
             let signal = signal.clone();
+
             Box::pin(async move {
                 if let Some(core) = signal.borrow().as_ref().and_then(std::rc::Weak::upgrade) {
                     Router(core).shutdown();
                 }
+
                 Ok(super::super::PreparedPage::from_value(()))
             }) as futures::future::LocalBoxFuture<'static, _>
         });
+
         let mount = Rc::new(|_, _, _, _| {
             Box::pin(async { Ok(Rc::new(()) as super::super::Resource) })
                 as futures::future::LocalBoxFuture<'static, _>
         });
+
         let stopped = Router::with_prepared_mount(
             RouterConfig::default(),
             Collector::default(),
             prepare,
             mount,
         );
+
         *stop.borrow_mut() = Some(Rc::downgrade(&stopped.0));
         stopped.window_host(Host(opened.clone())).unwrap();
         assert!(block_on(stopped.restore_workspace(&checkpoint, "app")).is_err());

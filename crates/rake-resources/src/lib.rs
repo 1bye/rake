@@ -1,9 +1,11 @@
 //! Resolves installed resources and private helpers independently of the working directory.
 #[cfg(any(unix, windows))]
 mod process;
+
 #[cfg(any(unix, windows))]
 pub use process::HelperProcess;
 use rake_dist_core::{Installation, validate_relative_path};
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -45,21 +47,26 @@ impl Resources {
     /// Returns an error for invalid names, missing descriptors or malformed metadata.
     pub fn for_executable(executable: &Path, name: &str) -> Result<Self, Error> {
         validate_relative_path(Path::new(name)).map_err(|e| Error::Invalid(e.to_string()))?;
+
         if Path::new(name).components().count() != 1 {
             return Err(Error::Invalid("resource directory name".into()));
         }
+
         let executable = fs::canonicalize(executable)?;
         let parent = executable.parent().ok_or(Error::Unbundled)?;
         let mut roots = vec![parent.to_path_buf()];
+
         if let Some(prefix) = parent.parent() {
             roots.push(prefix.join("Resources"));
             roots.push(prefix.join("lib").join(name));
         }
+
         for root in roots {
             if root.join("rake-installation.json").is_file() {
                 return Self::load(&root);
             }
         }
+
         Err(Error::Unbundled)
     }
 
@@ -68,14 +75,18 @@ impl Resources {
     /// Rejects unknown revisions, non-confined helper/runtime paths and invalid metadata.
     pub fn load(root: &Path) -> Result<Self, Error> {
         let root = fs::canonicalize(root)?;
+
         let mut installation: Installation =
             serde_json::from_slice(&fs::read(root.join("rake-installation.json"))?)?;
+
         installation
             .normalize_paths()
             .map_err(|error| Error::Invalid(error.to_string()))?;
+
         if installation.schema_version != 1 {
             return Err(Error::Invalid("descriptor schema".into()));
         }
+
         for path in installation
             .helpers
             .values()
@@ -84,6 +95,7 @@ impl Resources {
         {
             validate_relative_path(path).map_err(|e| Error::Invalid(e.to_string()))?;
         }
+
         Ok(Self { root, installation })
     }
 
@@ -98,10 +110,13 @@ impl Resources {
     pub fn path(&self, relative: impl AsRef<Path>) -> Result<PathBuf, Error> {
         let relative = rake_dist_core::portable_relative_path(relative.as_ref())
             .map_err(|e| Error::Invalid(e.to_string()))?;
+
         let path = fs::canonicalize(self.root.join(relative))?;
+
         if !path.starts_with(&self.root) {
             return Err(Error::Invalid("symlink escapes resources".into()));
         }
+
         Ok(path)
     }
 
@@ -128,9 +143,12 @@ impl Resources {
         S: AsRef<std::ffi::OsStr>,
     {
         let mut command = std::process::Command::new(self.helper(name)?);
+
         command.args(args);
+
         Ok(HelperProcess::spawn(command)?)
     }
+
     /// Resolves a macOS framework under Contents/Frameworks.
     /// # Errors
     /// Returns errors for missing frameworks or paths escaping the bundle.
@@ -138,21 +156,26 @@ impl Resources {
         if self.installation.platform != rake_dist_core::Platform::Macos {
             return Err(Error::Invalid("frameworks require macOS".into()));
         }
+
         let root = fs::canonicalize(
             self.root
                 .parent()
                 .ok_or(Error::Unbundled)?
                 .join("Frameworks"),
         )?;
+
         let relative = self
             .installation
             .frameworks
             .get(name)
             .ok_or_else(|| Error::Invalid(format!("unknown framework {name}")))?;
+
         let path = fs::canonicalize(root.join(relative))?;
+
         if !path.starts_with(&root) {
             return Err(Error::Invalid("framework escapes bundle".into()));
         }
+
         Ok(path)
     }
 
@@ -166,19 +189,24 @@ impl Resources {
     ) -> Result<std::process::Command, Error> {
         let root = self.runtime(runtime)?;
         let plugins = root.join("lib/gstreamer-1.0");
+
         let scanner = root.join("libexec/gstreamer-1.0").join(if cfg!(windows) {
             "gst-plugin-scanner.exe"
         } else {
             "gst-plugin-scanner"
         });
+
         if !plugins.is_dir() || !scanner.is_file() {
             return Err(Error::Invalid("GStreamer plugin/scanner layout".into()));
         }
+
         let mut command = std::process::Command::new(self.helper(helper)?);
+
         command
             .env("GST_PLUGIN_SYSTEM_PATH_1_0", "")
             .env("GST_PLUGIN_PATH_1_0", plugins)
             .env("GST_PLUGIN_SCANNER_1_0", scanner);
+
         Ok(command)
     }
 

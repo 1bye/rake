@@ -1,19 +1,24 @@
 //! Linux integration, native dependency policy and dedicated Arch/Flatpak builders.
 mod arch;
 mod deb;
+
 pub use deb::build_deb;
+
 mod elf;
 mod flatpak;
 mod metadata;
 mod repository;
 mod rpm;
+
 pub use arch::{ArchPackage, build_arch};
 pub use elf::{ElfReport, normalize_elf};
 pub use flatpak::{FlatpakBuild, FlatpakTool, build_flatpak, flatpak_manifest};
+
 pub use metadata::{
     appstream, appstream_with_metadata, desktop_entry, desktop_entry_with_metadata, mime_types,
     validate_appstream,
 };
+
 pub use repository::{Repository, build_repository};
 pub use rpm::build_rpm;
 
@@ -43,6 +48,7 @@ pub enum Error {
 
 pub(crate) fn run(command: &mut Command) -> Result<String, Error> {
     let output = command.output()?;
+
     if !output.status.success() {
         return Err(Error::Tool {
             program: command.get_program().to_string_lossy().into_owned(),
@@ -53,6 +59,7 @@ pub(crate) fn run(command: &mut Command) -> Result<String, Error> {
             ),
         });
     }
+
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -69,15 +76,19 @@ pub struct ToolRecord {
 
 pub(crate) fn files(root: &std::path::Path) -> Result<Vec<PathBuf>, Error> {
     let mut output = Vec::new();
+
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
+
         if entry.file_type()?.is_dir() {
             output.extend(files(&entry.path())?);
         } else if entry.file_type()?.is_file() {
             output.push(entry.path());
         }
     }
+
     output.sort();
+
     Ok(output)
 }
 

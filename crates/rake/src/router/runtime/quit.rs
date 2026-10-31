@@ -29,8 +29,11 @@ impl<R: Route> Router<R> {
                 "another quit or reload is already pending".into(),
             ));
         }
+
         let operation = self.quit(options);
+
         self.0.browser_reload.set(Some(operation.id()));
+
         Ok(operation)
     }
 }
@@ -88,7 +91,9 @@ impl<R: Route> Router<R> {
                 "another quit already owns the application lifecycle".into(),
             ));
         }
+
         let operation = self.quit(options);
+
         if self.quit_status().operation_id != Some(operation.id())
             || !self.quit_status().phase.is_pending()
         {
@@ -96,11 +101,13 @@ impl<R: Route> Router<R> {
                 "update quit was not admitted".into(),
             ));
         }
+
         *self.0.update_handoff.borrow_mut() = Some(handoff);
         *self.0.update_restart_error.borrow_mut() = None;
         self.0
             .update_exit
             .set(rake_updates::RestartDisposition::ExitHost);
+
         Ok(operation)
     }
 
@@ -118,20 +125,25 @@ impl<R: Route> Router<R> {
                 "update restart requires a committed guarded quit".into(),
             ));
         }
+
         if let Some(error) = self.update_restart_error() {
             return Err(rake_updates::Error::Provider(error));
         }
+
         let Some(handoff) = self.0.update_handoff.borrow_mut().take() else {
             return Ok(self.0.update_exit.get());
         };
+
         match handoff.commit(true) {
             Ok(disposition) => {
                 self.0.update_exit.set(disposition);
+
                 Ok(disposition)
             }
             Err(error) => {
                 *self.0.update_restart_error.borrow_mut() = Some(error.to_string());
                 self.0.notify();
+
                 Err(error)
             }
         }
@@ -245,6 +257,7 @@ impl<R: Route> Router<R> {
             if phase != QuitPhase::Ready {
                 core.update_handoff.borrow_mut().take();
             }
+
             core.quit.borrow_mut().phase = phase;
             core.finish(id, &result);
             let _ = sender.send(result);
@@ -252,6 +265,7 @@ impl<R: Route> Router<R> {
             #[cfg(target_family = "wasm")]
             if core.browser_reload.get() == Some(id) {
                 core.browser_reload.set(None);
+
                 if phase == QuitPhase::Ready {
                     // The runtime owns this handoff. Disposing a routed page must
                     // not cancel the final reload along with its observing view.
@@ -391,6 +405,7 @@ async fn transition<R: Route>(
         core.notify();
         run_quit_guards(core, id, options).await?;
         let pending = core.quit_status(&core.tasks.snapshot());
+
         if !pending.pending_tasks.is_empty() || !pending.pending_operations.is_empty() {
             continue;
         }
@@ -458,6 +473,7 @@ async fn run_quit_guards<R: Route>(
         operation_id,
         options,
     };
+
     let guards = core.quit_guards.borrow().clone();
 
     for guard in guards {
@@ -483,6 +499,7 @@ impl<R: Route> Router<R> {
                 Err(error) => tracing::error!(%error,"native quit guard could not be installed"),
             }
         }
+
         let core = Rc::downgrade(&self.0);
 
         cx.on_action(move |_: &crate::quit::RequestQuit, _| {
@@ -520,6 +537,7 @@ impl<R: Route> Router<R> {
             .borrow()
             .as_ref()
             .map(|bridge| bridge.changed());
+
         async move {
             if let Some(changed) = changed {
                 changed.await;
@@ -534,7 +552,9 @@ impl<R: Route> Router<R> {
     pub(crate) async fn changed_with_native_quit(&self, revision: u64) -> u64 {
         let changed = self.changed(revision);
         let _ = select(Box::pin(changed), self.native_quit_changed()).await;
+
         self.poll_native_quit();
+
         self.revision()
     }
 
@@ -545,9 +565,11 @@ impl<R: Route> Router<R> {
             .borrow()
             .as_ref()
             .is_some_and(|bridge| bridge.take_request());
+
         if requested {
             drop(self.quit(QuitOptions::default()));
         }
+
         if matches!(
             self.quit_status().phase,
             QuitPhase::Cancelled | QuitPhase::Blocked
@@ -555,11 +577,13 @@ impl<R: Route> Router<R> {
             self.reply_native_quit(false);
         }
     }
+
     pub(crate) fn prepare_native_exit(&self, approved: bool) {
         if let Some(bridge) = self.0.native_quit.borrow().as_ref() {
             bridge.prepare_exit(approved);
         }
     }
+
     pub(crate) fn reply_native_quit(&self, approved: bool) {
         if let Some(bridge) = self.0.native_quit.borrow().as_ref() {
             bridge.reply(approved);

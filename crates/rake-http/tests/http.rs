@@ -355,8 +355,10 @@ fn inspection_captures_headers_and_query_without_credentials() {
     let (base, server) = server(
         "HTTP/1.1 201 Created\r\nContent-Length: 2\r\nContent-Type: application/json; charset=utf-8\r\nX-Reply: one\r\nX-Reply: two\r\nSet-Cookie: private=value\r\nConnection: close\r\n\r\n{}",
     );
+
     let collector = Collector::default();
     let client = HttpClient::with_collector(HttpConfig::new(), collector.clone()).unwrap();
+
     block_on(
         client
             .post(&base)
@@ -368,12 +370,14 @@ fn inspection_captures_headers_and_query_without_credentials() {
     )
     .unwrap();
     let request = server.join().unwrap();
+
     assert!(
         request.contains("token=secret"),
         "capture must not modify transmission"
     );
     let records = collector.snapshot_after(0, Some("request")).records;
     let started = &records[0].fields;
+
     assert!(
         started["url"]
             .as_str()
@@ -386,6 +390,7 @@ fn inspection_captures_headers_and_query_without_credentials() {
         .iter()
         .find(|r| r.fields["phase"] == "headers_received")
         .unwrap();
+
     assert_eq!(response.fields["response_headers"]["x-reply"], "one\ntwo");
     assert_eq!(
         response.fields["response_headers"]["set-cookie"],
@@ -400,19 +405,24 @@ fn inspection_captures_headers_and_query_without_credentials() {
 fn body_capture_tracks_consumption_eof_and_limits() {
     for length in [0, 17, rake_diagnostics::http::BODY_LIMIT + 1] {
         let body = "x".repeat(length);
+
         let (base, server) = server(format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}"
         ));
+
         let collector = Collector::default();
         let client = HttpClient::with_collector(HttpConfig::new(), collector.clone()).unwrap();
         let response = block_on(client.post(&base).body(b"request".to_vec()).send()).unwrap();
+
         let id = collector.snapshot_after(0, Some("request")).records[0].fields["request_id"]
             .as_u64()
             .unwrap();
+
         assert_eq!(collector.http_body(id, false).unwrap().bytes, b"request");
         assert!(!collector.http_body(id, true).unwrap().complete);
         assert_eq!(block_on(response.bytes()).unwrap(), body.as_bytes());
         let capture = collector.http_body(id, true).unwrap();
+
         assert!(capture.complete);
         assert_eq!(
             capture.truncated,

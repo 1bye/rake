@@ -31,6 +31,7 @@ fn main() {
         } else {
             release::worker(&arguments[1..])
         };
+
         if let Err(error) = result {
             if json {
                 eprintln!(
@@ -40,10 +41,13 @@ fn main() {
             } else {
                 eprintln!("rake: {error}");
             }
+
             std::process::exit(1);
         }
+
         return;
     }
+
     if arguments
         .first()
         .is_some_and(|command| command == "__distribution-worker")
@@ -58,12 +62,15 @@ fn main() {
                     std::path::Path::new(arguments.get(2).ok_or("worker workspace missing")?),
                 )
             });
+
         if let Err(error) = result {
             eprintln!("rake worker: {error}");
             std::process::exit(1);
         }
+
         return;
     }
+
     if arguments.first().is_some_and(|command| {
         command == "__native-build" || native_commands::handles(command, &arguments[1..])
     }) {
@@ -78,6 +85,7 @@ fn main() {
         } else {
             native_commands::run(&arguments[0], &arguments[1..])
         };
+
         if let Err(error) = result {
             if json {
                 eprintln!(
@@ -87,10 +95,13 @@ fn main() {
             } else {
                 eprintln!("rake: {error}");
             }
+
             std::process::exit(1);
         }
+
         return;
     }
+
     if arguments.first().is_some_and(|command| command == "bundle")
         && !arguments
             .windows(2)
@@ -108,6 +119,7 @@ fn main() {
                 } else {
                     eprintln!("rake: {error}");
                 }
+
                 std::process::exit(1);
             }
         }

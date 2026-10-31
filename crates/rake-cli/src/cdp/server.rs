@@ -33,16 +33,20 @@ fn http(stream: &mut TcpStream, status: &str, body: &Value) -> std::io::Result<(
 
 fn http_body(stream: &mut TcpStream, status: &str, mime: &str, body: &[u8]) -> std::io::Result<()> {
     let mut header = Vec::new();
+
     while !header.ends_with(b"\r\n\r\n") && header.len() < 16384 {
         let mut byte = [0];
+
         stream.read_exact(&mut byte)?;
         header.push(byte[0]);
     }
+
     write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Type: {mime}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; sandbox\r\n\r\n",
         body.len()
     )?;
+
     stream.write_all(body)
 }
 
@@ -52,11 +56,13 @@ fn frame_source_content(instance: &Instance, tail: &str) -> Result<String> {
     let sequence: u64 = parts.next().ok_or("Frame sequence required")?.parse()?;
     let index: usize = parts.next().ok_or("Callback index required")?.parse()?;
     let after = sequence.checked_sub(1).ok_or("Invalid frame sequence")?;
+
     let Reply::Frames(frames) =
         crate::terminal::query(instance, Query::Frames { after }, super::TIMEOUT)?
     else {
         return Err("Frame source unavailable".into());
     };
+
     let location = frames
         .frames
         .iter()
@@ -64,6 +70,7 @@ fn frame_source_content(instance: &Instance, tail: &str) -> Result<String> {
         .and_then(|frame| frame.nodes.get(index))
         .map(|node| &node.source)
         .ok_or("Frame source expired or unavailable")?;
+
     crate::source::read(location)
 }
 
@@ -75,6 +82,7 @@ fn source_content(instance: &Instance, sequence: u64) -> Result<String> {
     let after = sequence
         .checked_sub(1)
         .ok_or("Invalid diagnostic sequence")?;
+
     let Reply::Diagnostics(snapshot) = crate::terminal::query(
         instance,
         Query::Diagnostics { after, kind: None },
@@ -83,12 +91,14 @@ fn source_content(instance: &Instance, sequence: u64) -> Result<String> {
     else {
         return Err("Diagnostic source unavailable".into());
     };
+
     let source = snapshot
         .records
         .iter()
         .find(|record| record.sequence == sequence)
         .and_then(|record| record.source.as_ref())
         .ok_or("Diagnostic source expired or unavailable")?;
+
     crate::source::read(&SourceLocation {
         file: source.file.clone(),
         line: source.line,
@@ -199,12 +209,14 @@ fn connection(
     let (id, source) = id
         .split_once("/source/")
         .map_or((id, None), |(id, tail)| (id, Some(tail)));
+
     // Source URLs name an exact runtime; a discovery selector may name its predecessor.
     let selector = if source.is_some() {
         None
     } else {
         options.selector.as_deref()
     };
+
     let Some(instance) = discover(&options.directory, selector)?
         .into_iter()
         .find(|i| i.info.runtime_id.to_string() == id)
@@ -226,6 +238,7 @@ fn connection(
                 .ok_or_else(|| "Invalid diagnostic source URL".into())
                 .and_then(|sequence| source_content(&instance, sequence))
         };
+
         match content {
             Ok(text) => http_body(&mut stream, "200 OK", "text/plain", text.as_bytes())?,
             Err(error) => http(
@@ -234,8 +247,10 @@ fn connection(
                 &json!({"error":error.to_string()}),
             )?,
         };
+
         return Ok(());
     }
+
     let socket = tungstenite::accept_with_config(
         stream,
         Some(

@@ -209,6 +209,7 @@ impl Render for Screen {
                 {
                     Some(network_fixture::controls(self, cx))
                 }
+
                 #[cfg(not(feature = "network-test"))]
                 {
                     None::<rake::gpui::AnyElement>
@@ -631,6 +632,7 @@ fn app() -> App<Destination> {
             let http = context
                 .http()
                 .map_err(|error| CommandError::Failed(error.to_string()))?;
+
             let response = http
                 .get(&command.url)
                 .cancellation(context.cancellation)

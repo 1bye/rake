@@ -1,7 +1,10 @@
 //! macOS metadata policy and native release finalization.
 mod finalize;
+
 pub use finalize::{notarize, package, preflight, sign_app, verify_artifact};
+
 mod loaders;
+
 pub use loaders::{normalize_loaders, signable_inventory};
 use std::path::Path;
 
@@ -34,6 +37,7 @@ pub fn info_plist(
 ) -> Result<plist::Value, Error> {
     let value = plist::Value::from_file(path)?;
     let dict = value.as_dictionary().ok_or(Error::Identity("dictionary"))?;
+
     for (key, expected) in [
         ("CFBundleIdentifier", identifier),
         ("CFBundleExecutable", executable),
@@ -47,6 +51,7 @@ pub fn info_plist(
             return Err(Error::Identity(key));
         }
     }
+
     Ok(value)
 }
 
@@ -62,12 +67,15 @@ pub fn sparkle_info_plist(
     let key = base64::engine::general_purpose::STANDARD
         .decode(public_key.trim())
         .map_err(|error| Error::Native(error.to_string()))?;
+
     if key.len() != 32 {
         return Err(Error::Identity("SUPublicEDKey"));
     }
+
     let dictionary = value
         .as_dictionary_mut()
         .ok_or(Error::Identity("dictionary"))?;
+
     for (name, expected) in [
         ("SUFeedURL", plist::Value::String(feed.into())),
         (
@@ -84,8 +92,10 @@ pub fn sparkle_info_plist(
         if dictionary.get(name).is_some_and(|value| value != &expected) {
             return Err(Error::Identity(name));
         }
+
         dictionary.insert(name.into(), expected);
     }
+
     Ok(value)
 }
 

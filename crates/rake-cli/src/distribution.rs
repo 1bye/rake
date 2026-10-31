@@ -20,18 +20,22 @@ pub(crate) fn handles(arguments: &[String]) -> bool {
     }) {
         return true;
     }
+
     let value = |flag: &str| {
         arguments
             .windows(2)
             .find(|pair| pair[0] == flag)
             .map(|pair| pair[1].as_str())
     };
+
     let platform = match std::env::consts::OS {
         "macos" => Platform::Macos,
         "windows" => Platform::Windows,
         _ => Platform::Linux,
     };
+
     let target = rake_dist::host_target().ok();
+
     rake_dist::plan_with(
         std::path::Path::new(value("--manifest-path").unwrap_or("Cargo.toml")),
         value("--package").or_else(|| value("-p")),
@@ -59,19 +63,24 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         {
             return Err("schema output accepts only --plan, --schema and --json".into());
         }
+
         println!(
             "{}",
             serde_json::to_string_pretty(&rake_dist::configuration_schema())?
         );
+
         return Ok(true);
     }
+
     let planning = arguments.iter().any(|arg| arg == "--plan");
+
     let explicit = arguments.iter().any(|arg| {
         matches!(
             arg.as_str(),
             "--native" | "--format" | "--platform" | "--target-triple"
         )
     });
+
     let mut output = PathBuf::from("dist");
     let mut output_selected = false;
     let mut compatibility = arguments.iter().any(|arg| arg == "--compat");
@@ -88,6 +97,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     let mut formats = Vec::new();
     let mut features = Vec::new();
     let mut args = arguments.iter();
+
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--plan" | "--json" | "--native" | "--compat" => {}
@@ -107,6 +117,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             "--trusted" => trust.required = true,
             "--sign-identity" => {
                 let identity = args.next().ok_or("--sign-identity requires a value")?;
+
                 trust.macos_identity = (identity != "-").then(|| identity.clone());
             }
             "--notary-profile" => {
@@ -163,23 +174,28 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             }
         }
     }
+
     let platform = match platform {
         "macos" => Platform::Macos,
         "windows" => Platform::Windows,
         "linux" => Platform::Linux,
         _ => return Err(format!("unsupported platform: {platform}").into()),
     };
+
     let native_platform = match std::env::consts::OS {
         "macos" => Platform::Macos,
         "windows" => Platform::Windows,
         _ => Platform::Linux,
     };
+
     let host = if platform == native_platform && target.is_none() {
         Some(rake_dist::host_target()?)
     } else {
         None
     };
+
     let target = target.or(host.as_deref());
+
     if compatibility && formats.is_empty() {
         formats.push(match platform {
             Platform::Macos => rake_dist::Format::Zip,
@@ -187,6 +203,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             _ => return Err("legacy compatibility is available on macOS and Linux".into()),
         });
     }
+
     let plan = rake_dist::plan_with(
         &manifest,
         package,
@@ -198,7 +215,9 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             Some(&formats)
         },
     )?;
+
     compatibility |= plan.is_legacy() && !explicit && platform != Platform::Windows;
+
     if planning {
         println!(
             "{}",
@@ -220,10 +239,13 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
                 ])
                 .arg(&manifest)
                 .output()?;
+
             if !metadata.status.success() {
                 return Err("could not resolve legacy output root".into());
             }
+
             let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
+
             let selected = metadata["packages"]
                 .as_array()
                 .ok_or("Cargo packages missing")?
@@ -235,6 +257,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
                         && package.is_none_or(|name| item["name"] == name)
                 })
                 .ok_or("Cargo package missing")?;
+
             output = PathBuf::from(
                 metadata["workspace_root"]
                     .as_str()
@@ -248,8 +271,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             )
             .join("desktop-bundle");
         }
+
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = cancelled.clone();
+
         ctrlc::set_handler(move || flag.store(true, std::sync::atomic::Ordering::Release))?;
         let request = rake_dist::BundleRequest {
             manifest,
@@ -267,11 +292,14 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             locked_components,
             trust,
         };
+
         let result = rake_dist::bundle(&request, &std::env::current_exe()?, &cancelled)?;
+
         if compatibility {
             let output = std::path::absolute(&request.output)?;
             let manifest = output.join("bundle.json");
             let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+
             println!(
                 "{}",
                 serde_json::to_string_pretty(
@@ -282,6 +310,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
     }
+
     Ok(true)
 }
 
@@ -290,6 +319,8 @@ pub(crate) fn worker(
     workspace: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let request: rake_dist::BundleRequest = serde_json::from_slice(&std::fs::read(path)?)?;
+
     rake_dist::execute_worker(&request, workspace)?;
+
     Ok(())
 }

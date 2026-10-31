@@ -25,6 +25,7 @@ struct Increment {
 
 fn services(counter: Counter) -> Services {
     let registry = ServiceRegistry::new().with(counter).unwrap();
+
     Services::new(
         HttpClient::new(HttpConfig::new()).unwrap(),
         Collector::default(),
@@ -34,12 +35,14 @@ fn services(counter: Counter) -> Services {
 
 fn drive(runtime: Rc<Runtime>, finished: Rc<Cell<bool>>) -> LocalPool {
     let pool = LocalPool::new();
+
     pool.spawner()
         .spawn_local(async move {
             runtime.run().await.unwrap();
             finished.set(true);
         })
         .unwrap();
+
     pool
 }
 
@@ -49,6 +52,7 @@ fn runtime_context_commands_and_tasks_share_services() {
         RouterConfig::default(),
         services(Counter(Cell::new(1))),
     ));
+
     let context = runtime.context();
     let counter = context.services().get::<Counter>().unwrap();
     let command_counter = counter.clone();
@@ -59,13 +63,16 @@ fn runtime_context_commands_and_tasks_share_services() {
         .commands()
         .register::<Increment, _, _>(move |args, command_context| {
             let command_counter = command_counter.clone();
+
             async move {
                 let service_counter = command_context
                     .services
                     .get::<Counter>()
                     .map_err(|error| CommandError::Failed(error.to_string()))?;
+
                 assert!(Rc::ptr_eq(&command_counter, &service_counter));
                 service_counter.0.set(service_counter.0.get() + args.amount);
+
                 Ok(service_counter.0.get())
             }
         })
@@ -76,22 +83,27 @@ fn runtime_context_commands_and_tasks_share_services() {
         .unwrap()
         .dispatch(Increment { amount: 4 }, "increment".into())
         .unwrap();
+
     assert!(matches!(reply, Reply::Submitted { .. }));
 
     let finished = Rc::new(Cell::new(false));
     let mut pool = drive(runtime.clone(), finished.clone());
+
     pool.run_until_stalled();
     assert_eq!(counter.0.get(), 5);
 
     let completed = Rc::new(Cell::new(false));
     let completed_by_task = completed.clone();
+
     let task = context
         .tasks()
         .spawn("headless-task", async move {
             completed_by_task.set(true);
+
             Ok(())
         })
         .unwrap();
+
     pool.run_until_stalled();
     assert!(completed.get());
     assert_eq!(task.snapshot().unwrap().state, TaskState::Completed);
@@ -107,11 +119,14 @@ fn committed_quit_auto_stops_the_headless_runtime_after_guards() {
         RouterConfig::default(),
         services(Counter(Cell::new(0))),
     ));
+
     let calls = Rc::new(RefCell::new(Vec::new()));
     let observed = calls.clone();
+
     runtime
         .quit_guard(move |context| {
             observed.borrow_mut().push(context.operation_id);
+
             async { Ok(()) }
         })
         .unwrap();
@@ -142,6 +157,7 @@ fn dropping_the_owner_expires_retained_contexts_but_services_remain_readable() {
     let runtime = Runtime::new(RouterConfig::default(), services(Counter(Cell::new(7))));
     let context = runtime.context();
     let client = context.client().unwrap();
+
     assert_eq!(context.services().get::<Counter>().unwrap().0.get(), 7);
 
     drop(runtime);
@@ -164,6 +180,7 @@ fn dropping_the_owner_expires_retained_contexts_but_services_remain_readable() {
         Err(OperationError::RuntimeShutdown)
     ));
     let mut pool = LocalPool::new();
+
     assert!(matches!(
         pool.run_until(context.quit(QuitOptions::default()).wait()),
         Err(OperationError::RuntimeShutdown)

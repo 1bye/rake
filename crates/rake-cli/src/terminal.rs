@@ -180,9 +180,11 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
         ("inspect", "pick") => Message::Query(Query::InspectPick {}),
         ("inspect", "focus" | "scroll") => {
             let generation = option(&mut args, "--generation")?.unwrap_or_default();
+
             if args.len() != 1 {
                 return Err("inspect focus|scroll requires one exact element ID".into());
             }
+
             Message::Command(Command::NavigateElement {
                 id: args.remove(0),
                 generation,
@@ -500,16 +502,21 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         option(&mut args, "--request-key")?.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let friendly_highlight = args.first().is_some_and(|arg| arg == "highlight");
+
     let friendly_navigation = args.first().is_some_and(|arg| arg == "inspect")
         && args
             .get(1)
             .is_some_and(|arg| matches!(arg.as_str(), "focus" | "scroll"));
+
     let source = args.first().is_some_and(|arg| arg == "inspect")
         && args.get(1).is_some_and(|arg| arg == "source");
+
     let mut source_target = rake_protocol::inspection::SourceTarget::Boundary {};
+
     if source {
         let style = option(&mut args, "--style")?;
         let handler = option(&mut args, "--handler")?;
+
         source_target = match (style, handler) {
             (Some(_), Some(_)) => return Err("choose either --style or --handler".into()),
             (Some(index), None) => rake_protocol::inspection::SourceTarget::Style {
@@ -522,6 +529,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         };
         args[1] = "element".into();
     }
+
     let (mut message, follow) = parse_message(args)?;
 
     let candidates: Vec<_> = instances
@@ -567,9 +575,11 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         let Reply::Elements(tree) = query(instance, Query::InspectTree {}, timeout)? else {
             return Err("Unexpected inspection reply".into());
         };
+
         if !tree.elements.iter().any(|element| element.id == *id) {
             return Err("Element is stale; refresh inspect tree".into());
         }
+
         *generation = tree.capture;
     }
 
@@ -589,9 +599,11 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         let Reply::Element(element) = reply else {
             return Err("Unexpected source lookup reply".into());
         };
+
         let location = element
             .source_location(&source_target)
             .ok_or("Source location unavailable")?;
+
         return print(&crate::source::open(location)?, compact);
     }
 

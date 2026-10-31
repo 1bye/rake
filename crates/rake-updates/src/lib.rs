@@ -1,31 +1,43 @@
 //! Native update providers and the optional AppKit termination bridge.
 #[cfg(feature = "appimage")]
 mod appimage;
+
 #[cfg(feature = "appimage")]
 pub use appimage::{ImageUpdate, StagedImage};
+
 #[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
 mod macos_lifecycle;
+
 #[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
 pub use macos_lifecycle::{NativeQuitBridge, stop_application_run_loop};
+
 #[cfg(all(target_os = "macos", feature = "sparkle"))]
 mod sparkle;
+
 #[cfg(all(target_os = "macos", feature = "sparkle"))]
 pub use sparkle::{Sparkle, SparkleStage, SparkleStatus};
+
 mod controller;
+
 pub use controller::{UpdateController, UpdateInfo, UpdateSnapshot, UpdateState, UpdateWork};
+
 mod service;
 #[cfg(all(windows, feature = "velopack"))]
 mod windows_registrations;
+
 pub use rake_dist_core::{UpdateBinding, UpdateOwner};
+
 pub use service::{
     Capability, DownloadProgress, RestartDisposition, RestartHandoff, UpdateService,
 };
+
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 mod signatures;
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 mod transport;
 #[cfg(feature = "velopack")]
 mod velopack;
+
 #[cfg(feature = "velopack")]
 pub use velopack::{StagedVelopack, VelopackUpdate};
 
@@ -38,9 +50,11 @@ pub use velopack::{StagedVelopack, VelopackUpdate};
 #[doc(hidden)]
 pub fn parse_policy(embedded: &str) -> Result<UpdateBinding, Error> {
     let binding: UpdateBinding = serde_json::from_str(embedded)?;
+
     binding
         .validate()
         .map_err(|error| Error::Policy(error.to_string()))?;
+
     Ok(binding)
 }
 
@@ -90,18 +104,23 @@ pub fn early_startup_with_desktop(
         .map(serde_json::from_str)
         .transpose()?
         .unwrap_or_default();
+
     desktop
         .validate()
         .map_err(|error| Error::Policy(error.to_string()))?;
+
     if let Some(embedded) = embedded {
         let binding = parse_policy(embedded)?;
+
         #[cfg(all(windows, feature = "velopack"))]
         if binding.format == rake_dist_core::Format::Velopack {
             windows_registrations::startup(&binding, &desktop);
         }
+
         #[cfg(not(all(windows, feature = "velopack")))]
         let _ = binding;
     }
+
     Ok(())
 }
 
@@ -130,6 +149,7 @@ macro_rules! updates {
         })()
     }};
 }
+
 #[doc(hidden)]
 pub use rake_resources as __resources;
 
@@ -142,6 +162,7 @@ mod policy_tests {
     #[test]
     fn parse_policy_validates_the_compiled_binding() {
         let binding = parse_policy(POLICY).unwrap();
+
         assert_eq!(binding.identifier, "dev.rake.test");
     }
 
@@ -150,6 +171,7 @@ mod policy_tests {
         let error =
             parse_policy(&POLICY.replace("\"owner\":\"disabled\"", "\"owner\":\"appimage\""))
                 .unwrap_err();
+
         assert!(error.to_string().contains("update policy"));
     }
 }

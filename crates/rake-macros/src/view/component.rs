@@ -12,13 +12,16 @@ impl Element {
         next: &mut usize,
     ) -> syn::Result<TokenStream> {
         let index = *next;
+
         *next += 1;
         let definition = self.inspection_definition(rake, index);
+
         let key = if self.attribute("id").is_some() {
             quote!(|component| #rake::__private::view_component_key(&component.id))
         } else {
             quote!(|_| None)
         };
+
         let path = &self.tag;
         let mut fields = TokenStream::new();
 
@@ -58,6 +61,7 @@ impl Element {
                 |__rake_component| #rake::__private::view_inspect_component(__rake_component, #definition, #key)
             )));
         }
+
         let children = format_ident!(
             "__rake_component_children_{index}",
             span = Span::mixed_site()
@@ -81,6 +85,7 @@ impl Element {
             },
             #defaults
         });
+
         Ok(quote!(#rake::__private::inspection!(
             #component,
             |__rake_component| #rake::__private::view_inspect_component(__rake_component, #definition, #key)

@@ -83,23 +83,29 @@ fn native_visibility(window: &Window) -> HostVisibility {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
     use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, IsWindowVisible};
+
     let Ok(handle) = HasWindowHandle::window_handle(window) else {
         return HostVisibility::Unknown;
     };
+
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {
         return HostVisibility::Unknown;
     };
+
     let hwnd = handle.hwnd.get() as *mut std::ffi::c_void;
     let mut cloaked = 0_u32;
+
     // SAFETY: The borrowed GPUI window supplies a live HWND on the UI thread.
     // The DWM output points to an initialized u32 with exactly the requested size.
     unsafe {
         if IsWindow(hwnd) == 0 {
             return HostVisibility::Unknown;
         }
+
         if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
             return HostVisibility::Hidden;
         }
+
         if DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED as u32,
@@ -110,6 +116,7 @@ fn native_visibility(window: &Window) -> HostVisibility {
             return HostVisibility::Unknown;
         }
     }
+
     if cloaked != 0 {
         HostVisibility::Hidden
     } else {

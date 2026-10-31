@@ -1,5 +1,6 @@
 //! Desktop and AppStream metadata share the validated application identity.
 use crate::Error;
+
 fn xml(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -22,6 +23,7 @@ pub fn desktop_entry(name: &str, binary: &str, icon: &str) -> Result<String, Err
     {
         return Err(Error::Metadata("desktop name/executable/icon".into()));
     }
+
     Ok(format!(
         "[Desktop Entry]\nType=Application\nName={}\nExec={binary} %U\nIcon={icon}\nTerminal=false\nCategories=Utility;\nStartupNotify=true\n",
         name.replace('\\', "\\\\")
@@ -41,30 +43,38 @@ pub fn desktop_entry_with_metadata(
         .validate()
         .map_err(|error| Error::Metadata(error.to_string()))?;
     let mut output = desktop_entry(name, binary, icon)?;
+
     if let Some(category) = metadata.category {
         output = output.replace(
             "Categories=Utility;",
             &format!("Categories={}", category.linux_categories()),
         );
     }
+
     let mut mime = std::collections::BTreeSet::new();
+
     for scheme in &metadata.url_schemes {
         mime.insert(format!("x-scheme-handler/{}", scheme.to_ascii_lowercase()));
     }
+
     for association in &metadata.file_associations {
         mime.insert(association_mime(icon, association));
     }
+
     if !mime.is_empty() {
         output.push_str(&format!(
             "MimeType={};\n",
             mime.into_iter().collect::<Vec<_>>().join(";")
         ));
     }
+
     for (locale, labels) in &metadata.localizations {
         let locale = locale.replace('-', "_");
+
         if let Some(name) = &labels.name {
             output.push_str(&format!("Name[{locale}]={}\n", name.replace('\\', "\\\\")));
         }
+
         if let Some(description) = &labels.description {
             output.push_str(&format!(
                 "Comment[{locale}]={}\n",
@@ -72,14 +82,17 @@ pub fn desktop_entry_with_metadata(
             ));
         }
     }
+
     Ok(output)
 }
+
 fn association_mime(identifier: &str, association: &rake_dist_core::FileAssociation) -> String {
     association
         .mime_type
         .clone()
         .unwrap_or_else(|| format!("application/x-{}-{}", identifier, association.extensions[0]))
 }
+
 /// Generates shared-mime-info globs for the configured file suffixes.
 /// # Errors
 /// Rejects malformed common metadata before escaping it into XML.
@@ -93,6 +106,7 @@ pub fn mime_types(
     let mut output = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">",
     );
+
     for association in &metadata.file_associations {
         output.push_str(&format!(
             "<mime-type type=\"{}\"><comment>{}</comment>",
@@ -103,12 +117,16 @@ pub fn mime_types(
                 .or(association.name.as_deref())
                 .unwrap_or(&association.extensions[0]))
         ));
+
         for extension in &association.extensions {
             output.push_str(&format!("<glob pattern=\"*.{}\"/>", xml(extension)));
         }
+
         output.push_str("</mime-type>");
     }
+
     output.push_str("</mime-info>");
+
     Ok(output)
 }
 
@@ -139,6 +157,7 @@ pub fn appstream_with_metadata(
         .validate()
         .map_err(|error| Error::Metadata(error.to_string()))?;
     let mut localized = String::new();
+
     for (locale, labels) in &metadata.localizations {
         if let Some(name) = &labels.name {
             localized.push_str(&format!(
@@ -147,6 +166,7 @@ pub fn appstream_with_metadata(
                 xml(name)
             ));
         }
+
         if let Some(description) = &labels.description {
             localized.push_str(&format!(
                 "<summary xml:lang=\"{}\">{}</summary>",
@@ -155,8 +175,10 @@ pub fn appstream_with_metadata(
             ));
         }
     }
+
     if let Some(category) = metadata.category {
         localized.push_str("<categories>");
+
         for category in category
             .linux_categories()
             .split(';')
@@ -164,18 +186,23 @@ pub fn appstream_with_metadata(
         {
             localized.push_str(&format!("<category>{category}</category>"));
         }
+
         localized.push_str("</categories>");
     }
+
     if !metadata.file_associations.is_empty() {
         localized.push_str("<provides>");
+
         for association in &metadata.file_associations {
             localized.push_str(&format!(
                 "<mediatype>{}</mediatype>",
                 xml(&association_mime(binary, association))
             ));
         }
+
         localized.push_str("</provides>");
     }
+
     Ok(appstream(identifier, name, binary, version)
         .replace("</component>", &format!("{localized}</component>")))
 }
@@ -186,6 +213,7 @@ pub fn appstream_with_metadata(
 pub fn validate_appstream(text: &str, identifier: &str, binary: &str) -> Result<(), Error> {
     let document =
         roxmltree::Document::parse(text).map_err(|error| Error::Metadata(error.to_string()))?;
+
     if !document
         .descendants()
         .any(|node| node.has_tag_name("id") && node.text() == Some(identifier))
@@ -194,6 +222,7 @@ pub fn validate_appstream(text: &str, identifier: &str, binary: &str) -> Result<
             "AppStream ID conflicts with application".into(),
         ));
     }
+
     if !document.descendants().any(|node| {
         node.has_tag_name("launchable") && node.text() == Some(&format!("{binary}.desktop"))
     }) {
@@ -201,15 +230,18 @@ pub fn validate_appstream(text: &str, identifier: &str, binary: &str) -> Result<
             "AppStream launcher conflicts with executable".into(),
         ));
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn integration_metadata_keeps_identity_and_escapes_text() {
         let text = appstream("dev.rake.app", "Rake & Media", "rake-media", "1.2.3");
+
         validate_appstream(&text, "dev.rake.app", "rake-media").unwrap();
         assert!(validate_appstream(&text, "dev.rake.other", "rake-media").is_err());
         assert!(desktop_entry("bad\nExec=other", "rake-media", "rake-media").is_err());
@@ -219,6 +251,7 @@ mod tests {
 #[cfg(test)]
 mod registration_tests {
     use super::*;
+
     #[test]
     fn generated_desktop_appstream_and_mime_files_agree_and_escape_localized_labels() {
         let metadata = rake_dist_core::DesktopMetadata {
@@ -239,12 +272,15 @@ mod registration_tests {
             )]
             .into(),
         };
+
         let desktop = desktop_entry_with_metadata("Notes", "notes", "notes", &metadata).unwrap();
+
         assert!(desktop.contains("Categories=Development;"));
         assert!(desktop.contains("Name[pt_PT]=Notas"));
         assert!(desktop.contains("application/x-notes-rnote;x-scheme-handler/rake-note;"));
         let mime = mime_types("notes", &metadata).unwrap();
         let document = roxmltree::Document::parse(&mime).unwrap();
+
         assert!(
             document
                 .descendants()
@@ -254,6 +290,7 @@ mod registration_tests {
         let appstream =
             appstream_with_metadata("dev.rake.notes", "Notes", "notes", "1.0.0", &metadata)
                 .unwrap();
+
         validate_appstream(&appstream, "dev.rake.notes", "notes").unwrap();
         assert!(appstream.contains("xml:lang=\"pt-PT\""));
         assert!(appstream.contains("application/x-notes-rnote"));

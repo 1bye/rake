@@ -16,6 +16,7 @@ use crate::{Capability, DownloadProgress, Error, RestartHandoff, UpdateOwner, Up
 use event_listener::Event;
 #[cfg(all(target_os = "macos", feature = "sparkle"))]
 use std::cell::RefCell;
+
 use std::{
     ffi::OsString,
     future::Future,
@@ -32,6 +33,7 @@ pub struct UpdateInfo {
     /// Human-facing available version.
     pub version: String,
 }
+
 /// The application's observable update lifecycle.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -80,6 +82,7 @@ pub enum UpdateState {
     /// Updates require an external installation action.
     External,
 }
+
 /// A revisioned snapshot for race-free UI subscriptions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UpdateSnapshot {
@@ -88,6 +91,7 @@ pub struct UpdateSnapshot {
     /// Current observable lifecycle.
     pub state: UpdateState,
 }
+
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 enum Selected {
     #[cfg(feature = "appimage")]
@@ -95,6 +99,7 @@ enum Selected {
     #[cfg(feature = "velopack")]
     Velo(crate::VelopackUpdate),
 }
+
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 impl Selected {
     fn info(&self) -> UpdateInfo {
@@ -108,6 +113,7 @@ impl Selected {
         }
     }
 }
+
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 enum Staged {
     #[cfg(feature = "appimage")]
@@ -115,6 +121,7 @@ enum Staged {
     #[cfg(feature = "velopack")]
     Velo(Box<crate::StagedVelopack>),
 }
+
 #[cfg(any(feature = "appimage", feature = "velopack"))]
 impl Staged {
     fn handoff(self, args: Vec<OsString>) -> RestartHandoff {
@@ -126,6 +133,7 @@ impl Staged {
         }
     }
 }
+
 enum Job {
     Check,
     #[cfg(any(feature = "appimage", feature = "velopack"))]
@@ -133,6 +141,7 @@ enum Job {
     #[cfg(test)]
     Test(Box<dyn FnOnce() -> Result<Output, Error> + Send>),
 }
+
 enum Output {
     #[cfg(any(feature = "appimage", feature = "velopack"))]
     Checked(Option<Box<Selected>>),
@@ -141,6 +150,7 @@ enum Output {
     #[cfg(test)]
     Empty,
 }
+
 struct Machine {
     snapshot: UpdateSnapshot,
     pending: Option<Job>,
@@ -152,36 +162,47 @@ struct Machine {
     staged: Option<Staged>,
     closed: bool,
 }
+
 struct Shared {
     machine: Mutex<Machine>,
     changed: Event,
 }
+
 impl Shared {
     fn edit<T>(&self, edit: impl FnOnce(&mut Machine) -> T) -> T {
         let result = {
             let mut machine = self.machine.lock().expect("update state lock poisoned");
             let result = edit(&mut machine);
+
             machine.snapshot.revision = machine.snapshot.revision.saturating_add(1);
+
             result
         };
+
         self.changed.notify(usize::MAX);
+
         result
     }
 }
+
 struct Local {
     shared: Arc<Shared>,
     service: Arc<UpdateService>,
     #[cfg(all(target_os = "macos", feature = "sparkle"))]
     sparkle: RefCell<Option<crate::Sparkle>>,
 }
+
 impl Drop for Local {
     fn drop(&mut self) {
         self.shared.edit(|machine| {
             machine.closed = true;
+
             if let Some(flag) = &machine.active {
                 flag.store(true, Ordering::Release);
             }
+
             machine.pending = None;
+
             #[cfg(any(feature = "appimage", feature = "velopack"))]
             {
                 machine.selected = None;
@@ -190,6 +211,7 @@ impl Drop for Local {
         });
     }
 }
+
 /// Shared local controller. Clones observe the same state; no threads are spawned.
 ///
 /// Native Rake workspaces install and drive this service automatically. Custom
@@ -198,6 +220,7 @@ impl Drop for Local {
 /// remain bounded by provider deadlines; cancellation does not block the UI.
 #[derive(Clone)]
 pub struct UpdateController(Rc<Local>);
+
 impl std::fmt::Debug for UpdateController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UpdateController")
@@ -205,6 +228,7 @@ impl std::fmt::Debug for UpdateController {
             .finish_non_exhaustive()
     }
 }
+
 impl UpdateController {
     /// Returns the installed public policy shared by all controller handles.
     pub fn binding(&self) -> &crate::UpdateBinding {
@@ -229,6 +253,7 @@ impl UpdateController {
             }
             Capability::SelfManaged => UpdateState::Idle,
         };
+
         Self(Rc::new(Local {
             shared: Arc::new(Shared {
                 machine: Mutex::new(Machine {
@@ -249,12 +274,14 @@ impl UpdateController {
             sparkle: RefCell::new(None),
         }))
     }
+
     /// Reports whether the installation and native lifecycle allow download/install actions.
     /// Standalone Sparkle hosts can check availability before attaching a quit guard.
     pub fn can_install(&self) -> bool {
         if self.0.service.capability() != Capability::SelfManaged {
             return false;
         }
+
         #[cfg(all(target_os = "macos", feature = "sparkle"))]
         if self.binding().owner == UpdateOwner::Sparkle {
             return self
@@ -264,8 +291,10 @@ impl UpdateController {
                 .as_ref()
                 .is_some_and(crate::Sparkle::guarded);
         }
+
         true
     }
+
     /// Returns an owned snapshot without performing provider I/O.
     pub fn snapshot(&self) -> UpdateSnapshot {
         self.0
@@ -276,26 +305,33 @@ impl UpdateController {
             .snapshot
             .clone()
     }
+
     /// Returns current state for rendering; use [`Self::snapshot`] for subscriptions.
     pub fn state(&self) -> UpdateState {
         self.snapshot().state
     }
+
     /// Waits until a revision changes, including Sparkle callbacks on the main thread.
     /// Registering before inspecting the revision prevents missed wakeups.
     pub async fn changed(&self, revision: u64) -> UpdateSnapshot {
         loop {
             let listener = self.0.shared.changed.listen();
+
             #[cfg(all(target_os = "macos", feature = "sparkle"))]
             let native = self.0.sparkle.borrow().as_ref().map(crate::Sparkle::listen);
+
             self.refresh_native();
             let snapshot = self.snapshot();
+
             if snapshot.revision != revision {
                 return snapshot;
             }
+
             #[cfg(all(target_os = "macos", feature = "sparkle"))]
             if let Some(native) = native {
                 let mut listener = std::pin::pin!(listener);
                 let mut native = std::pin::pin!(native);
+
                 std::future::poll_fn(|cx| {
                     if listener.as_mut().poll(cx).is_ready() || native.as_mut().poll(cx).is_ready()
                     {
@@ -307,9 +343,11 @@ impl UpdateController {
                 .await;
                 continue;
             }
+
             listener.await;
         }
     }
+
     /// Queues a check. Sparkle uses an information-only check with no native dialog.
     /// # Errors
     /// Rejects busy, disabled, externally managed or unavailable providers.
@@ -319,28 +357,36 @@ impl UpdateController {
             self.ensure_idle()?;
             sparkle.check_for_update_information()?;
             self.refresh_native();
+
             return Ok(());
         }
+
         self.ensure_available()?;
+
         self.queue(Job::Check, UpdateState::Checking)
     }
+
     /// Starts downloading the available update. Sparkle presents its native review UI.
     /// # Errors
     /// Rejects concurrent operations and calls without an eligible checked update.
     pub fn download(&self) -> Result<(), Error> {
         self.refresh_native();
         self.ensure_idle()?;
+
         let UpdateState::Available(info) = self.state() else {
             return Err(Error::Policy(
                 "check for an available update before downloading".into(),
             ));
         };
+
         #[cfg(all(target_os = "macos", feature = "sparkle"))]
         if let Some(sparkle) = self.0.sparkle.borrow().as_ref() {
             sparkle.check_for_updates()?;
             self.refresh_native();
+
             return Ok(());
         }
+
         #[cfg(any(feature = "appimage", feature = "velopack"))]
         {
             let selected = self
@@ -348,6 +394,7 @@ impl UpdateController {
                 .shared
                 .edit(|machine| machine.selected.take())
                 .ok_or_else(|| Error::Policy("checked update is no longer available".into()))?;
+
             self.queue(
                 Job::Download(selected),
                 UpdateState::Downloading {
@@ -359,21 +406,26 @@ impl UpdateController {
                 },
             )
         }
+
         #[cfg(not(any(feature = "appimage", feature = "velopack")))]
         {
             let _ = info;
+
             Err(Error::Policy("no download provider is enabled".into()))
         }
     }
+
     /// Requests cancellation; active I/O owns cleanup until its bounded call finishes.
     pub fn cancel(&self) {
         #[cfg(all(target_os = "macos", feature = "sparkle"))]
         if let Some(sparkle) = self.0.sparkle.borrow().as_ref() {
             sparkle.cancel();
         }
+
         self.0.shared.edit(|machine| {
             if let Some(flag) = &machine.active {
                 flag.store(true, Ordering::Release);
+
                 if machine.pending.take().is_some() {
                     machine.active = None;
                     machine.snapshot.state = UpdateState::Idle;
@@ -381,10 +433,12 @@ impl UpdateController {
                     machine.snapshot.state = UpdateState::Cancelling;
                 }
             }
+
             if matches!(machine.snapshot.state, UpdateState::AwaitingApproval(_)) {
                 machine.generation = machine.generation.wrapping_add(1);
                 machine.snapshot.state = UpdateState::Idle;
             }
+
             #[cfg(any(feature = "appimage", feature = "velopack"))]
             if machine.staged.take().is_some() {
                 machine.snapshot.state = UpdateState::Idle;
@@ -392,6 +446,7 @@ impl UpdateController {
         });
         self.refresh_native();
     }
+
     /// Takes verified staging once, without approving or performing installation.
     /// Pass the handoff to the host's save/quit guards. Dropping or declining it
     /// never installs. AppImage/Velopack discard staging and return to Idle; check
@@ -400,16 +455,20 @@ impl UpdateController {
     /// Rejects calls without ready staging or a live Sparkle restart continuation.
     pub fn restart_handoff(&self, args: Vec<OsString>) -> Result<RestartHandoff, Error> {
         self.refresh_native();
+
         let UpdateState::ReadyToRestart(info) = self.state() else {
             return Err(Error::Policy("no update is ready to restart".into()));
         };
+
         #[cfg(all(target_os = "macos", feature = "sparkle"))]
         if let Some(sparkle) = self.0.sparkle.borrow().as_ref() {
             let handoff = sparkle
                 .take_restart()?
                 .ok_or_else(|| Error::Policy("no native restart was requested".into()))?;
+
             return Ok(self.observe_handoff(handoff, info));
         }
+
         #[cfg(any(feature = "appimage", feature = "velopack"))]
         {
             let staged = self
@@ -417,14 +476,18 @@ impl UpdateController {
                 .shared
                 .edit(|machine| machine.staged.take())
                 .ok_or_else(|| Error::Policy("staging was already consumed".into()))?;
+
             Ok(self.observe_handoff(staged.handoff(args), info))
         }
+
         #[cfg(not(any(feature = "appimage", feature = "velopack")))]
         {
             let _ = (args, info);
+
             Err(Error::Policy("no update provider is enabled".into()))
         }
     }
+
     #[cfg(any(
         test,
         feature = "appimage",
@@ -435,18 +498,23 @@ impl UpdateController {
         let generation = self.0.shared.edit(|machine| {
             machine.generation = machine.generation.wrapping_add(1);
             machine.snapshot.state = UpdateState::AwaitingApproval(info.clone());
+
             machine.generation
         });
+
         let guard = HandoffGuard {
             shared: Arc::clone(&self.0.shared),
             committed: false,
             generation,
         };
+
         let disposition = handoff.disposition;
+
         RestartHandoff {
             disposition,
             action: Some(Box::new(move || {
                 let mut guard = guard;
+
                 guard.committed = true;
                 let valid = {
                     let machine = guard
@@ -454,17 +522,21 @@ impl UpdateController {
                         .machine
                         .lock()
                         .expect("update state lock poisoned");
+
                     !machine.closed && machine.generation == guard.generation
                 };
+
                 let result = if valid {
                     handoff.commit(true)
                 } else {
                     Err(Error::Cancelled)
                 };
+
                 guard.shared.edit(|machine| {
                     if machine.generation != guard.generation || machine.closed {
                         return;
                     }
+
                     machine.snapshot.state = match &result {
                         Ok(_) => UpdateState::Restarting(info),
                         Err(error) => UpdateState::Failed {
@@ -472,10 +544,12 @@ impl UpdateController {
                         },
                     }
                 });
+
                 result.map(|_| ())
             })),
         }
     }
+
     fn ensure_idle(&self) -> Result<(), Error> {
         if matches!(
             self.state(),
@@ -489,10 +563,13 @@ impl UpdateController {
         ) {
             return Err(Error::Busy);
         }
+
         Ok(())
     }
+
     fn ensure_available(&self) -> Result<(), Error> {
         self.ensure_idle()?;
+
         if self.0.service.capability() != Capability::SelfManaged
             || matches!(self.state(), UpdateState::ProviderUnavailable(_))
         {
@@ -500,8 +577,10 @@ impl UpdateController {
                 "this installation does not support in-app updates".into(),
             ));
         }
+
         Ok(())
     }
+
     fn queue(&self, job: Job, state: UpdateState) -> Result<(), Error> {
         self.ensure_idle()?;
         self.0.shared.edit(|machine| {
@@ -509,14 +588,17 @@ impl UpdateController {
             machine.active = Some(Arc::new(AtomicBool::new(false)));
             machine.pending = Some(job);
             machine.snapshot.state = state;
+
             #[cfg(any(feature = "appimage", feature = "velopack"))]
             {
                 machine.selected = None;
                 machine.staged = None;
             }
         });
+
         Ok(())
     }
+
     /// Takes one queued blocking operation. Hosts normally use [`Self::run`].
     pub fn take_work(&self) -> Option<UpdateWork> {
         let mut machine = self
@@ -525,6 +607,7 @@ impl UpdateController {
             .machine
             .lock()
             .expect("update state lock poisoned");
+
         machine.pending.take().map(|job| UpdateWork {
             job: Some(job),
             shared: Arc::clone(&self.0.shared),
@@ -539,14 +622,17 @@ impl UpdateController {
             completed: false,
         })
     }
+
     /// Drives queued work on a host-provided blocking executor and native events
     /// on the foreground executor. The host must retain this future until shutdown.
     /// Dropping it requests cancellation; provider cleanup may finish in the background.
     pub async fn run<F: Future<Output = ()>>(&self, mut execute: impl FnMut(UpdateWork) -> F) {
         let _guard = DriverGuard(self.clone());
+
         loop {
             self.refresh_native();
             let revision = self.snapshot().revision;
+
             if let Some(work) = self.take_work() {
                 execute(work).await;
             } else {
@@ -554,6 +640,7 @@ impl UpdateController {
             }
         }
     }
+
     #[cfg(all(target_os = "macos", feature = "sparkle"))]
     /// Initializes the macOS information-only SDK without granting installation authority.
     /// Native Rake applications call this on the AppKit main thread automatically.
@@ -563,13 +650,17 @@ impl UpdateController {
         if self.binding().owner != UpdateOwner::Sparkle || self.0.sparkle.borrow().is_some() {
             return Ok(());
         }
+
         let sparkle = crate::Sparkle::probe(&self.0.service)?;
+
         *self.0.sparkle.borrow_mut() = Some(sparkle);
         self.0
             .shared
             .edit(|machine| machine.snapshot.state = UpdateState::Idle);
+
         Ok(())
     }
+
     #[cfg(all(target_os = "macos", feature = "sparkle"))]
     /// Installs the main-thread SDK using the host's existing native quit guard.
     /// # Errors
@@ -577,6 +668,7 @@ impl UpdateController {
     pub fn attach_sparkle(&self, quit: Rc<crate::NativeQuitBridge>) -> Result<(), Error> {
         self.refresh_native();
         self.ensure_idle()?;
+
         if self
             .0
             .sparkle
@@ -586,24 +678,29 @@ impl UpdateController {
         {
             return Err(Error::Busy);
         }
+
         // A probing SDK is never replaced while its network session is active.
         self.0.sparkle.borrow_mut().take();
         self.0.shared.edit(|machine| {
             machine.snapshot.state = UpdateState::ProviderUnavailable(UpdateOwner::Sparkle)
         });
         let sparkle = crate::Sparkle::new(&self.0.service, quit)?;
+
         *self.0.sparkle.borrow_mut() = Some(sparkle);
         self.0
             .shared
             .edit(|machine| machine.snapshot.state = UpdateState::Idle);
+
         Ok(())
     }
+
     #[cfg(all(target_os = "macos", feature = "sparkle"))]
     /// Reads Sparkle-specific diagnostics for native lifecycle hosts.
     /// Application UI should normally observe [`Self::state`].
     pub fn native_status(&self) -> Option<crate::SparkleStatus> {
         self.0.sparkle.borrow().as_ref().map(crate::Sparkle::status)
     }
+
     fn refresh_native(&self) {
         #[cfg(all(target_os = "macos", feature = "sparkle"))]
         if let Some(status) = self.native_status() {
@@ -611,6 +708,7 @@ impl UpdateController {
             let info = status
                 .available_version
                 .map(|version| UpdateInfo { version });
+
             let state = match status.stage {
                 SparkleStage::Idle => Some(UpdateState::Idle),
                 SparkleStage::Checking => Some(UpdateState::Checking),
@@ -636,12 +734,16 @@ impl UpdateController {
                 SparkleStage::NoUpdate => Some(UpdateState::UpToDate),
                 SparkleStage::Cancelling => Some(UpdateState::Cancelling),
             };
+
             if let Some(state) = state {
                 let current = self.state();
+
                 let waiting_for_guards = matches!(current, UpdateState::AwaitingApproval(_))
                     && !matches!(state, UpdateState::Failed { .. });
+
                 let waiting_for_native_exit = matches!(current, UpdateState::Restarting(_))
                     && matches!(state, UpdateState::ReadyToRestart(_));
+
                 if current != state && !waiting_for_guards && !waiting_for_native_exit {
                     self.0.shared.edit(|machine| machine.snapshot.state = state);
                 }
@@ -649,12 +751,15 @@ impl UpdateController {
         }
     }
 }
+
 struct DriverGuard(UpdateController);
+
 impl Drop for DriverGuard {
     fn drop(&mut self) {
         self.0.cancel();
     }
 }
+
 #[cfg(any(
     test,
     feature = "appimage",
@@ -666,6 +771,7 @@ struct HandoffGuard {
     committed: bool,
     generation: u64,
 }
+
 #[cfg(any(
     test,
     feature = "appimage",
@@ -696,6 +802,7 @@ pub struct UpdateWork {
     generation: u64,
     completed: bool,
 }
+
 impl std::fmt::Debug for UpdateWork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UpdateWork")
@@ -703,6 +810,7 @@ impl std::fmt::Debug for UpdateWork {
             .finish_non_exhaustive()
     }
 }
+
 impl UpdateWork {
     /// Executes blocking provider I/O and publishes its verified result or error.
     pub fn run(mut self) {
@@ -710,17 +818,23 @@ impl UpdateWork {
             Err(Error::Cancelled)
         } else {
             let job = self.job.take().expect("update work runs once");
+
             self.execute(job)
         };
+
         self.shared.edit(|machine| {
             if machine.closed || machine.generation != self.generation {
                 return;
             }
+
             machine.active = None;
+
             if self.cancelled.load(Ordering::Acquire) || matches!(result, Err(Error::Cancelled)) {
                 machine.snapshot.state = UpdateState::Idle;
+
                 return;
             }
+
             match result {
                 #[cfg(any(feature = "appimage", feature = "velopack"))]
                 Ok(Output::Checked(update)) => {
@@ -735,6 +849,7 @@ impl UpdateWork {
                     if let UpdateState::Downloading { update, .. } = &machine.snapshot.state {
                         machine.snapshot.state = UpdateState::ReadyToRestart(update.clone());
                     }
+
                     machine.staged = Some(staged);
                 }
                 #[cfg(test)]
@@ -748,6 +863,7 @@ impl UpdateWork {
         });
         self.completed = true;
     }
+
     fn execute(&self, job: Job) -> Result<Output, Error> {
         match job {
             Job::Check => match self.service.binding().owner {
@@ -771,6 +887,7 @@ impl UpdateWork {
             Job::Download(update) => {
                 let shared = Arc::clone(&self.shared);
                 let generation = self.generation;
+
                 let progress = move |progress| {
                     shared.edit(|machine| {
                         if machine.generation == generation
@@ -783,6 +900,7 @@ impl UpdateWork {
                         }
                     });
                 };
+
                 Ok(Output::Downloaded(match *update {
                     #[cfg(feature = "appimage")]
                     Selected::Image(update) => Staged::Image(self.service.stage_appimage(
@@ -803,6 +921,7 @@ impl UpdateWork {
         }
     }
 }
+
 impl Drop for UpdateWork {
     fn drop(&mut self) {
         if !self.completed {

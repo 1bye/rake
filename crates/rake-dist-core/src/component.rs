@@ -42,6 +42,7 @@ pub enum ComponentSource {
         max_download_bytes: u64,
     },
 }
+
 fn download_limit() -> u64 {
     512 * 1024 * 1024
 }

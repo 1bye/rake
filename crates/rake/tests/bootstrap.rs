@@ -53,12 +53,14 @@ fn standalone_route_options_fail_instead_of_being_ignored() {
     let app = App::new("com.example.root")
         .root(|_, _, cx| {
             use rake::gpui::AppContext;
+
             cx.new(|_| rake::gpui::Empty).into()
         })
         .workspace_chrome(false)
         .control(rake::control::ControlConfig::FromEnvironment)
         .command::<RootCommand, _, _>(|_, _| async { Ok(()) })
         .unwrap();
+
     assert!(matches!(app.run(), Err(AppError::RoutingRequiresRoutes)));
 }
 
@@ -73,6 +75,7 @@ fn invalid_explicit_destination_fails_before_ui_startup() {
     let views = rake::router::__routes(|_: &Destination, _, _, _| {
         Err(rake::router::MountError("unused factory".into()))
     });
+
     let app = App::new("example.invalid-destination")
         .routes(views)
         .initial(Destination::Document(String::new()));
@@ -87,9 +90,11 @@ fn route_type_transition_rejects_configuration_it_cannot_preserve() {
             Err(rake::router::MountError("unused factory".into()))
         })
     };
+
     let guarded = App::new("example.order")
         .entry_guard(|_| async { rake::router::GuardResult::Allow })
         .routes(views());
+
     assert!(matches!(
         guarded.run(),
         Err(AppError::InvalidConfiguration(_))
@@ -98,9 +103,11 @@ fn route_type_transition_rejects_configuration_it_cannot_preserve() {
     let layout = App::new("example.order")
         .layout(|_, _, cx| {
             use rake::gpui::AppContext;
+
             cx.new(|_| rake::gpui::Empty)
         })
         .routes(views());
+
     assert!(matches!(
         layout.run(),
         Err(AppError::InvalidConfiguration(_))

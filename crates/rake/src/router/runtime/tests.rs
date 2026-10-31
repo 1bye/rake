@@ -11,6 +11,7 @@ use futures::task::LocalSpawnExt;
 
 use super::{Mount, Prepare, PreparedMount, Resource};
 use crate::diagnostics::Collector;
+
 use crate::router::{
     Admission, BrowserCheckpoint, GuardResult, HistoryChange, MountError, NavigationState,
     OpenTarget, OperationError, OperationId, Outcome, PreparedPage, Route, Router, RouterConfig,
@@ -42,6 +43,7 @@ impl crate::router::WindowHost for CountingHost {
         _: crate::router::Activation,
     ) -> futures::future::LocalBoxFuture<'static, Result<(), MountError>> {
         self.opened.set(self.opened.get() + 1);
+
         Box::pin(async { Ok(()) })
     }
 
@@ -84,6 +86,7 @@ fn prepared_mount() -> PreparedMount<Destination> {
 fn route_loader_failure_happens_before_new_window_host_creation() {
     let opened = Rc::new(Cell::new(0));
     let closed = Rc::new(Cell::new(0));
+
     let prepare: Prepare<Destination> = Rc::new(|destination, _, _, _| {
         Box::pin(async move {
             if matches!(destination, Destination::Broken) {
@@ -93,6 +96,7 @@ fn route_loader_failure_happens_before_new_window_host_creation() {
             }
         })
     });
+
     let router = Router::with_prepared_mount(
         RouterConfig::default(),
         Collector::default(),
@@ -108,6 +112,7 @@ fn route_loader_failure_happens_before_new_window_host_creation() {
         .unwrap();
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -141,8 +146,10 @@ fn pending_route_loader_cancels_without_opening_new_window() {
     let opened = Rc::new(Cell::new(0));
     let started = Rc::new(Cell::new(false));
     let observed = started.clone();
+
     let prepare: Prepare<Destination> = Rc::new(move |destination, _, _, cancellation| {
         let started = observed.clone();
+
         Box::pin(async move {
             if matches!(destination, Destination::Broken) {
                 started.set(true);
@@ -152,12 +159,14 @@ fn pending_route_loader_cancels_without_opening_new_window() {
             Ok(PreparedPage::empty())
         })
     });
+
     let router = Router::with_prepared_mount(
         RouterConfig::default(),
         Collector::default(),
         prepare,
         prepared_mount(),
     );
+
     router
         .window_host(CountingHost {
             opened: opened.clone(),
@@ -166,6 +175,7 @@ fn pending_route_loader_cancels_without_opening_new_window() {
         .unwrap();
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -173,6 +183,7 @@ fn pending_route_loader_cancels_without_opening_new_window() {
     let operation = router
         .navigator()
         .open(Destination::Broken, OpenTarget::NewWindow);
+
     pool.run_until_stalled();
     assert!(started.get());
     assert!(router.cancel(operation.id()).unwrap());
@@ -196,10 +207,12 @@ fn synchronous_loader_cancellation_is_checked_before_new_window_host_creation() 
     let target_id = target.clone();
     let slot = router_slot.clone();
     let did_cancel = cancelled.clone();
+
     let prepare: Prepare<Destination> = Rc::new(move |destination, _, _, _| {
         let target_id = target_id.clone();
         let slot = slot.clone();
         let did_cancel = did_cancel.clone();
+
         Box::pin(async move {
             if matches!(destination, Destination::Broken)
                 && !did_cancel.replace(true)
@@ -211,12 +224,14 @@ fn synchronous_loader_cancellation_is_checked_before_new_window_host_creation() 
             Ok(PreparedPage::empty())
         })
     });
+
     let router = Router::with_prepared_mount(
         RouterConfig::default(),
         Collector::default(),
         prepare,
         prepared_mount(),
     );
+
     *router_slot.borrow_mut() = Some(router.clone());
     router
         .window_host(CountingHost {
@@ -226,6 +241,7 @@ fn synchronous_loader_cancellation_is_checked_before_new_window_host_creation() 
         .unwrap();
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -233,6 +249,7 @@ fn synchronous_loader_cancellation_is_checked_before_new_window_host_creation() 
     let operation = router
         .navigator()
         .open(Destination::Broken, OpenTarget::NewWindow);
+
     target.set(Some(operation.id()));
     assert!(matches!(
         pool.run_until(operation.wait()),
@@ -251,8 +268,10 @@ fn loader_revision_change_rechecks_entry_guards_before_host_creation() {
     let guard_runs = Rc::new(Cell::new(0));
     let touched = Rc::new(Cell::new(false));
     let observed_touched = touched.clone();
+
     let prepare: Prepare<Destination> = Rc::new(move |destination, entry, _, _| {
         let touched = observed_touched.clone();
+
         Box::pin(async move {
             if matches!(destination, Destination::Broken) && !touched.replace(true) {
                 entry.set_dirty(true).unwrap();
@@ -261,16 +280,20 @@ fn loader_revision_change_rechecks_entry_guards_before_host_creation() {
             Ok(PreparedPage::empty())
         })
     });
+
     let router = Router::with_prepared_mount(
         RouterConfig::default(),
         Collector::default(),
         prepare,
         prepared_mount(),
     );
+
     let observed_guards = guard_runs.clone();
+
     router
         .entry_guard(move |_| {
             observed_guards.set(observed_guards.get() + 1);
+
             async { GuardResult::Allow }
         })
         .unwrap();
@@ -282,6 +305,7 @@ fn loader_revision_change_rechecks_entry_guards_before_host_creation() {
         .unwrap();
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -314,24 +338,31 @@ fn prepared_data_is_dropped_when_mount_fails() {
 
     let dropped = Rc::new(Cell::new(0));
     let observed = dropped.clone();
+
     let prepare: Prepare<Destination> = Rc::new(move |_, _, _, _| {
         let dropped = observed.clone();
+
         Box::pin(async move { Ok(PreparedPage::from_value(DropProbe(dropped))) })
     });
+
     let mount: PreparedMount<Destination> = Rc::new(|_, _, _, prepared| {
         Box::pin(async move {
             let _probe = prepared.downcast::<DropProbe>()?;
+
             Err(MountError("mount failed after load".into()))
         })
     });
+
     let router = Router::with_prepared_mount(
         RouterConfig::default(),
         Collector::default(),
         prepare,
         mount,
     );
+
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -355,18 +386,23 @@ fn prepared_data_is_dropped_when_mount_fails() {
 fn reused_history_resource_does_not_run_route_loader_again() {
     let prepared = Rc::new(Cell::new(0));
     let observed = prepared.clone();
+
     let prepare: Prepare<Destination> = Rc::new(move |_, _, _, _| {
         observed.set(observed.get() + 1);
+
         Box::pin(async { Ok(PreparedPage::empty()) })
     });
+
     let router = Router::with_prepared_mount(
         RouterConfig::default(),
         Collector::default(),
         prepare,
         prepared_mount(),
     );
+
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -383,7 +419,9 @@ fn reused_history_resource_does_not_run_route_loader_again() {
         Outcome::Committed(opened) => opened,
         _ => panic!("home must commit"),
     };
+
     let tab = router.navigator().tab(opened.tab_id);
+
     pool.run_until(tab.navigate(Destination::Other).wait())
         .unwrap();
     assert_eq!(prepared.get(), 2);
@@ -457,6 +495,7 @@ fn terminal_failures_in_closed_or_nonempty_windows_do_not_exceed_capacity() {
             }
         })
     });
+
     let router = Router::with_mount(
         RouterConfig {
             navigation_records: 1,
@@ -465,11 +504,13 @@ fn terminal_failures_in_closed_or_nonempty_windows_do_not_exceed_capacity() {
         Collector::default(),
         mount,
     );
+
     router
         .window_host(WindowHost(Rc::new(Cell::new(0))))
         .unwrap();
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -483,12 +524,16 @@ fn terminal_failures_in_closed_or_nonempty_windows_do_not_exceed_capacity() {
         Ok(Outcome::Committed(opened)) => opened,
         _ => panic!("new window must commit"),
     };
+
     let closed_window = opened.window_id;
+
     let closed_failure = router
         .navigator()
         .for_window(closed_window)
         .open(Destination::Broken, OpenTarget::NewTab);
+
     let closed_failure_id = closed_failure.id();
+
     assert!(matches!(
         pool.run_until(closed_failure.wait()),
         Err(OperationError::Mount(_))
@@ -499,12 +544,15 @@ fn terminal_failures_in_closed_or_nonempty_windows_do_not_exceed_capacity() {
     let current_failure = router
         .navigator()
         .open(Destination::Broken, OpenTarget::NewTab);
+
     let current_failure_id = current_failure.id();
+
     assert!(matches!(
         pool.run_until(current_failure.wait()),
         Err(OperationError::Mount(_))
     ));
     let statuses = router.snapshot().navigation;
+
     assert!(
         statuses
             .iter()
@@ -521,8 +569,10 @@ fn terminal_failures_in_closed_or_nonempty_windows_do_not_exceed_capacity() {
 fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
     let fail = Rc::new(Cell::new(true));
     let observed = fail.clone();
+
     let mount: Mount<Destination> = Rc::new(move |destination, _, _| {
         let fail = observed.clone();
+
         Box::pin(async move {
             if matches!(destination, Destination::Broken) && fail.get() {
                 Err(MountError("retry me".into()))
@@ -540,8 +590,10 @@ fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
         Collector::default(),
         mount,
     );
+
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -549,7 +601,9 @@ fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
     let operation = router
         .navigator()
         .open(Destination::Broken, OpenTarget::NewTab);
+
     let id = operation.id();
+
     assert!(matches!(
         pool.run_until(operation.wait()),
         Err(OperationError::Mount(_))
@@ -569,6 +623,7 @@ fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
     let unrelated = router
         .navigator()
         .open(Destination::Other, OpenTarget::NewTab);
+
     assert!(matches!(
         pool.run_until(unrelated.wait()),
         Ok(Outcome::Committed(_))
@@ -587,6 +642,7 @@ fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
     );
 
     let foreign = Router::<Destination>::new(RouterConfig::default());
+
     assert!(matches!(
         foreign.retry_navigation(&key),
         Err(OperationError::UnknownOperation)
@@ -594,6 +650,7 @@ fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
 
     fail.set(false);
     let retry = router.retry_navigation(&key).expect("retry");
+
     assert!(matches!(
         pool.run_until(retry.wait()),
         Ok(Outcome::Committed(_))
@@ -610,14 +667,17 @@ fn failed_mount_remains_keyed_and_retries_after_operation_retention_expires() {
 fn pending_retry_is_deduplicated_and_dismissing_child_removes_ancestor_failure() {
     let mode = Rc::new(Cell::new(0_u8));
     let observed = mode.clone();
+
     let mount: Mount<Destination> = Rc::new(move |destination, _, _| {
         let mode = observed.clone();
+
         Box::pin(async move {
             if matches!(destination, Destination::Broken) {
                 match mode.get() {
                     0 => Err(MountError("first failure".into())),
                     1 => {
                         futures::future::pending::<()>().await;
+
                         unreachable!("pending mount resumed")
                     }
                     _ => Ok(Rc::new(()) as Resource),
@@ -627,9 +687,11 @@ fn pending_retry_is_deduplicated_and_dismissing_child_removes_ancestor_failure()
             }
         })
     });
+
     let router = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -637,7 +699,9 @@ fn pending_retry_is_deduplicated_and_dismissing_child_removes_ancestor_failure()
     let first = router
         .navigator()
         .open(Destination::Broken, OpenTarget::NewTab);
+
     let first_id = first.id();
+
     assert!(matches!(
         pool.run_until(first.wait()),
         Err(OperationError::Mount(_))
@@ -652,6 +716,7 @@ fn pending_retry_is_deduplicated_and_dismissing_child_removes_ancestor_failure()
     mode.set(1);
     let retry = router.retry_navigation(&first_key).expect("retry");
     let retry_id = retry.id();
+
     pool.run_until_stalled();
     assert!(matches!(
         router.retry_navigation(&first_key),
@@ -669,6 +734,7 @@ fn pending_retry_is_deduplicated_and_dismissing_child_removes_ancestor_failure()
         .find(|status| status.key.operation_id == retry_id)
         .expect("cancelled retry")
         .key;
+
     router
         .dismiss_navigation(&retry_key)
         .expect("dismiss retry chain");
@@ -756,6 +822,7 @@ fn history_reuses_local_resources_and_failed_mounts_leave_the_old_view() {
 #[test]
 fn typed_admission_redirects_in_one_operation_and_reports_final_target() {
     let router = Router::new(RouterConfig::default());
+
     router
         .entry_admission(|context| async move {
             if matches!(context.destination, Destination::Other) {
@@ -768,6 +835,7 @@ fn typed_admission_redirects_in_one_operation_and_reports_final_target() {
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -775,6 +843,7 @@ fn typed_admission_redirects_in_one_operation_and_reports_final_target() {
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     let id = operation.id();
     let outcome = pool.run_until(operation.wait()).unwrap();
 
@@ -784,6 +853,7 @@ fn typed_admission_redirects_in_one_operation_and_reports_final_target() {
         .into_iter()
         .find(|status| status.key.operation_id == id)
         .expect("navigation status");
+
     assert_eq!(status.key.destination, Destination::Other.encode());
     assert_eq!(status.state, NavigationState::Committed);
 }
@@ -792,13 +862,17 @@ fn typed_admission_redirects_in_one_operation_and_reports_final_target() {
 fn invalid_redirect_is_rejected_before_mount_or_new_window_host_creation() {
     let mounts = Rc::new(Cell::new(0));
     let observed = mounts.clone();
+
     let mount: Mount<Destination> = Rc::new(move |_, _, _| {
         observed.set(observed.get() + 1);
+
         Box::pin(async { Ok(Rc::new(()) as Resource) })
     });
+
     let router = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
     let opens = Rc::new(Cell::new(0));
     let host = Rc::new(Cell::new(0));
+
     router
         .window_host(CountingHost {
             opened: opens.clone(),
@@ -817,12 +891,14 @@ fn invalid_redirect_is_rejected_before_mount_or_new_window_host_creation() {
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewWindow);
+
     assert!(matches!(
         pool.run_until(operation.wait()),
         Err(OperationError::Route(_))
@@ -837,12 +913,14 @@ fn redirect_loop_is_bounded_and_cancellable_admission_does_not_mount() {
         max_admission_redirects: 2,
         ..RouterConfig::default()
     });
+
     router
         .entry_admission(|_| async { Admission::Redirect(Destination::Home) })
         .unwrap();
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -850,6 +928,7 @@ fn redirect_loop_is_bounded_and_cancellable_admission_does_not_mount() {
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     assert!(matches!(
         pool.run_until(operation.wait()),
         Err(OperationError::AdmissionRedirectLoop { limit: 2 })
@@ -862,12 +941,14 @@ fn redirect_loop_is_bounded_and_cancellable_admission_does_not_mount() {
 #[test]
 fn cancellation_drops_pending_admission_and_retains_cancelled_status() {
     let router = Router::new(RouterConfig::default());
+
     router
         .entry_admission(|_| async { futures::future::pending::<Admission<Destination>>().await })
         .unwrap();
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -875,7 +956,9 @@ fn cancellation_drops_pending_admission_and_retains_cancelled_status() {
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     let id = operation.id();
+
     pool.run_until_stalled();
     assert!(router.cancel(id).unwrap());
 
@@ -903,23 +986,28 @@ fn pending_navigation_records_are_not_trimmed_by_terminal_capacity() {
         navigation_records: 1,
         ..RouterConfig::default()
     });
+
     router
         .entry_admission(|_| async { futures::future::pending::<Admission<Destination>>().await })
         .unwrap();
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
     let first = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     let second = router
         .navigator()
         .open(Destination::Other, OpenTarget::NewTab);
+
     let first_id = first.id();
     let second_id = second.id();
+
     pool.run_until_stalled();
 
     assert_eq!(router.navigation(crate::router::WindowId(1)).len(), 2);
@@ -956,16 +1044,20 @@ fn failed_browser_restore_keeps_old_entry_and_reconciles_old_url() {
             }
         })
     });
+
     let router = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
     let history = Rc::new(RefCell::new(Vec::new()));
     let observed = history.clone();
+
     router.on_history(move |change| {
         observed.borrow_mut().push(change);
+
         Ok(())
     });
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -982,6 +1074,7 @@ fn failed_browser_restore_keeps_old_entry_and_reconciles_old_url() {
         Outcome::Committed(opened) => opened,
         _ => panic!("home must commit"),
     };
+
     let checkpoint = BrowserCheckpoint {
         version: 1,
         runtime_id: router.runtime_id(),
@@ -1007,6 +1100,7 @@ fn failed_browser_restore_keeps_old_entry_and_reconciles_old_url() {
 #[test]
 fn redirected_browser_restore_replaces_history_with_final_destination() {
     let router = Router::new(RouterConfig::default());
+
     router
         .entry_admission(|context| async move {
             if matches!(context.destination, Destination::Broken) {
@@ -1018,13 +1112,16 @@ fn redirected_browser_restore_replaces_history_with_final_destination() {
         .unwrap();
     let history = Rc::new(RefCell::new(Vec::new()));
     let observed = history.clone();
+
     router.on_history(move |change| {
         observed.borrow_mut().push(change);
+
         Ok(())
     });
 
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -1037,6 +1134,7 @@ fn redirected_browser_restore_replaces_history_with_final_destination() {
         Ok(Outcome::Committed(opened)) => opened,
         _ => panic!("home must commit"),
     };
+
     let checkpoint = BrowserCheckpoint {
         version: 1,
         runtime_id: router.runtime_id(),
@@ -1050,6 +1148,7 @@ fn redirected_browser_restore_replaces_history_with_final_destination() {
         Ok(Outcome::Committed(_))
     ));
     let history = history.borrow();
+
     assert_eq!(history.len(), 2);
     assert!(matches!(
         history.last(),
@@ -1060,6 +1159,7 @@ fn redirected_browser_restore_replaces_history_with_final_destination() {
         .into_iter()
         .find(|status| status.key.destination == Destination::Other.encode())
         .expect("final restore status");
+
     assert_eq!(status.state, NavigationState::Committed);
 }
 
@@ -1074,9 +1174,11 @@ fn retrying_restore_after_browser_epoch_changes_is_rejected_as_stale() {
             }
         })
     });
+
     let router = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
     let mut pool = LocalPool::new();
     let driven = router.clone();
+
     pool.spawner()
         .spawn_local(async move { driven.run().await.unwrap() })
         .unwrap();
@@ -1089,6 +1191,7 @@ fn retrying_restore_after_browser_epoch_changes_is_rejected_as_stale() {
         Ok(Outcome::Committed(opened)) => opened,
         _ => panic!("home must commit"),
     };
+
     let checkpoint = BrowserCheckpoint {
         version: 1,
         runtime_id: router.runtime_id(),
@@ -1096,6 +1199,7 @@ fn retrying_restore_after_browser_epoch_changes_is_rejected_as_stale() {
         entry_id: opened.entry_id,
         destination: Destination::Broken.encode(),
     };
+
     assert!(matches!(
         pool.run_until(router.navigator().restore(checkpoint).wait()),
         Err(OperationError::Mount(_))

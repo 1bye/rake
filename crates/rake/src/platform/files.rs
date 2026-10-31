@@ -30,11 +30,13 @@ impl FileHandle {
     #[cfg(not(target_family = "wasm"))]
     pub fn from_path(path: impl Into<std::path::PathBuf>) -> Self {
         let path = path.into();
+
         let name = path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
+
         Self { name, path }
     }
 
@@ -57,9 +59,11 @@ impl FileHandle {
         #[cfg(not(target_family = "wasm"))]
         {
             let path = self.path.clone();
+
             blocking::unblock(move || {
                 use std::io::Read;
                 let mut options = std::fs::OpenOptions::new();
+
                 options.read(true);
                 #[cfg(unix)]
                 {
@@ -69,17 +73,22 @@ impl FileHandle {
                     options.custom_flags(libc::O_NONBLOCK);
                 }
                 let file = options.open(path)?;
+
                 if !file.metadata()?.is_file() {
                     return Err(Error::InvalidInput(
                         "selection must be a regular file".into(),
                     ));
                 }
+
                 let mut bytes = Vec::new();
+
                 file.take((max_bytes as u64).saturating_add(1))
                     .read_to_end(&mut bytes)?;
+
                 if bytes.len() > max_bytes {
                     return Err(Error::SizeLimit(max_bytes));
                 }
+
                 Ok(bytes)
             })
             .await
@@ -105,8 +114,10 @@ impl Platform {
         #[cfg(target_family = "wasm")]
         {
             let _ = cx;
+
             super::browser::pick_file()
         }
+
         #[cfg(not(target_family = "wasm"))]
         {
             let selection = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -115,6 +126,7 @@ impl Platform {
                 multiple: false,
                 prompt: None,
             });
+
             Box::pin(async move {
                 let paths = selection
                     .await
@@ -126,6 +138,7 @@ impl Platform {
                         operation: "file picker",
                         message: error.to_string(),
                     })?;
+
                 Ok(paths
                     .and_then(|paths| paths.into_iter().next())
                     .map(FileHandle::from_path))
@@ -153,19 +166,24 @@ impl Platform {
                 ))
             });
         }
+
         #[cfg(target_family = "wasm")]
         {
             let _ = cx;
             let result = super::browser::export_file(filename, &bytes);
+
             Box::pin(async move { result.map(|()| SaveOutcome::DownloadRequested) })
         }
+
         #[cfg(not(target_family = "wasm"))]
         {
             let root = std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(std::env::temp_dir);
+
             let selection = cx.prompt_for_new_path(&root, Some(filename));
+
             Box::pin(async move {
                 let path = selection
                     .await
@@ -177,18 +195,22 @@ impl Platform {
                         operation: "save picker",
                         message: error.to_string(),
                     })?;
+
                 let Some(path) = path else {
                     return Ok(SaveOutcome::Cancelled);
                 };
+
                 blocking::unblock(move || {
                     use std::io::Write;
                     let mut file =
                         tempfile::NamedTempFile::new_in(path.parent().ok_or_else(|| {
                             Error::InvalidInput("save path has no parent".into())
                         })?)?;
+
                     file.write_all(&bytes)?;
                     file.as_file().sync_all()?;
                     file.persist(path).map_err(|error| Error::Io(error.error))?;
+
                     Ok(SaveOutcome::Saved)
                 })
                 .await

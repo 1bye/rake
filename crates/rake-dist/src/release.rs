@@ -1,10 +1,13 @@
 //! Immutable publication and all-target channel promotion.
 use crate::{Artifact, Distribution, Error, Format, files};
 use fs2::FileExt;
+
 use rake_dist_core::{
     NativeFeedSignature, Publisher, ReleaseConfig, SignedUpdateFeed, UpdateFeed, UpdateRelease,
 };
+
 use serde::{Deserialize, Serialize};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -40,6 +43,7 @@ pub struct ReleaseRequest {
     /// Independently configured native verifiers accepted for custom formats.
     pub custom_verifiers: BTreeMap<String, Vec<String>>,
 }
+
 /// Final channel state. Native feeds remain the provider's native protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublishedRelease {
@@ -59,6 +63,7 @@ pub struct PublishedRelease {
     /// Every promoted native feed path and immutable object SHA-256.
     pub files: BTreeMap<String, PublishedFile>,
 }
+
 /// One immutable, independently downloadable object.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublishedFile {
@@ -69,30 +74,38 @@ pub struct PublishedFile {
     /// Exact byte size.
     pub size: u64,
 }
+
 struct Input {
     distribution: Distribution,
     artifact: Artifact,
     source: PathBuf,
 }
+
 struct CustomInput {
     artifact: crate::CustomArtifact,
     source: PathBuf,
 }
+
 struct Inputs {
     native: Vec<Input>,
     custom: Vec<CustomInput>,
 }
+
 struct Prepared {
     directory: tempfile::TempDir,
     state: PublishedRelease,
     objects: BTreeMap<String, PathBuf>,
 }
+
 #[path = "release_repositories.rs"]
 mod repositories;
+
 pub use repositories::prepare_repositories;
+
 fn fail(message: impl Into<String>) -> Error {
     Error::Execution(message.into())
 }
+
 fn segment(value: &str) -> Result<(), Error> {
     if value.is_empty()
         || value == "."
@@ -103,8 +116,10 @@ fn segment(value: &str) -> Result<(), Error> {
     {
         return Err(fail("invalid release path segment"));
     }
+
     Ok(())
 }
+
 fn cancelled(flag: &AtomicBool) -> Result<(), Error> {
     if flag.load(Ordering::Acquire) {
         Err(fail("release cancelled before promotion"))
@@ -112,6 +127,7 @@ fn cancelled(flag: &AtomicBool) -> Result<(), Error> {
         Ok(())
     }
 }
+
 fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
     request.config.validate()?;
     segment(&request.channel)?;
@@ -120,19 +136,25 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
     let mut custom = Vec::new();
     let mut matrix = BTreeSet::new();
     let mut custom_matrix = BTreeSet::new();
+
     for directory in &request.distributions {
         let distribution: Distribution =
             serde_json::from_slice(&fs::read(directory.join("distribution.json"))?)?;
+
         if distribution.schema_version != 1 || distribution.identifier != request.identifier {
             return Err(fail("release distribution identity/schema mismatch"));
         }
+
         segment(&distribution.target)?;
         semver::Version::parse(&distribution.version).map_err(|error| fail(error.to_string()))?;
+
         for artifact in &distribution.custom_artifacts {
             let source = files::confined(directory, &artifact.path)?;
+
             let proof = artifact.verification.as_ref().ok_or_else(|| {
                 fail("custom format requires an independent native verifier before release")
             })?;
+
             if !source.is_file()
                 || files::digest(&source)? != artifact.sha256
                 || proof.schema_version != 1
@@ -144,30 +166,38 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                     "custom format verification or output identity mismatch",
                 ));
             }
+
             if distribution.version == request.version {
                 custom_matrix.insert((distribution.target.clone(), artifact.format.clone()));
             }
+
             custom.push(CustomInput {
                 artifact: artifact.clone(),
                 source,
             });
         }
+
         for artifact in &distribution.artifacts {
             let source = files::confined(directory, &artifact.path)?;
+
             if files::digest(&source)? != artifact.sha256 {
                 return Err(fail("release artifact hash mismatch"));
             }
+
             if artifact.format == Format::App {
                 continue;
             } // directories are published through ZIP/DMG instead.
+
             if !source.is_file() {
                 return Err(fail("release requires regular-file artifacts"));
             }
+
             if request.updates_enabled {
                 let policy = artifact
                     .update_policy
                     .as_ref()
                     .ok_or_else(|| fail("release update policy missing; rebuild the artifact"))?;
+
                 policy.validate()?;
                 let root = match request
                     .config
@@ -183,6 +213,7 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                         public_url.trim_end_matches('/').to_owned()
                     }
                 };
+
                 if policy.identifier != request.identifier
                     || policy.version != distribution.version
                     || policy.target != distribution.target
@@ -197,6 +228,7 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                         "release destination/channel conflicts with compiled artifact update policy",
                     ));
                 }
+
                 for (provider, key) in &policy.public_keys {
                     if request.public_keys.get(provider) != Some(key) {
                         return Err(fail(
@@ -205,14 +237,17 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                     }
                 }
             }
+
             let platform = if distribution.target == "universal-apple-darwin" {
                 crate::Platform::Macos
             } else {
                 crate::Platform::from_target(&distribution.target)?
             };
+
             if !artifact.format.supports(platform) {
                 return Err(fail("release artifact format/target mismatch"));
             }
+
             if platform == crate::Platform::Macos
                 && (!artifact.trust.notarized
                     || !artifact.trust.stapled
@@ -222,6 +257,7 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                     "public macOS releases require verified Developer ID, notarization and stapling",
                 ));
             }
+
             if platform == crate::Platform::Windows
                 && matches!(
                     source.extension().and_then(|value| value.to_str()),
@@ -234,10 +270,12 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
                     "public Windows installers require verified Authenticode and RFC 3161 timestamp",
                 ));
             }
+
             if distribution.version == request.version && package_payload(artifact.format, &source)
             {
                 matrix.insert((distribution.target.clone(), artifact.format));
             }
+
             output.push(Input {
                 distribution: distribution.clone(),
                 artifact: artifact.clone(),
@@ -245,6 +283,7 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
             });
         }
     }
+
     for (target, formats) in &request.config.required {
         for format in formats {
             if !matrix.contains(&(target.clone(), *format)) {
@@ -255,6 +294,7 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
             }
         }
     }
+
     for (target, names) in &request.config.custom_required {
         for name in names {
             if !custom_matrix.contains(&(target.clone(), name.clone())) {
@@ -262,14 +302,17 @@ fn inputs(request: &ReleaseRequest) -> Result<Inputs, Error> {
             }
         }
     }
+
     if matrix.is_empty() && custom_matrix.is_empty() {
         return Err(fail("release has no artifacts for selected version"));
     }
+
     Ok(Inputs {
         native: output,
         custom,
     })
 }
+
 fn signer(
     request: &ReleaseRequest,
     provider: &str,
@@ -284,8 +327,10 @@ fn signer(
         let work = tempfile::tempdir()?;
         let input = work.path().join("message");
         let output = work.path().join("signature");
+
         fs::write(&input, message)?;
         let mut command = Command::new(&argv[0]);
+
         command
             .args(&argv[1..])
             .current_dir(&request.package_root)
@@ -293,41 +338,53 @@ fn signer(
             .stdout(fs::File::create(&output)?)
             .stderr(Stdio::inherit());
         let mut worker = crate::Worker::spawn_with_io(&mut command)?;
+
         if !worker.wait(flag, Duration::from_secs(120))?.success() {
             return Err(fail("local release signing command failed"));
         }
+
         if fs::metadata(&output)?.len() != 64 {
             return Err(fail(
                 "local signer must return exactly 64 raw Ed25519 signature bytes",
             ));
         }
+
         fs::read(output)?
     } else {
         return Err(fail(format!(
             "configure release.signing_keys.{provider} or release.signers.{provider}"
         )));
     };
+
     cancelled(flag)?;
     let key = request
         .public_keys
         .get(provider)
         .ok_or_else(|| fail(format!("release public key missing: {provider}")))?;
+
     let key = decode_key(key)?;
     let key = ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|e| fail(e.to_string()))?;
+
     let signature_value =
         ed25519_dalek::Signature::from_slice(&signature).map_err(|e| fail(e.to_string()))?;
+
     key.verify_strict(message, &signature_value)
         .map_err(|_| fail("local signing profile does not match configured public key"))?;
+
     Ok(signature)
 }
+
 fn decode_key(bytes: &[u8]) -> Result<[u8; 32], Error> {
     use base64::Engine as _;
+
     if bytes.len() == 32 {
         return bytes.try_into().map_err(|_| fail("invalid public key"));
     }
+
     let value = std::str::from_utf8(bytes)
         .map_err(|_| fail("invalid public key"))?
         .trim();
+
     let bytes = if value.len() == 64 {
         hex::decode(value).map_err(|_| fail("invalid public key"))?
     } else {
@@ -335,12 +392,15 @@ fn decode_key(bytes: &[u8]) -> Result<[u8; 32], Error> {
             .decode(value)
             .map_err(|_| fail("invalid public key"))?
     };
+
     bytes
         .try_into()
         .map_err(|_| fail("Ed25519 public key must contain 32 bytes"))
 }
+
 fn key_fingerprints(keys: &BTreeMap<String, Vec<u8>>) -> Result<BTreeMap<String, String>, Error> {
     use sha2::Digest as _;
+
     keys.iter()
         .map(|(provider, key)| {
             Ok((
@@ -350,14 +410,17 @@ fn key_fingerprints(keys: &BTreeMap<String, Vec<u8>>) -> Result<BTreeMap<String,
         })
         .collect()
 }
+
 fn previous_keys(previous: &PublishedRelease, next: &PublishedRelease) -> Result<(), Error> {
     if previous.public_key_sha256 != next.public_key_sha256 {
         return Err(fail(
             "update verification keys changed within channel; enroll a new channel with a signed installer",
         ));
     }
+
     Ok(())
 }
+
 fn public_root(config: &ReleaseConfig) -> Result<String, Error> {
     match config
         .publisher
@@ -372,15 +435,20 @@ fn public_root(config: &ReleaseConfig) -> Result<String, Error> {
         )),
     }
 }
+
 fn feed_name(request: &ReleaseRequest, target: &str, file: &str) -> String {
     format!("{}/{target}/{file}", request.channel)
 }
+
 fn object_name(hash: &str, file: &str) -> Result<String, Error> {
     let path = Path::new(file);
+
     rake_dist_core::validate_relative_path(path)?;
+
     if path.components().count() != 1 || file.chars().any(char::is_control) {
         return Err(fail("invalid immutable object filename"));
     }
+
     let slug = file
         .chars()
         .map(|character| {
@@ -391,18 +459,22 @@ fn object_name(hash: &str, file: &str) -> Result<String, Error> {
             }
         })
         .collect::<String>();
+
     Ok(format!("{hash}-{slug}"))
 }
 
 fn add(prepared: &mut Prepared, name: String, source: &Path, url: String) -> Result<(), Error> {
     let hash = files::digest(source)?;
     let size = fs::metadata(source)?.len();
+
     if let Some(previous) = prepared.state.files.get(&name) {
         if previous.sha256 != hash {
             return Err(fail(format!("release file collision: {name}")));
         }
+
         return Ok(());
     }
+
     prepared.state.files.insert(
         name.clone(),
         PublishedFile {
@@ -412,27 +484,35 @@ fn add(prepared: &mut Prepared, name: String, source: &Path, url: String) -> Res
         },
     );
     prepared.objects.insert(name, source.into());
+
     Ok(())
 }
+
 fn generated(prepared: &mut Prepared, name: String, bytes: &[u8], root: &str) -> Result<(), Error> {
     let path = prepared.directory.path().join("generated").join(&name);
+
     fs::create_dir_all(path.parent().ok_or_else(|| fail("feed parent"))?)?;
     fs::write(&path, bytes)?;
     let hash = files::digest(&path)?;
+
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| fail("feed filename"))?;
+
     let url = if root.starts_with("https://github.com/") && root.contains("/releases/download/") {
         format!("{root}/{}", name.replace('/', "-"))
     } else {
         format!("{root}/objects/{}", object_name(&hash, filename)?)
     };
+
     add(prepared, name, &path, url)
 }
+
 fn prepare(request: &ReleaseRequest, flag: &AtomicBool) -> Result<Prepared, Error> {
     prepare_with_repositories(request, &[], flag)
 }
+
 fn prepare_with_repositories(
     request: &ReleaseRequest,
     repository_inputs: &[PathBuf],
@@ -441,6 +521,7 @@ fn prepare_with_repositories(
     let mut selected = inputs(request)?;
     let root = public_root(&request.config)?;
     let directory = tempfile::tempdir()?;
+
     for (index, input) in selected.native.iter_mut().enumerate() {
         let snapshot = directory
             .path()
@@ -452,12 +533,16 @@ fn prepare_with_repositories(
                     .file_name()
                     .ok_or_else(|| fail("artifact filename"))?,
             );
+
         files::copy(&input.source, &snapshot)?;
+
         if files::digest(&snapshot)? != input.artifact.sha256 {
             return Err(fail("artifact changed during release preparation"));
         }
+
         input.source = snapshot;
     }
+
     for (index, input) in selected.custom.iter_mut().enumerate() {
         let snapshot = directory
             .path()
@@ -469,12 +554,16 @@ fn prepare_with_repositories(
                     .file_name()
                     .ok_or_else(|| fail("custom filename"))?,
             );
+
         files::copy(&input.source, &snapshot)?;
+
         if files::digest(&snapshot)? != input.artifact.sha256 {
             return Err(fail("custom artifact changed during release preparation"));
         }
+
         input.source = snapshot;
     }
+
     let inputs = selected.native;
 
     let mut prepared = Prepared {
@@ -490,36 +579,45 @@ fn prepare_with_repositories(
         },
         objects: BTreeMap::new(),
     };
+
     let expiry = request
         .published_at
         .checked_add(request.config.feed_validity_seconds.unwrap_or(7 * 86400))
         .ok_or_else(|| fail("feed expiry overflow"))?;
+
     let mut images: BTreeMap<String, Vec<UpdateRelease>> = BTreeMap::new();
     let mut sparkle: BTreeMap<String, Vec<&Input>> = BTreeMap::new();
     let mut velopack: BTreeMap<String, Vec<&Input>> = BTreeMap::new();
+
     for input in &inputs {
         cancelled(flag)?;
         let artifact = &input.artifact;
         let target = &input.distribution.target;
+
         let filename = input
             .source
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| fail("artifact filename"))?;
+
         let name = object_name(&artifact.sha256, filename)?;
+
         let url = match &request.config.publisher {
             Some(Publisher::Github { .. }) => format!("{root}/{name}"),
             _ => format!("{root}/objects/{name}"),
         };
+
         add(
             &mut prepared,
             format!("objects/{name}"),
             &input.source,
             url.clone(),
         )?;
+
         if !request.updates_enabled {
             continue;
         }
+
         match artifact.format {
             Format::Appimage => images
                 .entry(target.clone())
@@ -539,21 +637,26 @@ fn prepare_with_repositories(
             }
             Format::Msix if input.distribution.version == request.version => {
                 let name = feed_name(request, target, "application.appinstaller");
+
                 let feed_url = channel_url(
                     &request.config,
                     &request.channel,
                     target,
                     "application.appinstaller",
                 )?;
+
                 let xml = appinstaller(&input.distribution, artifact, &feed_url, &url)?;
+
                 generated(&mut prepared, name, xml.as_bytes(), &root)?;
             }
             _ => {}
         }
     }
+
     for input in selected.custom {
         let artifact = input.artifact;
         let source = input.source;
+
         let name = object_name(
             &artifact.sha256,
             source
@@ -561,13 +664,16 @@ fn prepare_with_repositories(
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| fail("custom filename"))?,
         )?;
+
         let url = if matches!(request.config.publisher, Some(Publisher::Github { .. })) {
             format!("{root}/{name}")
         } else {
             format!("{root}/objects/{name}")
         };
+
         add(&mut prepared, format!("objects/{name}"), &source, url)?;
     }
+
     for (target, releases) in images {
         let feed = UpdateFeed {
             schema_version: 1,
@@ -578,8 +684,10 @@ fn prepare_with_repositories(
             expires_at: expiry,
             releases,
         };
+
         let payload = serde_json::to_string(&feed)?;
         let signature = hex::encode(signer(request, "appimage", payload.as_bytes(), flag)?);
+
         generated(
             &mut prepared,
             feed_name(request, &target, "appimage.json"),
@@ -587,38 +695,51 @@ fn prepare_with_repositories(
             &root,
         )?;
     }
+
     for (target, items) in velopack {
         prepare_velopack(request, &mut prepared, &target, &items, &root, expiry, flag)?;
     }
+
     for (target, items) in sparkle {
         prepare_sparkle(request, &mut prepared, &target, &items, &root, flag)?;
     }
+
     let staged_repositories = repositories::load(request, &inputs, repository_inputs)?;
+
     for (target, formats) in &request.config.repositories {
         for format in formats {
             cancelled(flag)?;
+
             if let Some(files) = staged_repositories.get(&(target.clone(), *format)) {
                 for (name, file) in files {
                     let snapshot = prepared.directory.path().join("repositories").join(name);
+
                     files::copy(&file.path, &snapshot)?;
                     let hash = files::digest(&snapshot)?;
+
                     if hash != file.sha256 || fs::metadata(&snapshot)?.len() != file.size {
                         return Err(fail("prepared repository changed during copying"));
                     }
+
                     let filename = snapshot
                         .file_name()
                         .and_then(|name| name.to_str())
                         .ok_or_else(|| fail("repository filename"))?;
+
                     let url = format!("{root}/objects/{}", object_name(&hash, filename)?);
+
                     add(&mut prepared, name.clone(), &snapshot, url)?;
                 }
+
                 continue;
             }
+
             if !repository_inputs.is_empty() {
                 return Err(fail(
                     "prepared repository missing for required target/format",
                 ));
             }
+
             let packages = inputs
                 .iter()
                 .filter(|input| {
@@ -628,16 +749,21 @@ fn prepare_with_repositories(
                 })
                 .map(|input| input.source.clone())
                 .collect::<Vec<_>>();
+
             let kind = serde_json::to_value(format)?
                 .as_str()
                 .ok_or_else(|| fail("repository format"))?
                 .to_owned();
+
             let name = format!("rake-{kind}");
+
             let output = prepared
                 .directory
                 .path()
                 .join(format!("repository-{target}-{kind}"));
+
             let public_url = format!("{root}/{}/{target}/{kind}", request.channel);
+
             let paths = rake_dist_linux::build_repository(&rake_dist_linux::Repository {
                 format: *format,
                 identifier: &request.identifier,
@@ -653,20 +779,25 @@ fn prepare_with_repositories(
                 branch: "master",
             })
             .map_err(|error| fail(error.to_string()))?;
+
             for path in paths {
                 let relative = path
                     .strip_prefix(&output)
                     .map_err(|_| fail("repository output escapes staging"))?;
+
                 let name = format!(
                     "{}/{target}/{kind}/{}",
                     request.channel,
                     relative.to_string_lossy().replace('\\', "/")
                 );
+
                 let hash = files::digest(&path)?;
+
                 let filename = path
                     .file_name()
                     .and_then(|value| value.to_str())
                     .ok_or_else(|| fail("repository output filename"))?;
+
                 add(
                     &mut prepared,
                     name,
@@ -676,8 +807,10 @@ fn prepare_with_repositories(
             }
         }
     }
+
     Ok(prepared)
 }
+
 fn channel_url(
     config: &ReleaseConfig,
     channel: &str,
@@ -694,8 +827,10 @@ fn channel_url(
         }
         _ => public_root(config)?,
     };
+
     Ok(rake_dist_core::feed_url(&root, channel, target, file)?)
 }
+
 fn xml(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -704,6 +839,7 @@ fn xml(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
 }
+
 fn appinstaller(
     distribution: &Distribution,
     artifact: &Artifact,
@@ -714,15 +850,18 @@ fn appinstaller(
         .native_identity
         .get("msix_name")
         .ok_or_else(|| fail("MSIX release identity missing; rebuild package"))?;
+
     let publisher = artifact
         .native_identity
         .get("msix_publisher")
         .ok_or_else(|| fail("MSIX publisher missing; rebuild package"))?;
+
     let arch = match distribution.target.split('-').next() {
         Some("x86_64") => "x64",
         Some("aarch64") => "arm64",
         _ => return Err(fail("MSIX update architecture unsupported")),
     };
+
     Ok(format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><AppInstaller xmlns=\"http://schemas.microsoft.com/appx/appinstaller/2018\" Version=\"{}\" Uri=\"{}\"><MainPackage Name=\"{}\" Publisher=\"{}\" Version=\"{}\" ProcessorArchitecture=\"{arch}\" Uri=\"{}\"/><UpdateSettings><OnLaunch HoursBetweenUpdateChecks=\"0\" ShowPrompt=\"true\" UpdateBlocksActivation=\"false\"/><AutomaticBackgroundTask/></UpdateSettings></AppInstaller>",
         xml(&artifact.package_version),
@@ -733,6 +872,7 @@ fn appinstaller(
         xml(url)
     ))
 }
+
 fn prepare_velopack(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -743,14 +883,18 @@ fn prepare_velopack(
     flag: &AtomicBool,
 ) -> Result<(), Error> {
     let mut assets = BTreeMap::new();
+
     for input in items {
         if input.source.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
+
         let value: serde_json::Value = serde_json::from_slice(&fs::read(&input.source)?)?;
+
         let Some(entries) = value.get("Assets").and_then(serde_json::Value::as_array) else {
             continue;
         };
+
         for asset in entries {
             if asset
                 .get("Type")
@@ -759,15 +903,18 @@ fn prepare_velopack(
             {
                 continue;
             }
+
             let filename = asset
                 .get("FileName")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| fail("Velopack native asset filename missing"))?;
+
             segment(filename)?;
             let source = items
                 .iter()
                 .find(|item| item.source.file_name().is_some_and(|name| name == filename))
                 .ok_or_else(|| fail("Velopack release family missing full package"))?;
+
             if asset["PackageId"] != request.identifier
                 || asset["Version"] != source.distribution.version
                 || asset["Size"].as_u64() != Some(fs::metadata(&source.source)?.len())
@@ -777,18 +924,21 @@ fn prepare_velopack(
             {
                 return Err(fail("Velopack native feed disagrees with package records"));
             }
+
             let url = prepared.state.files[&format!(
                 "objects/{}",
                 object_name(&source.artifact.sha256, filename)?
             )]
                 .url
                 .clone();
+
             add(
                 prepared,
                 feed_name(request, target, filename),
                 &source.source,
                 url,
             )?;
+
             if let Some(previous) = assets.insert(filename.to_owned(), asset.clone())
                 && previous != *asset
             {
@@ -796,19 +946,24 @@ fn prepare_velopack(
             }
         }
     }
+
     if assets.is_empty() {
         return Err(fail("Velopack native release feed missing"));
     }
+
     let feed = serde_json::to_vec(
         &serde_json::json!({"Assets":assets.into_values().collect::<Vec<_>>()}),
     )?;
+
     let filename = format!("releases.{}.json", request.channel);
+
     let mut signature = NativeFeedSignature {
         schema_version: 1,
         published_at: request.published_at,
         expires_at: expiry,
         signature: String::new(),
     };
+
     signature.signature = hex::encode(signer(
         request,
         "velopack",
@@ -822,6 +977,7 @@ fn prepare_velopack(
         flag,
     )?);
     generated(prepared, feed_name(request, target, &filename), &feed, root)?;
+
     generated(
         prepared,
         feed_name(request, target, &format!("{filename}.sig")),
@@ -829,6 +985,7 @@ fn prepare_velopack(
         root,
     )
 }
+
 fn prepare_sparkle(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -840,36 +997,47 @@ fn prepare_sparkle(
     let tool = request.config.sparkle_tool.as_ref().ok_or_else(|| {
         fail("release.sparkle_tool must name the pinned SDK generate_appcast executable")
     })?;
+
     if !cfg!(target_os = "macos") {
         return Err(fail("Sparkle publication requires a macOS worker"));
     }
+
     let archives = prepared.directory.path().join(format!("sparkle-{target}"));
+
     fs::create_dir(&archives)?;
     let mut versions = BTreeSet::new();
+
     for input in items {
         let version = input
             .artifact
             .build_number
             .as_deref()
             .unwrap_or(&input.artifact.package_version);
+
         // One archive per build counter; ZIP is preferred by input order when both exist.
         if !versions.insert(version) {
             continue;
         }
+
         let filename = input
             .source
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| fail("Sparkle archive filename"))?;
+
         let filename = object_name(&input.artifact.sha256, filename)?;
+
         fs::copy(&input.source, archives.join(filename))?;
     }
+
     let prefix = if matches!(request.config.publisher, Some(Publisher::Github { .. })) {
         format!("{root}/")
     } else {
         format!("{root}/objects/")
     };
+
     let mut command = Command::new(request.package_root.join(tool));
+
     command.args([
         "--maximum-deltas",
         "0",
@@ -878,13 +1046,16 @@ fn prepare_sparkle(
         "--download-url-prefix",
         &prefix,
     ]);
+
     if let Some(account) = &request.config.sparkle_account {
         command.args(["--account", account]);
     }
+
     command.arg(&archives);
     run_tool(&mut command, flag)?;
     let appcast = archives.join("appcast.xml");
     let content = fs::read_to_string(&appcast)?;
+
     verify_sparkle_feed(
         content.as_bytes(),
         request
@@ -892,6 +1063,7 @@ fn prepare_sparkle(
             .get("sparkle")
             .ok_or_else(|| fail("Sparkle verification public key missing"))?,
     )?;
+
     // generate_appcast signs the native feed using the key embedded in each archive.
     generated(
         prepared,
@@ -900,17 +1072,21 @@ fn prepare_sparkle(
         root,
     )
 }
+
 fn run_tool(command: &mut Command, flag: &AtomicBool) -> Result<(), Error> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     let mut worker = crate::Worker::spawn_with_io(command)?;
+
     if !worker.wait(flag, Duration::from_secs(600))?.success() {
         return Err(fail("release native tool failed"));
     }
+
     Ok(())
 }
+
 /// Verifies artifacts, creates signed native metadata, uploads immutable objects,
 /// verifies their bytes and only then promotes the complete channel.
 ///
@@ -925,6 +1101,7 @@ fn run_tool(command: &mut Command, flag: &AtomicBool) -> Result<(), Error> {
 pub fn publish(request: &ReleaseRequest, flag: &AtomicBool) -> Result<PublishedRelease, Error> {
     publish_with_repositories(request, &[], flag)
 }
+
 /// Promotes a complete release using repositories prepared on native Linux workers.
 ///
 /// Each directory comes from [`prepare_repositories`]. The full artifact matrix,
@@ -945,11 +1122,13 @@ pub fn publish_with_repositories(
             "Linux repositories need a directory/static HTTPS publisher",
         ));
     }
+
     let mut prepared = if repository_inputs.is_empty() {
         prepare(request, flag)?
     } else {
         prepare_with_repositories(request, repository_inputs, flag)?
     };
+
     match request
         .config
         .publisher
@@ -969,8 +1148,10 @@ pub fn publish_with_repositories(
             publish_https(request, &mut prepared, url, token_env, flag)?
         }
     }
+
     Ok(prepared.state)
 }
+
 fn publish_directory(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -983,8 +1164,10 @@ fn publish_directory(
         .truncate(false)
         .write(true)
         .open(root.join(".rake-release.lock"))?;
+
     lock.try_lock_exclusive()?;
     let marker = root.join(".rake-release");
+
     if marker.exists() {
         if fs::read_to_string(&marker)? != request.identifier {
             return Err(fail("release directory belongs to another application"));
@@ -996,76 +1179,101 @@ fn publish_directory(
     } else {
         fs::write(marker, &request.identifier)?;
     }
+
     let current = root.join(&request.channel);
+
     if current.exists() {
         let bytes = fs::read(current.join("release.json"))?;
         let previous: PublishedRelease = serde_json::from_slice(&bytes)?;
+
         if previous.identifier != request.identifier || previous.channel != request.channel {
             return Err(fail("channel identity conflict"));
         }
+
         if semver::Version::parse(&previous.version).map_err(|e| fail(e.to_string()))?
             >= semver::Version::parse(&request.version).map_err(|e| fail(e.to_string()))?
         {
             return Err(fail("channel promotion must advance version"));
         }
+
         previous_keys(&previous, &prepared.state)?;
         prepared.state.previous = Some(files::digest(&current.join("release.json"))?);
+
         for name in appimage_feeds(prepared) {
             if let Some(record) = previous.files.get(&name) {
                 let relative = name
                     .strip_prefix(&format!("{}/", request.channel))
                     .ok_or_else(|| fail("AppImage channel path"))?;
+
                 let path = files::confined(&current, Path::new(relative))?;
                 let bytes = read_history(&path, record)?;
+
                 merge_appimage_history(request, prepared, &name, &bytes, flag)?;
             }
         }
     }
+
     let objects = root.join("objects");
+
     if objects.is_symlink() {
         return Err(fail("publication object directory must not be a symlink"));
     }
+
     fs::create_dir_all(&objects)?;
     let tree = tempfile::Builder::new()
         .prefix(".rake-promotion-")
         .tempdir_in(root)?;
+
     let staged = tree.path().join("channel");
+
     fs::create_dir(&staged)?;
+
     for (name, source) in &prepared.objects {
         cancelled(flag)?;
         let record = &prepared.state.files[name];
+
         let filename = source
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| fail("publication filename"))?;
+
         let object = objects.join(object_name(&record.sha256, filename)?);
+
         if object.is_symlink() {
             return Err(fail("immutable publication object must not be a symlink"));
         }
+
         if object.exists() {
             if files::digest(&object)? != record.sha256 {
                 return Err(fail("immutable publication object conflict"));
             }
         } else {
             let mut temporary = tempfile::NamedTempFile::new_in(&objects)?;
+
             std::io::copy(&mut fs::File::open(source)?, &mut temporary)?;
             temporary.as_file().sync_all()?;
             temporary.persist_noclobber(&object).map_err(|e| e.error)?;
         }
+
         if files::digest(&object)? != record.sha256 {
             return Err(fail("published object readback hash mismatch"));
         }
+
         if let Some(relative) = name.strip_prefix(&format!("{}/", request.channel)) {
             let destination = staged.join(relative);
+
             fs::create_dir_all(destination.parent().ok_or_else(|| fail("channel path"))?)?;
             fs::hard_link(&object, &destination)?;
         }
     }
+
     files::write_json(&staged.join("release.json"), &prepared.state)?;
     cancelled(flag)?;
     promote_directory(&staged, &current, root, &request.identifier)?;
+
     Ok(())
 }
+
 fn appimage_feeds(prepared: &Prepared) -> Vec<String> {
     prepared
         .objects
@@ -1074,24 +1282,31 @@ fn appimage_feeds(prepared: &Prepared) -> Vec<String> {
         .cloned()
         .collect()
 }
+
 fn verify_history_bytes(bytes: &[u8], record: &PublishedFile) -> Result<(), Error> {
     use sha2::Digest as _;
+
     if bytes.len() > 1024 * 1024
         || bytes.len() as u64 != record.size
         || hex::encode(sha2::Sha256::digest(bytes)) != record.sha256
     {
         return Err(fail("previous AppImage history hash mismatch"));
     }
+
     Ok(())
 }
+
 fn read_history(path: &Path, record: &PublishedFile) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
+
     fs::File::open(path)?
         .take(1024 * 1024 + 1)
         .read_to_end(&mut bytes)?;
     verify_history_bytes(&bytes, record)?;
+
     Ok(bytes)
 }
+
 fn merge_appimage_history(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -1103,10 +1318,13 @@ fn merge_appimage_history(
         .public_keys
         .get("appimage")
         .ok_or_else(|| fail("AppImage history public key missing"))?;
+
     let key = ed25519_dalek::VerifyingKey::from_bytes(&decode_key(key)?)
         .map_err(|error| fail(error.to_string()))?;
+
     let previous: SignedUpdateFeed = serde_json::from_slice(bytes)?;
     let signature = hex::decode(&previous.signature).map_err(|error| fail(error.to_string()))?;
+
     key.verify_strict(
         previous.payload.as_bytes(),
         &ed25519_dalek::Signature::from_slice(&signature)
@@ -1116,12 +1334,15 @@ fn merge_appimage_history(
     // Expiry authorizes new installation, not the already-signed ownership facts
     // being carried into a freshly signed feed with a new expiry.
     let previous: UpdateFeed = serde_json::from_str(&previous.payload)?;
+
     let source = prepared
         .objects
         .get(name)
         .ok_or_else(|| fail("prepared AppImage feed missing"))?;
+
     let envelope: SignedUpdateFeed = serde_json::from_slice(&fs::read(source)?)?;
     let mut feed: UpdateFeed = serde_json::from_str(&envelope.payload)?;
+
     if previous.schema_version != 1
         || previous.identifier != feed.identifier
         || previous.target != feed.target
@@ -1131,6 +1352,7 @@ fn merge_appimage_history(
     {
         return Err(fail("previous AppImage history context rejected"));
     }
+
     for release in previous.releases {
         if let Some(existing) = feed
             .releases
@@ -1149,19 +1371,24 @@ fn merge_appimage_history(
             feed.releases.push(release);
         }
     }
+
     if feed.releases.len() > 1000 {
         return Err(fail(
             "AppImage history exceeds 1000 versions; enroll a new channel with an installer",
         ));
     }
+
     let payload = serde_json::to_string(&feed)?;
     let signature = hex::encode(signer(request, "appimage", payload.as_bytes(), flag)?);
     let bytes = serde_json::to_vec(&SignedUpdateFeed { payload, signature })?;
+
     if bytes.len() > 1024 * 1024 {
         return Err(fail("AppImage history exceeds feed size bound"));
     }
+
     prepared.objects.remove(name);
     prepared.state.files.remove(name);
+
     generated(
         prepared,
         name.into(),
@@ -1169,9 +1396,11 @@ fn merge_appimage_history(
         &public_root(&request.config)?,
     )
 }
+
 fn gh(command: &mut Command, flag: &AtomicBool) -> Result<(), Error> {
     run_tool(command, flag)
 }
+
 fn publish_github(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -1181,6 +1410,7 @@ fn publish_github(
 ) -> Result<(), Error> {
     publish_github_with_program(request, prepared, repository, tag, flag, Path::new("gh"))
 }
+
 fn publish_github_with_program(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -1190,14 +1420,17 @@ fn publish_github_with_program(
     program: &Path,
 ) -> Result<(), Error> {
     let lease = request.package_root.join(".rake-release-github.lock");
+
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(lease)?;
+
     lock.try_lock_exclusive()?;
     let listing = prepared.directory.path().join("github-releases.json");
     let mut command = Command::new(program);
+
     command
         .args([
             "release",
@@ -1215,19 +1448,24 @@ fn publish_github_with_program(
         .stderr(Stdio::inherit())
         .stdin(Stdio::null());
     let mut worker = crate::Worker::spawn_with_io(&mut command)?;
+
     if !worker.wait(flag, Duration::from_secs(120))?.success()
         || fs::metadata(&listing)?.len() > 1024 * 1024
     {
         return Err(fail("GitHub previous-channel lookup failed"));
     }
+
     let releases: Vec<serde_json::Value> = serde_json::from_slice(&fs::read(listing)?)?;
+
     if !releases.is_empty() {
         let latest = releases
             .iter()
             .find(|release| release["isLatest"] == true)
             .and_then(|release| release["tagName"].as_str())
             .ok_or_else(|| fail("GitHub latest release is outside bounded history"))?;
+
         let previous = prepared.directory.path().join("github-previous");
+
         fs::create_dir(&previous)?;
         gh(
             Command::new(program)
@@ -1245,10 +1483,13 @@ fn publish_github_with_program(
             flag,
         )?;
         let path = previous.join("release.json");
+
         if fs::metadata(&path)?.len() > 4 * 1024 * 1024 {
             return Err(fail("GitHub previous state exceeds bound"));
         }
+
         let state: PublishedRelease = serde_json::from_slice(&fs::read(&path)?)?;
+
         if state.identifier != request.identifier
             || state.channel != request.channel
             || semver::Version::parse(&state.version).map_err(|error| fail(error.to_string()))?
@@ -1257,11 +1498,14 @@ fn publish_github_with_program(
         {
             return Err(fail("GitHub channel identity/version conflict"));
         }
+
         previous_keys(&state, &prepared.state)?;
         prepared.state.previous = Some(files::digest(&path)?);
+
         for name in appimage_feeds(prepared) {
             if let Some(record) = state.files.get(&name) {
                 let filename = name.replace('/', "-");
+
                 gh(
                     Command::new(program)
                         .args([
@@ -1278,10 +1522,12 @@ fn publish_github_with_program(
                     flag,
                 )?;
                 let bytes = read_history(&previous.join(filename), record)?;
+
                 merge_appimage_history(request, prepared, &name, &bytes, flag)?;
             }
         }
     }
+
     // No tag creation and no replacement of existing published releases/assets.
     gh(
         Command::new(program).args([
@@ -1300,23 +1546,31 @@ fn publish_github_with_program(
         flag,
     )?;
     let assets = prepared.directory.path().join("github-assets");
+
     fs::create_dir(&assets)?;
     let mut names = BTreeMap::new();
+
     for (name, source) in &prepared.objects {
         let record = &prepared.state.files[name];
+
         let filename = if let Some(value) = name.strip_prefix("objects/") {
             value.to_owned()
         } else {
             name.replace('/', "-")
         };
+
         segment(&filename)?;
+
         if let Some(hash) = names.insert(filename.clone(), record.sha256.clone()) {
             if hash != record.sha256 {
                 return Err(fail("GitHub release asset name collision"));
             }
+
             continue;
         }
+
         let destination = assets.join(&filename);
+
         fs::copy(source, &destination)?;
         gh(
             Command::new(program)
@@ -1325,6 +1579,7 @@ fn publish_github_with_program(
             flag,
         )?;
     }
+
     files::write_json(&assets.join("release.json"), &prepared.state)?;
     gh(
         Command::new(program)
@@ -1333,6 +1588,7 @@ fn publish_github_with_program(
         flag,
     )?;
     let verification = prepared.directory.path().join("github-readback");
+
     fs::create_dir(&verification)?;
     gh(
         Command::new(program)
@@ -1340,17 +1596,21 @@ fn publish_github_with_program(
             .arg(&verification),
         flag,
     )?;
+
     for (name, hash) in names {
         if files::digest(&verification.join(name))? != hash {
             return Err(fail("GitHub downloaded asset verification failed"));
         }
     }
+
     if files::digest(&verification.join("release.json"))?
         != files::digest(&assets.join("release.json"))?
     {
         return Err(fail("GitHub release state readback verification failed"));
     }
+
     cancelled(flag)?;
+
     gh(
         Command::new(program).args([
             "release",
@@ -1364,6 +1624,7 @@ fn publish_github_with_program(
         flag,
     )
 }
+
 fn publish_https(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -1376,6 +1637,7 @@ fn publish_https(
             "publisher credential environment variable missing: {token_env}"
         ))
     })?;
+
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .https_only(true)
         .max_redirects(0)
@@ -1383,8 +1645,10 @@ fn publish_https(
         .http_status_as_error(false)
         .build()
         .into();
+
     publish_https_with_agent(request, prepared, root, &token, flag, &agent)
 }
+
 fn publish_https_with_agent(
     request: &ReleaseRequest,
     prepared: &mut Prepared,
@@ -1398,11 +1662,13 @@ fn publish_https_with_agent(
         root.trim_end_matches('/'),
         request.channel
     );
+
     let mut previous = agent
         .get(&channel)
         .header("Authorization", &format!("Bearer {token}"))
         .call()
         .map_err(|_| fail("HTTPS channel lookup failed"))?;
+
     let etag = if previous.status() == 200 {
         let etag = previous
             .headers()
@@ -1410,13 +1676,16 @@ fn publish_https_with_agent(
             .and_then(|value| value.to_str().ok())
             .ok_or_else(|| fail("HTTPS publisher must return channel ETag"))?
             .to_owned();
+
         let bytes = previous
             .body_mut()
             .with_config()
             .limit(4 * 1024 * 1024)
             .read_to_vec()
             .map_err(|_| fail("HTTPS channel read failed"))?;
+
         let state: PublishedRelease = serde_json::from_slice(&bytes)?;
+
         if state.identifier != request.identifier
             || state.channel != request.channel
             || semver::Version::parse(&state.version).map_err(|e| fail(e.to_string()))?
@@ -1424,8 +1693,10 @@ fn publish_https_with_agent(
         {
             return Err(fail("HTTPS channel identity/version conflict"));
         }
+
         previous_keys(&state, &prepared.state)?;
         prepared.state.previous = Some(etag.clone());
+
         for name in appimage_feeds(prepared) {
             if let Some(record) = state.files.get(&name) {
                 let filename = record
@@ -1433,70 +1704,86 @@ fn publish_https_with_agent(
                     .rsplit('/')
                     .next()
                     .ok_or_else(|| fail("history object filename"))?;
+
                 segment(filename)?;
                 let mut response = agent
                     .get(format!("{}/objects/{filename}", root.trim_end_matches('/')))
                     .header("Authorization", &format!("Bearer {token}"))
                     .call()
                     .map_err(|_| fail("HTTPS history readback failed"))?;
+
                 if response.status() != 200 {
                     return Err(fail("HTTPS history readback rejected"));
                 }
+
                 let bytes = response
                     .body_mut()
                     .with_config()
                     .limit(1024 * 1024)
                     .read_to_vec()
                     .map_err(|_| fail("HTTPS history exceeds bound or is truncated"))?;
+
                 verify_history_bytes(&bytes, record)?;
                 merge_appimage_history(request, prepared, &name, &bytes, flag)?;
             }
         }
+
         Some(etag)
     } else if previous.status() == 404 {
         None
     } else {
         return Err(fail("HTTPS channel lookup rejected"));
     };
+
     for (name, path) in &prepared.objects {
         cancelled(flag)?;
         let record = &prepared.state.files[name];
+
         let filename = path
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| fail("publication filename"))?;
+
         let url = format!(
             "{}/objects/{}",
             root.trim_end_matches('/'),
             object_name(&record.sha256, filename)?
         );
+
         let response = agent
             .put(&url)
             .header("Authorization", &format!("Bearer {token}"))
             .header("If-None-Match", "*")
             .send(fs::File::open(path)?)
             .map_err(|_| fail("HTTPS immutable upload failed"))?;
+
         if !response.status().is_success() && response.status() != 412 {
             return Err(fail("HTTPS immutable upload rejected"));
         }
+
         let mut response = agent
             .get(&url)
             .header("Authorization", &format!("Bearer {token}"))
             .call()
             .map_err(|_| fail("HTTPS readback failed"))?;
+
         if response.status() != 200 {
             return Err(fail("HTTPS readback rejected"));
         }
+
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
         let mut body = response.body_mut().as_reader().take(record.size + 1);
         let count = std::io::copy(&mut body, &mut hash)?;
+
         if count != record.size || format!("{:x}", hash.finalize()) != record.sha256 {
             return Err(fail("HTTPS readback verification failed"));
         }
     }
+
     cancelled(flag)?;
     let bytes = serde_json::to_vec(&prepared.state)?;
+
     let response = agent
         .put(&channel)
         .header("Authorization", &format!("Bearer {token}"))
@@ -1511,19 +1798,23 @@ fn publish_https_with_agent(
         .header("Content-Type", "application/json")
         .send(bytes.as_slice())
         .map_err(|_| fail("HTTPS transactional promotion failed"))?;
+
     if !response.status().is_success() {
         return Err(fail(
             "HTTPS promotion conflict/rejection; previous channel retained",
         ));
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     pub(super) fn fixture(root: &Path, version: &str) -> ReleaseRequest {
         let input = root.join(version);
+
         fs::create_dir_all(&input).unwrap();
         fs::write(input.join("app.tar.gz"), format!("payload {version}")).unwrap();
         let distribution = Distribution {
@@ -1546,7 +1837,9 @@ mod tests {
                 update_policy: None,
             }],
         };
+
         files::write_json(&input.join("distribution.json"), &distribution).unwrap();
+
         ReleaseRequest {
             identifier: distribution.identifier,
             version: version.into(),
@@ -1567,16 +1860,20 @@ mod tests {
             custom_verifiers: BTreeMap::new(),
         }
     }
+
     #[test]
     fn builtin_provider_signing_verifies_the_exact_message_and_profile() {
         let root = tempfile::tempdir().unwrap();
         let mut request = fixture(root.path(), "1.0.0");
+
         let key = rake_dist_core::UpdateSigningKey::File {
             path: root.path().join("seed"),
         };
+
         crate::generate_update_key(&key, &root.path().join("public")).unwrap();
         let public = fs::read(root.path().join("public")).unwrap();
         let flag = AtomicBool::new(false);
+
         for provider in ["appimage", "velopack"] {
             request
                 .config
@@ -1584,9 +1881,12 @@ mod tests {
                 .insert(provider.into(), key.clone());
             request.public_keys.insert(provider.into(), public.clone());
             let signature = signer(&request, provider, b"exact feed bytes", &flag).unwrap();
+
             let verifying =
                 ed25519_dalek::VerifyingKey::from_bytes(&decode_key(&public).unwrap()).unwrap();
+
             let signature = ed25519_dalek::Signature::from_slice(&signature).unwrap();
+
             verifying
                 .verify_strict(b"exact feed bytes", &signature)
                 .unwrap();
@@ -1598,6 +1898,7 @@ mod tests {
             request.public_keys.insert(provider.into(), vec![7; 32]);
             assert!(signer(&request, provider, b"exact feed bytes", &flag).is_err());
         }
+
         request
             .config
             .signers
@@ -1609,16 +1910,19 @@ mod tests {
         flag.store(true, Ordering::Release);
         assert!(signer(&request, "appimage", b"cancelled", &flag).is_err());
     }
+
     #[test]
     fn provider_key_changes_require_explicit_channel_reenrollment() {
         for provider in ["sparkle", "velopack", "appimage"] {
             let root = tempfile::tempdir().unwrap();
             let flag = AtomicBool::new(false);
             let mut first = fixture(root.path(), "1.0.0");
+
             first.public_keys.insert(provider.into(), vec![7; 32]);
             let initial = publish(&first, &flag).unwrap();
             let previous = fs::read(root.path().join("published/stable/release.json")).unwrap();
             let mut next = fixture(root.path(), "1.0.1");
+
             // Different public-key encodings retain the same trust identity.
             next.public_keys
                 .insert(provider.into(), hex::encode([7; 32]).into_bytes());
@@ -1641,17 +1945,21 @@ mod tests {
             assert!(publish(&next, &flag).is_ok());
         }
     }
+
     #[test]
     fn windows_release_requires_native_timestamp_evidence() {
         let root = tempfile::tempdir().unwrap();
         let mut request = fixture(root.path(), "1.0.0");
         let directory = &request.distributions[0];
         let path = directory.join("distribution.json");
+
         let mut distribution: Distribution =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
         fs::rename(directory.join("app.tar.gz"), directory.join("setup.exe")).unwrap();
         distribution.target = "x86_64-pc-windows-msvc".into();
         let artifact = &mut distribution.artifacts[0];
+
         artifact.path = "setup.exe".into();
         artifact.format = Format::Nsis;
         artifact.trust.signature = Some("authenticode".into());
@@ -1669,15 +1977,18 @@ mod tests {
         files::write_json(&path, &distribution).unwrap();
         assert!(inputs(&request).is_ok());
     }
+
     #[test]
     fn absent_target_and_corrupted_payload_cannot_advance_channel() {
         let root = tempfile::tempdir().unwrap();
         let flag = AtomicBool::new(false);
         let initial = fixture(root.path(), "1.0.0");
         let first = publish(&initial, &flag).unwrap();
+
         assert!(first.previous.is_none());
         let old = fs::read(root.path().join("published/stable/release.json")).unwrap();
         let mut next = fixture(root.path(), "1.0.1");
+
         next.config
             .required
             .insert("aarch64-unknown-linux-gnu".into(), vec![Format::Tar]);
@@ -1704,6 +2015,7 @@ mod tests {
             old
         );
     }
+
     #[test]
     fn promotion_is_serialized_retains_history_and_rejects_replay() {
         let root = tempfile::tempdir().unwrap();
@@ -1713,10 +2025,12 @@ mod tests {
         let original_url = first.files.values().next().unwrap().url.clone();
         let next = fixture(root.path(), "1.0.1");
         let state = publish(&next, &flag).unwrap();
+
         assert!(state.previous.is_some());
         let original_object = original_url
             .strip_prefix("https://downloads.example.test/")
             .unwrap();
+
         assert!(
             root.path()
                 .join("published")
@@ -1733,15 +2047,19 @@ mod tests {
             .write(true)
             .open(root.path().join("published/.rake-release.lock"))
             .unwrap();
+
         lock.lock_exclusive().unwrap();
         let future = fixture(root.path(), "1.0.2");
+
         assert!(publish(&future, &flag).is_err());
     }
+
     #[test]
     fn cancellation_and_unowned_output_preserve_existing_files() {
         let root = tempfile::tempdir().unwrap();
         let request = fixture(root.path(), "1.0.0");
         let published = root.path().join("published");
+
         fs::create_dir(&published).unwrap();
         fs::write(published.join("valuable"), "keep").unwrap();
         assert!(
@@ -1757,13 +2075,16 @@ mod tests {
         assert!(publish(&request, &AtomicBool::new(true)).is_err());
         assert!(!published.join("stable").exists());
     }
+
     #[test]
     fn metadata_files_do_not_satisfy_package_gates_and_compiled_policy_is_binding() {
         let root = tempfile::tempdir().unwrap();
         let mut request = fixture(root.path(), "1.0.0");
         let manifest = request.distributions[0].join("distribution.json");
+
         let mut distribution: Distribution =
             serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+
         distribution.artifacts[0].format = Format::Flatpak;
         request
             .config
@@ -1801,6 +2122,7 @@ mod tests {
         );
         assert!(!root.path().join("published").exists());
     }
+
     #[test]
     fn release_uses_a_verified_snapshot_even_if_build_outputs_change() {
         let root = tempfile::tempdir().unwrap();
@@ -1808,8 +2130,10 @@ mod tests {
         let input = request.distributions[0].join("app.tar.gz");
         let expected = fs::read(&input).unwrap();
         let mut prepared = prepare(&request, &AtomicBool::new(false)).unwrap();
+
         fs::write(input, b"a later build replaced this source").unwrap();
         let destination = root.path().join("published");
+
         publish_directory(
             &request,
             &mut prepared,
@@ -1819,19 +2143,24 @@ mod tests {
         .unwrap();
         let url = &prepared.state.files.values().next().unwrap().url;
         let relative = url.strip_prefix("https://downloads.example.test/").unwrap();
+
         assert_eq!(fs::read(destination.join(relative)).unwrap(), expected);
     }
+
     #[test]
     fn custom_releases_require_independent_verification_and_safe_object_names() {
         let root = tempfile::tempdir().unwrap();
         let mut request = fixture(root.path(), "1.0.0");
         let manifest = request.distributions[0].join("distribution.json");
         let file = request.distributions[0].join("Company Installer.pkg");
+
         fs::write(&file, b"custom format payload").unwrap();
         let hash = files::digest(&file).unwrap();
         let command = vec!["tools/verify-company-installer".into()];
+
         let mut distribution: Distribution =
             serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+
         distribution.custom_artifacts.push(crate::CustomArtifact {
             format: "company-installer".into(),
             path: "Company Installer.pkg".into(),
@@ -1856,6 +2185,7 @@ mod tests {
         });
         files::write_json(&manifest, &distribution).unwrap();
         let state = publish(&request, &AtomicBool::new(false)).unwrap();
+
         assert!(
             state
                 .files
@@ -1864,16 +2194,20 @@ mod tests {
         );
         assert!(state.files.values().all(|file| !file.url.contains(' ')));
     }
+
     #[test]
     fn appinstaller_preserves_actual_native_identity_and_escapes_xml() {
         let root = tempfile::tempdir().unwrap();
         let request = fixture(root.path(), "1.0.0");
+
         let mut distribution: Distribution = serde_json::from_slice(
             &fs::read(request.distributions[0].join("distribution.json")).unwrap(),
         )
         .unwrap();
+
         distribution.target = "x86_64-pc-windows-msvc".into();
         let mut artifact = distribution.artifacts[0].clone();
+
         artifact.package_version = "1.2.3.4".into();
         artifact.native_identity = BTreeMap::from([
             ("msix_name".into(), "dev.rake.test".into()),
@@ -1886,6 +2220,7 @@ mod tests {
             "https://example.test/app.msix",
         )
         .unwrap();
+
         assert!(xml.contains("CN=Rake &amp; Co"));
         assert!(xml.contains("Version=\"1.2.3.4\""));
         assert!(xml.contains("ProcessorArchitecture=\"x64\""));
@@ -1895,36 +2230,48 @@ mod tests {
 fn verify_sparkle_feed(bytes: &[u8], key: &[u8]) -> Result<(), Error> {
     use base64::Engine as _;
     let text = std::str::from_utf8(bytes).map_err(|_| fail("Sparkle feed is not UTF-8"))?;
+
     let marker = text
         .rfind("<!-- sparkle-signatures:")
         .ok_or_else(|| fail("Sparkle native feed signature missing"))?;
+
     let trailer = &text[marker..];
+
     if !trailer.trim_end().ends_with("-->") {
         return Err(fail("Sparkle signature trailer malformed"));
     }
+
     let signature = trailer
         .lines()
         .find_map(|line| line.strip_prefix("edSignature: "))
         .ok_or_else(|| fail("Sparkle native Ed25519 signature missing"))?;
+
     let length = trailer
         .lines()
         .find_map(|line| line.strip_prefix("length: "))
         .and_then(|value| value.parse::<usize>().ok())
         .ok_or_else(|| fail("Sparkle native signed length missing"))?;
+
     if length != marker {
         return Err(fail("Sparkle signed feed length mismatch"));
     }
+
     let signature = base64::engine::general_purpose::STANDARD
         .decode(signature.trim())
         .map_err(|_| fail("Sparkle feed signature malformed"))?;
+
     let key = ed25519_dalek::VerifyingKey::from_bytes(&decode_key(key)?)
         .map_err(|e| fail(e.to_string()))?;
+
     let signature =
         ed25519_dalek::Signature::from_slice(&signature).map_err(|e| fail(e.to_string()))?;
+
     key.verify_strict(&bytes[..length], &signature)
         .map_err(|_| fail("Sparkle signing profile does not match the configured public key"))?;
+
     Ok(())
 }
+
 #[cfg(unix)]
 fn promote_directory(
     staged: &Path,
@@ -1933,12 +2280,16 @@ fn promote_directory(
     identifier: &str,
 ) -> Result<(), Error> {
     let generations = root.join(".rake-channels");
+
     if generations.is_symlink() {
         return Err(fail("channel generation directory must not be a symlink"));
     }
+
     fs::create_dir_all(&generations)?;
+
     if current.exists() {
         let actual = fs::canonicalize(current)?;
+
         if !current.is_symlink()
             || !actual.starts_with(fs::canonicalize(&generations)?)
             || fs::read_to_string(actual.join(".rake-distribution"))? != identifier
@@ -1946,22 +2297,31 @@ fn promote_directory(
             return Err(fail("refusing unowned release channel"));
         }
     }
+
     fs::write(staged.join(".rake-distribution"), identifier)?;
     let name = files::digest(&staged.join("release.json"))?;
     let generation = generations.join(&name);
+
     if generation.exists() {
         return Err(fail("channel generation already exists"));
     }
+
     fs::rename(staged, &generation)?;
     let link = root.join(format!(".rake-promote-{name}"));
+
     std::os::unix::fs::symlink(Path::new(".rake-channels").join(name), &link)?;
+
     if let Err(error) = fs::rename(&link, current) {
         let _ = fs::remove_file(link);
+
         return Err(error.into());
     }
+
     fs::File::open(root)?.sync_all()?;
+
     Ok(())
 }
+
 #[cfg(not(unix))]
 fn promote_directory(
     staged: &Path,
@@ -1971,15 +2331,19 @@ fn promote_directory(
 ) -> Result<(), Error> {
     files::commit(staged, current, identifier)
 }
+
 #[cfg(test)]
 mod signature_tests {
     use super::*;
+
     #[test]
     fn real_sparkle_2101_signed_feed_is_verified_and_tampering_fails() {
         let feed = include_bytes!("../tests/fixtures/sparkle/appcast.xml");
         let key = include_bytes!("../tests/fixtures/sparkle/public-key.txt");
+
         verify_sparkle_feed(feed, key).unwrap();
         let mut changed = feed.to_vec();
+
         changed[100] ^= 1;
         assert!(verify_sparkle_feed(&changed, key).is_err());
         assert!(verify_sparkle_feed(feed, &[7; 32]).is_err());
@@ -1992,6 +2356,7 @@ pub(crate) fn package_payload(format: Format, path: &Path) -> bool {
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+
     match format {
         Format::App => false,
         Format::Dmg => name.ends_with(".dmg"),

@@ -15,32 +15,41 @@ pub fn subtree<'a>(elements: &'a [Element], id: &str) -> Option<Vec<&'a Element>
 
 fn walk<'a>(elements: &'a [Element], id: &str) -> Option<Vec<(&'a Element, bool)>> {
     let index: BTreeMap<_, _> = elements.iter().map(|e| (e.id.as_str(), e)).collect();
+
     if index.len() != elements.len() {
         return None;
     }
+
     let mut children: BTreeMap<&str, Vec<&Element>> = BTreeMap::new();
+
     for element in elements {
         if let Some(parent) = &element.parent {
             children.entry(parent).or_default().push(element);
         }
     }
+
     let mut stack = vec![(*index.get(id)?, false)];
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
+
     while let Some((node, closing)) = stack.pop() {
         if closing {
             rows.push((node, true));
             continue;
         }
+
         if !seen.insert(&node.id) {
             return None;
         }
+
         rows.push((node, false));
         stack.push((node, true));
+
         if let Some(children) = children.get(node.id.as_str()) {
             stack.extend(children.iter().rev().map(|child| (*child, false)));
         }
     }
+
     Some(rows)
 }
 
@@ -48,14 +57,17 @@ fn walk<'a>(elements: &'a [Element], id: &str) -> Option<Vec<(&'a Element, bool)
 /// Returns `None` for invalid trees or output above the inspection response budget.
 pub fn text(elements: &[Element], id: &str) -> Option<String> {
     let mut output = String::new();
+
     for node in subtree(elements, id)? {
         if let Some(text) = &node.text {
             output.push_str(text);
         }
+
         if output.len() > MAX_SNAPSHOT_BYTES {
             return None;
         }
     }
+
     Some(output)
 }
 
@@ -63,6 +75,7 @@ pub fn text(elements: &[Element], id: &str) -> Option<String> {
 /// Returns `None` for invalid trees or output above the inspection response budget.
 pub fn markup(elements: &[Element], id: &str) -> Option<String> {
     let mut output = String::new();
+
     for (node, closing) in walk(elements, id)? {
         if let Some(text) = &node.text {
             if !closing {
@@ -72,15 +85,19 @@ pub fn markup(elements: &[Element], id: &str) -> Option<String> {
             output.push_str(&format!("</{}>", escape(node.display_name())));
         } else {
             output.push_str(&format!("<{}", escape(node.display_name())));
+
             if let Some(id) = &node.semantic_id {
                 output.push_str(&format!(" id=\"{}\"", escape(id)));
             }
+
             output.push('>');
         }
+
         if output.len() > MAX_SNAPSHOT_BYTES - 4096 {
             return None;
         }
     }
+
     (serde_json::to_vec(&output).ok()?.len() < MAX_SNAPSHOT_BYTES - 4096).then_some(output)
 }
 
@@ -97,46 +114,59 @@ fn escape(value: &str) -> String {
 /// Missing targets, duplicate IDs, cycles and oversized paths return `None`.
 pub fn path(elements: &[Element], id: &str) -> Option<String> {
     let index: BTreeMap<_, _> = elements.iter().map(|e| (e.id.as_str(), e)).collect();
+
     if index.len() != elements.len() {
         return None;
     }
+
     let mut counts = BTreeMap::new();
     let mut positions = BTreeMap::new();
+
     for element in elements {
         let count = counts
             .entry((element.parent.as_deref(), element.display_name()))
             .or_insert(0usize);
+
         *count += 1;
         positions.insert(element.id.as_str(), *count);
     }
+
     let mut current = Some(*index.get(id)?);
     let mut seen = BTreeSet::new();
     let mut segments = Vec::new();
     let mut bytes = 0;
+
     while let Some(node) = current {
         if !seen.insert(&node.id) {
             return None;
         }
+
         let semantic = node
             .semantic_id
             .as_ref()
             .map(|id| format!("[@id={}]", serde_json::to_string(id).unwrap_or_default()))
             .unwrap_or_default();
+
         let segment = format!(
             "{}[{}]{semantic}",
             node.display_name(),
             positions[node.id.as_str()]
         );
+
         bytes += segment.len() + 1;
+
         if bytes > MAX_SNAPSHOT_BYTES {
             return None;
         }
+
         segments.push(segment);
         current = match node.parent.as_deref() {
             Some(id) => Some(*index.get(id)?),
             None => None,
         };
     }
+
     segments.reverse();
+
     Some(format!("/{}", segments.join("/")))
 }

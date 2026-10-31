@@ -351,6 +351,7 @@ impl Request {
         url.set_query(None);
         #[cfg(feature = "devtools")]
         let url = inspection::url(&url);
+
         let deadline = self
             .timeout
             .map(|timeout| {
@@ -690,6 +691,7 @@ impl Lifecycle {
 
         #[cfg(feature = "devtools")]
         let start_us = collector.elapsed_us();
+
         Self {
             id: NEXT_REQUEST.fetch_add(1, Ordering::Relaxed),
             context: collector.context(),
@@ -702,6 +704,7 @@ impl Lifecycle {
                 {
                     BTreeMap::from([("request_start_us".into(), start_us.into())])
                 }
+
                 #[cfg(not(feature = "devtools"))]
                 {
                     BTreeMap::new()

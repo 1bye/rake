@@ -34,12 +34,15 @@ impl Element {
         let children = inline_children(&self.children, &content, &style, rake, next)?;
 
         let heading_text = format_ident!("__rake_heading_text_{index}", span = Span::mixed_site());
+
         let siblings = format_ident!(
             "__rake_paragraph_children_{index}",
             span = Span::mixed_site()
         );
+
         let definition =
             super::inspection::definition("Text", self.tag.span(), index, TokenStream::new(), rake);
+
         let label =
             if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
                 quote!(#node = #node.aria_label(#heading_text.full_text());)

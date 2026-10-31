@@ -1,5 +1,6 @@
 //! The only production boundary that imports upstream bundler types.
 use crate::{Error, Format, Plan};
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -33,10 +34,12 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         frameworks,
         linux_files,
     } = input;
+
     use tauri_bundler::{
         BundleBinary, BundleSettings, PackageSettings, PackageType, SettingsBuilder,
     };
     let item = &plan.packages()[index];
+
     let kind = match item.format() {
         Format::App => PackageType::MacOsBundle,
         Format::Dmg => PackageType::MacOsBundle,
@@ -50,17 +53,21 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
             )));
         }
     };
+
     let config = item.config();
+
     // Upstream resource normalization drops Windows drive prefixes. Inputs are
     // staged in this worker, so relative paths avoid cross-drive ambiguity.
     let resources = resources
         .into_iter()
         .map(|(source, destination)| Ok((worker_relative(Path::new(&source))?, destination)))
         .collect::<Result<HashMap<_, _>, Error>>()?;
+
     let icons = icons
         .iter()
         .map(|path| worker_relative(Path::new(path)))
         .collect::<Result<Vec<_>, _>>()?;
+
     let settings =
         BundleSettings {
             identifier: Some(plan.identifier().into()),
@@ -78,6 +85,7 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                         .as_ref()
                         .map(|path| {
                             let path = crate::files::confined(root, path)?;
+
                             rake_dist_macos::info_plist(
                                 &path,
                                 plan.identifier(),
@@ -91,26 +99,34 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                             .map_err(|error| Error::Execution(error.to_string()))
                         })
                         .transpose()?;
+
                     if let Some(dictionary) = value.as_ref().and_then(|value|value.as_dictionary()) {
                         for (field, enabled) in [("CFBundleURLTypes",!config.desktop.url_schemes.is_empty()),("CFBundleDocumentTypes",!config.desktop.file_associations.is_empty()),("LSApplicationCategoryType",config.desktop.category.is_some())] {
                             if enabled && dictionary.contains_key(field) {return Err(Error::Execution(format!("{field} is declared by both desktop metadata and the custom plist")));}
                         }
                     }
+
                     if !config.macos.privacy.is_empty() {
                         let mut plist = value.unwrap_or_else(rake_dist_macos::empty_info_plist);
                         let dictionary = plist.as_dictionary_mut().ok_or_else(||Error::Execution("custom plist must be a dictionary".into()))?;
+
                         for (key, description) in &config.macos.privacy {
                             if dictionary.get(key).is_some_and(|value|value.as_string()!=Some(description.as_str())) {return Err(Error::Execution(format!("macos.privacy conflicts with custom plist {key}")));}
+
                             dictionary.insert(key.clone(), description.clone().into());
                         }
+
                         value=Some(plist);
                     }
+
                     if item.update_owner() == rake_dist_core::UpdateOwner::Sparkle {
                         let path =
                             config.updates.public_keys.get("sparkle").ok_or_else(|| {
                                 Error::Execution("Sparkle public key missing".into())
                             })?;
+
                         let key = std::fs::read_to_string(crate::files::confined(root, path)?)?;
+
                         let feed =
                             rake_dist_core::feed_url(
                                 config.updates.base_url.as_deref().ok_or_else(|| {
@@ -120,6 +136,7 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                                 target,
                                 "appcast.xml",
                             )?;
+
                         value = Some(
                             rake_dist_macos::sparkle_info_plist(
                                 value.unwrap_or_else(rake_dist_macos::empty_info_plist),
@@ -129,6 +146,7 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                             .map_err(|error| Error::Execution(error.to_string()))?,
                         );
                     }
+
                     value.map(tauri_bundler::PlistKind::Plist)
                 } else {
                     None
@@ -155,7 +173,9 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
             },
             ..Default::default()
         };
+
     let mut binaries = vec![BundleBinary::new(binary.into(), true)];
+
     binaries.extend(
         helpers
             .into_iter()
@@ -184,11 +204,14 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
         .no_sign(true)
         .build()
         .map_err(|e| Error::Execution(format!("bundler settings: {e}")))?;
+
     let packages = tauri_bundler::bundle_project(&settings)
         .map_err(|e| Error::Execution(format!("bundler: {e}")))?;
+
     if !packages.iter().any(|p| p.package_type == kind) {
         return Err(Error::Execution("engine skipped requested format".into()));
     }
+
     Ok(packages
         .into_iter()
         .filter(|p| p.package_type == kind)
@@ -199,9 +222,11 @@ pub(crate) fn package(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
 fn worker_relative(path: &Path) -> Result<String, Error> {
     let current = dunce::canonicalize(std::env::current_dir()?)?;
     let path = dunce::canonicalize(path)?;
+
     let relative = path.strip_prefix(&current).map_err(|_| {
         Error::Execution("bundler inputs must stay inside the worker workspace".into())
     })?;
+
     Ok(rake_dist_core::portable_relative_path(relative)?
         .to_string_lossy()
         .into_owned())

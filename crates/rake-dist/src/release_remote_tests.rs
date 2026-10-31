@@ -2,16 +2,20 @@
 use super::*;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
+
 struct Server(std::process::Child);
+
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
+
 fn start_service(service: &Path) -> (Server, serde_json::Value) {
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/distribution_test_publisher.py");
+
     let mut server = Server(
         Command::new("python3")
             .arg(script)
@@ -21,13 +25,17 @@ fn start_service(service: &Path) -> (Server, serde_json::Value) {
             .spawn()
             .unwrap(),
     );
+
     let mut line = String::new();
+
     BufReader::new(server.0.stdout.take().unwrap())
         .read_line(&mut line)
         .unwrap();
     let ready: serde_json::Value = serde_json::from_str(&line).expect("TLS server ready");
+
     (server, ready)
 }
+
 fn appimage_fixture(
     root: &Path,
     version: &str,
@@ -37,6 +45,7 @@ fn appimage_fixture(
     let mut request = super::tests::fixture(root, version);
     let path = request.distributions[0].join("distribution.json");
     let mut distribution: Distribution = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
     fs::rename(
         request.distributions[0].join("app.tar.gz"),
         request.distributions[0].join("App.AppImage"),
@@ -44,6 +53,7 @@ fn appimage_fixture(
     .unwrap();
     let key = hex::decode(ready["public_key"].as_str().unwrap()).unwrap();
     let artifact = &mut distribution.artifacts[0];
+
     artifact.path = "App.AppImage".into();
     artifact.format = Format::Appimage;
     artifact.update_policy = Some(rake_dist_core::UpdateBinding {
@@ -66,16 +76,20 @@ fn appimage_fixture(
     );
     request.config.required = BTreeMap::from([(distribution.target, vec![Format::Appimage])]);
     request.updates_enabled = true;
+
     request
 }
+
 #[test]
 fn https_upload_readback_and_conflicts_never_partially_promote() {
     let root = tempfile::tempdir().unwrap();
     let service = root.path().join("service");
+
     fs::create_dir(&service).unwrap();
     let (_server, ready) = start_service(&service);
     let ca = fs::read(ready["ca"].as_str().unwrap()).unwrap();
     let certificate = ureq::tls::Certificate::from_pem(&ca).unwrap().to_owned();
+
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .https_only(true)
         .http_status_as_error(false)
@@ -88,15 +102,18 @@ fn https_upload_readback_and_conflicts_never_partially_promote() {
         )
         .build()
         .into();
+
     let url = ready["url"].as_str().unwrap();
     let flag = AtomicBool::new(false);
     let mut first = appimage_fixture(root.path(), "1.0.0", &ready, url);
+
     first.config.publisher = Some(Publisher::Https {
         url: url.into(),
         public_url: url.into(),
         token_env: "UNUSED_TEST_TOKEN".into(),
     });
     let mut prepared = prepare(&first, &flag).unwrap();
+
     assert!(
         publish_https_with_agent(
             &first,
@@ -124,10 +141,13 @@ fn https_upload_readback_and_conflicts_never_partially_promote() {
     .unwrap();
     let previous = fs::read(service.join("current.json")).unwrap();
     let mut next = appimage_fixture(root.path(), "1.0.1", &ready, url);
+
     next.config.publisher = first.config.publisher.clone();
+
     for fault in ["reject-upload", "corrupt", "conflict"] {
         fs::write(service.join(fault), "").unwrap();
         let mut prepared = prepare(&next, &flag).unwrap();
+
         assert!(
             publish_https_with_agent(
                 &next,
@@ -147,7 +167,9 @@ fn https_upload_readback_and_conflicts_never_partially_promote() {
         );
         fs::remove_file(service.join(fault)).unwrap();
     }
+
     let mut prepared = prepare(&next, &flag).unwrap();
+
     publish_https_with_agent(
         &next,
         &mut prepared,
@@ -159,14 +181,18 @@ fn https_upload_readback_and_conflicts_never_partially_promote() {
     .unwrap();
     let state: PublishedRelease =
         serde_json::from_slice(&fs::read(service.join("current.json")).unwrap()).unwrap();
+
     assert_eq!(state.version, "1.0.1");
     assert!(state.previous.is_some());
     let record = &state.files["stable/x86_64-unknown-linux-gnu/appimage.json"];
+
     let object = service
         .join("objects")
         .join(record.url.rsplit('/').next().unwrap());
+
     let signed: SignedUpdateFeed = serde_json::from_slice(&fs::read(object).unwrap()).unwrap();
     let feed: UpdateFeed = serde_json::from_str(&signed.payload).unwrap();
+
     assert_eq!(
         feed.releases.len(),
         2,
@@ -184,15 +210,18 @@ fn https_upload_readback_and_conflicts_never_partially_promote() {
         .is_err()
     );
 }
+
 #[test]
 fn github_draft_readback_and_previous_version_gate_precede_latest_promotion() {
     let root = tempfile::tempdir().unwrap();
     let service = root.path().join("credentials-service");
+
     fs::create_dir(&service).unwrap();
     let (_server, ready) = start_service(&service);
     let url = "https://github.com/owner/test/releases/latest/download";
     let script = root.path().join("gh-fixture");
     let mut file = fs::File::create(&script).unwrap();
+
     writeln!(
         file,
         "#!/usr/bin/env python3\nimport json,pathlib,shutil,sys\nroot=pathlib.Path({})",
@@ -220,14 +249,17 @@ else:raise AssertionError(args)
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     let flag = AtomicBool::new(false);
     let mut first = appimage_fixture(root.path(), "1.0.0", &ready, url);
+
     first.config.publisher = Some(Publisher::Github {
         repository: "owner/test".into(),
         tag: "v1".into(),
     });
     let mut prepared = prepare(&first, &flag).unwrap();
+
     publish_github_with_program(&first, &mut prepared, "owner/test", "v1", &flag, &script).unwrap();
     assert_eq!(fs::read_to_string(root.path().join("live")).unwrap(), "v1");
     let mut next = appimage_fixture(root.path(), "1.0.1", &ready, url);
+
     next.config.publisher = Some(Publisher::Github {
         repository: "owner/test".into(),
         tag: "v2".into(),
@@ -266,7 +298,9 @@ else:raise AssertionError(args)
     assert_eq!(fs::read_to_string(root.path().join("live")).unwrap(), "v3");
     let state: PublishedRelease =
         serde_json::from_slice(&fs::read(root.path().join("v3/release.json")).unwrap()).unwrap();
+
     let record = &state.files["stable/x86_64-unknown-linux-gnu/appimage.json"];
+
     assert_eq!(
         record.url,
         "https://github.com/owner/test/releases/download/v3/stable-x86_64-unknown-linux-gnu-appimage.json"
@@ -279,7 +313,9 @@ else:raise AssertionError(args)
         .unwrap(),
     )
     .unwrap();
+
     let feed: UpdateFeed = serde_json::from_str(&signed.payload).unwrap();
+
     assert_eq!(
         feed.releases.len(),
         2,
@@ -303,11 +339,13 @@ else:raise AssertionError(args)
 fn directory_release_carries_signed_installed_history_without_old_build_directories() {
     let root = tempfile::tempdir().unwrap();
     let service = root.path().join("service");
+
     fs::create_dir(&service).unwrap();
     let (_server, ready) = start_service(&service);
     let url = ready["url"].as_str().unwrap();
     let flag = AtomicBool::new(false);
     let mut first = appimage_fixture(root.path(), "1.0.0", &ready, url);
+
     first.config.publisher = Some(Publisher::Directory {
         path: root.path().join("published"),
         public_url: url.into(),
@@ -315,14 +353,17 @@ fn directory_release_carries_signed_installed_history_without_old_build_director
     publish(&first, &flag).unwrap();
     fs::remove_dir_all(&first.distributions[0]).unwrap();
     let mut next = appimage_fixture(root.path(), "1.0.1", &ready, url);
+
     next.config.publisher = first.config.publisher.clone();
     next.published_at += 8 * 86400; // Old feed expiry cannot erase authenticated installed versions.
     publish(&next, &flag).unwrap();
     let path = root
         .path()
         .join("published/stable/x86_64-unknown-linux-gnu/appimage.json");
+
     let envelope: SignedUpdateFeed = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let feed: UpdateFeed = serde_json::from_str(&envelope.payload).unwrap();
+
     assert_eq!(feed.releases.len(), 2);
     assert!(
         feed.releases
@@ -331,6 +372,7 @@ fn directory_release_carries_signed_installed_history_without_old_build_director
     );
     let before = fs::read(root.path().join("published/stable/release.json")).unwrap();
     let mut third = appimage_fixture(root.path(), "1.0.2", &ready, url);
+
     third.config.publisher = first.config.publisher.clone();
     third.published_at = next.published_at + 1;
     fs::remove_file(&path).unwrap();

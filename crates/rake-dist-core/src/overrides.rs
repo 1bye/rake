@@ -72,45 +72,59 @@ impl Overrides {
             ($($field:ident),*) => { $(if let Some(value) = &self.$field {config.$field = Some(value.clone());})* };
         }
         replace!(name, icon, assets, package_version, build_number);
+
         if let Some(value) = &self.desktop {
             config.desktop.category = value.category.or(config.desktop.category);
+
             if let Some(schemes) = &value.url_schemes {
                 config.desktop.url_schemes.clone_from(schemes);
             }
+
             if let Some(associations) = &value.file_associations {
                 config.desktop.file_associations.clone_from(associations);
             }
+
             config
                 .desktop
                 .localizations
                 .extend(value.localizations.clone());
         }
+
         if let Some(value) = &self.resources {
             config.resources.clone_from(value);
         }
+
         config.dependencies.extend(self.dependencies.clone());
+
         if let Some(value) = &self.components {
             config.components.clone_from(value);
         }
+
         if let Some(value) = &self.sidecars {
             config.sidecars.clone_from(value);
         }
+
         if let Some(value) = &self.runtimes {
             config.runtimes.clone_from(value);
         }
+
         if let Some(value) = &self.formats {
             *config.formats_mut(platform) = value.clone();
         }
+
         if let Some(value) = &self.updates {
             if let Some(enabled) = value.enabled {
                 config.updates.enabled = enabled;
             }
+
             if let Some(channel) = &value.channel {
                 config.updates.channel = Some(channel.clone());
             }
+
             if let Some(base) = &value.base_url {
                 config.updates.base_url = Some(base.clone());
             }
+
             config.updates.public_keys.extend(value.public_keys.clone());
         }
     }

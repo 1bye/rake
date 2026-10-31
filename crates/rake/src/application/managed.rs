@@ -7,6 +7,7 @@
 use gpui::{
     AnyView, AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, rgb,
 };
+
 #[cfg(feature = "updates")]
 use gpui::{InteractiveElement, StatefulInteractiveElement};
 
@@ -55,14 +56,19 @@ pub(super) fn background(
 ) {
     let runtime = prepare_background(&services, &config, cx);
     let context = runtime.context();
+
     setup(context, cx);
 
     let router = runtime.router.clone();
+
     let quit = cx.on_app_quit(move |_| {
         router.shutdown();
+
         async {}
     });
+
     let driver = spawn_background_driver(runtime, config, cx);
+
     cx.set_global(ManagedDriver {
         _driver: driver,
         _quit: quit,
@@ -76,6 +82,7 @@ fn prepare(
     cx: &mut gpui::App,
 ) -> Runtime {
     let runtime = Runtime::new(config.config.clone(), services.clone());
+
     runtime.router.install_quit_action(cx);
     configure(&runtime, config);
 
@@ -95,9 +102,11 @@ fn prepare(
 
 fn prepare_background(services: &Services, config: &ManagedConfig, cx: &mut gpui::App) -> Runtime {
     let runtime = Runtime::new(config.config.clone(), services.clone());
+
     runtime.router.install_quit_action(cx);
     configure(&runtime, config);
     cx.set_quit_mode(gpui::QuitMode::Explicit);
+
     runtime
 }
 
@@ -140,10 +149,13 @@ impl ManagedRoot {
         let router = runtime.router.clone();
         let driver = spawn_root_driver(runtime, config, Some(view), cx);
         let quit_router = router.clone();
+
         let quit = cx.on_app_quit(move |_, _| {
             quit_router.shutdown();
+
             async {}
         });
+
         cx.set_global(ManagedDriver {
             _driver: driver,
             _quit: quit,
@@ -167,6 +179,7 @@ impl Drop for ManagedRoot {
 impl Render for ManagedRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = self.router.snapshot();
+
         let inspection = crate::__rake_inspection!(
             self.router.client().inspection(),
             crate::inspection::Store::default()
@@ -330,8 +343,10 @@ async fn drive(
     // weak context handed to roots/pages must not be the owner of this state.
     let router = runtime.router.clone();
     let client = router.client();
+
     #[cfg(not(target_family = "wasm"))]
     let closing = client.clone();
+
     let application_id = config.application_id.clone();
     let control_config = config.control;
 
@@ -342,18 +357,21 @@ async fn drive(
     };
 
     let observed = runtime.router.clone();
+
     let observe = async move {
         let mut revision = u64::MAX;
 
         loop {
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             let changed = Box::pin(observed.changed_with_updates(revision));
+
             #[cfg(all(
                 not(feature = "updates"),
                 feature = "native-lifecycle",
                 target_os = "macos"
             ))]
             let changed = Box::pin(observed.changed_with_native_quit(revision));
+
             #[cfg(not(any(
                 all(feature = "updates", not(target_family = "wasm")),
                 all(
@@ -367,6 +385,7 @@ async fn drive(
             #[cfg(feature = "devtools")]
             {
                 let inspection = observed.client().inspection().listen();
+
                 if let futures::future::Either::Left((next, _)) =
                     futures::future::select(changed, Box::pin(inspection)).await
                 {
@@ -422,6 +441,7 @@ async fn drive(
 
     let control = crate::control::run_host(control_config, client, application_id);
     let host = futures::future::select(Box::pin(execute), Box::pin(observe));
+
     futures::future::select(Box::pin(host), Box::pin(control)).await;
 }
 
@@ -479,9 +499,11 @@ mod tests {
         let command_ran = Rc::new(Cell::new(false));
         let task_ran = Rc::new(Cell::new(false));
         let command_ran_in_handler = command_ran.clone();
+
         commands
             .register::<ProbeCommand, _, _>(move |_, _| {
                 command_ran_in_handler.set(true);
+
                 async { Ok("pong".into()) }
             })
             .unwrap();
@@ -489,6 +511,7 @@ mod tests {
         let (_, cx) = app.add_window_view(|_, cx| {
             let runtime = Runtime::new(RouterConfig::default(), services.clone());
             let managed_config = config(commands.clone());
+
             configure(&runtime, &managed_config);
             let context = runtime.context();
 
@@ -497,17 +520,21 @@ mod tests {
                 .unwrap()
                 .dispatch(ProbeCommand, "probe".into())
                 .unwrap();
+
             assert!(matches!(reply, Reply::Submitted { .. }));
             let task_ran_in_task = task_ran.clone();
+
             context
                 .tasks()
                 .spawn("managed-probe", async move {
                     task_ran_in_task.set(true);
+
                     Ok(())
                 })
                 .unwrap();
 
             let content: AnyView = cx.new(|_| gpui::Empty).into();
+
             ManagedRoot::new(content, runtime, managed_config, cx)
         });
 
@@ -539,26 +566,31 @@ mod tests {
         let services = crate::App::new("managed.inspection").services().unwrap();
         let commands = Commands::new();
         let mut managed_config = config(commands);
+
         managed_config.control = ControlConfig::FromEnvironment;
         let inspection = Rc::new(RefCell::new(None));
         let inspection_in_root = inspection.clone();
 
         let (_, cx) = app.add_window_view(move |_, cx| {
             let runtime = Runtime::new(RouterConfig::default(), services.clone());
+
             runtime.router.client().inspection().attach();
             *inspection_in_root.borrow_mut() = Some(runtime.router.client().inspection());
             let content: AnyView = cx.new(|_| CapturedContent).into();
+
             ManagedRoot::new(content, runtime, managed_config, cx)
         });
 
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let inspection = inspection.borrow().as_ref().unwrap().clone();
         let snapshot = inspection.snapshot();
+
         let content = snapshot
             .elements
             .iter()
             .find(|element| element.semantic_id.as_deref() == Some("managed.content"))
             .expect("managed content was not captured");
+
         assert_eq!(content.layout.unwrap().width, 120.);
         assert_eq!(content.layout.unwrap().height, 40.);
         assert!(

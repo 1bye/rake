@@ -20,11 +20,14 @@ mod browser {
             ServiceRegistry::new(),
         )
         .map_err(js_error)?;
+
         let runtime = Runtime::new(RouterConfig::default(), services);
         let allow = ALLOW.with(Rc::clone);
+
         runtime
             .quit_guard(move |_| {
                 let allowed = allow.get();
+
                 async move {
                     if allowed {
                         Ok(())
@@ -40,6 +43,7 @@ mod browser {
                 rake::error!(%error, "browser fixture stopped");
             }
         });
+
         Ok(())
     }
 
@@ -53,13 +57,16 @@ mod browser {
         let context = CONTEXT
             .with(|slot| slot.borrow().clone())
             .ok_or_else(|| JsValue::from_str("fixture not started"))?;
+
         let deployment = rake::web::Deployment::from_document()
             .map_err(js_error)?
             .ok_or_else(|| JsValue::from_str("deployment missing"))?;
+
         let operation = context
             .reload_web_update(&deployment, QuitOptions::default())
             .await
             .map_err(js_error)?;
+
         match operation.wait().await.map_err(js_error)? {
             Outcome::Committed(_) => Ok("committed".into()),
             Outcome::Blocked(_) => Ok("blocked".into()),

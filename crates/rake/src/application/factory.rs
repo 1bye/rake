@@ -63,11 +63,13 @@ where
     T: AppFactoryOutput,
 {
     let result = factory().run_with_policy(policy, resources);
+
     #[cfg(target_family = "wasm")]
     match &result {
         Err(error) => super::startup::show_browser_error(error),
         Ok(()) => super::startup::clear_browser_error(),
     }
+
     result
 }
 

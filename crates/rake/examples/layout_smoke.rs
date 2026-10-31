@@ -97,6 +97,7 @@ mod native {
     }
 
     struct LoadFailurePage;
+
     struct Other;
 
     fn page_probe<R: Route>(page: &PageContext<R>) -> Result<Rc<ProbeService>, MountError> {
@@ -104,10 +105,12 @@ mod native {
             .services()
             .get::<ProbeService>()
             .map_err(|error| MountError(error.to_string()))?;
+
         let same = page
             .services()
             .get::<ProbeService>()
             .map_err(|error| MountError(error.to_string()))?;
+
         assert!(
             Rc::ptr_eq(&service, &same),
             "pages must use one service pool"
@@ -130,6 +133,7 @@ mod native {
         service
             .page_pool_checks
             .set(service.page_pool_checks.get() + 1);
+
         Ok(service)
     }
 
@@ -144,14 +148,17 @@ mod native {
             if !matches!(destination, Destination::Home) {
                 return Err(LoadFailureError("home loader received another destination"));
             }
+
             let service = context
                 .services()
                 .get::<ProbeService>()
                 .map_err(|_| LoadFailureError("probe service missing"))?;
+
             let same = context
                 .services()
                 .get::<ProbeService>()
                 .map_err(|_| LoadFailureError("probe service missing"))?;
+
             assert!(
                 Rc::ptr_eq(&service, &same),
                 "loader must use one service pool"
@@ -161,6 +168,7 @@ mod native {
                 .borrow()
                 .clone()
                 .ok_or(LoadFailureError("layout HTTP was not captured"))?;
+
             assert!(
                 context.services().http().shares_transport_with(&first_http),
                 "loader standard HTTP must share the layout transport"
@@ -169,6 +177,7 @@ mod native {
             service
                 .load_http_checks
                 .set(service.load_http_checks.get() + 1);
+
             Ok(service)
         }
 
@@ -184,10 +193,12 @@ mod native {
                     "loaded home mount received another destination".into(),
                 ));
             }
+
             let service = page
                 .services()
                 .get::<ProbeService>()
                 .map_err(|error| MountError(error.to_string()))?;
+
             assert!(
                 Rc::ptr_eq(&service, &data),
                 "load and mount lost service identity"
@@ -197,6 +208,7 @@ mod native {
                 .set(service.page_pool_checks.get() + 1);
             service.home_mounts.set(service.home_mounts.get() + 1);
             service.page_mounts.set(service.page_mounts.get() + 1);
+
             Ok(cx.new(|_| Self { service }))
         }
     }
@@ -220,13 +232,16 @@ mod native {
                     "failing loader received another destination",
                 ));
             }
+
             let service = context
                 .services()
                 .get::<ProbeService>()
                 .map_err(|_| LoadFailureError("probe service missing"))?;
+
             service
                 .load_failure_calls
                 .set(service.load_failure_calls.get() + 1);
+
             // This route deliberately fails before a physical host is opened.
             // The workflow checks that its mount function is never reached.
             Err(LoadFailureError("intentional pre-host load failure"))
@@ -243,9 +258,11 @@ mod native {
                 .services()
                 .get::<ProbeService>()
                 .map_err(|error| MountError(error.to_string()))?;
+
             service
                 .load_failure_mounts
                 .set(service.load_failure_mounts.get() + 1);
+
             Err(MountError("failing loader page must not mount".into()))
         }
     }
@@ -264,11 +281,13 @@ mod native {
             cx: &mut gpui::App,
         ) -> Result<Entity<Self>, MountError> {
             let service = page_probe(&page)?;
+
             service
                 .other_mount_windows
                 .borrow_mut()
                 .push(page.window_id());
             service.page_mounts.set(service.page_mounts.get() + 1);
+
             Ok(cx.new(|_| Self))
         }
     }
@@ -295,10 +314,12 @@ mod native {
                 .services()
                 .get::<ProbeService>()
                 .map_err(|error| MountError(error.to_string()))?;
+
             let same = layout
                 .services()
                 .get::<ProbeService>()
                 .map_err(|error| MountError(error.to_string()))?;
+
             assert!(
                 Rc::ptr_eq(&service, &same),
                 "layout must use one service pool"
@@ -307,7 +328,9 @@ mod native {
             let router = layout
                 .router()
                 .map_err(|error| MountError(error.to_string()))?;
+
             service.layout_calls.set(service.layout_calls.get() + 1);
+
             if layout.window_id() == INITIAL_WINDOW {
                 service
                     .initial_layout_calls
@@ -323,12 +346,15 @@ mod native {
                 local_counter: 0,
                 workflow: None,
             });
+
             if layout.window_id() == INITIAL_WINDOW {
                 service.shell_entity.set(Some(entity.entity_id()));
                 let weak = entity.downgrade();
                 let task = cx.spawn(async move |cx| run_workflow(weak, router, service, cx).await);
+
                 entity.update(cx, |shell, _| shell.workflow = Some(task));
             }
+
             Ok(entity)
         }
     }
@@ -346,6 +372,7 @@ mod native {
         let snapshot = router.snapshot_in_window(INITIAL_WINDOW).ok()?;
         let selected = snapshot.selected?;
         let tab = snapshot.tabs.iter().find(|tab| tab.id == selected)?;
+
         tab.entries
             .get(tab.cursor)
             .map(|entry| entry.destination.route.clone())
@@ -363,6 +390,7 @@ mod native {
             if current_route(router).as_deref() == Some(route) {
                 return;
             }
+
             revision = router.changed(revision).await;
         }
     }
@@ -377,7 +405,9 @@ mod native {
             .initial_revision
             .get()
             .expect("initial layout must record a revision");
+
         let revision = router.changed(initial_revision).await;
+
         wait_for_route(&router, "home", revision).await;
 
         assert_eq!(service.initial_layout_calls.get(), 1);
@@ -391,19 +421,24 @@ mod native {
         let before_load_failure = router
             .snapshot_in_window(INITIAL_WINDOW)
             .expect("initial window exists");
+
         let before_tab = before_load_failure
             .selected
             .and_then(|id| before_load_failure.tabs.iter().find(|tab| tab.id == id))
             .expect("initial history exists");
+
         let before_entry_count = before_tab.entries.len();
         let before_cursor = before_tab.cursor;
         let before_entry_id = before_tab.entries[before_cursor].id;
         let before_selected = before_load_failure.selected;
+
         let load_failure = router
             .navigator()
             .for_window(INITIAL_WINDOW)
             .open(Destination::LoadFailure, OpenTarget::NewWindow);
+
         let result = load_failure.wait().await;
+
         assert!(
             matches!(result, Err(OperationError::Mount(ref error)) if error.0.contains("route load failed")),
             "{result:?}"
@@ -418,11 +453,13 @@ mod native {
         let after_load_failure = router
             .snapshot_in_window(INITIAL_WINDOW)
             .expect("initial window remains");
+
         assert_eq!(after_load_failure.selected, before_selected);
         let after_tab = after_load_failure
             .selected
             .and_then(|id| after_load_failure.tabs.iter().find(|tab| tab.id == id))
             .expect("initial history remains");
+
         assert_eq!(after_tab.entries.len(), before_entry_count);
         assert_eq!(after_tab.cursor, before_cursor);
         assert_eq!(after_tab.entries[after_tab.cursor].id, before_entry_id);
@@ -433,17 +470,22 @@ mod native {
             .expect("initial window exists")
             .selected
             .expect("initial tab exists");
+
         let tab = router.navigator().for_window(INITIAL_WINDOW).tab(tab_id);
         let before_navigation = router.snapshot().revision;
+
         committed(tab.navigate(Destination::Other)).await;
         let revision = router.changed(before_navigation).await;
+
         wait_for_route(&router, "other", revision).await;
 
         view.update(cx, |shell, _| shell.local_counter += 1)
             .expect("shell survives navigation");
         let before_back = router.snapshot().revision;
+
         committed(tab.back()).await;
         let revision = router.changed(before_back).await;
+
         wait_for_route(&router, "home", revision).await;
         assert_eq!(
             view.read_with(cx, |shell, _| shell.local_counter)
@@ -459,13 +501,16 @@ mod native {
             .navigator()
             .for_window(INITIAL_WINDOW)
             .open(Destination::Other, OpenTarget::NewWindow);
+
         let result = open.wait().await;
+
         assert!(
             matches!(result, Err(OperationError::Mount(_))),
             "{result:?}"
         );
 
         let snapshot = router.snapshot();
+
         assert_eq!(snapshot.windows.len(), 1, "failed window must roll back");
         assert_eq!(service.layout_calls.get(), 2);
         assert_eq!(service.initial_layout_calls.get(), 1);
@@ -490,12 +535,15 @@ mod native {
         let restored = router
             .snapshot_in_window(INITIAL_WINDOW)
             .expect("initial window remains");
+
         let selected = restored.selected.expect("history remains selected");
+
         let tab = restored
             .tabs
             .iter()
             .find(|tab| tab.id == selected)
             .expect("history tab remains");
+
         assert_eq!(tab.entries.len(), 2);
         assert_eq!(tab.cursor, 0);
         assert_eq!(tab.entries[tab.cursor].destination.route, "home");
@@ -528,8 +576,10 @@ mod native {
                     layout_probe
                         .failed_layout_window
                         .set(Some(layout.window_id()));
+
                     return Err(MountError("intentional secondary layout failure".into()));
                 }
+
                 // Shell records the first layout's services, revision and entity.
                 Shell::mount(layout, window, cx)
             })
@@ -538,6 +588,7 @@ mod native {
                     .options_calls
                     .set(options_probe.options_calls.get() + 1);
                 options_probe.option_ids.borrow_mut().push(window_id);
+
                 WindowOptions::default()
             })
             .initial(Destination::Home)

@@ -74,6 +74,7 @@ fn app_quit_guard_denies_a_route_free_quit() {
     router
         .quit_guard(move |_| {
             observed.set(true);
+
             async { Err(GuardReason("application is busy".into())) }
         })
         .unwrap();
@@ -100,6 +101,7 @@ fn app_quit_guard_cancellation_wins_while_the_guard_is_pending() {
 
             async move {
                 receiver.await.unwrap();
+
                 Ok(())
             }
         })
@@ -130,13 +132,16 @@ fn app_quit_guard_approves_with_operation_context_and_options() {
         .quit_guard(move |context| {
             observed_id.set(Some(context.operation_id));
             observed_options.set(Some(context.options));
+
             async { Ok(()) }
         })
         .unwrap();
     let mut pool = running(&router);
+
     let expected_options = QuitOptions {
         jobs: QuitJobs::Cancel,
     };
+
     let quit = router.quit(expected_options);
     let expected_id = quit.id();
 
@@ -159,14 +164,17 @@ fn app_quit_guard_runs_after_finite_work_settles() {
         .spawn("flush", async move {
             receiver.await.unwrap();
             task_order.borrow_mut().push("task");
+
             Ok(())
         })
         .unwrap();
 
     let guard_order = order.clone();
+
     router
         .quit_guard(move |_| {
             guard_order.borrow_mut().push("guard");
+
             async { Ok(()) }
         })
         .unwrap();
@@ -790,14 +798,18 @@ fn update_handoff_waits_for_committed_quit_and_can_fail_without_forcing_exit() {
     let (router, mut pool) = harness();
     let invoked = Rc::new(Cell::new(false));
     let observed = Rc::clone(&invoked);
+
     let handoff = rake::updates::RestartHandoff::new(move || {
         observed.set(true);
+
         Ok(())
     });
+
     assert!(router.complete_update_restart().is_err());
     let quit = router
         .quit_for_update(handoff, QuitOptions::default())
         .unwrap();
+
     assert!(!invoked.get());
     commit(&mut pool, quit);
     assert!(!invoked.get());
@@ -811,14 +823,17 @@ fn update_handoff_waits_for_committed_quit_and_can_fail_without_forcing_exit() {
         rake::updates::RestartDisposition::ExitHost
     );
     let (router, mut pool) = harness();
+
     let handoff = rake::updates::RestartHandoff::new(|| {
         Err(rake::updates::Error::Provider(
             "native installer unavailable".into(),
         ))
     });
+
     let quit = router
         .quit_for_update(handoff, QuitOptions::default())
         .unwrap();
+
     commit(&mut pool, quit);
     assert!(router.complete_update_restart().is_err());
     assert!(
@@ -834,18 +849,22 @@ fn update_handoff_waits_for_committed_quit_and_can_fail_without_forcing_exit() {
 fn dirty_document_cancellation_discards_the_update_handoff() {
     let (router, mut pool) = harness();
     let entry = open(&router, &mut pool, 1);
+
     entry.set_dirty(true).unwrap();
     let installed = Rc::new(Cell::new(false));
     let invoked = Rc::clone(&installed);
+
     let quit = router
         .quit_for_update(
             rake::updates::RestartHandoff::new(move || {
                 invoked.set(true);
+
                 Ok(())
             }),
             QuitOptions::default(),
         )
         .unwrap();
+
     pool.run_until_stalled();
     respond(&router, "cancel");
     assert!(matches!(
@@ -857,6 +876,7 @@ fn dirty_document_cancellation_discards_the_update_handoff() {
     assert!(router.complete_update_restart().is_err());
     // A later ordinary quit cannot accidentally revive the declined installer.
     let quit = router.quit(QuitOptions::default());
+
     pool.run_until_stalled();
     respond(&router, "discard");
     commit(&mut pool, quit);

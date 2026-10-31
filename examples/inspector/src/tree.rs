@@ -9,11 +9,13 @@ pub(crate) fn preserve_collapsed(
     collapsed: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut identities: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+
     for element in elements {
         if let Some(stable) = &element.stable_id {
             identities.entry(stable).or_default().push(&element.id);
         }
     }
+
     collapsed
         .iter()
         .filter_map(|id| old.get(id))
@@ -339,14 +341,18 @@ mod tests {
             ("old-root".into(), "root".into()),
             ("old-gone".into(), "gone".into()),
         ]);
+
         let mut root = element("new-root", None);
+
         root.stable_id = Some("root".into());
         let collapsed = BTreeSet::from(["old-root".into(), "old-gone".into()]);
+
         assert_eq!(
             preserve_collapsed(&old, std::slice::from_ref(&root), &collapsed),
             BTreeSet::from(["new-root".into()])
         );
         let mut duplicate = root.clone();
+
         duplicate.id = "ambiguous".into();
         assert!(preserve_collapsed(&old, &[root, duplicate], &collapsed).is_empty());
     }

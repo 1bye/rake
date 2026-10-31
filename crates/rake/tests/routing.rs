@@ -1127,6 +1127,7 @@ fn browser_admission_failure_repairs_the_url_without_disrupting_a_pending_close(
 fn current_tab_resolves_window_selection_when_called() {
     let (router, mut pool) = harness(RouterConfig::default());
     let navigator = router.navigator();
+
     assert!(matches!(
         navigator.current_tab(),
         Err(OperationError::NoCurrentTab)
@@ -1148,12 +1149,14 @@ fn current_tab_resolves_window_selection_when_called() {
             .navigate(Destination::NewDocument),
     );
     let snapshot = router.snapshot();
+
     assert_eq!(snapshot.selected, Some(first.tab_id));
     let selected = snapshot
         .tabs
         .iter()
         .find(|tab| tab.id == first.tab_id)
         .unwrap();
+
     assert_eq!(
         selected.entries[selected.cursor].destination.route,
         "new-document"

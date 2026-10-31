@@ -32,6 +32,7 @@ pub struct ReleaseConfig {
     /// Feed validity in seconds; default is seven days.
     pub feed_validity_seconds: Option<u64>,
 }
+
 /// A reference to a private Ed25519 seed; secret bytes never belong in metadata.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -55,6 +56,7 @@ pub enum UpdateSigningKey {
         account: String,
     },
 }
+
 impl UpdateSigningKey {
     /// Validates a reference without accessing any secret storage.
     /// # Errors
@@ -75,12 +77,15 @@ impl UpdateSigningKey {
                 .iter()
                 .all(|value| !value.is_empty() && !value.contains('\0')),
         };
+
         if !valid {
             return Err(Error::Field("release.signing_keys reference".into()));
         }
+
         Ok(())
     }
 }
+
 /// Explicit destinations. Remote destinations are never inferred from app identity.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -114,6 +119,7 @@ pub enum Publisher {
         public_url: String,
     },
 }
+
 impl ReleaseConfig {
     /// Validates public destination and matrix settings without loading credentials.
     /// # Errors
@@ -125,23 +131,28 @@ impl ReleaseConfig {
             } else {
                 crate::Platform::from_target(target)?
             };
+
             if formats.is_empty() || formats.iter().any(|format| !format.supports(platform)) {
                 return Err(Error::Field("release.required formats".into()));
             }
         }
+
         for (target, names) in &self.custom_required {
             if target != "universal-apple-darwin" {
                 crate::Platform::from_target(target)?;
             }
+
             if names.is_empty() {
                 return Err(Error::Field(
                     "release.custom_required cannot be empty".into(),
                 ));
             }
+
             for name in names {
                 crate::component_name(name)?;
             }
         }
+
         for (target, formats) in &self.repositories {
             if crate::Platform::from_target(target)? != crate::Platform::Linux
                 || formats.iter().any(|format| {
@@ -157,6 +168,7 @@ impl ReleaseConfig {
                 ));
             }
         }
+
         for (provider, key) in &self.signing_keys {
             if !matches!(provider.as_str(), "appimage" | "velopack")
                 || self.signers.contains_key(provider)
@@ -166,13 +178,16 @@ impl ReleaseConfig {
                         .into(),
                 ));
             }
+
             key.validate()?;
         }
+
         for command in self.signers.values() {
             if command.is_empty() || command.iter().any(|arg| arg.contains('\0')) {
                 return Err(Error::Field("release.signers argv".into()));
             }
         }
+
         if self
             .feed_validity_seconds
             .is_some_and(|value| !(300..=90 * 86400).contains(&value))
@@ -181,6 +196,7 @@ impl ReleaseConfig {
                 "release.feed_validity_seconds must be 300..7776000".into(),
             ));
         }
+
         match &self.publisher {
             Some(Publisher::Directory { public_url, .. }) => https(public_url)?,
             Some(Publisher::Https {
@@ -190,6 +206,7 @@ impl ReleaseConfig {
             }) => {
                 https(url)?;
                 https(public_url)?;
+
                 if token_env.is_empty()
                     || !token_env
                         .bytes()
@@ -201,11 +218,14 @@ impl ReleaseConfig {
             Some(Publisher::Github { repository, tag }) => validate_github(repository, tag)?,
             None => {}
         }
+
         Ok(())
     }
 }
+
 fn https(value: &str) -> Result<(), Error> {
     let url = url::Url::parse(value).map_err(|_| Error::Field("release HTTPS URL".into()))?;
+
     if url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -215,13 +235,16 @@ fn https(value: &str) -> Result<(), Error> {
     {
         return Err(Error::Field("release requires a public HTTPS URL".into()));
     }
+
     Ok(())
 }
+
 /// Resolves native feed URLs, including GitHub's flat release-asset namespace.
 /// # Errors
 /// Rejects unsafe channel/target/file path segments or non-HTTPS roots.
 pub fn feed_url(base: &str, channel: &str, target: &str, file: &str) -> Result<String, Error> {
     https(base)?;
+
     for part in [channel, target, file] {
         if part.is_empty()
             || part == "."
@@ -233,7 +256,9 @@ pub fn feed_url(base: &str, channel: &str, target: &str, file: &str) -> Result<S
             return Err(Error::Field("update feed path segment".into()));
         }
     }
+
     let root = base.trim_end_matches('/');
+
     if root.starts_with("https://github.com/") && root.ends_with("/releases/latest/download") {
         Ok(format!("{root}/{channel}-{target}-{file}"))
     } else {
@@ -255,5 +280,6 @@ fn validate_github(repository: &str, tag: &str) -> Result<(), Error> {
     {
         return Err(Error::Field("release GitHub repository/tag".into()));
     }
+
     Ok(())
 }

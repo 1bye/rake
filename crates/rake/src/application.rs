@@ -23,9 +23,11 @@ type Root = Box<
         &mut gpui::App,
     ) -> Result<AnyView, crate::router::MountError>,
 >;
+
 type WindowRoot = Box<
     dyn FnOnce(Services, &mut Window, &mut gpui::App) -> Result<AnyView, crate::router::MountError>,
 >;
+
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
 
 /// What closing a standalone application's window requests.
@@ -40,8 +42,10 @@ pub enum ClosePolicy {
 
 mod factory;
 mod managed;
+
 #[doc(hidden)]
 pub use factory::{AppFactoryOutput, run_app_factory};
+
 mod startup;
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 mod update_services;
@@ -135,6 +139,7 @@ impl App<NoRoute> {
             distribution: None,
         }
     }
+
     /// Registers the application's typed screens once. Defaults to the `/` route.
     ///
     /// Configure `initial`, `entry_guard`, and `entry_admission` after this type
@@ -160,6 +165,7 @@ impl App<NoRoute> {
         } else {
             self.configuration_error
         };
+
         App {
             id: self.id,
             services: self.services,
@@ -207,12 +213,16 @@ impl<R: Route> App<R> {
         #[cfg(feature = "updates")]
         {
             let mut app = self;
+
             app.distribution = policy.map(|policy| (policy, resources));
+
             app
         }
+
         #[cfg(not(feature = "updates"))]
         {
             let _ = (policy, resources);
+
             self
         }
     }
@@ -221,6 +231,7 @@ impl<R: Route> App<R> {
     #[must_use]
     pub fn replace_routes(mut self, routes: impl RouteViews<R>) -> Self {
         self.routes = Some(Rc::new(routes));
+
         self
     }
 
@@ -251,6 +262,7 @@ impl<R: Route> App<R> {
         self.layout = Some(Rc::new(move |context, window, cx| {
             mount(context, window, cx).map(Into::into)
         }));
+
         self
     }
 
@@ -264,6 +276,7 @@ impl<R: Route> App<R> {
     ) -> Self {
         self.route_options = true;
         self.new_window_options = Some(Rc::new(options));
+
         self
     }
 
@@ -290,6 +303,7 @@ impl<R: Route> App<R> {
     pub fn theme<T: 'static>(mut self, theme: T) -> Self {
         self.themes
             .push(Box::new(move |cx| crate::theme::install(cx, theme)));
+
         self
     }
 
@@ -444,6 +458,7 @@ impl<R: Route> App<R> {
         self.root = Some(Box::new(move |runtime, window, cx| {
             Ok(mount(runtime, window, cx))
         }));
+
         self
     }
 
@@ -461,6 +476,7 @@ impl<R: Route> App<R> {
         self.root = Some(Box::new(move |runtime, window, cx| {
             mount(runtime.services(), window, cx)
         }));
+
         self
     }
 
@@ -477,6 +493,7 @@ impl<R: Route> App<R> {
         + 'static,
     ) -> Self {
         self.root = Some(Box::new(mount));
+
         self
     }
 
@@ -489,6 +506,7 @@ impl<R: Route> App<R> {
         setup: impl FnOnce(crate::runtime::RuntimeContext, &mut gpui::App) + 'static,
     ) -> Self {
         self.background = Some(Box::new(setup));
+
         self
     }
 
@@ -497,6 +515,7 @@ impl<R: Route> App<R> {
     pub fn close_policy(mut self, policy: ClosePolicy) -> Self {
         self.close_policy = policy;
         self.close_policy_set = true;
+
         self
     }
 
@@ -516,6 +535,7 @@ impl<R: Route> App<R> {
     {
         self.quit_guards
             .push(Rc::new(move |context| Box::pin(guard(context))));
+
         self
     }
 
@@ -528,14 +548,18 @@ impl<R: Route> App<R> {
         }
 
         let cached = self.http_client.borrow().clone();
+
         let http = if let Some(http) = cached {
             http
         } else {
             let http =
                 HttpClient::with_collector(self.http.clone(), self.diagnostics.shared_collector())?;
+
             *self.http_client.borrow_mut() = Some(http.clone());
+
             http
         };
+
         Ok(Services::with_platform(
             http,
             self.diagnostics.shared_collector(),
@@ -559,9 +583,11 @@ impl<R: Route> App<R> {
         {
             self.services = update_services::install(self.services, self.distribution.take())?;
         }
+
         if let Some(error) = self.configuration_error {
             return Err(AppError::InvalidConfiguration(error));
         }
+
         let services = self.services()?;
 
         if usize::from(self.root.is_some())
@@ -577,9 +603,11 @@ impl<R: Route> App<R> {
                 "close_policy applies to standalone windows; routed windows own tab disposal",
             ));
         }
+
         if self.routes.is_none() && self.route_options {
             return Err(AppError::RoutingRequiresRoutes);
         }
+
         #[cfg(target_family = "wasm")]
         if self.background.is_some() {
             return Err(AppError::BackgroundUnsupported);
@@ -603,13 +631,16 @@ impl<R: Route> App<R> {
             close_policy: self.close_policy,
             quit_guards: self.quit_guards.clone(),
         };
+
         let background_config = self.background.as_ref().map(|_| managed.clone());
+
         let root: Option<WindowRoot> = if let Some(routes) = self.routes.take() {
             #[cfg(not(target_family = "wasm"))]
             let initial = {
                 if let Some(initial) = &self.initial {
                     initial.to_uri()?;
                 }
+
                 let destination = self
                     .initial
                     .take()
@@ -696,6 +727,7 @@ impl<R: Route> App<R> {
         }));
 
         let activations = services.platform();
+
         application.on_open_urls(move |urls| {
             for url in urls {
                 if let Err(error) = activations.receive_open_url(&url) {
@@ -706,6 +738,7 @@ impl<R: Route> App<R> {
 
         let startup_errors = startup::StartupErrors::default();
         let errors = startup_errors.clone();
+
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
 
@@ -718,7 +751,9 @@ impl<R: Route> App<R> {
                 if let Err(error) = updates.initialize_sparkle_checks() {
                     tracing::error!(%error, "native update checks could not start");
                 }
+
                 let executor = cx.background_executor().clone();
+
                 let task = cx.spawn(async move |_| {
                     updates
                         .run(move |work| {
@@ -728,31 +763,42 @@ impl<R: Route> App<R> {
                         })
                         .await;
                 });
+
                 cx.set_global(UpdatesDriver { _task: task });
             }
+
             let Some(root) = root else {
                 if let Some(setup) = self.background {
                     let managed = background_config
                         .expect("background configuration validated before launch");
+
                     managed::background(setup, services, managed, cx);
                 }
+
                 return;
             };
+
             let mount_errors = errors.clone();
+
             let opened = cx.open_window(self.window_options, move |window, cx| {
                 let view = match root(services, window, cx) {
                     Ok(view) => view,
                     Err(error) => {
                         let error = AppError::Mount(error);
+
                         mount_errors.record(error);
+
                         cx.new(|_| gpui::Empty).into()
                     }
                 };
+
                 cx.new(|_| RootView(view))
             });
+
             if let Err(error) = opened {
                 errors.record(AppError::Window(error.to_string()));
             }
+
             if errors.failed() {
                 #[cfg(target_os = "macos")]
                 rake_updates::stop_application_run_loop()
@@ -772,12 +818,14 @@ impl<R: Route> App<R> {
         });
 
         let result = startup_errors.finish();
+
         #[cfg(target_family = "wasm")]
         if result.is_err() {
             BROWSER_APP.with(|app| {
                 app.borrow_mut().take();
             });
         }
+
         result
     }
 }
@@ -887,6 +935,7 @@ impl Render for RootView {
 struct UpdatesDriver {
     _task: gpui::Task<()>,
 }
+
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 impl gpui::Global for UpdatesDriver {}
 
@@ -903,15 +952,20 @@ mod theme_tests {
             services
                 .get::<MissingService>()
                 .map_err(|error| crate::router::MountError(error.to_string()))?;
+
             unreachable!("the service is deliberately missing")
         });
+
         let services = app.services().unwrap();
         let runtime = crate::runtime::Runtime::new(RouterConfig::default(), services);
         let mount = app.root.take().unwrap();
         let mut cx = gpui::TestAppContext::single();
+
         cx.add_window(|window, cx| {
             let result = mount(runtime.context(), window, cx);
+
             assert!(matches!(result, Err(error) if error.0.contains("MissingService")));
+
             gpui::Empty
         });
     }
@@ -919,11 +973,14 @@ mod theme_tests {
     #[test]
     fn app_themes_are_deferred_preserved_by_routes_and_installed_in_order() {
         struct Colors(u32);
+
         struct Metrics(u32);
         let cx = gpui::TestAppContext::single();
+
         let views = crate::router::__routes(|_: &NoRoute, _, _, _| {
             Err(crate::router::MountError("unused fixture".into()))
         });
+
         let app = App::new("example.theme-test")
             .theme(Colors(1))
             .routes(views)
@@ -939,6 +996,7 @@ mod theme_tests {
         let standalone = App::new("example.root-theme")
             .theme(Colors(3))
             .root(|_, _, cx| cx.new(|_| gpui::Empty).into());
+
         assert_eq!(
             crate::theme::current::<Colors>().0,
             2,
@@ -966,16 +1024,21 @@ mod configuration_tests {
         let app = App::new("example.transport");
         let first = app.services().unwrap().http();
         let second = app.services().unwrap().http();
+
         assert!(first.shares_transport_with(&second));
         let pages = crate::router::__routes(|_: &Destination, _, _, _| {
             Err(crate::router::MountError("unused fixture".into()))
         });
+
         let app = app.routes(pages);
+
         assert!(first.shares_transport_with(&app.services().unwrap().http()));
         let app = app.http(HttpConfig::new());
         let changed = app.services().unwrap().http();
+
         assert!(!first.shares_transport_with(&changed));
         let app = app.diagnostics(DiagnosticsConfig::new());
+
         assert!(!changed.shares_transport_with(&app.services().unwrap().http()));
     }
 
@@ -986,6 +1049,7 @@ mod configuration_tests {
                 Err(crate::router::MountError("unused fixture".into()))
             })
         };
+
         let app = App::new("example.replacement")
             .routes(pages())
             .initial(Destination::Main)
@@ -1007,6 +1071,7 @@ mod configuration_tests {
                 Err(crate::router::MountError("unused fixture".into()))
             })
         };
+
         let app = App::new("example.admission-order")
             .entry_admission(|_| async { crate::router::Admission::Allow })
             .routes(pages());
@@ -1023,11 +1088,13 @@ mod configuration_tests {
         };
 
         let default = App::new("example.navigation-default").routes(pages());
+
         assert!(default.navigation_feedback);
 
         let custom = App::new("example.navigation-custom")
             .navigation_feedback(false)
             .routes(pages());
+
         assert!(!custom.navigation_feedback);
     }
 }

@@ -44,28 +44,35 @@ impl Dom {
                         .chain(&snapshot.elements)
                         .any(|e| e.stable_id.is_some()))
         });
+
         let old_children: BTreeMap<_, _> = std::iter::once(1)
             .chain(self.nodes.keys().copied())
             .map(|id| (id, self.children(id)))
             .collect();
+
         let expanded = self.children_sent.clone();
         let mut nodes = BTreeMap::new();
         let mut used = BTreeSet::new();
 
         let mut counts = BTreeMap::new();
+
         for element in &snapshot.elements {
             if let Some(id) = &element.stable_id {
                 *counts.entry(id).or_insert(0usize) += 1;
             }
         }
+
         let old_ids: BTreeMap<_, _> = self.nodes.iter().map(|(&id, e)| (&e.id, (id, e))).collect();
         let mut old_stable = BTreeMap::new();
+
         for (&id, element) in &self.nodes {
             if let Some(stable) = &element.stable_id {
                 let entry = old_stable.entry(stable).or_insert(Vec::new());
+
                 entry.push((id, element));
             }
         }
+
         // Release borrows before allocating new CDP IDs.
         let existing: Vec<_> = snapshot
             .elements
@@ -74,8 +81,10 @@ impl Dom {
                 let candidate = old_ids.get(&element.id).copied().or_else(|| {
                     let stable = element.stable_id.as_ref()?;
                     let old = old_stable.get(stable)?;
+
                     (counts.get(stable) == Some(&1) && old.len() == 1).then_some(old[0])
                 });
+
                 candidate
                     .filter(|(_, old)| {
                         !reset
@@ -88,9 +97,11 @@ impl Dom {
                     .map(|(id, old)| (id, old.clone()))
             })
             .collect();
+
         for (element, existing) in snapshot.elements.iter().zip(existing) {
             let existing = existing.filter(|(id, _)| !used.contains(id));
             let mut element = element.clone();
+
             let id = if let Some((id, old)) = existing {
                 // A paged index intentionally omits details. Retain the last observed
                 // style until InspectElement refreshes it; absence is not a CSS change.
@@ -100,9 +111,11 @@ impl Dom {
                     element.box_model = old.box_model.clone();
                     element.style_overrides = old.style_overrides.clone();
                 }
+
                 if old.accessibility != element.accessibility {
                     self.accessibility_updates.insert(id);
                 }
+
                 if (old.styles != element.styles
                     || old.resolved != element.resolved
                     || old.layout != element.layout
@@ -112,10 +125,12 @@ impl Dom {
                 {
                     self.style_updates.insert(id);
                 }
+
                 id
             } else {
                 self.allocate()?
             };
+
             used.insert(id);
             nodes.insert(id, element);
         }
@@ -123,6 +138,7 @@ impl Dom {
         let old_nodes = std::mem::replace(&mut self.nodes, nodes);
         let old_snapshot = self.snapshot.replace(snapshot);
         let previous_omitted = self.omitted_id;
+
         if self.snapshot.as_ref().is_some_and(|s| s.omitted > 0)
             && old_snapshot.as_ref().is_none_or(|s| s.omitted == 0)
         {
@@ -135,6 +151,7 @@ impl Dom {
             .map(|(&id, e)| (e.id.clone(), id))
             .collect();
         self.child_ids.clear();
+
         for element in self.snapshot.iter().flat_map(|s| &s.elements) {
             let parent = element
                 .parent
@@ -142,11 +159,13 @@ impl Dom {
                 .and_then(|id| self.control_ids.get(id))
                 .copied()
                 .unwrap_or(1);
+
             self.child_ids
                 .entry(parent)
                 .or_default()
                 .push(self.control_ids[&element.id]);
         }
+
         if self.snapshot.as_ref().is_some_and(|s| s.omitted > 0) {
             self.child_ids.entry(1).or_default().push(self.omitted_id);
         }
@@ -156,8 +175,10 @@ impl Dom {
                 self.accessibility_updates.insert(parent);
             }
         }
+
         if reset {
             self.reset_delivery();
+
             return Ok(true);
         }
 
@@ -166,6 +187,7 @@ impl Dom {
             .iter()
             .map(|(&id, element)| (&element.id, id))
             .collect();
+
         let parents = std::iter::once(1)
             .chain(
                 old_snapshot
@@ -174,13 +196,16 @@ impl Dom {
                     .filter_map(|element| old_ids.get(&element.id).copied()),
             )
             .collect::<Vec<_>>();
+
         for parent in parents {
             if !self.sent.contains(&parent) || !self.children_sent.contains(&parent) {
                 continue;
             }
+
             let before = &old_children[&parent];
             let after = self.children(parent);
             let retained = common_subsequence(before, &after);
+
             for &child in before {
                 if !retained.contains(&child) && self.sent.contains(&child) {
                     self.updates.push(Event::new(
@@ -200,22 +225,28 @@ impl Dom {
                     .filter_map(|element| self.node_id(&element.id)),
             )
             .collect::<Vec<_>>();
+
         for parent in parents {
             if !self.sent.contains(&parent) {
                 continue;
             }
+
             let children = self.children(parent);
+
             if self.children_sent.contains(&parent) {
                 let mut previous = 0;
+
                 for child in children {
                     if !self.sent.contains(&child) {
                         let node = self.inserted_node(child, &expanded);
+
                         self.remember(&node);
                         self.updates.push(Event::new(
                             "DOM.childNodeInserted",
                             json!({"parentNodeId":parent,"previousNodeId":previous,"node":node}),
                         ));
                     }
+
                     previous = child;
                 }
             } else if old_children.get(&parent) != Some(&children) {
@@ -237,6 +268,7 @@ impl Dom {
                     json!({"nodeId":id,"characterData":text}),
                 ));
             }
+
             if self.sent.contains(&id)
                 && element.text.is_none()
                 && let Some(old) = old_nodes.get(&id)
@@ -251,6 +283,7 @@ impl Dom {
                 });
             }
         }
+
         if self.omitted_id == previous_omitted
             && self.sent.contains(&self.omitted_id)
             && let (Some(old), Some(current)) = (&old_snapshot, &self.snapshot)
@@ -259,6 +292,7 @@ impl Dom {
         {
             self.updates.push(Event::new("DOM.characterDataModified", json!({"nodeId":self.omitted_id,"characterData":format!("{} elements omitted", current.omitted)})));
         }
+
         self.style_updates
             .retain(|id| self.nodes.contains_key(id) && self.sent.contains(id));
 
@@ -267,9 +301,11 @@ impl Dom {
 
     fn allocate(&mut self) -> Result<i32, Error> {
         let id = self.next.max(2);
+
         self.next = id
             .checked_add(1)
             .ok_or_else(|| Error::new(-32000, "CDP node identity exhausted; reconnect"))?;
+
         Ok(id)
     }
 
@@ -288,6 +324,7 @@ impl Dom {
     fn forget(&mut self, id: i32, old_children: &BTreeMap<i32, Vec<i32>>) {
         self.sent.remove(&id);
         self.children_sent.remove(&id);
+
         if let Some(children) = old_children.get(&id) {
             for &child in children {
                 self.forget(child, old_children);
@@ -297,6 +334,7 @@ impl Dom {
 
     fn inserted_node(&self, id: i32, expanded: &BTreeSet<i32>) -> Value {
         let mut node = self.node(id, 0);
+
         if expanded.contains(&id) {
             node["children"] = json!(
                 self.children(id)
@@ -305,6 +343,7 @@ impl Dom {
                     .collect::<Vec<_>>()
             );
         }
+
         node
     }
 
@@ -316,7 +355,9 @@ impl Dom {
         if query.trim().is_empty() || query.len() > 1024 {
             return Err(Error::new(-32602, "Search must contain 1–1024 bytes"));
         }
+
         let lower = query.to_lowercase();
+
         let results = self
             .snapshot
             .iter()
@@ -339,48 +380,62 @@ impl Dom {
             })
             .filter_map(|element| self.node_id(&element.id))
             .collect::<Vec<_>>();
+
         self.next_search = self
             .next_search
             .checked_add(1)
             .ok_or_else(|| Error::new(-32000, "Search identity exhausted; reconnect"))?;
+
         if self.searches.len() == 8 {
             self.searches.pop_first();
         }
+
         let count = results.len();
+
         self.searches.insert(self.next_search, results);
+
         Ok(json!({"searchId":format!("search-{}",self.next_search),"resultCount":count}))
     }
 
     pub fn search_results(&mut self, params: &Value) -> Result<(Value, Vec<Value>), Error> {
         let search = search_id(params)?;
+
         let results = self
             .searches
             .get(&search)
             .ok_or_else(|| Error::new(-32000, "Search expired; repeat the search"))?;
+
         let from = params["fromIndex"]
             .as_u64()
             .and_then(|v| usize::try_from(v).ok());
+
         let to = params["toIndex"]
             .as_u64()
             .and_then(|v| usize::try_from(v).ok());
+
         let (Some(from), Some(to)) = (from, to) else {
             return Err(Error::new(-32602, "Search range requires integer indices"));
         };
+
         if from >= to || to > results.len() {
             return Err(Error::new(-32602, "Invalid search result range"));
         }
+
         let ids = results[from..to].to_vec();
+
         if ids.iter().any(|id| !self.nodes.contains_key(id)) {
             return Err(Error::new(
                 -32000,
                 "Search result was removed; repeat the search",
             ));
         }
+
         self.push_nodes(&json!({"backendNodeIds":ids}))
     }
 
     pub fn discard_search(&mut self, params: &Value) -> Result<Value, Error> {
         self.searches.remove(&search_id(params)?);
+
         Ok(json!({}))
     }
 
@@ -390,6 +445,7 @@ impl Dom {
         params: &Value,
     ) -> Result<rake_protocol::control::Command, Error> {
         let element = self.element(node_id(params)?)?;
+
         let action = match method {
             "DOM.focus" => rake_protocol::inspection::NavigationAction::Focus,
             "DOM.scrollIntoViewIfNeeded" => {
@@ -397,6 +453,7 @@ impl Dom {
             }
             _ => return Err(Error::new(-32601, "Unknown navigation action")),
         };
+
         Ok(rake_protocol::control::Command::NavigateElement {
             id: element.id.clone(),
             generation: self.generation().unwrap_or_default().into(),
@@ -408,6 +465,7 @@ impl Dom {
         let id = node_id(params)?;
         let element = self.element(id)?;
         let name = element.display_name().to_owned();
+
         let description = format!(
             "{}{}",
             name,
@@ -416,18 +474,24 @@ impl Dom {
                 .as_ref()
                 .map_or_else(String::new, |id| format!("#{id}"))
         );
+
         let group = params["objectGroup"].as_str().map(str::to_owned);
+
         if group.as_ref().is_some_and(|group| group.len() > 128) {
             return Err(Error::new(-32602, "Object group exceeds 128 bytes"));
         }
+
         self.next_node_object = self
             .next_node_object
             .checked_add(1)
             .ok_or_else(|| Error::new(-32000, "Node object identity exhausted; reconnect"))?;
+
         if self.node_objects.len() == 128 {
             self.node_objects.pop_first();
         }
+
         self.node_objects.insert(self.next_node_object, (id, group));
+
         Ok(
             json!({"object":{"type":"object","subtype":"node","className":name,"description":description,"objectId":format!("rake-node-{}",self.next_node_object)}}),
         )
@@ -440,7 +504,9 @@ impl Dom {
             .and_then(|id| self.node_objects.get(&id))
             .map(|(node, _)| *node)
             .ok_or_else(|| Error::new(-32000, "Node object expired or unavailable"))?;
+
         self.element(node)?;
+
         Ok(node)
     }
 
@@ -460,8 +526,10 @@ impl Dom {
 
     pub fn set_inspected_node(&mut self, params: &Value) -> Result<Value, Error> {
         let id = node_id(params)?;
+
         self.element(id)?;
         self.inspected_node = Some(id);
+
         Ok(json!({}))
     }
 
@@ -469,7 +537,9 @@ impl Dom {
         let id = self
             .inspected_node
             .ok_or_else(|| Error::new(-32000, "Select an element first"))?;
+
         self.element(id)?;
+
         Ok(id)
     }
 
@@ -491,17 +561,22 @@ impl Dom {
                 "Navigation requires the current context and no arguments/side-effect restriction",
             ));
         }
+
         let object = params["objectId"]
             .as_str()
             .ok_or_else(|| Error::new(-32602, "objectId required"))?;
+
         let node = self.object_node(object)?;
+
         let function = params["functionDeclaration"]
             .as_str()
             .ok_or_else(|| Error::new(-32602, "functionDeclaration required"))?;
+
         let function = function
             .chars()
             .filter(|c| !c.is_ascii_whitespace())
             .collect::<String>();
+
         let body = function
             .strip_prefix("function")
             .and_then(|function| function.split_once('{'))
@@ -516,6 +591,7 @@ impl Dom {
             })
             .and_then(|(_, body)| body.strip_suffix('}'))
             .map(|body| body.trim_end_matches(';'));
+
         let method = match body {
             Some("this.focus()") => "DOM.focus",
             Some("this.scrollIntoViewIfNeeded(true)" | "this.scrollIntoViewIfNeeded(!0)") => {
@@ -528,28 +604,36 @@ impl Dom {
                 ));
             }
         };
+
         self.navigation_command(method, &json!({"nodeId":node}))
     }
 
     pub fn node_properties(&self, object: &str) -> Result<Value, Error> {
         let element = self.element(self.object_node(object)?)?;
+
         let mut result = vec![
             json!({"name":"nodeName","value":{"type":"string","value":if element.text.is_some() { "#text" } else { element.display_name() }},"configurable":false,"enumerable":true}),
             json!({"name":"id","value":{"type":"string","value":element.semantic_id.as_deref().unwrap_or_default()},"configurable":false,"enumerable":true}),
         ];
+
         if let Some(text) = &element.text {
             result.push(json!({"name":"textContent","value":{"type":"string","value":text},"configurable":false,"enumerable":true}));
         }
+
         if let Some(source) = &element.source {
             result.push(json!({"name":"rakeSource","value":{"type":"string","value":serde_json::to_string(source).unwrap_or_default()},"configurable":false,"enumerable":true}));
         }
+
         if let Some(view) = &element.view {
             result.push(json!({"name":"rakeStyleSources","value":{"type":"string","value":serde_json::to_string_pretty(&view.style_sources).unwrap_or_default()},"configurable":false,"enumerable":true}));
         }
+
         if let Some(a11y) = &element.accessibility {
             result.push(json!({"name":"rakeAccessibility","value":{"type":"string","value":serde_json::to_string_pretty(a11y).unwrap_or_default()},"configurable":false,"enumerable":true}));
         }
+
         result.push(json!({"name":"rakeHandlers","value":{"type":"string","value":serde_json::to_string_pretty(&element.handlers).unwrap_or_default()},"configurable":false,"enumerable":true}));
+
         Ok(json!({"result":result}))
     }
 
@@ -564,7 +648,9 @@ impl Dom {
             .transpose()
             .map_err(|_| Error::new(-32602, "Invalid captured source target"))?
             .unwrap_or_default();
+
         let id = self.source_node(selector)?;
+
         self.element(id)?
             .source_location(&target)
             .ok_or_else(|| Error::new(-32000, "Captured source location unavailable"))
@@ -572,22 +658,27 @@ impl Dom {
 
     pub fn source_node(&self, selector: &Value) -> Result<i32, Error> {
         let selector = selector.get("nodeId").unwrap_or(selector);
+
         if let Some(id) = selector.as_i64().and_then(|id| i32::try_from(id).ok()) {
             self.element(id)?;
+
             Ok(id)
         } else if let Some(name) = selector.as_str() {
             let mut matches = self.nodes.iter().filter(|(_, element)| {
                 element.semantic_id.as_deref() == Some(name) || element.id == name
             });
+
             let (&id, _) = matches
                 .next()
                 .ok_or_else(|| Error::new(-32000, "Source target not found"))?;
+
             if matches.next().is_some() {
                 return Err(Error::new(
                     -32602,
                     "Source target is ambiguous; use a node ID",
                 ));
             }
+
             Ok(id)
         } else {
             Err(Error::new(
@@ -599,10 +690,12 @@ impl Dom {
 
     pub fn outer_html(&self, params: &Value) -> Result<Value, Error> {
         let element = self.element(node_id(params)?)?;
+
         let snapshot = self
             .snapshot
             .as_ref()
             .ok_or_else(|| Error::new(-32000, "Tree unavailable"))?;
+
         let markup = rake_protocol::inspection::tree::markup(&snapshot.elements, &element.id)
             .ok_or_else(|| {
                 Error::new(
@@ -610,6 +703,7 @@ impl Dom {
                     "Copied subtree is invalid or exceeds the copy budget",
                 )
             })?;
+
         Ok(json!({"outerHTML":markup}))
     }
 
@@ -710,6 +804,7 @@ impl Dom {
 
     fn ax_node(&self, id: i32) -> Value {
         let element = self.nodes.get(&id);
+
         let parent = element.map(|element| {
             element
                 .parent
@@ -717,6 +812,7 @@ impl Dom {
                 .and_then(|id| self.node_id(id))
                 .unwrap_or(1)
         });
+
         super::accessibility::node(
             id,
             element,
@@ -747,6 +843,7 @@ impl Dom {
                 "Accessibility is waiting for a captured inspection host",
             ));
         }
+
         let target = || -> Result<i32, Error> {
             if let Some(id) = params["objectId"].as_str() {
                 self.object_node(id)
@@ -754,18 +851,23 @@ impl Dom {
                 node_id(params)
             }
         };
+
         if method == "Accessibility.getRootAXNode" {
             return Ok(json!({"node":self.ax_node(1)}));
         }
+
         let mut ids = BTreeSet::new();
+
         match method {
             "Accessibility.getFullAXTree" => {
                 let depth = depth(params, 128)?.min(128);
                 let mut pending = vec![(1, 0)];
+
                 while let Some((id, level)) = pending.pop() {
                     if !ids.insert(id) {
                         continue;
                     }
+
                     if level < depth {
                         pending.extend(
                             self.children(id)
@@ -782,9 +884,11 @@ impl Dom {
                     .and_then(|id| id.strip_prefix("ax-"))
                     .and_then(|id| id.parse().ok())
                     .ok_or_else(|| Error::new(-32602, "AX node id required"))?;
+
                 if id != 1 {
                     self.element(id)?;
                 }
+
                 ids.extend(
                     self.children(id)
                         .into_iter()
@@ -793,12 +897,16 @@ impl Dom {
             }
             "Accessibility.getPartialAXTree" | "Accessibility.getAXNodeAndAncestors" => {
                 let target = target()?;
+
                 if target != 1 {
                     self.element(target)?;
                 }
+
                 ids.insert(target);
+
                 if params["fetchRelatives"] != false {
                     let mut id = target;
+
                     while let Some(parent) = self.nodes.get(&id).map(|e| {
                         e.parent
                             .as_deref()
@@ -808,8 +916,10 @@ impl Dom {
                         if !ids.insert(parent) {
                             break;
                         }
+
                         id = parent;
                     }
+
                     if method == "Accessibility.getPartialAXTree" {
                         ids.extend(
                             self.children(target)
@@ -821,25 +931,31 @@ impl Dom {
             }
             _ => return Err(Error::new(-32601, "Unsupported accessibility method")),
         }
+
         let value = json!({"nodes":ids.into_iter().map(|id| self.ax_node(id)).collect::<Vec<_>>()});
+
         if serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len()) > 512 * 1024 {
             return Err(Error::new(
                 -32000,
                 "Accessibility response exceeds budget; request the root and individual children",
             ));
         }
+
         Ok(value)
     }
 
     pub fn edit_style(&self, id: i32) -> Result<Value, Error> {
         Ok(super::editing::style(id, self.element(id)?))
     }
+
     pub fn edit_text(&self, id: i32) -> Result<String, Error> {
         Ok(super::editing::text(self.element(id)?))
     }
+
     pub fn editable(&self, id: i32) -> bool {
         self.element(id).is_ok_and(|element| element.style_editable)
     }
+
     pub fn text_command(
         &self,
         params: &Value,
@@ -848,25 +964,32 @@ impl Dom {
     ) -> Result<rake_protocol::control::Command, Error> {
         let mut id = node_id(params)?;
         let mut seen = BTreeSet::new();
+
         while descend && self.element(id)?.text.is_none() && seen.insert(id) {
             let children = self.children(id);
+
             if children.len() != 1 {
                 break;
             }
+
             id = children[0];
         }
+
         let element = self.element(id)?;
+
         if !element.text_editable || element.text.is_none() {
             return Err(Error::new(
                 -32000,
                 "Select an editable text node or a container with one text child",
             ));
         }
+
         if let rake_protocol::inspection::TextEdit::Set { text } = &edit
             && text.len() > 16 * 1024
         {
             return Err(Error::new(-32602, "Text exceeds 16 KiB"));
         }
+
         Ok(rake_protocol::control::Command::EditElementText {
             id: element.id.clone(),
             generation: self.generation().unwrap_or_default().into(),
@@ -880,9 +1003,11 @@ impl Dom {
         edit: rake_protocol::inspection::StyleEdit,
     ) -> Result<rake_protocol::control::Command, Error> {
         let element = self.element(id)?;
+
         if !element.style_editable {
             return Err(Error::new(-32000, "Boundary is not style editable"));
         }
+
         Ok(rake_protocol::control::Command::EditElementStyle {
             id: element.id.clone(),
             generation: self.generation().unwrap_or_default().into(),
@@ -896,9 +1021,11 @@ impl Dom {
 
     pub fn details(&mut self, id: i32, element: Element) -> Result<(), Error> {
         let old = self.element(id)?;
+
         if old.id != element.id {
             return Err(Error::new(-32000, "Inspection capture changed; retry"));
         }
+
         if (old.styles != element.styles
             || old.resolved != element.resolved
             || old.box_model != element.box_model
@@ -907,7 +1034,9 @@ impl Dom {
         {
             self.style_updates.insert(id);
         }
+
         self.nodes.insert(id, element);
+
         Ok(())
     }
 
@@ -949,6 +1078,7 @@ impl Dom {
                 .nodes
                 .get(&children[0])
                 .is_some_and(|element| element.text.is_some());
+
         if depth > 0 || children.is_empty() || inline_text {
             node["children"] = json!(
                 children
@@ -1122,6 +1252,7 @@ impl Dom {
                         "Resolved box geometry unavailable for this node/runtime",
                     )
                 })?;
+
                 let (Some(content), Some(padding), Some(margin)) =
                     (model.content, model.padding, model.margin)
                 else {
@@ -1130,10 +1261,13 @@ impl Dom {
                         format!("Incomplete box geometry: {}", model.unavailable.join("; ")),
                     ));
                 };
+
                 let quad = |layout: rake_protocol::inspection::Layout| {
                     let (x, y, w, h) = (layout.x, layout.y, layout.width, layout.height);
+
                     json!([x, y, x + w, y, x + w, y + h, x, y + h])
                 };
+
                 Ok(
                     json!({"model":{"content":quad(content),"padding":quad(padding),
                     "border":quad(model.border),"margin":quad(margin),
@@ -1161,9 +1295,11 @@ impl Dom {
                 }
 
                 let mut rules = super::styles::matched(element);
+
                 if element.style_editable {
                     rules.push(super::editing::rule(id, element));
                 }
+
                 if rules.is_empty() {
                     Ok(
                         json!({"inlineStyle":super::styles::inline(element.styles.as_ref()),"matchedCSSRules":[],"inherited":inherited,"pseudoElements":[]}),
@@ -1204,27 +1340,35 @@ impl Dom {
 // Sibling IDs are unique: LCS is the longest increasing subsequence of old positions.
 fn common_subsequence(before: &[i32], after: &[i32]) -> BTreeSet<i32> {
     let positions: BTreeMap<_, _> = before.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+
     let sequence: Vec<_> = after
         .iter()
         .filter_map(|id| positions.get(id).map(|&p| (*id, p)))
         .collect();
+
     let mut tails: Vec<usize> = Vec::new();
     let mut previous = vec![None; sequence.len()];
+
     for (i, &(_, position)) in sequence.iter().enumerate() {
         let j = tails.partition_point(|&index| sequence[index].1 < position);
+
         previous[i] = j.checked_sub(1).map(|j| tails[j]);
+
         if j == tails.len() {
             tails.push(i);
         } else {
             tails[j] = i;
         }
     }
+
     let mut common = BTreeSet::new();
     let mut cursor = tails.last().copied();
+
     while let Some(i) = cursor {
         common.insert(sequence[i].0);
         cursor = previous[i];
     }
+
     common
 }
 
@@ -1299,6 +1443,7 @@ mod tests {
     #[test]
     fn accessibility_projection_exposes_real_labels_and_updates_without_losing_dom_identity() {
         let mut capture = stable_capture("1", &[("root", None), ("button", Some("root"))]);
+
         capture.elements[1].accessibility =
             Some(Box::new(rake_protocol::inspection::Accessibility {
                 role: Some("Button".into()),
@@ -1318,30 +1463,36 @@ mod tests {
                 actions: vec!["Click".into(), "Focus".into()],
             }));
         let mut dom = Dom::default();
+
         dom.update(capture.clone()).unwrap();
         let button = dom.node_id("1-button").unwrap();
+
         let tree = dom
             .accessibility(
                 "Accessibility.getPartialAXTree",
                 &json!({"backendNodeId":button}),
             )
             .unwrap();
+
         let node = tree["nodes"]
             .as_array()
             .unwrap()
             .iter()
             .find(|node| node["backendDOMNodeId"] == button)
             .unwrap();
+
         assert_eq!(node["role"]["value"], "button");
         assert_eq!(node["name"]["value"], "Save");
         assert_eq!(node["ignored"], false);
         let root = dom
             .accessibility("Accessibility.getRootAXNode", &json!({}))
             .unwrap();
+
         assert_eq!(root["node"]["role"]["value"], "application");
         dom.take_accessibility_updates();
         capture.elements[1].accessibility.as_mut().unwrap().focused = Some(true);
         let a11y = capture.elements[1].accessibility.as_mut().unwrap();
+
         a11y.name = Some("Save document".into());
         a11y.name_source = Some("contents".into());
         a11y.states.insert("pressed".into(), "mixed".into());
@@ -1354,12 +1505,14 @@ mod tests {
                 &json!({"backendNodeId":button}),
             )
             .unwrap();
+
         let node = tree["nodes"]
             .as_array()
             .unwrap()
             .iter()
             .find(|node| node["backendDOMNodeId"] == button)
             .unwrap();
+
         assert_eq!(node["name"]["value"], "Save document");
         assert!(
             node["properties"]
@@ -1384,12 +1537,16 @@ mod tests {
     fn large_sibling_lists_load_lazily_and_keep_identity_on_reorder() {
         let names: Vec<_> = (0..4000).map(|i| format!("child-{i}")).collect();
         let mut tree = vec![("root", None)];
+
         tree.extend(names.iter().map(|name| (name.as_str(), Some("root"))));
         let mut dom = Dom::default();
+
         dom.update(stable_capture("1", &tree)).unwrap();
         let document = dom.document(&json!({"depth":1})).unwrap();
+
         assert!(document["children"][0].get("children").is_none());
         let id = dom.node_id("1-child-3999").unwrap();
+
         tree[1..].reverse();
         assert!(!dom.update(stable_capture("2", &tree)).unwrap());
         assert_eq!(dom.node_id("2-child-3999"), Some(id));
@@ -1399,16 +1556,20 @@ mod tests {
     #[test]
     fn text_nodes_show_content_and_update_without_replacing_the_selected_node() {
         let mut capture = stable_capture("1", &[("p", None), ("text", Some("p"))]);
+
         capture.elements[1].text = Some("Hello <script>世 🌍</script>\n".into());
         let mut dom = Dom::default();
+
         dom.update(capture.clone()).unwrap();
         let preview = dom.node(dom.node_id("1-p").unwrap(), 0);
+
         assert_eq!(
             preview["children"][0]["nodeType"], 3,
             "lazy parent previews include their sole text child"
         );
         let document = dom.document(&json!({"depth":-1})).unwrap();
         let text = &document["children"][0]["children"][0];
+
         assert_eq!(text["nodeType"], 3);
         assert_eq!(text["nodeName"], "#text");
         assert_eq!(
@@ -1417,10 +1578,12 @@ mod tests {
         );
         assert!(text.get("attributes").is_none());
         let id = dom.node_id("1-text").unwrap();
+
         assert_eq!(dom.search("世 🌍").unwrap()["resultCount"], 1);
         let copied = dom
             .outer_html(&json!({"nodeId":dom.node_id("1-p").unwrap()}))
             .unwrap();
+
         assert!(
             copied["outerHTML"]
                 .as_str()
@@ -1433,6 +1596,7 @@ mod tests {
         assert!(!dom.update(capture.clone()).unwrap());
         assert_eq!(dom.node_id("2-text"), Some(id));
         let events = dom.take_updates();
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].method, "DOM.characterDataModified");
         assert_eq!(events[0].params, json!({"nodeId":id,"characterData":""}));
@@ -1450,11 +1614,13 @@ mod tests {
     fn geometry_and_metadata_updates_keep_nodes_and_expansion_across_captures() {
         let tree = [("root", None), ("child", Some("root"))];
         let mut dom = Dom::default();
+
         dom.update(stable_capture("1", &tree)).unwrap();
         dom.document(&json!({"depth":-1})).unwrap();
         let root = dom.node_id("1-root").unwrap();
         let child = dom.node_id("1-child").unwrap();
         let mut changed = stable_capture("2", &tree);
+
         changed.elements[1].layout.as_mut().unwrap().width = 42.;
         changed.elements[1].semantic_id = Some("renamed".into());
 
@@ -1467,6 +1633,7 @@ mod tests {
                 .is_empty()
         );
         let events = dom.take_updates();
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].method, "DOM.attributeModified");
         assert_eq!(
@@ -1492,6 +1659,7 @@ mod tests {
     #[test]
     fn structural_events_replay_to_the_new_order_without_replacing_unchanged_subtrees() {
         let mut dom = Dom::default();
+
         let before = [
             ("root", None),
             ("a", Some("root")),
@@ -1499,11 +1667,13 @@ mod tests {
             ("leaf", Some("b")),
             ("c", Some("root")),
         ];
+
         dom.update(stable_capture("1", &before)).unwrap();
         dom.document(&json!({"depth":-1})).unwrap();
         let root = dom.node_id("1-root").unwrap();
         let b = dom.node_id("1-b").unwrap();
         let leaf = dom.node_id("1-leaf").unwrap();
+
         let mut frontend: BTreeMap<_, _> = std::iter::once(1)
             .chain(dom.nodes.keys().copied())
             .map(|id| (id, dom.children(id)))
@@ -1516,20 +1686,25 @@ mod tests {
             ("leaf", Some("b")),
             ("new", Some("root")),
         ];
+
         assert!(!dom.update(stable_capture("2", &after)).unwrap());
         let events = dom.take_updates();
+
         for event in &events {
             let parent = event.params["parentNodeId"].as_i64().unwrap() as i32;
             let siblings = frontend.get_mut(&parent).unwrap();
+
             match event.method.as_str() {
                 "DOM.childNodeRemoved" => {
                     let id = event.params["nodeId"].as_i64().unwrap() as i32;
                     let index = siblings.iter().position(|child| *child == id).unwrap();
+
                     siblings.remove(index);
                     assert_ne!(id, b, "unchanged selected subtree stays attached");
                 }
                 "DOM.childNodeInserted" => {
                     let previous = event.params["previousNodeId"].as_i64().unwrap() as i32;
+
                     let index = if previous == 0 {
                         0
                     } else {
@@ -1539,13 +1714,16 @@ mod tests {
                             .unwrap()
                             + 1
                     };
+
                     let id = event.params["node"]["nodeId"].as_i64().unwrap() as i32;
+
                     assert!(!siblings.contains(&id));
                     siblings.insert(index, id);
                 }
                 _ => panic!("unexpected mutation: {}", event.method),
             }
         }
+
         assert_eq!(frontend[&root], dom.children(root));
         assert_eq!(dom.node_id("2-b"), Some(b));
         assert_eq!(dom.node_id("2-leaf"), Some(leaf));
@@ -1561,20 +1739,24 @@ mod tests {
     #[test]
     fn collapsed_branches_receive_counts_then_expand_the_current_capture() {
         let mut dom = Dom::default();
+
         dom.update(stable_capture("1", &[("root", None), ("a", Some("root"))]))
             .unwrap();
         dom.document(&json!({})).unwrap();
         let root = dom.node_id("1-root").unwrap();
+
         dom.update(stable_capture(
             "2",
             &[("root", None), ("a", Some("root")), ("b", Some("root"))],
         ))
         .unwrap();
         let events = dom.take_updates();
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].method, "DOM.childNodeCountUpdated");
         assert_eq!(events[0].params, json!({"nodeId":root,"childNodeCount":2}));
         let children = dom.request_children(&json!({"nodeId":root})).unwrap();
+
         assert_eq!(children[0]["nodes"].as_array().unwrap().len(), 2);
         assert!(dom.take_updates().is_empty());
     }
@@ -1582,6 +1764,7 @@ mod tests {
     #[test]
     fn removed_boundaries_are_never_resurrected_and_runtime_reset_invalidates_every_node() {
         let mut dom = Dom::default();
+
         dom.update(stable_capture(
             "1",
             &[("root", None), ("child", Some("root"))],
@@ -1589,6 +1772,7 @@ mod tests {
         .unwrap();
         dom.document(&json!({"depth":-1})).unwrap();
         let child = dom.node_id("1-child").unwrap();
+
         dom.update(stable_capture("2", &[("root", None)])).unwrap();
         assert!(dom.element(child).is_err());
         dom.update(stable_capture(
@@ -1598,6 +1782,7 @@ mod tests {
         .unwrap();
         assert_ne!(dom.node_id("3-child"), Some(child));
         let root = dom.node_id("3-root").unwrap();
+
         dom.clear();
         dom.update(stable_capture("1", &[("root", None)])).unwrap();
         assert_ne!(dom.node_id("1-root"), Some(root));
@@ -1607,18 +1792,22 @@ mod tests {
     #[test]
     fn name_and_id_search_reveals_collapsed_ancestors_and_rejects_expired_results() {
         let mut dom = Dom::default();
+
         let tree = [
             ("root", None),
             ("panel", Some("root")),
             ("save", Some("panel")),
         ];
+
         dom.update(stable_capture("1", &tree)).unwrap();
         dom.document(&json!({})).unwrap();
         let save = dom.node_id("1-save").unwrap();
         let search = dom.search("#save").unwrap();
+
         assert_eq!(search["resultCount"], 1);
         let params = json!({"searchId":search["searchId"],"fromIndex":0,"toIndex":1});
         let (result, paths) = dom.search_results(&params).unwrap();
+
         assert_eq!(result["nodeIds"], json!([save]));
         assert_eq!(paths.len(), 2);
         assert!(
@@ -1637,9 +1826,11 @@ mod tests {
         assert!(dom.search_results(&params).is_err());
         assert!(dom.search("").is_err());
         assert!(dom.search(&"x".repeat(1025)).is_err());
+
         for _ in 0..20 {
             dom.search("root").unwrap();
         }
+
         assert_eq!(dom.searches.len(), 8);
         dom.clear();
         assert!(dom.searches.is_empty());
@@ -1649,12 +1840,15 @@ mod tests {
     fn text_commands_reject_opaque_nodes_and_resolve_only_unambiguous_containers() {
         use rake_protocol::{control::Command, inspection::TextEdit};
         let mut snapshot = stable_capture("1", &[("root", None), ("text", Some("root"))]);
+
         snapshot.elements[1].text = Some("Original".into());
         snapshot.elements[1].text_editable = true;
         let mut dom = Dom::default();
+
         dom.update(snapshot.clone()).unwrap();
         let root = dom.node_id("1-root").unwrap();
         let leaf = dom.node_id("1-text").unwrap();
+
         assert!(
             dom.text_command(&json!({"nodeId":root}), TextEdit::Reset {}, false)
                 .is_err()
@@ -1681,6 +1875,7 @@ mod tests {
         );
         snapshot.elements[1].text_editable = true;
         let mut other = snapshot.elements[1].clone();
+
         other.id = "1-other".into();
         other.stable_id = Some("other".into());
         snapshot.elements.push(other);
@@ -1695,8 +1890,10 @@ mod tests {
     fn chrome_selection_survives_captures_but_expires_with_the_node() {
         let mut dom = Dom::default();
         let tree = [("root", None), ("save", Some("root"))];
+
         dom.update(stable_capture("1", &tree)).unwrap();
         let node = dom.node_id("1-save").unwrap();
+
         assert!(dom.inspected_node().is_err());
         dom.set_inspected_node(&json!({"nodeId":node})).unwrap();
         dom.update(stable_capture("2", &tree)).unwrap();
@@ -1717,12 +1914,16 @@ mod tests {
     fn chrome_node_helpers_only_dispatch_navigation_and_respect_object_lifetimes() {
         use rake_protocol::{control::Command, inspection::NavigationAction};
         let mut dom = Dom::default();
+
         dom.update(stable_capture("1", &[("root", None)])).unwrap();
         let node = dom.node_id("1-root").unwrap();
+
         let object = dom
             .resolve_node(&json!({"nodeId":node,"objectGroup":"navigation"}))
             .unwrap();
+
         let id = object["object"]["objectId"].as_str().unwrap();
+
         for function in [
             "function focusInPage() { this.focus(); }",
             "function f(){this.focus()}",
@@ -1737,7 +1938,9 @@ mod tests {
                 }
             );
         }
+
         let scroll = json!({"objectId":id,"functionDeclaration":"function s(){this.scrollIntoViewIfNeeded(!0)}"});
+
         assert!(matches!(
             dom.call_navigation(&scroll).unwrap(),
             Command::NavigateElement {
@@ -1745,6 +1948,7 @@ mod tests {
                 ..
             }
         ));
+
         for function in [
             "function(){this.focus();alert(1)}",
             "function(){return this.focus()}",
@@ -1755,6 +1959,7 @@ mod tests {
                     .is_err()
             );
         }
+
         dom.update(stable_capture("2", &[("root", None)])).unwrap();
         assert!(
             matches!(dom.call_navigation(&scroll).unwrap(), Command::NavigateElement { generation, .. } if generation == "2")
@@ -1763,6 +1968,7 @@ mod tests {
         assert!(dom.call_navigation(&scroll).is_err());
         let object = dom.resolve_node(&json!({"nodeId":node})).unwrap();
         let id = object["object"]["objectId"].as_str().unwrap();
+
         dom.release_node_object(id);
         assert!(dom.object_node(id).is_err());
     }
@@ -1777,6 +1983,7 @@ mod tests {
     #[test]
     fn authored_tags_are_searchable_and_style_sources_are_available_without_preview_attributes() {
         let mut snapshot = capture("view");
+
         snapshot.elements[0].view = Some(
             serde_json::from_value(json!({"tag":"section", "style_sources":[{
                 "scope":"section","attribute":"class","expression":"\"p-2 hover:opacity-50\"",
@@ -1785,28 +1992,36 @@ mod tests {
             .unwrap(),
         );
         let mut dom = Dom::default();
+
         dom.update(snapshot).unwrap();
         let document = dom.document(&json!({"depth":-1})).unwrap();
         let root = &document["children"][0];
+
         assert_eq!(root["nodeName"], "section");
         assert_eq!(root["attributes"], json!(["id", "root"]));
         let search = dom.search("section").unwrap();
+
         assert_eq!(search["resultCount"], 1);
         let object = dom.resolve_node(&json!({"nodeId":root["nodeId"]})).unwrap();
+
         let properties = dom
             .node_properties(object["object"]["objectId"].as_str().unwrap())
             .unwrap();
+
         let sources = properties["result"]
             .as_array()
             .unwrap()
             .iter()
             .find(|p| p["name"] == "rakeStyleSources")
             .unwrap();
+
         let sources: Value =
             serde_json::from_str(sources["value"]["value"].as_str().unwrap()).unwrap();
+
         assert_eq!(sources[0]["source"]["line"], 12);
         assert_eq!(sources[0]["attribute"], "class");
         let id = root["nodeId"].as_i64().unwrap();
+
         assert_eq!(
             dom.source(&json!({"nodeId":id,"target":{"kind":"style","index":0}}))
                 .unwrap()
@@ -1834,6 +2049,7 @@ mod tests {
         let mut snapshot = capture("boxes");
         let element = &mut snapshot.elements[0];
         let border = element.layout.unwrap();
+
         element.box_model = Some(BoxModel {
             border,
             padding: Some(Layout {
@@ -1866,10 +2082,12 @@ mod tests {
             }],
         });
         let mut dom = Dom::default();
+
         dom.update(snapshot.clone()).unwrap();
         let id = dom.node_id("boxes-a").unwrap();
         let params = json!({"nodeId":id});
         let model = dom.handle("DOM.getBoxModel", &params).unwrap()["model"].clone();
+
         assert_eq!(model["content"], json!([3., 4., 9., 4., 9., 20., 3., 20.]));
         assert_eq!(
             model["padding"],
@@ -1879,6 +2097,7 @@ mod tests {
         assert_eq!(model["margin"], json!([0., 1., 12., 1., 12., 23., 0., 23.]));
         let styles = dom.handle("CSS.getMatchedStylesForNode", &params).unwrap();
         let rules = styles["matchedCSSRules"].as_array().unwrap();
+
         assert!(
             styles.get("inlineStyle").is_none(),
             "resolved values must not masquerade as inline declarations"
@@ -2051,6 +2270,7 @@ mod tests {
     fn paged_polling_only_invalidates_styles_when_hydrated_values_change() {
         let mut snapshot = capture("live");
         let mut detail = snapshot.elements[0].clone();
+
         detail.resolved = Some(rake_protocol::inspection::ResolvedStyle {
             properties: json!({"text":{"font_size":"24px"}}),
             hovered: false,
@@ -2060,9 +2280,11 @@ mod tests {
         snapshot.elements[0].resolved = None;
         snapshot.elements[0].box_model = None;
         let mut dom = Dom::default();
+
         dom.update_index(snapshot.clone()).unwrap();
         dom.document(&json!({"depth":-1})).unwrap();
         let id = dom.node_id(&detail.id).unwrap();
+
         dom.details(id, detail.clone()).unwrap();
         dom.take_style_updates();
 
@@ -2072,6 +2294,7 @@ mod tests {
             dom.details(id, detail.clone()).unwrap();
             assert!(dom.take_style_updates().is_empty());
         }
+
         detail.resolved.as_mut().unwrap().hovered = true;
         detail.resolved.as_mut().unwrap().properties["text"]["font_size"] = json!("28px");
         dom.update_index(snapshot).unwrap();

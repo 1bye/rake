@@ -41,6 +41,7 @@ pub struct BundledLibraries {
     #[serde(default)]
     pub link_from_app: bool,
 }
+
 fn directory() -> String {
     "directory".into()
 }
@@ -54,11 +55,14 @@ impl Config {
         if self.dependencies.is_empty() {
             return Ok(());
         }
+
         let target = target.ok_or_else(|| {
             Error::Field("bundled dependencies require an explicit Rust target triple".into())
         })?;
+
         let expand = |path: &std::path::Path| -> Result<PathBuf, Error> {
             let text = path.to_str().ok_or_else(|| Error::Path(path.into()))?;
+
             let text = text.replace("{target}", target).replace(
                 "{exe}",
                 if platform == Platform::Windows {
@@ -67,15 +71,19 @@ impl Config {
                     ""
                 },
             );
+
             if text.contains(['{', '}']) {
                 return Err(Error::Field(
                     "unknown bundled dependency placeholder".into(),
                 ));
             }
+
             crate::portable_relative_path(std::path::Path::new(&text))
         };
+
         for (name, dependency) in std::mem::take(&mut self.dependencies) {
             crate::component_name(&name)?;
+
             if self
                 .components
                 .iter()
@@ -83,18 +91,22 @@ impl Config {
             {
                 return Err(Error::Duplicate(name));
             }
+
             let root = expand(&dependency.path)?;
+
             let licenses = dependency
                 .licenses
                 .iter()
                 .map(|path| expand(path))
                 .collect::<Result<_, _>>()?;
+
             self.components.push(Component {
                 name: name.clone(),
                 target: target.into(),
                 source: ComponentSource::Local { path: root.clone() },
                 licenses,
             });
+
             for (helper, path) in dependency.executables {
                 self.sidecars.push(Sidecar {
                     name: helper,
@@ -102,12 +114,14 @@ impl Config {
                     component: Some(name.clone()),
                 });
             }
+
             for (to, from) in dependency.resources {
                 self.resources.push(Resource {
                     from: root.join(expand(&from)?),
                     to: expand(&to)?,
                 });
             }
+
             if let Some(libraries) = dependency.libraries {
                 self.runtimes.push(Runtime {
                     name: format!("{name}-runtime"),
@@ -122,6 +136,7 @@ impl Config {
                 });
             }
         }
+
         Ok(())
     }
 }

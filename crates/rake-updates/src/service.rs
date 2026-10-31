@@ -39,6 +39,7 @@ pub struct UpdateService {
     #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
     pub(crate) test_sparkle_feed: Option<String>,
 }
+
 impl UpdateService {
     /// Creates a service from policy captured in the application crate and installed resources.
     /// # Errors
@@ -46,7 +47,9 @@ impl UpdateService {
     /// version, packaging format, owner, channel or publication root.
     pub fn new(embedded: &str, resources: &Resources) -> Result<Self, Error> {
         let binding = crate::parse_policy(embedded)?;
+
         matches_installation(&binding, resources.installation())?;
+
         Ok(Self {
             binding,
             #[cfg(all(
@@ -58,6 +61,7 @@ impl UpdateService {
             test_sparkle_feed: None,
         })
     }
+
     /// Uses a signed loopback HTTP appcast in explicit native SDK acceptance fixtures.
     /// Production builds should omit the native-tests feature.
     /// # Errors
@@ -65,6 +69,7 @@ impl UpdateService {
     #[cfg(all(target_os = "macos", feature = "sparkle", feature = "native-tests"))]
     pub fn testing_sparkle_feed(mut self, feed: &str) -> Result<Self, Error> {
         let url = url::Url::parse(feed).map_err(|error| Error::Policy(error.to_string()))?;
+
         if url.scheme() != "http"
             || url.host_str() != Some("127.0.0.1")
             || url.port().is_none()
@@ -75,7 +80,9 @@ impl UpdateService {
                 "native acceptance feed must be HTTP on 127.0.0.1 with an explicit port".into(),
             ));
         }
+
         self.test_sparkle_feed = Some(url.into());
+
         Ok(self)
     }
 
@@ -96,29 +103,36 @@ impl UpdateService {
                 .ok_or_else(|| Error::Policy("native test feed root missing".into()))?,
         )
         .map_err(|error| Error::Policy(error.to_string()))?;
+
         if url.scheme() != "https" || url.host_str() != Some("127.0.0.1") || url.port().is_none() {
             return Err(Error::Policy(
                 "test CA enrollment requires HTTPS on 127.0.0.1 with an explicit port".into(),
             ));
         }
+
         self.test_tls_root = Some(
             ureq::tls::Certificate::from_pem(pem)
                 .map_err(|error| Error::Policy(error.to_string()))?,
         );
+
         Ok(self)
     }
+
     #[cfg(any(feature = "appimage", feature = "velopack"))]
     pub(crate) fn http_agent(&self) -> ureq::Agent {
         #[cfg(feature = "native-tests")]
         if let Some(root) = &self.test_tls_root {
             return crate::transport::configured_agent(Some(root.clone()));
         }
+
         crate::transport::agent()
     }
+
     /// Returns the application identity and immutable verification policy.
     pub fn binding(&self) -> &UpdateBinding {
         &self.binding
     }
+
     /// Reports capabilities without downloading or mutating the installation.
     pub fn capability(&self) -> Capability {
         match self.binding.owner {
@@ -142,6 +156,7 @@ impl UpdateService {
         }
     }
 }
+
 fn matches_installation(binding: &UpdateBinding, installed: &Installation) -> Result<(), Error> {
     if binding.identifier != installed.identifier
         || binding.version != installed.version
@@ -156,6 +171,7 @@ fn matches_installation(binding: &UpdateBinding, installed: &Installation) -> Re
             "installed metadata conflicts with the compiled update policy".into(),
         ));
     }
+
     Ok(())
 }
 
@@ -174,6 +190,7 @@ pub struct RestartHandoff {
     pub(crate) action: Option<Box<dyn FnOnce() -> Result<(), Error>>>,
     pub(crate) disposition: RestartDisposition,
 }
+
 impl std::fmt::Debug for RestartHandoff {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -182,6 +199,7 @@ impl std::fmt::Debug for RestartHandoff {
             .finish()
     }
 }
+
 impl RestartHandoff {
     /// Owns a provider/application-defined install callback until explicit approval.
     /// Callbacks must not install anything before this handoff is committed.
@@ -191,6 +209,7 @@ impl RestartHandoff {
             disposition: RestartDisposition::ExitHost,
         }
     }
+
     #[cfg(all(target_os = "macos", feature = "sparkle"))]
     pub(crate) fn native_provider(action: impl FnOnce() -> Result<(), Error> + 'static) -> Self {
         Self {
@@ -210,9 +229,11 @@ impl RestartHandoff {
         if !approved {
             return Err(Error::Declined);
         }
+
         self.action
             .take()
             .ok_or_else(|| Error::Policy("handoff already consumed".into()))?()?;
+
         Ok(self.disposition)
     }
 }
@@ -221,25 +242,33 @@ impl RestartHandoff {
 mod tests {
     use super::*;
     use std::{cell::Cell, rc::Rc};
+
     #[test]
     fn decline_and_drop_never_invoke_the_installer() {
         let invoked = Rc::new(Cell::new(false));
         let observed = Rc::clone(&invoked);
+
         let handoff = RestartHandoff::new(move || {
             observed.set(true);
+
             Ok(())
         });
+
         assert!(matches!(handoff.commit(false), Err(Error::Declined)));
         assert!(!invoked.get());
         let observed = Rc::clone(&invoked);
+
         drop(RestartHandoff::new(move || {
             observed.set(true);
+
             Ok(())
         }));
         assert!(!invoked.get());
         let observed = Rc::clone(&invoked);
+
         RestartHandoff::new(move || {
             observed.set(true);
+
             Ok(())
         })
         .commit(true)
@@ -252,6 +281,7 @@ mod tests {
 mod policy_tests {
     use super::*;
     use rake_dist_core::{Format, Platform, Updates};
+
     #[test]
     fn managed_ownership_cannot_be_changed_by_an_installed_descriptor() {
         let binding = UpdateBinding {
@@ -266,6 +296,7 @@ mod policy_tests {
             base_url: Some("https://updates.example.org".into()),
             public_keys: Default::default(),
         };
+
         binding.validate().unwrap();
         let mut installed = Installation {
             schema_version: 1,
@@ -286,11 +317,13 @@ mod policy_tests {
             frameworks: Default::default(),
             native_groups: Default::default(),
         };
+
         matches_installation(&binding, &installed).unwrap();
         installed.format = Format::Appimage;
         installed.update_owner = UpdateOwner::Appimage;
         assert!(matches_installation(&binding, &installed).is_err());
         let mut forged = binding;
+
         forged.owner = UpdateOwner::Appimage;
         assert!(forged.validate().is_err());
     }

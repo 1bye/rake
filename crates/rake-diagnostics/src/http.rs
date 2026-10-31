@@ -35,6 +35,7 @@ impl Bodies {
             truncated: request.len() > BODY_LIMIT,
             failure: None,
         };
+
         self.bytes += body.bytes.len();
         self.requests.insert(id, (body, Body::default()));
         self.evict();
@@ -43,6 +44,7 @@ impl Bodies {
     pub fn append(&mut self, id: u64, bytes: &[u8]) {
         if let Some((_, body)) = self.requests.get_mut(&id) {
             let count = bytes.len().min(BODY_LIMIT - body.bytes.len());
+
             body.bytes.extend_from_slice(&bytes[..count]);
             body.truncated |= count < bytes.len();
             self.bytes += count;
@@ -53,6 +55,7 @@ impl Bodies {
     pub fn finish(&mut self, id: u64, phase: &str) {
         if let Some((_, body)) = self.requests.get_mut(&id) {
             body.complete = phase == "completed";
+
             if !body.complete {
                 body.failure = Some(phase.into());
             }
@@ -81,18 +84,22 @@ mod tests {
     #[test]
     fn eviction_bounds_bytes_and_empty_requests_without_resurrection() {
         let mut bodies = Bodies::default();
+
         for id in 1..100 {
             bodies.begin(id, &vec![42; BODY_LIMIT]);
             bodies.append(id, &vec![43; BODY_LIMIT]);
         }
+
         assert!(bodies.bytes <= TOTAL_LIMIT);
         assert!(bodies.get(1, false).is_none());
         bodies.append(1, b"late");
         bodies.finish(1, "completed");
         assert!(bodies.get(1, true).is_none());
+
         for id in 100..200 {
             bodies.begin(id, b"");
         }
+
         assert!(bodies.requests.len() <= REQUEST_LIMIT);
     }
 }

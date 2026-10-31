@@ -2,6 +2,7 @@
 use crate::{Error, ToolRecord, run, shell};
 use rake_dist_core::FlatpakConfig;
 use serde_json::{Value, json};
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -62,8 +63,10 @@ pub fn flatpak_manifest(
             "Flatpak requires a Linux Rust target".into(),
         ));
     }
+
     rake_dist_core::validate_relative_path(manifest)
         .map_err(|error| Error::Metadata(error.to_string()))?;
+
     for component in ["rustc", "cargo", "rust-std"] {
         if !tools.iter().any(|tool| tool.name == component) {
             return Err(Error::Metadata(format!(
@@ -71,8 +74,10 @@ pub fn flatpak_manifest(
             )));
         }
     }
+
     let mut sources = Vec::new();
     let mut commands = Vec::new();
+
     for tool in tools {
         sources.push(json!({"type":"archive","path":tool.archive,"sha256":tool.sha256,"archive-type":"tar-xz","dest":tool.name}));
         commands.push(format!(
@@ -80,11 +85,13 @@ pub fn flatpak_manifest(
             shell(&tool.name)
         ));
     }
+
     let feature_args = if features.is_empty() {
         String::new()
     } else {
         format!(" --features {}", shell(&features.join(",")))
     };
+
     let compile = format!(
         "cargo build --offline --locked --release --target {} --manifest-path {} --package {} --bin {}{feature_args}",
         shell(target),
@@ -92,13 +99,17 @@ pub fn flatpak_manifest(
         shell(package),
         shell(binary)
     );
+
     let mut build_commands = Vec::new();
+
     for dependency in system_dependencies {
         if dependency.is_empty() || dependency.chars().any(char::is_control) {
             return Err(Error::Metadata("Flatpak SDK dependency expression".into()));
         }
+
         build_commands.push(format!("pkg-config --exists {}", shell(dependency)));
     }
+
     build_commands.extend([
         compile,
         format!(
@@ -109,6 +120,7 @@ pub fn flatpak_manifest(
         ),
         "cp -a payload/usr/. /app/".into(),
     ]);
+
     Ok(json!({
         "app-id":identifier,"runtime":config.runtime,"runtime-version":config.runtime_version,"sdk":config.sdk,
         "command":binary,"finish-args":config.finish_args,
@@ -128,6 +140,7 @@ pub fn flatpak_manifest(
 /// actual sandbox compilation/build failures. It never installs a remote or SDK.
 pub fn build_flatpak(input: &FlatpakBuild<'_>) -> Result<(PathBuf, Vec<ToolRecord>), Error> {
     let manifest: Value = serde_json::from_slice(&fs::read(input.manifest)?)?;
+
     if manifest["app-id"] != input.identifier
         || manifest["runtime"] != input.config.runtime
         || manifest["sdk"] != input.config.sdk
@@ -137,11 +150,13 @@ pub fn build_flatpak(input: &FlatpakBuild<'_>) -> Result<(PathBuf, Vec<ToolRecor
             "Flatpak manifest identity/runtime conflicts with configuration".into(),
         ));
     }
+
     let arch = match input.target.split('-').next() {
         Some("x86_64") => "x86_64",
         Some("aarch64") => "aarch64",
         _ => return Err(Error::Metadata("unsupported Flatpak architecture".into())),
     };
+
     fs::create_dir_all(input.output)?;
     let mut records = vec![ToolRecord {
         name: "flatpak-builder".into(),
@@ -150,26 +165,32 @@ pub fn build_flatpak(input: &FlatpakBuild<'_>) -> Result<(PathBuf, Vec<ToolRecor
             .into(),
         sha256: None,
     }];
+
     for (name, pinned) in [
         (&input.config.runtime, &input.config.runtime_commit),
         (&input.config.sdk, &input.config.sdk_commit),
     ] {
         let reference = format!("{name}/{arch}/{}", input.config.runtime_version);
+
         let commit = run(Command::new("flatpak").args(["info", "--show-commit", &reference]))?
             .trim()
             .to_owned();
+
         if pinned.as_ref().is_some_and(|expected| *expected != commit) {
             return Err(Error::Metadata(format!(
                 "installed Flatpak {reference} commit differs from configured pin"
             )));
         }
+
         records.push(ToolRecord {
             name: reference,
             version: commit,
             sha256: None,
         });
     }
+
     let repo = input.output.join("repo");
+
     run(Command::new("flatpak-builder")
         .args([
             "--force-clean",
@@ -181,17 +202,20 @@ pub fn build_flatpak(input: &FlatpakBuild<'_>) -> Result<(PathBuf, Vec<ToolRecor
         .arg(input.output.join("build"))
         .arg(input.manifest))?;
     let artifact = input.output.join(format!("{}.flatpak", input.identifier));
+
     run(Command::new("flatpak")
         .args(["build-bundle", &format!("--arch={arch}")])
         .arg(repo)
         .arg(&artifact)
         .args([input.identifier, "master"]))?;
+
     Ok((artifact, records))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn sandbox_builds_source_and_does_not_inherit_network_permissions() {
         let tools = ["rustc", "cargo", "rust-std"].map(|name| FlatpakTool {
@@ -199,6 +223,7 @@ mod tests {
             archive: PathBuf::from(format!("/tmp/{name}.tar.xz")),
             sha256: "a".repeat(64),
         });
+
         let manifest = flatpak_manifest(
             "dev.rake.Example",
             "example",
@@ -213,6 +238,7 @@ mod tests {
             &["fontconfig >= 2.13".into()],
         )
         .unwrap();
+
         assert_eq!(
             manifest["modules"][1]["build-commands"][0],
             "pkg-config --exists 'fontconfig >= 2.13'"

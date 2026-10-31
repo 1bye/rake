@@ -7,6 +7,7 @@ use crate::router::Route;
 
 pub(super) trait Host {
     fn info(&self) -> RuntimeInfo;
+
     fn request(&self, request: Request) -> Result<Reply, ControlError>;
 
     #[cfg(any(unix, target_family = "wasm"))]
@@ -35,9 +36,11 @@ impl HostClient {
     pub(super) fn new(client: impl Host + 'static) -> Self {
         Self(Rc::new(client))
     }
+
     pub(crate) fn info(&self) -> RuntimeInfo {
         self.0.info()
     }
+
     pub(crate) fn request(&self, request: Request) -> Result<Reply, ControlError> {
         self.0.request(request)
     }
@@ -67,6 +70,7 @@ impl<R: Route> Host for RuntimeClient<R> {
     fn info(&self) -> RuntimeInfo {
         self.info()
     }
+
     fn request(&self, request: Request) -> Result<Reply, ControlError> {
         self.request(request)
     }

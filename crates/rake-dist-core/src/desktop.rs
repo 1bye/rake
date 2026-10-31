@@ -32,6 +32,7 @@ pub enum ApplicationCategory {
     /// Video tools.
     Video,
 }
+
 impl ApplicationCategory {
     /// Returns the native bundler's stable category spelling.
     pub fn native_name(self) -> &'static str {
@@ -49,6 +50,7 @@ impl ApplicationCategory {
             Self::Video => "Video",
         }
     }
+
     /// Returns the freedesktop main category list.
     pub fn linux_categories(self) -> &'static str {
         match self {
@@ -63,6 +65,7 @@ impl ApplicationCategory {
         }
     }
 }
+
 /// One native file type registration, without a leading dot in its extensions.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -80,6 +83,7 @@ pub struct FileAssociation {
     #[serde(default)]
     pub mime_type: Option<String>,
 }
+
 /// Localized application labels. Locale keys use ASCII BCP 47 spellings.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -90,6 +94,7 @@ pub struct LocalizedMetadata {
     /// Localized application description.
     pub description: Option<String>,
 }
+
 /// Common OS registrations and labels, independent of any packaging engine.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -104,6 +109,7 @@ pub struct DesktopMetadata {
     /// Labels keyed by locale, such as `fr` or `pt-PT`.
     pub localizations: BTreeMap<String, LocalizedMetadata>,
 }
+
 impl DesktopMetadata {
     /// Returns whether no common OS metadata was supplied.
     pub fn is_empty(&self) -> bool {
@@ -112,11 +118,13 @@ impl DesktopMetadata {
             && self.file_associations.is_empty()
             && self.localizations.is_empty()
     }
+
     /// Validates text, URI schemes, extensions, MIME names and safe locale identifiers.
     /// # Errors
     /// Rejects malformed registrations before invoking a native tool.
     pub fn validate(&self) -> Result<(), Error> {
         let mut schemes = std::collections::BTreeSet::new();
+
         for scheme in &self.url_schemes {
             if scheme.len() > 64
                 || !schemes.insert(scheme.to_ascii_lowercase())
@@ -131,11 +139,14 @@ impl DesktopMetadata {
                 return Err(Error::Field("desktop.url_schemes".into()));
             }
         }
+
         let mut extensions = std::collections::BTreeSet::new();
+
         for association in &self.file_associations {
             if association.extensions.is_empty() {
                 return Err(Error::Field("desktop.file_associations.extensions".into()));
             }
+
             for extension in &association.extensions {
                 if extension.is_empty()
                     || extension.starts_with('.')
@@ -151,14 +162,17 @@ impl DesktopMetadata {
                     ));
                 }
             }
+
             for text in [&association.name, &association.description]
                 .into_iter()
                 .flatten()
             {
                 validate_text(text)?;
             }
+
             if let Some(mime) = &association.mime_type {
                 let parts: Vec<_> = mime.split('/').collect();
+
                 if parts.len() != 2
                     || parts.iter().any(|part| {
                         part.is_empty()
@@ -171,7 +185,9 @@ impl DesktopMetadata {
                 }
             }
         }
+
         let mut locales = std::collections::BTreeSet::new();
+
         for (locale, labels) in &self.localizations {
             if !locales.insert(locale.to_ascii_lowercase())
                 || locale.is_empty()
@@ -182,18 +198,22 @@ impl DesktopMetadata {
             {
                 return Err(Error::Field("desktop.localizations locale".into()));
             }
+
             for text in [&labels.name, &labels.description].into_iter().flatten() {
                 validate_text(text)?;
             }
         }
+
         Ok(())
     }
 }
+
 fn validate_text(value: &str) -> Result<(), Error> {
     if value.trim().is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
         return Err(Error::Field(
             "desktop metadata text must be nonempty and contain no control characters".into(),
         ));
     }
+
     Ok(())
 }

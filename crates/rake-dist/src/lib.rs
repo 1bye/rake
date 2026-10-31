@@ -5,34 +5,45 @@
 mod archives;
 mod compatibility;
 mod components;
+
 pub use components::ComponentLock;
+
 mod engine;
 mod extensions;
+
 pub use extensions::{
     CheckedArtifact, CommandExtension, CustomArtifact, run_component_recipe, run_package_backend,
 };
+
 mod execution;
 mod files;
 mod linux;
 mod process;
 mod recipes;
 mod signing;
+
 pub use rake_dist_core::UpdateSigningKey;
 pub use signing::{export_update_public_key, generate_update_key};
+
 mod release;
+
 pub use release::{
     PublishedFile, PublishedRelease, ReleaseRequest, prepare_repositories, publish,
     publish_with_repositories,
 };
+
 mod sparkle;
 mod windows_dlls;
+
 pub use execution::{
     Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, execute_worker, host_target,
 };
+
 pub use process::Worker;
 
 pub use rake_dist_core::{Config, Format, Plan, Platform, TrustOptions};
 use serde::Deserialize;
+
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -110,6 +121,7 @@ pub fn plan_with(
     formats: Option<&[Format]>,
 ) -> Result<Plan, Error> {
     let manifest = std::path::absolute(manifest)?;
+
     let output = Command::new("cargo")
         .current_dir(
             manifest
@@ -127,11 +139,13 @@ pub fn plan_with(
         ])
         .arg(&manifest)
         .output()?;
+
     if !output.status.success() {
         return Err(Error::Cargo(
             String::from_utf8_lossy(&output.stderr).trim().into(),
         ));
     }
+
     plan_metadata_with(&output.stdout, package, platform, target, formats)
 }
 
@@ -160,19 +174,25 @@ pub fn plan_metadata_with(
     formats: Option<&[Format]>,
 ) -> Result<Plan, Error> {
     let metadata: Metadata = serde_json::from_slice(metadata)?;
+
     let mut candidates = metadata.packages.into_iter().filter(|item| {
         metadata.workspace_members.contains(&item.id)
             && package.is_none_or(|name| item.name == name)
     });
+
     let selected = candidates.next().ok_or(Error::Package)?;
+
     if candidates.next().is_some() {
         return Err(Error::Package);
     }
+
     let config = selected.metadata.pointer("/rake/bundle");
+
     let config: Config = match config {
         Some(value) => serde_json::from_value(value.clone())?,
         None => Config::default(),
     };
+
     Ok(config.plan_for(&selected.name, &selected.version, platform, target, formats)?)
 }
 

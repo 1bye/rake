@@ -162,6 +162,7 @@ impl Page<Destination> for RouteScreen {
         cx: &mut gpui::App,
     ) -> Result<gpui::Entity<Self>, framework::router::MountError> {
         use gpui::AppContext;
+
         Ok(cx.new(|_| Self))
     }
 }

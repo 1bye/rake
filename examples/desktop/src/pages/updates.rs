@@ -50,6 +50,7 @@ impl Render for Updates {
                 _ => "Updates are unavailable in this build".into(),
             },
         };
+
         let error = self.updates.error(cx);
         let can_check = self.updates.can_check(cx);
         let can_download = self.updates.can_download(cx);

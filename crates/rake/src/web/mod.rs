@@ -60,9 +60,11 @@ impl DeploymentVersion {
         {
             return Err(Error::Invalid("invalid deployment identity".into()));
         }
+
         WebConfig::new()
             .base_path(&self.base_path)
             .map_err(|error| Error::Invalid(error.to_string()))?;
+
         Ok(())
     }
 }
@@ -80,6 +82,7 @@ impl Deployment {
     pub fn from_document() -> Result<Option<Self>, Error> {
         #[cfg(target_family = "wasm")]
         return browser::deployment();
+
         #[cfg(not(target_family = "wasm"))]
         Ok(None)
     }
@@ -87,6 +90,7 @@ impl Deployment {
     /// Captures a validated deployment identity. Useful for custom browser hosts.
     pub fn new(current: DeploymentVersion) -> Result<Self, Error> {
         current.validate()?;
+
         Ok(Self { current })
     }
 
@@ -102,6 +106,7 @@ impl Deployment {
         candidate: DeploymentVersion,
     ) -> Result<Option<DeploymentVersion>, Error> {
         candidate.validate()?;
+
         if candidate.application_id != self.current.application_id
             || candidate.base_path != self.current.base_path
         {
@@ -109,6 +114,7 @@ impl Deployment {
                 "deployment belongs to another application or root".into(),
             ));
         }
+
         Ok((candidate.build != self.current.build).then_some(candidate))
     }
 
@@ -117,6 +123,7 @@ impl Deployment {
     pub async fn check(&self) -> Result<Option<DeploymentVersion>, Error> {
         #[cfg(target_family = "wasm")]
         return self.available(browser::check(&self.current.base_path).await?);
+
         #[cfg(not(target_family = "wasm"))]
         Err(Error::Unsupported("browser deployment checks"))
     }
@@ -137,9 +144,11 @@ pub fn run_worker(
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, Error>>>> {
     #[cfg(target_family = "wasm")]
     return browser::worker(module, input, timeout);
+
     #[cfg(not(target_family = "wasm"))]
     {
         let _ = (module, input, timeout);
+
         Box::pin(async { Err(Error::Unsupported("browser workers")) })
     }
 }

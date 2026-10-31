@@ -3,28 +3,43 @@
 //! Resolving a plan performs no filesystem, network or native-tool operations.
 
 mod extension;
+
 pub use extension::{
     BackendOutput, BackendRequest, ComponentRecipe, CustomFormat, ExtensionError, PackageBackend,
     PreparedComponent, RecipeRequest, Verification, VerifyRequest,
 };
+
 mod desktop;
+
 pub use desktop::{ApplicationCategory, DesktopMetadata, FileAssociation, LocalizedMetadata};
+
 mod dependency;
+
 pub use dependency::{BundledDependency, BundledLibraries};
+
 mod component;
+
 pub use component::{Archive, Component, ComponentSource};
+
 mod release;
+
 pub use release::{Publisher, ReleaseConfig, UpdateSigningKey, feed_url};
+
 mod installation;
 mod update_binding;
 mod update_feed;
+
 pub use installation::Installation;
 pub use update_binding::UpdateBinding;
 pub use update_feed::{NativeFeedSignature, SignedUpdateFeed, UpdateFeed, UpdateRelease};
+
 mod overrides;
 mod trust;
+
 pub use trust::{TrustOptions, TrustRecord};
+
 mod version;
+
 pub use overrides::{DesktopOverrides, Overrides, UpdateOverrides};
 pub use version::PackageVersion;
 
@@ -53,6 +68,7 @@ impl Platform {
         let triple = target
             .parse::<target_lexicon::Triple>()
             .map_err(|_| Error::Field("target triple".into()))?;
+
         match triple.operating_system {
             target_lexicon::OperatingSystem::Darwin(_)
             | target_lexicon::OperatingSystem::MacOSX(_) => Ok(Self::Macos),
@@ -418,14 +434,17 @@ impl PackagePlan {
     pub fn version(&self) -> &PackageVersion {
         &self.version
     }
+
     /// Returns the effective per-format configuration.
     pub fn config(&self) -> &Config {
         &self.config
     }
+
     /// Returns the requested installation format.
     pub fn format(&self) -> Format {
         self.format
     }
+
     /// Returns the update owner determined by the installation channel.
     pub fn update_owner(&self) -> UpdateOwner {
         self.update_owner
@@ -449,26 +468,32 @@ impl Plan {
     pub fn name(&self) -> &str {
         &self.name
     }
+
     /// Returns the validated stable application identifier.
     pub fn identifier(&self) -> &str {
         &self.identifier
     }
+
     /// Returns the Cargo semantic version.
     pub fn version(&self) -> &str {
         &self.version
     }
+
     /// Returns the selected packaging platform.
     pub fn platform(&self) -> Platform {
         self.platform
     }
+
     /// Returns the validated configuration snapshot used by later native checks.
     pub fn config(&self) -> &Config {
         &self.config
     }
+
     /// Returns the installation requests in configured order.
     pub fn packages(&self) -> &[PackagePlan] {
         &self.packages
     }
+
     /// Returns whether legacy bundle behavior was selected.
     pub fn is_legacy(&self) -> bool {
         self.legacy
@@ -525,10 +550,13 @@ impl Config {
         formats: Option<&[Format]>,
     ) -> Result<Plan, Error> {
         let mut base = self.clone();
+
         base.normalize_paths()?;
+
         if platform == Platform::Linux && base.linux.package_name.is_none() {
             base.linux.package_name = Some(package.to_ascii_lowercase().replace('_', "-"));
         }
+
         if let Some(target) = target {
             let matches_platform = if target == "universal-apple-darwin"
                 && platform == Platform::Macos
@@ -538,11 +566,13 @@ impl Config {
             } else {
                 Platform::from_target(target)? == platform
             };
+
             if !matches_platform {
                 return Err(Error::Field(
                     "Rust target triple does not match platform".into(),
                 ));
             }
+
             if let Some(layer) = self.target_overrides.get(target) {
                 layer.apply(&mut base, platform);
                 base.normalize_paths()?;
@@ -552,10 +582,13 @@ impl Config {
                 "target overrides require an explicit Rust target triple".into(),
             ));
         }
+
         if let Some(formats) = formats {
             *base.formats_mut(platform) = formats.to_vec();
         }
+
         let requested = base.selected_formats(platform);
+
         for backend in base
             .custom_formats
             .iter()
@@ -568,23 +601,30 @@ impl Config {
                 )));
             }
         }
+
         let mut packages = Vec::new();
+
         for format in requested {
             if packages.iter().any(|p: &PackagePlan| p.format == format) {
                 return Err(Error::Duplicate(format!("{format:?}")));
             }
+
             let mut effective = base.clone();
+
             if let Some(layer) = self.format_overrides.get(&format) {
                 if layer.formats.is_some() {
                     return Err(Error::Field(
                         "format overrides cannot change format lists".into(),
                     ));
                 }
+
                 layer.apply(&mut effective, platform);
                 effective.normalize_paths()?;
             }
+
             effective.expand_dependencies(platform, target)?;
             effective.normalize_paths()?;
+
             if platform == Platform::Macos && effective.updates.enabled {
                 if let Some(minimum) = &effective.minimum_system_version {
                     if minimum
@@ -601,7 +641,9 @@ impl Config {
                     effective.minimum_system_version = Some("12.0".into());
                 }
             }
+
             *effective.formats_mut(platform) = vec![format];
+
             for name in effective
                 .sidecars
                 .iter()
@@ -627,17 +669,23 @@ impl Config {
                     )));
                 }
             }
+
             let mut validated = effective.plan_effective(package, version, platform)?;
+
             packages.append(&mut validated.packages);
         }
+
         let mut result = base;
+
         result.target_overrides.clear();
         result.format_overrides.clear();
         let name = result.name.clone().unwrap_or_else(|| package.into());
+
         let identifier = result
             .identifier
             .clone()
             .unwrap_or_else(|| format!("dev.rake.{}", package.replace('_', "-")));
+
         Ok(Plan {
             name,
             identifier,
@@ -663,9 +711,11 @@ impl Config {
             Platform::Windows => &self.windows.formats,
             Platform::Linux => &self.linux.formats,
         };
+
         if !configured.is_empty() {
             return configured.clone();
         }
+
         vec![match (platform, self.schema_version.is_none()) {
             (Platform::Macos, true) => Format::Zip,
             (Platform::Macos, false) => Format::Dmg,
@@ -686,9 +736,11 @@ impl Config {
         {
             return Err(Error::Schema(schema));
         }
+
         self.release.validate()?;
         let legacy = self.schema_version.is_none();
         let name = self.name.clone().unwrap_or_else(|| package.into());
+
         if name.trim().is_empty()
             || name
                 .chars()
@@ -696,18 +748,22 @@ impl Config {
         {
             return Err(Error::Field("name".into()));
         }
+
         let identifier = self
             .identifier
             .clone()
             .unwrap_or_else(|| format!("dev.rake.{}", package.replace('_', "-")));
+
         if !identifier.split('.').all(|part| {
             !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
         }) || !identifier.contains('.')
         {
             return Err(Error::Field("identifier".into()));
         }
+
         let parsed_version =
             semver::Version::parse(version).map_err(|_| Error::Field("version".into()))?;
+
         let paths = [
             self.icon.as_ref(),
             self.assets.as_ref(),
@@ -719,9 +775,11 @@ impl Config {
             self.linux.appstream.as_ref(),
             self.linux.flatpak.manifest.as_ref(),
         ];
+
         for path in paths.into_iter().flatten() {
             validate_relative_path(path)?;
         }
+
         if self.windows.system_dlls.iter().any(|name| {
             !name.to_ascii_lowercase().ends_with(".dll")
                 || name.starts_with('.')
@@ -731,8 +789,11 @@ impl Config {
         }) {
             return Err(Error::Field("windows.system_dlls basenames".into()));
         }
+
         let mut custom_names = std::collections::BTreeSet::new();
+
         self.desktop.validate()?;
+
         for (key, value) in &self.macos.privacy {
             if !key.starts_with("NS")
                 || !key.ends_with("UsageDescription")
@@ -745,41 +806,54 @@ impl Config {
                 ));
             }
         }
+
         for backend in &self.custom_formats {
             component_name(&backend.name)?;
+
             if !custom_names.insert(&backend.name)
                 || !backend.input_format.supports(backend.platform)
             {
                 return Err(Error::Field("custom_formats name/input platform".into()));
             }
+
             extension_command(&backend.command)?;
+
             if let Some(verifier) = &backend.verify_command {
                 extension_command(verifier)?;
             }
         }
+
         for (name, command) in &self.component_recipes {
             component_name(name)?;
+
             if matches!(name.as_str(), "directory" | "framework" | "gstreamer") {
                 return Err(Error::Field(
                     "built-in component recipes cannot be replaced".into(),
                 ));
             }
+
             extension_command(command)?;
         }
+
         let mut components = std::collections::BTreeSet::new();
+
         for component in &self.components {
             component_name(&component.name)?;
+
             if component.target != "universal-apple-darwin"
                 && component.target.parse::<target_lexicon::Triple>().is_err()
             {
                 return Err(Error::Field("component target".into()));
             }
+
             if !components.insert((&component.name, &component.target)) {
                 return Err(Error::Duplicate(component.name.clone()));
             }
+
             for path in &component.licenses {
                 validate_relative_path(path)?;
             }
+
             match &component.source {
                 ComponentSource::Local { path } => validate_relative_path(path)?,
                 ComponentSource::Https {
@@ -790,6 +864,7 @@ impl Config {
                 } => {
                     let url =
                         url::Url::parse(url).map_err(|_| Error::Field("component URL".into()))?;
+
                     if url.scheme() != "https"
                         || url.host_str().is_none()
                         || !url.username().is_empty()
@@ -798,6 +873,7 @@ impl Config {
                     {
                         return Err(Error::Field("component requires public HTTPS URL".into()));
                     }
+
                     if sha256.len() != 64
                         || !sha256
                             .bytes()
@@ -810,28 +886,38 @@ impl Config {
                 }
             }
         }
+
         let mut names = std::collections::BTreeSet::new();
+
         for sidecar in &self.sidecars {
             component_name(&sidecar.name)?;
+
             if let Some(component) = &sidecar.component {
                 component_name(component)?;
             }
+
             if !names.insert(&sidecar.name) {
                 return Err(Error::Duplicate(sidecar.name.clone()));
             }
+
             validate_relative_path(&sidecar.path)?;
         }
+
         for runtime in &self.runtimes {
             component_name(&runtime.name)?;
+
             if let Some(component) = &runtime.component {
                 component_name(component)?;
             }
+
             for plugin in &runtime.plugins {
                 component_name(plugin)?;
             }
+
             if !names.insert(&runtime.name) {
                 return Err(Error::Duplicate(runtime.name.clone()));
             }
+
             if runtime.system {
                 if platform != Platform::Linux
                     || !runtime.source.as_os_str().is_empty()
@@ -844,17 +930,22 @@ impl Config {
                 validate_relative_path(&runtime.source)?;
             }
         }
+
         let mut destinations = std::collections::BTreeSet::new();
+
         for resource in &self.resources {
             validate_relative_path(&resource.from)?;
             validate_relative_path(&resource.to)?;
+
             if !destinations.insert(&resource.to) {
                 return Err(Error::Duplicate(resource.to.display().to_string()));
             }
         }
+
         for path in self.updates.public_keys.values() {
             validate_relative_path(path)?;
         }
+
         if self.updates.enabled {
             component_name(self.updates.channel.as_deref().unwrap_or("stable"))?;
             let base = self
@@ -862,6 +953,7 @@ impl Config {
                 .base_url
                 .as_deref()
                 .and_then(|value| url::Url::parse(value).ok());
+
             if !base.as_ref().is_some_and(|url| {
                 url.scheme() == "https"
                     && url.host_str().is_some()
@@ -873,11 +965,13 @@ impl Config {
                 return Err(Error::Field("updates.base_url requires HTTPS".into()));
             }
         }
+
         let formats = match platform {
             Platform::Macos => &self.macos.formats,
             Platform::Windows => &self.windows.formats,
             Platform::Linux => &self.linux.formats,
         };
+
         let formats = if formats.is_empty() {
             vec![match (platform, legacy) {
                 (Platform::Macos, true) => Format::Zip,
@@ -889,30 +983,37 @@ impl Config {
         } else {
             formats.clone()
         };
+
         let mut packages = Vec::new();
+
         for format in formats {
             if !format.supports(platform) {
                 return Err(Error::Format { format, platform });
             }
+
             if packages.iter().any(|p: &PackagePlan| p.format == format) {
                 return Err(Error::Duplicate(format!("{format:?}")));
             }
+
             let owner = if !self.updates.enabled {
                 UpdateOwner::Disabled
             } else {
                 format.update_owner(platform)
             };
+
             let key = match owner {
                 UpdateOwner::Sparkle => Some("sparkle"),
                 UpdateOwner::Appimage => Some("appimage"),
                 UpdateOwner::Velopack => Some("velopack"),
                 _ => None,
             };
+
             if let Some(key) = key
                 && !self.updates.public_keys.contains_key(key)
             {
                 return Err(Error::Field(format!("updates.public_keys.{key}")));
             }
+
             if format == Format::Msix
                 && self
                     .windows
@@ -923,8 +1024,10 @@ impl Config {
             {
                 return Err(Error::Field("windows.msix.publisher".into()));
             }
+
             if platform == Platform::Linux {
                 let name = self.linux.package_name.as_deref().unwrap_or(package);
+
                 if name.len() < 2
                     || !name.bytes().all(|byte| {
                         byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"+.-".contains(&byte)
@@ -933,6 +1036,7 @@ impl Config {
                 {
                     return Err(Error::Field("linux.package_name".into()));
                 }
+
                 for dependencies in self.linux.dependencies.values().chain(
                     self.runtimes
                         .iter()
@@ -945,6 +1049,7 @@ impl Config {
                         }
                     }
                 }
+
                 for runtime in self.runtimes.iter().filter(|runtime| runtime.system) {
                     if format == Format::Appimage
                         || runtime
@@ -958,10 +1063,12 @@ impl Config {
                         )));
                     }
                 }
+
                 if let Some(baseline) = &self.linux.baseline {
                     if baseline.name.trim().is_empty() {
                         return Err(Error::Field("linux.baseline.name".into()));
                     }
+
                     for version in [baseline.glibc.as_deref(), baseline.kernel.as_deref()]
                         .into_iter()
                         .flatten()
@@ -972,12 +1079,14 @@ impl Config {
                     }
                 }
             }
+
             if platform == Platform::Windows
                 && !self.desktop.localizations.is_empty()
                 && format != Format::Msix
             {
                 return Err(Error::Field("Windows localized OS display labels require MSIX or a custom installer backend".into()));
             }
+
             packages.push(PackagePlan {
                 format,
                 update_owner: owner,
@@ -994,6 +1103,7 @@ impl Config {
                 config: self.clone(),
             });
         }
+
         Ok(Plan {
             name,
             identifier,
@@ -1012,7 +1122,9 @@ impl Config {
 pub fn portable_relative_path(path: &std::path::Path) -> Result<PathBuf, Error> {
     let text = path.to_str().ok_or_else(|| Error::Path(path.into()))?;
     let portable = PathBuf::from(text.replace('\\', "/"));
+
     validate_relative_path(&portable)?;
+
     Ok(portable)
 }
 
@@ -1034,29 +1146,36 @@ impl Config {
         {
             *path = portable_relative_path(path)?;
         }
+
         for resource in &mut self.resources {
             resource.from = portable_relative_path(&resource.from)?;
             resource.to = portable_relative_path(&resource.to)?;
         }
+
         for sidecar in &mut self.sidecars {
             sidecar.path = portable_relative_path(&sidecar.path)?;
         }
+
         for runtime in &mut self.runtimes {
             if !runtime.system {
                 runtime.source = portable_relative_path(&runtime.source)?;
             }
         }
+
         for path in self.updates.public_keys.values_mut() {
             *path = portable_relative_path(path)?;
         }
+
         for component in &mut self.components {
             if let ComponentSource::Local { path } = &mut component.source {
                 *path = portable_relative_path(path)?;
             }
+
             for path in &mut component.licenses {
                 *path = portable_relative_path(path)?;
             }
         }
+
         Ok(())
     }
 }
@@ -1066,6 +1185,7 @@ impl Config {
 /// Rejects absolute paths, Windows prefixes and parent traversal on every host.
 pub fn validate_relative_path(path: &std::path::Path) -> Result<(), Error> {
     let text = path.to_str().ok_or_else(|| Error::Path(path.into()))?;
+
     if text.is_empty()
         || text.contains(['\\', ':'])
         || text.chars().any(char::is_control)
@@ -1075,6 +1195,7 @@ pub fn validate_relative_path(path: &std::path::Path) -> Result<(), Error> {
     {
         return Err(Error::Path(path.into()));
     }
+
     Ok(())
 }
 
@@ -1086,6 +1207,7 @@ fn component_name(name: &str) -> Result<(), Error> {
     {
         return Err(Error::Field(format!("component/channel name: {name}")));
     }
+
     Ok(())
 }
 
@@ -1095,5 +1217,6 @@ fn extension_command(command: &[String]) -> Result<(), Error> {
             "extension requires explicit nonempty argv".into(),
         ));
     }
+
     Ok(())
 }

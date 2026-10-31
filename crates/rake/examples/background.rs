@@ -7,12 +7,15 @@ fn main() -> Result<(), rake::AppError> {
             let task = cx.spawn(async move |_| {
                 if let Ok(work) = runtime.tasks().spawn("background-work", async {
                     rake::tasks::sleep(std::time::Duration::from_millis(10)).await;
+
                     Ok(())
                 }) {
                     let _ = work.wait().await;
                 }
+
                 drop(runtime.quit(rake::quit::QuitOptions::default()));
             });
+
             cx.set_global(Workflow { _task: task });
         })
         .run()
@@ -22,6 +25,7 @@ fn main() -> Result<(), rake::AppError> {
 struct Workflow {
     _task: rake::gpui::Task<()>,
 }
+
 #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
 impl rake::gpui::Global for Workflow {}
 

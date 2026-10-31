@@ -55,9 +55,11 @@ fn standard_services_are_installed_with_shared_transport_identity() {
     let registry = services.registry();
 
     let registry_http = registry.http().unwrap();
+
     assert!(http.shares_transport_with(&registry_http));
 
     let reconstructed = registry.standard_services().unwrap();
+
     assert!(http.shares_transport_with(&reconstructed.http()));
     assert!(Rc::ptr_eq(
         &services.get::<Counter>().unwrap(),
@@ -99,6 +101,7 @@ fn raw_router_service_registry_reports_missing_standard_services() {
     ));
 
     let router = Router::<NoRoute>::with_services(RouterConfig::default(), registry);
+
     assert!(matches!(
         router.client().services().http(),
         Err(ServiceError::Missing(_))
@@ -189,6 +192,7 @@ fn headless_commands_receive_the_standard_service_handles() {
                 let actual = context
                     .http()
                     .map_err(|error| CommandError::Failed(error.to_string()))?;
+
                 observed.set(actual.shares_transport_with(&expected));
                 assert!(context.app_services().is_ok());
 
@@ -201,10 +205,12 @@ fn headless_commands_receive_the_standard_service_handles() {
         .navigator()
         .dispatch(InspectStandard, "headless".into())
         .unwrap();
+
     assert!(matches!(reply, rake::control::Reply::Submitted { .. }));
 
     let mut pool = LocalPool::new();
     let driver = router.clone();
+
     pool.spawner()
         .spawn_local(async move {
             driver.run().await.unwrap();

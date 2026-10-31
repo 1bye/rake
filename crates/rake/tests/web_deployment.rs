@@ -18,18 +18,24 @@ fn version(build: char) -> DeploymentVersion {
 #[test]
 fn deployment_checks_use_content_identity_and_reject_foreign_manifests() {
     let deployment = Deployment::new(version('a')).unwrap();
+
     assert!(deployment.available(version('a')).unwrap().is_none());
     assert!(deployment.available(version('b')).unwrap().is_some());
     let mut foreign = version('b');
+
     foreign.application_id = "other.app".into();
     assert!(deployment.available(foreign).is_err());
     let mut foreign = version('b');
+
     foreign.base_path = "/other/".into();
     assert!(deployment.available(foreign).is_err());
+
     for build in ['g', '/', 'A'] {
         assert!(Deployment::new(version(build)).is_err());
     }
+
     let mut unknown = version('a');
+
     unknown.protocol = 2;
     assert!(Deployment::new(unknown).is_err());
 }

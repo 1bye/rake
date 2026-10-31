@@ -89,6 +89,7 @@ impl UpdateModel {
         if self.released || !self.runtime_live() {
             return UpdateHandleState::Unavailable;
         }
+
         self.snapshot
             .as_ref()
             .map_or(UpdateHandleState::Unavailable, |snapshot| {
@@ -100,7 +101,9 @@ impl UpdateModel {
         if self.released || !self.runtime_live() {
             return None;
         }
+
         let state = &self.snapshot.as_ref()?.state;
+
         update_info(state).map(|info| info.version.clone())
     }
 
@@ -171,10 +174,13 @@ impl UpdateHandle {
             .snapshot
             .as_ref()
             .map_or(0, |snapshot| snapshot.revision);
+
         let controller = model.read(&*cx).controller.clone();
+
         if let Some(controller) = controller {
             let weak_model = model.downgrade();
             let runtime_stopped = model.read(&*cx).runtime_stopped.clone();
+
             let observer = cx.spawn(async move |_, cx| {
                 observe_managed(
                     controller,
@@ -185,6 +191,7 @@ impl UpdateHandle {
                 )
                 .await;
             });
+
             model.update(cx, |model, _| {
                 model.observation = Some(Observation::Standalone(observer));
             });
@@ -206,21 +213,26 @@ impl UpdateHandle {
         let mut parts = BindingParts::new(&runtime);
         let live = parts.runtime_live;
         let entry = page.entry();
+
         parts.runtime_live = Rc::new(move || live() && entry.id().is_ok());
         let model = new_model(parts, cx);
         let (observe, release) = subscriptions(&model, cx);
 
         let controller = model.read(&*cx).controller.clone();
+
         if let Some(controller) = controller {
             let weak_model = model.downgrade();
             let async_cx = cx.to_async();
             let key = format!("rake.updates.{}", model.entity_id());
+
             let admission = page.while_visible(key, move |run| {
                 let controller = controller.clone();
                 let weak_model = weak_model.clone();
                 let mut async_cx = async_cx.clone();
+
                 async move { observe_page(controller, weak_model, run, &mut async_cx).await }
             });
+
             match admission {
                 Ok(task) => {
                     model.update(cx, |model, _| {
@@ -293,6 +305,7 @@ impl UpdateHandle {
                 (model.check)()
             }
         });
+
         self.record_action(cx, &result);
     }
 
@@ -305,6 +318,7 @@ impl UpdateHandle {
                 (model.download)()
             }
         });
+
         self.record_action(cx, &result);
     }
 
@@ -321,6 +335,7 @@ impl UpdateHandle {
                     .map(|controller| controller.cancel())
             }
         });
+
         self.record_action(cx, &result);
     }
 
@@ -333,6 +348,7 @@ impl UpdateHandle {
                 (model.restart)()
             }
         });
+
         self.record_action(cx, &result);
     }
 
@@ -346,7 +362,9 @@ impl UpdateHandle {
                 model.runtime_live(),
             )
         });
+
         let error = result.as_ref().err().map(ToString::to_string);
+
         self.model.update(cx, |model, model_cx| {
             if live {
                 if let Some(snapshot) = snapshot {
@@ -356,6 +374,7 @@ impl UpdateHandle {
                 model.controller = None;
                 model.snapshot = None;
             }
+
             model.last_error = error;
             model_cx.notify();
         });
@@ -379,6 +398,7 @@ impl BindingParts {
         let (controller, snapshot, last_error) = match runtime.updates() {
             Ok(Some(controller)) => {
                 let snapshot = controller.snapshot();
+
                 (Some(controller), Some(snapshot), None)
             }
             Ok(None) => (None, None, None),
@@ -390,6 +410,7 @@ impl BindingParts {
         let restart_runtime = runtime.clone();
         let live_runtime = runtime.clone();
         let stopped_runtime = runtime.clone();
+
         Self {
             controller,
             snapshot,
@@ -400,6 +421,7 @@ impl BindingParts {
             runtime_live: Rc::new(move || live_runtime.client().is_ok()),
             runtime_stopped: Rc::new(move || {
                 let runtime = stopped_runtime.clone();
+
                 Box::pin(async move { runtime.stopped().await })
             }),
         }
@@ -441,20 +463,25 @@ fn subscriptions<V: 'static>(
     cx: &mut Context<V>,
 ) -> (Subscription, Subscription) {
     let observe = cx.observe(model, |_, _, cx| cx.notify());
+
     let release = cx.on_release({
         let weak = model.downgrade();
+
         move |_, cx| {
             let _ = weak.update(cx, |model, model_cx| {
                 model.released = true;
+
                 if let Some(observation) = model.observation.take() {
                     observation.cancel();
                 }
+
                 model.controller = None;
                 model.snapshot = None;
                 model_cx.notify();
             });
         }
     });
+
     (observe, release)
 }
 
@@ -468,15 +495,18 @@ async fn observe_managed(
     loop {
         let changed = Box::pin(controller.changed(revision));
         let stopped = (runtime_stopped)();
+
         match select(changed, stopped).await {
             Either::Left((snapshot, _)) => {
                 revision = snapshot.revision;
+
                 if !publish_snapshot(&weak_model, cx, snapshot) {
                     return;
                 }
             }
             Either::Right(((), _)) => {
                 mark_unavailable(&weak_model, cx);
+
                 return;
             }
         }
@@ -490,19 +520,24 @@ async fn observe_page(
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), TaskError> {
     let mut snapshot = controller.snapshot();
+
     loop {
         match run.check() {
             Ok(()) => {}
             Err(TaskError::OwnerDisposed) => {
                 mark_unavailable(&weak_model, cx);
+
                 return Ok(());
             }
             Err(_) => return Ok(()),
         }
+
         let revision = snapshot.revision;
+
         if !publish_snapshot(&weak_model, cx, snapshot) {
             return Ok(());
         }
+
         snapshot = controller.changed(revision).await;
     }
 }
@@ -517,8 +552,10 @@ fn publish_snapshot(
             if model.released {
                 return false;
             }
+
             model.snapshot = Some(snapshot);
             model_cx.notify();
+
             true
         })
         .unwrap_or(false)
@@ -529,6 +566,7 @@ fn mark_unavailable(weak_model: &WeakEntity<UpdateModel>, cx: &mut gpui::AsyncAp
         if model.released {
             return;
         }
+
         model.controller = None;
         model.snapshot = None;
         model.last_error = Some("update runtime is no longer available".into());

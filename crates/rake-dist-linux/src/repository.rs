@@ -1,6 +1,7 @@
 //! Repository production delegates native signing and metadata to established tools.
 use crate::{Error, run};
 use rake_dist_core::Format;
+
 use std::{
     fs,
     io::Write,
@@ -28,6 +29,7 @@ pub struct Repository<'a> {
     /// Flatpak branch; defaults are selected by the caller.
     pub branch: &'a str,
 }
+
 /// Creates signed native repository metadata and an enrollment public key.
 ///
 /// Debian uses a flat APT repository (`deb [signed-by=...] URL ./`). RPM uses
@@ -50,6 +52,7 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
             "repository name/key/packages invalid".into(),
         ));
     }
+
     if !input.public_url.starts_with("https://")
         || input.public_url.contains(['\n', '\r'])
         || input.branch.contains(['\n', '\r'])
@@ -58,59 +61,75 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
             "repository public URL/branch invalid".into(),
         ));
     }
+
     fs::create_dir_all(input.output)?;
+
     if fs::read_dir(input.output)?.next().is_some() {
         return Err(Error::Metadata("repository output must be empty".into()));
     }
+
     let public = run(Command::new("gpg").args(["--batch", "--armor", "--export", input.gpg_key]))?;
+
     if !public.contains("BEGIN PGP PUBLIC KEY BLOCK") {
         return Err(Error::Metadata(
             "repository signing public key unavailable".into(),
         ));
     }
+
     fs::write(input.output.join("public-key.asc"), &public)?;
     let packages = if input.format == Format::Arch {
         input.output.to_owned()
     } else {
         let packages = input.output.join("packages");
+
         fs::create_dir(&packages)?;
+
         packages
     };
+
     let mut staged = Vec::new();
+
     for source in input.packages {
         if source.is_symlink() || !source.is_file() {
             return Err(Error::Metadata(
                 "repository input must be a regular package file".into(),
             ));
         }
+
         let destination = packages.join(
             source
                 .file_name()
                 .ok_or_else(|| Error::Metadata("package filename".into()))?,
         );
+
         if destination.exists() {
             return Err(Error::Metadata(
                 "repository package filename collision".into(),
             ));
         }
+
         fs::copy(source, &destination)?;
         staged.push(destination);
     }
+
     match input.format {
         Format::Deb => {
             let index = run(Command::new("dpkg-scanpackages")
                 .current_dir(input.output)
                 .args(["--multiversion", "packages"]))?;
+
             fs::write(input.output.join("Packages"), index.as_bytes())?;
             let mut gzip = flate2::write::GzEncoder::new(
                 fs::File::create(input.output.join("Packages.gz"))?,
                 flate2::Compression::default(),
             );
+
             gzip.write_all(index.as_bytes())?;
             gzip.finish()?;
             let release = run(Command::new("apt-ftparchive")
                 .current_dir(input.output)
                 .args(["release", "."]))?;
+
             fs::write(input.output.join("Release"), release)?;
             sign(
                 input,
@@ -127,12 +146,14 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
         }
         Format::Rpm => {
             let keyring = input.output.join(".rpm-keyring");
+
             fs::create_dir(&keyring)?;
             run(Command::new("rpmkeys")
                 .arg("--dbpath")
                 .arg(&keyring)
                 .arg("--import")
                 .arg(input.output.join("public-key.asc")))?;
+
             for package in &staged {
                 run(Command::new("rpmsign")
                     .args([
@@ -147,9 +168,11 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
                     .arg("--checksig")
                     .arg(package))?;
             }
+
             fs::remove_dir_all(&keyring)?;
             run(Command::new("createrepo_c").arg(input.output))?;
             let metadata = input.output.join("repodata/repomd.xml");
+
             sign(input, &metadata, &metadata.with_extension("xml.asc"), false)?;
         }
         Format::Arch => {
@@ -161,6 +184,7 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
                     false,
                 )?;
             }
+
             run(Command::new("repo-add")
                 .args(["--sign", "--key", input.gpg_key, "--prevent-downgrade"])
                 .arg(input.output.join(format!("{}.db.tar.gz", input.name)))
@@ -168,10 +192,12 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
         }
         Format::Flatpak => {
             let repo = input.output.join("repo");
+
             run(Command::new("ostree")
                 .arg("init")
                 .arg(format!("--repo={}", repo.display()))
                 .arg("--mode=archive"))?;
+
             for package in &staged {
                 run(Command::new("flatpak")
                     .arg("build-import-bundle")
@@ -179,6 +205,7 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
                     .arg(&repo)
                     .arg(package))?;
             }
+
             run(Command::new("flatpak")
                 .args(["build-update-repo", "--generate-static-deltas"])
                 .arg(format!("--gpg-sign={}", input.gpg_key))
@@ -188,10 +215,13 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
             let binary = Command::new("gpg")
                 .args(["--batch", "--export", input.gpg_key])
                 .output()?;
+
             if !binary.status.success() {
                 return Err(Error::Metadata("GPG key export failed".into()));
             }
+
             let key = base64::engine::general_purpose::STANDARD.encode(binary.stdout);
+
             fs::write(
                 input.output.join(format!("{}.flatpakrepo", input.name)),
                 format!(
@@ -217,10 +247,13 @@ pub fn build_repository(input: &Repository<'_>) -> Result<Vec<PathBuf>, Error> {
             ));
         }
     }
+
     repository_files(input.output, input.output)
 }
+
 fn sign(input: &Repository<'_>, source: &Path, output: &Path, clear: bool) -> Result<(), Error> {
     let mut command = Command::new("gpg");
+
     command
         .args([
             "--batch",
@@ -233,31 +266,42 @@ fn sign(input: &Repository<'_>, source: &Path, output: &Path, clear: bool) -> Re
         ])
         .arg(output);
     command.arg(if clear { "--clearsign" } else { "--armor" });
+
     if !clear {
         command.arg("--detach-sign");
     }
+
     command.arg(source);
     run(&mut command)?;
     let mut verify = Command::new("gpg");
+
     verify.args(["--batch", "--verify"]).arg(output);
+
     if !clear {
         verify.arg(source);
     }
+
     run(&mut verify)?;
+
     Ok(())
 }
 
 fn repository_files(root: &Path, path: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut files = Vec::new();
+
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path();
+
         if entry.file_type()?.is_symlink() {
             let actual = fs::canonicalize(&path)?;
+
             if !actual.starts_with(fs::canonicalize(root)?) || !actual.is_file() {
                 return Err(Error::Metadata("repository symlink escapes output".into()));
             }
+
             let bytes = fs::read(&actual)?;
+
             fs::remove_file(&path)?;
             fs::write(&path, bytes)?;
             files.push(path);
@@ -267,6 +311,8 @@ fn repository_files(root: &Path, path: &Path) -> Result<Vec<PathBuf>, Error> {
             files.push(path);
         }
     }
+
     files.sort();
+
     Ok(files)
 }

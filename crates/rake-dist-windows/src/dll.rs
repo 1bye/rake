@@ -2,6 +2,7 @@
 use crate::Error;
 use object::Object;
 use sha2::{Digest, Sha256};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -24,17 +25,22 @@ pub struct DllDeployment<'a> {
     /// Additional DLLs explicitly supplied by an enrolled system prerequisite.
     pub system_dlls: &'a [String],
 }
+
 /// Returns imported DLL basenames from a real PE image, without invoking native tools.
 /// # Errors
 /// Rejects malformed/non-PE images, import tables and nonportable DLL names.
 pub fn pe_imports(path: &Path) -> Result<Vec<String>, Error> {
     let bytes = fs::read(path)?;
+
     let file =
         object::File::parse(bytes.as_slice()).map_err(|error| Error::Tool(error.to_string()))?;
+
     if file.format() != object::BinaryFormat::Pe {
         return Err(Error::Tool("DLL deployment requires a PE image".into()));
     }
+
     let mut imports = BTreeSet::new();
+
     for import in file
         .imports()
         .map_err(|error| Error::Tool(error.to_string()))?
@@ -42,13 +48,17 @@ pub fn pe_imports(path: &Path) -> Result<Vec<String>, Error> {
         let name = std::str::from_utf8(import.library())
             .map_err(|error| Error::Tool(error.to_string()))?
             .to_ascii_lowercase();
+
         if !dll_name(&name) && !system(&name) {
             return Err(Error::Tool("invalid imported DLL basename".into()));
         }
+
         imports.insert(name);
     }
+
     Ok(imports.into_iter().collect())
 }
+
 /// Copies a complete private dependency closure beside its executable before signing.
 ///
 /// Runtime DLLs remain at their declared resource paths too, so callers can still
@@ -59,48 +69,62 @@ pub fn pe_imports(path: &Path) -> Result<Vec<String>, Error> {
 /// Call only with an owned staging destination; source/project files are not mutated.
 pub fn deploy_dlls(input: &DllDeployment<'_>) -> Result<Vec<PathBuf>, Error> {
     let mut catalog: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+
     for root in input.roots {
         let root = fs::canonicalize(root)?;
+
         for path in dll_files(&root, &root)? {
             let name = path
                 .file_name()
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| Error::Tool("DLL filename must be UTF-8".into()))?
                 .to_ascii_lowercase();
+
             catalog.entry(name).or_default().push(path);
         }
     }
+
     let seeds: Vec<_> = catalog.keys().cloned().collect();
+
     for root in input.fallback_roots {
         let root = fs::canonicalize(root)?;
+
         for path in dll_files(&root, &root)? {
             let name = path
                 .file_name()
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| Error::Tool("CRT DLL filename".into()))?
                 .to_ascii_lowercase();
+
             catalog.entry(name).or_insert_with(|| vec![path]);
         }
     }
+
     let machine = pe_architecture(input.executable)?;
     let mut queue = vec![input.executable.to_owned()];
     let mut selected = BTreeMap::new();
+
     for name in &seeds {
         let path = select(&catalog, name)?;
+
         queue.push(path.clone());
         selected.insert(name.clone(), path);
     }
+
     let mut inspected = BTreeSet::new();
+
     while let Some(path) = queue.pop() {
         if !inspected.insert(fs::canonicalize(&path)?) {
             continue;
         }
+
         if pe_architecture(&path)? != machine {
             return Err(Error::Tool(format!(
                 "private DLL architecture conflicts with {}",
                 input.executable.display()
             )));
         }
+
         for name in pe_imports(&path)? {
             if system(&name)
                 || input
@@ -110,16 +134,21 @@ pub fn deploy_dlls(input: &DllDeployment<'_>) -> Result<Vec<PathBuf>, Error> {
             {
                 continue;
             }
+
             let dependency=select(&catalog,&name).map_err(|_|Error::Tool(format!("undeclared or conflicting DLL {name} required by {}; add its runtime/component or declare an installed system prerequisite",path.display())))?;
+
             if selected.insert(name, dependency.clone()).is_none() {
                 queue.push(dependency);
             }
         }
     }
+
     fs::create_dir_all(input.destination)?;
     let mut deployed = Vec::new();
+
     for (name, path) in selected {
         let output = input.destination.join(name);
+
         if output.exists() {
             if digest(&output)? != digest(&path)? {
                 return Err(Error::Tool("private DLL destination collision".into()));
@@ -127,21 +156,27 @@ pub fn deploy_dlls(input: &DllDeployment<'_>) -> Result<Vec<PathBuf>, Error> {
         } else {
             fs::copy(path, &output)?;
         }
+
         deployed.push(output);
     }
+
     Ok(deployed)
 }
+
 fn dll_files(root: &Path, directory: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut files = Vec::new();
+
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
         let actual = fs::canonicalize(&path)?;
+
         if !actual.starts_with(root) {
             return Err(Error::Tool(
                 "native DLL symlink escapes declared runtime".into(),
             ));
         }
+
         if entry.file_type()?.is_dir() {
             files.extend(dll_files(root, &path)?);
         } else if actual.is_file()
@@ -153,21 +188,29 @@ fn dll_files(root: &Path, directory: &Path) -> Result<Vec<PathBuf>, Error> {
             files.push(path);
         }
     }
+
     Ok(files)
 }
+
 fn digest(path: &Path) -> Result<Vec<u8>, Error> {
     let mut hash = Sha256::new();
+
     std::io::copy(&mut fs::File::open(path)?, &mut hash)?;
+
     Ok(hash.finalize().to_vec())
 }
+
 fn select(catalog: &BTreeMap<String, Vec<PathBuf>>, name: &str) -> Result<PathBuf, Error> {
     let values = catalog
         .get(name)
         .ok_or_else(|| Error::Tool(format!("undeclared DLL {name}")))?;
+
     let first = values
         .first()
         .ok_or_else(|| Error::Tool("empty DLL catalog entry".into()))?;
+
     let hash = digest(first)?;
+
     for value in &values[1..] {
         if digest(value)? != hash {
             return Err(Error::Tool(format!(
@@ -175,8 +218,10 @@ fn select(catalog: &BTreeMap<String, Vec<PathBuf>>, name: &str) -> Result<PathBu
             )));
         }
     }
+
     Ok(first.clone())
 }
+
 fn dll_name(name: &str) -> bool {
     name.ends_with(".dll")
         && name
@@ -184,6 +229,7 @@ fn dll_name(name: &str) -> bool {
             .all(|value| value.is_ascii_alphanumeric() || b"._-".contains(&value))
         && !name.starts_with('.')
 }
+
 fn system(name: &str) -> bool {
     name.starts_with("api-ms-win-")
         || name.starts_with("ext-ms-win-")
@@ -273,32 +319,40 @@ fn system(name: &str) -> bool {
         ]
         .contains(&name)
 }
+
 fn pe_architecture(path: &Path) -> Result<object::Architecture, Error> {
     let bytes = fs::read(path)?;
+
     let file =
         object::File::parse(bytes.as_slice()).map_err(|error| Error::Tool(error.to_string()))?;
+
     if file.format() != object::BinaryFormat::Pe {
         return Err(Error::Tool("native dependency is not a PE image".into()));
     }
+
     Ok(file.architecture())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn duplicate_versions_are_only_allowed_when_bytes_match() {
         let root = tempfile::tempdir().unwrap();
         let first = root.path().join("first.dll");
         let second = root.path().join("second.dll");
+
         fs::write(&first, b"same").unwrap();
         fs::write(&second, b"same").unwrap();
         let catalog = BTreeMap::from([("codec.dll".into(), vec![first, second.clone()])]);
+
         assert!(select(&catalog, "codec.dll").is_ok());
         fs::write(second, b"different").unwrap();
         assert!(select(&catalog, "codec.dll").is_err());
         assert!(select(&catalog, "missing.dll").is_err());
     }
+
     #[test]
     fn redistributable_crt_is_not_silently_treated_as_an_os_library() {
         assert!(system("api-ms-win-crt-runtime-l1-1-0.dll"));

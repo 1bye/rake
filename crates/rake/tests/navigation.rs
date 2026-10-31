@@ -28,6 +28,7 @@ fn harness(config: RouterConfig) -> (Router<Destination>, LocalPool) {
 #[test]
 fn public_admission_redirect_keeps_one_operation_and_final_status() {
     let (router, mut pool) = harness(RouterConfig::default());
+
     router
         .entry_admission(|context| async move {
             if matches!(context.destination, Destination::Login) {
@@ -41,7 +42,9 @@ fn public_admission_redirect_keeps_one_operation_and_final_status() {
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     let id = operation.id();
+
     assert!(matches!(
         pool.run_until(operation.wait()),
         Ok(Outcome::Committed(_))
@@ -52,6 +55,7 @@ fn public_admission_redirect_keeps_one_operation_and_final_status() {
         .into_iter()
         .find(|status| status.key.operation_id == id)
         .expect("status retained");
+
     assert_eq!(status.key.destination, Destination::Login.encode());
     assert_eq!(status.state, NavigationState::Committed);
 }
@@ -59,6 +63,7 @@ fn public_admission_redirect_keeps_one_operation_and_final_status() {
 #[test]
 fn public_pending_admission_can_be_cancelled_by_operation_id() {
     let (router, mut pool) = harness(RouterConfig::default());
+
     router
         .entry_admission(|_| async { futures::future::pending::<Admission<Destination>>().await })
         .unwrap();
@@ -66,7 +71,9 @@ fn public_pending_admission_can_be_cancelled_by_operation_id() {
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     let id = operation.id();
+
     pool.run_until_stalled();
     assert!(router.cancel(id).unwrap());
     assert_eq!(
@@ -78,10 +85,13 @@ fn public_pending_admission_can_be_cancelled_by_operation_id() {
 #[test]
 fn public_router_snapshot_exposes_keyed_navigation() {
     let (router, mut pool) = harness(RouterConfig::default());
+
     let operation = router
         .navigator()
         .open(Destination::Home, OpenTarget::NewTab);
+
     let id = operation.id();
+
     pool.run_until(operation.wait()).unwrap();
 
     let status = router
@@ -90,6 +100,7 @@ fn public_router_snapshot_exposes_keyed_navigation() {
         .into_iter()
         .find(|status| status.key.operation_id == id)
         .expect("snapshot status");
+
     assert_eq!(status.key.window_id, WindowId(1));
     assert_eq!(status.key.destination, Destination::Home.encode());
 }

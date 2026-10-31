@@ -168,6 +168,7 @@ impl Collector {
             .buffer
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+
         (
             self.elapsed_us(),
             buffer.sequence,
@@ -191,6 +192,7 @@ impl Collector {
     pub fn append_http(&self, id: u64, bytes: &[u8]) -> bool {
         if let Ok(mut bodies) = self.0.http.try_lock() {
             bodies.append(id, bytes);
+
             true
         } else {
             false
@@ -335,6 +337,7 @@ impl Collector {
                 #[cfg(not(feature = "devtools"))]
                 let _ = old;
             }
+
             self.0.dropped.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -355,15 +358,19 @@ impl Collector {
             parent_span_id: context.parent_span_id,
             duration_us,
         };
+
         #[cfg(feature = "devtools")]
         {
             // Keep IPC snapshots below their 1 MiB envelope even with rich HTTP metadata.
             const LIMIT: usize = 512 * 1024;
             let bytes = serde_json::to_vec(&record).map_or(LIMIT + 1, |bytes| bytes.len());
+
             if bytes > LIMIT {
                 self.0.dropped.fetch_add(1, Ordering::Relaxed);
+
                 return;
             }
+
             while buffer.bytes + bytes > LIMIT {
                 if let Some(old) = buffer.records.pop_front() {
                     buffer.evicted += 1;
@@ -375,6 +382,7 @@ impl Collector {
                     break;
                 }
             }
+
             buffer.bytes += bytes;
         }
         buffer.records.push_back(record);
@@ -524,6 +532,7 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
         drop(extensions);
         #[allow(unused_mut)]
         let mut context = capture(span, &self.0);
+
         #[cfg(feature = "devtools")]
         {
             context.source =
@@ -575,6 +584,7 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
         #[cfg(feature = "devtools")]
         let context = {
             let mut context = context;
+
             context.source =
                 event
                     .metadata()
@@ -584,8 +594,10 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
                         file: file.into(),
                         line,
                     });
+
             context
         };
+
         self.0.record_context(
             context,
             event.metadata().level().as_str(),
@@ -606,8 +618,10 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
                 .map(|data| data.started.elapsed().as_micros().min(u64::MAX as u128) as u64);
 
             let metadata = span.metadata();
+
             #[allow(unused_mut)]
             let mut context = capture(span, &self.0);
+
             #[cfg(feature = "devtools")]
             {
                 context.source = metadata
@@ -771,6 +785,7 @@ impl<S: Subscriber> Layer<S> for OutputLayer {
         } else {
             text
         };
+
         #[cfg(not(target_family = "wasm"))]
         if self.sender.try_send(text).is_err() {
             self.collector

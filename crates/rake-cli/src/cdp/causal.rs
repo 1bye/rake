@@ -52,6 +52,7 @@ impl Causal {
         let mut events = Vec::new();
         let cursor = self.cursor;
         let mut previous = cursor;
+
         for record in snapshot
             .records
             .iter()
@@ -60,11 +61,13 @@ impl Causal {
             self.loss |= record.sequence > previous.saturating_add(1);
             previous = record.sequence;
             let properties = properties(record, sources.get(&record.sequence));
+
             match record.kind.as_str() {
                 "span_open" => {
                     if let Some(id) = record.span_id {
                         let lane = lane(record);
                         let label = label(record);
+
                         self.insert(
                             id,
                             Start {
@@ -81,13 +84,16 @@ impl Causal {
                 "span_close" => {
                     if let Some(id) = record.span_id {
                         let cached = self.remove(id, false);
+
                         if let Some(duration) = record.duration_us {
                             let start = cached.as_ref().map_or_else(
                                 || self.time(record.elapsed_us.saturating_sub(duration)),
                                 |start| start.at,
                             );
+
                             let end = self.time(record.elapsed_us);
                             let mut properties = properties;
+
                             properties.push(json!([
                                 "Span start outside capture",
                                 cached.is_none().to_string()
@@ -96,6 +102,7 @@ impl Causal {
                                 "Measurement",
                                 "asynchronous span lifetime; not CPU execution"
                             ]));
+
                             if let Some(parent) =
                                 record.parent_span_id.and_then(|id| self.spans.get(&id))
                             {
@@ -103,9 +110,11 @@ impl Causal {
                                     "span-{}-{id}",
                                     record.parent_span_id.unwrap_or_default()
                                 );
+
                                 events.push(json!({"name":"Captured span parent","cat":"rake.causal","ph":"s","id":flow,"pid":1,"tid":1,"ts":parent.at}));
                                 events.push(json!({"name":"Captured span parent","cat":"rake.causal","ph":"f","bp":"e","id":flow,"pid":1,"tid":1,"ts":start}));
                             }
+
                             events.extend(super::frames::track(
                                 &label(record),
                                 start,
@@ -121,19 +130,23 @@ impl Causal {
                     let Some(id) = record.fields.get("request_id").and_then(Value::as_u64) else {
                         continue;
                     };
+
                     let phase = record
                         .fields
                         .get("phase")
                         .and_then(Value::as_str)
                         .unwrap_or_default();
+
                     let request_label =
                         format!("HTTP {} {}", text(record, "method"), text(record, "url"));
+
                     if phase == "started" {
                         let start = record
                             .fields
                             .get("request_start_us")
                             .and_then(Value::as_u64)
                             .unwrap_or(record.elapsed_us);
+
                         self.insert(
                             id,
                             Start {
@@ -150,11 +163,13 @@ impl Causal {
                         "completed" | "failed" | "timed_out" | "cancelled" | "abandoned"
                     ) {
                         let cached = self.remove(id, true);
+
                         let duration = record
                             .fields
                             .get("duration_us")
                             .and_then(Value::as_u64)
                             .unwrap_or_default();
+
                         let start = cached.as_ref().map_or_else(
                             || {
                                 self.time(
@@ -167,8 +182,10 @@ impl Causal {
                             },
                             |start| start.at,
                         );
+
                         let end = self.time(record.elapsed_us);
                         let mut properties = properties;
+
                         properties.push(json!([
                             "Request start outside capture",
                             cached.is_none().to_string()
@@ -194,24 +211,31 @@ impl Causal {
                 _ => {}
             }
         }
+
         if let Some(record) = snapshot.records.last() {
             self.cursor = self.cursor.max(record.sequence);
         }
+
         events
     }
 
     fn insert(&mut self, id: u64, mut start: Start, request: bool) {
         let _ = self.remove(id, request);
+
         start.bytes = start.label.len()
             + serde_json::to_vec(&start.properties).map_or(usize::MAX / 2, |data| data.len())
             + 128;
+
         if start.bytes > 128 * 1024 {
             self.loss = true;
+
             return;
         }
+
         while self.spans.len() + self.requests.len() >= 128 || self.bytes + start.bytes > 128 * 1024
         {
             let old = self.spans.pop_first().or_else(|| self.requests.pop_first());
+
             if let Some((_, start)) = old {
                 self.bytes -= start.bytes;
                 self.loss = true;
@@ -219,7 +243,9 @@ impl Causal {
                 break;
             }
         }
+
         self.bytes += start.bytes;
+
         if request {
             self.requests.insert(id, start);
         } else {
@@ -233,19 +259,23 @@ impl Causal {
         } else {
             self.spans.remove(&id)
         };
+
         if let Some(start) = &start {
             self.bytes -= start.bytes;
         }
+
         start
     }
 
     pub fn finish(&mut self, end: u64) -> Vec<Value> {
         let mut events = Vec::new();
+
         for (_, start) in std::mem::take(&mut self.spans)
             .into_iter()
             .chain(std::mem::take(&mut self.requests))
         {
             let mut properties = start.properties;
+
             properties.push(json!([
                 "Incomplete",
                 "end not observed before recording stopped"
@@ -259,7 +289,9 @@ impl Causal {
                 properties,
             ));
         }
+
         self.bytes = 0;
+
         events
     }
 }
@@ -317,22 +349,27 @@ fn properties(record: &Record, source: Option<&String>) -> Vec<Value> {
                 .map_or_else(|| "unavailable".into(), |id| id.to_string())
         ]),
     ];
+
     for key in record.fields.keys().take(16) {
         result.push(json!([key, text(record, key)]));
     }
+
     if let Some(source) = source {
         result.push(json!(["Rust source URL", source]));
     }
+
     result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn record(sequence: u64, elapsed: u64, kind: &str, id: Option<u64>, fields: Value) -> Record {
         serde_json::from_value(json!({"sequence":sequence,"elapsed_us":elapsed,"level":"INFO","target":"test","kind":kind,
             "spans":["command.execute"],"span_id":id,"duration_us":if kind=="span_close" {Some(2000)} else {None},"fields":fields})).unwrap()
     }
+
     fn clock() -> FrameClock {
         FrameClock {
             recording_us: 1000,
@@ -346,6 +383,7 @@ mod tests {
     #[test]
     fn commands_requests_and_partial_spans_share_the_calibrated_clock() {
         let mut trace = Causal::default();
+
         trace.calibrate(&clock());
         let records = vec![
             record(
@@ -377,6 +415,7 @@ mod tests {
                 json!({"phase":"completed","request_id":3,"method":"GET","url":"http://fixture/","duration_us":3000}),
             ),
         ];
+
         let events = trace.observe(
             &Snapshot {
                 records,
@@ -386,6 +425,7 @@ mod tests {
             },
             &BTreeMap::new(),
         );
+
         let command = events
             .iter()
             .find(|event| {
@@ -395,15 +435,18 @@ mod tests {
                     && event["ph"] == "b"
             })
             .unwrap();
+
         let request = events
             .iter()
             .find(|event| event["name"] == "HTTP GET http://fixture/" && event["ph"] == "b")
             .unwrap();
+
         assert_eq!(command["ts"], 2000);
         assert_eq!(request["ts"], 2500);
         assert_eq!(trace.cursor, 14);
         assert!(!trace.loss, "consumed eviction is not loss");
         let records = vec![record(15, 15000, "span_open", Some(8), json!({}))];
+
         trace.observe(
             &Snapshot {
                 records,
@@ -424,6 +467,7 @@ mod tests {
     #[test]
     fn pending_retention_is_bounded_and_unread_gaps_report_loss() {
         let mut trace = Causal::default();
+
         trace.calibrate(&clock());
         let records = (11..300)
             .map(|id| {
@@ -436,6 +480,7 @@ mod tests {
                 )
             })
             .collect();
+
         trace.observe(
             &Snapshot {
                 records,
@@ -449,6 +494,7 @@ mod tests {
         assert!(trace.bytes <= 128 * 1024);
         assert!(trace.loss);
         let mut trace = Causal::default();
+
         trace.calibrate(&clock());
         trace.observe(
             &Snapshot {

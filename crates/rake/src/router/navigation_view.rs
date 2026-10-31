@@ -4,6 +4,7 @@ use gpui::{IntoElement, RenderOnce, Window, div, prelude::*, rgb};
 use super::{
     BlockReason, CancelReason, NavigationState, Navigator, OperationId, Route, Router, WindowId,
 };
+
 use crate::inspection::InspectElement as _;
 
 /// Built-in loading, cancellation and retry controls for one window.
@@ -22,6 +23,7 @@ impl<R: Route> NavigationBoundary<R> {
     pub fn new(router: Router<R>) -> Self {
         let navigator = router.navigator();
         let window = navigator.window_id();
+
         Self { navigator, window }
     }
 
@@ -29,6 +31,7 @@ impl<R: Route> NavigationBoundary<R> {
     #[must_use]
     pub fn in_window(mut self, window: WindowId) -> Self {
         self.window = window;
+
         self
     }
 }
@@ -59,13 +62,16 @@ fn button(
 
 fn tab_navigation(event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut gpui::App) {
     let mut modifiers = event.keystroke.modifiers;
+
     modifiers.shift = false;
+
     if event.keystroke.key == "tab" && !modifiers.modified() && !window.default_prevented() {
         if event.keystroke.modifiers.shift {
             window.focus_prev(cx);
         } else {
             window.focus_next(cx);
         }
+
         window.prevent_default();
         cx.stop_propagation();
     }
@@ -76,8 +82,10 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
         let Ok(router) = self.navigator.runtime() else {
             return div().into_any_element();
         };
+
         let has_page = self.navigator.for_window(self.window).current_tab().is_ok();
         let shutting_down = router.quit_status().phase.blocks_navigation();
+
         let mut feedback = div()
             .id("rake.navigation.feedback")
             .tab_group()
@@ -87,6 +95,7 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
             .gap_2();
 
         let statuses = router.navigation(self.window);
+
         for status in &statuses {
             // A retry presents its own state. Hide earlier attempts in that
             // chain without suppressing unrelated navigation failures.
@@ -96,7 +105,9 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
             {
                 continue;
             }
+
             let pending = matches!(status.state, NavigationState::Pending);
+
             let message = match &status.state {
                 NavigationState::Pending => "Opening…".to_owned(),
                 NavigationState::Failed(error) => error.to_string(),
@@ -112,11 +123,14 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
                 NavigationState::Cancelled(_) if has_page && status.retry_of.is_none() => continue,
                 NavigationState::Cancelled(_) => "Opening cancelled.".into(),
             };
+
             let destination = R::decode(&status.key.destination)
                 .and_then(|destination| destination.to_uri())
                 .unwrap_or_else(|_| status.key.destination.route.clone());
+
             let action = self.navigator.clone();
             let key = status.key.clone();
+
             let mut row = div()
                 .id(format!("navigation-{}", key.operation_id))
                 .role(if pending {
@@ -141,6 +155,7 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
             } else {
                 if !shutting_down {
                     let retry = key.clone();
+
                     row = row.child(button("Retry", key.operation_id, move || {
                         if let Ok(router) = action.runtime()
                             && let Err(error) = router.retry_navigation(&retry)
@@ -149,9 +164,11 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
                         }
                     }));
                 }
+
                 // An initial failure keeps its retry control until a page opens.
                 if has_page {
                     let dismiss = self.navigator.clone();
+
                     row = row.child(button("Dismiss", key.operation_id, move || {
                         if let Ok(router) = dismiss.runtime() {
                             let _ = router.dismiss_navigation(&key);
@@ -159,8 +176,10 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
                     }));
                 }
             }
+
             feedback = feedback.child(row);
         }
+
         feedback.inspect("rake.navigation").into_any_element()
     }
 }

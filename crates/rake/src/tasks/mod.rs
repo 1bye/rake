@@ -40,6 +40,7 @@ pub fn visibility_support() -> VisibilitySupport {
     if !cfg!(feature = "gpui") {
         return VisibilitySupport::Unknown;
     }
+
     if cfg!(target_os = "macos") {
         VisibilitySupport::NativeOcclusion
     } else if cfg!(target_os = "windows") {

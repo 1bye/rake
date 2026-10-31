@@ -320,6 +320,7 @@ pub fn uri_address(
 
     for descriptor in descriptors {
         let pattern: Vec<_> = descriptor.path.split('/').collect();
+
         let specificity = pattern
             .iter()
             .filter(|segment| placeholder(segment).is_some())
@@ -406,6 +407,7 @@ mod tests {
         value_type: "String",
         required: true,
     }];
+
     const SECTION_PARAMS: &[ParameterDescriptor] = &[ParameterDescriptor {
         name: "section",
         value_type: "String",
@@ -449,6 +451,7 @@ mod tests {
         ];
 
         let address = uri_address("/files/settings", &descriptors).expect("static route");
+
         assert_eq!(address.route, "settings");
     }
 }

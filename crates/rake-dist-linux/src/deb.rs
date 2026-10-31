@@ -11,6 +11,7 @@ pub fn build_deb(input: &ArchPackage<'_>) -> Result<PathBuf, Error> {
         Some("aarch64") => "arm64",
         _ => return Err(Error::Metadata("unsupported Debian architecture".into())),
     };
+
     for field in [input.name, input.version, input.display_name]
         .into_iter()
         .chain(input.dependencies.iter().map(String::as_str))
@@ -19,14 +20,17 @@ pub fn build_deb(input: &ArchPackage<'_>) -> Result<PathBuf, Error> {
             return Err(Error::Metadata("control character in Debian field".into()));
         }
     }
+
     run(Command::new("dpkg").args(["--validate-version", input.version]))?;
     let control = input.payload.join("DEBIAN");
+
     fs::create_dir(&control)?;
     let dependencies = if input.dependencies.is_empty() {
         String::new()
     } else {
         format!("Depends: {}\n", input.dependencies.join(", "))
     };
+
     fs::write(
         control.join("control"),
         format!(
@@ -39,9 +43,11 @@ pub fn build_deb(input: &ArchPackage<'_>) -> Result<PathBuf, Error> {
         "{}_{}_{architecture}.deb",
         input.name, input.version
     ));
+
     run(Command::new("dpkg-deb")
         .args(["--build", "--root-owner-group"])
         .arg(input.payload)
         .arg(&output))?;
+
     Ok(output)
 }

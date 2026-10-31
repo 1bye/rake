@@ -6,10 +6,12 @@
 //! observation, but cannot undo an OS dialog, clipboard write or browser download.
 
 mod preferences;
+
 pub use preferences::Preferences;
 
 #[cfg(feature = "gpui")]
 mod files;
+
 #[cfg(feature = "gpui")]
 pub use files::{FileHandle, SaveOutcome};
 
@@ -130,6 +132,7 @@ impl Platform {
                 permission: PermissionState::NotRequired,
                 requires_user_gesture: false,
             };
+
             Capabilities {
                 file_import: ui,
                 file_export: ui,
@@ -163,14 +166,18 @@ impl Platform {
         if value.len() > 16 * 1024 {
             return Err(Error::InvalidInput("activation URL exceeds 16 KiB".into()));
         }
+
         let url = url::Url::parse(value).map_err(|error| Error::InvalidInput(error.to_string()))?;
         let mut urls = self.activations.urls.borrow_mut();
+
         if urls.len() == 32 {
             urls.pop_front();
         }
+
         urls.push_back(url);
         drop(urls);
         self.activations.changed.notify(usize::MAX);
+
         Ok(())
     }
 
@@ -179,9 +186,11 @@ impl Platform {
     pub async fn next_open_url(&self) -> url::Url {
         loop {
             let listener = self.activations.changed.listen();
+
             if let Some(url) = self.activations.urls.borrow_mut().pop_front() {
                 return url;
             }
+
             listener.await;
         }
     }
@@ -194,11 +203,14 @@ impl Platform {
         #[cfg(target_family = "wasm")]
         {
             let _ = cx;
+
             browser::read_clipboard()
         }
+
         #[cfg(not(target_family = "wasm"))]
         {
             let value = cx.read_from_clipboard().and_then(|item| item.text());
+
             Box::pin(async move { Ok(value) })
         }
     }
@@ -210,11 +222,14 @@ impl Platform {
         #[cfg(target_family = "wasm")]
         {
             let _ = cx;
+
             browser::write_clipboard(text)
         }
+
         #[cfg(not(target_family = "wasm"))]
         {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_owned()));
+
             Box::pin(async { Ok(()) })
         }
     }
@@ -227,14 +242,18 @@ impl Platform {
     #[cfg(feature = "gpui")]
     pub fn open_url(&self, value: &str, cx: &gpui::App) -> Result<(), Error> {
         let url = external_url(value)?;
+
         #[cfg(target_family = "wasm")]
         {
             let _ = cx;
+
             browser::open_url(url.as_str())
         }
+
         #[cfg(not(target_family = "wasm"))]
         {
             cx.open_url(url.as_str());
+
             Ok(())
         }
     }
@@ -243,16 +262,19 @@ impl Platform {
 #[cfg(any(feature = "gpui", test))]
 fn external_url(value: &str) -> Result<url::Url, Error> {
     let url = url::Url::parse(value).map_err(|error| Error::InvalidInput(error.to_string()))?;
+
     if !matches!(url.scheme(), "https" | "http" | "mailto") {
         return Err(Error::InvalidInput(
             "external URL must use http, https or mailto".into(),
         ));
     }
+
     if !url.username().is_empty() || url.password().is_some() {
         return Err(Error::InvalidInput(
             "external URLs cannot contain credentials".into(),
         ));
     }
+
     Ok(url)
 }
 
@@ -270,6 +292,7 @@ mod tests {
         ] {
             assert!(external_url(invalid).is_err(), "accepted {invalid}");
         }
+
         assert!(external_url("https://example.com/path?q=a").is_ok());
         assert!(external_url("mailto:hello@example.com").is_ok());
     }

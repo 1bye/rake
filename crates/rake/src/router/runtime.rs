@@ -44,9 +44,12 @@ mod windows;
 mod tests;
 
 pub(crate) type Guard<R> = Rc<dyn Fn(GuardContext<R>) -> LocalBoxFuture<'static, GuardResult>>;
+
 pub(crate) use crate::router::admission::Callback as AdmissionCallback;
+
 pub(crate) type QuitGuard =
     Rc<dyn Fn(QuitGuardContext) -> LocalBoxFuture<'static, Result<(), GuardReason>>>;
+
 pub(crate) type Resource = Rc<dyn Any>;
 
 #[cfg(feature = "gpui")]
@@ -361,6 +364,7 @@ impl<R: Route> Core<R> {
         let terminal = |record: &navigation::Record<R>| {
             !matches!(record.status.state, NavigationState::Pending)
         };
+
         let recoverable = |record: &navigation::Record<R>| {
             matches!(
                 record.status.state,
@@ -408,6 +412,7 @@ impl<R: Route> Core<R> {
 
     fn retain_navigation(&self, record: navigation::Record<R>) {
         let mut state = self.state.borrow_mut();
+
         state.navigation.push_back(record);
         self.trim_navigation(&mut state);
     }
@@ -456,6 +461,7 @@ impl<R: Route> Core<R> {
         };
 
         let mut state = self.state.borrow_mut();
+
         if let Some(record) = state
             .navigation
             .iter_mut()
@@ -467,6 +473,7 @@ impl<R: Route> Core<R> {
             record.status.state = NavigationState::Pending;
             record.action = Some(action.clone());
         }
+
         drop(state);
         self.notify();
     }
@@ -483,6 +490,7 @@ impl<R: Route> Core<R> {
         }
 
         let mut state = self.state.borrow_mut();
+
         if let Some(record) = state
             .navigation
             .iter_mut()
@@ -519,12 +527,14 @@ impl<R: Route> Core<R> {
 
             self.trim_navigation(&mut state);
         }
+
         drop(state);
         self.notify();
     }
 
     fn navigation_committed(&self, id: OperationId, entry: &Rc<Entry<R>>) {
         let mut state = self.state.borrow_mut();
+
         if let Some(record) = state
             .navigation
             .iter_mut()
@@ -534,6 +544,7 @@ impl<R: Route> Core<R> {
             record.status.key.tab_id = Some(entry.tab);
             record.status.key.destination = entry.destination.encode();
         }
+
         drop(state);
         self.notify();
     }
@@ -556,6 +567,7 @@ impl<R: Route> Core<R> {
         };
 
         let mut state = self.state.borrow_mut();
+
         if let Some(record) = state
             .navigation
             .iter_mut()
@@ -567,6 +579,7 @@ impl<R: Route> Core<R> {
             record.status.state = NavigationState::Failed(OperationError::Mount(error));
             record.action = Some(action.clone());
         }
+
         drop(state);
         self.notify();
     }
@@ -580,12 +593,14 @@ impl<R: Route> Core<R> {
         };
 
         let mut state = self.state.borrow_mut();
+
         let source = state
             .navigation
             .iter_mut()
             .find(|record| record.status.key.operation_id == id)
             .and_then(|record| {
                 record.status.state = status;
+
                 if matches!(result, Ok(Outcome::Committed(_))) {
                     record.status.retry_of.clone()
                 } else {
@@ -720,6 +735,7 @@ impl<R: Route> Router<R> {
     pub(crate) fn with_mount(config: RouterConfig, collector: Collector, mount: Mount<R>) -> Self {
         let prepared_mount: PreparedMount<R> =
             Rc::new(move |destination, entry, navigator, _| mount(destination, entry, navigator));
+
         let prepare: Prepare<R> =
             Rc::new(|_, _, _, _| Box::pin(async { Ok(PreparedPage::empty()) }));
 
@@ -885,6 +901,7 @@ impl<R: Route> Router<R> {
 
         let (action, origin_window) = {
             let state = self.0.state.borrow();
+
             let record = state
                 .navigation
                 .iter()
@@ -953,6 +970,7 @@ impl<R: Route> Router<R> {
         }
 
         let mut state = self.0.state.borrow_mut();
+
         let index = state
             .navigation
             .iter()
@@ -967,9 +985,11 @@ impl<R: Route> Router<R> {
         }
 
         let source = state.navigation[index].status.key.clone();
+
         self.0.remove_navigation_chain(&mut state, source);
         drop(state);
         self.0.notify();
+
         Ok(())
     }
 
@@ -1199,9 +1219,11 @@ impl<R: Route> Router<R> {
             serde_json::to_value(self.0.collector.http_body(request_id, response))
                 .unwrap_or_default()
         }
+
         #[cfg(not(feature = "devtools"))]
         {
             let _ = (request_id, response);
+
             serde_json::Value::Null
         }
     }
@@ -1434,6 +1456,7 @@ impl<R: Route> Router<R> {
     ) {
         #[cfg(target_family = "wasm")]
         let _ = close_policy;
+
         self.0.has_window.set(true);
         let core = Rc::downgrade(&self.0);
         let shutdown = core.clone();
@@ -1450,6 +1473,7 @@ impl<R: Route> Router<R> {
 
                 if matches!(close_policy, HostClosePolicy::Detach) {
                     Router(core).detach_host(id);
+
                     return true;
                 }
 
@@ -1527,9 +1551,12 @@ impl<R: Route> Router<R> {
     #[cfg(feature = "gpui")]
     pub(crate) fn detach_host(&self, id: WindowId) {
         let _ = self.set_window_visibility(id, HostVisibility::Hidden);
+
         let empty = {
             let mut hosts = self.0.host.borrow_mut();
+
             hosts.remove(&id);
+
             hosts.is_empty()
         };
 
@@ -1578,6 +1605,7 @@ impl<R: Route> Navigator<R> {
             let Some(core) = self.core.upgrade() else {
                 return;
             };
+
             let listener = core.work.listen();
 
             if core.shutdown.get() {
@@ -1682,6 +1710,7 @@ impl<R: Route> Navigator<R> {
     pub fn current_tab(&self) -> Result<TabHandle<R>, OperationError> {
         let core = self.core()?;
         let state = core.state.borrow();
+
         let id = self
             .tab
             .or_else(|| {
@@ -1691,8 +1720,10 @@ impl<R: Route> Navigator<R> {
                     .and_then(|window| window.selected)
             })
             .ok_or(OperationError::NoCurrentTab)?;
+
         state.tab(id)?;
         drop(state);
+
         Ok(self.tab(id))
     }
 
@@ -1931,6 +1962,7 @@ impl<R: Route> Navigator<R> {
         let action = match action {
             Ok(action) if core.state.borrow().tokens.len() < core.config.pending_operations => {
                 core.navigation_begin(id, &action, origin_window);
+
                 action
             }
             Ok(action) => {
@@ -2826,6 +2858,7 @@ async fn transition<R: Route>(
     'plan: loop {
         action.check(core)?;
         let plan = plan(core, &action, window)?;
+
         core.navigation_plan(id, &action, window, &plan.entry);
         let mut provisional = None;
 
@@ -2872,6 +2905,7 @@ async fn transition<R: Route>(
                     origin_entry: Some(plan.entry.id),
                     origin_scope: Rc::downgrade(&plan.entry.tab_scope),
                 };
+
                 let token = core
                     .state
                     .borrow()
@@ -2894,6 +2928,7 @@ async fn transition<R: Route>(
                 .await
                 .map_err(|error| {
                     core.navigation_mount_failed(id, &action, window, &plan.entry, error.clone());
+
                     OperationError::Mount(error)
                 })?;
 
@@ -2989,6 +3024,7 @@ async fn transition<R: Route>(
                 .await
                 .map_err(|error| {
                     core.navigation_mount_failed(id, &action, window, &plan.entry, error.clone());
+
                     OperationError::Mount(error)
                 })?;
 

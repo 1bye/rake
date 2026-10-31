@@ -1,6 +1,7 @@
 //! Native trust finalization occurs after every payload mutation.
 use crate::{Error, normalize_loaders};
 use rake_dist_core::{Format, TrustOptions, TrustRecord};
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -9,6 +10,7 @@ use std::{
 
 fn run(command: &mut Command) -> Result<String, Error> {
     let output = command.output()?;
+
     if !output.status.success() {
         return Err(Error::Native(format!(
             "native release tool failed: {} {}",
@@ -16,6 +18,7 @@ fn run(command: &mut Command) -> Result<String, Error> {
             String::from_utf8_lossy(&output.stderr)
         )));
     }
+
     Ok(String::from_utf8_lossy(&output.stdout).into())
 }
 
@@ -26,14 +29,17 @@ pub fn preflight(trust: &TrustOptions) -> Result<(), Error> {
     if trust.required && (trust.macos_identity.is_none() || trust.notary_profile.is_none()) {
         return Err(Error::Native("trusted macOS releases require a Developer ID identity and notarytool Keychain profile".into()));
     }
+
     if trust.notary_profile.is_some() && trust.macos_identity.is_none() {
         return Err(Error::Native(
             "notarization requires a Developer ID identity".into(),
         ));
     }
+
     if let Some(identity) = &trust.macos_identity {
         let identities =
             run(Command::new("security").args(["find-identity", "-v", "-p", "codesigning"]))?;
+
         if !identities
             .lines()
             .any(|line| line.contains(identity) && line.contains("Developer ID Application:"))
@@ -43,6 +49,7 @@ pub fn preflight(trust: &TrustOptions) -> Result<(), Error> {
             ));
         }
     }
+
     if let Some(profile) = &trust.notary_profile {
         run(Command::new("xcrun").args([
             "notarytool",
@@ -53,32 +60,40 @@ pub fn preflight(trust: &TrustOptions) -> Result<(), Error> {
             "json",
         ]))?;
     }
+
     Ok(())
 }
 
 fn sign(path: &Path, trust: &TrustOptions, entitlements: Option<&Path>) -> Result<(), Error> {
     let mut command = Command::new("codesign");
+
     command
         .args(["--force", "--sign"])
         .arg(trust.macos_identity.as_deref().unwrap_or("-"));
+
     if trust.macos_identity.is_some() {
         command.args(["--timestamp", "--options", "runtime"]);
     }
+
     if let Some(path) = entitlements {
         command.arg("--entitlements").arg(path);
     } else {
         // Sparkle's XPC services require their declared sandbox/network entitlements.
         command.arg("--preserve-metadata=entitlements");
     }
+
     run(command.arg(path))?;
+
     Ok(())
 }
 
 fn wrappers(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), Error> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
+
         if entry.file_type()?.is_dir() {
             wrappers(&entry.path(), output)?;
+
             if entry.path().extension().is_some_and(|extension| {
                 matches!(extension.to_str(), Some("framework" | "app" | "xpc"))
             }) {
@@ -86,6 +101,7 @@ fn wrappers(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), Error> {
             }
         }
     }
+
     Ok(())
 }
 
@@ -99,18 +115,24 @@ pub fn sign_app(
 ) -> Result<TrustRecord, Error> {
     preflight(trust)?;
     let inventory = normalize_loaders(app)?;
+
     for file in inventory {
         sign(&file, trust, None)?;
     }
+
     let mut nested = Vec::new();
+
     wrappers(app, &mut nested)?;
+
     for wrapper in nested {
         sign(&wrapper, trust, None)?;
     }
+
     sign(app, trust, entitlements)?;
     run(Command::new("codesign")
         .args(["--verify", "--deep", "--strict"])
         .arg(app))?;
+
     Ok(TrustRecord {
         signature: Some(
             if trust.macos_identity.is_some() {
@@ -134,17 +156,22 @@ pub fn notarize(path: &Path, trust: &TrustOptions) -> Result<(), Error> {
         .notary_profile
         .as_deref()
         .ok_or_else(|| Error::Native("notary profile missing".into()))?;
+
     let directory = tempfile::tempdir()?;
+
     let submission = if path.extension().is_some_and(|extension| extension == "app") {
         let zip = directory.path().join("submission.zip");
+
         run(Command::new("ditto")
             .args(["-c", "-k", "--keepParent"])
             .arg(path)
             .arg(&zip))?;
+
         zip
     } else {
         path.into()
     };
+
     let output = run(Command::new("xcrun")
         .args(["notarytool", "submit"])
         .arg(submission)
@@ -155,18 +182,22 @@ pub fn notarize(path: &Path, trust: &TrustOptions) -> Result<(), Error> {
             "--output-format",
             "json",
         ]))?;
+
     let status: serde_json::Value =
         serde_json::from_str(&output).map_err(|e| Error::Native(e.to_string()))?;
+
     if status["status"] != "Accepted" {
         return Err(Error::Native(format!(
             "Apple notarization rejected payload: {} (submission {})",
             status["status"], status["id"]
         )));
     }
+
     run(Command::new("xcrun").args(["stapler", "staple"]).arg(path))?;
     run(Command::new("xcrun")
         .args(["stapler", "validate"])
         .arg(path))?;
+
     Ok(())
 }
 
@@ -182,23 +213,28 @@ pub fn package(
     entitlements: Option<&Path>,
 ) -> Result<(PathBuf, TrustRecord), Error> {
     let mut record = sign_app(app, trust, entitlements)?;
+
     if trust.notary_profile.is_some() {
         notarize(app, trust)?;
         record.notarized = true;
         record.stapled = true;
     }
+
     match format {
         Format::App => Ok((app.into(), record)),
         Format::Zip => {
             let output = destination.join(format!("{name}.zip"));
+
             run(Command::new("ditto")
                 .args(["-c", "-k", "--keepParent"])
                 .arg(app)
                 .arg(&output))?;
+
             Ok((output, record))
         }
         Format::Dmg => {
             let folder = tempfile::tempdir_in(destination)?;
+
             run(Command::new("ditto").arg(app).arg(
                 folder.path().join(
                     app.file_name()
@@ -208,6 +244,7 @@ pub fn package(
             #[cfg(unix)]
             std::os::unix::fs::symlink("/Applications", folder.path().join("Applications"))?;
             let output = destination.join(format!("{name}.dmg"));
+
             run(Command::new("hdiutil")
                 .args([
                     "create",
@@ -222,9 +259,11 @@ pub fn package(
                 .arg(&output))?;
             sign(&output, trust, None)?;
             run(Command::new("hdiutil").arg("verify").arg(&output))?;
+
             if trust.notary_profile.is_some() {
                 notarize(&output, trust)?;
             }
+
             Ok((output, record))
         }
         _ => Err(Error::Native("unsupported macOS format".into())),
@@ -240,9 +279,11 @@ pub fn verify_artifact(path: &Path, format: Format, record: &TrustRecord) -> Res
             run(Command::new("codesign")
                 .args(["--verify", "--deep", "--strict"])
                 .arg(path))?;
+
             if format == Format::Dmg {
                 run(Command::new("hdiutil").arg("verify").arg(path))?;
             }
+
             if record.stapled {
                 run(Command::new("xcrun")
                     .args(["stapler", "validate"])
@@ -251,6 +292,7 @@ pub fn verify_artifact(path: &Path, format: Format, record: &TrustRecord) -> Res
         }
         Format::Zip => {
             let directory = tempfile::tempdir()?;
+
             run(Command::new("ditto")
                 .args(["-x", "-k"])
                 .arg(path)
@@ -260,16 +302,19 @@ pub fn verify_artifact(path: &Path, format: Format, record: &TrustRecord) -> Res
                 .map(|entry| entry.path())
                 .find(|path| path.extension().is_some_and(|extension| extension == "app"))
                 .ok_or_else(|| Error::Native("ZIP is missing its signed app".into()))?;
+
             verify_artifact(&app, Format::App, record)?;
         }
         _ => return Err(Error::Native("unsupported verification format".into())),
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn trusted_release_cannot_degrade_to_ad_hoc_or_skip_notarization() {
         assert!(

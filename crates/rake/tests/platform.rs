@@ -11,6 +11,7 @@ use rake::platform::{Error, Platform, Preferences};
 fn preferences_replace_remove_and_isolate_keys_without_partial_files() {
     let directory = tempfile::tempdir().unwrap();
     let preferences = Preferences::at(directory.path());
+
     block_on(async {
         assert_eq!(preferences.get("theme").await.unwrap(), None);
         preferences.set("theme", "light").await.unwrap();
@@ -27,6 +28,7 @@ fn preferences_replace_remove_and_isolate_keys_without_partial_files() {
             preferences.get("other").await.unwrap().as_deref(),
             Some("kept")
         );
+
         for key in ["", "..", "../outside", "a/b", "a\\b", "a:b"] {
             assert!(matches!(
                 preferences.set(key, "bad").await,
@@ -41,6 +43,7 @@ fn preferences_replace_remove_and_isolate_keys_without_partial_files() {
 fn preference_write_failure_preserves_the_previous_value() {
     let directory = tempfile::tempdir().unwrap();
     let preferences = Preferences::at(directory.path());
+
     block_on(async {
         preferences.set("kept", "original").await.unwrap();
         std::fs::create_dir(directory.path().join("blocked")).unwrap();
@@ -64,14 +67,18 @@ fn service_snapshots_share_the_activation_inbox() {
         rake::ServiceRegistry::new(),
     )
     .unwrap();
+
     let producer = services.platform();
     let consumer = services.registry().standard_services().unwrap().platform();
+
     assert!(producer.receive_open_url("invalid URL").is_err());
+
     for n in 0..35 {
         producer
             .receive_open_url(&format!("example://document/{n}"))
             .unwrap();
     }
+
     assert_eq!(block_on(consumer.next_open_url()).path(), "/3");
     assert_eq!(block_on(producer.next_open_url()).path(), "/4");
     assert!(rake::ServiceRegistry::new().platform().is_err());
@@ -81,6 +88,7 @@ fn service_snapshots_share_the_activation_inbox() {
 #[test]
 fn application_service_calls_preserve_activation_identity() {
     let app = rake::App::new("test.platform");
+
     app.services()
         .unwrap()
         .platform()
@@ -98,8 +106,10 @@ fn file_reads_are_bounded_and_preserve_empty_files() {
     use rake::platform::FileHandle;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("example.txt");
+
     std::fs::write(&path, b"hello").unwrap();
     let file = FileHandle::from_path(&path);
+
     assert_eq!(file.name(), "example.txt");
     assert_eq!(block_on(file.read(5)).unwrap(), b"hello");
     assert!(matches!(block_on(file.read(4)), Err(Error::SizeLimit(4))));
@@ -130,6 +140,7 @@ fn reading_a_fifo_is_rejected_without_waiting_for_a_writer() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("pipe");
     let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+
     // SAFETY: name is a valid NUL-terminated pathname in our temporary directory.
     assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
     assert!(matches!(

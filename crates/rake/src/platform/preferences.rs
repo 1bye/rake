@@ -24,12 +24,14 @@ pub(super) fn name(value: &str) -> Result<(), Error> {
             "names must be 1–128 ASCII letters, digits, dots, hyphens or underscores".into(),
         ));
     }
+
     Ok(())
 }
 
 impl Preferences {
     pub(super) fn open(namespace: &str) -> Result<Self, Error> {
         name(namespace)?;
+
         #[cfg(target_family = "wasm")]
         return Ok(Self {
             namespace: namespace.into(),
@@ -38,6 +40,7 @@ impl Preferences {
         #[cfg(not(target_family = "wasm"))]
         {
             let root = application_data()?;
+
             Ok(Self {
                 root: root.join(namespace),
             })
@@ -57,12 +60,14 @@ impl Preferences {
     /// Rejects invalid keys, I/O failures, invalid UTF-8 and browser access denial.
     pub async fn get(&self, key: &str) -> Result<Option<String>, Error> {
         name(key)?;
+
         #[cfg(target_family = "wasm")]
         return super::browser::preference_get(&self.namespace, key);
 
         #[cfg(not(target_family = "wasm"))]
         {
             let path = self.root.join(key);
+
             blocking::unblock(move || match std::fs::read_to_string(path) {
                 Ok(value) => Ok(Some(value)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -80,6 +85,7 @@ impl Preferences {
     /// Rejects invalid keys, I/O failures, quota exhaustion and access denial.
     pub async fn set(&self, key: &str, value: &str) -> Result<(), Error> {
         name(key)?;
+
         #[cfg(target_family = "wasm")]
         return super::browser::preference_set(&self.namespace, key, Some(value));
 
@@ -88,15 +94,18 @@ impl Preferences {
             let root = self.root.clone();
             let path = root.join(key);
             let value = value.to_owned();
+
             blocking::unblock(move || {
                 use std::io::Write;
                 std::fs::create_dir_all(&root)?;
                 let mut temporary = tempfile::NamedTempFile::new_in(&root)?;
+
                 temporary.write_all(value.as_bytes())?;
                 temporary.as_file().sync_all()?;
                 temporary
                     .persist(path)
                     .map_err(|error| Error::Io(error.error))?;
+
                 Ok(())
             })
             .await
@@ -109,12 +118,14 @@ impl Preferences {
     /// Rejects invalid keys and filesystem/browser access failures.
     pub async fn remove(&self, key: &str) -> Result<(), Error> {
         name(key)?;
+
         #[cfg(target_family = "wasm")]
         return super::browser::preference_set(&self.namespace, key, None);
 
         #[cfg(not(target_family = "wasm"))]
         {
             let path = self.root.join(key);
+
             blocking::unblock(move || match std::fs::remove_file(path) {
                 Ok(()) => Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -129,9 +140,11 @@ impl Preferences {
 fn application_data() -> Result<std::path::PathBuf, Error> {
     #[cfg(target_os = "windows")]
     let root = std::env::var_os("APPDATA").map(std::path::PathBuf::from);
+
     #[cfg(target_os = "macos")]
     let root = std::env::var_os("HOME")
         .map(|root| std::path::PathBuf::from(root).join("Library/Application Support"));
+
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let root = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
@@ -139,6 +152,7 @@ fn application_data() -> Result<std::path::PathBuf, Error> {
         .or_else(|| {
             std::env::var_os("HOME").map(|root| std::path::PathBuf::from(root).join(".config"))
         });
+
     root.filter(|root| root.is_absolute())
         .ok_or_else(|| Error::Unavailable {
             operation: "preferences",

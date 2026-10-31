@@ -60,6 +60,7 @@ pub struct NativeFeedSignature {
     /// Context-bound Ed25519 signature encoded as hexadecimal.
     pub signature: String,
 }
+
 impl NativeFeedSignature {
     /// Returns exact signing bytes bound to provider, identity, target, channel and freshness.
     pub fn message(
@@ -75,7 +76,9 @@ impl NativeFeedSignature {
             self.published_at, self.expires_at
         )
         .into_bytes();
+
         message.extend_from_slice(feed);
+
         message
     }
 }

@@ -52,6 +52,7 @@ pub(super) fn install(
             .as_ref()
             .map(|controller| controller.service())
             .or(installed);
+
         if let Some(service) = service {
             registry = registry.with(service).map_err(|error| {
                 AppError::Updates(rake_updates::Error::Policy(error.to_string()))
@@ -84,6 +85,7 @@ fn validate_bindings(
                 compiled,
             )?;
         }
+
         if let Some(controller) = manual_controller {
             require_match(
                 "manual UpdateController and compiled update policy",
@@ -91,6 +93,7 @@ fn validate_bindings(
                 compiled,
             )?;
         }
+
         if let Some(installed) = installed {
             require_match(
                 "installed UpdateService and compiled update policy",
@@ -107,6 +110,7 @@ fn validate_bindings(
             service.binding(),
         )?;
     }
+
     Ok(())
 }
 
@@ -158,8 +162,10 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+
         std::fs::create_dir(&root).unwrap();
         let binding = rake_updates::parse_policy(policy).unwrap();
+
         let installation = serde_json::json!({
             "schema_version": 1,
             "identifier": binding.identifier,
@@ -175,6 +181,7 @@ mod tests {
             "frameworks": {},
             "native_groups": {}
         });
+
         std::fs::write(
             root.join("rake-installation.json"),
             serde_json::to_vec(&installation).unwrap(),
@@ -182,7 +189,9 @@ mod tests {
         .unwrap();
         let resources = Resources::load(&root).unwrap();
         let service = UpdateService::new(policy, &resources).unwrap();
+
         std::fs::remove_dir_all(root).unwrap();
+
         service
     }
 
@@ -190,6 +199,7 @@ mod tests {
     fn exact_binding_equality_includes_public_keys() {
         let expected = binding();
         let mut different = expected.clone();
+
         different.public_keys.insert("appimage".into(), vec![1]);
         assert!(
             require_match(
@@ -213,6 +223,7 @@ mod tests {
     fn conflicting_diagnostics_do_not_include_policy_contents() {
         let expected = binding();
         let mut different = expected.clone();
+
         different.base_url = Some("https://private.example.invalid/secret-channel".into());
         let error = require_match(
             "manual UpdateService and compiled update policy",
@@ -221,6 +232,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
+
         assert!(error.contains("manual UpdateService"));
         assert!(!error.contains("private.example.invalid"));
     }
@@ -231,6 +243,7 @@ mod tests {
         let fixture_service = service(&fixture_policy);
         let controller = UpdateController::new(fixture_service.clone());
         let compiled = rake_updates::parse_policy(&fixture_policy).unwrap();
+
         validate_bindings(
             Some(&compiled),
             Some(&fixture_service),
@@ -240,10 +253,12 @@ mod tests {
         .unwrap();
 
         let other = service(&policy("dev.rake.other"));
+
         assert!(
             validate_bindings(Some(&compiled), Some(&other), None, Some(&fixture_service)).is_err()
         );
         let other_controller = UpdateController::new(other);
+
         assert!(
             validate_bindings(None, Some(&fixture_service), Some(&other_controller), None,)
                 .is_err()

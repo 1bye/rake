@@ -28,6 +28,7 @@ pub struct UpdateBinding {
     /// Public verification key contents embedded into the executable.
     pub public_keys: BTreeMap<String, Vec<u8>>,
 }
+
 impl UpdateBinding {
     /// Checks serialized policy before provider activation.
     /// # Errors
@@ -37,17 +38,21 @@ impl UpdateBinding {
         if self.schema_version != 1 {
             return Err(crate::Error::Field("update binding schema".into()));
         }
+
         semver::Version::parse(&self.version)
             .map_err(|_| crate::Error::Field("update binding version".into()))?;
+
         if matches!(self.format, Format::Appimage | Format::Velopack) {
             semver::Version::parse(&self.package_version)
                 .map_err(|_| crate::Error::Field("native updater version".into()))?;
         }
+
         let platform = if self.target == "universal-apple-darwin" {
             Platform::Macos
         } else {
             Platform::from_target(&self.target)?
         };
+
         if !self.format.supports(platform)
             || (self.owner != UpdateOwner::Disabled
                 && self.owner != self.format.update_owner(platform))
@@ -56,6 +61,7 @@ impl UpdateBinding {
                 "update binding owner conflicts with compiled format".into(),
             ));
         }
+
         if self.identifier.is_empty()
             || self.channel.is_empty()
             || !self
@@ -67,12 +73,14 @@ impl UpdateBinding {
         {
             return Err(crate::Error::Field("update identity/channel".into()));
         }
+
         if self.owner != UpdateOwner::Disabled {
             let url = self
                 .base_url
                 .as_deref()
                 .and_then(|value| url::Url::parse(value).ok())
                 .ok_or_else(|| crate::Error::Field("update binding base URL".into()))?;
+
             if url.scheme() != "https"
                 || url.host_str().is_none()
                 || !url.username().is_empty()
@@ -85,9 +93,11 @@ impl UpdateBinding {
                 ));
             }
         }
+
         Ok(())
     }
 }
+
 impl Format {
     /// Returns the native update authority for this format, before updates are disabled.
     pub fn update_owner(self, platform: Platform) -> UpdateOwner {
