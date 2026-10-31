@@ -15,6 +15,7 @@ from dev_bridge import BridgeError, DevBridge, MAX_BYTES
 from inspector import Inspector
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -295,6 +296,11 @@ class AppHandler(SimpleHTTPRequestHandler):
 
 class BoundedServer(ThreadingHTTPServer):
     slots = threading.BoundedSemaphore(64)
+
+    def server_bind(self):
+        # The listener is numeric loopback; startup must not depend on reverse DNS.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
