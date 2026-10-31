@@ -407,7 +407,7 @@ async fn transition<R: Route>(
 #[cfg(feature = "gpui")]
 impl<R: Route> Router<R> {
     pub(crate) fn install_quit_action(&self, cx: &mut gpui::App) {
-        #[cfg(all(feature = "updates", target_os = "macos"))]
+        #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
         if self.0.native_quit.borrow().is_none() {
             match rake_updates::NativeQuitBridge::new() {
                 Ok(bridge) => *self.0.native_quit.borrow_mut() = Some(Rc::new(bridge)),
@@ -442,7 +442,7 @@ impl<R: Route> Router<R> {
     }
 }
 
-#[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
+#[cfg(all(feature = "native-lifecycle", feature = "gpui", target_os = "macos"))]
 impl<R: Route> Router<R> {
     pub(crate) fn native_quit_changed(&self) -> futures::future::LocalBoxFuture<'static, ()> {
         let changed = self
@@ -460,6 +460,15 @@ impl<R: Route> Router<R> {
         }
         .boxed_local()
     }
+
+    #[cfg(not(feature = "updates"))]
+    pub(crate) async fn changed_with_native_quit(&self, revision: u64) -> u64 {
+        let changed = self.changed(revision);
+        let _ = select(Box::pin(changed), self.native_quit_changed()).await;
+        self.poll_native_quit();
+        self.revision()
+    }
+
     pub(crate) fn poll_native_quit(&self) {
         let requested = self
             .0

@@ -32,7 +32,9 @@ for scalar values and domain IDs. Route enums do not need Serde or `Send`.
 duplicate parameters fail explicitly. Static paths take precedence over dynamic
 ones. Values shadowed by another pattern, empty path values and dot segments are
 rejected when encoding, so a successful encoding round-trips to the same route.
-`descriptors` exposes the closed registry and parameter schema.
+Equal-specificity patterns that overlap (such as `/files/{id}` and
+`/{section}/settings`) fail at derive time. `descriptors` exposes the closed
+registry and parameter schema.
 
 Register page types with an exhaustive destination match:
 
@@ -45,6 +47,10 @@ App::new("example.notes")
     })
     .initial(Destination::Home)
 ```
+
+Register `.routes(...)` once, then configure `.initial(...)` and `.entry_guard(...)`.
+Use `.replace_routes(...)` to change the factory for the same destination type;
+it preserves the initial destination and guards.
 
 `Home` and `DocumentPage` implement `Page<Destination>` alongside GPUI `Render`.
 `Page::mount(destination, page, window, cx)` returns `Result<Entity<Self>, MountError>`;

@@ -62,12 +62,12 @@ impl<R: Route> Router<R> {
             }
         };
         let changed = futures::future::select(Box::pin(changed), Box::pin(update));
-        #[cfg(target_os = "macos")]
+        #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
         let _ = futures::future::select(Box::pin(changed), self.native_quit_changed()).await;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(all(feature = "native-lifecycle", target_os = "macos")))]
         let _ = changed.await;
         self.poll_updates();
-        #[cfg(target_os = "macos")]
+        #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
         self.poll_native_quit();
         if let Some(updates) = &updates {
             let next = updates.snapshot().revision;

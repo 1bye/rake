@@ -255,7 +255,7 @@ struct Core<R: Route> {
     update_restart_error: RefCell<Option<String>>,
     #[cfg(feature = "updates")]
     update_exit: Cell<rake_updates::RestartDisposition>,
-    #[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
+    #[cfg(all(feature = "native-lifecycle", feature = "gpui", target_os = "macos"))]
     native_quit: RefCell<Option<Rc<rake_updates::NativeQuitBridge>>>,
     #[cfg(all(feature = "updates", feature = "gpui", not(target_family = "wasm")))]
     update_revision: Cell<u64>,
@@ -483,7 +483,7 @@ impl<R: Route> Router<R> {
             update_restart_error: RefCell::new(None),
             #[cfg(feature = "updates")]
             update_exit: Cell::new(rake_updates::RestartDisposition::ExitHost),
-            #[cfg(all(feature = "updates", feature = "gpui", target_os = "macos"))]
+            #[cfg(all(feature = "native-lifecycle", feature = "gpui", target_os = "macos"))]
             native_quit: RefCell::new(None),
             #[cfg(all(feature = "updates", feature = "gpui", not(target_family = "wasm")))]
             update_revision: Cell::new(u64::MAX),

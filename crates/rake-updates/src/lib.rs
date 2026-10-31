@@ -1,4 +1,4 @@
-//! Native update providers with embedded authority and explicit restart handoff.
+//! Native update providers and the optional AppKit termination bridge.
 #[cfg(feature = "appimage")]
 mod appimage;
 #[cfg(feature = "appimage")]

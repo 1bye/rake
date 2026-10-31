@@ -109,12 +109,16 @@ runtime available for NewWindow or explicit Quit. Custom `Router::in_window` hos
 without a window adapter retain application-wide quit on close; they observe quit
 readiness and own final host exit, as they own the driver and shell.
 
-The pinned GPUI application shutdown callback cannot veto an OS/Dock termination
-request. Those requests, forced termination and `Router::shutdown()` are immediate
-cleanup boundaries, without a guaranteed asynchronous save dialog. Applications
-should route their own menu actions through `RequestQuit`/`Navigator::quit`
-instead of calling GPUI quit directly. This adapter needs a cancelable GPUI
-application-quit hook before it can guard those additional OS paths.
+Without `rake`'s `native-lifecycle` feature, the pinned GPUI application shutdown
+callback cannot veto an OS/Dock termination request. Those requests, forced
+termination and `Router::shutdown()` are immediate cleanup boundaries, without a
+guaranteed asynchronous save dialog. The `gpui` feature enables
+`native-lifecycle`; on macOS it installs an AppKit termination bridge and routes
+an ordinary Dock/Application terminate request through the same guarded quit
+operation. The `updates` feature enables it transitively as well. Forced
+termination remains outside the bridge's control.
+Applications should route their own menu actions through `RequestQuit`/`Navigator::quit`
+instead of calling GPUI quit directly.
 
 On Web, a committed quit disposes the workspace and shows “Application closed.”
 The document and development bridge remain available for status queries. It does

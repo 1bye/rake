@@ -86,6 +86,43 @@ impl App<NoRoute> {
             distribution: None,
         }
     }
+    /// Registers the application's typed screens once. Defaults to the `/` route.
+    ///
+    /// Configure `initial` and `entry_guard` after this type transition. To change
+    /// factories for the same destination type, use [`App::replace_routes`], which
+    /// preserves the initial destination and guards.
+    ///
+    /// ```compile_fail
+    /// #[derive(Clone, rake::Route)]
+    /// enum Destination { #[route(id = "home", path = "/")] Home }
+    /// let pages = || rake::router::__routes(|_: &Destination, _, _, _| {
+    ///     Err(rake::router::MountError("fixture".into()))
+    /// });
+    /// let app = rake::App::new("example.routes").routes(pages());
+    /// let app = app.routes(pages()); // use replace_routes instead
+    /// ```
+    pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
+        App {
+            id: self.id,
+            services: self.services,
+            window_options: self.window_options,
+            workspace_chrome: self.workspace_chrome,
+            http: self.http,
+            diagnostics: self.diagnostics,
+            root: self.root,
+            routes: Some(Rc::new(routes)),
+            initial: None,
+            router: self.router,
+            web: self.web,
+            guards: Vec::new(),
+            control: self.control,
+            commands: self.commands,
+            #[cfg(feature = "experimental-view")]
+            themes: self.themes,
+            #[cfg(feature = "updates")]
+            distribution: self.distribution,
+        }
+    }
 }
 
 impl<R: Route> App<R> {
@@ -110,28 +147,11 @@ impl<R: Route> App<R> {
         }
     }
 
-    /// Registers the application's typed screen factory. Defaults to the `/` route.
-    pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
-        App {
-            id: self.id,
-            services: self.services,
-            window_options: self.window_options,
-            workspace_chrome: self.workspace_chrome,
-            http: self.http,
-            diagnostics: self.diagnostics,
-            root: self.root,
-            routes: Some(Rc::new(routes)),
-            initial: None,
-            router: self.router,
-            web: self.web,
-            guards: Vec::new(),
-            control: self.control,
-            commands: self.commands,
-            #[cfg(feature = "experimental-view")]
-            themes: self.themes,
-            #[cfg(feature = "updates")]
-            distribution: self.distribution,
-        }
+    /// Replaces the screen factory without changing destinations or access guards.
+    #[must_use]
+    pub fn replace_routes(mut self, routes: impl RouteViews<R>) -> Self {
+        self.routes = Some(Rc::new(routes));
+        self
     }
 
     /// Registers a concrete shared local service before startup. Duplicates fail explicitly.
@@ -602,5 +622,37 @@ mod theme_tests {
         );
         cx.update(|cx| install_themes(standalone.themes, cx));
         assert_eq!(crate::theme::current::<Colors>().0, 3);
+    }
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    //! Covers: same-type route replacement retains the configured destination and guards.
+    //! Real: application builder. Doubles: unused page factory. Requires: no UI startup.
+    use super::*;
+
+    #[derive(Clone, crate::Route)]
+    enum Destination {
+        #[route(id = "main", path = "/main")]
+        Main,
+    }
+
+    #[test]
+    fn replacing_routes_preserves_destination_and_guards() {
+        let pages = || {
+            crate::router::__routes(|_: &Destination, _, _, _| {
+                Err(crate::router::MountError("unused fixture".into()))
+            })
+        };
+        let app = App::new("example.replacement")
+            .routes(pages())
+            .initial(Destination::Main)
+            .entry_guard(|_| async {
+                GuardResult::Deny(crate::router::GuardReason("denied".into()))
+            })
+            .replace_routes(pages());
+
+        assert!(matches!(app.initial, Some(Destination::Main)));
+        assert_eq!(app.guards.len(), 1);
     }
 }

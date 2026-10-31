@@ -533,7 +533,20 @@ impl<R: Route> Workspace<R> {
                         loop {
                             #[cfg(all(feature="updates",not(target_family="wasm")))]
                             let changed=Box::pin(observed.changed_with_updates(revision));
-                            #[cfg(not(all(feature="updates",not(target_family="wasm"))))]
+                            #[cfg(all(
+                                not(feature="updates"),
+                                feature="native-lifecycle",
+                                target_os="macos"
+                            ))]
+                            let changed=Box::pin(observed.changed_with_native_quit(revision));
+                            #[cfg(not(any(
+                                all(feature="updates",not(target_family="wasm")),
+                                all(
+                                    not(feature="updates"),
+                                    feature="native-lifecycle",
+                                    target_os="macos"
+                                )
+                            )))]
                             let changed=Box::pin(observed.changed(revision));
                             #[cfg(feature="devtools")]
                             {
@@ -546,21 +559,21 @@ impl<R: Route> Workspace<R> {
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
                                 closing.responses_idle().await;
-                                #[cfg(all(feature="updates",target_os="macos"))]
+                                #[cfg(all(feature="native-lifecycle",target_os="macos"))]
                                 observed.prepare_native_exit(true);
                                 #[cfg(feature="updates")]
                                 match observed.complete_update_restart() {
                                     Ok(rake_updates::RestartDisposition::ProviderHandlesExit)=>continue,
                                     Ok(rake_updates::RestartDisposition::ExitHost)=>{},
                                     Err(error)=>{
-                                        #[cfg(target_os="macos")]
+                                        #[cfg(all(feature="native-lifecycle",target_os="macos"))]
                                         {observed.reply_native_quit(false);observed.prepare_native_exit(true);}
                                         tracing::error!(%error,"update handoff failed; manual restart required");
                                         let _=_view.update(cx,|_,cx|cx.notify());
                                         break;
                                     }
                                 }
-                                #[cfg(all(feature="updates",target_os="macos"))]
+                                #[cfg(all(feature="native-lifecycle",target_os="macos"))]
                                 observed.reply_native_quit(true);
                                 cx.update(|cx| cx.quit());
 
