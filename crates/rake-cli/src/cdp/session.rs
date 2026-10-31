@@ -31,6 +31,7 @@ fn encoded_bytes(events: &[Option<EncodedEvent>]) -> usize {
 }
 
 struct Session {
+    native_input: super::native_input::NativeInput,
     captures: std::sync::Arc<super::captures::Captures>,
     index_revision: Option<rake_protocol::inspection::TreeRevision>,
     instance: Instance,
@@ -70,6 +71,7 @@ struct Session {
 impl Session {
     fn new(instance: Instance, output: Option<std::path::PathBuf>) -> Self {
         Self {
+            native_input: Default::default(),
             captures: std::sync::Arc::default(),
             index_revision: None,
             instance,
@@ -151,6 +153,17 @@ impl Session {
             return Ok(result);
         }
         match method {
+            "Rake.getWindows" => {
+                Ok(json!({"windows":super::native_input::windows(&self.instance)?}))
+            }
+            "Rake.selectWindow" => self.native_input.select(&self.instance, &request.params),
+            "Input.dispatchMouseEvent" | "Input.dispatchKeyEvent" | "Input.insertText" => {
+                let command = self
+                    .native_input
+                    .command(&self.instance, method, &request.params)?;
+                self.control(command)?;
+                Ok(json!({}))
+            }
             "DOMStorage.enable" => {
                 self.domains.insert(Domain::DomStorage);
                 Ok(json!({}))
@@ -2137,6 +2150,7 @@ impl Session {
     }
 
     fn replace(&mut self, instance: Instance) {
+        self.native_input = Default::default();
         self.finish_trace(Some("runtime replaced"));
         self.cleanup();
         self.memory = super::memory::Memory::default();

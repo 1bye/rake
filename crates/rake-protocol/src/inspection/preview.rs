@@ -44,10 +44,37 @@ pub struct Point {
     pub y: i32,
 }
 
-/// The prototype forwards atomic primary clicks and pixel wheel deltas, not keyboard or drag input.
+/// Development input: legacy preview gestures and literal native CDP events.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Input {
+    /// Native pointer phases; a pressed button on Move supports dragging.
+    Pointer {
+        /// Down, up or move, without synthetic click retries.
+        phase: PointerPhase,
+        /// Left=1, right=2, middle=4; zero means no button.
+        button: u8,
+        /// Click count, from one to three.
+        click_count: u8,
+        /// CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
+        modifiers: u8,
+    },
+    /// Dispatch a native key event to the currently focused control.
+    Key {
+        /// True for a press, false for a release.
+        down: bool,
+        /// GPUI key name, at most 128 UTF-8 bytes.
+        key: String,
+        /// Optional literal text associated with a press, at most 16 KiB.
+        text: Option<String>,
+        /// CDP modifier bits.
+        modifiers: u8,
+    },
+    /// Insert literal text through GPUI's focused input handler, not inspection overrides.
+    Text {
+        /// At most 16 KiB of UTF-8 text.
+        text: String,
+    },
     /// Update GPUI hover without moving the desktop cursor.
     Move,
     /// Dispatch movement, primary down and primary up in one UI-loop update.
@@ -68,6 +95,18 @@ pub enum Input {
         /// Vertical browser wheel delta.
         dy: i32,
     },
+}
+
+/// Native pointer phase, including moves with a pressed button for drag gestures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerPhase {
+    /// Mouse button down.
+    Down,
+    /// Mouse button up.
+    Up,
+    /// Pointer movement.
+    Move,
 }
 
 /// Browser scroll gesture lifetime, forwarded to GPUI.

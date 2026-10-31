@@ -43,7 +43,7 @@ pub(super) fn handle(method: &str) -> Option<Value> {
         })),
         "Schema.getDomains" => Some(json!({"domains":([
             "Accessibility", "Browser", "CSS", "DOM", "DOMStorage", "HeapProfiler",
-            "IO", "Inspector", "Log", "Network", "Overlay", "Page", "Performance",
+            "IO", "Input", "Inspector", "Log", "Network", "Overlay", "Page", "Performance",
             "Runtime", "Schema", "Tracing", "Rake"
         ].map(|name| json!({"name":name,"version":VERSION})))})),
         _ => None,

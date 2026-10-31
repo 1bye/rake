@@ -1,4 +1,4 @@
-//! Native preview bindings exist only in opted-in macOS development hosts.
+//! Native window bindings and injected input exist only in opted-in macOS development hosts.
 
 use super::{Element, InspectionError, Store, preview as wire};
 
@@ -87,6 +87,35 @@ impl Store {
         point: &wire::Point,
         input: &wire::Input,
     ) -> Result<(), InspectionError> {
+        let valid = match input {
+            wire::Input::Pointer {
+                phase,
+                button,
+                click_count,
+                modifiers,
+            } => {
+                matches!(button, 0 | 1 | 2 | 4)
+                    && (1..=3).contains(click_count)
+                    && *modifiers <= 15
+                    && (*phase == wire::PointerPhase::Move || *button != 0)
+            }
+            wire::Input::Key {
+                key,
+                text,
+                modifiers,
+                ..
+            } => {
+                !key.is_empty()
+                    && key.len() <= 128
+                    && text.as_ref().is_none_or(|t| t.len() <= 16 * 1024)
+                    && *modifiers <= 15
+            }
+            wire::Input::Text { text } => text.len() <= 16 * 1024,
+            _ => true,
+        };
+        if !valid {
+            return Err(InspectionError::NavigationUnavailable);
+        }
         if !self
             .preview_windows()
             .iter()
@@ -126,15 +155,100 @@ impl Store {
                     };
                     let position = gpui::point(gpui::px(point.x as f32), gpui::px(point.y as f32));
 
-                    window.dispatch_event(
-                        PlatformInput::MouseMove(MouseMoveEvent {
-                            position,
-                            ..Default::default()
-                        }),
-                        cx,
-                    );
+                    if !matches!(
+                        input,
+                        wire::Input::Key { .. }
+                            | wire::Input::Text { .. }
+                            | wire::Input::Pointer { .. }
+                    ) {
+                        window.dispatch_event(
+                            PlatformInput::MouseMove(MouseMoveEvent {
+                                position,
+                                ..Default::default()
+                            }),
+                            cx,
+                        );
+                    }
 
                     match input {
+                        wire::Input::Pointer {
+                            phase,
+                            button,
+                            click_count,
+                            modifiers,
+                        } => {
+                            let modifiers = native::modifiers(*modifiers);
+                            let button = match button {
+                                1 => Some(MouseButton::Left),
+                                2 => Some(MouseButton::Right),
+                                4 => Some(MouseButton::Middle),
+                                _ => None,
+                            };
+                            let event = match phase {
+                                wire::PointerPhase::Down => {
+                                    PlatformInput::MouseDown(MouseDownEvent {
+                                        position,
+                                        button: button.expect("validated button"),
+                                        click_count: usize::from(*click_count),
+                                        modifiers,
+                                        ..Default::default()
+                                    })
+                                }
+                                wire::PointerPhase::Up => PlatformInput::MouseUp(MouseUpEvent {
+                                    position,
+                                    button: button.expect("validated button"),
+                                    click_count: usize::from(*click_count),
+                                    modifiers,
+                                }),
+                                wire::PointerPhase::Move => {
+                                    PlatformInput::MouseMove(MouseMoveEvent {
+                                        position,
+                                        pressed_button: button,
+                                        modifiers,
+                                    })
+                                }
+                            };
+                            window.dispatch_event(event, cx);
+                        }
+                        wire::Input::Key {
+                            down,
+                            key,
+                            text,
+                            modifiers,
+                        } => {
+                            let keystroke = gpui::Keystroke {
+                                key: key.clone(),
+                                key_char: text.clone(),
+                                modifiers: native::modifiers(*modifiers),
+                            };
+                            if *down && text.is_some() {
+                                window.dispatch_keystroke(keystroke, cx);
+                            } else if *down {
+                                window.dispatch_event(
+                                    PlatformInput::KeyDown(gpui::KeyDownEvent {
+                                        keystroke,
+                                        is_held: false,
+                                        prefer_character_input: false,
+                                    }),
+                                    cx,
+                                );
+                            } else {
+                                window.dispatch_event(
+                                    PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+                                    cx,
+                                );
+                            }
+                        }
+                        wire::Input::Text { text } => {
+                            window.dispatch_keystroke(
+                                gpui::Keystroke {
+                                    key: String::new(),
+                                    key_char: Some(text.clone()),
+                                    modifiers: Default::default(),
+                                },
+                                cx,
+                            );
+                        }
                         wire::Input::Move => {}
                         wire::Input::Click => {
                             window.dispatch_event(
@@ -251,6 +365,16 @@ pub(super) mod native {
     use objc2_app_kit::NSView;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+    pub(super) fn modifiers(bits: u8) -> gpui::Modifiers {
+        gpui::Modifiers {
+            alt: bits & 1 != 0,
+            control: bits & 2 != 0,
+            platform: bits & 4 != 0,
+            shift: bits & 8 != 0,
+            ..Default::default()
+        }
+    }
+
     #[derive(Clone)]
     pub(in crate::inspection) struct Target {
         pub window: AnyWindowHandle,
@@ -264,17 +388,17 @@ pub(super) mod native {
             window: &Window,
             cx: &gpui::App,
         ) {
-            if std::env::var_os("RAKE_DEV_PREVIEW").as_deref() != Some(std::ffi::OsStr::new("1")) {
-                return;
-            }
-
             if self
                 .0
                 .borrow()
                 .windows
                 .get(&id)
-                .is_some_and(|host| host.preview.is_none())
+                .is_none_or(|host| host.preview.is_some())
             {
+                return;
+            }
+
+            if std::env::var_os("RAKE_DEV_PREVIEW").as_deref() == Some(std::ffi::OsStr::new("1")) {
                 keep_on_stage(window);
             }
 

@@ -12,6 +12,7 @@ mod editing;
 mod evaluate;
 mod frames;
 mod memory;
+mod native_input;
 mod network;
 mod params;
 mod server;
