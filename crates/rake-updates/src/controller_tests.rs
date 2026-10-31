@@ -228,3 +228,9 @@ fn disabled_and_managed_installations_cannot_enqueue_self_updates() {
     assert!(managed.restart_handoff(vec![]).is_err());
     assert!(managed.take_work().is_none());
 }
+
+#[test]
+fn controller_service_accessor_preserves_the_owned_binding() {
+    let controller = controller();
+    assert_eq!(controller.binding(), controller.service().binding());
+}

@@ -19,7 +19,7 @@ struct AppInfo {
 }
 
 #[rake::app]
-fn application() -> Result<App<pages::Destination>, rake::ServiceError> {
+fn application() -> Result<App<pages::Destination>, rake::AppError> {
     Ok(App::new("dev.rake.starter")
         .service(AppInfo {
             name: "Rake Starter",
@@ -34,6 +34,7 @@ fn application() -> Result<App<pages::Destination>, rake::ServiceError> {
             pages::Destination::Home => pages::Home,
             pages::Destination::Updates => pages::Updates,
         })
+        .try_layout(shell::Shell::mount)
         .initial(pages::Destination::Home)
         .workspace_chrome(false)
         .control(rake::control::ControlConfig::FromEnvironment))

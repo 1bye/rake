@@ -19,10 +19,13 @@ struct Output {
     bytes: usize,
 }
 
-pub(super) fn register(commands: &Commands, http: HttpClient) {
+pub(super) fn register(commands: &Commands) {
     commands
-        .register::<Fixture, _, _>(move |fixture, _| {
-            execute(fixture, http.clone(), CancellationToken::new())
+        .register::<Fixture, _, _>(|fixture, context| async move {
+            let http = context
+                .http()
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
+            execute(fixture, http, context.cancellation).await
         })
         .expect("network fixture registration");
 }

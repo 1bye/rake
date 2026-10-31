@@ -1,6 +1,9 @@
 //! GPUI mounting and presentation; retained entries own independent view entities.
 
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/layout_tests.rs"]
+mod layout_tests;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
 #[path = "view/page_tests.rs"]
 mod page_tests;
 
@@ -20,6 +23,7 @@ use gpui::{AnyView, Context, ElementId, IntoElement, Render, RenderOnce, Window,
 use crate::Services;
 use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle};
 
+use super::layout::{LayoutContext, LayoutFactory};
 use super::runtime::{Guard, Mount, Resource};
 
 use super::{
@@ -315,18 +319,24 @@ impl<R: Route> RenderOnce for TabBar<R> {
 }
 
 /// Displays only the selected current view. Hidden tabs and history retain their entities.
-#[derive(IntoElement)]
+#[derive(Clone, IntoElement)]
 pub struct RouteOutlet<R: Route> {
-    router: Router<R>,
+    navigator: Navigator<R>,
     window: WindowId,
 }
 
 impl<R: Route> RouteOutlet<R> {
-    /// Creates a selected-entry outlet. Its owning shell observes router changes.
+    /// Creates a selected-entry outlet. The outlet keeps only a weak navigator;
+    /// its owning shell observes router changes and owns the runtime lifetime.
     pub fn new(router: Router<R>) -> Self {
-        let window = router.navigator().window_id();
+        let navigator = router.navigator();
+        let window = navigator.window_id();
 
-        Self { router, window }
+        Self { navigator, window }
+    }
+
+    pub(crate) fn from_navigator(navigator: Navigator<R>, window: WindowId) -> Self {
+        Self { navigator, window }
     }
 }
 
@@ -341,13 +351,17 @@ impl<R: Route> RouteOutlet<R> {
 
 impl<R: Route> RenderOnce for RouteOutlet<R> {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
-        let view = self
-            .router
-            .resource(self.window)
-            .and_then(|resource| resource.downcast_ref::<AnyView>().cloned());
+        let router = self.navigator.runtime().ok();
+        let view = router.as_ref().and_then(|router| {
+            router
+                .resource(self.window)
+                .and_then(|resource| resource.downcast_ref::<AnyView>().cloned())
+        });
 
         #[cfg(feature = "devtools")]
-        let snapshot = self.router.presented_snapshot(self.window);
+        let snapshot = router
+            .as_ref()
+            .map(|router| router.presented_snapshot(self.window));
 
         let outlet = div()
             .size_full()
@@ -356,11 +370,12 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
 
         #[cfg(feature = "devtools")]
         {
-            if let Some(tab) = snapshot
-                .tabs
-                .iter()
-                .find(|tab| Some(tab.id) == snapshot.selected)
-            {
+            if let Some(tab) = snapshot.as_ref().and_then(|snapshot| {
+                snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| Some(tab.id) == snapshot.selected)
+            }) {
                 outlet.owner(tab.id, tab.entries[tab.cursor].id)
             } else {
                 outlet
@@ -390,6 +405,7 @@ pub(crate) struct Workspace<R: Route> {
     chrome: bool,
     router: Router<R>,
     restart: Option<R>,
+    layout: Option<AnyView>,
     _driver: Option<DriverTask>,
     window: WindowId,
     #[cfg(target_family = "wasm")]
@@ -415,6 +431,43 @@ pub(crate) struct RoutingRoot<R: Route> {
     pub(crate) control: crate::control::ControlConfig,
     pub(crate) commands: crate::control::Commands,
     pub(crate) application_id: String,
+    pub(crate) layout: Option<LayoutFactory<R>>,
+    pub(crate) new_window_options: Option<Rc<dyn Fn(WindowId) -> gpui::WindowOptions>>,
+}
+
+/// Mounts a host-owned layout exactly once for a concrete physical window.
+///
+/// Keeping this small operation separate makes initial and secondary windows use
+/// identical context construction and preserves the factory's error as a mount
+/// failure instead of panicking inside GPUI's root-view callback.
+fn mount_layout<R: Route>(
+    layout: Option<&LayoutFactory<R>>,
+    router: Router<R>,
+    services: Services,
+    window_id: WindowId,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Result<Option<AnyView>, MountError> {
+    layout
+        .map(|factory| factory(LayoutContext::new(router, services, window_id), window, cx))
+        .transpose()
+}
+
+/// Invalidates one workspace and its retained custom layout after a router
+/// revision. Layouts are entities in their own right, so notifying both handles
+/// avoids depending on GPUI re-rendering an erased child solely because its
+/// parent happened to redraw.
+fn notify_workspace<R: Route>(
+    view: &gpui::WeakEntity<Workspace<R>>,
+    cx: &mut gpui::AsyncApp,
+) -> bool {
+    view.update(cx, |workspace, cx| {
+        cx.notify();
+        if let Some(layout) = &workspace.layout {
+            gpui::App::notify(cx, layout.entity_id());
+        }
+    })
+    .is_ok()
 }
 
 impl<R: Route> Workspace<R> {
@@ -439,7 +492,11 @@ impl<R: Route> Workspace<R> {
             application_id,
             chrome,
             quit_guards,
+            layout,
+            new_window_options,
         } = root;
+        #[cfg(target_family = "wasm")]
+        let _ = new_window_options;
 
         let initial_window = checkpoint
             .as_ref()
@@ -449,6 +506,7 @@ impl<R: Route> Workspace<R> {
 
         let contexts = Rc::new(RefCell::new(BTreeMap::new()));
 
+        let layout_services = services.clone();
         let router = Router::with_views(
             config,
             services,
@@ -466,6 +524,9 @@ impl<R: Route> Workspace<R> {
             contexts,
             views: Rc::new(RefCell::new(BTreeMap::new())),
             chrome,
+            layout: layout.clone(),
+            services: layout_services.clone(),
+            new_window_options,
         });
 
         #[cfg(not(target_family = "wasm"))]
@@ -504,6 +565,15 @@ impl<R: Route> Workspace<R> {
         let _ = web;
 
         let restart = initial.clone().or_else(|| R::from_uri("/").ok());
+
+        let initial_layout = mount_layout(
+            layout.as_ref(),
+            router.clone(),
+            layout_services,
+            initial_window,
+            window,
+            cx,
+        )?;
 
         if checkpoint.is_none()
             && let Some(initial) = initial
@@ -597,13 +667,13 @@ impl<R: Route> Workspace<R> {
                             }
 
                             #[cfg(target_family = "wasm")]
-                            if _view.update(cx, |_, cx| cx.notify()).is_err() {
+                            if !notify_workspace(&_view, cx) {
                                 break;
                             }
 
                             #[cfg(not(target_family = "wasm"))]
                             for view in observed_views.borrow().values() {
-                                let _ = view.update(cx, |_, cx| cx.notify());
+                                let _ = notify_workspace(view, cx);
                             }
                         }
                     };
@@ -653,6 +723,7 @@ impl<R: Route> Workspace<R> {
                     chrome,
                     router,
                     restart,
+                    layout: initial_layout,
                     _driver: driver,
                     window: initial_window,
                     #[cfg(target_family = "wasm")]
@@ -964,6 +1035,16 @@ impl<R: Route> Render for Workspace<R> {
             quit_controls
         };
 
+        let content = self
+            .layout
+            .clone()
+            .map(|layout| layout.into_any_element())
+            .unwrap_or_else(|| {
+                RouteOutlet::new(self.router.clone())
+                    .in_window(self.window)
+                    .into_any_element()
+            });
+
         div()
             .size_full()
             .flex()
@@ -986,7 +1067,7 @@ impl<R: Route> Render for Workspace<R> {
                 div()
                     .flex_1()
                     .overflow_hidden()
-                    .child(RouteOutlet::new(self.router.clone()).in_window(self.window))
+                    .child(content)
                     .inspect("rake.content"),
             )
             .inspect("rake.workspace")
@@ -1017,6 +1098,9 @@ struct NativeWindows<R: Route> {
     contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
     views: Rc<RefCell<BTreeMap<WindowId, gpui::WeakEntity<Workspace<R>>>>>,
     chrome: bool,
+    layout: Option<LayoutFactory<R>>,
+    services: Services,
+    new_window_options: Option<Rc<dyn Fn(WindowId) -> gpui::WindowOptions>>,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -1035,33 +1119,84 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                 .ok_or_else(|| MountError("Runtime closed.".into()))?;
 
             let app = host.app.clone();
+            let layout = host.layout.clone();
+            let services = host.services.clone();
+            let views = host.views.clone();
+            let chrome = host.chrome;
+            let setup_error = Rc::new(RefCell::new(None));
+            let callback_error = setup_error.clone();
+            let mut options = host
+                .new_window_options
+                .as_ref()
+                .map(|factory| factory(id))
+                .unwrap_or_default();
+            // Navigation decides activation, while the application factory owns
+            // every other option (bounds, titlebar, kind, and visibility).
+            options.focus = activation == Activation::Activate;
 
-            app.update(|cx| {
-                cx.open_window(
-                    gpui::WindowOptions {
-                        focus: activation == Activation::Activate,
-                        ..gpui::WindowOptions::default()
-                    },
-                    move |window, cx| {
-                        router
-                            .attach_window(id, window, cx)
-                            .expect("reserved native window");
-                        let view = cx.new(|_| Workspace {
-                            chrome: host.chrome,
+            let result = app.update(|cx| {
+                cx.open_window(options, move |window, cx| {
+                    if let Err(error) = router.attach_window(id, window, cx) {
+                        *callback_error.borrow_mut() = Some(MountError(error.to_string()));
+                        window.remove_window();
+                        return cx.new(|_| Workspace {
+                            chrome,
                             restart: R::from_uri("/").ok(),
-                            router,
+                            router: router.clone(),
+                            layout: None,
                             _driver: None,
                             window: id,
                         });
+                    }
 
-                        host.views.borrow_mut().insert(id, view.downgrade());
+                    let layout = match mount_layout(
+                        layout.as_ref(),
+                        router.clone(),
+                        services.clone(),
+                        id,
+                        window,
+                        cx,
+                    ) {
+                        Ok(layout) => layout,
+                        Err(error) => {
+                            *callback_error.borrow_mut() = Some(error);
+                            // `ProvisionalWindow` owns the final rollback; close
+                            // the just-created host immediately as well so a
+                            // failed layout never becomes visible.
+                            window.remove_window();
+                            return cx.new(|_| Workspace {
+                                chrome,
+                                restart: R::from_uri("/").ok(),
+                                router: router.clone(),
+                                layout: None,
+                                _driver: None,
+                                window: id,
+                            });
+                        }
+                    };
 
-                        view
-                    },
-                )
+                    let view = cx.new(|_| Workspace {
+                        chrome,
+                        restart: R::from_uri("/").ok(),
+                        router: router.clone(),
+                        layout,
+                        _driver: None,
+                        window: id,
+                    });
+
+                    views.borrow_mut().insert(id, view.downgrade());
+
+                    view
+                })
                 .map(|_| ())
                 .map_err(|error| MountError(error.to_string()))
-            })
+            });
+
+            if let Some(error) = setup_error.borrow_mut().take() {
+                Err(error)
+            } else {
+                result
+            }
         }
         .boxed_local()
     }

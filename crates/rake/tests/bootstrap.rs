@@ -79,3 +79,30 @@ fn invalid_explicit_destination_fails_before_ui_startup() {
 
     assert!(matches!(app.run(), Err(AppError::Route(_))));
 }
+
+#[test]
+fn route_type_transition_rejects_configuration_it_cannot_preserve() {
+    let views = || {
+        rake::router::__routes(|_: &Destination, _, _, _| {
+            Err(rake::router::MountError("unused factory".into()))
+        })
+    };
+    let guarded = App::new("example.order")
+        .entry_guard(|_| async { rake::router::GuardResult::Allow })
+        .routes(views());
+    assert!(matches!(
+        guarded.run(),
+        Err(AppError::InvalidConfiguration(_))
+    ));
+
+    let layout = App::new("example.order")
+        .layout(|_, _, cx| {
+            use rake::gpui::AppContext;
+            cx.new(|_| rake::gpui::Empty)
+        })
+        .routes(views());
+    assert!(matches!(
+        layout.run(),
+        Err(AppError::InvalidConfiguration(_))
+    ));
+}

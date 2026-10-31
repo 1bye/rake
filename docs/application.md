@@ -82,3 +82,28 @@ runtime errors rather than synchronous `App::run` errors.
 Run `python3 scripts/test-app-startup.py` on a native desktop session to verify the
 real event-loop failure boundary. It intentionally launches a failing fixture and
 checks the error and exit status; it is separate from the portable unit suite.
+
+## Services and persistent layouts
+
+Repeated `app.services()` calls and application startup share the configured HTTP
+transport. Changing `.http(...)` or `.diagnostics(...)` creates a new transport;
+existing service snapshots remain valid. Registries returned by `Services` also
+carry the standard HTTP and diagnostic handles for command handlers. A bare
+`ServiceRegistry::new()` remains a custom-only composition and reports a missing
+standard service explicitly.
+
+Routed apps can install `.layout(...)` or `.try_layout(...)` after registering
+routes. The layout is one retained entity per window; pages own only their route
+bodies and entry-scoped work. Use `layout.outlet()` in a sidebar/dashboard shell,
+and `layout.runtime()` for application operations. Same-type `replace_routes`
+keeps the layout and guards. Registering an entry guard or layout before the
+route type transition returns an explicit builder-order error at startup.
+
+`python3 scripts/test-app-layout.py` runs the native layout fixture. It verifies
+persistent shell state, shared service/transport identity, history navigation, and
+rollback when a secondary window's layout fails. It requires a desktop session.
+
+When supplying an update controller manually, its immutable binding must agree
+with any registered update service and compiled policy. Packaged descriptors are
+validated even when both services were supplied manually. Controller-only
+registration supplies its own service; conflicting combinations fail at startup.

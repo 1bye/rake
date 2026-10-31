@@ -29,6 +29,21 @@ mod velopack;
 #[cfg(feature = "velopack")]
 pub use velopack::{StagedVelopack, VelopackUpdate};
 
+/// Parses and validates the policy compiled into an application binary.
+///
+/// This is kept separate from installation discovery so application hosts can
+/// reject a conflicting manually supplied service before provider startup.
+/// # Errors
+/// Returns malformed JSON or an invalid update binding.
+#[doc(hidden)]
+pub fn parse_policy(embedded: &str) -> Result<UpdateBinding, Error> {
+    let binding: UpdateBinding = serde_json::from_str(embedded)?;
+    binding
+        .validate()
+        .map_err(|error| Error::Policy(error.to_string()))?;
+    Ok(binding)
+}
+
 /// Native update failures; a failed check or declined restart never implies installation.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -79,14 +94,13 @@ pub fn early_startup_with_desktop(
         .validate()
         .map_err(|error| Error::Policy(error.to_string()))?;
     if let Some(embedded) = embedded {
-        let binding: UpdateBinding = serde_json::from_str(embedded)?;
-        binding
-            .validate()
-            .map_err(|error| Error::Policy(error.to_string()))?;
+        let binding = parse_policy(embedded)?;
         #[cfg(all(windows, feature = "velopack"))]
         if binding.format == rake_dist_core::Format::Velopack {
             windows_registrations::startup(&binding, &desktop);
         }
+        #[cfg(not(all(windows, feature = "velopack")))]
+        let _ = binding;
     }
     Ok(())
 }
@@ -118,3 +132,24 @@ macro_rules! updates {
 }
 #[doc(hidden)]
 pub use rake_resources as __resources;
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    const POLICY: &str = r#"{"schema_version":1,"identifier":"dev.rake.test","version":"1.0.0","package_version":"1.0.0","target":"x86_64-unknown-linux-gnu","format":"deb","owner":"disabled","channel":"stable","base_url":null,"public_keys":{}}"#;
+
+    #[test]
+    fn parse_policy_validates_the_compiled_binding() {
+        let binding = parse_policy(POLICY).unwrap();
+        assert_eq!(binding.identifier, "dev.rake.test");
+    }
+
+    #[test]
+    fn parse_policy_rejects_invalid_bindings() {
+        let error =
+            parse_policy(&POLICY.replace("\"owner\":\"disabled\"", "\"owner\":\"appimage\""))
+                .unwrap_err();
+        assert!(error.to_string().contains("update policy"));
+    }
+}

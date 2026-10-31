@@ -1,14 +1,11 @@
 //! The home page owns resource loading, retained edits and its route context.
 use super::Destination;
-use crate::{AppInfo, shell::Shell};
 use rake::gpui::{self, Context, Entity, Window, prelude::*};
 use rake::prelude::*;
 use rake::router::MountError;
-use std::rc::Rc;
 
 pub(crate) struct Home {
     page: PageContext<Destination>,
-    app: Rc<AppInfo>,
     welcome: String,
     edits: u32,
     error: Option<String>,
@@ -21,10 +18,6 @@ impl Page<Destination> for Home {
         _: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<Entity<Self>, MountError> {
-        let app = page
-            .services()
-            .get::<AppInfo>()
-            .map_err(|error| MountError(error.to_string()))?;
         let welcome = match rake::resources!() {
             Ok(resources) => {
                 let path = resources
@@ -40,7 +33,6 @@ impl Page<Destination> for Home {
 
         Ok(cx.new(|_| Self {
             page,
-            app,
             welcome,
             edits: 0,
             error: None,
@@ -50,7 +42,7 @@ impl Page<Destination> for Home {
 
 impl Render for Home {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = rake::view! {
+        rake::view! {
             <section class="gap-3">
                 <p>{self.welcome.clone()}</p>
                 <p>{format!("Retained local edits: {}", self.edits)}</p>
@@ -66,10 +58,6 @@ impl Render for Home {
                 <p>"Back/Forward retain this screen. Quit or update restart asks before discarding dirty state."</p>
                 if let Some(error) = &self.error { <p>{error.clone()}</p> }
             </section>
-        };
-
-        rake::view! {
-            <Shell page={self.page.clone()} app={Rc::clone(&self.app)} body={body.into_any_element()}/>
         }
     }
 }

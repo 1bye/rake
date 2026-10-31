@@ -1225,6 +1225,28 @@ impl<R: Route> Navigator<R> {
         self.submit(action, |result| result.opened)
     }
 
+    /// Resolves this navigator's current committed tab without cloning workspace history.
+    /// Page-bound navigators retain their originating tab; window-bound navigators
+    /// resolve that window's selection when called.
+    /// # Errors
+    /// Returns `NoCurrentTab`, a closed-target error, or a lifecycle admission error.
+    pub fn current_tab(&self) -> Result<TabHandle<R>, OperationError> {
+        let core = self.core()?;
+        let state = core.state.borrow();
+        let id = self
+            .tab
+            .or_else(|| {
+                state
+                    .windows
+                    .get(&self.window)
+                    .and_then(|window| window.selected)
+            })
+            .ok_or(OperationError::NoCurrentTab)?;
+        state.tab(id)?;
+        drop(state);
+        Ok(self.tab(id))
+    }
+
     /// Targets an exact tab without semantic reuse.
     pub fn tab(&self, tab_id: TabId) -> TabHandle<R> {
         TabHandle {

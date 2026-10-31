@@ -211,6 +211,12 @@ impl UpdateController {
         self.0.service.binding()
     }
 
+    /// Returns the service owned by this controller for host composition.
+    #[doc(hidden)]
+    pub fn service(&self) -> UpdateService {
+        (*self.0.service).clone()
+    }
+
     /// Owns immutable installed policy; performs no I/O or automatic checks.
     pub fn new(service: UpdateService) -> Self {
         let state = match service.capability() {

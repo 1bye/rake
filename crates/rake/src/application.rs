@@ -14,7 +14,7 @@ use crate::router::{
     GuardContext, GuardResult, NoRoute, Route, RouteViews, RouterConfig, WebConfig,
 };
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 type Root = Box<
     dyn FnOnce(
@@ -43,6 +43,8 @@ mod managed;
 #[doc(hidden)]
 pub use factory::{AppFactoryOutput, run_app_factory};
 mod startup;
+#[cfg(all(feature = "updates", not(target_family = "wasm")))]
+mod update_services;
 
 #[cfg(feature = "experimental-view")]
 type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
@@ -70,10 +72,15 @@ pub struct App<R: Route = NoRoute> {
     window_options: WindowOptions,
     workspace_chrome: bool,
     http: HttpConfig,
+    http_client: RefCell<Option<HttpClient>>,
+    layout: Option<crate::router::layout::LayoutFactory<R>>,
+    new_window_options: Option<Rc<dyn Fn(crate::router::WindowId) -> WindowOptions>>,
+    configuration_error: Option<&'static str>,
     diagnostics: DiagnosticsConfig,
     root: Option<Root>,
     background: Option<Background>,
     close_policy: ClosePolicy,
+    close_policy_set: bool,
     route_options: bool,
     quit_guards: Vec<crate::router::runtime::QuitGuard>,
     routes: Option<Rc<dyn RouteViews<R>>>,
@@ -98,10 +105,15 @@ impl App<NoRoute> {
             window_options: WindowOptions::default(),
             workspace_chrome: true,
             http: HttpConfig::new(),
+            http_client: RefCell::new(None),
+            layout: None,
+            new_window_options: None,
+            configuration_error: None,
             diagnostics: DiagnosticsConfig::new(),
             root: None,
             background: None,
             close_policy: ClosePolicy::default(),
+            close_policy_set: false,
             route_options: false,
             quit_guards: Vec::new(),
             routes: None,
@@ -130,19 +142,29 @@ impl App<NoRoute> {
     ///     Err(rake::router::MountError("fixture".into()))
     /// });
     /// let app = rake::App::new("example.routes").routes(pages());
-    /// let app = app.routes(pages()); // use replace_routes instead
+    /// let app = app.routes(pages); // use replace_routes instead
     /// ```
     pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
+        let configuration_error = if self.layout.is_some() || !self.guards.is_empty() {
+            Some("register routes before configuring layouts or entry guards")
+        } else {
+            self.configuration_error
+        };
         App {
             id: self.id,
             services: self.services,
             window_options: self.window_options,
             workspace_chrome: self.workspace_chrome,
             http: self.http,
+            http_client: self.http_client,
+            layout: None,
+            new_window_options: self.new_window_options,
+            configuration_error,
             diagnostics: self.diagnostics,
             root: self.root,
             background: self.background,
             close_policy: self.close_policy,
+            close_policy_set: self.close_policy_set,
             route_options: self.route_options,
             quit_guards: self.quit_guards,
             routes: Some(Rc::new(routes)),
@@ -186,6 +208,49 @@ impl<R: Route> App<R> {
     #[must_use]
     pub fn replace_routes(mut self, routes: impl RouteViews<R>) -> Self {
         self.routes = Some(Rc::new(routes));
+        self
+    }
+
+    /// Mounts one persistent layout entity per window, outside route history.
+    /// Configure this after `routes`. Guard decisions and lifecycle UI remain active.
+    #[must_use]
+    pub fn layout<L: Render>(
+        self,
+        mount: impl Fn(crate::router::LayoutContext<R>, &mut Window, &mut gpui::App) -> gpui::Entity<L>
+        + 'static,
+    ) -> Self {
+        self.try_layout(move |context, window, cx| Ok(mount(context, window, cx)))
+    }
+
+    /// Mounts a persistent layout that can report service or initialization failures.
+    /// Each secondary-window failure rolls back that window's opening operation.
+    #[must_use]
+    pub fn try_layout<L: Render>(
+        mut self,
+        mount: impl Fn(
+            crate::router::LayoutContext<R>,
+            &mut Window,
+            &mut gpui::App,
+        ) -> Result<gpui::Entity<L>, crate::router::MountError>
+        + 'static,
+    ) -> Self {
+        self.route_options = true;
+        self.layout = Some(Rc::new(move |context, window, cx| {
+            mount(context, window, cx).map(Into::into)
+        }));
+        self
+    }
+
+    /// Configures secondary native windows using their reserved runtime identity.
+    /// The requested navigation activation still determines keyboard focus.
+    /// Initial-window options are configured separately with `window_options`.
+    #[must_use]
+    pub fn new_window_options(
+        mut self,
+        options: impl Fn(crate::router::WindowId) -> WindowOptions + 'static,
+    ) -> Self {
+        self.route_options = true;
+        self.new_window_options = Some(Rc::new(options));
         self
     }
 
@@ -300,6 +365,7 @@ impl<R: Route> App<R> {
     /// Configures the shared request transport.
     pub fn http(mut self, config: HttpConfig) -> Self {
         self.http = config;
+        self.http_client = RefCell::new(None);
 
         self
     }
@@ -307,6 +373,7 @@ impl<R: Route> App<R> {
     /// Configures collection and tracing subscriber ownership.
     pub fn diagnostics(mut self, config: DiagnosticsConfig) -> Self {
         self.diagnostics = config;
+        self.http_client = RefCell::new(None);
 
         self
     }
@@ -386,6 +453,7 @@ impl<R: Route> App<R> {
     #[must_use]
     pub fn close_policy(mut self, policy: ClosePolicy) -> Self {
         self.close_policy = policy;
+        self.close_policy_set = true;
         self
     }
 
@@ -408,14 +476,25 @@ impl<R: Route> App<R> {
         self
     }
 
-    /// Validates service configuration without initializing diagnostics or a GPU.
+    /// Resolves shared services without initializing diagnostics or a GPU.
+    /// Repeated calls and startup reuse the same HTTP transport. Changing HTTP or
+    /// diagnostics configuration creates a new transport; older snapshots stay valid.
     pub fn services(&self) -> Result<Services, AppError> {
         if self.id.is_empty() || self.id.chars().any(char::is_whitespace) {
             return Err(AppError::InvalidId);
         }
 
+        let cached = self.http_client.borrow().clone();
+        let http = if let Some(http) = cached {
+            http
+        } else {
+            let http =
+                HttpClient::with_collector(self.http.clone(), self.diagnostics.shared_collector())?;
+            *self.http_client.borrow_mut() = Some(http.clone());
+            http
+        };
         Ok(Services::new(
-            HttpClient::with_collector(self.http.clone(), self.diagnostics.shared_collector())?,
+            http,
             self.diagnostics.shared_collector(),
             self.services.clone(),
         ))
@@ -433,37 +512,11 @@ impl<R: Route> App<R> {
         }
 
         #[cfg(all(feature = "updates", not(target_family = "wasm")))]
-        if self.services.get::<rake_updates::UpdateService>().is_err()
-            && let Some((policy, name)) = self.distribution.take()
         {
-            match crate::Resources::discover(name) {
-                Ok(resources) => {
-                    let updates = rake_updates::UpdateService::new(policy, &resources)?;
-                    self.services = self.services.with(updates).map_err(|error| {
-                        AppError::Updates(rake_updates::Error::Policy(error.to_string()))
-                    })?;
-                }
-                Err(crate::resources::Error::Unbundled) => {}
-                Err(error) => {
-                    return Err(AppError::Updates(rake_updates::Error::Policy(
-                        error.to_string(),
-                    )));
-                }
-            }
+            self.services = update_services::install(self.services, self.distribution.take())?;
         }
-        #[cfg(all(feature = "updates", not(target_family = "wasm")))]
-        if self
-            .services
-            .get::<rake_updates::UpdateController>()
-            .is_err()
-            && let Ok(service) = self.services.get::<rake_updates::UpdateService>()
-        {
-            self.services = self
-                .services
-                .with(rake_updates::UpdateController::new((*service).clone()))
-                .map_err(|error| {
-                    AppError::Updates(rake_updates::Error::Policy(error.to_string()))
-                })?;
+        if let Some(error) = self.configuration_error {
+            return Err(AppError::InvalidConfiguration(error));
         }
         let services = self.services()?;
 
@@ -475,6 +528,11 @@ impl<R: Route> App<R> {
             return Err(AppError::ConflictingRoots);
         }
 
+        if self.routes.is_some() && self.close_policy_set {
+            return Err(AppError::InvalidConfiguration(
+                "close_policy applies to standalone windows; routed windows own tab disposal",
+            ));
+        }
         if self.routes.is_none() && self.route_options {
             return Err(AppError::RoutingRequiresRoutes);
         }
@@ -540,6 +598,8 @@ impl<R: Route> App<R> {
             let application_id = self.id.clone();
             let chrome = self.workspace_chrome;
             let quit_guards = self.quit_guards;
+            let layout = self.layout;
+            let new_window_options = self.new_window_options;
 
             Some(Box::new(move |services, window, cx| {
                 let root = crate::router::view::RoutingRoot {
@@ -554,6 +614,8 @@ impl<R: Route> App<R> {
                     application_id,
                     chrome,
                     quit_guards,
+                    layout,
+                    new_window_options,
                 };
 
                 crate::router::view::Workspace::mount(services, root, window, cx)
@@ -666,6 +728,15 @@ impl<R: Route> App<R> {
 /// Application configuration and synchronous host initialization failures.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// A typed service could not be registered or resolved during application setup.
+    #[error(transparent)]
+    Service(#[from] ServiceError),
+    /// An application command could not be registered during setup.
+    #[error(transparent)]
+    Command(#[from] crate::control::CommandError),
+    /// Builder ordering would discard configuration belonging to another route type.
+    #[error("invalid application configuration: {0}")]
+    InvalidConfiguration(&'static str),
     /// The initial root or workspace could not initialize.
     #[error("application root initialization failed: {0}")]
     Mount(#[from] crate::router::MountError),
@@ -831,6 +902,24 @@ mod configuration_tests {
     enum Destination {
         #[route(id = "main", path = "/main")]
         Main,
+    }
+
+    #[test]
+    fn service_previews_share_the_transport_across_route_registration() {
+        let app = App::new("example.transport");
+        let first = app.services().unwrap().http();
+        let second = app.services().unwrap().http();
+        assert!(first.shares_transport_with(&second));
+        let pages = crate::router::__routes(|_: &Destination, _, _, _| {
+            Err(crate::router::MountError("unused fixture".into()))
+        });
+        let app = app.routes(pages);
+        assert!(first.shares_transport_with(&app.services().unwrap().http()));
+        let app = app.http(HttpConfig::new());
+        let changed = app.services().unwrap().http();
+        assert!(!first.shares_transport_with(&changed));
+        let app = app.diagnostics(DiagnosticsConfig::new());
+        assert!(!changed.shares_transport_with(&app.services().unwrap().http()));
     }
 
     #[test]

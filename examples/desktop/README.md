@@ -9,7 +9,7 @@ examples/desktop/
 ├── build.rs                # rake-build preparation
 ├── src/
 │   ├── main.rs             # App, shared AppInfo service and theme
-│   ├── shell.rs            # Shared RenderOnce layout; no Page implementation
+│   ├── shell.rs            # Persistent Render layout; no Page implementation
 │   └── pages/
 │       ├── mod.rs          # Typed navigation addresses
 │       ├── home.rs         # Home: Page + Render, resources and dirty state
@@ -51,6 +51,7 @@ App::new("dev.rake.starter")
         Destination::Home => Home,
         Destination::Updates => Updates,
     })
+    .try_layout(Shell::mount)
     .initial(Destination::Home)
 ```
 
@@ -58,8 +59,11 @@ App::new("dev.rake.starter")
 files. The macro checks every destination and calls the selected `Page::mount`;
 there is no application-owned dispatcher. Mount returns an `Entity<Self>` and
 runs only for a new or reconstructed history entry. Theme installation runs once
-at app startup before any page mounts. `Shell` is an ordinary shared `RenderOnce`
-component, composed by both pages without implementing the routing trait.
+at app startup before any page mounts. `Shell` is one persistent `Render` entity
+per window. Its `LayoutContext` supplies the shared services, navigation and route
+outlet. Pages render their bodies; they do not construct the shell. The shell's
+navigation-click count survives page changes independently of retained page edits.
+`try_layout` reports initialization failures without panicking.
 
 `Updates::new` resolves the automatically registered `UpdateController` and retains
 a task awaiting `changed(revision)` to redraw. Rake owns the provider driver and

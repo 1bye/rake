@@ -34,6 +34,10 @@
 //! ```
 
 #[cfg(feature = "gpui")]
+pub(crate) mod layout;
+#[cfg(feature = "gpui")]
+pub use layout::LayoutContext;
+#[cfg(feature = "gpui")]
 mod page;
 pub(crate) mod runtime;
 mod types;

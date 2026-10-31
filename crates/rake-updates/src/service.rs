@@ -45,10 +45,7 @@ impl UpdateService {
     /// Rejects missing/invalid policy and metadata that changes identity, target,
     /// version, packaging format, owner, channel or publication root.
     pub fn new(embedded: &str, resources: &Resources) -> Result<Self, Error> {
-        let binding: UpdateBinding = serde_json::from_str(embedded)?;
-        binding
-            .validate()
-            .map_err(|error| Error::Policy(error.to_string()))?;
+        let binding = crate::parse_policy(embedded)?;
         matches_installation(&binding, resources.installation())?;
         Ok(Self {
             binding,

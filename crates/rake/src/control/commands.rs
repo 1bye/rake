@@ -128,6 +128,37 @@ pub struct CommandContext {
     pub cancellation: CancellationToken,
 }
 
+impl CommandContext {
+    /// Returns the application-owned HTTP handle when standard services were supplied.
+    ///
+    /// # Errors
+    /// Returns [`crate::services::ServiceError::Missing`] for a raw registry without
+    /// standard application services.
+    pub fn http(&self) -> Result<crate::http::HttpClient, crate::services::ServiceError> {
+        self.services.http()
+    }
+
+    /// Returns the application-owned diagnostic collector when standard services were supplied.
+    ///
+    /// # Errors
+    /// Returns [`crate::services::ServiceError::Missing`] for a raw registry without
+    /// standard application services.
+    pub fn diagnostics(
+        &self,
+    ) -> Result<crate::diagnostics::Collector, crate::services::ServiceError> {
+        self.services.diagnostics()
+    }
+
+    /// Reconstructs the standard service view for this command's application composition.
+    ///
+    /// # Errors
+    /// Returns [`crate::services::ServiceError::Missing`] for a raw registry without
+    /// standard application services.
+    pub fn app_services(&self) -> Result<crate::services::Services, crate::services::ServiceError> {
+        self.services.standard_services()
+    }
+}
+
 use rake_protocol::control::CommandError;
 
 type Handler = Rc<

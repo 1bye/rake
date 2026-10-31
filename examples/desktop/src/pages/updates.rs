@@ -1,6 +1,5 @@
 //! One shared controller, with a redraw task owned by each retained view.
 use super::Destination;
-use crate::{AppInfo, shell::Shell};
 use rake::gpui::{self, Context, Entity, Task, Window, prelude::*};
 use rake::prelude::*;
 use rake::router::MountError;
@@ -9,7 +8,6 @@ use std::rc::Rc;
 
 pub(crate) struct Updates {
     page: PageContext<Destination>,
-    app: Rc<AppInfo>,
     controller: Option<Rc<UpdateController>>,
     error: Option<String>,
     _watch: Option<Task<()>>,
@@ -22,16 +20,12 @@ impl Page<Destination> for Updates {
         _: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<Entity<Self>, MountError> {
-        let app = page
-            .services()
-            .get::<AppInfo>()
-            .map_err(|error| MountError(error.to_string()))?;
-        Ok(cx.new(|cx| Self::new(page, app, cx)))
+        Ok(cx.new(|cx| Self::new(page, cx)))
     }
 }
 
 impl Updates {
-    fn new(page: PageContext<Destination>, app: Rc<AppInfo>, cx: &mut Context<Self>) -> Self {
+    fn new(page: PageContext<Destination>, cx: &mut Context<Self>) -> Self {
         let controller = page.services().get::<UpdateController>().ok();
         let watch = controller.clone().map(|updates| {
             cx.spawn(async move |view, cx| {
@@ -48,7 +42,6 @@ impl Updates {
 
         Self {
             page,
-            app,
             controller,
             error: None,
             _watch: watch,
@@ -110,7 +103,7 @@ impl Render for Updates {
             Some(UpdateState::Checking | UpdateState::Downloading { .. })
         );
 
-        let body = rake::view! {
+        rake::view! {
             <section class="gap-3">
                 <h2>"Updates"</h2>
                 <p>{label}</p>
@@ -131,10 +124,8 @@ impl Render for Updates {
                         })}>"Cancel"</button>
                     <button disabled={!can_restart} class="disabled:opacity-50"
                         on:click={cx.listener(|this, _, _, cx| {
-                            if let Some(router) = this.page.navigator().router() {
-                                this.error = router.restart_for_update(QuitOptions::default())
-                                    .err().map(|error| error.to_string());
-                            }
+                            this.error = this.page.runtime().restart_for_update(QuitOptions::default())
+                                .err().map(|error| error.to_string());
                             cx.notify();
                         })}>"Restart to update"</button>
                 </div>
@@ -142,10 +133,6 @@ impl Render for Updates {
                     <p>{error.clone()}</p>
                 }
             </section>
-        };
-
-        rake::view! {
-            <Shell page={self.page.clone()} app={Rc::clone(&self.app)} body={body.into_any_element()}/>
         }
     }
 }

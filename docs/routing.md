@@ -68,6 +68,18 @@ Ordinary shared components only implement `Render` or `RenderOnce` and need not
 depend on `PageContext`. See the [small desktop app](../examples/desktop/README.md)
 for complete, compiled page implementations and app setup.
 
+Use `.layout(|layout, window, cx| cx.new(|_| Shell::new(layout)))` after
+`.routes(...)` for a persistent application shell. `.try_layout(...)` accepts
+`Result<Entity<_>, MountError>` when initialization can fail. Rake mounts one
+layout per window, retains it across route changes, and leaves route bodies in
+`layout.outlet()`. `LayoutContext` supplies window-bound navigation, shared
+services and `runtime()` capabilities. Guard decisions, error presentation, reload and shutdown remain owned by the workspace outside the custom layout.
+
+`.new_window_options(|window_id| WindowOptions { ... })` configures secondary
+native windows. The navigation activation controls focus; `window_options`
+continues to configure the initial window. Browser hosts have one physical window
+and reject `NewWindow` operations.
+
 The runner installs the default tab strip, route outlet and decision presenter.
 Domain models may be shared, but each retained entry owns its own view and local
 state. The browser's URL takes precedence over `initial`. A custom GPUI host can use
