@@ -16,7 +16,7 @@ const root=fileURLToPath(new URL('../',import.meta.url)), directory=mkdtempSync(
 const control=join(directory,'control');mkdirSync(control,{mode:0o700});
 const env={...process.env,RAKE_DEV_CONTROL:'1',RAKE_CONTROL_DIR:control,RAKE_DEV_PREVIEW:'1'};
 const log=openSync(join(directory,'runtime.log'),'w',0o600),children=[];
-const rake=join(root,'target/debug/rake');let client;
+const rake=join(root,'target/debug/rake');let client, native;
 async function eventually(check,timeoutMs=20000) {
   const until=Date.now()+timeoutMs;let last;
   while(Date.now()<until) {try {const result=await check();if(result)return result;}catch(error){last=error;}await delay(50);}
@@ -24,7 +24,7 @@ async function eventually(check,timeoutMs=20000) {
 }
 try {
   children.push(spawn('caffeinate',['-d','-i','-t','180'],{stdio:'ignore'}));
-  children.push(spawn(join(root,'target/debug/rake-agent-example'),[],{cwd:root,env,stdio:['ignore',log,log]}));
+  native=spawn(join(root,'target/debug/rake-agent-example'),[],{cwd:root,env,stdio:['ignore',log,log]});children.push(native);
   await eventually(()=>JSON.parse(execFileSync(rake,['ctl','--json','inspect','tree'],{env,timeout:4000,stdio:['ignore','pipe','ignore']})).value?.elements.some(n=>n.semantic_id==='agent-increment'));
   const adapter=spawn(rake,['cdp','--session',directory,'--capture','--no-open','--json'],{cwd:root,env,stdio:['ignore','pipe',log]});children.push(adapter);
   const endpoint=await new Promise((resolve,reject)=>{
@@ -48,7 +48,7 @@ try {
   await client.waitFor({text:'Text: café 你好 🙂'});
   await client.key('a',4);await client.typeText('replaced 🙂');
   await client.waitFor({text:'Text: replaced 🙂'});
-  await client.key('F2');await client.waitFor({text:'Keys: 1'});
+  await client.key('F2');await client.waitFor({text:'Keys: 1; ticks: 0'});
   console.log('Focused Unicode text input, select-all replacement, native keyboard shortcut');
   await client.drag(await client.find({id:'agent-drag'}),60,0);
   const dragged=await client.waitFor({textContains:'Drags:'});
@@ -86,6 +86,40 @@ try {
   assert.equal((await client.find({text:'Count: 1'})).text,'Count: 1');
   assert.equal((await client.find({text:'Text: replaced 🙂'})).text,'Text: replaced 🙂');
   console.log('Ambiguity, missing node, timeout/cancel and stale runtime/window/capture reject safely');
+  const beforeResize=(await client.windows())[0];
+  await client.key('F3');
+  await eventually(async()=>{const w=(await client.windows())[0];return w.content.width>beforeResize.content.width && w.content.height>beforeResize.content.height;});
+  await client.waitFor({id:'agent-increment',bounds:{width:668,tolerance:1}});
+  assert.equal((await client.find({id:'agent-increment'})).stableId,increment.stableId);
+  await client.key('F4');
+  const frames=new Set();
+  // Occluded macOS windows need an input-driven draw; do not treat cached pixels as live frames.
+  await eventually(async()=>{await client.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});const s=await client.snapshot({textContains:'ticks:'});frames.add(s.frameSequence);return s.elements.some(e=>e.text==='Keys: 1; ticks: 24');});
+  assert.ok(frames.size>1,'continuous updates must produce several observable presentations');
+  const reconnect=await RakeAgent.connect(endpoint);
+  assert.equal(reconnect.runtimeId,client.runtimeId);await reconnect.waitFor({text:'Count: 1'});reconnect.close();
+  const old=client;const oldRuntime=old.runtimeId;
+  native.kill('SIGTERM');await new Promise(resolve=>native.once('exit',resolve));
+  await assert.rejects(old.typeText('must not reach the replacement'));
+  native=spawn(join(root,'target/debug/rake-agent-example'),[],{cwd:root,env:{...env,RAKE_AGENT_ROUTER:'1'},stdio:['ignore',log,log]});children.push(native);
+  await eventually(()=>JSON.parse(execFileSync(rake,['ctl','--json','inspect','tree'],{env,timeout:4000,stdio:['ignore','pipe','ignore']})).value?.elements.some(n=>n.semantic_id==='agent-increment'));
+  client=await eventually(async()=>{const c=await RakeAgent.connect(endpoint);if(c.runtimeId!==oldRuntime)return c;c.close();});
+  old.close();await assert.rejects(client.click(increment),/another runtime/);
+  await client.waitFor({text:'Count: 0'});
+  const first=client.windowId, firstRef=await client.find({id:'agent-increment'});
+  execFileSync(rake,['ctl','--json','router','open','demo','--target','new-window'],{env,timeout:10000});
+  const windows=await eventually(async()=>{const w=await client.windows();return w.length===2 && w;});
+  const second=windows.find(w=>w.window!==first).window;
+  const waitWindow=await client.call('Rake.waitFor',{query:{id:'missing'},timeoutMs:5000});
+  await client.selectWindow(second);
+  assert.equal((await client.call('Rake.getWait',{waitId:waitWindow.waitId})).status,'invalidated');
+  await assert.rejects(client.click(firstRef),/another runtime or window/);
+  await client.click(await client.find({id:'agent-increment'}));await client.waitFor({text:'Count: 1'});
+  await client.selectWindow(first);await client.waitFor({text:'Count: 0'});
+  execFileSync(rake,['ctl','--json','windows','close',`window-${second}`],{env,timeout:10000});
+  await eventually(async()=> (await client.windows()).length===1);
+  console.log('Native resize, rapid draws, reconnect/restart and isolated multi-window input passed');
+
   console.log(JSON.stringify({passed:true,directory,imagePath,runtimeId:runtime}));
 } catch(error) {
   if(client) { try { console.error('Text at failure',JSON.stringify(await client.snapshot({textContains:':'}))); } catch {} }

@@ -182,3 +182,12 @@ It closes only its own processes; logs and the native image stay in the printed
 private temporary directory. This suite passed on a real macOS window, including
 visual inspection of its PNG. It does not claim arbitrary browser/Puppeteer API
 compatibility or GPU-engine coverage beyond the reported inspection boundaries.
+
+The native regression suite also checks resizing without changing stable IDs,
+changing layouts across draws, reconnecting without replay, replacing the app
+runtime, and two independently inspected router windows. Switching windows
+invalidates pending waits and old element references cannot operate on the new
+selection. Each window retains its own counter. The fixture uses F3 to resize,
+F4 for 24 timer-driven updates, and `RAKE_AGENT_ROUTER=1` for router mode. When
+macOS occludes the window, the suite supplies harmless pointer moves to request
+native draws; it does not claim an occluded-window frame-rate measurement.

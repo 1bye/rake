@@ -6,6 +6,8 @@ use std::ops::Range;
 struct Demo {
     count: usize,
     keys: usize,
+    ticks: usize,
+    animation: Option<Task<()>>,
     drags: usize,
     text: String,
     selection: Range<usize>,
@@ -28,6 +30,22 @@ fn byte(text: &str, utf16: usize) -> usize {
 }
 
 impl Demo {
+    fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            count: 0,
+            keys: 0,
+            ticks: 0,
+            animation: None,
+            drags: 0,
+            text: String::new(),
+            selection: 0..0,
+            marked: None,
+            focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            input_bounds: Bounds::default(),
+        }
+    }
+
     fn utf16(&self, range: Range<usize>) -> Range<usize> {
         self.text[..range.start].encode_utf16().count()
             ..self.text[..range.end].encode_utf16().count()
@@ -143,6 +161,7 @@ impl Render for Demo {
         let count = self.count;
         let keys = self.keys;
         let drags = self.drags;
+        let ticks = self.ticks;
         let text = self.text.clone();
         let entity = cx.entity();
         let painted = entity.clone();
@@ -157,8 +176,18 @@ impl Render for Demo {
         .size_full();
         rake::view! {
             <div id="agent-root" class="size-full flex flex-col p-4 gap-2" style={|s|s.bg(rgb(0x172330)).text_color(rgb(0xffffff))}
-                on:key-down={cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                on:key-down={cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key == "f2" { this.keys += 1; cx.notify(); }
+                    if event.keystroke.key == "f3" { window.resize(size(px(700.),px(740.))); }
+                    if event.keystroke.key == "f4" {
+                        this.ticks = 0;
+                        this.animation = Some(cx.spawn(async move |view, cx| {
+                            for _ in 0..24 {
+                                cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
+                                if view.update(cx, |this,cx| { this.ticks+=1;cx.notify(); }).is_err() { break; }
+                            }
+                        }));
+                    }
                     if event.keystroke.modifiers.platform && event.keystroke.key == "a" { this.selection = 0..this.text.len(); cx.stop_propagation(); }
                 })}>
                 <h1>"Native agent workflow"</h1>
@@ -172,7 +201,7 @@ impl Render for Demo {
                     {input}
                 </div>
                 <p id="agent-echo">{format!("Text: {text}")}</p>
-                <p id="agent-keys">{format!("Keys: {keys}")}</p>
+                <p id="agent-keys">{format!("Keys: {keys}; ticks: {ticks}")}</p>
                 <div id="agent-drag" class="p-3 rounded-md" style={|s|s.bg(rgb(0x395b4b))}
                     on:mouse-move={cx.listener(|this, event: &MouseMoveEvent, _, cx| {if event.dragging() {this.drags+=1;cx.notify();}})}>
                     {format!("Drags: {drags}")}
@@ -187,8 +216,28 @@ impl Render for Demo {
     }
 }
 
+// Router mode exercises multiple inspected windows in the same native runtime.
+#[derive(Clone, rake::Route)]
+enum Destination {
+    #[route(id = "demo", path = "/")]
+    Demo,
+}
+
+struct Routes;
+impl rake::prelude::RouteViews<Destination> for Routes {
+    fn mount(
+        &self,
+        _: &Destination,
+        _: rake::prelude::PageContext<Destination>,
+        _: &mut Window,
+        cx: &mut gpui::App,
+    ) -> Result<AnyView, rake::router::MountError> {
+        Ok(cx.new(Demo::new).into())
+    }
+}
+
 fn main() -> Result<(), rake::AppError> {
-    rake::App::new("com.example.rake.agent")
+    let app = rake::App::new("com.example.rake.agent")
         .control(rake::control::ControlConfig::FromEnvironment)
         .window_options(WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -196,20 +245,13 @@ fn main() -> Result<(), rake::AppError> {
                 size: size(px(640.), px(680.)),
             })),
             ..Default::default()
-        })
-        .root(|_, _, cx| {
-            cx.new(|cx| Demo {
-                count: 0,
-                keys: 0,
-                drags: 0,
-                text: String::new(),
-                selection: 0..0,
-                marked: None,
-                focus: cx.focus_handle(),
-                scroll: ScrollHandle::new(),
-                input_bounds: Bounds::default(),
-            })
-            .into()
-        })
-        .run()
+        });
+    if std::env::var_os("RAKE_AGENT_ROUTER").is_some() {
+        app.routes(Routes)
+            .workspace_chrome(false)
+            .initial(Destination::Demo)
+            .run()
+    } else {
+        app.root(|_, _, cx| cx.new(Demo::new).into()).run()
+    }
 }
