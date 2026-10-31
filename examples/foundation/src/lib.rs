@@ -2,6 +2,7 @@
 
 use rake::gpui::{Context, Window, prelude::*};
 use rake::prelude::*;
+use rake::updates::UpdateState;
 
 #[rake::data]
 struct Message {
@@ -10,6 +11,7 @@ struct Message {
 
 struct Foundation {
     message: Loader<Message, rake::http::Error>,
+    updates: UpdateHandle,
     status: String,
     runtime: RuntimeContext,
 }
@@ -30,6 +32,27 @@ impl Render for Foundation {
             LoadStatus::Idle | LoadStatus::Loading(_) => "Loading…".into(),
             LoadStatus::Ready(message) => message.title.clone(),
             LoadStatus::Failed(error) => error.to_string(),
+        };
+        let version = self.updates.available_version(cx);
+        let update_error = self.updates.error(cx);
+        let can_check = self.updates.can_check(cx);
+        let can_download = self.updates.can_download(cx);
+        let can_restart = self.updates.can_restart(cx);
+        let update_status = match self.updates.state(cx) {
+            UpdateHandleState::Unavailable => "Updates unavailable in this build",
+            UpdateHandleState::Observed(state) => match state {
+                UpdateState::Disabled => "Updates disabled in this build",
+                UpdateState::ManagedExternally(_) => "Updates managed by your package manager",
+                UpdateState::Checking => "Checking for updates…",
+                UpdateState::Downloading { .. } => "Downloading update…",
+                UpdateState::Extracting { .. } => "Preparing update…",
+                UpdateState::Available(_) => "A new version is available",
+                UpdateState::ReadyToRestart(_) => "Ready to restart",
+                UpdateState::AwaitingApproval(_) => "Waiting for save/quit approval…",
+                UpdateState::Restarting(_) => "Restarting…",
+                UpdateState::UpToDate => "You're up to date",
+                _ => "Updates",
+            },
         };
 
         rake::view! {
@@ -53,6 +76,23 @@ impl Render for Foundation {
                     cx.notify();
                 })}>"Run managed job"</button>
                 <p>{self.status.clone()}</p>
+                <p>{update_status}</p>
+                if let Some(version) = version { <p>{format!("Version {version}")}</p> }
+                <div class="flex flex-row gap-3">
+                    <button disabled={!can_check}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}>
+                        "Check for updates"
+                    </button>
+                    <button disabled={!can_download}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}>
+                        "Download"
+                    </button>
+                    <button disabled={!can_restart}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}>
+                        "Restart to update"
+                    </button>
+                </div>
+                if let Some(error) = update_error { <p>{error}</p> }
             </main>
         }
     }
@@ -65,6 +105,7 @@ pub fn application() -> App {
         .root_with(|runtime, _, cx| {
             cx.new(|cx| Foundation {
                 message: runtime.load(cx, load_message),
+                updates: runtime.bind_updates(cx),
                 status: "Portable application foundation".into(),
                 runtime,
             })

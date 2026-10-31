@@ -211,7 +211,29 @@ workspace chrome and managed standalone hosts expose availability/progress and
 offer check, download/cancel and guarded restart actions through the same controller
 on each platform.
 
-Custom views resolve the same service through `page.services()` or root `Services`:
+Custom views normally keep an automatically observed `UpdateHandle`. Construct it
+inside `cx.new(|cx| ...)` with `runtime.bind_updates(cx)` for a standalone view or
+`page.bind_updates(cx)` for a routed page:
+
+```rust
+struct Updates { updates: rake::UpdateHandle }
+// Inside a Page::mount callback:
+let view = cx.new(|cx| Updates { updates: page.bind_updates(cx) });
+```
+
+Read `state(cx)`, `available_version(cx)`, and `error(cx)` in `Render`. Capability
+checks (`can_check`, `can_download`, `can_cancel`, `can_restart`) determine which
+buttons to enable. Actions `check(cx)`, `download(cx)`, `cancel(cx)` and
+`restart(cx)` retain failures and redraw automatically; restart uses the existing
+guarded quit path. Missing policy is `UpdateHandleState::Unavailable`.
+
+Rake owns weak subscriptions and revision watching. Page observation pauses while
+hidden and refreshes immediately on return. Standalone observation lasts until
+the bound view or runtime is released; it never enters the finite-work quit wait.
+Provider work remains application-owned when an observing page is hidden or
+closed. A failed observer registration is unavailable with an explanatory error.
+
+Low-level hosts can still resolve the same service through `Services`:
 
 ```rust
 use rake::updates::{UpdateController, UpdateState};
@@ -225,9 +247,8 @@ let label = match updates.state() {
 };
 ```
 
-Keep a view-owned task awaiting `updates.changed(snapshot.revision)` and notify
-the view on each new snapshot. Registering the listener before reading the state
-prevents missed events. Controller clones share policy, selection and staging;
+Low-level hosts drive `updates.changed(snapshot.revision)` explicitly. The
+revision argument prevents missed changes. Controller clones share policy, selection and staging;
 one operation owns the provider at a time. `cancel()` requests bounded cleanup;
 `Cancelling` prevents a new download from racing that cleanup. Dropping a driver
 cancels work, and late results cannot replace newer state.

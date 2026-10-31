@@ -31,11 +31,21 @@ impl<R: Route> Router<R> {
     /// # Errors
     /// Rejects absent staging or a competing quit operation.
     pub fn restart_for_update(&self, options: QuitOptions) -> Result<Operation<QuitResult>, Error> {
-        let updates = self
-            .updates()
-            .ok_or_else(|| Error::Policy("no update controller is installed".into()))?;
-        let handoff = updates.restart_handoff(std::env::args_os().skip(1).collect())?;
-        self.quit_for_update(handoff, options)
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = options;
+            Err(Error::Policy(
+                "native update restart is unavailable in a browser".into(),
+            ))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let updates = self
+                .updates()
+                .ok_or_else(|| Error::Policy("no update controller is installed".into()))?;
+            let handoff = updates.restart_handoff(std::env::args_os().skip(1).collect())?;
+            self.quit_for_update(handoff, options)
+        }
     }
 }
 

@@ -27,6 +27,14 @@ keep a closed runtime alive. `services()` returns shared application handles;
 restart. A routed page obtains these capabilities from `page.runtime()` and keeps
 entry-specific navigation, activities, and guards on `PageContext`.
 
+Inside an entity constructor, `runtime.load(cx, factory)` binds an arbitrary
+async value to that view; `runtime.bind_updates(cx)` observes the shared updates
+controller. Both arrange redraws and cancellation internally. Routed pages can
+use `page.load` for additional retained data and `page.bind_updates` for
+visibility-scoped update observation. For initial route preparation, register a
+`LoadedPage` with `loaded(PageType)` instead. See the [foundation example](../examples/foundation/src/lib.rs)
+and [desktop example](../examples/desktop/src/main.rs).
+
 Closing a standalone window requests guarded application quit by default on every
 native platform. Choose `.close_policy(rake::ClosePolicy::KeepRunning)` explicitly
 for a tray/background application. An OS force quit, crash, or process kill cannot

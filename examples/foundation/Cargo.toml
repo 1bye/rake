@@ -17,7 +17,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-rake = { workspace = true, features = ["experimental-view"] }
+rake = { workspace = true, features = ["experimental-view", "updates"] }
 
 [package.metadata.rake.bundle]
 name = "Rake Foundation"

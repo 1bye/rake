@@ -90,6 +90,30 @@ pub struct PageContext<R: Route> {
 }
 
 impl<R: Route> PageContext<R> {
+    pub(crate) fn new(
+        navigator: Navigator<R>,
+        entry: EntryHandle<R>,
+        services: Services,
+    ) -> Result<Self, MountError> {
+        let tab_id = entry
+            .tab_id()
+            .map_err(|error| MountError(error.to_string()))?;
+        Ok(Self {
+            navigator,
+            entry,
+            services,
+            tab_id,
+        })
+    }
+
+    /// Observes shared updates only while this retained page is visible.
+    /// Returning to the page refreshes its snapshot automatically. Provider work
+    /// stays application-owned and restart still uses the normal quit guards.
+    #[cfg(feature = "updates")]
+    pub fn bind_updates<V: 'static>(&self, cx: &mut Context<V>) -> crate::UpdateHandle {
+        crate::updates_binding::bind_page_updates(self.clone(), cx)
+    }
+
     /// Starts entry-owned asynchronous data with automatic redraw and checked retries.
     /// Loading continues while retained in history and stops when this entry is disposed.
     pub fn load<V: 'static, T: 'static, E, F, Fut>(
@@ -260,19 +284,13 @@ impl<R: Route> Router<R> {
                 .cloned();
 
             let views = views.clone();
-            let tab_id = entry.tab_id();
             let services = services.clone();
 
             Box::pin(async move {
                 let mut context =
                     context.ok_or_else(|| MountError("The target window has closed.".into()))?;
 
-                let page = PageContext {
-                    navigator,
-                    entry,
-                    services,
-                    tab_id: tab_id.map_err(|error| MountError(error.to_string()))?,
-                };
+                let page = PageContext::new(navigator, entry, services)?;
 
                 context
                     .update(|window, cx| {

@@ -12,8 +12,8 @@ examples/desktop/
 │   ├── shell.rs            # Persistent Render layout; no Page implementation
 │   └── pages/
 │       ├── mod.rs          # Typed navigation addresses
-│       ├── home.rs         # Home: Page + Render, resources and dirty state
-│       └── updates.rs      # Updates: Page + Render, controller and guarded restart
+│       ├── home.rs         # Home: LoadedPage + Render, resources and dirty state
+│       └── updates.rs      # Updates: automatic binding and guarded restart
 ├── assets/
 │   ├── icon.svg
 │   └── welcome.txt
@@ -77,10 +77,10 @@ Back/Forward reuse the retained view and data; selecting Home again creates a
 fresh entry and loads again. Loaders may prepare files, services or domain models;
 they are not limited to HTTP. Blocking work must explicitly use a worker.
 
-Updates resolves the automatically registered `UpdateController` during mount.
-Its `page.while_visible` observer awaits `changed(revision)` to redraw, pauses
-while hidden, and publishes a fresh snapshot when shown again. Rake owns the provider driver and
-blocking work; views do not create worker threads. Check, available version,
+Updates calls `page.bind_updates(cx)` during entity construction and retains an
+`UpdateHandle`. Rake observes revisions, redraws the view, pauses observation
+while hidden, and refreshes the snapshot when shown again. Rake owns the provider driver and
+blocking work; views do not create worker threads or register events. Check, available version,
 download progress, cancellation, failures and guarded restart use that controller.
 No update check starts automatically. An unbundled `cargo run` has no installed
 controller and shows that updates are unavailable. This is a desktop example;

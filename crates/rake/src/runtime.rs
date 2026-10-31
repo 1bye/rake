@@ -150,6 +150,19 @@ pub struct RuntimeContext<R: Route = NoRoute> {
 }
 
 impl<R: Route> RuntimeContext<R> {
+    /// Observes the shared update controller and redraws this view automatically.
+    /// Dropping the handle/view stops observation, without stopping provider work.
+    /// Missing policy and action failures are represented in the returned handle.
+    #[cfg(all(feature = "gpui", feature = "updates"))]
+    pub fn bind_updates<V: 'static>(&self, cx: &mut gpui::Context<V>) -> crate::UpdateHandle {
+        crate::updates_binding::bind_updates(self.clone(), cx)
+    }
+
+    #[cfg(all(feature = "gpui", feature = "updates"))]
+    pub(crate) async fn stopped(&self) {
+        self.navigator.stopped().await;
+    }
+
     /// Starts a view-owned asynchronous value and automatically redraws its view.
     /// Work survives hidden views and is cancelled when the loader is dropped.
     /// Admission and source failures are exposed by the returned handle.

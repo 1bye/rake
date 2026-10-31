@@ -65,6 +65,11 @@ pub mod runtime;
 pub mod services;
 pub mod tasks;
 
+#[cfg(all(feature = "gpui", feature = "updates"))]
+mod updates_binding;
+#[cfg(all(feature = "gpui", feature = "updates"))]
+pub use updates_binding::{UpdateHandle, UpdateHandleState};
+
 #[cfg(feature = "gpui")]
 mod application;
 
@@ -270,6 +275,8 @@ pub mod prelude {
         ApplicationCommand, CommandContext, CommandDescriptor, CommandError, Commands,
         ControlConfig, ExecutionCapability, RuntimeClient,
     };
+    #[cfg(all(feature = "gpui", feature = "updates"))]
+    pub use crate::{UpdateHandle, UpdateHandleState};
 
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};

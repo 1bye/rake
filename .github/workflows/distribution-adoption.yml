@@ -60,6 +60,7 @@ jobs:
               "--test", "guarded_quit",
               "--test", "runtime_context",
               "--test", "services",
+              "--test", "windows",
           ]
           subprocess.run(
               ["cargo", "test", "-p", "rake", "--no-default-features", *tests, "--locked"],
@@ -67,10 +68,10 @@ jobs:
           )
       - name: Check rake and desktop targets on Windows
         if: runner.os == 'Windows'
-        run: cargo check -p rake -p rake-desktop-example --all-targets --features rake/view-test-support,rake/devtools,rake/updates-velopack --locked
+        run: cargo check -p rake -p rake-foundation -p rake-desktop-example --all-targets --features rake/view-test-support,rake/devtools,rake/updates-velopack --locked
       - name: Check rake and desktop targets on Linux
         if: runner.os == 'Linux'
-        run: cargo check -p rake -p rake-desktop-example --all-targets --features rake/view-test-support,rake/devtools,rake/updates-appimage --locked
+        run: cargo check -p rake -p rake-foundation -p rake-desktop-example --all-targets --features rake/view-test-support,rake/devtools,rake/updates-appimage --locked
   native:
     if: inputs.mode == 'comparison'
     strategy:
