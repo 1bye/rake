@@ -1,0 +1,26 @@
+name: CDP snapshot diagnostics
+on:
+  push:
+    branches: [codex/cdp-adapter]
+    paths: [.github/workflows/cdp-snapshot-diagnostics.yml]
+permissions:
+  contents: read
+jobs:
+  snapshots:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Generate current macro expansion snapshots for review
+        run: RAKE_UPDATE_SNAPSHOTS=1 cargo test -p rake-macros --features view --lib expansion_snapshots --locked
+      - name: Report generated fixtures
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path("crates/rake-macros/src/view/snapshots").glob("*.txt")):
+              text = path.read_text()
+              parts = [text[i:i+4096] for i in range(0, len(text), 4096)]
+              for index, chunk in enumerate(parts):
+                  print("RAKE_SNAPSHOT " + json.dumps({"path": str(path), "part": index, "total": len(parts), "content": chunk}))
+          PY
