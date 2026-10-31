@@ -81,8 +81,10 @@ function drawOverlays() {
   for (const item of $('annotation-list').children) {
     const annotation = notes.items.find(note => note.id === item.dataset.id);
     const live = annotation && geometryFor(annotation.element, annotation.generation);
-    item.querySelector('.annotation-location').textContent = !current ? 'App disconnected'
-      : !live ? 'Position unavailable in this frame' : visibleBounds(live, current.window) ? hoveredID === annotation.id ? copyKey + ' to copy' : 'Hover to highlight' : 'Outside the visible window';
+    const location = item.querySelector('.annotation-location');
+    location.textContent = !current ? 'App disconnected'
+      : !live ? 'Position unavailable in this frame' : !visibleBounds(live, current.window) ? 'Outside the visible window' : '';
+    location.hidden = !location.textContent;
   }
 }
 function scheduleOverlays() {
