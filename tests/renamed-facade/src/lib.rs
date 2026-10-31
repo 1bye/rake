@@ -142,6 +142,38 @@ pub enum Destination {
     Document(u64),
 }
 
+struct RouteScreen;
+
+impl gpui::Render for RouteScreen {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        gpui::div()
+    }
+}
+
+impl Page<Destination> for RouteScreen {
+    fn mount(
+        _: &Destination,
+        _: PageContext<Destination>,
+        _: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> Result<gpui::Entity<Self>, framework::router::MountError> {
+        use gpui::AppContext;
+        Ok(cx.new(|_| Self))
+    }
+}
+
+/// Registration and its generated calls resolve through a renamed facade on native and Wasm.
+pub fn page_routes() -> impl RouteViews<Destination> {
+    framework::routes! {
+        Destination::Home => RouteScreen,
+        Destination::Document(..) => RouteScreen,
+    }
+}
+
 /// A consumer intentionally has no direct Serde or tracing dependency.
 #[framework::data]
 pub struct Document {
@@ -177,6 +209,9 @@ pub struct Description {
 #[framework::app]
 fn app() -> App {
     App::new("com.example.renamed")
+        .theme(ViewTheme {
+            surface: gpui::rgb(0x18232b),
+        })
         .root(|_, _, cx| framework::gpui::AppContext::new(cx, |_| framework::gpui::Empty).into())
 }
 

@@ -18,6 +18,16 @@ use std::rc::Rc;
 
 type Root = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
 
+#[cfg(feature = "experimental-view")]
+type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
+
+#[cfg(feature = "experimental-view")]
+fn install_themes(themes: Vec<ThemeInstaller>, cx: &mut gpui::App) {
+    for install in themes {
+        install(cx);
+    }
+}
+
 #[cfg(feature = "devtools")]
 mod standalone;
 
@@ -46,6 +56,8 @@ pub struct App<R: Route = NoRoute> {
     guards: Vec<Guard<R>>,
     control: crate::control::ControlConfig,
     commands: crate::control::Commands,
+    #[cfg(feature = "experimental-view")]
+    themes: Vec<ThemeInstaller>,
     #[cfg(feature = "updates")]
     distribution: Option<(&'static str, &'static str)>,
 }
@@ -68,6 +80,8 @@ impl App<NoRoute> {
             guards: Vec::new(),
             control: crate::control::ControlConfig::default(),
             commands: crate::control::Commands::new(),
+            #[cfg(feature = "experimental-view")]
+            themes: Vec::new(),
             #[cfg(feature = "updates")]
             distribution: None,
         }
@@ -113,6 +127,8 @@ impl<R: Route> App<R> {
             guards: Vec::new(),
             control: self.control,
             commands: self.commands,
+            #[cfg(feature = "experimental-view")]
+            themes: self.themes,
             #[cfg(feature = "updates")]
             distribution: self.distribution,
         }
@@ -123,6 +139,25 @@ impl<R: Route> App<R> {
         self.services = self.services.with(service)?;
 
         Ok(self)
+    }
+
+    /// Installs an owned theme once on the UI thread before the first window mounts.
+    ///
+    /// Available with `experimental-view`. Calling this before or after `routes`
+    /// has the same effect. Multiple theme types coexist; for repeated types the
+    /// last registration wins. No `Clone` bound is required. Later theme changes
+    /// use [`crate::theme::install`] and are not reset by navigation.
+    ///
+    /// ```no_run
+    /// struct Colors { accent: u32 }
+    /// let app = rake::App::new("example.theme").theme(Colors { accent: 0x365849 });
+    /// ```
+    #[cfg(feature = "experimental-view")]
+    #[must_use]
+    pub fn theme<T: 'static>(mut self, theme: T) -> Self {
+        self.themes
+            .push(Box::new(move |cx| crate::theme::install(cx, theme)));
+        self
     }
 
     /// Configures the initial GPUI window; browser hosts apply supported options.
@@ -401,6 +436,9 @@ impl<R: Route> App<R> {
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
 
+            #[cfg(feature = "experimental-view")]
+            install_themes(self.themes, cx);
+
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
                 #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
@@ -527,3 +565,42 @@ struct UpdatesDriver {
 }
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 impl gpui::Global for UpdatesDriver {}
+
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+mod theme_tests {
+    //! Covers: deferred app themes, routing composition and owned non-Clone values.
+    //! Real: application configuration and theme globals. Doubles: GPUI TestPlatform.
+    use super::*;
+
+    #[test]
+    fn app_themes_are_deferred_preserved_by_routes_and_installed_in_order() {
+        struct Colors(u32);
+        struct Metrics(u32);
+        let cx = gpui::TestAppContext::single();
+        let views = crate::router::__routes(|_: &NoRoute, _, _, _| {
+            Err(crate::router::MountError("unused fixture".into()))
+        });
+        let app = App::new("example.theme-test")
+            .theme(Colors(1))
+            .routes(views)
+            .theme(Metrics(8))
+            .theme(Colors(2));
+
+        assert!(crate::theme::try_current::<Colors>().is_none());
+        assert!(crate::theme::try_current::<Metrics>().is_none());
+        cx.update(|cx| install_themes(app.themes, cx));
+        assert_eq!(crate::theme::current::<Colors>().0, 2);
+        assert_eq!(crate::theme::current::<Metrics>().0, 8);
+
+        let standalone = App::new("example.root-theme")
+            .theme(Colors(3))
+            .root(|_, _, cx| cx.new(|_| gpui::Empty).into());
+        assert_eq!(
+            crate::theme::current::<Colors>().0,
+            2,
+            "configuration is deferred"
+        );
+        cx.update(|cx| install_themes(standalone.themes, cx));
+        assert_eq!(crate::theme::current::<Colors>().0, 3);
+    }
+}
