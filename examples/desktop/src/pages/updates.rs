@@ -1,16 +1,19 @@
-//! One shared controller, with a redraw task owned by each retained view.
+//! One shared controller, with a visible observer owned by each retained page.
 use super::Destination;
-use rake::gpui::{self, Context, Entity, Task, Window, prelude::*};
+use rake::gpui::{self, Context, Entity, Window, prelude::*};
 use rake::prelude::*;
 use rake::router::MountError;
-use rake::updates::{Error, UpdateController, UpdateState};
+use rake::updates::{Error, UpdateController, UpdateSnapshot, UpdateState};
 use std::rc::Rc;
+
+#[derive(Clone)]
+struct UpdateRevision(UpdateSnapshot);
 
 pub(crate) struct Updates {
     page: PageContext<Destination>,
     controller: Option<Rc<UpdateController>>,
     error: Option<String>,
-    _watch: Option<Task<()>>,
+    _observe: Option<TaskHandle>,
 }
 
 impl Page<Destination> for Updates {
@@ -20,31 +23,48 @@ impl Page<Destination> for Updates {
         _: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<Entity<Self>, MountError> {
-        Ok(cx.new(|cx| Self::new(page, cx)))
+        let controller = page.services().get::<UpdateController>().ok();
+        let view = cx.new(|_| Self::new(page.clone(), controller.clone()));
+        let weak = view.downgrade();
+        let context = cx.to_async();
+
+        page.on_event(move |UpdateRevision(_snapshot)| {
+            weak.update(&mut context.clone(), |_, cx| cx.notify())
+                .map_err(|error| TaskError::Failed(error.to_string()))
+        })
+        .map_err(|error| MountError(error.to_string()))?;
+
+        let observation = controller
+            .clone()
+            .map(|updates| {
+                page.while_visible("updates.observe", move |run| {
+                    let updates = updates.clone();
+                    async move {
+                        let mut snapshot = updates.snapshot();
+                        run.publish(UpdateRevision(snapshot.clone()))?;
+
+                        loop {
+                            snapshot = updates.changed(snapshot.revision).await;
+                            run.publish(UpdateRevision(snapshot.clone()))?;
+                        }
+                    }
+                })
+                .map_err(|error| MountError(error.to_string()))
+            })
+            .transpose()?;
+
+        view.update(cx, |view, _| view._observe = observation);
+        Ok(view)
     }
 }
 
 impl Updates {
-    fn new(page: PageContext<Destination>, cx: &mut Context<Self>) -> Self {
-        let controller = page.services().get::<UpdateController>().ok();
-        let watch = controller.clone().map(|updates| {
-            cx.spawn(async move |view, cx| {
-                let mut snapshot = updates.snapshot();
-
-                loop {
-                    snapshot = updates.changed(snapshot.revision).await;
-                    if view.update(cx, |_, cx| cx.notify()).is_err() {
-                        break;
-                    }
-                }
-            })
-        });
-
+    fn new(page: PageContext<Destination>, controller: Option<Rc<UpdateController>>) -> Self {
         Self {
             page,
             controller,
             error: None,
-            _watch: watch,
+            _observe: None,
         }
     }
 

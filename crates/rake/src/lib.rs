@@ -57,6 +57,7 @@ pub mod inspection;
 #[cfg(not(feature = "devtools"))]
 #[path = "inspection/disabled.rs"]
 pub mod inspection;
+pub mod loading;
 pub mod quit;
 pub mod reload;
 pub mod router;
@@ -272,6 +273,7 @@ pub mod prelude {
 
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
+    pub use crate::loading::{LoadState, LoadStatus, LoadToken};
     pub use crate::quit::{
         QuitGuardContext, QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus,
     };
@@ -281,9 +283,9 @@ pub mod prelude {
     pub use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 
     pub use crate::router::{
-        Activation, DecisionChoice, DecisionRequest, EntryHandle, GuardResult, Navigator,
-        OpenOptions, OpenTarget, Outcome, RevealScope, Route, Router, RouterConfig, TabMode,
-        WebConfig, WebRouting,
+        Activation, Admission, AdmissionContext, DecisionChoice, DecisionRequest, EntryHandle,
+        GuardResult, Navigator, OpenOptions, OpenTarget, Outcome, RevealScope, Route, Router,
+        RouterConfig, TabMode, WebConfig, WebRouting,
     };
 
     #[cfg(feature = "gpui")]
@@ -291,7 +293,9 @@ pub mod prelude {
     #[cfg(feature = "gpui")]
     pub use crate::inspection::InspectElement;
     #[cfg(feature = "gpui")]
-    pub use crate::router::{LayoutContext, Page, PageContext, RouteOutlet, RouteViews, TabBar};
+    pub use crate::router::{
+        LayoutContext, NavigationBoundary, Page, PageContext, RouteOutlet, RouteViews, TabBar,
+    };
     pub use rake_macros::{Command, Route};
 }
 

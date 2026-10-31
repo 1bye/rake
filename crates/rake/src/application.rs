@@ -7,7 +7,7 @@ use gpui::{AnyView, AppContext, Context, IntoElement, Render, Window, WindowOpti
 
 use crate::diagnostics::{DiagnosticsConfig, DiagnosticsError};
 use crate::http::{HttpClient, HttpConfig};
-use crate::router::runtime::Guard;
+use crate::router::runtime::{AdmissionCallback, Guard};
 use crate::services::{ServiceError, ServiceRegistry, Services};
 
 use crate::router::{
@@ -71,6 +71,7 @@ pub struct App<R: Route = NoRoute> {
     services: ServiceRegistry,
     window_options: WindowOptions,
     workspace_chrome: bool,
+    navigation_feedback: bool,
     http: HttpConfig,
     http_client: RefCell<Option<HttpClient>>,
     layout: Option<crate::router::layout::LayoutFactory<R>>,
@@ -88,6 +89,7 @@ pub struct App<R: Route = NoRoute> {
     router: RouterConfig,
     web: WebConfig,
     guards: Vec<Guard<R>>,
+    admissions: Vec<AdmissionCallback<R>>,
     control: crate::control::ControlConfig,
     commands: crate::control::Commands,
     #[cfg(feature = "experimental-view")]
@@ -104,6 +106,7 @@ impl App<NoRoute> {
             services: ServiceRegistry::new(),
             window_options: WindowOptions::default(),
             workspace_chrome: true,
+            navigation_feedback: true,
             http: HttpConfig::new(),
             http_client: RefCell::new(None),
             layout: None,
@@ -121,6 +124,7 @@ impl App<NoRoute> {
             router: RouterConfig::default(),
             web: WebConfig::new(),
             guards: Vec::new(),
+            admissions: Vec::new(),
             control: crate::control::ControlConfig::default(),
             commands: crate::control::Commands::new(),
             #[cfg(feature = "experimental-view")]
@@ -131,9 +135,10 @@ impl App<NoRoute> {
     }
     /// Registers the application's typed screens once. Defaults to the `/` route.
     ///
-    /// Configure `initial` and `entry_guard` after this type transition. To change
-    /// factories for the same destination type, use [`App::replace_routes`], which
-    /// preserves the initial destination and guards.
+    /// Configure `initial`, `entry_guard`, and `entry_admission` after this type
+    /// transition. To change factories for the same destination type, use
+    /// [`App::replace_routes`], which preserves the initial destination, guards,
+    /// and admissions.
     ///
     /// ```compile_fail
     /// #[derive(Clone, rake::Route)]
@@ -145,8 +150,11 @@ impl App<NoRoute> {
     /// let app = app.routes(pages); // use replace_routes instead
     /// ```
     pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
-        let configuration_error = if self.layout.is_some() || !self.guards.is_empty() {
-            Some("register routes before configuring layouts or entry guards")
+        let configuration_error = if self.layout.is_some()
+            || !self.guards.is_empty()
+            || !self.admissions.is_empty()
+        {
+            Some("register routes before configuring layouts, entry guards, or entry admissions")
         } else {
             self.configuration_error
         };
@@ -155,6 +163,7 @@ impl App<NoRoute> {
             services: self.services,
             window_options: self.window_options,
             workspace_chrome: self.workspace_chrome,
+            navigation_feedback: self.navigation_feedback,
             http: self.http,
             http_client: self.http_client,
             layout: None,
@@ -172,6 +181,7 @@ impl App<NoRoute> {
             router: self.router,
             web: self.web,
             guards: Vec::new(),
+            admissions: Vec::new(),
             control: self.control,
             commands: self.commands,
             #[cfg(feature = "experimental-view")]
@@ -204,7 +214,7 @@ impl<R: Route> App<R> {
         }
     }
 
-    /// Replaces the screen factory without changing destinations or access guards.
+    /// Replaces the screen factory without changing destinations, guards, or admissions.
     #[must_use]
     pub fn replace_routes(mut self, routes: impl RouteViews<R>) -> Self {
         self.routes = Some(Rc::new(routes));
@@ -296,6 +306,18 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Shows the default navigation feedback boundary for routed applications.
+    ///
+    /// Disable this when an application-owned shell renders its own navigation
+    /// feedback. Custom shells can use the public [`crate::router::NavigationBoundary`]
+    /// or [`crate::router::Router::navigation`] APIs to choose their presentation.
+    pub fn navigation_feedback(mut self, visible: bool) -> Self {
+        self.route_options = true;
+        self.navigation_feedback = visible;
+
+        self
+    }
+
     /// Sets the native initial destination. Browser deep links take precedence.
     pub fn initial(mut self, destination: R) -> Self {
         self.route_options = true;
@@ -358,6 +380,24 @@ impl<R: Route> App<R> {
         self.route_options = true;
         self.guards
             .push(Rc::new(move |context| Box::pin(guard(context))));
+
+        self
+    }
+
+    /// Registers an asynchronous typed route admission policy before mounting the router.
+    ///
+    /// Admissions run before entry allocation, host creation, and page mounting. They may
+    /// allow the requested destination, deny it with a typed reason, or redirect the same
+    /// operation to another destination. Configure this after [`App::routes`].
+    #[must_use]
+    pub fn entry_admission<F, Fut>(mut self, admission: F) -> Self
+    where
+        F: Fn(crate::router::AdmissionContext<R>) -> Fut + 'static,
+        Fut: std::future::Future<Output = crate::router::Admission<R>> + 'static,
+    {
+        self.route_options = true;
+        self.admissions
+            .push(Rc::new(move |context| Box::pin(admission(context))));
 
         self
     }
@@ -593,10 +633,12 @@ impl<R: Route> App<R> {
             let config = self.router;
             let web = self.web;
             let guards = self.guards;
+            let admissions = self.admissions;
             let control = self.control;
             let commands = self.commands;
             let application_id = self.id.clone();
             let chrome = self.workspace_chrome;
+            let navigation_feedback = self.navigation_feedback;
             let quit_guards = self.quit_guards;
             let layout = self.layout;
             let new_window_options = self.new_window_options;
@@ -609,10 +651,12 @@ impl<R: Route> App<R> {
                     config,
                     web,
                     guards,
+                    admissions,
                     control,
                     commands,
                     application_id,
                     chrome,
+                    navigation_feedback,
                     quit_guards,
                     layout,
                     new_window_options,
@@ -935,9 +979,42 @@ mod configuration_tests {
             .entry_guard(|_| async {
                 GuardResult::Deny(crate::router::GuardReason("denied".into()))
             })
+            .entry_admission(|_| async { crate::router::Admission::Allow })
             .replace_routes(pages());
 
         assert!(matches!(app.initial, Some(Destination::Main)));
         assert_eq!(app.guards.len(), 1);
+        assert_eq!(app.admissions.len(), 1);
+    }
+
+    #[test]
+    fn route_type_transition_rejects_entry_admission_configured_too_early() {
+        let pages = || {
+            crate::router::__routes(|_: &Destination, _, _, _| {
+                Err(crate::router::MountError("unused fixture".into()))
+            })
+        };
+        let app = App::new("example.admission-order")
+            .entry_admission(|_| async { crate::router::Admission::Allow })
+            .routes(pages());
+
+        assert!(matches!(app.run(), Err(AppError::InvalidConfiguration(_))));
+    }
+
+    #[test]
+    fn navigation_feedback_defaults_on_and_survives_route_transition() {
+        let pages = || {
+            crate::router::__routes(|_: &Destination, _, _, _| {
+                Err(crate::router::MountError("unused fixture".into()))
+            })
+        };
+
+        let default = App::new("example.navigation-default").routes(pages());
+        assert!(default.navigation_feedback);
+
+        let custom = App::new("example.navigation-custom")
+            .navigation_feedback(false)
+            .routes(pages());
+        assert!(!custom.navigation_feedback);
     }
 }

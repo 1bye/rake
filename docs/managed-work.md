@@ -61,6 +61,32 @@ GPUI handler. `PageContext` and the headless `EntryHandle` expose the same activ
 visibility-activity and typed-handler methods. `Router::app()` provides an app task
 scope to services. `Navigator::app()` preserves a page's causal origin.
 
+### Generation-safe loading state
+
+`LoadState<T, E>` is a small synchronous state machine for view/model loading. It
+does not start a request, choose an executor, cache data or replace managed work.
+Start the actual request in an application, tab or activity task, keep the token,
+and complete only that generation:
+
+```rust,no_run
+use rake::prelude::{LoadState, LoadStatus};
+
+struct Project;
+let project = Project;
+let mut load = LoadState::<Project, String>::default();
+let token = load.begin();
+// An owned task performs the HTTP request and later calls:
+let accepted = load.complete(token, Ok(project));
+assert!(accepted);
+assert!(matches!(load.state(), LoadStatus::Ready(_)));
+```
+
+Calling `begin` again or `reset` makes an older token stale; its late result is
+rejected and cannot overwrite the current state. Use `LoadStatus::Loading` to
+render progress and `LoadStatus::Failed` to render a retry affordance. The task
+that owns the request still needs cancellation and lifetime policy from
+`ActivityRun`, `TaskScope` or an application-specific model.
+
 `spawn` accepts one `Future<Output = Result<(), TaskError>>`. `spawn_with` accepts
 one factory invocation receiving an `ActivityRun`, useful for cancellation and
 checked publication in tab or app tasks. Unlike activity factories, these jobs

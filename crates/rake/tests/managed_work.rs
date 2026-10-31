@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use futures::FutureExt;
+use futures::channel::oneshot;
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
 use rake::prelude::*;
@@ -255,6 +256,151 @@ fn tab_tasks_survive_navigation_and_selection_but_application_tasks_survive_tab_
     pool.run_until_stalled();
     assert_eq!(app_drops.get(), 1);
     assert_eq!(app.snapshot().unwrap().state, TaskState::Cancelled);
+}
+
+#[test]
+fn finite_entry_tasks_continue_when_hidden_and_revisited_from_history() {
+    let (router, mut pool) = harness(RouterConfig::default());
+    let a = open(&router, &mut pool, 1, TabMode::Foreground);
+    let entry = router.entry(a.entry_id).unwrap();
+    let (release, wait) = oneshot::channel();
+
+    let task = entry
+        .tasks()
+        .unwrap()
+        .spawn("entry-load", async move {
+            wait.await.expect("release entry load");
+            Ok(())
+        })
+        .unwrap();
+    let tab = router.navigator().tab(a.tab_id);
+
+    pool.run_until_stalled();
+    assert_eq!(task.snapshot().unwrap().state, TaskState::Running);
+    commit(&mut pool, tab.navigate(Destination::Page(2)));
+    pool.run_until_stalled();
+    assert_eq!(task.snapshot().unwrap().state, TaskState::Running);
+    commit(&mut pool, tab.back());
+    pool.run_until_stalled();
+    assert_eq!(task.snapshot().unwrap().state, TaskState::Running);
+
+    release.send(()).unwrap();
+    pool.run_until_stalled();
+    assert_eq!(task.snapshot().unwrap().state, TaskState::Completed);
+}
+
+#[test]
+fn finite_entry_tasks_cancel_on_truncation_or_close_while_app_work_survives() {
+    let (router, mut pool) = harness(RouterConfig::default());
+    let a = open(&router, &mut pool, 1, TabMode::Foreground);
+    let tab = router.navigator().tab(a.tab_id);
+    let b = commit(&mut pool, tab.navigate(Destination::Page(2)));
+    let b_entry = router.entry(b.entry_id).unwrap();
+    let b_drops = Rc::new(Cell::new(0));
+    let b_guard = Dropped(b_drops.clone());
+    let b_task = b_entry
+        .tasks()
+        .unwrap()
+        .spawn("truncated-entry", async move {
+            let _guard = b_guard;
+            futures::future::pending::<()>().await;
+            Ok(())
+        })
+        .unwrap();
+
+    let app_drops = Rc::new(Cell::new(0));
+    let app_guard = Dropped(app_drops.clone());
+    let app_task = router
+        .app()
+        .tasks()
+        .spawn("application-export", async move {
+            let _guard = app_guard;
+            futures::future::pending::<()>().await;
+            Ok(())
+        })
+        .unwrap();
+
+    pool.run_until_stalled();
+    commit(&mut pool, tab.back());
+    let c = commit(&mut pool, tab.navigate(Destination::Page(3)));
+    pool.run_until_stalled();
+    assert_eq!(b_task.snapshot().unwrap().state, TaskState::Cancelled);
+    assert_eq!(b_drops.get(), 1);
+    assert_eq!(app_task.snapshot().unwrap().state, TaskState::Running);
+    assert_eq!(app_drops.get(), 0);
+
+    let c_entry = router.entry(c.entry_id).unwrap();
+    let c_drops = Rc::new(Cell::new(0));
+    let c_guard = Dropped(c_drops.clone());
+    let c_task = c_entry
+        .tasks()
+        .unwrap()
+        .spawn("closed-entry", async move {
+            let _guard = c_guard;
+            futures::future::pending::<()>().await;
+            Ok(())
+        })
+        .unwrap();
+    pool.run_until_stalled();
+    commit(&mut pool, tab.close());
+    pool.run_until_stalled();
+
+    assert_eq!(c_task.snapshot().unwrap().state, TaskState::Cancelled);
+    assert_eq!(c_drops.get(), 1);
+    assert_eq!(app_task.snapshot().unwrap().state, TaskState::Running);
+    assert_eq!(app_drops.get(), 0);
+
+    router.shutdown();
+    pool.run_until_stalled();
+    assert_eq!(app_task.snapshot().unwrap().state, TaskState::Cancelled);
+    assert_eq!(app_drops.get(), 1);
+}
+
+#[test]
+fn activity_publication_rejects_after_cancel_and_entry_close() {
+    let (router, mut pool) = harness(RouterConfig::default());
+    let a = open(&router, &mut pool, 1, TabMode::Foreground);
+    let entry = router.entry(a.entry_id).unwrap();
+    entry.on_event(|_: u32| Ok(())).unwrap();
+    let runs = Rc::new(RefCell::new(Vec::new()));
+    let observed = runs.clone();
+    let task = entry
+        .activity("cancelled", move |run| {
+            observed.borrow_mut().push(run.clone());
+            async move {
+                futures::future::pending::<()>().await;
+                Ok(())
+            }
+        })
+        .unwrap();
+
+    pool.run_until_stalled();
+    let cancelled = runs.borrow()[0].clone();
+    assert!(task.cancel().unwrap());
+    pool.run_until_stalled();
+    assert_eq!(cancelled.publish(1_u32), Err(TaskError::StaleRun));
+
+    let tab = router.navigator().tab(a.tab_id);
+    let b = commit(&mut pool, tab.navigate(Destination::Page(2)));
+    let b_entry = router.entry(b.entry_id).unwrap();
+    b_entry.on_event(|_: u32| Ok(())).unwrap();
+    let closed_runs = Rc::new(RefCell::new(Vec::new()));
+    let observed = closed_runs.clone();
+    b_entry
+        .activity("closed", move |run| {
+            observed.borrow_mut().push(run.clone());
+            async move {
+                futures::future::pending::<()>().await;
+                Ok(())
+            }
+        })
+        .unwrap();
+    pool.run_until_stalled();
+    let closed = closed_runs.borrow()[0].clone();
+
+    commit(&mut pool, tab.close());
+    pool.run_until_stalled();
+    assert_eq!(closed.publish(2_u32), Err(TaskError::OwnerDisposed));
 }
 
 #[test]

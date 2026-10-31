@@ -315,8 +315,15 @@ pub fn uri_address(
             .count()
     });
 
+    let mut best_specificity = None;
+    let mut best_matches = Vec::new();
+
     for descriptor in descriptors {
         let pattern: Vec<_> = descriptor.path.split('/').collect();
+        let specificity = pattern
+            .iter()
+            .filter(|segment| placeholder(segment).is_some())
+            .count();
 
         if pattern.len() != segments.len()
             || !pattern
@@ -327,35 +334,121 @@ pub fn uri_address(
             continue;
         }
 
-        let mut address = RouteAddress {
-            route: descriptor.id.into(),
-            params: BTreeMap::new(),
-        };
-
-        for (pattern, segment) in pattern.iter().zip(&segments) {
-            if let Some(name) = placeholder(pattern) {
-                address.params.insert(name.into(), segment.clone());
-            }
+        if best_specificity.is_some_and(|best| specificity > best) {
+            break;
         }
 
-        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            let name = decode_component(name, true)?;
-
-            if address
-                .params
-                .insert(name.clone(), decode_component(value, true)?)
-                .is_some()
-            {
-                return Err(RouteDecodeError::DuplicateParameter(name));
-            }
+        if best_specificity != Some(specificity) {
+            best_specificity = Some(specificity);
+            best_matches.clear();
         }
 
-        address.validate(descriptor)?;
-        address_uri(&address, &[*descriptor])?;
+        let candidate = (|| {
+            let mut address = RouteAddress {
+                route: descriptor.id.into(),
+                params: BTreeMap::new(),
+            };
 
-        return Ok(address);
+            for (pattern, segment) in pattern.iter().zip(&segments) {
+                if let Some(name) = placeholder(pattern) {
+                    address.params.insert(name.into(), segment.clone());
+                }
+            }
+
+            for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+                let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+                let name = decode_component(name, true)?;
+
+                if address
+                    .params
+                    .insert(name.clone(), decode_component(value, true)?)
+                    .is_some()
+                {
+                    return Err(RouteDecodeError::DuplicateParameter(name));
+                }
+            }
+
+            address.validate(descriptor)?;
+            address_uri(&address, &[*descriptor])?;
+
+            Ok(address)
+        })();
+
+        best_matches.push(candidate);
     }
 
-    Err(RouteDecodeError::UnknownRoute(path.into()))
+    let mut valid = Vec::new();
+    let mut first_error = None;
+
+    for candidate in best_matches {
+        match candidate {
+            Ok(address) => valid.push(address),
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+
+    match valid.as_slice() {
+        [address] => Ok(address.clone()),
+        [] => Err(first_error.unwrap_or_else(|| RouteDecodeError::UnknownRoute(path.into()))),
+        _ => Err(RouteDecodeError::InvalidUri(
+            "ambiguous route URI: multiple equally specific patterns match".into(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ParameterDescriptor, RouteDecodeError, RouteDescriptor, uri_address};
+
+    const FILE_PARAMS: &[ParameterDescriptor] = &[ParameterDescriptor {
+        name: "id",
+        value_type: "String",
+        required: true,
+    }];
+    const SECTION_PARAMS: &[ParameterDescriptor] = &[ParameterDescriptor {
+        name: "section",
+        value_type: "String",
+        required: true,
+    }];
+
+    #[test]
+    fn rejects_equal_specificity_crossing_patterns() {
+        let descriptors = [
+            RouteDescriptor {
+                id: "file",
+                path: "/files/{id}",
+                params: FILE_PARAMS,
+            },
+            RouteDescriptor {
+                id: "settings",
+                path: "/{section}/settings",
+                params: SECTION_PARAMS,
+            },
+        ];
+
+        assert!(matches!(
+            uri_address("/files/settings", &descriptors),
+            Err(RouteDecodeError::InvalidUri(message)) if message.contains("ambiguous")
+        ));
+    }
+
+    #[test]
+    fn preserves_static_precedence_over_dynamic_pattern() {
+        let descriptors = [
+            RouteDescriptor {
+                id: "dynamic",
+                path: "/files/{id}",
+                params: FILE_PARAMS,
+            },
+            RouteDescriptor {
+                id: "settings",
+                path: "/files/settings",
+                params: &[],
+            },
+        ];
+
+        let address = uri_address("/files/settings", &descriptors).expect("static route");
+        assert_eq!(address.route, "settings");
+    }
 }

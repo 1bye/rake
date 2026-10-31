@@ -42,6 +42,39 @@ managed runtime without opening an initial window. The GPUI app context can own 
 tray or other platform integration. Browser hosts reject this mode. Retain any
 platform handles in an application-owned global so they live until shutdown.
 
+For example, background setup can retain a GPUI-owned task and request the same
+guarded quit used by a windowed app:
+
+```rust,no_run
+struct TrayTask { _task: rake::gpui::Task<()> }
+impl rake::gpui::Global for TrayTask {}
+
+let app = rake::App::new("example.tray")
+    .background(|runtime, cx| {
+        let task = cx.spawn(async move |_| {
+            // Perform tray/application work, then:
+            // drop(runtime.quit(rake::quit::QuitOptions::default()));
+        });
+        cx.set_global(TrayTask { _task: task });
+    });
+```
+
+`TrayTask` is an application-owned `gpui::Global` that holds the task. A
+standalone window can instead choose its close behavior explicitly:
+
+```rust,no_run
+let app = rake::App::new("example.tray-window")
+    .root_with(|runtime, _, cx| {
+        let _services = runtime.services();
+        cx.new(|_| rake::gpui::Empty).into()
+    })
+    .close_policy(rake::ClosePolicy::KeepRunning);
+```
+
+`KeepRunning` is for an intentional tray/background lifetime; the default
+`ClosePolicy::Quit` runs quit guards and stops managed work when the window
+closes. `close_policy` applies to standalone windows, not routed workspaces.
+
 For a worker with no GPUI event loop, construct `rake::runtime::Runtime` with an
 explicit `Services` composition and `RouterConfig`, register commands/quit guards,
 and drive its `run()` future on the host's executor. It reuses the application
@@ -95,7 +128,10 @@ standard service explicitly.
 Routed apps can install `.layout(...)` or `.try_layout(...)` after registering
 routes. The layout is one retained entity per window; pages own only their route
 bodies and entry-scoped work. Use `layout.outlet()` in a sidebar/dashboard shell,
-and `layout.runtime()` for application operations. Same-type `replace_routes`
+and `layout.runtime()` for application operations. `layout.router()` is a weak
+upgrade and returns `Result<Router<_>, OperationError>`; an owner that is already
+stopping can therefore fail to upgrade, while `layout.outlet()` simply renders
+no retained page after the runtime has gone away. Same-type `replace_routes`
 keeps the layout and guards. Registering an entry guard or layout before the
 route type transition returns an explicit builder-order error at startup.
 

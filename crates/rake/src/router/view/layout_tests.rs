@@ -152,6 +152,7 @@ fn layout_is_created_once_and_outlet_updates_while_layout_state_survives() {
 
         Workspace {
             chrome: false,
+            navigation_feedback: true,
             router,
             restart: None,
             layout: Some(layout),

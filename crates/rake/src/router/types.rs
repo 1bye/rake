@@ -23,6 +23,13 @@ pub struct RouterConfig {
     pub completed_operations: usize,
     /// Upper bound on queued and executing operations.
     pub pending_operations: usize,
+    /// Maximum typed admission redirects permitted in one operation.
+    pub max_admission_redirects: usize,
+    /// Number of terminal navigation statuses retained independently of operations.
+    /// The effective minimum is one.
+    /// Pending statuses are never trimmed; one recoverable status is retained per
+    /// currently empty live window even when this bound is reached.
+    pub navigation_records: usize,
     /// Initial work policy for fresh tabs.
     pub default_mode: TabMode,
 }
@@ -35,6 +42,8 @@ impl Default for RouterConfig {
             history_capacity: None,
             completed_operations: 256,
             pending_operations: 1024,
+            max_admission_redirects: 8,
+            navigation_records: 64,
             default_mode: TabMode::Foreground,
         }
     }

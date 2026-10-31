@@ -34,6 +34,10 @@ fn application() -> Result<App<pages::Destination>, rake::AppError> {
             pages::Destination::Home => pages::Home,
             pages::Destination::Updates => pages::Updates,
         })
+        .runtime_config(RouterConfig {
+            history_capacity: Some(64),
+            ..Default::default()
+        })
         .try_layout(shell::Shell::mount)
         .initial(pages::Destination::Home)
         .workspace_chrome(false)

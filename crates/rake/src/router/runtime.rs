@@ -25,12 +25,14 @@ use super::{
     Activation, BlockReason, BrowserCheckpoint, CancelReason, ChoiceAction, Closed, DecisionChoice,
     DecisionError, DecisionId, DecisionRequest, DecisionSnapshot, DisposeReason, Entered, EntryId,
     EntrySnapshot, GuardContext, GuardKind, GuardReason, GuardResult, HistoryChange, ModeChanged,
-    MountError, OpenOptions, OpenTarget, Opened, Operation, OperationError, OperationId,
-    OperationState, Outcome, QuitGuardContext, RevealScope, Revealed, Route, RouteDecodeError,
-    RouterConfig, RouterSnapshot, RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowClosed,
-    WindowHost, WindowId, WindowSnapshot,
+    MountError, NavigationKey, NavigationState, NavigationStatus, OpenOptions, OpenTarget, Opened,
+    Operation, OperationError, OperationId, OperationState, Outcome, QuitGuardContext, RevealScope,
+    Revealed, Route, RouteDecodeError, RouterConfig, RouterSnapshot, RuntimeId, Selected, TabId,
+    TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId, WindowSnapshot,
 };
 
+mod admission;
+mod navigation;
 mod quit;
 mod reload;
 #[cfg(feature = "updates")]
@@ -41,6 +43,7 @@ mod windows;
 mod tests;
 
 pub(crate) type Guard<R> = Rc<dyn Fn(GuardContext<R>) -> LocalBoxFuture<'static, GuardResult>>;
+pub(crate) use crate::router::admission::Callback as AdmissionCallback;
 pub(crate) type QuitGuard =
     Rc<dyn Fn(QuitGuardContext) -> LocalBoxFuture<'static, Result<(), GuardReason>>>;
 pub(crate) type Resource = Rc<dyn Any>;
@@ -127,8 +130,15 @@ struct PendingDecision<R: Route> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Lane {
     Workspace,
+    WorkspaceExclusive,
     Tab(TabId),
     Window(WindowId),
+}
+
+fn lanes_conflict(left: Lane, right: Lane) -> bool {
+    left == right
+        || matches!(left, Lane::WorkspaceExclusive)
+        || matches!(right, Lane::WorkspaceExclusive)
 }
 
 struct Job {
@@ -168,6 +178,7 @@ struct State<R: Route> {
     queue: VecDeque<Job>,
     operations: BTreeMap<OperationId, OperationState>,
     results: BTreeMap<OperationId, serde_json::Value>,
+    navigation: VecDeque<navigation::Record<R>>,
     tokens: BTreeMap<OperationId, CancellationToken>,
     completed: VecDeque<OperationId>,
     decisions: BTreeMap<DecisionId, PendingDecision<R>>,
@@ -287,6 +298,7 @@ struct Core<R: Route> {
     window_host: RefCell<Option<Rc<dyn WindowHost>>>,
     window_closes: RefCell<BTreeMap<WindowId, Operation<WindowClosed>>>,
     guards: RefCell<Vec<Guard<R>>>,
+    admissions: RefCell<Vec<AdmissionCallback<R>>>,
     event: Event,
     work: Event,
     driving: Cell<bool>,
@@ -317,6 +329,253 @@ impl<R: Route> Core<R> {
                 ("phase".into(), phase.into()),
             ]),
         );
+    }
+
+    fn navigation_capacity(&self) -> usize {
+        self.config.navigation_records.max(1)
+    }
+
+    fn trim_navigation(&self, state: &mut State<R>) {
+        let terminal = |record: &navigation::Record<R>| {
+            !matches!(record.status.state, NavigationState::Pending)
+        };
+        let recoverable = |record: &navigation::Record<R>| {
+            matches!(
+                record.status.state,
+                NavigationState::Failed(_)
+                    | NavigationState::Blocked(_)
+                    | NavigationState::Cancelled(_)
+            )
+        };
+
+        while state
+            .navigation
+            .iter()
+            .filter(|record| terminal(record))
+            .count()
+            > self.navigation_capacity()
+        {
+            let candidate = state
+                .navigation
+                .iter()
+                .position(|record| matches!(record.status.state, NavigationState::Committed))
+                .or_else(|| {
+                    state.navigation.iter().position(|record| {
+                        let protected_empty_window_failure = recoverable(record)
+                            && state
+                                .windows
+                                .get(&record.status.key.window_id)
+                                .is_some_and(|window| window.selected.is_none())
+                            && !state.navigation.iter().any(|other| {
+                                other.status.key.window_id == record.status.key.window_id
+                                    && !std::ptr::eq(other, record)
+                                    && recoverable(other)
+                            });
+
+                        terminal(record) && !protected_empty_window_failure
+                    })
+                });
+
+            let Some(candidate) = candidate else {
+                break;
+            };
+
+            state.navigation.remove(candidate);
+        }
+    }
+
+    fn retain_navigation(&self, record: navigation::Record<R>) {
+        let mut state = self.state.borrow_mut();
+        state.navigation.push_back(record);
+        self.trim_navigation(&mut state);
+    }
+
+    fn remove_navigation_chain(&self, state: &mut State<R>, source: NavigationKey) {
+        let mut current = Some(source);
+
+        while let Some(key) = current {
+            let parent = state
+                .navigation
+                .iter()
+                .find(|record| record.status.key == key)
+                .and_then(|record| record.status.retry_of.clone());
+
+            state.navigation.retain(|record| record.status.key != key);
+            current = parent;
+        }
+    }
+
+    fn navigation_begin(&self, id: OperationId, action: &Action<R>, origin_window: WindowId) {
+        let Some(destination) = action.destination() else {
+            return;
+        };
+
+        self.retain_navigation(navigation::Record {
+            status: NavigationStatus {
+                key: NavigationKey {
+                    runtime_id: self.runtime,
+                    operation_id: id,
+                    window_id: origin_window,
+                    tab_id: action.target_tab(),
+                    destination: destination.encode(),
+                },
+                retry_of: None,
+                state: NavigationState::Pending,
+            },
+            action: Some(action.clone()),
+            origin_window,
+        });
+        self.notify();
+    }
+
+    fn navigation_redirect(&self, id: OperationId, action: &Action<R>, origin_window: WindowId) {
+        let Some(destination) = action.destination() else {
+            return;
+        };
+
+        let mut state = self.state.borrow_mut();
+        if let Some(record) = state
+            .navigation
+            .iter_mut()
+            .find(|record| record.status.key.operation_id == id)
+        {
+            record.status.key.window_id = origin_window;
+            record.status.key.tab_id = action.target_tab();
+            record.status.key.destination = destination.encode();
+            record.status.state = NavigationState::Pending;
+            record.action = Some(action.clone());
+        }
+        drop(state);
+        self.notify();
+    }
+
+    fn navigation_plan(
+        &self,
+        id: OperationId,
+        action: &Action<R>,
+        origin_window: WindowId,
+        entry: &Rc<Entry<R>>,
+    ) {
+        if !action.tracks_navigation() {
+            return;
+        }
+
+        let mut state = self.state.borrow_mut();
+        if let Some(record) = state
+            .navigation
+            .iter_mut()
+            .find(|record| record.status.key.operation_id == id)
+        {
+            record.status.key.window_id = if matches!(
+                action,
+                Action::Open(_, options, _) if options.target == OpenTarget::NewWindow
+            ) {
+                origin_window
+            } else {
+                entry.window
+            };
+            record.status.key.tab_id = Some(entry.tab);
+            record.status.key.destination = entry.destination.encode();
+            record.status.state = NavigationState::Pending;
+            record.action = Some(action.clone());
+        } else {
+            state.navigation.push_back(navigation::Record {
+                status: NavigationStatus {
+                    key: NavigationKey {
+                        runtime_id: self.runtime,
+                        operation_id: id,
+                        window_id: entry.window,
+                        tab_id: Some(entry.tab),
+                        destination: entry.destination.encode(),
+                    },
+                    retry_of: None,
+                    state: NavigationState::Pending,
+                },
+                action: Some(action.clone()),
+                origin_window,
+            });
+
+            self.trim_navigation(&mut state);
+        }
+        drop(state);
+        self.notify();
+    }
+
+    fn navigation_committed(&self, id: OperationId, entry: &Rc<Entry<R>>) {
+        let mut state = self.state.borrow_mut();
+        if let Some(record) = state
+            .navigation
+            .iter_mut()
+            .find(|record| record.status.key.operation_id == id)
+        {
+            record.status.key.window_id = entry.window;
+            record.status.key.tab_id = Some(entry.tab);
+            record.status.key.destination = entry.destination.encode();
+        }
+        drop(state);
+        self.notify();
+    }
+
+    fn navigation_mount_failed(
+        &self,
+        id: OperationId,
+        action: &Action<R>,
+        origin_window: WindowId,
+        entry: &Rc<Entry<R>>,
+        error: MountError,
+    ) {
+        let failed_window = if matches!(
+            action,
+            Action::Open(_, options, _) if options.target == OpenTarget::NewWindow
+        ) {
+            origin_window
+        } else {
+            entry.window
+        };
+
+        let mut state = self.state.borrow_mut();
+        if let Some(record) = state
+            .navigation
+            .iter_mut()
+            .find(|record| record.status.key.operation_id == id)
+        {
+            record.status.key.window_id = failed_window;
+            record.status.key.tab_id = Some(entry.tab);
+            record.status.key.destination = entry.destination.encode();
+            record.status.state = NavigationState::Failed(OperationError::Mount(error));
+            record.action = Some(action.clone());
+        }
+        drop(state);
+        self.notify();
+    }
+
+    fn navigation_finish<T>(&self, id: OperationId, result: &Result<Outcome<T>, OperationError>) {
+        let status = match result {
+            Ok(Outcome::Committed(_)) => NavigationState::Committed,
+            Ok(Outcome::Cancelled(reason)) => NavigationState::Cancelled(reason.clone()),
+            Ok(Outcome::Blocked(reason)) => NavigationState::Blocked(reason.clone()),
+            Err(error) => NavigationState::Failed(error.clone()),
+        };
+
+        let mut state = self.state.borrow_mut();
+        let source = state
+            .navigation
+            .iter_mut()
+            .find(|record| record.status.key.operation_id == id)
+            .and_then(|record| {
+                record.status.state = status;
+                if matches!(result, Ok(Outcome::Committed(_))) {
+                    record.status.retry_of.clone()
+                } else {
+                    None
+                }
+            });
+
+        if let Some(source) = source {
+            self.remove_navigation_chain(&mut state, source);
+        }
+
+        self.trim_navigation(&mut state);
     }
 
     fn finish<T: serde::Serialize>(
@@ -470,6 +729,7 @@ impl<R: Route> Router<R> {
                 queue: VecDeque::new(),
                 operations: BTreeMap::new(),
                 results: BTreeMap::new(),
+                navigation: VecDeque::new(),
                 tokens: BTreeMap::new(),
                 completed: VecDeque::new(),
                 decisions: BTreeMap::new(),
@@ -482,6 +742,7 @@ impl<R: Route> Router<R> {
             window_host: RefCell::new(None),
             window_closes: RefCell::new(BTreeMap::new()),
             guards: RefCell::new(Vec::new()),
+            admissions: RefCell::new(Vec::new()),
             event: Event::new(),
             work: Event::new(),
             driving: Cell::new(false),
@@ -541,6 +802,135 @@ impl<R: Route> Router<R> {
             .borrow_mut()
             .push(Rc::new(move |context| Box::pin(guard(context))));
 
+        Ok(())
+    }
+
+    /// Registers typed, side-effect-free route admission before the operation driver starts.
+    pub fn entry_admission<F, Fut>(&self, admission: F) -> Result<(), OperationError>
+    where
+        F: Fn(crate::router::AdmissionContext<R>) -> Fut + 'static,
+        Fut: Future<Output = crate::router::Admission<R>> + 'static,
+    {
+        if self.0.driving.get() {
+            return Err(OperationError::InvalidOptions);
+        }
+
+        self.0
+            .admissions
+            .borrow_mut()
+            .push(Rc::new(move |context| Box::pin(admission(context))));
+
+        Ok(())
+    }
+
+    /// Returns retained navigation statuses for one presenting window.
+    pub fn navigation(&self, window: WindowId) -> Vec<NavigationStatus> {
+        self.0
+            .state
+            .borrow()
+            .navigation
+            .iter()
+            .filter(|record| record.status.key.window_id == window)
+            .map(|record| record.status.clone())
+            .collect()
+    }
+
+    /// Retries an exact retained navigation through the normal admission and guard chain.
+    pub fn retry_navigation(
+        &self,
+        key: &NavigationKey,
+    ) -> Result<Operation<Opened>, OperationError> {
+        if key.runtime_id != self.0.runtime {
+            return Err(OperationError::UnknownOperation);
+        }
+
+        let (action, origin_window) = {
+            let state = self.0.state.borrow();
+            let record = state
+                .navigation
+                .iter()
+                .find(|record| record.status.key.operation_id == key.operation_id)
+                .ok_or(OperationError::OperationExpired)?;
+
+            if record.status.key != *key {
+                return Err(OperationError::InvalidOptions);
+            }
+
+            if matches!(
+                record.status.state,
+                NavigationState::Committed | NavigationState::Pending
+            ) {
+                return Err(OperationError::InvalidOptions);
+            }
+
+            if state.navigation.iter().any(|candidate| {
+                candidate.status.retry_of.as_ref() == Some(key)
+                    && matches!(candidate.status.state, NavigationState::Pending)
+            }) {
+                return Err(OperationError::InvalidOptions);
+            }
+
+            let action = record
+                .action
+                .clone()
+                .ok_or(OperationError::OperationExpired)?;
+
+            if let Action::Restore(_, _, epoch) = &action
+                && *epoch != state.browser_epoch
+            {
+                return Err(OperationError::StaleNavigation);
+            }
+
+            (action, record.origin_window)
+        };
+
+        let operation = Navigator {
+            core: Rc::downgrade(&self.0),
+            window: origin_window,
+            tab: None,
+            origin_entry: None,
+            origin_scope: Weak::new(),
+        }
+        .submit(Ok(action), |result| result.opened);
+
+        if let Some(record) = self
+            .0
+            .state
+            .borrow_mut()
+            .navigation
+            .iter_mut()
+            .find(|record| record.status.key.operation_id == operation.id)
+        {
+            record.status.retry_of = Some(key.clone());
+        }
+
+        Ok(operation)
+    }
+
+    /// Removes one exact retained navigation status.
+    pub fn dismiss_navigation(&self, key: &NavigationKey) -> Result<(), OperationError> {
+        if key.runtime_id != self.0.runtime {
+            return Err(OperationError::UnknownOperation);
+        }
+
+        let mut state = self.0.state.borrow_mut();
+        let index = state
+            .navigation
+            .iter()
+            .position(|record| record.status.key == *key)
+            .ok_or(OperationError::OperationExpired)?;
+
+        if matches!(
+            state.navigation[index].status.state,
+            NavigationState::Pending
+        ) {
+            return Err(OperationError::InvalidOptions);
+        }
+
+        let source = state.navigation[index].status.key.clone();
+        self.0.remove_navigation_chain(&mut state, source);
+        drop(state);
+        self.0.notify();
         Ok(())
     }
 
@@ -604,6 +994,7 @@ impl<R: Route> Router<R> {
             tabs: state.tab_snapshots(window),
             decisions: state.decision_snapshots(window),
             operations: state.operation_snapshots(),
+            navigation: state.navigation_snapshots(window),
             history_capacity: self.0.config.history_capacity,
             history_error: state.history_error.clone(),
         }
@@ -908,11 +1299,13 @@ impl<R: Route> Router<R> {
                         job.lanes.clear();
                     }
 
-                    if job
-                        .lanes
-                        .iter()
-                        .any(|lane| busy.contains(lane) || blocked.contains(lane))
-                    {
+                    if job.lanes.iter().any(|lane| {
+                        busy.iter().copied().any(|busy| lanes_conflict(*lane, busy))
+                            || blocked
+                                .iter()
+                                .copied()
+                                .any(|blocked| lanes_conflict(*lane, blocked))
+                    }) {
                         blocked.extend(job.lanes.iter().copied());
                         waiting.push_back(job);
                     } else {
@@ -1477,13 +1870,18 @@ impl<R: Route> Navigator<R> {
         };
 
         let action = owner.and(action);
+        let origin_window = self.window;
 
         let action = match action {
             Ok(action) if core.state.borrow().tokens.len() < core.config.pending_operations => {
+                core.navigation_begin(id, &action, origin_window);
                 action
             }
             Ok(action) => {
                 let result = Err(OperationError::QueueFull);
+
+                core.navigation_begin(id, &action, origin_window);
+                core.navigation_finish(id, &result);
 
                 core.finish::<T>(id, &result);
 
@@ -1558,6 +1956,7 @@ impl<R: Route> Navigator<R> {
                 owned.emit_history(true);
             }
 
+            owned.navigation_finish(id, &result);
             let result = result.map(|outcome| match outcome {
                 Outcome::Committed(value) => Outcome::Committed(map(value)),
                 Outcome::Cancelled(reason) => Outcome::Cancelled(reason),
@@ -1681,7 +2080,11 @@ pub struct EntryHandle<R: Route> {
 }
 
 impl<R: Route> EntryHandle<R> {
-    fn tasks(&self) -> Result<TaskScope, TaskError> {
+    /// Returns this retained entry's finite-work scope. Jobs continue while hidden
+    /// and are cancelled when the entry is disposed, including mount rollback.
+    /// # Errors
+    /// Returns `OwnerDisposed` after the entry or its runtime stops accepting work.
+    pub fn tasks(&self) -> Result<TaskScope, TaskError> {
         let entry = self.live().map_err(|_| TaskError::OwnerDisposed)?;
         let core = self.core.upgrade().ok_or(TaskError::OwnerDisposed)?;
         let mut origin = core.tasks.origin();
@@ -1816,6 +2219,7 @@ impl<R: Route> EntryHandle<R> {
     }
 }
 
+#[derive(Clone)]
 enum Action<R: Route> {
     Quit,
     CloseWindow,
@@ -1830,6 +2234,41 @@ enum Action<R: Route> {
 }
 
 impl<R: Route> Action<R> {
+    fn destination(&self) -> Option<R> {
+        match self {
+            Self::Open(destination, ..)
+            | Self::Navigate(_, destination, _)
+            | Self::Reveal(destination, _)
+            | Self::Restore(destination, _, _) => Some(destination.clone()),
+            _ => None,
+        }
+    }
+
+    fn target_tab(&self) -> Option<TabId> {
+        match self {
+            Self::Open(_, _, tab) => *tab,
+            Self::Navigate(tab, ..) => Some(*tab),
+            _ => None,
+        }
+    }
+
+    fn tracks_navigation(&self) -> bool {
+        !matches!(
+            self,
+            Self::Quit | Self::CloseWindow | Self::Close(_) | Self::Mode(_, _)
+        )
+    }
+
+    fn with_destination(self, destination: R) -> Self {
+        match self {
+            Self::Open(_, options, tab) => Self::Open(destination, options, tab),
+            Self::Navigate(tab, _, replace) => Self::Navigate(tab, destination, replace),
+            Self::Reveal(_, scope) => Self::Reveal(destination, scope),
+            Self::Restore(_, checkpoint, epoch) => Self::Restore(destination, checkpoint, epoch),
+            action => action,
+        }
+    }
+
     fn lanes(&self, core: &Core<R>, window: WindowId) -> Vec<Lane> {
         match self {
             Self::Open(_, _, Some(tab))
@@ -1838,6 +2277,9 @@ impl<R: Route> Action<R> {
             | Self::Select(tab)
             | Self::Close(tab)
             | Self::Mode(tab, _) => vec![Lane::Tab(*tab)],
+            Self::Restore(_, _, _) if !core.admissions.borrow().is_empty() => {
+                vec![Lane::WorkspaceExclusive]
+            }
             Self::Restore(_, Some(checkpoint), _) if checkpoint.runtime_id == core.runtime => {
                 vec![Lane::Workspace, Lane::Tab(checkpoint.tab_id)]
             }
@@ -2323,9 +2765,12 @@ async fn transition<R: Route>(
     action: &Action<R>,
     window: WindowId,
 ) -> Result<Commit, Stop> {
+    let action = admission::evaluate(core, id, action, window).await?;
+
     'plan: loop {
         action.check(core)?;
-        let plan = plan(core, action, window)?;
+        let plan = plan(core, &action, window)?;
+        core.navigation_plan(id, &action, window, &plan.entry);
         let mut provisional = None;
 
         loop {
@@ -2334,19 +2779,27 @@ async fn transition<R: Route>(
             if !matches!(plan.transition, Transition::Close | Transition::Mode(_)) {
                 approvals.push((
                     plan.entry.clone(),
-                    guard(core, id, action, &plan.entry, GuardKind::Enter, window).await?,
+                    guard(core, id, &action, &plan.entry, GuardKind::Enter, window).await?,
                 ));
             }
 
             for (entry, reason) in &plan.disposed {
                 approvals.push((
                     entry.clone(),
-                    guard(core, id, action, entry, GuardKind::Dispose(*reason), window).await?,
+                    guard(
+                        core,
+                        id,
+                        &action,
+                        entry,
+                        GuardKind::Dispose(*reason),
+                        window,
+                    )
+                    .await?,
                 ));
             }
 
             if provisional.is_none()
-                && matches!(action, Action::Open(_, options, _) if options.target == OpenTarget::NewWindow)
+                && matches!(&action, Action::Open(_, options, _) if options.target == OpenTarget::NewWindow)
             {
                 provisional = Some(windows::ProvisionalWindow::new(
                     core.clone(),
@@ -2357,7 +2810,7 @@ async fn transition<R: Route>(
 
             if let Some(provisional) = &mut provisional {
                 provisional
-                    .open(match action {
+                    .open(match &action {
                         Action::Open(_, options, _) => options.activation,
                         _ => Activation::Activate,
                     })
@@ -2383,7 +2836,16 @@ async fn transition<R: Route>(
                 let resource = (core.mount)(plan.entry.destination.clone(), handle, navigator)
                     .instrument(tracing::info_span!("router.mount", entry_id = %plan.entry.id))
                     .await
-                    .map_err(OperationError::Mount)?;
+                    .map_err(|error| {
+                        core.navigation_mount_failed(
+                            id,
+                            &action,
+                            window,
+                            &plan.entry,
+                            error.clone(),
+                        );
+                        OperationError::Mount(error)
+                    })?;
 
                 *plan.entry.resource.borrow_mut() = Some(resource);
             }
@@ -2409,11 +2871,11 @@ async fn transition<R: Route>(
                 continue 'plan;
             }
 
-            if let Action::Reveal(destination, _) = action
+            if let Action::Reveal(destination, _) = &action
                 && state
                     .matching(
                         destination,
-                        match action {
+                        match &action {
                             Action::Reveal(_, RevealScope::Application) => None,
                             _ => Some(window),
                         },
@@ -2424,12 +2886,12 @@ async fn transition<R: Route>(
                 continue 'plan;
             }
 
-            if let Action::Restore(destination, _, _) = action
+            if let Action::Restore(destination, _, _) = &action
                 && matches!(plan.transition, Transition::New(..) | Transition::Select)
                 && state
                     .matching(
                         destination,
-                        match action {
+                        match &action {
                             Action::Reveal(_, RevealScope::Application) => None,
                             _ => Some(window),
                         },
@@ -2453,7 +2915,8 @@ async fn transition<R: Route>(
                 return Err(Stop::Cancelled(CancelReason::Requested));
             }
 
-            commit(core, id, action, &plan)?;
+            commit(core, id, &action, &plan)?;
+            core.navigation_committed(id, &plan.entry);
 
             if let Some(provisional) = &mut provisional {
                 provisional.committed = true;
@@ -2731,6 +3194,14 @@ impl<R: Route> State<R> {
         self.operations
             .iter()
             .map(|(id, status)| (*id, status.clone()))
+            .collect()
+    }
+
+    fn navigation_snapshots(&self, window: Option<WindowId>) -> Vec<NavigationStatus> {
+        self.navigation
+            .iter()
+            .filter(|record| window.is_none_or(|window| record.status.key.window_id == window))
+            .map(|record| record.status.clone())
             .collect()
     }
 }

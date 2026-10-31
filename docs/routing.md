@@ -108,7 +108,10 @@ New tabs preserve all existing tabs, even for identical destinations. Hidden
 views remain retained but do not enter the displayed layout or paint tree.
 `OpenOptions` controls activation and the initial stored mode. Hidden navigation
 does not select its tab. A history capacity blocks a push that would exceed it;
-it never silently evicts an entry. Retention is unlimited by default.
+it never silently evicts an entry. Low-level `RouterConfig::default()` leaves
+history unlimited (`None`); the small desktop example opts into an explicit
+64-entry limit with `runtime_config` so production applications can choose their
+own policy.
 
 Commands queue eagerly and return cloneable `Operation<T>` handles. `wait().await`
 only observes the shared result; dropping a handle does not cancel the command.
@@ -122,6 +125,65 @@ tab histories, dirty revisions, capacity and host capabilities. Admission and
 completed-operation retention have configurable count bounds. An evicted completed
 operation reports `OperationExpired`; its existing handle still owns its result.
 IDs belong to one fresh `RuntimeId` and must not be reused across runtimes.
+
+### Admission and navigation recovery
+
+Custom router hosts can register a typed admission callback before starting the
+driver. Admission runs before entry allocation, native host creation or page
+mounting, and it returns data rather than navigating as a side effect:
+
+```rust,no_run
+use rake::prelude::*;
+
+#[derive(Clone, Route)]
+enum Destination {
+    #[route(id = "home", path = "/")]
+    Home,
+    #[route(id = "login", path = "/login")]
+    Login,
+}
+
+let router = Router::<Destination>::new(RouterConfig::default());
+router.entry_admission(|context| async move {
+    match context.destination {
+        Destination::Home => Admission::Redirect(Destination::Login),
+        Destination::Login => Admission::Allow,
+    }
+}).unwrap();
+```
+
+The context contains the operation ID, presenting window, resolved target tab,
+typed candidate destination and an immutable `ServiceRegistry`. Admission may
+be asynchronous, but it must not retain UI borrows. A redirect is re-admitted
+as part of the same operation; `RouterConfig::max_admission_redirects` bounds
+redirect loops (eight by default). Denials become `Outcome::Blocked`, while
+technical failures remain `OperationError` values.
+Admission handles destination-bearing Open, Navigate, Reveal, and browser Restore
+operations. Back/Forward and tab selection reuse retained entries and run entry
+guards; use those guards when access must be checked again on every entry.
+
+Each route-changing operation also retains a `NavigationStatus` keyed by runtime,
+operation, window and destination. `Router::navigation(window_id)` exposes
+pending, failed, blocked, cancelled and committed attempts independently of the
+bounded completed-operation table. `retry_navigation(&key)` replays the exact
+retained action through admission and guards; `dismiss_navigation(&key)` removes
+a terminal status. Retry keys have their own `RouterConfig::navigation_records`
+bound (64 by default), so a status can outlive the ordinary operation result but
+not the runtime's configured navigation history.
+Pending attempts are never evicted. The effective terminal limit is at least one,
+and an empty live window keeps its last recoverable failure even when the limit
+is reached. A successful retry or Dismiss clears that attempt's earlier retry
+chain; unrelated failures remain independent.
+
+`App::routes` renders `NavigationBoundary` around the workspace. It shows
+pending feedback with Cancel, and failed/blocked feedback with Retry and (once a
+page is visible) Dismiss. A custom GPUI host can render
+`NavigationBoundary::new(router).in_window(window_id)` beside its
+`RouteOutlet`, then notify the owning shell after `Router::changed` resolves.
+The boundary is feedback and retry UI; it does not replace route pages or cache
+failed data.
+An app layout can provide its own feedback using these same statuses and opt out
+of the default presentation with `.navigation_feedback(false)`.
 
 ## Guards and decisions
 

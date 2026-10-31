@@ -209,6 +209,51 @@ pub struct Opened {
     pub entry_id: EntryId,
 }
 
+/// Stable identity for an observable navigation attempt.
+///
+/// The runtime identity is part of the key so a stale status copied from a
+/// previous runtime cannot be replayed against a newly-created router.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NavigationKey {
+    /// Runtime that accepted the operation.
+    pub runtime_id: RuntimeId,
+    /// Eagerly submitted navigation operation.
+    pub operation_id: OperationId,
+    /// Host presenting the operation or its retained failure.
+    pub window_id: WindowId,
+    /// Concrete tab once planning has resolved one, if any.
+    pub tab_id: Option<TabId>,
+    /// Final destination currently associated with this operation.
+    pub destination: RouteAddress,
+}
+
+/// Terminal or in-flight state for a keyed navigation attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NavigationState {
+    /// Admission, planning, guarding or mounting is still in progress.
+    Pending,
+    /// The final destination committed successfully.
+    Committed,
+    /// A technical error occurred before commit.
+    Failed(OperationError),
+    /// An application guard deliberately blocked the operation.
+    Blocked(BlockReason),
+    /// The operation was explicitly or browser-superseded cancelled.
+    Cancelled(CancelReason),
+}
+
+/// Observable navigation status keyed independently of operation retention.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NavigationStatus {
+    /// Stable operation/window/tab/destination identity.
+    pub key: NavigationKey,
+    /// Earlier failed/blocked/cancelled attempt retried by this operation.
+    #[serde(default)]
+    pub retry_of: Option<NavigationKey>,
+    /// Current lifecycle state.
+    pub state: NavigationState,
+}
+
 /// Identity after a push, replacement or history traversal.
 pub type Entered = Opened;
 /// Identity after selection without adding history.
@@ -335,6 +380,15 @@ pub enum OperationError {
     /// Invalid choice schema returned by an application guard.
     #[error("invalid guard decision: {0}")]
     InvalidDecision(String),
+    /// Typed admission redirected too many times in one operation.
+    #[error("navigation redirect limit exceeded ({limit})")]
+    AdmissionRedirectLoop {
+        /// Maximum number of redirects permitted for one operation.
+        limit: usize,
+    },
+    /// A retained restore action belongs to an obsolete browser epoch.
+    #[error("the retained navigation restore target is stale")]
+    StaleNavigation,
 }
 
 /// Observable operation state, independent of polling the observation handle.
@@ -490,6 +544,9 @@ pub struct RouterSnapshot {
     pub decisions: Vec<DecisionSnapshot>,
     /// Retained operation statuses, including all pending operations.
     pub operations: Vec<(OperationId, OperationState)>,
+    /// Keyed route navigation statuses retained independently of operation status.
+    #[serde(default)]
+    pub navigation: Vec<NavigationStatus>,
     /// Configured history limit; no implicit state eviction occurs.
     pub history_capacity: Option<usize>,
     /// Browser synchronization failure after an otherwise successful router commit.

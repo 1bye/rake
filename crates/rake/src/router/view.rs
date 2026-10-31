@@ -4,6 +4,9 @@
 #[path = "view/layout_tests.rs"]
 mod layout_tests;
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/navigation_tests.rs"]
+mod navigation_tests;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
 #[path = "view/page_tests.rs"]
 mod page_tests;
 
@@ -21,14 +24,14 @@ use gpui::prelude::*;
 use gpui::{AnyView, Context, ElementId, IntoElement, Render, RenderOnce, Window, div, rgb};
 
 use crate::Services;
-use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle};
+use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 
 use super::layout::{LayoutContext, LayoutFactory};
-use super::runtime::{Guard, Mount, Resource};
+use super::runtime::{AdmissionCallback, Guard, Mount, Resource};
 
 use super::{
-    EntryHandle, MountError, Navigator, OperationState, Route, Router, RouterConfig, TabHandle,
-    TabId, WebConfig, WindowId,
+    EntryHandle, MountError, Navigator, Route, Router, RouterConfig, TabHandle, TabId, WebConfig,
+    WindowId,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -78,6 +81,13 @@ impl<R: Route> PageContext<R> {
     /// Application-owned work retains its causal origin and survives this tab closing.
     pub fn app(&self) -> AppHandle {
         self.navigator.app()
+    }
+
+    /// Finite jobs owned by this retained entry, independent of visibility.
+    /// # Errors
+    /// Returns `OwnerDisposed` after this entry or its runtime is disposed.
+    pub fn tasks(&self) -> Result<TaskScope, TaskError> {
+        self.entry.tasks()
     }
 
     /// Registers fresh activity runs following the tab's Foreground/Live policy.
@@ -403,6 +413,7 @@ impl Drop for DriverTask {
 
 pub(crate) struct Workspace<R: Route> {
     chrome: bool,
+    navigation_feedback: bool,
     router: Router<R>,
     restart: Option<R>,
     layout: Option<AnyView>,
@@ -421,6 +432,7 @@ impl<R: Route> Drop for Workspace<R> {
 
 pub(crate) struct RoutingRoot<R: Route> {
     pub(crate) chrome: bool,
+    pub(crate) navigation_feedback: bool,
     pub(crate) quit_guards: Vec<super::runtime::QuitGuard>,
     pub(crate) views: Rc<dyn RouteViews<R>>,
     pub(crate) initial: Option<R>,
@@ -428,6 +440,7 @@ pub(crate) struct RoutingRoot<R: Route> {
     pub(crate) config: RouterConfig,
     pub(crate) web: WebConfig,
     pub(crate) guards: Vec<Guard<R>>,
+    pub(crate) admissions: Vec<AdmissionCallback<R>>,
     pub(crate) control: crate::control::ControlConfig,
     pub(crate) commands: crate::control::Commands,
     pub(crate) application_id: String,
@@ -487,10 +500,12 @@ impl<R: Route> Workspace<R> {
             config,
             web,
             guards,
+            admissions,
             control,
             commands,
             application_id,
             chrome,
+            navigation_feedback,
             quit_guards,
             layout,
             new_window_options,
@@ -524,6 +539,7 @@ impl<R: Route> Workspace<R> {
             contexts,
             views: Rc::new(RefCell::new(BTreeMap::new())),
             chrome,
+            navigation_feedback,
             layout: layout.clone(),
             services: layout_services.clone(),
             new_window_options,
@@ -554,6 +570,12 @@ impl<R: Route> Workspace<R> {
         for guard in guards {
             router
                 .entry_guard(move |context| guard(context))
+                .map_err(|error| MountError(error.to_string()))?;
+        }
+
+        for admission in admissions {
+            router
+                .entry_admission(move |context| admission(context))
                 .map_err(|error| MountError(error.to_string()))?;
         }
 
@@ -721,6 +743,7 @@ impl<R: Route> Workspace<R> {
 
                 Self {
                     chrome,
+                    navigation_feedback,
                     router,
                     restart,
                     layout: initial_layout,
@@ -875,15 +898,6 @@ impl<R: Route> Render for Workspace<R> {
                     .inspect_with(|| format!("rake.decision.{}", decision.id)),
             );
         }
-
-        let failure = snapshot
-            .operations
-            .last()
-            .and_then(|(_, state)| match state {
-                OperationState::Failed(error) => Some(error.to_string()),
-                OperationState::Blocked(reason) => Some(format!("Operation blocked: {reason:?}")),
-                _ => None,
-            });
 
         let quitting = snapshot.quit.phase.is_pending();
         let quit_router = self.router.clone();
@@ -1061,7 +1075,11 @@ impl<R: Route> Render for Workspace<R> {
                 .child(quit_controls)
             })
             .child(decision_area.inspect("rake.decisions"))
-            .children(failure)
+            .when(self.navigation_feedback, |root| {
+                root.child(
+                    super::NavigationBoundary::new(self.router.clone()).in_window(self.window),
+                )
+            })
             .children(snapshot.history_error)
             .child(
                 div()
@@ -1098,6 +1116,7 @@ struct NativeWindows<R: Route> {
     contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
     views: Rc<RefCell<BTreeMap<WindowId, gpui::WeakEntity<Workspace<R>>>>>,
     chrome: bool,
+    navigation_feedback: bool,
     layout: Option<LayoutFactory<R>>,
     services: Services,
     new_window_options: Option<Rc<dyn Fn(WindowId) -> gpui::WindowOptions>>,
@@ -1123,6 +1142,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
             let services = host.services.clone();
             let views = host.views.clone();
             let chrome = host.chrome;
+            let navigation_feedback = host.navigation_feedback;
             let setup_error = Rc::new(RefCell::new(None));
             let callback_error = setup_error.clone();
             let mut options = host
@@ -1141,6 +1161,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                         window.remove_window();
                         return cx.new(|_| Workspace {
                             chrome,
+                            navigation_feedback,
                             restart: R::from_uri("/").ok(),
                             router: router.clone(),
                             layout: None,
@@ -1166,6 +1187,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                             window.remove_window();
                             return cx.new(|_| Workspace {
                                 chrome,
+                                navigation_feedback,
                                 restart: R::from_uri("/").ok(),
                                 router: router.clone(),
                                 layout: None,
@@ -1177,6 +1199,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
 
                     let view = cx.new(|_| Workspace {
                         chrome,
+                        navigation_feedback,
                         restart: R::from_uri("/").ok(),
                         router: router.clone(),
                         layout,

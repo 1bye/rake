@@ -34,6 +34,10 @@ Quit: the routed host offers Discard/Cancel before disposing that dirty history.
 “Mark clean” demonstrates clearing dirty state; it does not persist a document.
 Update restart uses the same guard path. The host still presents guard decisions
 when `workspace_chrome(false)` hides its default tab/quit controls.
+Navigation loading, Cancel, and Retry also remain available outside the shell.
+The starter limits each tab to 64 retained entries; reaching the limit blocks
+the next push instead of discarding unsaved state. Low-level routers default to
+unlimited history.
 
 `#[rake::app]` runs installer startup and passes build-script distribution policy
 to `App`. The app registers `AppInfo` once. An owned `PageContext` is passed to
@@ -65,8 +69,13 @@ outlet. Pages render their bodies; they do not construct the shell. The shell's
 navigation-click count survives page changes independently of retained page edits.
 `try_layout` reports initialization failures without panicking.
 
-`Updates::new` resolves the automatically registered `UpdateController` and retains
-a task awaiting `changed(revision)` to redraw. Rake owns the provider driver and
+Home loads its bundled welcome text with `page.tasks()`, away from the UI loop.
+Its `LoadState` rejects results from older retries. Finite entry work survives
+navigation into history and is cancelled when the entry is disposed.
+
+Updates resolves the automatically registered `UpdateController` during mount.
+Its `page.while_visible` observer awaits `changed(revision)` to redraw, pauses
+while hidden, and publishes a fresh snapshot when shown again. Rake owns the provider driver and
 blocking work; views do not create worker threads. Check, available version,
 download progress, cancellation, failures and guarded restart use that controller.
 No update check starts automatically. An unbundled `cargo run` has no installed
