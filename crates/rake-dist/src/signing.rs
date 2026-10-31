@@ -122,7 +122,7 @@ pub fn generate_update_key(
     let mut seed = Zeroizing::new([0u8; 32]);
     getrandom::fill(seed.as_mut()).map_err(|_| fail("OS update key generation failed"))?;
     let key = SigningKey::from_bytes(&seed);
-    let encoded = Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(seed.as_ref()));
+    let encoded = Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(seed.as_slice()));
     match reference {
         UpdateSigningKey::File { path } => {
             let mut file = temporary(path)?;
