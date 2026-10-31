@@ -2,7 +2,8 @@
 
 Rake is an application framework for native GPUI and browser WebAssembly. This
 repository implements the **portable foundation, routing, managed work, runtime control, development supervision, graphical devtools, application packaging, element inspection, typed application commands, guarded quit and native multi-window routing** of the
-[API design](docs/api-design.md). It is an unpublished prototype.
+[API design](docs/api-design.md). It is an unpublished alpha candidate; see the
+[support contract and release gates](docs/release-readiness.md) before adoption.
 
 The foundation includes:
 
@@ -119,15 +120,17 @@ The project pins Rust 1.95.0 and GPUI CE source revision
 `99109e3a77ddadbcb46cba8567e779a651600608` (GPUI 0.2.2 and platform 0.1.0).
 The source pin includes font assets missing from the published Web crate. GPUI CE
 is the selected community GPUI distribution, rather than a moving Zed checkout.
-Cargo.lock pins the complete resolution. Initial native validation targets macOS;
-other desktop backends need their platform development libraries and validation.
+Cargo.lock pins the complete resolution. Native validation includes macOS and focused
+Windows/Linux workflows. Each release still needs its own evidence; see the support
+contract for the distinction between compilation, GUI and installer checks.
 
 ```sh
 cargo run -p rake-foundation
 cargo run -p rake-routing
 ```
 
-The example's **Load JSON** button requests `http://127.0.0.1:8080/message.json`.
+The foundation example loads `http://127.0.0.1:8080/message.json` automatically;
+its **Reload / Retry** button repeats that load.
 Start the fixture server for either native or browser use:
 
 ```sh
