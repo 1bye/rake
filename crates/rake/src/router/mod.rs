@@ -33,12 +33,37 @@
 //! }
 //! ```
 
+#[cfg(feature = "gpui")]
+pub(crate) mod layout;
+
+#[cfg(feature = "gpui")]
+pub use layout::LayoutContext;
+
+#[cfg(feature = "gpui")]
+mod navigation_view;
+
+#[cfg(feature = "gpui")]
+pub use navigation_view::NavigationBoundary;
+
+pub(crate) mod admission;
+#[cfg(feature = "gpui")]
+mod page;
 pub(crate) mod runtime;
 mod types;
 #[cfg(feature = "gpui")]
 pub(crate) mod view;
 pub(crate) mod web;
 
+pub use admission::{Admission, AdmissionContext};
+
+#[cfg(feature = "gpui")]
+#[doc(hidden)]
+pub use page::{
+    __mount_loaded_page, __mount_page, __prepare_loaded_page, __routes, __routes_prepared,
+};
+
+#[cfg(feature = "gpui")]
+pub use page::{LoadedPage, Page};
 pub use rake_protocol::router::*;
 pub use runtime::{EntryHandle, Navigator, Router, TabHandle};
 pub use types::*;

@@ -10,15 +10,18 @@ Capture and temporary editing require the opt-in `rake/devtools` Cargo feature.
 Without it, generated instrumentation and the capture/edit backend are compiled
 out; the manual builders are identities and queries report unavailable. Use
 `inspect_with` for lazy dynamic identities. See [build configuration](devtools.md#connection).
-Both routed and standalone `App::root` runners attach capture when configured with
-`ControlConfig::FromEnvironment` and enabled by `RAKE_DEV_CONTROL=1` on native
-or valid authenticated development metadata on Web. Disabled and headless hosts
-report `unavailable`. An attached host reports `waiting` until its first prepaint.
-A standalone host captures the application-owned root and its instrumented
-children, without creating a router, tabs, entries or an operation dispatcher.
-The same picker, highlight, focus, scroll and source actions are available when
-registered by the captured elements. Closing the root cancels its driver, leases
-and endpoint; old clients receive `RuntimeShutdown` or disconnect.
+Both routed and standalone `App::root`/`App::root_with` runners attach capture when
+configured with `ControlConfig::FromEnvironment` and enabled by
+`RAKE_DEV_CONTROL=1` on native or valid authenticated development metadata on Web.
+Disabled and headless hosts report `unavailable`. An attached host reports
+`waiting` until its first prepaint. A standalone host captures the application-owned
+root and its instrumented children without creating a router, tabs or entries; its
+managed runtime still provides command/work/quit/update operations and inspection
+control. The same picker, highlight, focus, scroll and source actions are available
+when registered by the captured elements. With the default `ClosePolicy::Quit`,
+closing the root stops managed work and cancels its driver, leases and endpoint;
+`ClosePolicy::KeepRunning` may leave the runtime alive after the window detaches.
+Old clients receive `RuntimeShutdown` or disconnect once the runtime ends.
 
 `rake::view!` automatically instruments its rendered nodes, component/entity mounts,
 and ordinary text/expression children. String values display as `Text`; other

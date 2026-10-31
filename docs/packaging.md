@@ -1,5 +1,10 @@
 # Packaging and distribution
 
+This page describes the legacy macOS/Linux archive layout and the Web pipeline.
+For native installers, updates, metadata, components and release publishing, use
+[Desktop distribution](distribution.md). Schema 1 selects that workflow; legacy
+native bundles retain their layout and JSON through the same Rust coordinator.
+
 `rake bundle` uses the same package selection, Cargo build and Wasm binding generator
 as `rake build`. It needs no running app, dev supervisor or runtime connection.
 
@@ -14,8 +19,8 @@ Bundles default to the **release** profile. Use `--debug` explicitly for local
 packaging checks. Existing `--manifest-path`, `--package`, `--bin`, `--features`,
 `--web-dir` and `--output` options work as for builds. Defaults write
 `dist/PACKAGE/desktop-bundle` or `dist/PACKAGE/web-bundle`. Build outputs remain
-separate at `dist/PACKAGE/desktop|web`. Python 3.11+ is required; all packaging
-helpers are bundled in the CLI. Web also requires the wasm32 target and a
+separate at `dist/PACKAGE/desktop|web`. Web and the development supervisor require
+Python 3.11+; native bundle assembly runs in Rust. Web also requires the wasm32 target and a
 `wasm-bindgen` CLI exactly matching Cargo.lock.
 
 Each output contains the unpacked artifact, archive, `bundle.json` with versions,
@@ -81,8 +86,8 @@ resources and optional icon. PNG icons are converted to ICNS during bundling.
 Plain non-system dylib dependencies are resolved from loader/executable paths and
 LC_RPATH entries, copied recursively into `Contents/Frameworks`, rewritten and
 signed before the outer app. Filename collisions and unresolved libraries fail.
-External framework bundles/plugins need a platform packager and are rejected;
-system frameworks and `/usr/lib` dependencies remain system-provided.
+Use explicit framework/runtime recipes in schema 1 for external framework bundles
+and plugins. System frameworks and `/usr/lib` dependencies remain system-provided.
 
 The default is an **ad-hoc signature**, verified with `codesign --verify --deep
 --strict`. This supplies local bundle integrity, not Developer ID/notarization or
@@ -99,15 +104,18 @@ entitlements are optional. Signing failure prevents publication. The ZIP is made
 with `ditto --keepParent` after signature verification, following Apple's
 [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/)
 and [packaging guidance](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution).
-Notarization, stapling, DMG/installer creation and App Store submission are separate
-steps; no credentials are inferred or upload performed. `notarized` remains false.
+Ordinary development bundles report `notarized: false`. Explicit trusted releases
+use an enrolled Developer ID identity and `--notary-profile`, then verify
+notarization and stapled tickets. See [release settings](distribution-release.md).
+App Store submission remains a separate publishing adapter.
 
 Linux produces a directory archive with `bin/` and `share/` resources. It relies
 on compatible system libraries and is not an AppImage, distro package or installer.
-The layout is checked on macOS; Linux native execution/distribution still needs a
-Linux host validation. The CLI's native process/transport layer currently requires
-Unix; Windows packaging is unsupported. macOS archives report the actual Mach-O
-architecture; builds use Cargo's selected host target, with no universal merge.
+The archive layout is validated on macOS and Linux. Schema 1 additionally produces
+Linux native packages, AppImage and Flatpak. Windows distribution commands run
+independently of Unix development-control IPC and support NSIS/MSI/MSIX/Velopack.
+macOS archives report actual Mach-O architecture; explicit universal builds and
+matching native components use the schema-1 configuration.
 
 ## Web deployment
 

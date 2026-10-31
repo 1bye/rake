@@ -1,0 +1,1 @@
+This resource is included in every native package and resolves independently of the working directory.

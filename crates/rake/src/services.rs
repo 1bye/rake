@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::diagnostics::Collector;
-use crate::http::HttpClient;
+use crate::http::{HttpClient, HttpConfig};
 
 /// Missing or duplicate concrete service registration.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -32,8 +32,27 @@ pub enum ServiceError {
 }
 
 /// One application composition. Clones share service values, not later registrations.
-#[derive(Clone, Default)]
-pub struct ServiceRegistry(Rc<HashMap<TypeId, Rc<dyn Any>>>);
+#[derive(Clone)]
+pub struct ServiceRegistry {
+    values: Rc<HashMap<TypeId, Rc<dyn Any>>>,
+    standard: Option<Rc<StandardServices>>,
+}
+
+#[derive(Clone)]
+struct StandardServices {
+    http: HttpClient,
+    collector: Collector,
+    platform: crate::platform::Platform,
+}
+
+impl Default for ServiceRegistry {
+    fn default() -> Self {
+        Self {
+            values: Rc::new(HashMap::new()),
+            standard: None,
+        }
+    }
+}
 
 impl ServiceRegistry {
     /// Creates an empty composition.
@@ -45,22 +64,88 @@ impl ServiceRegistry {
     pub fn with<T: 'static>(mut self, service: T) -> Result<Self, ServiceError> {
         let id = TypeId::of::<T>();
 
-        if self.0.contains_key(&id) {
+        if self.values.contains_key(&id) {
             return Err(ServiceError::Duplicate(type_name::<T>()));
         }
 
-        Rc::make_mut(&mut self.0).insert(id, Rc::new(service));
+        Rc::make_mut(&mut self.values).insert(id, Rc::new(service));
 
         Ok(self)
     }
 
     /// Resolves the shared concrete value without copying the service itself.
     pub fn get<T: 'static>(&self) -> Result<Rc<T>, ServiceError> {
-        self.0
+        self.values
             .get(&TypeId::of::<T>())
             .cloned()
             .and_then(|value| value.downcast().ok())
             .ok_or(ServiceError::Missing(type_name::<T>()))
+    }
+
+    pub(crate) fn with_standard(
+        mut self,
+        http: HttpClient,
+        collector: Collector,
+        platform: crate::platform::Platform,
+    ) -> Self {
+        self.standard = Some(Rc::new(StandardServices {
+            http,
+            collector,
+            platform,
+        }));
+
+        self
+    }
+
+    /// Returns the application-owned HTTP handle, if this registry came from [`Services`].
+    ///
+    /// A registry constructed directly with [`ServiceRegistry::new`] has no standard
+    /// services. This makes low-level routers explicit about the services they need.
+    ///
+    /// # Errors
+    /// Returns [`ServiceError::Missing`] when this registry has no standard HTTP handle.
+    pub fn http(&self) -> Result<HttpClient, ServiceError> {
+        self.standard
+            .as_ref()
+            .map(|standard| standard.http.clone())
+            .ok_or(ServiceError::Missing(type_name::<HttpClient>()))
+    }
+
+    /// Returns the application-owned diagnostic collector, if one was configured.
+    ///
+    /// # Errors
+    /// Returns [`ServiceError::Missing`] when this registry has no standard collector.
+    pub fn diagnostics(&self) -> Result<Collector, ServiceError> {
+        self.standard
+            .as_ref()
+            .map(|standard| standard.collector.clone())
+            .ok_or(ServiceError::Missing(type_name::<Collector>()))
+    }
+
+    /// Returns shared host services, or a missing-service error on a bare registry.
+    pub fn platform(&self) -> Result<crate::platform::Platform, ServiceError> {
+        self.standard
+            .as_ref()
+            .map(|standard| standard.platform.clone())
+            .ok_or(ServiceError::Missing(
+                type_name::<crate::platform::Platform>(),
+            ))
+    }
+
+    /// Reconstructs the standard service view represented by this registry.
+    ///
+    /// This is a cheap clone of the shared service handles. Custom typed values and
+    /// their identities remain in the returned registry snapshot.
+    ///
+    /// # Errors
+    /// Returns [`ServiceError::Missing`] when either standard handle is absent.
+    pub fn standard_services(&self) -> Result<Services, ServiceError> {
+        Ok(Services {
+            http: self.http()?,
+            collector: self.diagnostics()?,
+            platform: self.platform()?,
+            registry: self.clone(),
+        })
     }
 }
 
@@ -70,16 +155,48 @@ pub struct Services {
     http: HttpClient,
     collector: Collector,
     registry: ServiceRegistry,
+    platform: crate::platform::Platform,
 }
 
 impl Services {
     /// Constructs standard service handles with an explicit application composition.
     pub fn new(http: HttpClient, collector: Collector, registry: ServiceRegistry) -> Self {
+        Self::with_platform(
+            http,
+            collector,
+            registry,
+            crate::platform::Platform::default(),
+        )
+    }
+
+    pub(crate) fn with_platform(
+        http: HttpClient,
+        collector: Collector,
+        registry: ServiceRegistry,
+        platform: crate::platform::Platform,
+    ) -> Self {
+        let registry = registry.with_standard(http.clone(), collector.clone(), platform.clone());
+
         Self {
             http,
             collector,
             registry,
+            platform,
         }
+    }
+
+    /// Builds a configured HTTP service and installs it with the supplied collector.
+    ///
+    /// # Errors
+    /// Returns the HTTP configuration error when the client cannot be constructed.
+    pub fn from_config(
+        config: HttpConfig,
+        collector: Collector,
+        registry: ServiceRegistry,
+    ) -> Result<Self, crate::http::Error> {
+        let http = HttpClient::with_collector(config, collector.clone())?;
+
+        Ok(Self::new(http, collector, registry))
     }
 
     /// Returns the shared configured HTTP transport handle.
@@ -90,6 +207,11 @@ impl Services {
     /// Returns the bounded diagnostic collector.
     pub fn diagnostics(&self) -> Collector {
         self.collector.clone()
+    }
+
+    /// Returns shared file, clipboard, preferences and URL activation capabilities.
+    pub fn platform(&self) -> crate::platform::Platform {
+        self.platform.clone()
     }
 
     /// Resolves the same typed service used by command handlers and other views.

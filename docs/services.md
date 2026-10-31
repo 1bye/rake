@@ -1,5 +1,9 @@
 # Typed application services
 
+Standard services also expose shared [platform services](platform-services.md) via
+`services.platform()`: file import/export, clipboard text, namespaced preferences,
+URL opening and host activations. They are available in roots, pages and commands.
+
 Compose concrete services once at the application boundary. Routed views and
 typed command handlers resolve the same `Rc<T>` without global variables or
 capturing a second copy in a command registry.

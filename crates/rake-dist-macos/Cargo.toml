@@ -1,0 +1,20 @@
+[package]
+name = "rake-dist-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rake-dist-core = { path = "../rake-dist-core" }
+plist = "1"
+object = { version = "0.37", default-features = false, features = ["read", "std"] }
+base64 = "0.23"
+thiserror.workspace = true
+
+tempfile = "3"
+serde_json.workspace = true

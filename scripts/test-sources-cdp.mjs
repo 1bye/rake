@@ -128,8 +128,8 @@ try {
     });
   } else {
     const docs=await sourceTree();assert.ok(docs.length>=3,JSON.stringify(docs));
-    const status=await call('Rake.getSources');assert.equal(status.omitted,false);assert.ok(docs.every(d=>status.files.some(file=>file.url===d.url))); 
-    const frameTree=await call('Page.getFrameTree');assert.ok(docs.every(d=>frameTree.frameTree.childFrames.some(child=>child.frame.url===d.url))); 
+    const status=await call('Rake.getSources');assert.equal(status.omitted,false);assert.ok(docs.every(d=>status.files.some(file=>file.url===d.url)));
+    const frameTree=await call('Page.getFrameTree');assert.ok(docs.every(d=>frameTree.frameTree.childFrames.some(child=>child.frame.url===d.url)));
     assert.equal(new Set(docs.map(d=>d.url)).size,docs.length,'one catalog entry per file');
     const lib=docs.find(d=>d.url.endsWith('/examples/routing/src/lib.rs'));assert.ok(lib);
     const content=await call('Page.getResourceContent',{frameId:lib.id,url:lib.url});

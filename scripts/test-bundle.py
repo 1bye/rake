@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Covers: relocatable native bundles, signing/dylibs, Web deployment, assets and rollback.
 Real: Cargo/Rust, wasm-bindgen, native platform tools, archives and loopback HTTP.
-Doubles: tiny application fixtures; Linux layout uses a platform selector double on macOS.
+Doubles: tiny application fixtures; native packaging uses the Rust CLI on its host.
 Requires: Python 3.11+, Rust with wasm32 target, matching wasm-bindgen; macOS signing/clang tools on macOS.
 """
 
@@ -22,10 +22,9 @@ import tomllib
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
 import zipfile
 
-from bundle import BundleConfig, base_path, copy_tree, native
+from bundle import BundleConfig, base_path, copy_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "target/debug/rake"
@@ -61,7 +60,7 @@ class BundleTests(unittest.TestCase):
             (root / "web/loader.js").write_text("import init from '/pkg/bundle_fixture.js'; await init(); fetch('/assets/nested/message.txt');")
         else:
             if sys.platform == "darwin":
-                (root / "icon.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5l8AAAAASUVORK5CYII="))
+                (root / "icon.png").write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSDjwHwAEJAJA6qdhxgAAAABJRU5ErkJggg=="))
             (root / "src/main.rs").write_text(source or '''fn main(){let exe=std::env::current_exe().unwrap();
 let prefix=exe.parent().unwrap().parent().unwrap();
 let assets=if cfg!(target_os="macos"){prefix.join("Resources/assets")}else{prefix.join("share/com.example.fixture/assets")};
@@ -109,6 +108,11 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
             failed_signing = subprocess.run([*command, "--entitlements", str(entitlements)], capture_output=True)
             self.assertNotEqual(failed_signing.returncode, 0)
             self.assertEqual(Path(result["archive"]).read_bytes(), archive_before)
+        # A previous Python bundle only has this exact legacy ownership marker.
+        (Path(result["manifest"]).parent / ".rake-distribution").unlink()
+        migrated = json.loads(run(command))
+        self.assertTrue((Path(migrated["manifest"]).parent / ".rake-distribution").is_file())
+        archive_before = Path(result["archive"]).read_bytes()
         (root / "src/main.rs").write_text('fn main(){does_not_compile}')
         failure = subprocess.run(command, capture_output=True, text=True)
         self.assertNotEqual(failure.returncode, 0)
@@ -136,6 +140,24 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
         shutil.rmtree(libraries)
         self.assertEqual(run([str(app / "Contents/MacOS/bundle-fixture")], cwd="/").strip(), "42")
         run(["codesign", "--verify", "--deep", "--strict", str(app)])
+
+    def test_native_output_cannot_overlap_an_asset_input(self):
+        root = self.fixture()
+        output = root / "assets/distribution"
+        command = self.command(root)
+        command[command.index("--output") + 1] = str(output)
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output overlaps packaging input", result.stderr)
+        self.assertFalse(output.exists())
+        self.assertEqual((root / "assets/nested/message.txt").read_text(), "owned packaged asset")
+
+    def test_native_build_delegates_to_rust_and_preserves_installed_layout(self):
+        root = self.fixture()
+        result = json.loads(run([str(CLI), "build", "--debug", "--manifest-path", str(root / "Cargo.toml"), "--output", str(self.root / "built"), "--json"]))
+        executable = Path(result["artifact"])
+        self.assertEqual(run([str(executable)], cwd="/").strip(), "owned packaged asset")
+        self.assertTrue((self.root / "built/distribution.json").is_file())
 
     def test_real_web_bundle_has_deployment_metadata_bindings_assets_and_no_development_bridge(self):
         root = self.fixture(web=True)
@@ -208,18 +230,6 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("error", json.loads(result.stderr))
 
-    def test_linux_resource_layout_uses_the_same_metadata_without_claiming_host_execution(self):
-        from types import SimpleNamespace
-        source = self.root / "program"
-        source.write_bytes(b"fixture executable")
-        assets = self.root / "assets"
-        assets.mkdir(); (assets / "data").write_text("asset")
-        config = BundleConfig({"name": "fixture", "version": "1.0.0", "metadata": {"rake": {"bundle": {"assets": "assets"}}}}, self.root)
-        project = SimpleNamespace(bundle=config, target={"name": "fixture"})
-        with patch("bundle.sys.platform", "linux"):
-            binary = native(project, source, self.root / "linux")
-        self.assertEqual(binary.relative_to(self.root / "linux").as_posix(), "bin/fixture")
-        self.assertEqual((self.root / "linux/share/dev.rake.fixture/assets/data").read_text(), "asset")
 
 
 if __name__ == "__main__":

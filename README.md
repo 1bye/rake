@@ -6,7 +6,7 @@ Build native and browser apps in Rust, with tools that let developers and agents
 inspect and control the running application. The GUI, CLI and devtools share
 application commands, operation results and lifecycle guards.
 
-**Status:** unpublished prototype.
+**Status:** unpublished alpha candidate. See the [support contract and release gates](docs/release-readiness.md) and [release qualification](docs/qualification.md).
 
 ## What Rake provides
 
@@ -14,14 +14,18 @@ application commands, operation results and lifecycle guards.
   WebAssembly, with direct GPUI access through `rake::gpui`.
 - **Application structure.** Typed routes, independent tabs and histories, native
   multi-window support, and save/discard/cancel guards.
-- **Managed async work.** Tasks owned by tabs or the application, with cancellation
-  and visibility-aware activities.
+- **Managed async work.** Route loaders, retryable data, initiated user actions, and
+  tasks owned by tabs or the application, with cancellation and visibility-aware activities.
 - **Shared services.** Typed service composition, HTTP, storage and structured
   diagnostics behind one `rake` dependency.
 - **Tools for agents.** Discoverable commands with argument/result schemas, JSON
   CLI output, element inspection and Chrome DevTools integration.
 - **Development workflow.** Watched builds, checkpointed reloads, native browser
   preview and native/Web packaging.
+- **Distribution and updates.** Icons, bundled dependencies/resources, desktop metadata,
+  signing, publication and shared native update controllers.
+- **Platform services.** Shared files, clipboard, preferences and URL activation, with
+  owned browser workers, offline bundles and guarded deployment updates.
 
 ## Try it
 
@@ -40,6 +44,8 @@ Other examples:
 | `cargo run -p rake-foundation` | Application setup, HTTP and diagnostics |
 | `cargo run -p rake-routing` | Tabs, histories, guards and managed work |
 | `cargo run -p rake-view` | Experimental HTML-like `rake::view!` syntax |
+| `cargo run -p rake-desktop-example` | Pages, persistent layouts, loading/retry and native updates |
+| `cargo run -p rake-files` | File processing, clipboard/export, preferences and Web updates |
 
 For watched builds and Chrome DevTools, install the local CLI. Python 3.11+ is
 required:
@@ -84,22 +90,27 @@ waits, screenshots and Rust source lookup.
 
 | Topic | Guides |
 | --- | --- |
-| Application model | [Routing](docs/routing.md), [managed work](docs/managed-work.md), [guarded quit](docs/guarded-quit.md) |
-| Data and services | [Service composition](docs/services.md), [typed storage](docs/storage.md) |
+| Application model | [Application shapes](docs/application.md), [routing](docs/routing.md), [managed work](docs/managed-work.md), [guarded quit](docs/guarded-quit.md) |
+| Data and services | [Service composition](docs/services.md), [typed storage](docs/storage.md), [platform services](docs/platform-services.md) |
 | UI | [Experimental view syntax](docs/experimental-view.md), [element inspection](docs/element-inspection.md) |
 | Developer tools | [Runtime control](docs/runtime-control.md), [Chrome DevTools](docs/devtools.md), [native browser preview](docs/dev-preview.md) |
-| Build and ship | [Development and reload](docs/development.md), [packaging](docs/packaging.md) |
+| Build and ship | [Development and reload](docs/development.md), [packaging](docs/packaging.md), [distribution](docs/distribution.md), [browser applications](docs/web-applications.md) |
 | Reference | [Fieldnotes app](docs/notes.md), [API design](docs/api-design.md) |
 
 ## Status
 
-Runtime validation currently covers macOS and Chromium. Other native platforms
-and browsers need validation. Native applications support multiple windows;
-browser applications use one host. Native control transport requires Unix.
+Runtime validation includes macOS/Chromium, with focused Windows/Linux readiness
+and installer workflows. Each release needs its own evidence; compilation, GUI
+and installer checks establish different boundaries. Native applications support
+multiple windows; browser applications use one host. Native control transport
+requires Unix. Built-in host visibility measures macOS occlusion, Windows window
+state and browser document visibility; Linux reports Unknown.
 
 Native reload currently uses checkpointed restarts; code replacement awaits an
-external hot reloader. Installers, notarization and durable sessions remain
-future work. See the individual guides for feature limits.
+external hot reloader. Packaging, signing/notarization and publication are covered
+by the distribution pipeline; durable sessions remain separate from development
+checkpoints. Real-host screen-reader, display and sustained-workload qualification
+remain beta release gates. See the individual guides for feature limits.
 
 ## Verify
 
@@ -112,3 +123,12 @@ cargo test --workspace --locked
 
 The [CI workflow](.github/workflows/check.yml) contains the full native, Wasm,
 devtools and documentation checks.
+
+The standalone [foundation example](examples/foundation/README.md) loads its JSON
+fixture automatically and offers Reload / Retry. [Text Toolkit](examples/files/README.md)
+exercises the common platform services without routes. Browser pickers/clipboard
+requests start in user events, while Rake actions own observation and quit tracking.
+
+The Rust spacing checker is pinned in Cargo metadata. Run
+`python3 scripts/check-spacing.py` after formatting; it uses the project's separate
+development-only nightly without changing the stable application toolchain.

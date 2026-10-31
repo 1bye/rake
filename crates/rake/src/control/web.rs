@@ -191,28 +191,6 @@ impl WebBridge {
         self.run_host(HostClient::new(client), application_id).await;
     }
 
-    #[cfg(feature = "devtools")]
-    pub(super) async fn reload_standalone(
-        &self,
-        runtime: crate::router::RuntimeId,
-        build: u64,
-    ) -> Result<(), String> {
-        let _: serde_json::Value = self
-            .post(
-                "reload_result",
-                &serde_json::json!({
-                    "runtime_id":runtime,"build_id":build,"error":null,"reload":null
-                }),
-            )
-            .await?;
-        web_sys::window()
-            .ok_or("browser window unavailable")?
-            .location()
-            .reload()
-            .map_err(|error| format!("{error:?}"))?;
-        futures::future::pending::<Result<(), String>>().await
-    }
-
     pub(crate) async fn run_host(&self, client: HostClient, application_id: &str) {
         loop {
             let session = async {

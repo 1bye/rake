@@ -640,7 +640,6 @@ fn app() -> App<Destination> {
             WebRouting::Path
         }));
 
-    let http = app.services().expect("example HTTP services").http();
     let commands = Commands::new();
 
     commands
@@ -651,31 +650,31 @@ fn app() -> App<Destination> {
         })
         .expect("echo registration");
     commands
-        .register::<Fetch, _, _>(move |command, context| {
-            let http = http.clone();
+        .register::<Fetch, _, _>(|command, context| async move {
+            let http = context
+                .http()
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
 
-            async move {
-                let response = http
-                    .get(&command.url)
-                    .cancellation(context.cancellation)
-                    .send()
-                    .await
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+            let response = http
+                .get(&command.url)
+                .cancellation(context.cancellation)
+                .send()
+                .await
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
 
-                let status = response.status();
+            let status = response.status();
 
-                let bytes = response
-                    .bytes()
-                    .await
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
 
-                rake::info!(status, bytes = bytes.len(), "Inspector request completed");
+            rake::info!(status, bytes = bytes.len(), "Inspector request completed");
 
-                Ok(FetchResult {
-                    status,
-                    bytes: bytes.len(),
-                })
-            }
+            Ok(FetchResult {
+                status,
+                bytes: bytes.len(),
+            })
         })
         .expect("fetch registration");
 
@@ -686,7 +685,7 @@ fn app() -> App<Destination> {
     memory_fixture::register(&commands);
 
     #[cfg(feature = "network-test")]
-    network_fixture::register(&commands, app.services().expect("fixture services").http());
+    network_fixture::register(&commands);
 
     #[cfg(feature = "performance-test")]
     performance_fixture::register(&commands, app.services().expect("fixture services").http());

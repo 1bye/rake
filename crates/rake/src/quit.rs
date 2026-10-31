@@ -15,6 +15,7 @@
 //! drop(quit);
 //! ```
 
+pub use crate::router::QuitGuardContext;
 pub use rake_protocol::quit::*;
 
 #[cfg(feature = "gpui")]

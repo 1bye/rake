@@ -17,8 +17,17 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-rake.workspace = true
+rake = { workspace = true, features = ["experimental-view", "updates"] }
 
 [package.metadata.rake.bundle]
 name = "Rake Foundation"
 identifier = "com.example.rake.foundation"
+
+[package.metadata.rake.bundle.web]
+offline = true
+
+[build-dependencies]
+rake-build = { path = "../../crates/rake-build" }
+
+[package.metadata.rake.bundle.windows]
+manifest = "windows.manifest.xml"

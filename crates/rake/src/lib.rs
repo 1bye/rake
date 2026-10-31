@@ -10,6 +10,44 @@ extern crate self as rake;
 #[path = "inspection/macros.rs"]
 mod inspection_macros;
 
+pub use rake_resources as resources;
+pub use rake_resources::{Resources, resources};
+
+#[cfg(feature = "updates")]
+pub use rake_updates as updates;
+#[cfg(feature = "updates")]
+pub use rake_updates::updates;
+
+/// Runs enabled native updater installer callbacks before constructing the app.
+/// Manual entry points use `early_startup!()`; `#[rake::app]` does so automatically.
+/// # Panics
+/// Panics if a hand-written embedded policy is invalid; rake-build validates generated policy.
+pub fn early_startup_for(embedded: Option<&str>) {
+    early_startup_with_desktop(embedded, None);
+}
+
+/// Runs installer startup with common desktop metadata captured by [`early_startup!`].
+/// # Panics
+/// Panics if hand-written embedded metadata is invalid; rake-build validates generated metadata.
+pub fn early_startup_with_desktop(embedded: Option<&str>, desktop: Option<&str>) {
+    #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+    rake_updates::early_startup_with_desktop(embedded, desktop)
+        .expect("generated Rake distribution policy must be valid");
+    #[cfg(any(not(feature = "updates"), target_family = "wasm"))]
+    let _ = (embedded, desktop);
+}
+
+/// Initializes installer callbacks using policy embedded into the application crate.
+#[macro_export]
+macro_rules! early_startup {
+    () => {
+        $crate::early_startup_with_desktop(
+            option_env!("RAKE_UPDATE_POLICY"),
+            option_env!("RAKE_DESKTOP_METADATA"),
+        )
+    };
+}
+
 pub mod control;
 
 #[cfg(all(feature = "devtools-memory", unix))]
@@ -24,12 +62,22 @@ pub mod inspection;
 #[cfg(not(feature = "devtools"))]
 #[path = "inspection/disabled.rs"]
 pub mod inspection;
+pub mod loading;
+pub mod platform;
 pub mod quit;
 pub mod reload;
 pub mod router;
+pub mod runtime;
 pub mod services;
 pub mod storage;
 pub mod tasks;
+pub mod web;
+
+#[cfg(all(feature = "gpui", feature = "updates"))]
+mod updates_binding;
+
+#[cfg(all(feature = "gpui", feature = "updates"))]
+pub use updates_binding::{UpdateHandle, UpdateHandleState};
 
 #[cfg(feature = "gpui")]
 mod application;
@@ -44,7 +92,7 @@ pub mod overlay;
 pub use rake_ui::theme;
 
 #[cfg(feature = "gpui")]
-pub use application::{App, AppError};
+pub use application::{App, AppError, ClosePolicy};
 #[cfg(feature = "gpui")]
 pub use gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
@@ -237,31 +285,49 @@ pub mod prelude {
         ControlConfig, ExecutionCapability, RuntimeClient,
     };
 
+    #[cfg(all(feature = "gpui", feature = "updates"))]
+    pub use crate::{UpdateHandle, UpdateHandleState};
+
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
-    pub use crate::quit::{QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus};
+    #[cfg(feature = "gpui")]
+    pub use crate::loading::{AsyncAction, LoadContext, LoadError, Loader};
+    pub use crate::loading::{LoadState, LoadStatus, LoadToken};
+
+    pub use crate::quit::{
+        QuitGuardContext, QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus,
+    };
+
     pub use crate::reload::{Checkpoint, ReloadError, ReloadState};
+    pub use crate::runtime::{Runtime, RuntimeContext};
     pub use crate::services::{ServiceError, ServiceRegistry, Services};
     pub use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 
     pub use crate::router::{
-        Activation, DecisionChoice, DecisionRequest, EntryHandle, GuardResult, Navigator,
-        OpenOptions, OpenTarget, Outcome, RevealScope, Route, Router, RouterConfig, TabMode,
-        WebConfig, WebRouting,
+        Activation, Admission, AdmissionContext, DecisionChoice, DecisionRequest, EntryHandle,
+        GuardResult, Navigator, OpenOptions, OpenTarget, Outcome, RevealScope, Route, Router,
+        RouterConfig, TabMode, WebConfig, WebRouting,
     };
 
     #[cfg(feature = "gpui")]
     pub use crate::App;
     #[cfg(feature = "gpui")]
     pub use crate::inspection::InspectElement;
+
     #[cfg(feature = "gpui")]
-    pub use crate::router::{PageContext, RouteOutlet, RouteViews, TabBar};
+    pub use crate::router::{
+        LayoutContext, LoadedPage, NavigationBoundary, Page, PageContext, RouteOutlet, RouteViews,
+        TabBar,
+    };
+
     pub use rake_macros::{Command, Route};
 }
 
 #[doc(hidden)]
 pub mod __private {
     pub use crate::__rake_inspection as inspection;
+    #[cfg(feature = "gpui")]
+    pub use crate::application::{AppFactoryOutput, run_app_factory};
 
     #[cfg(all(feature = "experimental-view", feature = "devtools"))]
     pub use crate::inspection::authored::{

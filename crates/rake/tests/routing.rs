@@ -1122,3 +1122,44 @@ fn browser_admission_failure_repairs_the_url_without_disrupting_a_pending_close(
         Outcome::Cancelled(CancelReason::Decision)
     );
 }
+
+#[test]
+fn current_tab_resolves_window_selection_when_called() {
+    let (router, mut pool) = harness(RouterConfig::default());
+    let navigator = router.navigator();
+
+    assert!(matches!(
+        navigator.current_tab(),
+        Err(OperationError::NoCurrentTab)
+    ));
+    let first = open(&router, &mut pool, "first");
+    let second = open(&router, &mut pool, "second");
+
+    committed(
+        &mut pool,
+        navigator.current_tab().unwrap().navigate(Destination::Home),
+    );
+    assert_eq!(router.snapshot().selected, Some(second.tab_id));
+    committed(&mut pool, navigator.tab(first.tab_id).select());
+    committed(
+        &mut pool,
+        navigator
+            .current_tab()
+            .unwrap()
+            .navigate(Destination::NewDocument),
+    );
+    let snapshot = router.snapshot();
+
+    assert_eq!(snapshot.selected, Some(first.tab_id));
+    let selected = snapshot
+        .tabs
+        .iter()
+        .find(|tab| tab.id == first.tab_id)
+        .unwrap();
+
+    assert_eq!(
+        selected.entries[selected.cursor].destination.route,
+        "new-document"
+    );
+    router.shutdown();
+}

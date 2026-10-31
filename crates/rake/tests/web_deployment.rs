@@ -3,6 +3,60 @@
 //! Requires: no browser, GPU, filesystem or network.
 
 use rake::router::{WebConfig, WebRouting};
+use rake::web::{Deployment, DeploymentVersion};
+
+fn version(build: char) -> DeploymentVersion {
+    DeploymentVersion {
+        protocol: 1,
+        application_id: "dev.example.tools".into(),
+        version: "1.0.0".into(),
+        build: build.to_string().repeat(64),
+        base_path: "/tools/".into(),
+    }
+}
+
+#[test]
+fn deployment_checks_use_content_identity_and_reject_foreign_manifests() {
+    let deployment = Deployment::new(version('a')).unwrap();
+
+    assert!(deployment.available(version('a')).unwrap().is_none());
+    assert!(deployment.available(version('b')).unwrap().is_some());
+    let mut foreign = version('b');
+
+    foreign.application_id = "other.app".into();
+    assert!(deployment.available(foreign).is_err());
+    let mut foreign = version('b');
+
+    foreign.base_path = "/other/".into();
+    assert!(deployment.available(foreign).is_err());
+
+    for build in ['g', '/', 'A'] {
+        assert!(Deployment::new(version(build)).is_err());
+    }
+
+    let mut unknown = version('a');
+
+    unknown.protocol = 2;
+    assert!(Deployment::new(unknown).is_err());
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn native_hosts_reject_browser_operations_without_side_effects() {
+    assert!(Deployment::from_document().unwrap().is_none());
+    assert!(matches!(
+        futures::executor::block_on(Deployment::new(version('a')).unwrap().check()),
+        Err(rake::web::Error::Unsupported(_))
+    ));
+    assert!(matches!(
+        futures::executor::block_on(rake::web::run_worker(
+            "count.js",
+            &rake::serde_json::json!({}),
+            std::time::Duration::from_secs(1)
+        )),
+        Err(rake::web::Error::Unsupported(_))
+    ));
+}
 
 #[derive(Clone, rake::Route, Debug, PartialEq, Eq)]
 enum Destination {

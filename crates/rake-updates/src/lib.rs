@@ -1,0 +1,177 @@
+//! Native update providers and the optional AppKit termination bridge.
+#[cfg(feature = "appimage")]
+mod appimage;
+
+#[cfg(feature = "appimage")]
+pub use appimage::{ImageUpdate, StagedImage};
+
+#[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
+mod macos_lifecycle;
+
+#[cfg(all(target_os = "macos", feature = "native-lifecycle"))]
+pub use macos_lifecycle::{NativeQuitBridge, stop_application_run_loop};
+
+#[cfg(all(target_os = "macos", feature = "sparkle"))]
+mod sparkle;
+
+#[cfg(all(target_os = "macos", feature = "sparkle"))]
+pub use sparkle::{Sparkle, SparkleStage, SparkleStatus};
+
+mod controller;
+
+pub use controller::{UpdateController, UpdateInfo, UpdateSnapshot, UpdateState, UpdateWork};
+
+mod service;
+#[cfg(all(windows, feature = "velopack"))]
+mod windows_registrations;
+
+pub use rake_dist_core::{UpdateBinding, UpdateOwner};
+
+pub use service::{
+    Capability, DownloadProgress, RestartDisposition, RestartHandoff, UpdateService,
+};
+
+#[cfg(any(feature = "appimage", feature = "velopack"))]
+mod signatures;
+#[cfg(any(feature = "appimage", feature = "velopack"))]
+mod transport;
+#[cfg(feature = "velopack")]
+mod velopack;
+
+#[cfg(feature = "velopack")]
+pub use velopack::{StagedVelopack, VelopackUpdate};
+
+/// Parses and validates the policy compiled into an application binary.
+///
+/// This is kept separate from installation discovery so application hosts can
+/// reject a conflicting manually supplied service before provider startup.
+/// # Errors
+/// Returns malformed JSON or an invalid update binding.
+#[doc(hidden)]
+pub fn parse_policy(embedded: &str) -> Result<UpdateBinding, Error> {
+    let binding: UpdateBinding = serde_json::from_str(embedded)?;
+
+    binding
+        .validate()
+        .map_err(|error| Error::Policy(error.to_string()))?;
+
+    Ok(binding)
+}
+
+/// Native update failures; a failed check or declined restart never implies installation.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// Invalid embedded/installed authority or provider metadata.
+    #[error("update policy: {0}")]
+    Policy(String),
+    /// Malformed serialized policy/feed.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    /// Native filesystem/process failure.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// Provider download, verification or installation failure.
+    #[error("update provider: {0}")]
+    Provider(String),
+    /// The application's quit guards declined this restart.
+    #[error("update restart was declined")]
+    Declined,
+    /// Another check, download or restart already owns the controller.
+    #[error("an update operation is already active")]
+    Busy,
+    /// The user cancelled an update operation.
+    #[error("update operation cancelled")]
+    Cancelled,
+}
+
+/// Runs installer callbacks before app construction, only for a compiled Velopack package.
+/// # Errors
+/// Rejects invalid embedded policy. An absent policy means an unbundled application.
+pub fn early_startup_for(embedded: Option<&str>) -> Result<(), Error> {
+    early_startup_with_desktop(embedded, None)
+}
+
+/// Runs provider startup and automatic installer registrations from build-script metadata.
+/// Prefer [`early_startup!`] so both policies are captured from the application crate.
+/// # Errors
+/// Rejects invalid embedded policy or desktop metadata before running installer callbacks.
+pub fn early_startup_with_desktop(
+    embedded: Option<&str>,
+    desktop: Option<&str>,
+) -> Result<(), Error> {
+    let desktop: rake_dist_core::DesktopMetadata = desktop
+        .map(serde_json::from_str)
+        .transpose()?
+        .unwrap_or_default();
+
+    desktop
+        .validate()
+        .map_err(|error| Error::Policy(error.to_string()))?;
+
+    if let Some(embedded) = embedded {
+        let binding = parse_policy(embedded)?;
+
+        #[cfg(all(windows, feature = "velopack"))]
+        if binding.format == rake_dist_core::Format::Velopack {
+            windows_registrations::startup(&binding, &desktop);
+        }
+
+        #[cfg(not(all(windows, feature = "velopack")))]
+        let _ = binding;
+    }
+
+    Ok(())
+}
+
+/// Captures build-script policy in the application's crate before SDK startup.
+#[macro_export]
+macro_rules! early_startup {
+    () => {
+        $crate::early_startup_with_desktop(
+            option_env!("RAKE_UPDATE_POLICY"),
+            option_env!("RAKE_DESKTOP_METADATA"),
+        )
+    };
+}
+
+/// Captures policy and resource layout from the consuming application crate.
+#[macro_export]
+macro_rules! updates {
+    () => {{
+        (|| -> Result<$crate::UpdateService, $crate::Error> {
+            let policy = option_env!("RAKE_UPDATE_POLICY").ok_or_else(|| {
+                $crate::Error::Policy("call rake_build::build() in build.rs".into())
+            })?;
+            let resources = $crate::__resources::resources!()
+                .map_err(|error| $crate::Error::Policy(error.to_string()))?;
+            $crate::UpdateService::new(policy, &resources)
+        })()
+    }};
+}
+
+#[doc(hidden)]
+pub use rake_resources as __resources;
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    const POLICY: &str = r#"{"schema_version":1,"identifier":"dev.rake.test","version":"1.0.0","package_version":"1.0.0","target":"x86_64-unknown-linux-gnu","format":"deb","owner":"disabled","channel":"stable","base_url":null,"public_keys":{}}"#;
+
+    #[test]
+    fn parse_policy_validates_the_compiled_binding() {
+        let binding = parse_policy(POLICY).unwrap();
+
+        assert_eq!(binding.identifier, "dev.rake.test");
+    }
+
+    #[test]
+    fn parse_policy_rejects_invalid_bindings() {
+        let error =
+            parse_policy(&POLICY.replace("\"owner\":\"disabled\"", "\"owner\":\"appimage\""))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("update policy"));
+    }
+}

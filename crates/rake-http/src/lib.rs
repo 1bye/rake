@@ -177,6 +177,16 @@ impl HttpClient {
         })))
     }
 
+    /// Reports whether two handles share the same configured transport.
+    ///
+    /// Cloning an [`HttpClient`] preserves the transport identity. Methods that
+    /// intentionally rebuild transport policy, such as `without_redirects`, return
+    /// a distinct transport.
+    #[must_use]
+    pub fn shares_transport_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     /// Builds an equivalent native client that never follows redirects.
     ///
     /// # Errors

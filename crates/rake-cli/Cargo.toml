@@ -16,6 +16,9 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
+tempfile = "3"
+rake-dist = { path = "../rake-dist" }
+ctrlc = { version = "3.5", features = ["termination"] }
 base64 = "0.22.1"
 regex = "1"
 rake-client.workspace = true

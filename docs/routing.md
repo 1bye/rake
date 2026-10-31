@@ -32,13 +32,57 @@ for scalar values and domain IDs. Route enums do not need Serde or `Send`.
 duplicate parameters fail explicitly. Static paths take precedence over dynamic
 ones. Values shadowed by another pattern, empty path values and dot segments are
 rejected when encoding, so a successful encoding round-trips to the same route.
-`descriptors` exposes the closed registry and parameter schema.
+Equal-specificity patterns that overlap (such as `/files/{id}` and
+`/{section}/settings`) fail at derive time. `descriptors` exposes the closed
+registry and parameter schema.
 
-`App::new(...).routes(AppRoutes).initial(Destination::Home)` installs the default
-tab strip, route outlet and decision presenter. `RouteViews::mount` receives a
-destination and owned `PageContext`, and creates a fresh `AnyView`. Domain models
-may be shared, but each retained entry owns its own view and local state. The
-browser's URL takes precedence over `initial`. A custom GPUI host can use
+Register page types with an exhaustive destination match:
+
+```rust
+App::new("example.notes")
+    .theme(Colors::dark())
+    .routes(rake::routes! {
+        Destination::Home => Home,
+        Destination::Document(..) => DocumentPage,
+    })
+    .initial(Destination::Home)
+```
+
+Register `.routes(...)` once, then configure `.initial(...)` and `.entry_guard(...)`.
+Use `.replace_routes(...)` to change the factory for the same destination type;
+it preserves the initial destination and guards.
+
+`Home` and `DocumentPage` implement `Page<Destination>` alongside GPUI `Render`.
+`Page::mount(destination, page, window, cx)` returns `Result<Entity<Self>, MountError>`;
+it owns that page's service resolution, typed parameters and initialization.
+Register parameters with `(..)` or `{ .. }`, then read the full destination in
+the page constructor. Registration expands to a checked Rust match and static
+page calls, with no implicit fallback. A missing destination fails compilation.
+The result implements the existing `RouteViews` interface, which remains available
+for custom dispatchers and hosts.
+
+`App::theme` installs each owned theme once on the UI thread before the first
+window or route mounts. It is available with `experimental-view`; registering
+before or after `.routes` is equivalent. Navigation never reinstalls a theme.
+Ordinary shared components only implement `Render` or `RenderOnce` and need not
+depend on `PageContext`. See the [small desktop app](../examples/desktop/README.md)
+for complete, compiled page implementations and app setup.
+
+Use `.layout(|layout, window, cx| cx.new(|_| Shell::new(layout)))` after
+`.routes(...)` for a persistent application shell. `.try_layout(...)` accepts
+`Result<Entity<_>, MountError>` when initialization can fail. Rake mounts one
+layout per window, retains it across route changes, and leaves route bodies in
+`layout.outlet()`. `LayoutContext` supplies window-bound navigation, shared
+services and `runtime()` capabilities. Guard decisions, error presentation, reload and shutdown remain owned by the workspace outside the custom layout.
+
+`.new_window_options(|window_id| WindowOptions { ... })` configures secondary
+native windows. The navigation activation controls focus; `window_options`
+continues to configure the initial window. Browser hosts have one physical window
+and reject `NewWindow` operations.
+
+The runner installs the default tab strip, route outlet and decision presenter.
+Domain models may be shared, but each retained entry owns its own view and local
+state. The browser's URL takes precedence over `initial`. A custom GPUI host can use
 `Router::in_window`, own its `run` future, observe `changed`, and compose `TabBar`
 and `RouteOutlet`. `Router::new` is a headless state model without GPUI resources.
 
@@ -64,7 +108,10 @@ New tabs preserve all existing tabs, even for identical destinations. Hidden
 views remain retained but do not enter the displayed layout or paint tree.
 `OpenOptions` controls activation and the initial stored mode. Hidden navigation
 does not select its tab. A history capacity blocks a push that would exceed it;
-it never silently evicts an entry. Retention is unlimited by default.
+it never silently evicts an entry. Low-level `RouterConfig::default()` leaves
+history unlimited (`None`); the small desktop example opts into an explicit
+64-entry limit with `runtime_config` so production applications can choose their
+own policy.
 
 Commands queue eagerly and return cloneable `Operation<T>` handles. `wait().await`
 only observes the shared result; dropping a handle does not cancel the command.
@@ -78,6 +125,98 @@ tab histories, dirty revisions, capacity and host capabilities. Admission and
 completed-operation retention have configurable count bounds. An evicted completed
 operation reports `OperationExpired`; its existing handle still owns its result.
 IDs belong to one fresh `RuntimeId` and must not be reused across runtimes.
+
+### Route loaders
+
+Use `loaded(PageType)` to opt a route into asynchronous preparation:
+
+```rust
+rake::routes! {
+    Destination::Home => loaded(Home),
+    Destination::Updates => Updates,
+}
+```
+
+`Home` implements `LoadedPage<Destination>` with owned `Data`, a typed `Error`,
+`async fn load(destination: Destination, load: LoadContext)`, and
+`mount(destination, data, page, window, cx)`. Ordinary `Page` implementations
+continue to work in the same registration. Loaders can query application services,
+read local databases/files, or prepare domain resources; they need not use HTTP.
+They run on the UI event loop without a `Send` requirement, so blocking work must
+explicitly use `load.background_executor()` or an application worker service.
+
+Admission and guards run before preparation. Rake awaits the result, revalidates
+cancellation and entry revisions, then mounts and commits the page. A navigation
+that creates a native window prepares its data before opening that host. Failed
+or cancelled preparation leaves the existing page/history/URL intact and uses the
+normal navigation recovery controls. Retry reruns admission, guards and loading.
+Owned prepared data is dropped when the attempt is cancelled or mounting fails.
+
+Each fresh retained entry loads once. Back/Forward reuse its data and view;
+reconstructed entries after process/browser reload prepare again. There is no
+implicit cross-route cache or background revalidation. A loader must tolerate
+repetition on retry; explicit writes such as document saves and update installation
+belong in commands/actions. The [desktop Home page](../examples/desktop/src/pages/home.rs)
+demonstrates worker-backed bundled resource preparation and retained dirty state.
+
+### Admission and navigation recovery
+
+Custom router hosts can register a typed admission callback before starting the
+driver. Admission runs before entry allocation, native host creation or page
+mounting, and it returns data rather than navigating as a side effect:
+
+```rust,no_run
+use rake::prelude::*;
+
+#[derive(Clone, Route)]
+enum Destination {
+    #[route(id = "home", path = "/")]
+    Home,
+    #[route(id = "login", path = "/login")]
+    Login,
+}
+
+let router = Router::<Destination>::new(RouterConfig::default());
+router.entry_admission(|context| async move {
+    match context.destination {
+        Destination::Home => Admission::Redirect(Destination::Login),
+        Destination::Login => Admission::Allow,
+    }
+}).unwrap();
+```
+
+The context contains the operation ID, presenting window, resolved target tab,
+typed candidate destination and an immutable `ServiceRegistry`. Admission may
+be asynchronous, but it must not retain UI borrows. A redirect is re-admitted
+as part of the same operation; `RouterConfig::max_admission_redirects` bounds
+redirect loops (eight by default). Denials become `Outcome::Blocked`, while
+technical failures remain `OperationError` values.
+Admission handles destination-bearing Open, Navigate, Reveal, and browser Restore
+operations. Back/Forward and tab selection reuse retained entries and run entry
+guards; use those guards when access must be checked again on every entry.
+
+Each route-changing operation also retains a `NavigationStatus` keyed by runtime,
+operation, window and destination. `Router::navigation(window_id)` exposes
+pending, failed, blocked, cancelled and committed attempts independently of the
+bounded completed-operation table. `retry_navigation(&key)` replays the exact
+retained action through admission and guards; `dismiss_navigation(&key)` removes
+a terminal status. Retry keys have their own `RouterConfig::navigation_records`
+bound (64 by default), so a status can outlive the ordinary operation result but
+not the runtime's configured navigation history.
+Pending attempts are never evicted. The effective terminal limit is at least one,
+and an empty live window keeps its last recoverable failure even when the limit
+is reached. A successful retry or Dismiss clears that attempt's earlier retry
+chain; unrelated failures remain independent.
+
+`App::routes` renders `NavigationBoundary` around the workspace. It shows
+pending feedback with Cancel, and failed/blocked feedback with Retry and (once a
+page is visible) Dismiss. A custom GPUI host can render
+`NavigationBoundary::new(router).in_window(window_id)` beside its
+`RouteOutlet`, then notify the owning shell after `Router::changed` resolves.
+The boundary is feedback and retry UI; it does not replace route pages or cache
+failed data.
+An app layout can provide its own feedback using these same statuses and opt out
+of the default presentation with `.navigation_feedback(false)`.
 
 ## Guards and decisions
 

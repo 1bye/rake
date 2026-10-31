@@ -9,7 +9,7 @@ import tomllib
 
 project = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--example", choices=["foundation", "routing", "notes", "view", "inspector"], default="foundation")
+parser.add_argument("--example", choices=["foundation", "routing", "notes", "view", "inspector", "files"], default="foundation")
 parser.add_argument("--hash", action="store_true", help="Build the routing example with fragment URLs")
 args = parser.parse_args()
 

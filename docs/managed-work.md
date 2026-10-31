@@ -34,6 +34,43 @@ alive even though their activity stopped.
 
 ## Using the API
 
+### View-bound loading
+
+`runtime.load(cx, factory)` starts an arbitrary asynchronous value and redraws
+its owning GPUI view automatically. `page.load(cx, factory)` uses the retained
+entry's finite task scope, so hiding the page does not cancel it. Dropping the
+loader or disposing its owner cancels the attempt. Neither results nor errors
+need `Clone` or `Send`.
+
+```rust,no_run
+use rake::prelude::*;
+struct Screen;
+fn bind(runtime: &RuntimeContext, cx: &mut rake::gpui::Context<Screen>)
+    -> Loader<String, std::io::Error>
+{
+    runtime.load(cx, |load| async move {
+        load.background_executor()
+            .spawn(async { std::fs::read_to_string("welcome.txt") })
+            .await
+    })
+}
+```
+
+The factory receives `LoadContext` with shared `services()`, `http()`,
+`cancellation()`, and `background_executor()`. Async I/O runs on the UI loop;
+blocking/CPU work must use a worker. A separately spawned worker may keep
+running after cancellation, but cannot replace a newer result.
+
+Read `loader.state(cx)` in `Render`, call `loader.retry(cx)` to start a fresh
+attempt, or `loader.cancel(cx)` to stop. Failures distinguish typed
+`LoadError::Source`, managed-work `LoadError::Task`, and `LoadError::Cancelled`.
+Task admission failures are visible immediately. Rake retains subscriptions and
+terminal observation internally; applications do not register completion events.
+
+The [foundation example](../examples/foundation/src/lib.rs) shows this API with
+`rake::view!`. Its configured HTTP endpoint must be served for the request to
+succeed; a connection failure is shown with a retry button.
+
 The [routing example](../examples/routing/src/lib.rs) registers refresh and preview
 clocks and displays their counters and run identities. Its Foreground/Live buttons
 change policy; tab download and app export buttons exercise longer-lived scopes.
@@ -60,6 +97,32 @@ The snippet is schematic; the executable example supplies the typed event and
 GPUI handler. `PageContext` and the headless `EntryHandle` expose the same activity,
 visibility-activity and typed-handler methods. `Router::app()` provides an app task
 scope to services. `Navigator::app()` preserves a page's causal origin.
+
+### Generation-safe loading state
+
+`LoadState<T, E>` is a small synchronous state machine for view/model loading. It
+does not start a request, choose an executor, cache data or replace managed work.
+Start the actual request in an application, tab or activity task, keep the token,
+and complete only that generation:
+
+```rust,no_run
+use rake::prelude::{LoadState, LoadStatus};
+
+struct Project;
+let project = Project;
+let mut load = LoadState::<Project, String>::default();
+let token = load.begin();
+// An owned task performs the HTTP request and later calls:
+let accepted = load.complete(token, Ok(project));
+assert!(accepted);
+assert!(matches!(load.state(), LoadStatus::Ready(_)));
+```
+
+Calling `begin` again or `reset` makes an older token stale; its late result is
+rejected and cannot overwrite the current state. Use `LoadStatus::Loading` to
+render progress and `LoadStatus::Failed` to render a retry affordance. The task
+that owns the request still needs cancellation and lifetime policy from
+`ActivityRun`, `TaskScope` or an application-specific model.
 
 `spawn` accepts one `Future<Output = Result<(), TaskError>>`. `spawn_with` accepts
 one factory invocation receiving an `ActivityRun`, useful for cancellation and
@@ -111,7 +174,9 @@ The macOS adapter reads AppKit window visibility, minimization and occlusion on
 the UI loop every 250 ms. This bounds observation frequency without confusing
 keyboard focus with presentation. [Guarded quit](guarded-quit.md) coordinates
 finite jobs and disposal guards before stopping activity factories. Forced native
-termination requests cancellation before host teardown. Other native backends currently report `Unknown`; unknown
+termination requests cancellation before host teardown. Windows observes visible,
+minimized and DWM-cloaked window state without inferring keyboard focus; it does not
+measure overlap by other windows. Linux backends currently report `Unknown`; unknown
 visibility assumes visible, and custom hosts can supply actual observations with
 `Router::set_window_visibility(id, visibility)`. The existing
 `set_host_visibility` convenience targets the initial host. Every native window

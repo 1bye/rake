@@ -6,6 +6,13 @@ generates ordinary GPUI builders and Rust control flow. State stays in your GPUI
 entities, handlers use GPUI events, and changes still need `cx.notify()`.
 This API is experimental and may change.
 
+For app-wide theme setup, register `.theme(colors)` on `App` before or after
+`.routes(...)`/`.root(...)`. Installation is deferred to the UI thread and runs
+once before the initial view mounts; page constructors do not reinstall it.
+Multiple theme types coexist, with the last registration winning for repeated
+types. Use `rake::theme::install(cx, colors)` for later user-selected changes.
+See the [desktop example](../examples/desktop/src/main.rs).
+
 ```rust
 use rake::gpui::{Context, IntoElement, Render, Window, rgb};
 

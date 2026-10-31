@@ -21,6 +21,7 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let mut ids = BTreeSet::new();
     let mut paths = BTreeSet::new();
+    let mut patterns: Vec<Vec<Option<String>>> = Vec::new();
     let mut descriptors = Vec::new();
     let mut encoders = Vec::new();
     let mut decoders = Vec::new();
@@ -74,6 +75,7 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
         let mut placeholders = Vec::new();
         let mut shape = Vec::new();
+        let mut pattern = Vec::new();
 
         for segment in path_value.split('/') {
             if let Some(parameter) = segment
@@ -89,6 +91,7 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
 
                 placeholders.push(parameter.to_string());
                 shape.push("{}");
+                pattern.push(None);
             } else {
                 if matches!(segment, "." | "..")
                     || !segment
@@ -102,6 +105,7 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
 
                 shape.push(segment);
+                pattern.push(Some(segment.to_owned()));
             }
         }
 
@@ -111,6 +115,26 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
                 "ambiguous route path pattern",
             ));
         }
+
+        let parameter_count = pattern.iter().filter(|segment| segment.is_none()).count();
+
+        if patterns.iter().any(|previous| {
+            previous.len() == pattern.len()
+                && previous.iter().filter(|segment| segment.is_none()).count() == parameter_count
+                && previous.iter().zip(&pattern).all(|(previous, current)| {
+                    match (previous, current) {
+                        (Some(previous), Some(current)) => previous == current,
+                        _ => true,
+                    }
+                })
+        }) {
+            return Err(syn::Error::new_spanned(
+                path,
+                "route path patterns overlap at equal specificity; static segments must disambiguate routes",
+            ));
+        }
+
+        patterns.push(pattern);
 
         let variant_name = variant.ident;
         let mut field_names = Vec::new();

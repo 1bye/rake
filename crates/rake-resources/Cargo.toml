@@ -1,0 +1,22 @@
+[package]
+name = "rake-resources"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rake-dist-core = { path = "../rake-dist-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(any(unix, windows))'.dependencies]
+command-group = {version="5.0.1",default-features=false}
+
+[dev-dependencies]
+fs2 = "0.4"
+tempfile = "3"

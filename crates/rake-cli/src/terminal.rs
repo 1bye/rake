@@ -49,6 +49,7 @@ Build/watch: rake dev|build --target desktop|web --package PACKAGE.
 Package: rake bundle --target desktop|web --package PACKAGE [--debug] [--json].
 Web deployment: --base-path /notes/ --routing path|hash.
 macOS signing: --sign-identity IDENTITY [--entitlements FILE]; default ad-hoc.
+Update keys: rake update-key generate|public --private-key PATH --public-key PATH.
 Prerequisites: rake doctor. Graphical devtools: rake inspect, or the Devtools link in a Web dev session.";
 
 fn flag(args: &mut Vec<String>, name: &str) -> bool {

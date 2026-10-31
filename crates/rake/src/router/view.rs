@@ -1,5 +1,18 @@
 //! GPUI mounting and presentation; retained entries own independent view entities.
 
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/layout_tests.rs"]
+mod layout_tests;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/loaded_page_tests.rs"]
+mod loaded_page_tests;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/navigation_tests.rs"]
+mod navigation_tests;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/page_tests.rs"]
+mod page_tests;
+
 use crate::inspection::InspectElement as _;
 #[cfg(not(feature = "devtools"))]
 use crate::inspection::InspectRoot as _;
@@ -14,12 +27,13 @@ use gpui::prelude::*;
 use gpui::{AnyView, Context, ElementId, IntoElement, Render, RenderOnce, Window, div, rgb};
 
 use crate::Services;
-use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle};
+use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 
-use super::runtime::{Guard, Mount, Resource};
+use super::layout::{LayoutContext, LayoutFactory};
+use super::runtime::{AdmissionCallback, Guard, Prepare, PreparedMount, Resource};
 
 use super::{
-    EntryHandle, MountError, Navigator, OperationState, Route, Router, RouterConfig, TabHandle,
+    EntryHandle, MountError, Navigator, PreparedPage, Route, Router, RouterConfig, TabHandle,
     TabId, WebConfig, WindowId,
 };
 
@@ -28,6 +42,16 @@ use super::{Activation, WindowHost};
 
 /// Application mapping from compact destinations to ordinary GPUI view instances.
 pub trait RouteViews<R: Route>: 'static {
+    /// Prepares owned route data before any physical NewWindow host is created.
+    /// Existing synchronous implementations receive an empty preparation.
+    fn prepare(
+        &self,
+        _destination: &R,
+        _context: crate::loading::LoadContext,
+    ) -> futures::future::LocalBoxFuture<'static, Result<PreparedPage, MountError>> {
+        Box::pin(async { Ok(PreparedPage::empty()) })
+    }
+
     /// Constructs a fresh screen on the UI loop, once per newly created retained entry.
     /// Domain models may be shared; local view state belongs to this entry.
     fn mount(
@@ -37,6 +61,23 @@ pub trait RouteViews<R: Route>: 'static {
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<AnyView, MountError>;
+
+    /// Mounts a prepared route value. Synchronous views can keep implementing
+    /// only [`Self::mount`].
+    fn mount_prepared(
+        &self,
+        destination: &R,
+        prepared: PreparedPage,
+        page: PageContext<R>,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> Result<AnyView, MountError> {
+        if !prepared.is_empty() {
+            return Err(MountError("route preparation was not consumed".into()));
+        }
+
+        self.mount(destination, page, window, cx)
+    }
 }
 
 /// Owned route-scoped services and weak runtime handles, safe to capture across waits.
@@ -49,6 +90,69 @@ pub struct PageContext<R: Route> {
 }
 
 impl<R: Route> PageContext<R> {
+    pub(crate) fn new(
+        navigator: Navigator<R>,
+        entry: EntryHandle<R>,
+        services: Services,
+    ) -> Result<Self, MountError> {
+        let tab_id = entry
+            .tab_id()
+            .map_err(|error| MountError(error.to_string()))?;
+
+        Ok(Self {
+            navigator,
+            entry,
+            services,
+            tab_id,
+        })
+    }
+
+    /// Observes shared updates only while this retained page is visible.
+    /// Returning to the page refreshes its snapshot automatically. Provider work
+    /// stays application-owned and restart still uses the normal quit guards.
+    #[cfg(feature = "updates")]
+    pub fn bind_updates<V: 'static>(&self, cx: &mut Context<V>) -> crate::UpdateHandle {
+        crate::updates_binding::bind_page_updates(self.clone(), cx)
+    }
+
+    /// Binds an initiated user action as view/entry-owned finite work. Browser
+    /// requests needing a user gesture must start before calling this method.
+    pub fn action<V: 'static, T: 'static, E, Fut>(
+        &self,
+        cx: &mut Context<V>,
+        future: Fut,
+    ) -> crate::loading::AsyncAction<T, E>
+    where
+        E: std::error::Error + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + 'static,
+    {
+        crate::loading::AsyncAction::new(self.tasks(), self.services(), future, cx)
+    }
+
+    /// Starts entry-owned asynchronous data with automatic redraw and checked retries.
+    /// Loading continues while retained in history and stops when this entry is disposed.
+    pub fn load<V: 'static, T: 'static, E, F, Fut>(
+        &self,
+        cx: &mut Context<V>,
+        factory: F,
+    ) -> crate::loading::Loader<T, E>
+    where
+        E: std::error::Error + 'static,
+        F: Fn(crate::loading::LoadContext) -> Fut + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + 'static,
+    {
+        crate::loading::Loader::new(self.tasks(), self.services(), factory, cx)
+    }
+
+    /// Application capabilities independent of this entry's navigation lifetime.
+    /// The context contains weak runtime handles and preserves service identity.
+    pub fn runtime(&self) -> crate::runtime::RuntimeContext<R> {
+        crate::runtime::RuntimeContext::from_navigator(
+            self.navigator.clone(),
+            self.services.clone(),
+        )
+    }
+
     /// Dispatches a registered command through the shared operation registry.
     pub fn dispatch<C: crate::control::ApplicationCommand>(
         &self,
@@ -61,6 +165,13 @@ impl<R: Route> PageContext<R> {
     /// Application-owned work retains its causal origin and survives this tab closing.
     pub fn app(&self) -> AppHandle {
         self.navigator.app()
+    }
+
+    /// Finite jobs owned by this retained entry, independent of visibility.
+    /// # Errors
+    /// Returns `OwnerDisposed` after this entry or its runtime is disposed.
+    pub fn tasks(&self) -> Result<TaskScope, TaskError> {
+        self.entry.tasks()
     }
 
     /// Registers fresh activity runs following the tab's Foreground/Live policy.
@@ -166,36 +277,48 @@ impl<R: Route> Router<R> {
         let collector = services.diagnostics();
         let registry = services.registry();
         let mounting_contexts = contexts.clone();
+        let background = cx.background_executor().clone();
 
-        let mount: Mount<R> = Rc::new(move |destination, entry, navigator| {
+        let preparing_views = views.clone();
+        let preparing_services = services.clone();
+
+        let prepare: Prepare<R> = Rc::new(move |destination, _entry, _navigator, cancellation| {
+            let views = preparing_views.clone();
+
+            let context = crate::loading::LoadContext::new(
+                preparing_services.clone(),
+                cancellation,
+                background.clone(),
+            );
+
+            Box::pin(async move { views.prepare(&destination, context).await })
+        });
+
+        let mount: PreparedMount<R> = Rc::new(move |destination, entry, navigator, prepared| {
             let context = mounting_contexts
                 .borrow()
                 .get(&navigator.window_id())
                 .cloned();
 
             let views = views.clone();
-            let tab_id = entry.tab_id();
             let services = services.clone();
 
             Box::pin(async move {
                 let mut context =
                     context.ok_or_else(|| MountError("The target window has closed.".into()))?;
 
-                let page = PageContext {
-                    navigator,
-                    entry,
-                    services,
-                    tab_id: tab_id.map_err(|error| MountError(error.to_string()))?,
-                };
+                let page = PageContext::new(navigator, entry, services)?;
 
                 context
-                    .update(|window, cx| views.mount(&destination, page, window, cx))
+                    .update(|window, cx| {
+                        views.mount_prepared(&destination, prepared, page, window, cx)
+                    })
                     .map_err(|error| MountError(error.to_string()))?
                     .map(|view| Rc::new(view) as Resource)
             })
         });
 
-        let router = Router::with_mount(config, collector, mount);
+        let router = Router::with_prepared_mount(config, collector, prepare, mount);
 
         router.bind_initial_window(initial_window, contexts);
         router.client().set_services(registry);
@@ -302,18 +425,24 @@ impl<R: Route> RenderOnce for TabBar<R> {
 }
 
 /// Displays only the selected current view. Hidden tabs and history retain their entities.
-#[derive(IntoElement)]
+#[derive(Clone, IntoElement)]
 pub struct RouteOutlet<R: Route> {
-    router: Router<R>,
+    navigator: Navigator<R>,
     window: WindowId,
 }
 
 impl<R: Route> RouteOutlet<R> {
-    /// Creates a selected-entry outlet. Its owning shell observes router changes.
+    /// Creates a selected-entry outlet. The outlet keeps only a weak navigator;
+    /// its owning shell observes router changes and owns the runtime lifetime.
     pub fn new(router: Router<R>) -> Self {
-        let window = router.navigator().window_id();
+        let navigator = router.navigator();
+        let window = navigator.window_id();
 
-        Self { router, window }
+        Self { navigator, window }
+    }
+
+    pub(crate) fn from_navigator(navigator: Navigator<R>, window: WindowId) -> Self {
+        Self { navigator, window }
     }
 }
 
@@ -328,13 +457,18 @@ impl<R: Route> RouteOutlet<R> {
 
 impl<R: Route> RenderOnce for RouteOutlet<R> {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
-        let view = self
-            .router
-            .resource(self.window)
-            .and_then(|resource| resource.downcast_ref::<AnyView>().cloned());
+        let router = self.navigator.runtime().ok();
+
+        let view = router.as_ref().and_then(|router| {
+            router
+                .resource(self.window)
+                .and_then(|resource| resource.downcast_ref::<AnyView>().cloned())
+        });
 
         #[cfg(feature = "devtools")]
-        let snapshot = self.router.presented_snapshot(self.window);
+        let snapshot = router
+            .as_ref()
+            .map(|router| router.presented_snapshot(self.window));
 
         let outlet = div()
             .size_full()
@@ -343,11 +477,12 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
 
         #[cfg(feature = "devtools")]
         {
-            if let Some(tab) = snapshot
-                .tabs
-                .iter()
-                .find(|tab| Some(tab.id) == snapshot.selected)
-            {
+            if let Some(tab) = snapshot.as_ref().and_then(|snapshot| {
+                snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| Some(tab.id) == snapshot.selected)
+            }) {
                 outlet.owner(tab.id, tab.entries[tab.cursor].id)
             } else {
                 outlet
@@ -376,8 +511,10 @@ impl Drop for DriverTask {
 
 pub(crate) struct Workspace<R: Route> {
     chrome: bool,
+    navigation_feedback: bool,
     router: Router<R>,
     restart: Option<R>,
+    layout: Option<AnyView>,
     _driver: Option<DriverTask>,
     window: WindowId,
     #[cfg(target_family = "wasm")]
@@ -393,15 +530,56 @@ impl<R: Route> Drop for Workspace<R> {
 
 pub(crate) struct RoutingRoot<R: Route> {
     pub(crate) chrome: bool,
+    pub(crate) navigation_feedback: bool,
+    pub(crate) quit_guards: Vec<super::runtime::QuitGuard>,
     pub(crate) views: Rc<dyn RouteViews<R>>,
     pub(crate) initial: Option<R>,
     pub(crate) checkpoint: Option<Result<crate::reload::WorkspaceCheckpoint, String>>,
     pub(crate) config: RouterConfig,
     pub(crate) web: WebConfig,
     pub(crate) guards: Vec<Guard<R>>,
+    pub(crate) admissions: Vec<AdmissionCallback<R>>,
     pub(crate) control: crate::control::ControlConfig,
     pub(crate) commands: crate::control::Commands,
     pub(crate) application_id: String,
+    pub(crate) layout: Option<LayoutFactory<R>>,
+    pub(crate) new_window_options: Option<Rc<dyn Fn(WindowId) -> gpui::WindowOptions>>,
+}
+
+/// Mounts a host-owned layout exactly once for a concrete physical window.
+///
+/// Keeping this small operation separate makes initial and secondary windows use
+/// identical context construction and preserves the factory's error as a mount
+/// failure instead of panicking inside GPUI's root-view callback.
+fn mount_layout<R: Route>(
+    layout: Option<&LayoutFactory<R>>,
+    router: Router<R>,
+    services: Services,
+    window_id: WindowId,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Result<Option<AnyView>, MountError> {
+    layout
+        .map(|factory| factory(LayoutContext::new(router, services, window_id), window, cx))
+        .transpose()
+}
+
+/// Invalidates one workspace and its retained custom layout after a router
+/// revision. Layouts are entities in their own right, so notifying both handles
+/// avoids depending on GPUI re-rendering an erased child solely because its
+/// parent happened to redraw.
+fn notify_workspace<R: Route>(
+    view: &gpui::WeakEntity<Workspace<R>>,
+    cx: &mut gpui::AsyncApp,
+) -> bool {
+    view.update(cx, |workspace, cx| {
+        cx.notify();
+
+        if let Some(layout) = &workspace.layout {
+            gpui::App::notify(cx, layout.entity_id());
+        }
+    })
+    .is_ok()
 }
 
 impl<R: Route> Workspace<R> {
@@ -421,11 +599,19 @@ impl<R: Route> Workspace<R> {
             config,
             web,
             guards,
+            admissions,
             control,
             commands,
             application_id,
             chrome,
+            navigation_feedback,
+            quit_guards,
+            layout,
+            new_window_options,
         } = root;
+
+        #[cfg(target_family = "wasm")]
+        let _ = new_window_options;
 
         let initial_window = checkpoint
             .as_ref()
@@ -434,6 +620,8 @@ impl<R: Route> Workspace<R> {
             .map_or(WindowId(1), |window| window.id);
 
         let contexts = Rc::new(RefCell::new(BTreeMap::new()));
+
+        let layout_services = services.clone();
 
         let router = Router::with_views(
             config,
@@ -452,6 +640,10 @@ impl<R: Route> Workspace<R> {
             contexts,
             views: Rc::new(RefCell::new(BTreeMap::new())),
             chrome,
+            navigation_feedback,
+            layout: layout.clone(),
+            services: layout_services.clone(),
+            new_window_options,
         });
 
         #[cfg(not(target_family = "wasm"))]
@@ -459,7 +651,19 @@ impl<R: Route> Workspace<R> {
             .window_host(native.clone())
             .map_err(|error| MountError(error.to_string()))?;
 
+        for guard in quit_guards {
+            router
+                .quit_guard(move |context| guard(context))
+                .map_err(|error| MountError(error.to_string()))?;
+        }
+
         router.install_quit_action(cx);
+
+        #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
+        if let Err(error) = router.install_sparkle() {
+            tracing::error!(%error,"native updater could not start");
+        }
+
         router.client().set_commands(commands);
 
         #[cfg(feature = "devtools")]
@@ -473,6 +677,12 @@ impl<R: Route> Workspace<R> {
                 .map_err(|error| MountError(error.to_string()))?;
         }
 
+        for admission in admissions {
+            router
+                .entry_admission(move |context| admission(context))
+                .map_err(|error| MountError(error.to_string()))?;
+        }
+
         #[cfg(target_family = "wasm")]
         let browser = super::web::browser::BrowserHistory::attach(&router, web)
             .map_err(|error| MountError(error.to_string()))?;
@@ -481,6 +691,15 @@ impl<R: Route> Workspace<R> {
         let _ = web;
 
         let restart = initial.clone().or_else(|| R::from_uri("/").ok());
+
+        let initial_layout = mount_layout(
+            layout.as_ref(),
+            router.clone(),
+            layout_services,
+            initial_window,
+            window,
+            cx,
+        )?;
 
         if checkpoint.is_none()
             && let Some(initial) = initial
@@ -524,41 +743,70 @@ impl<R: Route> Workspace<R> {
                         let mut revision = u64::MAX;
 
                         loop {
-                            #[cfg(feature = "devtools")]
-                            {
-                                let inspection = observed.client().inspection().listen();
+                            #[cfg(all(feature="updates",not(target_family="wasm")))]
+                            let changed=Box::pin(observed.changed_with_updates(revision));
 
-                                if let futures::future::Either::Left((next, _)) =
-                                    futures::future::select(
-                                        Box::pin(observed.changed(revision)),
-                                        Box::pin(inspection),
-                                    )
-                                    .await
-                                {
-                                    revision = next;
-                                }
-                            }
-                            #[cfg(not(feature = "devtools"))]
+                            #[cfg(all(
+                                not(feature="updates"),
+                                feature="native-lifecycle",
+                                target_os="macos"
+                            ))]
+                            let changed=Box::pin(observed.changed_with_native_quit(revision));
+
+                            #[cfg(not(any(
+                                all(feature="updates",not(target_family="wasm")),
+                                all(
+                                    not(feature="updates"),
+                                    feature="native-lifecycle",
+                                    target_os="macos"
+                                )
+                            )))]
+                            let changed=Box::pin(observed.changed(revision));
+
+                            #[cfg(feature="devtools")]
                             {
-                                revision = observed.changed(revision).await;
+                                let inspection=observed.client().inspection().listen();
+
+                                if let futures::future::Either::Left((next,_))=futures::future::select(changed,Box::pin(inspection)).await {revision=next;}
                             }
+                            #[cfg(not(feature="devtools"))]
+                            {revision=changed.await;}
 
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
                                 closing.responses_idle().await;
+                                #[cfg(all(feature="native-lifecycle",target_os="macos"))]
+                                observed.prepare_native_exit(true);
+
+                                #[cfg(feature="updates")]
+                                match observed.complete_update_restart() {
+                                    Ok(rake_updates::RestartDisposition::ProviderHandlesExit)=>continue,
+                                    Ok(rake_updates::RestartDisposition::ExitHost)=>{},
+                                    Err(error)=>{
+                                        #[cfg(all(feature="native-lifecycle",target_os="macos"))]
+                                        {observed.reply_native_quit(false);observed.prepare_native_exit(true);}
+                                        tracing::error!(%error,"update handoff failed; manual restart required");
+                                        let _=_view.update(cx,|_,cx|cx.notify());
+
+                                        break;
+                                    }
+                                }
+
+                                #[cfg(all(feature="native-lifecycle",target_os="macos"))]
+                                observed.reply_native_quit(true);
                                 cx.update(|cx| cx.quit());
 
                                 break;
                             }
 
                             #[cfg(target_family = "wasm")]
-                            if _view.update(cx, |_, cx| cx.notify()).is_err() {
+                            if !notify_workspace(&_view, cx) {
                                 break;
                             }
 
                             #[cfg(not(target_family = "wasm"))]
                             for view in observed_views.borrow().values() {
-                                let _ = view.update(cx, |_, cx| cx.notify());
+                                let _ = notify_workspace(view, cx);
                             }
                         }
                     };
@@ -606,8 +854,10 @@ impl<R: Route> Workspace<R> {
 
                 Self {
                     chrome,
+                    navigation_feedback,
                     router,
                     restart,
+                    layout: initial_layout,
                     _driver: driver,
                     window: initial_window,
                     #[cfg(target_family = "wasm")]
@@ -627,6 +877,15 @@ impl<R: Route> Render for Workspace<R> {
             snapshot.quit.phase,
             crate::quit::QuitPhase::Stopping | crate::quit::QuitPhase::Ready
         ) {
+            #[cfg(feature = "updates")]
+            if let Some(error) = self.router.update_restart_error() {
+                return div().size_full().bg(rgb(0x18232b)).text_color(rgb(0xf0f4e8)).p_4()
+                    .child(format!("The update could not restart the app: {error}. The app finished shutting down. Restart manually to continue."))
+                    .child(div().id("update-quit-manually").px_3().py_2().cursor_pointer().child("Quit").on_click(|_,_,cx|cx.quit()))
+                    .inspect("rake.update.restart_error")
+                    .root(crate::__rake_inspection!(self.router.client().inspection(),crate::inspection::Store::default()),snapshot.revision,self.window);
+            }
+
             return div()
                 .size_full()
                 .bg(rgb(0x18232b))
@@ -753,15 +1012,6 @@ impl<R: Route> Render for Workspace<R> {
             );
         }
 
-        let failure = snapshot
-            .operations
-            .last()
-            .and_then(|(_, state)| match state {
-                OperationState::Failed(error) => Some(error.to_string()),
-                OperationState::Blocked(reason) => Some(format!("Operation blocked: {reason:?}")),
-                _ => None,
-            });
-
         let quitting = snapshot.quit.phase.is_pending();
         let quit_router = self.router.clone();
         let cancel_router = self.router.clone();
@@ -840,6 +1090,94 @@ impl<R: Route> Render for Workspace<R> {
                 )
             });
 
+        #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+        let quit_controls = if let Some(updates) = self.router.updates() {
+            use rake_updates::UpdateState;
+            let state = updates.state();
+
+            let label = match &state {
+                UpdateState::Available(info) => Some(format!("Update {} available…", info.version)),
+                UpdateState::Downloading { progress, .. } if progress.total_bytes > 0 => {
+                    Some(format!(
+                        "Downloading {}% — Cancel",
+                        progress
+                            .received_bytes
+                            .saturating_mul(100)
+                            .checked_div(progress.total_bytes)
+                            .unwrap_or(0)
+                            .min(100)
+                    ))
+                }
+                UpdateState::Downloading { .. } => Some("Downloading… — Cancel".into()),
+                UpdateState::Checking => Some("Checking… — Cancel".into()),
+                UpdateState::Idle | UpdateState::UpToDate => Some("Check for updates…".into()),
+                UpdateState::Extracting { .. } => Some("Preparing update…".into()),
+                UpdateState::ReadyToRestart(_) => Some("Restart to update".into()),
+                UpdateState::Cancelling => Some("Cancelling update…".into()),
+                UpdateState::AwaitingApproval(_) => Some("Waiting to restart…".into()),
+                UpdateState::Restarting(_) => Some("Restarting for update…".into()),
+                UpdateState::Failed { .. } => Some("Update failed — Retry".into()),
+                UpdateState::ManagedExternally(_) => Some("Updates managed by your system".into()),
+                _ => None,
+            };
+
+            let actionable = matches!(
+                state,
+                UpdateState::Idle
+                    | UpdateState::UpToDate
+                    | UpdateState::Available(_)
+                    | UpdateState::ReadyToRestart(_)
+                    | UpdateState::Checking
+                    | UpdateState::Downloading { .. }
+                    | UpdateState::Failed { .. }
+            );
+
+            let router = self.router.clone();
+
+            if let Some(label) = label {
+                quit_controls.child(div().id("update-status").px_3().py_2().child(label).when(
+                    actionable,
+                    |control| {
+                        control.cursor_pointer().on_click(move |_, _, _| {
+                            let result = match updates.state() {
+                                UpdateState::Available(_) => router.download_update(),
+                                UpdateState::ReadyToRestart(_) => router
+                                    .restart_for_update(crate::quit::QuitOptions::default())
+                                    .map(|_| ()),
+                                UpdateState::Checking | UpdateState::Downloading { .. } => {
+                                    updates.cancel();
+
+                                    Ok(())
+                                }
+                                UpdateState::Idle
+                                | UpdateState::UpToDate
+                                | UpdateState::Failed { .. } => router.check_for_updates(),
+                                _ => Ok(()),
+                            };
+
+                            if let Err(error) = result {
+                                tracing::error!(%error, "update action failed");
+                            }
+                        })
+                    },
+                ))
+            } else {
+                quit_controls
+            }
+        } else {
+            quit_controls
+        };
+
+        let content = self
+            .layout
+            .clone()
+            .map(|layout| layout.into_any_element())
+            .unwrap_or_else(|| {
+                RouteOutlet::new(self.router.clone())
+                    .in_window(self.window)
+                    .into_any_element()
+            });
+
         div()
             .size_full()
             .flex()
@@ -856,13 +1194,17 @@ impl<R: Route> Render for Workspace<R> {
                 .child(quit_controls)
             })
             .child(decision_area.inspect("rake.decisions"))
-            .children(failure)
+            .when(self.navigation_feedback, |root| {
+                root.child(
+                    super::NavigationBoundary::new(self.router.clone()).in_window(self.window),
+                )
+            })
             .children(snapshot.history_error)
             .child(
                 div()
                     .flex_1()
                     .overflow_hidden()
-                    .child(RouteOutlet::new(self.router.clone()).in_window(self.window))
+                    .child(content)
                     .inspect("rake.content"),
             )
             .inspect("rake.workspace")
@@ -893,6 +1235,10 @@ struct NativeWindows<R: Route> {
     contexts: Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>,
     views: Rc<RefCell<BTreeMap<WindowId, gpui::WeakEntity<Workspace<R>>>>>,
     chrome: bool,
+    navigation_feedback: bool,
+    layout: Option<LayoutFactory<R>>,
+    services: Services,
+    new_window_options: Option<Rc<dyn Fn(WindowId) -> gpui::WindowOptions>>,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -911,33 +1257,92 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                 .ok_or_else(|| MountError("Runtime closed.".into()))?;
 
             let app = host.app.clone();
+            let layout = host.layout.clone();
+            let services = host.services.clone();
+            let views = host.views.clone();
+            let chrome = host.chrome;
+            let navigation_feedback = host.navigation_feedback;
+            let setup_error = Rc::new(RefCell::new(None));
+            let callback_error = setup_error.clone();
 
-            app.update(|cx| {
-                cx.open_window(
-                    gpui::WindowOptions {
-                        focus: activation == Activation::Activate,
-                        ..gpui::WindowOptions::default()
-                    },
-                    move |window, cx| {
-                        router
-                            .attach_window(id, window, cx)
-                            .expect("reserved native window");
-                        let view = cx.new(|_| Workspace {
-                            chrome: host.chrome,
+            let mut options = host
+                .new_window_options
+                .as_ref()
+                .map(|factory| factory(id))
+                .unwrap_or_default();
+
+            // Navigation decides activation, while the application factory owns
+            // every other option (bounds, titlebar, kind, and visibility).
+            options.focus = activation == Activation::Activate;
+
+            let result = app.update(|cx| {
+                cx.open_window(options, move |window, cx| {
+                    if let Err(error) = router.attach_window(id, window, cx) {
+                        *callback_error.borrow_mut() = Some(MountError(error.to_string()));
+                        window.remove_window();
+
+                        return cx.new(|_| Workspace {
+                            chrome,
+                            navigation_feedback,
                             restart: R::from_uri("/").ok(),
-                            router,
+                            router: router.clone(),
+                            layout: None,
                             _driver: None,
                             window: id,
                         });
+                    }
 
-                        host.views.borrow_mut().insert(id, view.downgrade());
+                    let layout = match mount_layout(
+                        layout.as_ref(),
+                        router.clone(),
+                        services.clone(),
+                        id,
+                        window,
+                        cx,
+                    ) {
+                        Ok(layout) => layout,
+                        Err(error) => {
+                            *callback_error.borrow_mut() = Some(error);
+                            // `ProvisionalWindow` owns the final rollback; close
+                            // the just-created host immediately as well so a
+                            // failed layout never becomes visible.
+                            window.remove_window();
 
-                        view
-                    },
-                )
+                            return cx.new(|_| Workspace {
+                                chrome,
+                                navigation_feedback,
+                                restart: R::from_uri("/").ok(),
+                                router: router.clone(),
+                                layout: None,
+                                _driver: None,
+                                window: id,
+                            });
+                        }
+                    };
+
+                    let view = cx.new(|_| Workspace {
+                        chrome,
+                        navigation_feedback,
+                        restart: R::from_uri("/").ok(),
+                        router: router.clone(),
+                        layout,
+                        _driver: None,
+                        window: id,
+                    });
+
+                    views.borrow_mut().insert(id, view.downgrade());
+
+                    view
+                })
                 .map(|_| ())
                 .map_err(|error| MountError(error.to_string()))
-            })
+            });
+
+            if let Some(error) = setup_error.borrow_mut().take() {
+                Err(error)
+            } else {
+                result
+            }
         }
         .boxed_local()
     }

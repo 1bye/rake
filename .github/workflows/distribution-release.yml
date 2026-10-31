@@ -1,0 +1,112 @@
+name: Native distribution release
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Cargo application package with release configuration
+        required: true
+        type: string
+      channel:
+        default: stable
+        type: string
+      publish:
+        description: Promote verified artifacts using configured publisher
+        default: false
+        type: boolean
+concurrency:
+  group: distribution-release-${{ github.repository }}-${{ inputs.package }}-${{ inputs.channel }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Release identities stay in enrolled local signing profiles.
+          - runner: ' ["self-hosted", "macOS", "distribution"] '
+            platform: macos
+          - runner: ' ["self-hosted", "Windows", "distribution"] '
+            platform: windows
+          - runner: ' ["self-hosted", "Linux", "distribution"] '
+            platform: linux
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 45
+    env:
+      RELEASE_PACKAGE: ${{ inputs.package }}
+      RELEASE_CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p rake-cli --locked
+      - shell: python
+        run: |
+          import os, pathlib, subprocess
+          cli = pathlib.Path('target/debug/rake' + ('.exe' if os.name == 'nt' else '')).resolve()
+          subprocess.run([str(cli), 'release', '--plan', '--package', os.environ['RELEASE_PACKAGE'], '--channel', os.environ['RELEASE_CHANNEL'], '--json'], check=True)
+          subprocess.run([str(cli), 'bundle', '--native', '--package', os.environ['RELEASE_PACKAGE'], '--trusted', '--locked-components', '--output', 'release-output', '--json'], check=True)
+      - name: Prepare signed repositories on the native Linux worker
+        if: matrix.platform == 'linux'
+        shell: python
+        run: |
+          import os, pathlib, subprocess
+          cli = pathlib.Path('target/debug/rake').resolve()
+          subprocess.run([str(cli), 'release', '--package', os.environ['RELEASE_PACKAGE'], '--channel', os.environ['RELEASE_CHANNEL'], '--from', 'release-output', '--prepare-repositories', 'release-repositories', '--json'], check=True)
+      - name: Preserve native modes and relative framework links in transport
+        shell: python
+        run: |
+          import pathlib, tarfile
+          for directory in ('release-output', 'release-repositories'):
+              if pathlib.Path(directory).is_dir():
+                  with tarfile.open(directory + '.tar.gz', 'w:gz', dereference=False) as archive:
+                      archive.add(directory, arcname=directory)
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'linux'
+        with:
+          name: repositories-linux
+          path: release-repositories.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution-${{ matrix.platform }}
+          path: release-output.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+  promote:
+    if: inputs.publish
+    needs: build
+    # Sparkle native feed tooling and signing accounts are enrolled here once.
+    runs-on: [self-hosted, macOS, distribution]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      RELEASE_PACKAGE: ${{ inputs.package }}
+      RELEASE_CHANNEL: ${{ inputs.channel }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: distribution-*
+          path: native-artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: repositories-linux
+          path: native-repositories
+      - run: cargo build -p rake-cli --locked
+      - shell: python
+        run: |
+          import os, pathlib, subprocess, tarfile
+          command = [str(pathlib.Path('target/debug/rake').resolve()), 'release', '--package', os.environ['RELEASE_PACKAGE'], '--channel', os.environ['RELEASE_CHANNEL'], '--json']
+          for path in sorted(pathlib.Path('native-artifacts').glob('*/release-output.tar.gz')):
+              with tarfile.open(path, 'r:gz') as archive:
+                  archive.extractall(path.parent, filter='data')
+              command += ['--from', str(path.parent / 'release-output')]
+          with tarfile.open('native-repositories/release-repositories.tar.gz', 'r:gz') as archive:
+              archive.extractall('native-repositories', filter='data')
+          command += ['--repositories', 'native-repositories/release-repositories']
+          subprocess.run(command, check=True)

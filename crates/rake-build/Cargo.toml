@@ -1,0 +1,21 @@
+[package]
+name = "rake-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rake-dist-core = { path = "../rake-dist-core" }
+serde_json.workspace = true
+toml = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+tauri-winres = "0.3"
+resvg = { version = "0.45", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

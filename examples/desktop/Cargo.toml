@@ -1,0 +1,88 @@
+[package]
+name = "rake-desktop-example"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+devtools = ["rake/devtools"]
+
+[dependencies]
+rake = { workspace = true, features = ["experimental-view", "updates"] }
+
+[build-dependencies]
+rake-build = { path = "../../crates/rake-build" }
+
+[package.metadata.rake.bundle]
+schema_version = 1
+name = "Rake Starter"
+identifier = "dev.rake.starter"
+icon = "assets/icon.svg"
+resources = [{ from = "assets/welcome.txt", to = "welcome.txt" }]
+
+[package.metadata.rake.bundle.desktop]
+category = "utility"
+
+[package.metadata.rake.bundle.macos]
+formats = ["zip", "dmg"]
+info_plist = "packaging/Info.plist"
+# Enroll your own local profiles before a trusted release:
+# signing_identity = "Developer ID Application: Your Company (TEAMID)"
+# notary_profile = "your-notarytool-profile"
+
+[package.metadata.rake.bundle.windows]
+formats = ["velopack"]
+manifest = "packaging/app.manifest"
+timestamp_url = "http://timestamp.digicert.com"
+# certificate_thumbprint = "YOUR_LOCAL_CERTIFICATE_THUMBPRINT"
+
+[package.metadata.rake.bundle.linux]
+formats = ["appimage", "deb", "rpm", "arch"]
+package_name = "rake-starter"
+
+[package.metadata.rake.bundle.updates]
+# Run without release credentials first. Follow README.md to enable real feeds.
+enabled = false
+channel = "stable"
+base_url = "https://downloads.example.com/rake-starter"
+
+# Generate your public keys, then uncomment this table and set enabled = true.
+# [package.metadata.rake.bundle.updates.public_keys]
+# sparkle = "packaging/sparkle.pub"
+# velopack = "packaging/velopack.pub"
+# appimage = "packaging/appimage.pub"
+
+[package.metadata.rake.bundle.release.publisher]
+kind = "directory"
+path = "release-site"
+public_url = "https://downloads.example.com/rake-starter"
+
+[package.metadata.rake.bundle.release.required]
+aarch64-apple-darwin = ["zip", "dmg"]
+x86_64-pc-windows-msvc = ["velopack"]
+x86_64-unknown-linux-gnu = ["appimage", "deb", "rpm", "arch"]
+
+[package.metadata.rake.bundle.release.signing_keys.velopack]
+kind = "environment"
+variable = "RAKE_STARTER_VELOPACK_SEED"
+
+[package.metadata.rake.bundle.release.signing_keys.appimage]
+kind = "environment"
+variable = "RAKE_STARTER_APPIMAGE_SEED"
+
+# Sparkle uses its native Keychain signer from the pinned 2.10.1 SDK:
+# [package.metadata.rake.bundle.release]
+# sparkle_tool = "/path/to/Sparkle-2.10.1/bin/generate_appcast"
+# sparkle_account = "rake-starter"
+
+# Optional: prepare this target-specific tree, then uncomment. See README.md.
+# [package.metadata.rake.bundle.dependencies.ffmpeg]
+# path = "vendor/ffmpeg/{target}"
+# executables = { ffmpeg = "bin/ffmpeg{exe}", ffprobe = "bin/ffprobe{exe}" }
+# licenses = ["LICENSE"]
+# libraries = { path = "lib" } # Omit for self-contained executables.

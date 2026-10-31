@@ -1,18 +1,14 @@
-"""Host application bundles and static Web deployment artifacts; standard library only."""
+"""Static Web deployment artifacts; native packaging belongs to the Rust coordinator."""
 
 import hashlib
 import html
 import json
 from pathlib import Path
-import platform
-import plistlib
 import re
 import shutil
 import stat
-import sys
-import tarfile
-import tempfile
 import zipfile
+import web_offline
 
 
 def base_path(value):
@@ -40,10 +36,16 @@ def copy_tree(source, destination):
 
 
 class BundleConfig:
-    def __init__(self, package, directory):
+    def __init__(self, package, directory, native=False):
         self.directory = directory.resolve()
         config = (package.get("metadata") or {}).get("rake", {}).get("bundle", {})
-        if not isinstance(config, dict) or config.keys() - {"name", "identifier", "assets", "icon", "build_number", "minimum_system_version", "web"}:
+        # The same Cargo application can declare native installers and a Web build.
+        # Native sections remain owned/validated by the Rust distribution pipeline;
+        # they do not become browser assets, helper processes or update providers.
+        native_fields = {"schema_version", "package_version", "target_overrides", "format_overrides",
+            "desktop", "macos", "windows", "linux", "dependencies", "components", "resources",
+            "sidecars", "runtimes", "updates", "release", "custom_formats", "component_recipes"}
+        if not isinstance(config, dict) or (not native and config.keys() - {"name", "identifier", "assets", "icon", "build_number", "minimum_system_version", "web"} - native_fields):
             raise ValueError("unknown or invalid package.metadata.rake.bundle configuration")
         self.name = config.get("name", package["name"])
         self.identifier = config.get("identifier", "dev.rake." + package["name"].replace("_", "-"))
@@ -60,10 +62,13 @@ class BundleConfig:
         self.assets = self.input(config.get("assets"), directory=True)
         self.icon = self.input(config.get("icon"))
         web = config.get("web", {})
-        if not isinstance(web, dict) or web.keys() - {"base_path", "routing"}:
+        if not isinstance(web, dict) or web.keys() - {"base_path", "routing", "offline"}:
             raise ValueError("unknown bundle.web configuration")
         self.web_base = base_path(web.get("base_path", "/"))
         self.routing = web.get("routing", "path")
+        self.offline = web.get("offline", False)
+        if not isinstance(self.offline, bool):
+            raise ValueError("bundle.web.offline must be a boolean")
         if self.routing not in {"path", "hash"}:
             raise ValueError("bundle.web.routing must be path or hash")
 
@@ -79,129 +84,6 @@ class BundleConfig:
         if path == self.directory or not path.is_relative_to(self.directory) or (not path.is_dir() if directory else not path.is_file()):
             raise ValueError(f"invalid bundle input: {value}")
         return path
-
-
-def native(project, source, output):
-    config = project.bundle
-    if sys.platform == "darwin":
-        contents = output / f"{config.name}.app" / "Contents"
-        binary = contents / "MacOS" / project.target["name"]
-        resources = contents / "Resources"
-        resources.mkdir(parents=True)
-        info = {"CFBundleExecutable": binary.name, "CFBundleIdentifier": config.identifier,
-            "CFBundleName": config.name, "CFBundleDisplayName": config.name,
-            "CFBundlePackageType": "APPL", "CFBundleInfoDictionaryVersion": "6.0",
-            "CFBundleShortVersionString": config.version, "CFBundleVersion": config.build_number,
-            "NSHighResolutionCapable": True}
-        if config.minimum_system_version:
-            info["LSMinimumSystemVersion"] = config.minimum_system_version
-        if config.icon:
-            if config.icon.suffix.lower() not in {".icns", ".png"}:
-                raise ValueError("macOS icons require .icns or .png")
-            # PNG conversion happens at distribution time; dev builds retain the source.
-            icon = resources / ("rake-icon" + config.icon.suffix.lower())
-            shutil.copyfile(config.icon, icon)
-            info["CFBundleIconFile"] = icon.name
-        with (contents / "Info.plist").open("wb") as file:
-            plistlib.dump(info, file)
-    elif sys.platform.startswith("linux"):
-        binary = output / "bin" / project.target["name"]
-        resources = output / "share" / config.identifier
-        resources.mkdir(parents=True)
-        if config.icon:
-            shutil.copyfile(config.icon, resources / config.icon.name)
-    else:
-        raise ValueError("native bundles currently require a macOS or Linux host")
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, binary)
-    binary.chmod(0o755)
-    if config.assets:
-        copy_tree(config.assets, resources / "assets")
-    return binary
-
-
-def mac_libraries(project, binary, invoke, output):
-    """Relocate plain dylib closures. External framework bundles fail explicitly."""
-    original_executable = project.native_source.resolve()
-    frameworks = binary.parent.parent / "Frameworks"
-    copied, names = {}, {}
-    libraries = []
-
-    def rpaths(path):
-        listing = output(["otool", "-l", str(path)])
-        return re.findall(r"cmd LC_RPATH\n\s*cmdsize \d+\n\s*path (.*?) \(offset", listing)
-
-    def expand(path, loader):
-        return Path(path.replace("@loader_path", str(loader.parent)).replace("@executable_path", str(original_executable.parent)))
-
-    def visit(original, destination, inherited):
-        roots = [expand(root, original) for root in rpaths(original)] + inherited
-        listing = output(["otool", "-L", str(original)])
-        for line in listing.splitlines()[1:]:
-            dependency = line.strip().split(" (compatibility", 1)[0]
-            if dependency.startswith(("/usr/lib/", "/System/Library/")):
-                continue
-            candidates = [root / dependency.removeprefix("@rpath/") for root in roots] if dependency.startswith("@rpath/") else [expand(dependency, original)]
-            source = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
-            if source is None:
-                raise ValueError(f"cannot resolve native dependency {dependency} from {original.name}")
-            if source == original:
-                continue
-            if any(part.endswith(".framework") for part in source.parts):
-                raise ValueError(f"external framework embedding is not supported: {dependency}; link statically or provide a platform packager")
-            if source.name in names and names[source.name] != source:
-                raise ValueError(f"native dependency filename collision: {source.name}")
-            target = frameworks / source.name
-            relocated = "@executable_path/../Frameworks/" + source.name
-            if source not in copied:
-                copied[source] = target
-                names[source.name] = source
-                frameworks.mkdir(exist_ok=True)
-                shutil.copyfile(source, target)
-                target.chmod(0o755)
-                invoke(["install_name_tool", "-id", relocated, str(target)])
-                visit(source, target, roots)
-                libraries.append(target)
-            invoke(["install_name_tool", "-change", dependency, relocated, str(destination)])
-
-    visit(original_executable, binary, [])
-    return libraries
-
-
-def mac_sign(project, binary, invoke, output):
-    app = binary.parent.parent.parent
-    config = project.bundle
-    if config.icon and config.icon.suffix.lower() == ".png":
-        with tempfile.TemporaryDirectory(prefix="rake-icon-") as temporary:
-            iconset = Path(temporary) / "rake.iconset"
-            iconset.mkdir()
-            for points in [16, 32, 128, 256, 512]:
-                for scale in [1, 2]:
-                    name = f"icon_{points}x{points}{'@2x' if scale == 2 else ''}.png"
-                    invoke(["sips", "-z", str(points * scale), str(points * scale), str(config.icon), "--out", str(iconset / name)])
-            icon = app / "Contents/Resources/rake-icon.icns"
-            invoke(["iconutil", "-c", "icns", str(iconset), "-o", str(icon)])
-        path = app / "Contents/Info.plist"
-        info = plistlib.loads(path.read_bytes())
-        info["CFBundleIconFile"] = icon.name
-        path.write_bytes(plistlib.dumps(info))
-        (app / "Contents/Resources/rake-icon.png").unlink()
-    libraries = mac_libraries(project, binary, invoke, output)
-    identity = project.args.sign_identity or "-"
-    if project.args.entitlements:
-        with project.args.entitlements.open("rb") as file:
-            if not isinstance(plistlib.load(file), dict):
-                raise ValueError("entitlements must be a plist dictionary")
-    for path in [*libraries, app]:
-        command = ["codesign", "--force", "--sign", identity, "--timestamp=none" if identity == "-" else "--timestamp"]
-        if path == app:
-            if identity != "-":
-                command += ["--options", "runtime"]
-            if project.args.entitlements:
-                command += ["--entitlements", str(project.args.entitlements)]
-        invoke([*command, str(path)])
-    invoke(["codesign", "--verify", "--deep", "--strict", str(app)])
-    return app, "ad_hoc" if identity == "-" else "identity"
 
 
 def web_deployment(project, site):
@@ -235,6 +117,7 @@ def web_deployment(project, site):
     metadata = {"protocol": 1, "application_id": config.identifier, "version": project.package["version"],
         "base_path": base, "routing": routing, "assets": base + "assets/", "wasm_mime": "application/wasm",
         "development_control": False, "cache": "revalidate; filenames are not content hashed"}
+    web_offline.prepare(site, metadata, config.offline)
     (site / "rake-deployment.json").write_text(json.dumps(metadata, indent=2) + "\n")
     return metadata
 
@@ -248,40 +131,33 @@ def sha256(path):
 
 
 def distribution(project, output, processes, invoke):
-    payload = output / ("site" if project.args.target == "web" else "application")
+    if project.args.target != "web":
+        raise ValueError("native packaging requires the Rust CLI")
+    payload = output / "site"
     artifact = project.build(processes, payload)
-    signing, deployment = "not_applicable", None
-    architecture = "wasm32" if project.args.target == "web" else platform.machine()
-    name = f"{project.package['name']}-{project.package['version']}-{project.args.target}"
-    if project.args.target == "web":
-        deployment = web_deployment(project, payload)
-        archive = output / (name + ".zip")
-        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as file:
-            for path in sorted(payload.rglob("*")):
-                if path.is_file():
-                    file.write(path, path.relative_to(payload))
-        base = deployment["base_path"]
-        fallback = f"try_files $uri $uri/ {base}index.html;" if deployment["routing"] == "path" else "try_files $uri $uri/ =404;"
-        redirect = f"location = {base[:-1]} {{ return 308 {base}; }}\n" if base != "/" else ""
-        (output / "nginx.conf.example").write_text(
-            f"# Install site/ contents below /srv/www{base}; include the server's standard MIME types.\n{redirect}"
-            f"location {base}pkg/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\n"
-            f"location {base}assets/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\n"
-            f"location {base} {{ root /srv/www; index index.html; {fallback} add_header Cache-Control 'no-cache'; }}\n")
-    elif sys.platform == "darwin":
-        artifact, signing = mac_sign(project, artifact, invoke, processes.output)
-        architecture = processes.output(["lipo", "-archs", str(artifact / "Contents/MacOS" / project.target["name"])]).strip().replace(" ", "+")
-        archive = output / (name + "-macos-" + architecture + ".zip")
-        invoke(["ditto", "-c", "-k", "--keepParent", str(artifact), str(archive)])
-    else:
-        archive = output / (name + "-linux-" + platform.machine() + ".tar.gz")
-        with tarfile.open(archive, "w:gz") as file:
-            file.add(payload, arcname=project.package["name"], recursive=True)
+    signing = "not_applicable"
+    name = f"{project.package['name']}-{project.package['version']}-web"
+    deployment = web_deployment(project, payload)
+    archive = output / (name + ".zip")
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as file:
+        for path in sorted(payload.rglob("*")):
+            if path.is_file():
+                file.write(path, path.relative_to(payload))
+    base = deployment["base_path"]
+    fallback = f"try_files $uri $uri/ {base}index.html;" if deployment["routing"] == "path" else "try_files $uri $uri/ =404;"
+    redirect = f"location = {base[:-1]} {{ return 308 {base}; }}\n" if base != "/" else ""
+    (output / "nginx.conf.example").write_text(
+        f"# Install site/ contents below /srv/www{base}; include the server's standard MIME types.\n{redirect}"
+        f"# Retain previous rake-builds/ directories while old tabs may still request their assets.\n"
+        f"location {base}rake-builds/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'public, max-age=31536000, immutable'; }}\n"
+        f"location {base}pkg/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\n"
+        f"location {base}assets/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\n"
+        f"location {base} {{ root /srv/www; index index.html; {fallback} add_header Cache-Control 'no-cache'; }}\n")
     files = [{"path": str(path.relative_to(output)), "bytes": path.stat().st_size, "sha256": sha256(path)}
         for path in sorted(payload.rglob("*")) if path.is_file()]
     manifest = {"protocol": 1, "package": project.package["name"], "application_id": project.bundle.identifier,
         "name": project.bundle.name, "version": project.package["version"], "target": project.args.target,
-        "platform": "web" if deployment else sys.platform, "architecture": architecture,
+        "platform": "web", "architecture": "wasm32",
         "profile": "release" if project.args.release else "debug", "signing": signing, "notarized": False,
         "artifact": str(artifact.relative_to(output)), "deployment": deployment,
         "archive": {"path": archive.name, "bytes": archive.stat().st_size, "sha256": sha256(archive)}, "files": files}

@@ -1,8 +1,8 @@
 //! One global quit operation reuses entry decisions and coordinates existing work.
 
 use super::{
-    Action, Core, DisposeReason, GuardKind, Job, Navigator, Operation, OperationError, OperationId,
-    OperationState, Outcome, Route, Router, Stop, guard,
+    Action, BlockReason, Core, DisposeReason, GuardKind, Job, Navigator, Operation, OperationError,
+    OperationId, OperationState, Outcome, QuitGuardContext, Route, Router, Stop, guard,
 };
 
 use crate::http::CancellationToken;
@@ -16,6 +16,27 @@ use futures::{
 };
 
 use std::rc::Rc;
+use tracing::Instrument;
+
+#[cfg(target_family = "wasm")]
+impl<R: Route> Router<R> {
+    pub(crate) fn request_browser_reload(
+        &self,
+        options: QuitOptions,
+    ) -> Result<Operation<QuitResult>, crate::web::Error> {
+        if self.quit_status().phase.blocks_navigation() {
+            return Err(crate::web::Error::Host(
+                "another quit or reload is already pending".into(),
+            ));
+        }
+
+        let operation = self.quit(options);
+
+        self.0.browser_reload.set(Some(operation.id()));
+
+        Ok(operation)
+    }
+}
 
 impl<R: Route> Core<R> {
     pub(super) fn quit_status(&self, work: &crate::tasks::WorkSnapshot) -> QuitStatus {
@@ -50,6 +71,88 @@ impl<R: Route> Router<R> {
     /// Latest quit phase and live finite-work identities. Ready remains queryable until host exit.
     pub fn quit_status(&self) -> QuitStatus {
         self.0.quit_status(&self.0.tasks.snapshot())
+    }
+
+    /// Attaches one staged update to a new guarded quit operation.
+    ///
+    /// Existing document, history, window and active-work guards run unchanged.
+    /// Decline/cancellation drops the handoff without installation. Hosts commit
+    /// it with `complete_update_restart` only after `QuitPhase::Ready`.
+    /// # Errors
+    /// Rejects concurrent quits or a quit that was not admitted.
+    #[cfg(feature = "updates")]
+    pub fn quit_for_update(
+        &self,
+        handoff: rake_updates::RestartHandoff,
+        options: QuitOptions,
+    ) -> Result<Operation<QuitResult>, rake_updates::Error> {
+        if self.quit_status().phase.blocks_navigation() {
+            return Err(rake_updates::Error::Policy(
+                "another quit already owns the application lifecycle".into(),
+            ));
+        }
+
+        let operation = self.quit(options);
+
+        if self.quit_status().operation_id != Some(operation.id())
+            || !self.quit_status().phase.is_pending()
+        {
+            return Err(rake_updates::Error::Policy(
+                "update quit was not admitted".into(),
+            ));
+        }
+
+        *self.0.update_handoff.borrow_mut() = Some(handoff);
+        *self.0.update_restart_error.borrow_mut() = None;
+        self.0
+            .update_exit
+            .set(rake_updates::RestartDisposition::ExitHost);
+
+        Ok(operation)
+    }
+
+    /// Runs a pending updater after all guards and managed work have completed.
+    /// Native Rake workspaces call this before host exit; custom hosts call it there too.
+    /// Returns the native SDK/host termination disposition, retained across windows.
+    /// # Errors
+    /// Rejects premature calls and preserves native handoff failures for manual restart.
+    #[cfg(feature = "updates")]
+    pub fn complete_update_restart(
+        &self,
+    ) -> Result<rake_updates::RestartDisposition, rake_updates::Error> {
+        if self.quit_status().phase != QuitPhase::Ready {
+            return Err(rake_updates::Error::Policy(
+                "update restart requires a committed guarded quit".into(),
+            ));
+        }
+
+        if let Some(error) = self.update_restart_error() {
+            return Err(rake_updates::Error::Provider(error));
+        }
+
+        let Some(handoff) = self.0.update_handoff.borrow_mut().take() else {
+            return Ok(self.0.update_exit.get());
+        };
+
+        match handoff.commit(true) {
+            Ok(disposition) => {
+                self.0.update_exit.set(disposition);
+
+                Ok(disposition)
+            }
+            Err(error) => {
+                *self.0.update_restart_error.borrow_mut() = Some(error.to_string());
+                self.0.notify();
+
+                Err(error)
+            }
+        }
+    }
+
+    /// Returns the updater's failed restart diagnostic, for a manual-restart UI.
+    #[cfg(feature = "updates")]
+    pub fn update_restart_error(&self) -> Option<String> {
+        self.0.update_restart_error.borrow().clone()
     }
 
     /// Eagerly submits one guarded quit. Concurrent requests join its operation;
@@ -150,9 +253,27 @@ impl<R: Route> Router<R> {
                 _ => QuitPhase::Blocked,
             };
 
+            #[cfg(feature = "updates")]
+            if phase != QuitPhase::Ready {
+                core.update_handoff.borrow_mut().take();
+            }
+
             core.quit.borrow_mut().phase = phase;
             core.finish(id, &result);
             let _ = sender.send(result);
+
+            #[cfg(target_family = "wasm")]
+            if core.browser_reload.get() == Some(id) {
+                core.browser_reload.set(None);
+
+                if phase == QuitPhase::Ready {
+                    // The runtime owns this handoff. Disposing a routed page must
+                    // not cancel the final reload along with its observing view.
+                    if let Err(error) = Router(core.clone()).reload_page() {
+                        tracing::error!(%error, "approved browser reload failed; reload manually");
+                    }
+                }
+            }
         }
         .boxed_local();
 
@@ -280,6 +401,22 @@ async fn transition<R: Route>(
             continue;
         }
 
+        core.quit.borrow_mut().phase = QuitPhase::Guarding;
+        core.notify();
+        run_quit_guards(core, id, options).await?;
+        let pending = core.quit_status(&core.tasks.snapshot());
+
+        if !pending.pending_tasks.is_empty() || !pending.pending_operations.is_empty() {
+            continue;
+        }
+
+        if approvals
+            .iter()
+            .any(|(entry, revision)| !entry.alive.get() || entry.revision.get() != *revision)
+        {
+            continue;
+        }
+
         // Last cancellation check, including a request made synchronously by a guard.
         if core
             .state
@@ -327,9 +464,42 @@ async fn transition<R: Route>(
     }
 }
 
+async fn run_quit_guards<R: Route>(
+    core: &Core<R>,
+    operation_id: OperationId,
+    options: QuitOptions,
+) -> Result<(), Stop> {
+    let context = QuitGuardContext {
+        operation_id,
+        options,
+    };
+
+    let guards = core.quit_guards.borrow().clone();
+
+    for guard in guards {
+        guard(context)
+            .instrument(tracing::info_span!(
+                "router.quit_guard",
+                operation_id = %operation_id
+            ))
+            .await
+            .map_err(|reason| Stop::Blocked(BlockReason::Guard(reason)))?;
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "gpui")]
 impl<R: Route> Router<R> {
     pub(crate) fn install_quit_action(&self, cx: &mut gpui::App) {
+        #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
+        if self.0.native_quit.borrow().is_none() {
+            match rake_updates::NativeQuitBridge::new() {
+                Ok(bridge) => *self.0.native_quit.borrow_mut() = Some(Rc::new(bridge)),
+                Err(error) => tracing::error!(%error,"native quit guard could not be installed"),
+            }
+        }
+
         let core = Rc::downgrade(&self.0);
 
         cx.on_action(move |_: &crate::quit::RequestQuit, _| {
@@ -354,6 +524,69 @@ impl<R: Route> Router<R> {
                 items: vec![gpui::MenuItem::action("Quit", crate::quit::RequestQuit)],
                 disabled: false,
             }]);
+        }
+    }
+}
+
+#[cfg(all(feature = "native-lifecycle", feature = "gpui", target_os = "macos"))]
+impl<R: Route> Router<R> {
+    pub(crate) fn native_quit_changed(&self) -> futures::future::LocalBoxFuture<'static, ()> {
+        let changed = self
+            .0
+            .native_quit
+            .borrow()
+            .as_ref()
+            .map(|bridge| bridge.changed());
+
+        async move {
+            if let Some(changed) = changed {
+                changed.await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        }
+        .boxed_local()
+    }
+
+    #[cfg(not(feature = "updates"))]
+    pub(crate) async fn changed_with_native_quit(&self, revision: u64) -> u64 {
+        let changed = self.changed(revision);
+        let _ = select(Box::pin(changed), self.native_quit_changed()).await;
+
+        self.poll_native_quit();
+
+        self.revision()
+    }
+
+    pub(crate) fn poll_native_quit(&self) {
+        let requested = self
+            .0
+            .native_quit
+            .borrow()
+            .as_ref()
+            .is_some_and(|bridge| bridge.take_request());
+
+        if requested {
+            drop(self.quit(QuitOptions::default()));
+        }
+
+        if matches!(
+            self.quit_status().phase,
+            QuitPhase::Cancelled | QuitPhase::Blocked
+        ) {
+            self.reply_native_quit(false);
+        }
+    }
+
+    pub(crate) fn prepare_native_exit(&self, approved: bool) {
+        if let Some(bridge) = self.0.native_quit.borrow().as_ref() {
+            bridge.prepare_exit(approved);
+        }
+    }
+
+    pub(crate) fn reply_native_quit(&self, approved: bool) {
+        if let Some(bridge) = self.0.native_quit.borrow().as_ref() {
+            bridge.reply(approved);
         }
     }
 }

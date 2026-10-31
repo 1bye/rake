@@ -1,0 +1,5 @@
+error: route path patterns overlap at equal specificity; static segments must disambiguate routes
+ --> tests/ui/route/ambiguous_crossing.rs:5:37
+  |
+5 |     #[route(id = "settings", path = "/{section}/settings")]
+  |                                     ^^^^^^^^^^^^^^^^^^^^^

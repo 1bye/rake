@@ -1,9 +1,57 @@
 //! Runtime-owned handles, guard callbacks and configuration.
 
+use std::any::Any;
+
 use super::{
     Activation, ChoiceAction, ChoiceDescriptor, EntryId, GuardKind, GuardReason, MountError,
     OperationError, OperationId, Outcome, Route, TabId, TabMode, WindowId,
 };
+
+/// Opaque, owned data prepared before a route is mounted.
+///
+/// This is an internal bridge between the statically dispatched route loader
+/// and the runtime's erased mount callback. The value is consumed exactly once;
+/// dropping it drops the loaded data as well. Ordinary applications should use
+/// the `loaded(...)` arm of `rake::routes!` rather than this type directly.
+#[doc(hidden)]
+pub struct PreparedPage(Option<Box<dyn Any>>);
+
+impl PreparedPage {
+    /// Creates an empty preparation for synchronous route views.
+    #[doc(hidden)]
+    pub fn empty() -> Self {
+        Self(None)
+    }
+
+    /// Wraps owned route data for a custom preparation implementation.
+    #[doc(hidden)]
+    pub fn from_value<T: 'static>(value: T) -> Self {
+        Self(Some(Box::new(value)))
+    }
+
+    /// Returns whether this preparation carries no route data.
+    #[doc(hidden)]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// Consumes the preparation and recovers its concrete route data.
+    #[doc(hidden)]
+    pub fn downcast<T: 'static>(self) -> Result<T, MountError> {
+        self.0
+            .ok_or_else(|| MountError("route preparation is empty".into()))?
+            .downcast::<T>()
+            .map(|value| *value)
+            .map_err(|_| {
+                MountError(format!(
+                    "route preparation type mismatch for {}",
+                    std::any::type_name::<T>()
+                ))
+            })
+    }
+}
+
+use crate::quit::QuitOptions;
 
 use futures::future::{LocalBoxFuture, Shared};
 use std::rc::Rc;
@@ -21,6 +69,13 @@ pub struct RouterConfig {
     pub completed_operations: usize,
     /// Upper bound on queued and executing operations.
     pub pending_operations: usize,
+    /// Maximum typed admission redirects permitted in one operation.
+    pub max_admission_redirects: usize,
+    /// Number of terminal navigation statuses retained independently of operations.
+    /// The effective minimum is one.
+    /// Pending statuses are never trimmed; one recoverable status is retained per
+    /// currently empty live window even when this bound is reached.
+    pub navigation_records: usize,
     /// Initial work policy for fresh tabs.
     pub default_mode: TabMode,
 }
@@ -33,6 +88,8 @@ impl Default for RouterConfig {
             history_capacity: None,
             completed_operations: 256,
             pending_operations: 1024,
+            max_admission_redirects: 8,
+            navigation_records: 64,
             default_mode: TabMode::Foreground,
         }
     }
@@ -56,6 +113,20 @@ impl<T: Clone> Operation<T> {
     pub async fn wait(self) -> Result<Outcome<T>, OperationError> {
         self.result.await
     }
+}
+
+/// Application-wide quit guard input.
+///
+/// Rake invokes these guards after finite work and retained-entry guards have
+/// approved the quit, immediately before managed work is stopped. The callback
+/// owns any application state it needs to inspect and should re-read that state
+/// before returning `Ok(())`; Rake cannot revalidate state outside the router.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuitGuardContext {
+    /// The quit operation being evaluated.
+    pub operation_id: OperationId,
+    /// The finite-work policy selected by the initiating quit request.
+    pub options: QuitOptions,
 }
 
 /// An owned guard input. No UI context is borrowed across its async work.

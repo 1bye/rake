@@ -1,0 +1,6 @@
+[
+  {"input":"","normalize":true,"trim":true,"expected":{"text":"","statistics":{"bytes":0,"characters":0,"words":0,"lines":0}}},
+  {"input":"a \r\nb\t\r","normalize":true,"trim":true,"expected":{"text":"a\nb\n","statistics":{"bytes":4,"characters":4,"words":2,"lines":3}}},
+  {"input":"漢字 🙂  \r\nsecond\t\r","normalize":true,"trim":true,"expected":{"text":"漢字 🙂\nsecond\n","statistics":{"bytes":19,"characters":12,"words":3,"lines":3}}},
+  {"input":"a\u0085b\uFEFFc","normalize":false,"trim":false,"expected":{"text":"a\u0085b\uFEFFc","statistics":{"bytes":8,"characters":5,"words":1,"lines":1}}}
+]

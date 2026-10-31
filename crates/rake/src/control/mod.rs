@@ -18,8 +18,6 @@
 mod commands;
 mod host;
 mod memory;
-#[cfg(all(feature = "gpui", feature = "devtools"))]
-pub(crate) mod standalone;
 
 pub(crate) use host::HostClient;
 

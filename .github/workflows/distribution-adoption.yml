@@ -1,0 +1,280 @@
+name: Distribution adoption
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [acceptance, comparison, velopack, velopack-update, updates-controller, linux-deep, flatpak, windows-update, linux-final, windows-final, appinstaller, app-readiness]
+        default: acceptance
+      fixture_run:
+        type: string
+        description: Previous Flatpak artifact run to reuse for UI diagnostics
+        default: ""
+      platform:
+        type: choice
+        options: [all, windows, linux, macos]
+        default: all
+concurrency:
+  group: distribution-adoption-${{ github.ref }}-${{ inputs.platform }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  app-readiness:
+    if: inputs.mode == 'app-readiness' && inputs.platform != 'macos'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-latest","ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GPUI Linux development libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-xinput-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev libfontconfig-dev
+      - name: Portable runtime tests
+        shell: python
+        run: |
+          import subprocess
+          tests = [
+              "--lib",
+              "--test", "routing",
+              "--test", "navigation",
+              "--test", "managed_work",
+              "--test", "guarded_quit",
+              "--test", "runtime_context",
+              "--test", "services",
+              "--test", "platform",
+              "--test", "web_deployment",
+              "--test", "windows",
+              "--test", "storage",
+              "--test", "storage_backends",
+              "--test", "storage_cache",
+          ]
+          subprocess.run(
+              ["cargo", "test", "-p", "rake", "--no-default-features", *tests, "--locked"],
+              check=True,
+          )
+      - name: Check rake and desktop targets on Windows
+        if: runner.os == 'Windows'
+        run: cargo check -p rake -p rake-foundation -p rake-desktop-example -p rake-files --all-targets --features rake/view-test-support,rake/devtools,rake/updates-velopack --locked
+      - name: Check rake and desktop targets on Linux
+        if: runner.os == 'Linux'
+        run: cargo check -p rake -p rake-foundation -p rake-desktop-example -p rake-files --all-targets --features rake/view-test-support,rake/devtools,rake/updates-appimage --locked
+      - name: Platform and Web boundary regression tests
+        run: |
+          node scripts/test-platform.mjs
+          node scripts/test-web-runtime.mjs
+          node scripts/test-offline.mjs
+          node scripts/test-file-processing.mjs
+          python scripts/test-web-deployment.py
+  native:
+    if: inputs.mode == 'comparison'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-latest"]' || inputs.platform == 'macos' && '["macos-latest"]' || '["macos-latest","windows-latest","ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tests/distribution-adoption
+      - run: python scripts/test-distribution-adoption.py --output adoption-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adoption-${{ matrix.os }}
+          path: adoption-results.json
+  acceptance:
+    if: inputs.mode == 'updates-controller' || inputs.mode == 'acceptance' || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'windows-update' || inputs.mode == 'linux-final' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-latest"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-latest","ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final') && 45 || 30 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install deep Linux prerequisites
+        if: runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf rpm desktop-file-utils apt-utils dpkg-dev createrepo-c gnupg flatpak flatpak-builder ostree xvfb xauth openbox weston libfuse2
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build CLI for deep Linux acceptance
+        if: inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final'
+        run: cargo build -p rake-cli --locked
+      - name: Signed Linux repository install and upgrade
+        if: runner.os == 'Linux' && inputs.mode == 'linux-deep'
+        timeout-minutes: 10
+        run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install --repositories
+      - name: Shared update controller tests and native host checks
+        if: inputs.mode == 'updates-controller'
+        timeout-minutes: 8
+        shell: python
+        run: |
+          import os, subprocess
+          feature = 'velopack' if os.name == 'nt' else 'appimage'
+          if os.name != 'nt':
+              subprocess.run(['sudo', 'apt-get', 'update'], check=True)
+              subprocess.run(['sudo', 'apt-get', 'install', '-y', 'patchelf', 'desktop-file-utils', 'libfuse2'], check=True)
+              subprocess.run(['cargo', 'build', '-p', 'rake-cli', '--locked'], check=True)
+          subprocess.run(['cargo', 'test', '-p', 'rake-updates', '--features', feature, '--locked'], check=True)
+          subprocess.run(['cargo', 'check', '-p', 'rake', '--features', 'updates-' + feature, *([] if os.name == 'nt' else ['--no-default-features']), '--locked'], check=True)
+      - name: Signed AppImage HTTPS publication and native update
+        if: always() && runner.os == 'Linux' && ((inputs.mode == 'updates-controller' && success()) || inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
+        timeout-minutes: 8
+        run: python3 scripts/test-distribution-appimage.py --cli target/debug/rake
+      - uses: actions/download-artifact@v4
+        if: runner.os == 'Linux' && inputs.mode == 'flatpak' && inputs.fixture_run != ''
+        with:
+          name: native-flatpak
+          path: target/distribution-native-flatpak
+          run-id: ${{ inputs.fixture_run }}
+          github-token: ${{ github.token }}
+      - name: Linux legacy bundle and native metadata consumers
+        if: runner.os == 'Linux' && inputs.mode == 'linux-final'
+        timeout-minutes: 3
+        run: |
+          cargo test -p rake-cli --test distribution_commands --test distribution_bundle --locked
+          python3 scripts/test-bundle.py BundleTests.test_real_native_bundle_is_signed_relocatable_and_preserves_previous_output_on_failure BundleTests.test_native_build_delegates_to_rust_and_preserves_installed_layout BundleTests.test_native_output_cannot_overlap_an_asset_input
+      - name: Arch repository and Flatpak sandbox GPU render
+        if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')
+        timeout-minutes: 30
+        run: python3 scripts/test-distribution-linux-formats.py --cli target/debug/rake ${{ (inputs.mode == 'flatpak' || inputs.mode == 'linux-final') && '--only flatpak' || '' }} ${{ inputs.fixture_run != '' && '--reuse-flatpak' || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Linux' && (inputs.mode == 'flatpak' || inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
+        with:
+          name: native-flatpak
+          path: target/distribution-native-flatpak/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Install Linux packaging prerequisites
+        if: runner.os == 'Linux' && inputs.mode == 'acceptance'
+        run: sudo apt-get update && sudo apt-get install -y patchelf rpm desktop-file-utils
+      - if: inputs.mode == 'acceptance'
+        run: cargo test -p rake-dist-core -p rake-dist -p rake-build -p rake-resources -p rake-dist-macos -p rake-dist-windows -p rake-dist-linux --locked
+      - name: Verify real ELF relocation and Debian tool consumption
+        if: runner.os == 'Linux' && inputs.mode == 'acceptance'
+        run: cargo test -p rake-dist-linux --features native-tests --test native --locked
+      - if: inputs.mode == 'acceptance'
+        run: cargo test -p rake-cli --test distribution_bundle --test distribution_plan --locked
+      - name: Debian and Fedora install, upgrade and uninstall
+        if: runner.os == 'Linux' && inputs.mode == 'acceptance'
+        timeout-minutes: 8
+        run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install
+      - name: Build and package the real GPUI application with custom manifest
+        if: runner.os == 'Windows' && inputs.mode == 'acceptance'
+        run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
+      - name: Build CLI for focused Velopack acceptance
+        if: (inputs.mode == 'updates-controller' && runner.os == 'Windows') || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
+        run: cargo build -p rake-cli --locked
+      - name: Create a disposable local Windows signing profile
+        timeout-minutes: 2
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Rake CI Distribution' -Provider 'Microsoft Software Key Storage Provider' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyProtection None -KeyExportPolicy NonExportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(2)
+          "RAKE_TEST_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          $public = Join-Path $env:RUNNER_TEMP 'rake-test-public.cer'
+          Export-Certificate -Cert $cert -FilePath $public | Out-Null
+          Write-Host 'Created disposable software signing identity'
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+          Write-Host 'Installed public root trust on the disposable runner'
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+      - name: Windows SDK signing, installation and upgrade
+        timeout-minutes: 5
+        if: always() && runner.os == 'Windows' && inputs.mode == 'acceptance'
+        run: cargo test -p rake-dist-windows --features native-signing-tests --test sdk --test dll --locked
+      - name: Install pinned native Velopack tool
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller'
+        timeout-minutes: 3
+        run: dotnet tool install --global vpk --version 1.2.161
+      - name: Inspect pinned Velopack CLI console output
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller'
+        run: vpk --help
+      - name: Focused registration and built-in signing tests
+        if: runner.os == 'Windows' && (inputs.mode == 'velopack' || inputs.mode == 'velopack-update')
+        timeout-minutes: 4
+        run: |
+          cargo test -p rake-updates --features velopack --lib --locked
+          cargo test -p rake-dist --test signing --locked
+          cargo test -p rake-cli --test update_key --locked
+          cargo test -p rake-dist-core --locked
+      - name: Velopack native install, upgrade and uninstall
+        if: always() && runner.os == 'Windows' && inputs.mode != 'updates-controller' && inputs.mode != 'windows-update' && inputs.mode != 'velopack-update' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller' && (inputs.mode != 'velopack' || success())
+        timeout-minutes: 8
+        run: python scripts/test-distribution-velopack.py --cli target/debug/rake.exe
+      - name: Native private DLL isolation
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 3
+        run: cargo test -p rake-dist-windows --features native-signing-tests --test dll --locked
+      - name: Velopack signed HTTPS feed and guarded SDK restart
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || ((inputs.mode == 'updates-controller' || inputs.mode == 'velopack' || inputs.mode == 'velopack-update') && success()))
+        timeout-minutes: 12
+        run: python scripts/test-distribution-velopack-update.py --cli target/debug/rake.exe
+      - name: Managed metadata and localized PRI SDK acceptance
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 3
+        run: cargo test -p rake-dist-windows --features native-tests --test sdk sdk_validates_and_unpacks_a_real_managed_package --locked
+      - name: NSIS lifecycle and OS registrations
+        if: always() && runner.os == 'Windows' && inputs.mode == 'windows-update'
+        timeout-minutes: 4
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only nsis
+      - name: MSI lifecycle and OS registrations
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || inputs.mode == 'windows-final')
+        timeout-minutes: 4
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only msi
+      - name: Installed Windows native UI
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-update' || inputs.mode == 'windows-final')
+        timeout-minutes: 8
+        run: python scripts/test-distribution-windows-installers.py --cli target/debug/rake.exe --only gpui
+      - name: Generated HTTPS App Installer enrollment and managed upgrade
+        if: always() && runner.os == 'Windows' && (inputs.mode == 'windows-final' || inputs.mode == 'appinstaller')
+        timeout-minutes: 6
+        run: python scripts/test-distribution-appinstaller.py --cli target/debug/rake.exe
+      - name: Windows helper process tree ownership
+        if: always() && runner.os == 'Windows' && inputs.mode == 'appinstaller'
+        timeout-minutes: 2
+        run: cargo test -p rake-resources --test process --locked
+      - name: Verify Velopack startup precedes the app factory
+        if: always() && runner.os == 'Windows' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller'
+        shell: pwsh
+        run: |
+          cargo run -p rake-updates --features velopack --example velopack-startup --locked -- --veloapp-install 1.0.0
+          if ($LASTEXITCODE -ne 0) { throw 'Velopack installer startup failed' }
+      - name: Remove disposable signing profile
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:RAKE_TEST_CERT_THUMBPRINT) {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:RAKE_TEST_CERT_THUMBPRINT" -DeleteKey -ErrorAction SilentlyContinue
+            foreach ($store in @('Root', 'TrustedPeople')) {
+              Remove-Item -LiteralPath "Cert:\LocalMachine\$store\$env:RAKE_TEST_CERT_THUMBPRINT" -ErrorAction SilentlyContinue
+            }
+          }
