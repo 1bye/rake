@@ -3,9 +3,9 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use super::{Capabilities, Capability, Error, PermissionState};
 #[cfg(feature = "gpui")]
 use super::Request;
+use super::{Capabilities, Capability, Error, PermissionState};
 
 #[wasm_bindgen(module = "/src/platform/browser.js")]
 extern "C" {

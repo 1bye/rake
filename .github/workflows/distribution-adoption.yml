@@ -60,6 +60,8 @@ jobs:
               "--test", "guarded_quit",
               "--test", "runtime_context",
               "--test", "services",
+              "--test", "platform",
+              "--test", "web_deployment",
               "--test", "windows",
           ]
           subprocess.run(
@@ -72,6 +74,12 @@ jobs:
       - name: Check rake and desktop targets on Linux
         if: runner.os == 'Linux'
         run: cargo check -p rake -p rake-foundation -p rake-desktop-example --all-targets --features rake/view-test-support,rake/devtools,rake/updates-appimage --locked
+      - name: Platform and Web boundary regression tests
+        run: |
+          node scripts/test-platform.mjs
+          node scripts/test-web-runtime.mjs
+          node scripts/test-offline.mjs
+          python scripts/test-web-deployment.py
   native:
     if: inputs.mode == 'comparison'
     strategy:

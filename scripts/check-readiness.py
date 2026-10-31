@@ -20,17 +20,24 @@ GROUPS = {
     "native": [
         ["cargo", "fmt", "--all", "--check"],
         ["cargo", "clippy", "-p", "rake", "-p", "rake-foundation", "-p", "rake-desktop-example", "--all-targets", "--features", "rake/view-test-support,rake/devtools", "--locked", "--", "-D", "warnings"],
-        ["cargo", "test", "-p", "rake", "--features", "view-test-support,devtools", "--lib", "--test", "view_state", "--test", "services", "--locked"],
+        ["cargo", "test", "-p", "rake", "--features", "view-test-support,devtools", "--lib", "--test", "view_state", "--test", "services", "--test", "platform", "--test", "web_deployment", "--locked"],
         ["cargo", "test", "-p", "rake", "--features", "experimental-view", "--doc", "--locked"],
     ],
     "web": [
         ["cargo", "clippy", "-p", "rake-foundation", "-p", "rake-routing", "-p", "rake-notes", "-p", "renamed-facade", "--lib", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
         ["node", "scripts/test-notes-storage.mjs"],
+        ["node", "scripts/test-platform.mjs"],
+        ["node", "scripts/test-web-runtime.mjs"],
+        ["node", "scripts/test-offline.mjs"],
+        ["python3", "scripts/test-web-deployment.py"],
+        ["cargo", "clippy", "-p", "rake-web-host-fixture", "--lib", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
+        ["cargo", "clippy", "-p", "rake", "--no-default-features", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
     ],
     "ui": [
         ["python3", "scripts/test-app-startup.py"],
         ["python3", "scripts/test-app-layout.py"],
     ],
+    "browser": [["node", "scripts/test-web-platform.mjs"]],
 }
 
 

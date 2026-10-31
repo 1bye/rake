@@ -5975,6 +5975,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6290,6 +6291,15 @@ name = "rake-view"
 version = "0.1.0"
 dependencies = [
  "rake",
+]
+
+[[package]]
+name = "rake-web-host-fixture"
+version = "0.1.0"
+dependencies = [
+ "rake",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

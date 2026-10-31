@@ -20,7 +20,7 @@ updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["rake-diagnostics/devtools", "rake-http/devtools"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
 view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
-gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "native-lifecycle"]
+gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 rake-updates = { path = "../rake-updates", optional = true }
@@ -52,6 +52,7 @@ libc = "0.2"
 async-io = "2.6"
 blocking = "1.7"
 tempfile = "3"
+raw-window-handle = { version = "0.6", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen = "0.2"
@@ -62,7 +63,9 @@ web-sys = { version = "0.3", features = ["console", "Window", "History", "Locati
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
-raw-window-handle = { version = "0.6", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm"], optional = true }
 
 [dev-dependencies]
 futures.workspace = true

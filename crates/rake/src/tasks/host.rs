@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 pub(crate) struct HostObserver {
     _quit: gpui::Subscription,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     _poll: gpui::Task<()>,
     #[cfg(target_family = "wasm")]
     _browser: Option<BrowserVisibility>,
@@ -25,21 +25,20 @@ impl HostObserver {
         #[cfg(not(target_family = "wasm"))]
         let _ = warn_before_unload;
 
-        // shortcut: GPUI cannot veto OS/Dock termination here; use a cancelable
-        // application-quit hook when GPUI provides one.
+        // Managed host bridges handle cancelable quit before this final teardown.
         let quit = cx.on_app_quit(move |_| {
             shutdown();
 
             async {}
         });
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             report(native_visibility(window));
             let mut context = window.to_async(cx);
 
-            // GPUI currently exposes no occlusion observer. Poll the actual AppKit
-            // surface on the UI loop rather than substituting active-window status.
+            // GPUI currently exposes no visibility observer. Query the borrowed
+            // native surface on its UI loop instead of substituting keyboard focus.
             let poll = cx.foreground_executor().spawn(async move {
                 loop {
                     if context
@@ -68,7 +67,7 @@ impl HostObserver {
             }
         }
 
-        #[cfg(not(any(target_os = "macos", target_family = "wasm")))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_family = "wasm")))]
         {
             let _ = (window, cx);
 
@@ -76,6 +75,45 @@ impl HostObserver {
 
             Self { _quit: quit }
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_visibility(window: &Window) -> HostVisibility {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, IsWindowVisible};
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return HostVisibility::Unknown;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return HostVisibility::Unknown;
+    };
+    let hwnd = handle.hwnd.get() as *mut std::ffi::c_void;
+    let mut cloaked = 0_u32;
+    // SAFETY: The borrowed GPUI window supplies a live HWND on the UI thread.
+    // The DWM output points to an initialized u32 with exactly the requested size.
+    unsafe {
+        if IsWindow(hwnd) == 0 {
+            return HostVisibility::Unknown;
+        }
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            return HostVisibility::Hidden;
+        }
+        if DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED as u32,
+            (&mut cloaked as *mut u32).cast(),
+            std::mem::size_of::<u32>() as u32,
+        ) < 0
+        {
+            return HostVisibility::Unknown;
+        }
+    }
+    if cloaked != 0 {
+        HostVisibility::Hidden
+    } else {
+        HostVisibility::Visible
     }
 }
 

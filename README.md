@@ -61,6 +61,12 @@ with search, pinned notes, an editor, autosave and crash recovery. Run
 `cargo run -p rake-notes`. Its [typed service composition](docs/services.md) keeps
 GUI edits, CLI commands and lifecycle guards on the same notebook instance.
 
+Shared [platform services](docs/platform-services.md) expose files, clipboard,
+preferences and URL activations. [Browser applications](docs/web-applications.md)
+cover owned Web Workers, offline bundles and guarded deployment reload. See
+[release qualification](docs/qualification.md) for what automated checks establish
+and which real-host accessibility/display checks remain release gates.
+
 ## Workspace
 
 `rake` is the application facade. It owns routing, task lifetimes, runtime control
@@ -235,8 +241,9 @@ Durable sessions remain separate. Native code
 replacement awaits the external hot reloader; native dev currently uses an explicitly
 reported checkpointed restart. Runtime control is opt-in, native IPC currently requires Unix, and state watches coalesce with
 explicit revision gaps. Native routed applications support multiple windows; Web
-keeps one host and reports `NewWindow` as unsupported. Host visibility is measured in Web
-and on macOS; other native backends report Unknown. Development reload checkpoints
+keeps one host and reports `NewWindow` as unsupported. Host visibility is measured in Web,
+on macOS, and through Windows visible/minimized/cloaked state; Linux reports Unknown.
+See `rake::tasks::visibility_support()` for the measurement boundary. Development reload checkpoints
 restore compatible workspaces and opt-in entry data; durable sessions are separate.
 `App::root` and `App::root_with` support managed applications without navigation.
 See [application shapes](docs/application.md) for root, background and headless hosts.

@@ -145,7 +145,7 @@ pub enum HistoryChange {
     Clear,
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "gpui"))]
 pub(crate) mod browser {
     use std::cell::RefCell;
     use std::rc::Rc;

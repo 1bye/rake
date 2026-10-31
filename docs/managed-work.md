@@ -174,7 +174,9 @@ The macOS adapter reads AppKit window visibility, minimization and occlusion on
 the UI loop every 250 ms. This bounds observation frequency without confusing
 keyboard focus with presentation. [Guarded quit](guarded-quit.md) coordinates
 finite jobs and disposal guards before stopping activity factories. Forced native
-termination requests cancellation before host teardown. Other native backends currently report `Unknown`; unknown
+termination requests cancellation before host teardown. Windows observes visible,
+minimized and DWM-cloaked window state without inferring keyboard focus; it does not
+measure overlap by other windows. Linux backends currently report `Unknown`; unknown
 visibility assumes visible, and custom hosts can supply actual observations with
 `Router::set_window_visibility(id, visibility)`. The existing
 `set_host_visibility` convenience targets the initial host. Every native window

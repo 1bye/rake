@@ -54,6 +54,9 @@ Use the [standalone example](../examples/foundation/README.md),
 ## Release gates and evidence
 
 Run `python3 scripts/check-readiness.py --list` to see the bounded check groups.
+The `browser` group uses a real isolated Chrome instance and a Rust Wasm fixture;
+`web` includes compilation and deterministic adapter/cache tests. See
+[qualification](qualification.md) for their exact boundaries and prerequisites.
 Each invocation writes an evidence report with the revision, dirty-worktree state,
 commands, durations and exit codes. A failed prerequisite fails the invocation;
 compilation is never recorded as a browser or native GUI test.

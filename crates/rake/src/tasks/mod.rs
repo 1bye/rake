@@ -20,6 +20,37 @@ mod runtime;
 pub use runtime::{ActivityRun, AppHandle, TaskHandle, TaskScope};
 pub(crate) use runtime::{Scope, WorkRuntime};
 
+/// What the built-in host adapter can measure, independently of keyboard focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VisibilitySupport {
+    /// No portable measurement; custom hosts may supply their own signal.
+    Unknown,
+    /// AppKit visibility, minimization and occlusion.
+    NativeOcclusion,
+    /// Windows visibility, minimization and DWM cloaking; overlap is not measured.
+    NativeWindowState,
+    /// Browser document visibility/page lifecycle; execution may still be suspended.
+    BrowserDocument,
+}
+
+/// Describes the selected adapter's visibility contract. A particular unavailable
+/// surface can still report [`HostVisibility::Unknown`]. Linux/Wayland do not infer
+/// visibility from focus; embedding hosts can use `Router::set_window_visibility`.
+pub fn visibility_support() -> VisibilitySupport {
+    if !cfg!(feature = "gpui") {
+        return VisibilitySupport::Unknown;
+    }
+    if cfg!(target_os = "macos") {
+        VisibilitySupport::NativeOcclusion
+    } else if cfg!(target_os = "windows") {
+        VisibilitySupport::NativeWindowState
+    } else if cfg!(target_family = "wasm") {
+        VisibilitySupport::BrowserDocument
+    } else {
+        VisibilitySupport::Unknown
+    }
+}
+
 /// Portable host timer. Dropping its future cancels observation of the timer.
 pub async fn sleep(duration: std::time::Duration) {
     crate::http::sleep(duration).await;

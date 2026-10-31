@@ -59,7 +59,16 @@ impl FileHandle {
             let path = self.path.clone();
             blocking::unblock(move || {
                 use std::io::Read;
-                let file = std::fs::File::open(path)?;
+                let mut options = std::fs::OpenOptions::new();
+                options.read(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    // A picker result can be replaced with a FIFO before opening.
+                    // Never leave a blocking worker waiting forever for its writer.
+                    options.custom_flags(libc::O_NONBLOCK);
+                }
+                let file = options.open(path)?;
                 if !file.metadata()?.is_file() {
                     return Err(Error::InvalidInput(
                         "selection must be a regular file".into(),

@@ -122,3 +122,18 @@ fn namespaced_preferences_reject_paths_before_accessing_the_host() {
         ));
     }
 }
+
+#[cfg(all(unix, feature = "gpui"))]
+#[test]
+fn reading_a_fifo_is_rejected_without_waiting_for_a_writer() {
+    use std::os::unix::ffi::OsStrExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pipe");
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: name is a valid NUL-terminated pathname in our temporary directory.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    assert!(matches!(
+        block_on(rake::platform::FileHandle::from_path(path).read(10)),
+        Err(Error::InvalidInput(_))
+    ));
+}
