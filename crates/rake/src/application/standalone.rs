@@ -40,7 +40,15 @@ impl InspectionRoot {
             let observe = async {
                 loop {
                     inspection.listen().await;
-                    if view.update(cx, |_, cx| cx.notify()).is_err() {
+                    if view
+                        .update(cx, |root, cx| {
+                            // GPUI tracks the erased content view as a render dependency.
+                            // Invalidating only this wrapper may not schedule a native draw.
+                            gpui::App::notify(cx, root.content.entity_id());
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }

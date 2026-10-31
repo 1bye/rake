@@ -124,3 +124,116 @@ fn disabled_policy_returns_the_original_root_without_creating_a_host() {
         assert_eq!(root.entity_id(), id);
     });
 }
+
+#[test]
+fn inspection_edits_invalidate_content_and_draw_text_styles_reset_and_undo() {
+    use crate::inspection::{StyleDeclaration, StyleEdit, TextEdit};
+    use futures::{FutureExt, StreamExt};
+
+    let mut app = gpui::TestAppContext::single();
+    let client = InspectionClient::new(Collector::default());
+    let mut content = None;
+    let (_, cx) = app.add_window_view(|_, cx| {
+        let view = cx.new(|cx| Content {
+            width: 120.,
+            focus: cx.focus_handle(),
+        });
+        content = Some(view.clone());
+        InspectionRoot::new(
+            view.into(),
+            client.clone(),
+            ControlConfig::Disabled,
+            "standalone.edits".into(),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let mut invalidations = cx.notifications(&content.unwrap());
+    let host = client.host();
+    let set_width = |value: &str| StyleEdit::Set {
+        declaration: StyleDeclaration {
+            property: "width".into(),
+            value: value.into(),
+            enabled: true,
+        },
+    };
+
+    for (text_edit, style_edit, expected_text, expected_width) in [
+        (
+            TextEdit::Set {
+                text: "Edited café 🙂".into(),
+            },
+            set_width("240px"),
+            "Edited café 🙂",
+            240.,
+        ),
+        (TextEdit::Reset {}, StyleEdit::Reset, "Standalone", 120.),
+        (TextEdit::Undo {}, StyleEdit::Undo, "Edited café 🙂", 240.),
+        (
+            TextEdit::Set {
+                text: String::new(),
+            },
+            set_width("180px"),
+            "",
+            180.,
+        ),
+        (TextEdit::Undo {}, StyleEdit::Undo, "Edited café 🙂", 240.),
+    ] {
+        while matches!(invalidations.next().now_or_never(), Some(Some(()))) {}
+        let before = client.inspection().snapshot();
+        let text = before
+            .elements
+            .iter()
+            .find(|node| node.text_editable && node.text.is_some())
+            .unwrap();
+        let styled = before
+            .elements
+            .iter()
+            .find(|node| node.semantic_id.as_deref() == Some("content"))
+            .unwrap();
+        for command in [
+            Command::EditElementText {
+                id: text.id.clone(),
+                generation: before.capture.clone(),
+                edit: text_edit,
+            },
+            Command::EditElementStyle {
+                id: styled.id.clone(),
+                generation: before.capture.clone(),
+                edit: style_edit,
+            },
+        ] {
+            assert!(matches!(
+                futures::executor::block_on(host.request_async(Request {
+                    protocol: PROTOCOL_VERSION,
+                    runtime_id: host.info().runtime_id,
+                    key: None,
+                    message: Message::Command(command),
+                }))
+                .unwrap(),
+                Reply::Acknowledged
+            ));
+        }
+        cx.run_until_parked();
+        assert_eq!(
+            invalidations.next().now_or_never(),
+            Some(Some(())),
+            "inspection edits must invalidate the content entity that GPUI tracks for redraw"
+        );
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let after = client.inspection().snapshot();
+        let text_after = after
+            .elements
+            .iter()
+            .find(|node| node.stable_id == text.stable_id)
+            .unwrap();
+        let style_after = after
+            .elements
+            .iter()
+            .find(|node| node.stable_id == styled.stable_id)
+            .unwrap();
+        assert_eq!(text_after.text.as_deref(), Some(expected_text));
+        assert_eq!(style_after.layout.unwrap().width, expected_width);
+    }
+}

@@ -667,11 +667,9 @@ impl Session {
                             .into(),
                     },
                 };
-                self.control(self.dom.text_command(
-                    &request.params,
-                    edit,
-                    method != "DOM.setNodeValue",
-                )?)?;
+                self.edit_control(|dom| {
+                    dom.text_command(&request.params, edit.clone(), method != "DOM.setNodeValue")
+                })?;
                 // Character-data events follow the actual GPUI draw, including layout and AX updates.
                 Ok(json!({}))
             }
@@ -821,9 +819,10 @@ impl Session {
                         },
                     )
                 };
-                self.control(self.dom.edit_command(node, edit)?)?;
-                self.refresh_dom()?;
-                self.load_details(node)?;
+                self.edit_control(|dom| dom.edit_command(node, edit.clone()))?;
+                // The mutation is acknowledged. A redraw can expire the capture before a
+                // follow-up read; that must not turn an applied edit into an apparent failure.
+                self.dom.acknowledge_style(node, &edit)?;
                 self.event(Event::new(
                     "CSS.styleSheetChanged",
                     json!({"styleSheetId":format!("rake-edit-{node}")}),
@@ -1533,7 +1532,19 @@ impl Session {
     }
 
     fn control(&self, command: Command) -> std::result::Result<(), Error> {
-        let reply = crate::terminal::exchange(
+        let reply = self
+            .send_control(command)
+            .map_err(|e| Error::new(-32000, e.to_string()))?;
+
+        if !matches!(reply, Reply::Acknowledged) {
+            return Err(Error::new(-32000, "Unexpected inspection control reply"));
+        }
+
+        Ok(())
+    }
+
+    fn send_control(&self, command: Command) -> std::result::Result<Reply, rake_client::Error> {
+        rake_client::exchange(
             &self.instance,
             &RuntimeRequest {
                 protocol: PROTOCOL_VERSION,
@@ -1543,7 +1554,28 @@ impl Session {
             },
             TIMEOUT,
         )
-        .map_err(|e| Error::new(-32000, e.to_string()))?;
+    }
+
+    fn edit_control(
+        &mut self,
+        command: impl Fn(&super::dom::Dom) -> std::result::Result<Command, Error>,
+    ) -> std::result::Result<(), Error> {
+        let reply = self.send_control(command(&self.dom)?);
+        if matches!(
+            reply,
+            Err(rake_client::Error::Control(
+                rake_protocol::control::ControlError::Inspection(
+                    rake_protocol::inspection::InspectionError::StaleGeneration
+                )
+            ))
+        ) {
+            // A draw can land between lookup and admission. This rejection proves no edit ran.
+            // Remap the retained CDP identity once; never repeat an uncertain transport outcome.
+            self.refresh_dom()?;
+            return self.control(command(&self.dom)?);
+        }
+
+        let reply = reply.map_err(|e| Error::new(-32000, e.to_string()))?;
 
         if !matches!(reply, Reply::Acknowledged) {
             return Err(Error::new(-32000, "Unexpected inspection control reply"));
@@ -3044,6 +3076,235 @@ mod tests {
     }
 
     #[test]
+    fn edits_remap_once_after_explicit_stale_rejection_without_retargeting_removed_nodes() {
+        use rake_protocol::{control::ControlError, inspection::InspectionError};
+
+        for (method, removed) in [
+            ("DOM.setNodeValue", false),
+            ("CSS.setEffectivePropertyValueForNode", false),
+            ("DOM.setNodeValue", true),
+        ] {
+            let mut before = capture("before-edit");
+            before.elements[0].stable_id = Some("retained".into());
+            before.elements[0].text = Some("Original".into());
+            before.elements[0].text_editable = true;
+            before.elements[0].style_editable = true;
+            let mut after = before.clone();
+            after.capture = "after-draw".into();
+            after.elements[0].id = "element-after-draw-0".into();
+            if removed {
+                after.elements[0].stable_id = Some("replacement".into());
+            }
+            let mut visible = before.clone();
+            let next = after.clone();
+            let mut attempts = 0;
+            let requests = if removed { 3 } else { 4 };
+            let (instance, worker, path) = fixture_result(
+                move |request| match request.message {
+                    RuntimeMessage::Query(Query::InspectTree {}) => {
+                        Ok(Reply::Elements(visible.clone()))
+                    }
+                    RuntimeMessage::Command(command) => {
+                        let (id, generation) = match command {
+                            Command::EditElementText { id, generation, .. }
+                            | Command::EditElementStyle { id, generation, .. } => (id, generation),
+                            _ => panic!("unexpected edit"),
+                        };
+                        attempts += 1;
+                        assert_eq!(
+                            generation,
+                            if attempts == 1 {
+                                "before-edit"
+                            } else {
+                                "after-draw"
+                            }
+                        );
+                        assert_eq!(id, format!("element-{generation}-0"));
+                        if attempts == 1 {
+                            visible = next.clone();
+                            Err(ControlError::Inspection(InspectionError::StaleGeneration))
+                        } else {
+                            assert_eq!(attempts, 2);
+                            Ok(Reply::Acknowledged)
+                        }
+                    }
+                    _ => panic!("unexpected request"),
+                },
+                requests,
+            );
+            let mut session = Session::new(instance, None);
+            session.dom.update(before).unwrap();
+            let node = session.dom.node_id("element-before-edit-0").unwrap();
+
+            let result = session.handle(&Request {
+                id: 1,
+                method: method.into(),
+                params: json!({"nodeId":node,"value":"240px","propertyName":"width"}),
+            });
+
+            assert_eq!(result.is_err(), removed);
+            if !removed {
+                assert_eq!(session.dom.node_id("element-after-draw-0"), Some(node));
+            }
+            worker.join().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn edit_recovery_is_bounded_and_other_rejections_are_never_repeated() {
+        use rake_protocol::{control::ControlError, inspection::InspectionError};
+
+        for rejection in [
+            ControlError::Inspection(InspectionError::StaleGeneration),
+            ControlError::RuntimeShutdown,
+        ] {
+            let mut snapshot = capture("edit");
+            snapshot.elements[0].style_editable = true;
+            let returned = snapshot.clone();
+            let stale = matches!(
+                rejection,
+                ControlError::Inspection(InspectionError::StaleGeneration)
+            );
+            let expected = rejection.to_string();
+            let (instance, worker, path) = fixture_result(
+                move |request| match request.message {
+                    RuntimeMessage::Query(Query::InspectTree {}) => {
+                        Ok(Reply::Elements(returned.clone()))
+                    }
+                    RuntimeMessage::Command(Command::EditElementStyle { .. }) => {
+                        Err(rejection.clone())
+                    }
+                    _ => panic!("unexpected request"),
+                },
+                if stale { 4 } else { 2 },
+            );
+            let mut session = Session::new(instance, None);
+            session.dom.update(snapshot).unwrap();
+            let node = session.dom.node_id("element-edit-0").unwrap();
+
+            let error = session
+                .handle(&Request {
+                    id: 1,
+                    method: "Rake.undoStyles".into(),
+                    params: json!({"nodeId":node}),
+                })
+                .unwrap_err();
+
+            assert_eq!(error.message, expected);
+            worker.join().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn lost_edit_acknowledgement_never_starts_recovery() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let (instance, worker, path) = fixture(|_| unreachable!(), 0);
+        worker.join().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let server = listener.try_clone().unwrap();
+        let mut snapshot = capture("lost-edit-ack");
+        snapshot.elements[0].style_editable = true;
+        let returned = snapshot.clone();
+        let worker = std::thread::spawn(move || {
+            for query in [true, false] {
+                let (mut socket, _) = server.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut line = String::new();
+                BufReader::new(socket.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: RuntimeRequest = serde_json::from_str(&line).unwrap();
+                if query {
+                    assert!(matches!(
+                        request.message,
+                        RuntimeMessage::Query(Query::InspectTree {})
+                    ));
+                    let reply: std::result::Result<Reply, rake_protocol::control::ControlError> =
+                        Ok(Reply::Elements(returned.clone()));
+                    writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                } else {
+                    assert!(matches!(
+                        request.message,
+                        RuntimeMessage::Command(Command::EditElementStyle { .. })
+                    ));
+                    // The edit may have run. Lose its acknowledgement, keeping admission observable.
+                }
+            }
+        });
+        let mut session = Session::new(instance, None);
+        session.dom.update(snapshot).unwrap();
+        let node = session.dom.node_id("element-lost-edit-ack-0").unwrap();
+
+        assert!(
+            session
+                .handle(&Request {
+                    id: 1,
+                    method: "Rake.undoStyles".into(),
+                    params: json!({"nodeId":node}),
+                })
+                .is_err()
+        );
+
+        worker.join().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn acknowledged_style_edits_do_not_depend_on_followup_reads() {
+        for method in ["CSS.setStyleTexts", "Rake.resetStyles", "Rake.undoStyles"] {
+            let mut snapshot = capture("ack-edit");
+            snapshot.elements[0].style_editable = true;
+            let returned = snapshot.clone();
+            // The host closes immediately after committing: no capture/detail read is available.
+            let (instance, worker, path) = fixture(
+                move |request| match request.message {
+                    RuntimeMessage::Query(Query::InspectTree {}) => {
+                        Reply::Elements(returned.clone())
+                    }
+                    RuntimeMessage::Command(Command::EditElementStyle { .. }) => {
+                        Reply::Acknowledged
+                    }
+                    _ => panic!("unexpected request after mutation"),
+                },
+                2,
+            );
+            let mut session = Session::new(instance, None);
+            session.dom.update(snapshot).unwrap();
+            let node = session.dom.node_id("element-ack-edit-0").unwrap();
+
+            let result = session
+                .handle(&Request {
+                    id: 1,
+                    method: method.into(),
+                    params: json!({"nodeId":node,"edits":[{
+                        "styleSheetId":format!("rake-edit-{node}"),
+                        "range":{"startLine":0,"startColumn":0,"endLine":0,"endColumn":0},
+                        "text":"width: 240px;"
+                    }]}),
+                })
+                .unwrap();
+
+            if method == "CSS.setStyleTexts" {
+                assert_eq!(result["styles"][0]["cssProperties"][0]["value"], "240px");
+                assert_eq!(session.dom.edit_text(node).unwrap(), "width: 240px;");
+            }
+            worker.join().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
     fn style_edits_cross_runtime_once_and_never_edit_authored_sheets() {
         let mut snapshot = capture("style-edit");
         snapshot.elements[0].style_editable = true;
@@ -3071,7 +3332,7 @@ mod tests {
                 }
                 _ => panic!("unexpected style request"),
             },
-            6,
+            4,
         );
         let mut session = Session::new(instance, None);
         session.dom.update(capture("style-edit")).unwrap();

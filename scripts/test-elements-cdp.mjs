@@ -12,6 +12,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 
 assert.equal(process.platform, 'darwin', 'requires a real macOS GUI; never silently skip');
 const root = fileURLToPath(new URL('../', import.meta.url));
+const serve = process.argv.includes('--serve');
 const directory = mkdtempSync('/tmp/rake-elements-cdp-'), control = join(directory, 'control');
 mkdirSync(control, {mode:0o700});
 const env = {...process.env, RAKE_DEV_CONTROL:'1', RAKE_CONTROL_DIR:control};
@@ -31,8 +32,13 @@ async function eventually(check) {
 function call(method, params = {}) {
   return new Promise((resolve, reject) => {
     const id = ++next, timer = setTimeout(() => { pending.delete(id); reject(new Error(method + ' timed out')); }, 5000);
-    pending.set(id, {resolve, reject, timer}); socket.send(JSON.stringify({id, method, params}));
+    pending.set(id, {resolve, reject, timer, method}); socket.send(JSON.stringify({id, method, params}));
   });
+}
+async function evaluate(expression) {
+  const result = await call('Runtime.evaluate',{expression});
+  assert.ok(!result.exceptionDetails, JSON.stringify(result.exceptionDetails));
+  return result;
 }
 function flatten(node) { return [node, ...(node.children || []).flatMap(flatten)]; }
 function semantic(node, id) { return node.attributes?.some((value, i, values) => i % 2 === 0 && value === 'id' && values[i+1] === id); }
@@ -55,10 +61,14 @@ try {
   socket.addEventListener('error', () => { if (!intentionalClose) for (const request of pending.values()) request.reject(new Error('WebSocket failed')); });
   socket.addEventListener('message', event => {
     const reply = JSON.parse(event.data), request = pending.get(reply.id);
-    if (request) { pending.delete(reply.id); clearTimeout(request.timer); reply.error ? request.reject(new Error(JSON.stringify(reply.error))) : request.resolve(reply.result); }
+    if (request) { pending.delete(reply.id); clearTimeout(request.timer); reply.error ? request.reject(new Error(`${request.method}: ${JSON.stringify(reply.error)}`)) : request.resolve(reply.result); }
     else if (reply.method && events.length < 256) events.push(reply);
   });
   await call('DOM.enable'); await call('CSS.enable'); await call('Accessibility.enable');
+  if (serve) {
+    console.log(JSON.stringify({session:directory,devtoolsFrontendUrl:target.devtoolsFrontendUrl}));
+    await new Promise(resolve => { process.once('SIGINT',resolve); process.once('SIGTERM',resolve); });
+  } else {
   const document = await call('DOM.getDocument', {depth:-1}), nodes = flatten(document.root);
   const paragraph = nodes.find(node => node.nodeName === 'p' && node.children?.some(child => child.nodeValue === 'Count: 0'));
   assert.ok(paragraph, 'paragraph text must reach CDP');
@@ -79,15 +89,15 @@ try {
   await assert.rejects(call('DOM.setNodeValue',{nodeId:paragraph.nodeId,value:'no element replacement'}), /editable text node/i);
   await assert.rejects(call('DOM.setNodeValue',{nodeId:textNode.nodeId,value:'🙂'.repeat(4097)}), /16 KiB/);
   await call('DOM.setInspectedNode',{nodeId:paragraph.nodeId});
-  await call('Runtime.evaluate',{expression:'rake.resetText($0)'});
+  await evaluate('rake.resetText($0)');
   await eventually(async () => await renderedText() === 'Count: 0');
-  await call('Runtime.evaluate',{expression:'rake.undoText($0)'});
+  await evaluate('rake.undoText($0)');
   await eventually(async () => await renderedText() === temporary);
   await call('DOM.setNodeValue',{nodeId:textNode.nodeId,value:''});
   await eventually(async () => await renderedText() === '');
-  await call('Runtime.evaluate',{expression:'rake.undoText($0)'});
+  await evaluate('rake.undoText($0)');
   await eventually(async () => await renderedText() === temporary);
-  await call('Runtime.evaluate',{expression:'rake.resetText($0)'});
+  await evaluate('rake.resetText($0)');
   await eventually(async () => await renderedText() === 'Count: 0');
   await call('CSS.setStyleSheetText',{styleSheetId:`rake-edit-${paragraph.nodeId}`,text:'display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; column-gap: 4px;'});
   await eventually(async () => (await call('CSS.getComputedStyleForNode',{nodeId:paragraph.nodeId})).computedStyle
@@ -122,16 +132,20 @@ try {
   assert.equal(edited.styles[0].cssProperties[0].disabled,true);
   edited = await call('CSS.setStyleTexts',{edits:[{styleSheetId:`rake-edit-${button.nodeId}`,range:edited.styles[0].range,text:'width: 240px;'}]});
   assert.equal(edited.styles[0].cssProperties[0].disabled,false);
-  await call('Runtime.evaluate',{expression:'rake.resetStyles($0)'});
+  await evaluate('rake.resetStyles($0)');
   events.length = 0;
   await call('CSS.setStyleSheetText',{styleSheetId:`rake-edit-${button.nodeId}`,text:'width: 240px; border-width: 2px; border-radius: 8px; overflow: hidden;'});
-  await eventually(async () => (await computed()).some(p=>p.name==='width' && p.value==='240px'));
-  const changed = await computed();
+  const changed = await eventually(async () => {
+    const properties = await computed();
+    // Width can already match an earlier frame; wait for the complete acknowledged edit.
+    return [['width','240px'],['border-left-width','2px'],['overflow-x','hidden']]
+      .every(([name,value])=>properties.some(p=>p.name===name && p.value===value)) && properties;
+  });
   assert.equal(changed.find(p=>p.name==='border-left-width').value,'2px');
   assert.equal(changed.find(p=>p.name==='overflow-x').value,'hidden');
   await call('Rake.resetStyles',{nodeId:button.nodeId});
   await eventually(async () => (await computed()).some(p=>p.name==='width' && p.value===original));
-  await call('Runtime.evaluate',{expression:'rake.undoStyles($0)'});
+  await evaluate('rake.undoStyles($0)');
   await eventually(async () => (await computed()).some(p=>p.name==='width' && p.value==='240px'));
   const current = flatten((await call('DOM.getDocument',{depth:-1})).root);
   assert.equal(current.find(node=>node.nodeName==='button' && semantic(node,'increment')).nodeId,button.nodeId);
@@ -139,6 +153,7 @@ try {
   await call('DOM.focus',{nodeId:button.nodeId});
   await call('Overlay.highlightNode',{nodeId:button.nodeId}); await call('Overlay.hideHighlight');
   console.log(`Native Elements/CDP passed: ${capture.elements.length} boundaries; temporary text/Unicode/empty edits and reset/undo, real relayout, stable IDs, lazy text, copy, sources, AX, style edits/toggles, stable polling, $0, focus and highlight.`);
+  }
 } catch (error) {
   console.error(readFileSync(logPath,'utf8')); throw error;
 } finally {

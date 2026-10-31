@@ -920,6 +920,28 @@ impl Dom {
         })
     }
 
+    pub fn acknowledge_style(
+        &mut self,
+        id: i32,
+        edit: &rake_protocol::inspection::StyleEdit,
+    ) -> Result<(), Error> {
+        use rake_protocol::inspection::StyleEdit;
+        let mut element = self.element(id)?.clone();
+        match edit {
+            StyleEdit::Replace { declarations } => element.style_overrides.clone_from(declarations),
+            StyleEdit::Set { declaration } => {
+                element
+                    .style_overrides
+                    .retain(|old| old.property != declaration.property);
+                element.style_overrides.push(declaration.clone());
+            }
+            StyleEdit::Reset => element.style_overrides.clear(),
+            // Only the runtime owns undo history. Its next poll publishes the restored value.
+            StyleEdit::Undo => return Ok(()),
+        }
+        self.details(id, element)
+    }
+
     pub fn control_id(&self, id: i32) -> Result<&str, Error> {
         Ok(&self.element(id)?.id)
     }

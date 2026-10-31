@@ -22,13 +22,14 @@ metadata. Source grants, selected nodes, object handles, editing and cursors sta
 connection-local. Simultaneous cold misses may read the same capture; no socket
 I/O occurs under the cache lock.
 
-Socket I/O has one owner. A connection admits four queued requests and two encoded
-outbound messages in addition to the existing session byte budget. Its ordered
+Socket I/O has one owner. A connection admits up to 64 pending requests within
+a 4 MiB encoded-request budget and two encoded outbound messages in addition to
+the existing session byte budget. Its ordered
 worker performs runtime operations, while ping, close and stateless startup
 acknowledgements remain responsive. Queued requests expire before execution;
 executing operations share a two-second blocking-exchange deadline. Mutations
-are never replayed by the transport. Disconnect cancels queued work. Explicit
-worker shutdown gets one 100 ms cleanup budget; inspection leases cover lost
+with uncertain outcomes are never replayed. Disconnect cancels queued work.
+Explicit worker shutdown gets one 100 ms cleanup budget; inspection leases cover lost
 cleanup acknowledgements. Dropping session state performs no socket I/O.
 
 Projection nodes now own shared views into immutable captures. Only hydrated
@@ -124,7 +125,7 @@ and byte eviction. Tests use real loopback sockets and controlled workers.
 Paged captures are installed only after contiguous pages reach their declared
 total. Skipped/truncated pages, changed totals/status/generations and expired
 captures fail without changing the frontend tree. A subsequent read can recover;
-mutations are not retried. The WebSocket write buffer is capped at 2 MiB, in
+uncertain mutations are not retried. The WebSocket write buffer is capped at 2 MiB, in
 addition to session and worker queue limits. A stopped worker's final batch is
 flushed before closing the connection.
 
@@ -160,3 +161,68 @@ scope so callers can budget polling as well as I/O.
 Console and Performance source-access checks were updated to request an actually
 uncaptured file URL. Their old numeric-URL replacements left current workspace
 URLs unchanged and incorrectly fetched the original allowed source.
+
+## Native temporary-edit redraws
+
+The standalone inspection host must notify its content entity as well as its
+wrapper. GPUI tracks that erased content entity as a render dependency; notifying
+only the wrapper could acknowledge an edit without scheduling the native draw
+that publishes the edited text, geometry and styles. The host now invalidates
+both entities through GPUI's public API. The production feature gate is unchanged.
+
+A draw can also land between the adapter's capture lookup and runtime admission.
+For text/style editing, reset and undo, an explicit `StaleGeneration` rejection
+allows one fresh lookup and submission using the retained CDP identity. That
+rejection occurs before mutation. Removed elements are never retargeted, repeated
+staleness remains an error, and transport failures or other rejections never cause
+another submission. All attempts share the enclosing operation deadline.
+
+Once a style mutation is acknowledged, its response no longer depends on a
+second capture/detail read. Such a read could expire during redraw and report
+an error even though reset or editing had already succeeded. The adapter stages
+acknowledged declarations for Chrome's immediate style/range response; normal
+polling publishes rendered geometry and the runtime-owned undo state. A socket
+regression closes the host immediately after committing: the acknowledgement and
+edited CSS still succeed. It fails on the former post-mutation read path.
+
+The standalone regression fails on the old invalidation path and checks Unicode,
+empty text, actual GPUI layout, reset and undo with the GPUI TestPlatform. Separate
+real Unix-socket tests cover remapping, removal, bounded recovery and other
+rejections, including a lost edit acknowledgement with no recovery request.
+Neither test category claims GPU or Chrome UI execution. Five consecutive native
+Elements workflow runs passed on 2026-10-31 after both fixes, covering actual
+GPUI rendering, Unicode/empty text, relayout, style edits/toggles, reset and undo.
+
+The final rebuilt adapter was verified in stock Chrome **156.0.8078.74** on
+2026-10-31. Inline editing changed a paragraph to `Verified native text — café 🙂`;
+`rake.resetText($0)` restored `Count: 0`, and `rake.undoText($0)` restored the edit.
+Editing the button's override in Styles set its width to 260px;
+`rake.resetStyles($0)` restored its original measured 109px, and
+`rake.undoStyles($0)` restored both the override and measured 260px width.
+All four Console helpers returned successfully, with no Console errors. A direct
+native capture confirmed the final Unicode text, declaration and rendered width.
+
+Native assertions wait for the complete rendered edit, including border and
+overflow. Width alone could match a previous frame before the newly acknowledged
+declarations had drawn; an acknowledgement does not claim a synchronous frame.
+
+Stock Chrome verification also exposed a startup admission regression: its burst
+of roughly 40 small requests exceeded the old four-request queue and rejected
+`Runtime.enable`, leaving Console without an execution context. Admission now
+has independent count and byte budgets so that normal startup fits without
+allowing 64 full-sized requests. A deterministic WebSocket test holds the worker
+until the recorded startup burst is admitted. Separate overload cases verify
+both limits while ping, startup acknowledgements and close remain responsive.
+
+For manual stock Chrome verification, start a dedicated native fixture:
+
+```sh
+cargo build -p rake-cli -p rake-view --features rake/devtools --offline
+node scripts/test-elements-cdp.mjs --serve
+```
+
+Open the printed `devtoolsFrontendUrl` in Chrome. Ctrl+C stops that fixture and
+cleans up its app, adapter and temporary control directory. Without `--serve`,
+the script runs the native protocol assertions and cleans up automatically.
+Evaluation helpers now assert `exceptionDetails` immediately instead of masking
+an exception as an eventual redraw timeout; protocol failures name their method.

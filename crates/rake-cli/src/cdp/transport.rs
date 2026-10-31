@@ -2,11 +2,15 @@
 
 use super::wire::{Error, Request, Response};
 use super::{Result, TIMEOUT};
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use tungstenite::{Message, WebSocket};
+
+const REQUEST_LIMIT: usize = 64;
+const REQUEST_BYTES: usize = 4 * 1024 * 1024;
 
 pub(super) struct Work {
     pub request: Request,
@@ -73,7 +77,8 @@ pub(super) fn serve(
     socket
         .get_mut()
         .set_write_timeout(Some(Duration::from_secs(1)))?;
-    let (input, requests) = mpsc::sync_channel(4);
+    // Chrome starts with a burst of small requests. Bound count and encoded bytes separately.
+    let (input, requests) = mpsc::sync_channel(REQUEST_LIMIT);
     // At most two encoded messages in addition to the session's byte-bounded queue.
     let (events, output) = mpsc::sync_channel(2);
     let closed = Arc::new(AtomicBool::new(false));
@@ -87,14 +92,15 @@ pub(super) fn serve(
     let thread = std::thread::spawn(move || work(worker).map_err(|error| error.to_string()));
     let mut peer_closed = false;
     let result = (|| -> Result<()> {
-        let mut pending = 0usize;
+        let mut pending = VecDeque::new();
+        let mut pending_bytes = 0usize;
         let mut busy = false;
         loop {
             for _ in 0..32 {
                 match output.try_recv() {
                     Ok(output) => {
                         if output.completed {
-                            pending = pending.saturating_sub(1);
+                            pending_bytes -= pending.pop_front().unwrap_or(0);
                         }
                         socket.write(output.message)?;
                     }
@@ -106,8 +112,9 @@ pub(super) fn serve(
                 }
             }
             socket.flush()?;
-            if busy != (pending > 0) {
-                busy = pending > 0;
+            let has_pending = !pending.is_empty();
+            if busy != has_pending {
+                busy = has_pending;
                 socket
                     .get_mut()
                     .set_read_timeout(Some(Duration::from_millis(if busy { 2 } else { 20 })))?;
@@ -136,11 +143,30 @@ pub(super) fn serve(
                         continue;
                     }
                     let id = request.id;
+                    let bytes = text.len();
+                    if pending.len() >= REQUEST_LIMIT
+                        || pending_bytes.saturating_add(bytes) > REQUEST_BYTES
+                    {
+                        socket.send(Message::text(
+                            Response::new(
+                                Some(id),
+                                Err(Error::new(
+                                    -32000,
+                                    "CDP request queue is full; no operation was started",
+                                )),
+                            )
+                            .encode()?,
+                        ))?;
+                        continue;
+                    }
                     match input.try_send(Work {
                         request,
                         deadline: Instant::now() + TIMEOUT,
                     }) {
-                        Ok(()) => pending += 1,
+                        Ok(()) => {
+                            pending.push_back(bytes);
+                            pending_bytes += bytes;
+                        }
                         Err(mpsc::TrySendError::Full(_)) => {
                             socket.send(Message::text(
                                 Response::new(
