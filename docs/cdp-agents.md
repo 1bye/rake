@@ -76,3 +76,28 @@ four retained page leases shared with ordinary tree paging. Unchanged semantic
 indexes reuse the existing shared immutable cache; a separate draw sequence
 advances without invalidating stable control IDs or unchanged-tree caching.
 Switching windows retires old CDP node handles; runtime replacement clears selection.
+
+## Condition waits
+
+`Rake.waitFor { query, state?: "present" | "absent", timeoutMs?: 1..30000,
+afterFrame?: "decimal-sequence" }` creates a connection-owned wait and performs
+one observation. The default timeout is five seconds. Poll
+`Rake.getWait { waitId }`; `Rake.cancelWait { waitId }` cancels observation without
+undoing or cancelling the original application action.
+
+Queries also support exact `text` and `bounds` predicates. Bounds can specify
+`x`, `y`, `width`, `height` and a nonnegative `tolerance` (default 0.5 logical
+points, maximum 100). Combine them with role/name/ID, enabled and visible filters.
+`afterFrame` requires a later inspection draw even if the tree identity stays
+unchanged. It is an inspection-paint marker, not a GPU presentation fence or a
+claim that every asynchronous application task has completed.
+
+Statuses are `pending`, `satisfied`, `timed_out`, `cancelled` and `invalidated`.
+Responses retain the last bounded observation, its revision/draw sequence, and
+any observation error. There are at most 32 handles; completed/expired handles
+can be evicted when new waits are created. Pending handles are never silently
+evicted. Selection/runtime changes invalidate pending waits. Absence refers to
+the captured tree and cannot succeed while its omission count is nonzero.
+
+Each poll uses the normal finite request deadline. No long wait holds the worker,
+and no fixed sleep substitutes for a readiness condition.

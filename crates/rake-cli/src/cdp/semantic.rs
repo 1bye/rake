@@ -145,8 +145,50 @@ pub(super) struct Selector {
     pub role: Option<String>,
     pub name: Option<String>,
     pub text_contains: Option<String>,
+    pub text: Option<String>,
+    pub bounds: Option<Bounds>,
     pub enabled: Option<bool>,
     pub visible: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Bounds {
+    x: Option<f32>,
+    y: Option<f32>,
+    width: Option<f32>,
+    height: Option<f32>,
+    #[serde(default = "default_tolerance")]
+    tolerance: f32,
+}
+fn default_tolerance() -> f32 {
+    0.5
+}
+impl Bounds {
+    fn valid(&self) -> bool {
+        self.tolerance.is_finite()
+            && (0. ..=100.).contains(&self.tolerance)
+            && [self.x, self.y, self.width, self.height]
+                .into_iter()
+                .flatten()
+                .all(f32::is_finite)
+            && self.width.is_none_or(|v| v >= 0.)
+            && self.height.is_none_or(|v| v >= 0.)
+    }
+    fn matches(&self, bounds: Option<rake_protocol::inspection::Layout>) -> bool {
+        bounds.is_some_and(|b| {
+            [
+                (self.x, b.x),
+                (self.y, b.y),
+                (self.width, b.width),
+                (self.height, b.height),
+            ]
+            .into_iter()
+            .all(|(expected, actual)| {
+                expected.is_none_or(|value| (value - actual).abs() <= self.tolerance)
+            })
+        })
+    }
 }
 
 pub(super) fn selector(params: &Value) -> Result<Selector, Error> {
@@ -154,7 +196,12 @@ pub(super) fn selector(params: &Value) -> Result<Selector, Error> {
     if serde_json::to_vec(&query).map_or(true, |v| v.len() > 4096) {
         return Err(Error::new(-32602, "Semantic query exceeds 4 KiB"));
     }
-    serde_json::from_value(query).map_err(|e| Error::new(-32602, e.to_string()))
+    let selector: Selector =
+        serde_json::from_value(query).map_err(|e| Error::new(-32602, e.to_string()))?;
+    if selector.bounds.as_ref().is_some_and(|b| !b.valid()) {
+        return Err(Error::new(-32602, "Invalid bounds predicate"));
+    }
+    Ok(selector)
 }
 
 fn prefix(value: &str) -> &str {
@@ -235,6 +282,14 @@ pub(super) fn project(
                 .text_contains
                 .as_ref()
                 .is_some_and(|v| !element.text.as_deref().is_some_and(|text| text.contains(v)))
+            || selector
+                .text
+                .as_ref()
+                .is_some_and(|v| element.text.as_ref() != Some(v))
+            || selector
+                .bounds
+                .as_ref()
+                .is_some_and(|v| !v.matches(element.layout))
             || selector.enabled.is_some_and(|v| enabled != Some(v))
             || selector.visible.is_some_and(|v| visible != Some(v))
         {
@@ -263,6 +318,20 @@ pub(super) fn project(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn geometry_predicates_have_explicit_finite_tolerances() {
+        let bounds: Bounds = serde_json::from_value(json!({"width":10.2})).unwrap();
+        assert!(bounds.matches(Some(rake_protocol::inspection::Layout {
+            x: 0.,
+            y: 0.,
+            width: 10.,
+            height: 5.
+        })));
+        assert!(!bounds.matches(None));
+        assert!(selector(&json!({"query":{"bounds":{"width":-1}}})).is_err());
+        assert!(selector(&json!({"query":{"bounds":{"tolerance":101}}})).is_err());
+        assert!(selector(&json!({"query":{"bounds":{"width":1e300}}})).is_err());
+    }
     #[test]
     fn semantic_queries_preserve_identity_and_bound_unicode_and_pagination() {
         let tree:Snapshot=serde_json::from_value(json!({"status":"captured","capture":"1","router_revision":0,"omitted":0,"coverage":"test","elements":[{"id":"one","stable_id":"s1","kind":"Button","semantic_id":"save","metadata_truncated":false,"text":"🙂".repeat(200)}]})).unwrap();

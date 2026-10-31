@@ -24,6 +24,7 @@ mod storage;
 mod styles;
 mod trace;
 mod transport;
+mod waits;
 mod wire;
 
 use rake_client::local::{self, Instance};

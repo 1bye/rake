@@ -31,6 +31,7 @@ fn encoded_bytes(events: &[Option<EncodedEvent>]) -> usize {
 }
 
 struct Session {
+    waits: super::waits::Waits,
     screenshots: Option<std::sync::Arc<super::screenshot::Screenshots>>,
     native_input: super::native_input::NativeInput,
     captures: std::sync::Arc<super::captures::Captures>,
@@ -72,6 +73,7 @@ struct Session {
 impl Session {
     fn new(instance: Instance, output: Option<std::path::PathBuf>) -> Self {
         Self {
+            waits: Default::default(),
             screenshots: None,
             native_input: Default::default(),
             captures: std::sync::Arc::default(),
@@ -155,6 +157,28 @@ impl Session {
             return Ok(result);
         }
         match method {
+            "Rake.waitFor" => {
+                let window = self.native_input.target(&self.instance)?.window;
+                self.native_input.window = Some(window);
+                let id = self.waits.start(
+                    &request.params,
+                    self.instance.info.runtime_id.to_string(),
+                    window,
+                    Instant::now(),
+                )?;
+                self.poll_wait(&id)
+            }
+            "Rake.getWait" | "Rake.cancelWait" => {
+                let id = request.params["waitId"]
+                    .as_str()
+                    .filter(|s| s.len() <= 128)
+                    .ok_or_else(|| Error::new(-32602, "waitId required"))?;
+                if method == "Rake.cancelWait" {
+                    self.waits.cancel(id, Instant::now())
+                } else {
+                    self.poll_wait(id)
+                }
+            }
             "Rake.getCaptureStatus" => Ok(
                 json!({"enabled":self.screenshots.is_some(),"helperReady":self.screenshots.as_ref().is_some_and(|s|s.available()),"error":self.screenshots.as_ref().and_then(|s|s.error()),"permission":"checked by ScreenCaptureKit during capture"}),
             ),
@@ -186,6 +210,7 @@ impl Session {
                 let before = self.native_input.window;
                 let result = self.native_input.select(&self.instance, &request.params)?;
                 if before != self.native_input.window {
+                    self.waits.invalidate("Selected window changed");
                     self.dom.clear();
                     self.index_revision = None;
                     self.tracked_style_node = None;
@@ -1887,6 +1912,18 @@ impl Session {
         Ok(result)
     }
 
+    fn poll_wait(&mut self, id: &str) -> std::result::Result<Value, Error> {
+        if let Some(arguments) =
+            self.waits
+                .arguments(id, self.native_input.window, Instant::now())?
+        {
+            let result = self.agent_snapshot(&arguments);
+            self.waits.observe(id, result, Instant::now())
+        } else {
+            self.waits.response(id, Instant::now())
+        }
+    }
+
     fn read_index(&self) -> std::result::Result<rake_protocol::inspection::Snapshot, Error> {
         let paged = self
             .instance
@@ -2237,6 +2274,7 @@ impl Session {
     }
 
     fn replace(&mut self, instance: Instance) {
+        self.waits.invalidate("Runtime replaced");
         self.native_input = Default::default();
         self.finish_trace(Some("runtime replaced"));
         self.cleanup();
