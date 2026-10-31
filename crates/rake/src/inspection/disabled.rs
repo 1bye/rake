@@ -50,6 +50,7 @@ impl Store {
     }
     pub(crate) fn tree_revision(&self) -> TreeRevision {
         TreeRevision {
+            metadata: None,
             capture: "0".into(),
             status: Status::Unavailable,
         }

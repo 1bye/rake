@@ -32,6 +32,7 @@ fn encoded_bytes(events: &[Option<EncodedEvent>]) -> usize {
 
 struct Session {
     captures: std::sync::Arc<super::captures::Captures>,
+    index_revision: Option<rake_protocol::inspection::TreeRevision>,
     instance: Instance,
     cursor: u64,
     network_cursor: u64,
@@ -70,6 +71,7 @@ impl Session {
     fn new(instance: Instance, output: Option<std::path::PathBuf>) -> Self {
         Self {
             captures: std::sync::Arc::default(),
+            index_revision: None,
             instance,
             cursor: 0,
             network_cursor: 0,
@@ -1709,7 +1711,7 @@ impl Session {
         };
         let unchanged = revision
             .as_ref()
-            .is_some_and(|revision| self.dom.matches(revision));
+            .is_some_and(|revision| self.index_revision.as_ref() == Some(revision));
         let mut reset = false;
         if !unchanged {
             let cached = revision.as_ref().and_then(|revision| {
@@ -1720,9 +1722,10 @@ impl Session {
                 snapshot
             } else {
                 let snapshot = std::sync::Arc::new(self.read_index()?);
-                if revision.is_some() {
+                if let Some(revision) = &revision {
                     self.captures.retain(
                         self.instance.info.runtime_id.0,
+                        revision,
                         std::sync::Arc::clone(&snapshot),
                     );
                 }
@@ -1746,6 +1749,7 @@ impl Session {
                 self.dom.update((*snapshot).clone())?
             };
         }
+        self.index_revision = revision;
         self.deliver_dom_updates(reset)
     }
 
@@ -2121,6 +2125,7 @@ impl Session {
         self.discard_diagnostics = false;
         self.loss = super::console::Loss::default();
         self.dom.clear();
+        self.index_revision = None;
         self.edit_sheets.clear();
         self.outbound
             .retain(|(event, _)| event.method.starts_with("Tracing."));
@@ -3420,6 +3425,7 @@ mod tests {
                     })
                     .collect();
                 let revision = TreeRevision {
+                    metadata: None,
                     capture: "one".into(),
                     status: metadata.status,
                 };
@@ -3507,12 +3513,96 @@ mod tests {
     }
 
     #[test]
+    fn metadata_revisions_refresh_focus_without_replacing_control_ids_or_reusing_old_indexes() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let focused = Arc::new(AtomicBool::new(false));
+        let app = Arc::clone(&focused);
+        let (mut instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectRevision {}) => {
+                    Reply::InspectionRevision(rake_protocol::inspection::TreeRevision {
+                        capture: "live-focus".into(),
+                        metadata: Some(
+                            if app.load(Ordering::Acquire) {
+                                "focused"
+                            } else {
+                                "initial"
+                            }
+                            .into(),
+                        ),
+                        status: rake_protocol::inspection::Status::Captured,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectTreePage { .. }) => {
+                    let mut snapshot = capture("live-focus");
+                    snapshot.elements[0].accessibility = Some(Box::new(
+                        serde_json::from_value(json!({
+                            "role":"Button", "disabled":false, "hidden":false, "focusable":true,
+                            "focused":app.load(Ordering::Acquire), "actions":[]
+                        }))
+                        .unwrap(),
+                    ));
+                    Reply::ElementPage(rake_protocol::inspection::TreePage {
+                        snapshot,
+                        total: 1,
+                        next: None,
+                    })
+                }
+                _ => panic!("unexpected metadata refresh query"),
+            },
+            5,
+        );
+        instance
+            .info
+            .queries
+            .extend(["inspect_revision".into(), "inspect_tree_page".into()]);
+        let request = Request {
+            id: 1,
+            method: "Accessibility.getFullAXTree".into(),
+            params: json!({}),
+        };
+        let mut first = Session::new(instance.clone(), None);
+        first.handle(&request).unwrap();
+        let node = first.dom.node_id("element-live-focus-0").unwrap();
+
+        focused.store(true, Ordering::Release);
+        let updated = first.handle(&request).unwrap();
+        assert_eq!(first.dom.node_id("element-live-focus-0"), Some(node));
+        let property = updated["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["role"]["value"] == "button")
+            .unwrap()["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|property| property["name"] == "focused")
+            .unwrap();
+        assert_eq!(property["value"]["value"], true);
+
+        let mut second = Session::new(instance, None);
+        second.captures = Arc::clone(&first.captures);
+        assert_eq!(
+            second.handle(&request).unwrap(),
+            updated,
+            "new sessions share the current metadata revision, not the previous focus state"
+        );
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn revisions_skip_unchanged_indexes_and_share_only_immutable_captures() {
         let snapshot = capture("shared");
         let (mut instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectRevision {}) => {
                     Reply::InspectionRevision(rake_protocol::inspection::TreeRevision {
+                        metadata: None,
                         capture: "shared".into(),
                         status: rake_protocol::inspection::Status::Captured,
                     })
@@ -3548,6 +3638,7 @@ mod tests {
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectRevision {}) => {
                     Reply::InspectionRevision(rake_protocol::inspection::TreeRevision {
+                        metadata: None,
                         capture: "hover".into(),
                         status: rake_protocol::inspection::Status::Captured,
                     })

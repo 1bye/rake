@@ -194,6 +194,7 @@ impl Store {
         let snapshot = self.full_snapshot();
         TreeRevision {
             capture: snapshot.capture.clone(),
+            metadata: Some(snapshot.index_revision.clone()),
             status: snapshot.status,
         }
     }
@@ -566,6 +567,15 @@ impl Store {
                 );
 
             if same_boundaries {
+                // Live focus invalidates the index without expiring control IDs or edits.
+                if snapshot
+                    .elements
+                    .iter()
+                    .zip(&old.elements)
+                    .all(|(a, b)| a.accessibility == b.accessibility)
+                {
+                    snapshot.index_revision.clone_from(&old.index_revision);
+                }
                 snapshot.capture.clone_from(&old.capture);
 
                 for (element, old) in snapshot.elements.iter_mut().zip(&old.elements) {

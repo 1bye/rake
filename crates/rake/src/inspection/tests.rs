@@ -727,3 +727,58 @@ fn index_revision_tracks_geometry_but_preserves_live_style_identity() {
     store.publish(WindowId(1), next);
     assert_ne!(store.tree_revision(), revision);
 }
+
+#[test]
+fn live_accessibility_changes_invalidate_the_index_without_geometry_changes() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut element = boundary("element-1-0", None, bounds, bounds);
+    element.stable_id = Some("button".into());
+    element.accessibility = Some(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "role":"Button", "disabled":false, "hidden":false,
+            "focusable":true, "focused":false, "contains_focus":false,
+            "captured_tab_order":0, "actions":[]
+        }))
+        .unwrap(),
+    ));
+    let mut first = store.begin(0);
+    first.elements.push(element.clone());
+    store.publish(WindowId(1), first);
+    let mut revision = store.tree_revision();
+
+    for (focused, contains_focus, tab_order) in [(true, false, 0), (true, true, 0), (true, true, 1)]
+    {
+        let mut next = store.begin(0);
+        element.id = format!("element-{}-0", next.capture);
+        let accessibility = element.accessibility.as_mut().unwrap();
+        accessibility.focused = Some(focused);
+        accessibility.contains_focus = Some(contains_focus);
+        accessibility.captured_tab_order = Some(tab_order);
+        next.elements.push(element.clone());
+        store.publish(WindowId(1), next);
+
+        let updated = store.tree_revision();
+        assert_eq!(
+            updated.capture, revision.capture,
+            "live focus must not expire control IDs"
+        );
+        assert_ne!(
+            updated, revision,
+            "live accessibility changes must invalidate cached indexes"
+        );
+        let page = store.tree_page(None, 0).unwrap();
+        assert_eq!(page.snapshot.capture, updated.capture);
+        assert_eq!(
+            page.snapshot.elements[0].accessibility,
+            element.accessibility
+        );
+        assert_eq!(page.snapshot.elements[0].layout, Some(bounds));
+        revision = updated;
+    }
+}

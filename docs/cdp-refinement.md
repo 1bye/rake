@@ -12,6 +12,9 @@ production feature gate. Their implementation order is:
 `inspect_revision` is an additive, capability-advertised runtime query. Older
 runtimes retain paged/full snapshot fallback. An unchanged index skips page reads
 and DOM diffing; the selected element's live styles still refresh independently.
+The optional metadata revision invalidates live accessibility without changing
+control capture IDs, so focus changes do not expire in-flight edits. Cache keys
+include both identities; older hosts can omit the additive metadata field.
 The shared index cache retains at most four runtimes and 32 MiB of serialized
 metadata. Source grants, selected nodes, object handles, editing and cursors stay
 connection-local. Simultaneous cold misses may read the same capture; no socket

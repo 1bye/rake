@@ -341,8 +341,11 @@ pub struct Snapshot {
 /// Lightweight index identity. Style-only redraws may retain this identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TreeRevision {
-    /// Index capture identity; changes to geometry, text and structure invalidate it.
+    /// Control capture identity; changes to geometry, text and structure invalidate it.
     pub capture: String,
+    /// Lightweight metadata revision, independent of control IDs. Absent on older hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
     /// Distinguishes unavailable and waiting hosts, even before their first capture.
     pub status: Status,
 }

@@ -348,12 +348,6 @@ impl Dom {
         self.snapshot.as_ref().map(|s| s.capture.as_str())
     }
 
-    pub fn matches(&self, revision: &rake_protocol::inspection::TreeRevision) -> bool {
-        self.snapshot.as_ref().is_some_and(|snapshot| {
-            snapshot.capture == revision.capture && snapshot.status == revision.status
-        })
-    }
-
     pub fn search(&mut self, query: &str) -> Result<Value, Error> {
         if query.trim().is_empty() || query.len() > 1024 {
             return Err(Error::new(-32602, "Search must contain 1–1024 bytes"));
