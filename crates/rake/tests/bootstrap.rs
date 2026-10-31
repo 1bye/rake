@@ -53,10 +53,12 @@ fn root_inspection_does_not_enable_registered_application_commands() {
     let app = App::new("com.example.root")
         .root(|_, _, cx| {
             use rake::gpui::AppContext;
+
             cx.new(|_| rake::gpui::Empty).into()
         })
         .control(rake::control::ControlConfig::FromEnvironment)
         .command::<RootCommand, _, _>(|_, _| async { Ok(()) })
         .unwrap();
+
     assert!(matches!(app.run(), Err(AppError::ControlRequiresRouter)));
 }

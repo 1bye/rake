@@ -12,9 +12,11 @@ pub(super) fn body(value: Value, response: bool) -> Result<Value, Error> {
             "Body capture unavailable or evicted (64 requests / 1 MiB)",
         )
     })?;
+
     if body.truncated {
         return Err(Error::new(-32000, "Body exceeds the 64 KiB capture limit"));
     }
+
     if !body.complete {
         return Err(Error::new(
             -32000,
@@ -24,6 +26,7 @@ pub(super) fn body(value: Value, response: bool) -> Result<Value, Error> {
             ),
         ));
     }
+
     if response {
         let (body, encoded) = match String::from_utf8(body.bytes) {
             Ok(text) => (text, false),
@@ -32,11 +35,13 @@ pub(super) fn body(value: Value, response: bool) -> Result<Value, Error> {
                 true,
             ),
         };
+
         Ok(json!({"body":body,"base64Encoded":encoded}))
     } else {
         let text = String::from_utf8(body.bytes).map_err(|_| {
             Error::new(-32000, "Request body is binary; text post data unavailable")
         })?;
+
         Ok(json!({"postData":text}))
     }
 }
@@ -110,8 +115,10 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
             .get("request_start_us")
             .and_then(Value::as_u64)
             .unwrap_or_else(|| record.elapsed_us.saturating_sub(duration));
+
         let start = start_us as f64 / 1e6;
         let headers_ms = record.elapsed_us.saturating_sub(start_us) as f64 / 1000.0;
+
         params["response"]["timing"] = json!({
             "requestTime":start,"proxyStart":-1,"proxyEnd":-1,
             "dnsStart":-1,"dnsEnd":-1,"connectStart":-1,"connectEnd":-1,
@@ -121,22 +128,27 @@ pub(super) fn translate(record: &Record) -> Vec<Event> {
             "receiveHeadersStart":headers_ms,"receiveHeadersEnd":headers_ms
         });
     }
+
     if phase == "started"
         && let Some(source) = &record.source
     {
         let mut context = record.spans.join(" → ");
+
         for key in ["command_id", "operation_id", "task_id", "generation_id"] {
             if let Some(value) = f.get(key) {
                 context.push_str(&format!(" {key}={}", value.as_str().unwrap_or_default()));
             }
         }
+
         if let Some(id) = record.span_id {
             context.push_str(&format!(" span={id}"));
         }
+
         params["initiator"] = json!({"type":"script","stack":{"description":"Rust request origin (not a JavaScript stack)",
             "callFrames":[{"functionName":context.trim(),"scriptId":"","url":super::console::source_url(source),
             "lineNumber":source.line.saturating_sub(1),"columnNumber":0}]}});
     }
+
     vec![Event::new(method, params)]
 }
 
@@ -162,6 +174,7 @@ mod tests {
             .unwrap(),
             json!({"body":"AP8=","base64Encoded":true})
         );
+
         for (complete, truncated, failure) in [
             (false, false, None),
             (false, false, Some("cancelled")),
@@ -175,6 +188,7 @@ mod tests {
                 .is_err()
             );
         }
+
         assert!(body(Value::Null, false).is_err());
     }
 
@@ -184,8 +198,10 @@ mod tests {
             "source":{"file":"src/fetch.rs","line":17},"span_id":8,
             "level":"INFO","target":"rake::http","kind":"request","spans":["command.execute","http.request"],"fields":{
             "request_id":7,"phase":"started","command_id":"demo.fetch","operation_id":"op-3","task_id":"task-2","url":"https://example.test/"}})).unwrap();
+
         let event = translate(&record).remove(0);
         let origin = &event.params["initiator"]["stack"]["callFrames"][0];
+
         assert_eq!(origin["lineNumber"], 16);
         assert!(
             origin["functionName"]
@@ -198,6 +214,7 @@ mod tests {
             .insert("phase".into(), json!("headers_received"));
         record.fields.insert("duration_us".into(), json!(250000));
         let event = translate(&record).remove(0);
+
         assert_eq!(event.params["response"]["timing"]["requestTime"], 1.0);
         assert_eq!(
             event.params["response"]["timing"]["receiveHeadersEnd"],
@@ -210,6 +227,7 @@ mod tests {
     fn preserved_bodies_are_bounded_and_old_ids_cannot_retarget() {
         let mut bodies = Bodies::default();
         let data = json!({"bytes":[104,105],"complete":true,"truncated":false,"failure":null});
+
         bodies.insert("old:1".into(), [Value::Null, data.clone()]);
         assert_eq!(
             body(bodies.get("old:1", true).unwrap(), true).unwrap()["body"],
@@ -217,9 +235,11 @@ mod tests {
         );
         assert!(local_id("old:1", "new").is_err());
         assert_eq!(local_id("new:1", "new").unwrap(), 1);
+
         for id in 1..70 {
             bodies.insert(format!("new:{id}"), [Value::Null, data.clone()]);
         }
+
         assert!(bodies.get("old:1", true).is_none());
         assert!(bodies.entries.len() <= 64);
         let large = serde_json::to_value(rake_diagnostics::http::Body {
@@ -228,15 +248,18 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
+
         for id in 70..100 {
             bodies.insert(format!("new:{id}"), [large.clone(), large.clone()]);
         }
+
         assert!(bodies.bytes <= 1024 * 1024);
     }
 
     #[test]
     fn response_search_handles_case_regex_and_binary_failures() {
         let body = json!({"body":"First\nhello World\nhello again","base64Encoded":false});
+
         assert_eq!(
             search(&body, &json!({"query":"world"})).unwrap()["result"][0]["lineNumber"],
             1
@@ -309,16 +332,20 @@ impl Bodies {
         if self.entries.iter().any(|entry| entry.0 == id) {
             return;
         }
+
         let bodies =
             bodies.map(|body| serde_json::from_value::<rake_diagnostics::http::Body>(body).ok());
+
         let bytes = bodies
             .iter()
             .flatten()
             .map(|body| body.bytes.len())
             .sum::<usize>();
+
         if bytes > 1024 * 1024 {
             return;
         }
+
         while self.entries.len() >= 64 || self.bytes.saturating_add(bytes) > 1024 * 1024 {
             if let Some((_, _, bytes)) = self.entries.pop_front() {
                 self.bytes -= bytes;
@@ -326,6 +353,7 @@ impl Bodies {
                 break;
             }
         }
+
         self.bytes += bytes;
         self.entries.push_back((id, bodies, bytes));
     }
@@ -342,12 +370,14 @@ pub(super) fn local_id(id: &str, runtime: &str) -> Result<u64, Error> {
     let (owner, id) = id
         .split_once(':')
         .ok_or_else(|| Error::new(-32602, "Invalid request ID"))?;
+
     if owner != runtime {
         return Err(Error::new(
             -32000,
             "Request belongs to an expired runtime; body is no longer retained",
         ));
     }
+
     id.parse()
         .map_err(|_| Error::new(-32602, "Invalid request ID"))
 }
@@ -357,19 +387,23 @@ pub(super) fn search(body: &Value, params: &Value) -> Result<Value, Error> {
         .as_str()
         .filter(|_| body["base64Encoded"] == false)
         .ok_or_else(|| Error::new(-32000, "Search requires a complete UTF-8 response"))?;
+
     let query = params["query"]
         .as_str()
         .ok_or_else(|| Error::new(-32602, "Search query required"))?;
+
     let pattern = if params["isRegex"].as_bool().unwrap_or(false) {
         query.to_owned()
     } else {
         regex::escape(query)
     };
+
     let matcher = regex::RegexBuilder::new(&pattern)
         .case_insensitive(!params["caseSensitive"].as_bool().unwrap_or(false))
         .size_limit(1024 * 1024)
         .build()
         .map_err(|_| Error::new(-32602, "Invalid or oversized search expression"))?;
+
     let result: Vec<Value> = text
         .lines()
         .enumerate()
@@ -377,5 +411,6 @@ pub(super) fn search(body: &Value, params: &Value) -> Result<Value, Error> {
         .take(1000)
         .map(|(number, line)| json!({"lineNumber":number,"lineContent":line}))
         .collect();
+
     Ok(json!({"result":result}))
 }

@@ -19,11 +19,15 @@ impl Access {
             .0
             .lock()
             .map_err(|_| Error::new(-32000, "Source access unavailable"))?;
+
         catalogs.retain(|catalog| catalog.strong_count() > 0);
+
         if catalogs.len() == 32 {
             return Err(Error::new(-32000, "Source session limit reached"));
         }
+
         catalogs.push(Arc::downgrade(&sources.catalog));
+
         Ok(())
     }
 
@@ -35,16 +39,19 @@ impl Access {
             .iter()
             .filter_map(Weak::upgrade)
             .collect();
+
         for catalog in catalogs {
             let location = catalog
                 .lock()
                 .ok()
                 .and_then(|catalog| catalog.get(url).cloned());
+
             if let Some(location) = location {
                 return crate::source::read(&location)
                     .map_err(|e| Error::new(-32000, e.to_string()));
             }
         }
+
         Err(Error::new(-32602, "Source URL expired or was not captured"))
     }
 }
@@ -74,24 +81,31 @@ impl Sources {
         if let Some(url) = self.file_urls.get(&location.file) {
             return Some(url.clone());
         }
+
         if self.catalog.lock().ok()?.len() >= 128
             || self.file_urls.len() >= 128
             || location.file.len() > 4096
         {
             self.omitted = true;
+
             return None;
         }
+
         let prefix = self.prefix.as_ref()?;
         let path = crate::source::relative(location).ok()?;
         let url = file_url(prefix, &path)?;
         let bytes = url.len() * 3 + path.len() * 2 + location.file.len() + 512;
+
         if self.metadata_bytes.saturating_add(bytes) > 256 * 1024 {
             self.omitted = true;
+
             return None;
         }
+
         self.metadata_bytes += bytes;
         self.file_urls.insert(location.file.clone(), url.clone());
         let mut catalog = self.catalog.lock().ok()?;
+
         if !catalog.contains_key(&url) {
             catalog.insert(
                 url.clone(),
@@ -103,6 +117,7 @@ impl Sources {
             );
             self.pending.insert(url.clone());
         }
+
         Some(url)
     }
 
@@ -112,6 +127,7 @@ impl Sources {
             .lock()
             .map(|catalog| catalog.keys().cloned().collect())
             .unwrap_or_default();
+
         urls.iter()
             .map(|url| json!({"frame":self.document(url)}))
             .collect()
@@ -119,10 +135,12 @@ impl Sources {
 
     pub fn documents(&mut self) -> Vec<Value> {
         self.pending.clear();
+
         self.frames()
             .into_iter()
             .map(|mut document| {
                 document["resources"] = json!([]);
+
                 document
             })
             .collect()
@@ -139,6 +157,7 @@ impl Sources {
                     .collect()
             })
             .unwrap_or_default();
+
         json!({"runtimeId":self.runtime,"files":files,"omitted":self.omitted,"fileLimit":128,"metadataBytes":self.metadata_bytes,"metadataLimitBytes":256*1024})
     }
 
@@ -156,6 +175,7 @@ impl Sources {
             .ok()
             .and_then(|catalog| catalog.get(url).map(|site| site.file.clone()))
             .unwrap_or_else(|| "Unavailable source".into());
+
         json!({"id":format!("rake-source:{url}"),"parentId":"rake","loaderId":format!("rake-source:{}:{url}",self.runtime),
             "name":format!("Rust: {}",path),"url":url,"securityOrigin":"rake://source",
             "domainAndRegistry":"","mimeType":"text/plain","secureContextType":"Secure",
@@ -164,12 +184,15 @@ impl Sources {
 
     pub fn events(&mut self) -> Vec<Event> {
         let urls: Vec<_> = self.pending.iter().take(16).cloned().collect();
+
         for url in &urls {
             self.pending.remove(url);
         }
+
         urls.into_iter()
             .flat_map(|url| {
                 let frame = self.document(&url);
+
                 [
                     Event::new(
                         "Page.frameAttached",
@@ -183,9 +206,11 @@ impl Sources {
 
     pub fn capture(&mut self, url: String, location: SourceLocation) {
         self.admit(&location);
+
         if self.locations.len() >= 128 && !self.locations.contains_key(&url) {
             self.locations.pop_first();
         }
+
         self.locations.insert(url, location);
     }
 
@@ -196,10 +221,13 @@ impl Sources {
                 line: source.line,
                 column: 1,
             });
+
             if self.prefix.is_some() {
                 return;
             }
+
             let url = super::console::source_url(source);
+
             if self.locations.len() < 128 || self.locations.contains_key(&url) {
                 self.locations.insert(
                     url,
@@ -232,6 +260,7 @@ impl Sources {
         if self.prefix.is_some() {
             return Vec::new();
         }
+
         self.locations
             .keys()
             .map(|url| json!({"url":url,"type":"Document","mimeType":"text/plain"}))
@@ -249,6 +278,7 @@ impl Sources {
 
     pub fn content(&self, params: &Value) -> Result<String, Error> {
         let url = params["url"].as_str().unwrap_or_default();
+
         if let Some(frame) = params.get("frameId")
             && frame != "rake"
             && frame.as_str() != Some(format!("rake-source:{url}").as_str())
@@ -258,7 +288,9 @@ impl Sources {
                 "Source frame is stale or does not match the resource",
             ));
         }
+
         let location = self.location(url)?;
+
         crate::source::read(&location).map_err(|error| Error::new(-32000, error.to_string()))
     }
 
@@ -266,6 +298,7 @@ impl Sources {
         let text = crate::source::read(site).ok()?;
         let line = text.split('\n').nth(site.line.checked_sub(1)? as usize)?;
         let column = site.column.checked_sub(1)? as usize;
+
         (line.chars().count() >= column)
             .then(|| line.chars().take(column).map(char::len_utf16).sum())
     }
@@ -275,28 +308,35 @@ impl Sources {
         let text = self.content(params)?;
         let line = coordinate(params, "lineNumber")?;
         let column = coordinate(params, "columnNumber")?;
+
         let line_text = text
             .split('\n')
             .nth(line)
             .ok_or_else(|| Error::new(-32602, "Source line is outside the file"))?;
+
         let line_text = line_text.strip_suffix('\r').unwrap_or(line_text);
         let mut units = 0;
         let mut chars = 0;
+
         for character in line_text.chars() {
             if units == column {
                 break;
             }
+
             units += character.len_utf16();
             chars += 1;
         }
+
         if units != column {
             return Err(Error::new(
                 -32602,
                 "Source column is outside the line or splits a UTF-16 character",
             ));
         }
+
         location.line = (line + 1) as u32;
         location.column = (chars + 1) as u32;
+
         Ok(location)
     }
 
@@ -304,24 +344,30 @@ impl Sources {
         if text.len() > 256 * 1024 {
             return Err(Error::new(-32000, "Rust source exceeds 256 KiB"));
         }
+
         if self.streams.len() == 8 {
             return Err(Error::new(
                 -32000,
                 "Close a source stream before opening another",
             ));
         }
+
         self.next += 1;
         let handle = format!("rake-source-{}", self.next);
+
         self.streams.insert(handle.clone(), (text, 0));
+
         Ok(json!({"resource":{"success":true,"httpStatusCode":200,"stream":handle}}))
     }
 
     pub fn read(&mut self, params: &Value) -> Result<Value, Error> {
         let handle = params["handle"].as_str().unwrap_or_default();
+
         let (text, cursor) = self
             .streams
             .get_mut(handle)
             .ok_or_else(|| Error::new(-32000, "Source stream expired"))?;
+
         if let Some(offset) = params.get("offset") {
             *cursor = offset
                 .as_u64()
@@ -331,16 +377,20 @@ impl Sources {
                     Error::new(-32602, "Invalid source offset or split UTF-8 character")
                 })?;
         }
+
         let size = params
             .get("size")
             .map_or(Some(65536), Value::as_u64)
             .filter(|size| *size > 0)
             .ok_or_else(|| Error::new(-32602, "Invalid source stream size"))?
             .min(65536) as usize;
+
         let mut end = cursor.saturating_add(size).min(text.len());
+
         while end > *cursor && !text.is_char_boundary(end) {
             end -= 1;
         }
+
         if end == *cursor && end < text.len() {
             end += text[end..]
                 .chars()
@@ -348,16 +398,21 @@ impl Sources {
                 .expect("nonempty UTF-8 tail")
                 .len_utf8();
         }
+
         let data = &text[*cursor..end];
+
         *cursor = end;
+
         Ok(json!({"data":data,"base64Encoded":false,"eof":end==text.len()}))
     }
 
     pub fn clear(&mut self) {
         self.locations.clear();
+
         if let Ok(mut catalog) = self.catalog.lock() {
             catalog.clear();
         }
+
         self.file_urls.clear();
         self.metadata_bytes = 0;
         self.omitted = false;
@@ -384,25 +439,31 @@ pub(super) fn search(text: &str, params: &Value) -> Result<Value, Error> {
         .as_str()
         .filter(|query| !query.is_empty() && query.len() <= 4096)
         .ok_or_else(|| Error::new(-32602, "Source query must contain 1–4096 bytes"))?;
+
     let flag = |key| {
         params
             .get(key)
             .map_or(Some(false), Value::as_bool)
             .ok_or_else(|| Error::new(-32602, format!("{key} must be a boolean")))
     };
+
     let pattern = if flag("isRegex")? {
         query.to_owned()
     } else {
         regex::escape(query)
     };
+
     let regex = regex::RegexBuilder::new(&pattern)
         .case_insensitive(!flag("caseSensitive")?)
         .size_limit(256 * 1024)
         .build()
         .map_err(|error| Error::new(-32602, error.to_string()))?;
+
     let mut matches = Vec::new();
+
     for (line, content) in text.split('\n').enumerate() {
         let content = content.strip_suffix('\r').unwrap_or(content);
+
         if regex.is_match(content) {
             if matches.len() == 1000 {
                 return Err(Error::new(
@@ -410,20 +471,25 @@ pub(super) fn search(text: &str, params: &Value) -> Result<Value, Error> {
                     "Source search exceeds 1000 matching lines; narrow the query or search the opened file",
                 ));
             }
+
             matches.push(json!({"lineNumber":line,"lineContent":content}));
         }
     }
+
     Ok(json!({"result":matches}))
 }
 
 fn file_url(prefix: &str, path: &str) -> Option<String> {
     let mut url = url::Url::parse(prefix).ok()?;
+
     {
         let mut segments = url.path_segments_mut().ok()?;
+
         for part in path.split('/') {
             segments.push(part);
         }
     }
+
     Some(url.to_string())
 }
 
@@ -434,6 +500,7 @@ mod tests {
     #[test]
     fn catalog_limits_and_incremental_delivery_are_explicit() {
         let mut sources = Sources::default();
+
         sources.bind("http://localhost/token", "runtime");
         sources.metadata_bytes = 256 * 1024 - 1;
         assert!(
@@ -448,8 +515,10 @@ mod tests {
         assert_eq!(sources.status()["omitted"], true);
         assert!(sources.frames().is_empty());
         sources.clear();
+
         for index in 0..40 {
             let url = format!("http://localhost/token/runtime/source/workspace/{index}.rs");
+
             sources.catalog.lock().unwrap().insert(
                 url.clone(),
                 SourceLocation {
@@ -460,6 +529,7 @@ mod tests {
             );
             sources.pending.insert(url);
         }
+
         assert_eq!(sources.events().len(), 32);
         assert_eq!(sources.events().len(), 32);
         assert_eq!(sources.events().len(), 16);
@@ -471,6 +541,7 @@ mod tests {
     #[test]
     fn search_preserves_line_numbers_and_rejects_partial_results() {
         let text = "first\r\ncafé 🙂\nCafé\n";
+
         assert_eq!(
             search(text, &json!({"query":"CAFÉ"})).unwrap()["result"]
                 .as_array()
@@ -499,6 +570,7 @@ mod tests {
     fn source_grants_expire_and_streams_validate_unicode_offsets() {
         let access = Access::default();
         let mut sources = Sources::default();
+
         sources.bind("http://127.0.0.1/token", "runtime");
         access.register(&sources).unwrap();
         let url = sources
@@ -508,6 +580,7 @@ mod tests {
                 column: 1,
             })
             .unwrap();
+
         assert!(access.content(&url).unwrap().contains("struct Sources"));
         assert!(
             access
@@ -515,6 +588,7 @@ mod tests {
                 .is_err()
         );
         let handle = sources.stream("é🙂文".into()).unwrap()["resource"]["stream"].clone();
+
         assert_eq!(
             sources.read(&json!({"handle":handle,"size":1})).unwrap()["data"],
             "é"
@@ -523,6 +597,7 @@ mod tests {
         assert!(sources.read(&json!({"handle":handle,"size":0})).is_err());
         assert!(sources.stream("x".repeat(256 * 1024 + 1)).is_err());
         let encoded = file_url("http://localhost/token/workspace", "src/café #?.rs").unwrap();
+
         assert!(encoded.ends_with("src/caf%C3%A9%20%23%3F.rs"));
         assert!(url::Url::parse(&encoded).unwrap().fragment().is_none());
         drop(sources);
@@ -532,6 +607,7 @@ mod tests {
     #[test]
     fn unobserved_sources_are_rejected_and_streams_preserve_unicode() {
         let mut sources = Sources::default();
+
         assert!(
             sources
                 .content(&json!({"url":"rake://source/../../private.rs"}))
@@ -543,11 +619,13 @@ mod tests {
         let first = sources
             .read(&json!({"handle":"rake-source-1","size":4}))
             .unwrap();
+
         assert_eq!(first["data"], "caf");
         assert_eq!(first["eof"], false);
         let second = sources
             .read(&json!({"handle":"rake-source-1","size":6}))
             .unwrap();
+
         assert_eq!(second["data"], "é🙂");
         sources.close(&json!({"handle":"rake-source-1"}));
         assert!(sources.read(&json!({"handle":"rake-source-1"})).is_err());
@@ -556,17 +634,21 @@ mod tests {
     #[test]
     fn catalog_deduplicates_files_and_publishes_read_only_documents() {
         let mut sources = Sources::default();
+
         sources.bind("http://127.0.0.1/token", "runtime-a");
         let mut site = SourceLocation {
             file: "src/cdp/sources.rs".into(),
             line: 12,
             column: 3,
         };
+
         let first = sources.admit(&site).unwrap();
+
         site.line = 200;
         assert_eq!(sources.admit(&site).unwrap(), first);
         assert!(first.ends_with("/runtime-a/source/workspace/src/cdp/sources.rs"));
         let events = sources.events();
+
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].method, "Page.frameAttached");
         assert_eq!(
@@ -578,6 +660,7 @@ mod tests {
         assert!(sources.events().is_empty());
         assert!(sources.resources().is_empty());
         let documents = sources.documents();
+
         assert_eq!(documents.len(), 1);
         assert!(
             documents[0]["frame"]["name"]

@@ -387,6 +387,7 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
         if method == "Network.dataReceived" {
             consumed += event["params"]["dataLength"].as_u64().unwrap();
         }
+
         if method == "Network.loadingFinished" {
             assert_eq!(consumed, 4);
             assert_eq!(event["params"]["encodedDataLength"], 0);

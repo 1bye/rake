@@ -24,12 +24,15 @@ struct Demo {
 // Platform text ranges use UTF-16; the model always stores valid UTF-8 boundaries.
 fn byte(text: &str, utf16: usize) -> usize {
     let mut units = 0;
+
     for (index, c) in text.char_indices() {
         if units + c.len_utf16() > utf16 {
             return index;
         }
+
         units += c.len_utf16();
     }
+
     text.len()
 }
 
@@ -68,14 +71,18 @@ impl Demo {
             .map(|r| self.range(r))
             .or_else(|| self.marked.take())
             .unwrap_or_else(|| self.selection.clone());
+
         if self.text.len() - range.len() + text.len() > 4096 {
             return false;
         }
+
         self.text.replace_range(range.clone(), text);
         let cursor = range.start + text.len();
+
         self.selection = cursor..cursor;
         self.marked = None;
         cx.notify();
+
         true
     }
 }
@@ -89,7 +96,9 @@ impl EntityInputHandler for Demo {
         _: &mut Context<Self>,
     ) -> Option<String> {
         let range = self.range(range);
+
         *actual = Some(self.utf16(range.clone()));
+
         Some(self.text[range].into())
     }
 
@@ -137,7 +146,9 @@ impl EntityInputHandler for Demo {
 
         let end = self.selection.end;
         let start = end.saturating_sub(text.len());
+
         self.marked = Some(start..end);
+
         if let Some(selected) = selected {
             self.selection = start + byte(&self.text[start..end], selected.start)
                 ..start + byte(&self.text[start..end], selected.end);
@@ -176,6 +187,7 @@ impl Render for Demo {
         let entity = cx.entity();
         let painted = entity.clone();
         let focus = self.focus.clone();
+
         let input = canvas(
             move |bounds, _, cx| entity.update(cx, |this, _| this.input_bounds = bounds),
             move |bounds, _, window, cx| {
@@ -184,6 +196,7 @@ impl Render for Demo {
         )
         .absolute()
         .size_full();
+
         rake::view! {
             <div id="agent-root" class="size-full flex flex-col p-4 gap-2" style={|s|s.bg(rgb(0x172330)).text_color(rgb(0xffffff))}
                 on:key-down={cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -253,6 +266,7 @@ enum Destination {
 }
 
 struct Routes;
+
 impl rake::prelude::RouteViews<Destination> for Routes {
     fn mount(
         &self,
@@ -275,6 +289,7 @@ fn main() -> Result<(), rake::AppError> {
             })),
             ..Default::default()
         });
+
     if std::env::var_os("RAKE_AGENT_ROUTER").is_some() {
         app.routes(Routes)
             .workspace_chrome(false)
@@ -284,7 +299,9 @@ fn main() -> Result<(), rake::AppError> {
         app.root(|services, _, cx| {
             cx.new(|cx| {
                 let mut demo = Demo::new(cx);
+
                 demo.http = Some(services.http());
+
                 demo
             })
             .into()

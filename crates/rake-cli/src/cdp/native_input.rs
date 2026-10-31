@@ -2,11 +2,13 @@
 
 use super::{TIMEOUT, wire::Error};
 use rake_client::local::Instance;
+
 use rake_protocol::{
     control::{Command, Query, Reply},
     inspection::preview::{Input, Point, PointerPhase, Window as NativeWindow},
     router::WindowId,
 };
+
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -21,6 +23,7 @@ pub(super) fn windows(instance: &Instance) -> Result<Vec<NativeWindow>, Error> {
     else {
         return Err(Error::new(-32000, "Unexpected native window reply"));
     };
+
     serde_json::from_value(value).map_err(|e| Error::new(-32000, e.to_string()))
 }
 
@@ -44,6 +47,7 @@ impl NativeInput {
                     )
                 });
         }
+
         if available.len() != 1 {
             return Err(Error::agent(
                 -32014,
@@ -53,6 +57,7 @@ impl NativeInput {
                 "Select a native window with Rake.selectWindow; automatic selection requires exactly one window",
             ));
         }
+
         Ok(available.remove(0))
     }
 
@@ -61,13 +66,17 @@ impl NativeInput {
             .as_u64()
             .filter(|n| *n > 0)
             .ok_or_else(|| Error::new(-32602, "Positive windowId required"))?;
+
         let available = windows(instance)?;
+
         let window = available
             .into_iter()
             .find(|w| w.window == WindowId(id))
             .ok_or_else(|| Error::new(-32000, "Native window is unavailable"))?;
+
         self.window = Some(window.window);
         self.pointer = [0., 0.];
+
         Ok(json!({"window":window}))
     }
 
@@ -79,7 +88,9 @@ impl NativeInput {
     ) -> Result<Command, Error> {
         let (position, input) = translate(method, params, self.pointer)?;
         let target = self.target(instance)?;
+
         window_guard(params, &target)?;
+
         if position[0] < 0.
             || position[1] < 0.
             || position[0] >= f64::from(target.content.width)
@@ -90,6 +101,7 @@ impl NativeInput {
                 "Input coordinates are outside the selected content viewport",
             ));
         }
+
         let geometry = [
             target.frame.width,
             target.frame.height,
@@ -99,7 +111,9 @@ impl NativeInput {
             target.content.height,
         ]
         .map(|n| (n * 64.).round() as i32);
+
         self.pointer = position;
+
         Ok(Command::PreviewInput {
             point: Point {
                 window: target.window,
@@ -127,12 +141,14 @@ fn bounded_u8(params: &Value, name: &str, default: u8, max: u8) -> Result<u8, Er
 
 fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2], Input), Error> {
     let modifiers = bounded_u8(params, "modifiers", 0, 15)?;
+
     let text = || {
         params["text"]
             .as_str()
             .filter(|s| s.len() <= 16 * 1024)
             .ok_or_else(|| Error::new(-32602, "text must be at most 16 KiB"))
     };
+
     match method {
         "Input.insertText" => Ok((
             pointer,
@@ -149,15 +165,18 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                     },
                 ));
             }
+
             let down = match params["type"].as_str() {
                 Some("keyDown" | "rawKeyDown") => true,
                 Some("keyUp") => false,
                 _ => return Err(Error::new(-32602, "Unsupported key event type")),
             };
+
             let key = params["key"]
                 .as_str()
                 .filter(|s| !s.is_empty() && s.len() <= 128)
                 .ok_or_else(|| Error::new(-32602, "key must contain 1–128 bytes"))?;
+
             let key = match key {
                 "ArrowLeft" => "left",
                 "ArrowRight" => "right",
@@ -175,11 +194,13 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                 " " => "space",
                 other => other,
             };
+
             let text = if down && params["type"] != "rawKeyDown" && params.get("text").is_some() {
                 Some(text()?.into())
             } else {
                 None
             };
+
             Ok((
                 pointer,
                 Input::Key {
@@ -203,7 +224,9 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                     .filter(|n| n.is_finite() && n.abs() < 1_000_000.)
                     .ok_or_else(|| Error::new(-32602, format!("Finite {name} required")))
             };
+
             let position = [coordinate("x")?, coordinate("y")?];
+
             if params["type"] == "mouseWheel" {
                 if modifiers != 0 {
                     return Err(Error::new(
@@ -211,6 +234,7 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                         "Modified wheel gestures are unavailable",
                     ));
                 }
+
                 let delta = |name: &str| {
                     params[name]
                         .as_f64()
@@ -218,6 +242,7 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                         .map(|n| (n * 64.).round() as i32)
                         .ok_or_else(|| Error::new(-32602, format!("Invalid {name}")))
                 };
+
                 return Ok((
                     position,
                     Input::Wheel {
@@ -227,12 +252,14 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                     },
                 ));
             }
+
             let phase = match params["type"].as_str() {
                 Some("mousePressed") => PointerPhase::Down,
                 Some("mouseReleased") => PointerPhase::Up,
                 Some("mouseMoved") => PointerPhase::Move,
                 _ => return Err(Error::new(-32602, "Unsupported pointer phase")),
             };
+
             let button = match params["button"].as_str() {
                 None | Some("none") => 0,
                 Some("left") => 1,
@@ -240,22 +267,28 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                 Some("middle") => 4,
                 _ => return Err(Error::new(-32602, "Unsupported mouse button")),
             };
+
             let button = if phase == PointerPhase::Move {
                 let buttons = bounded_u8(params, "buttons", button, 4)?;
+
                 if !matches!(buttons, 0 | 1 | 2 | 4) {
                     return Err(Error::new(
                         -32602,
                         "Multiple pressed buttons are unavailable",
                     ));
                 }
+
                 buttons
             } else {
                 button
             };
+
             if phase != PointerPhase::Move && button == 0 {
                 return Err(Error::new(-32602, "A button is required for press/release"));
             }
+
             let click_count = bounded_u8(params, "clickCount", 1, 3)?.max(1);
+
             Ok((
                 position,
                 Input::Pointer {
@@ -276,6 +309,7 @@ pub(super) fn runtime_guard(params: &Value, runtime: &str) -> Result<(), Error> 
         let expected = expected
             .as_str()
             .ok_or_else(|| Error::new(-32602, "rakeRuntimeId must be a string"))?;
+
         if expected != runtime {
             return Err(Error::agent(
                 -32010,
@@ -286,6 +320,7 @@ pub(super) fn runtime_guard(params: &Value, runtime: &str) -> Result<(), Error> 
             ));
         }
     }
+
     Ok(())
 }
 
@@ -294,6 +329,7 @@ fn window_guard(params: &Value, target: &NativeWindow) -> Result<(), Error> {
         let expected = expected
             .as_u64()
             .ok_or_else(|| Error::new(-32602, "rakeWindowId must be an integer"))?;
+
         if expected != target.window.0 {
             return Err(Error::agent(
                 -32010,
@@ -304,10 +340,12 @@ fn window_guard(params: &Value, target: &NativeWindow) -> Result<(), Error> {
             ));
         }
     }
+
     if let Some(expected) = params.get("rakeCapture") {
         let expected = expected
             .as_str()
             .ok_or_else(|| Error::new(-32602, "rakeCapture must be a string"))?;
+
         if expected != target.generation {
             return Err(Error::agent(
                 -32010,
@@ -318,22 +356,26 @@ fn window_guard(params: &Value, target: &NativeWindow) -> Result<(), Error> {
             ));
         }
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn selection_never_falls_through_to_another_window() {
         let window: NativeWindow=serde_json::from_value(json!({"window":1,"native_id":9,"generation":"one","frame":{"x":0,"y":0,"width":100,"height":100},"content":{"x":0,"y":0,"width":100,"height":100},"translucent":false})).unwrap();
         let mut input = NativeInput::default();
+
         assert!(input.choose(vec![]).is_err());
         assert!(input.choose(vec![window.clone(), window.clone()]).is_err());
         assert_eq!(input.choose(vec![window.clone()]).unwrap().native_id, 9);
         input.window = Some(WindowId(2));
         assert!(input.choose(vec![window]).is_err());
     }
+
     #[test]
     fn literal_input_validates_without_runtime_io_and_preserves_drag_and_unicode() {
         let (_, input) = translate(
@@ -342,6 +384,7 @@ mod tests {
             [0., 0.],
         )
         .unwrap();
+
         assert!(matches!(
             input,
             Input::Pointer {
@@ -353,12 +396,14 @@ mod tests {
         ));
         let (_, input) =
             translate("Input.insertText", &json!({"text":"café 🙂"}), [1., 2.]).unwrap();
+
         assert_eq!(
             input,
             Input::Text {
                 text: "café 🙂".into()
             }
         );
+
         for params in [
             json!({"type":"mousePressed","x":-1,"y":"bad"}),
             json!({"type":"mouseMoved","x":1,"y":2,"buttons":3}),
@@ -366,6 +411,7 @@ mod tests {
         ] {
             assert!(translate("Input.dispatchMouseEvent", &params, [0., 0.]).is_err());
         }
+
         assert!(
             translate(
                 "Input.insertText",
@@ -380,6 +426,7 @@ mod tests {
             [0., 0.],
         )
         .unwrap();
+
         assert!(matches!(input,Input::Key {key,text:None,..} if key=="left"));
     }
 }
@@ -387,12 +434,14 @@ mod tests {
 #[cfg(test)]
 mod guard_tests {
     use super::*;
+
     #[test]
     fn agent_guards_reject_wrong_owners_and_stale_captures() {
         assert!(runtime_guard(&json!({"rakeRuntimeId":"old"}), "new").is_err());
         assert!(runtime_guard(&json!({"rakeRuntimeId":1}), "new").is_err());
         assert!(runtime_guard(&json!({"rakeRuntimeId":"new"}), "new").is_ok());
         let target:NativeWindow=serde_json::from_value(json!({"window":1,"native_id":2,"generation":"3","frame":{"x":0,"y":0,"width":200,"height":200},"content":{"x":0,"y":20,"width":200,"height":180},"translucent":false})).unwrap();
+
         assert!(window_guard(&json!({"rakeWindowId":2}), &target).is_err());
         assert!(window_guard(&json!({"rakeCapture":"2"}), &target).is_err());
         assert!(window_guard(&json!({"rakeWindowId":1,"rakeCapture":"3"}), &target).is_ok());

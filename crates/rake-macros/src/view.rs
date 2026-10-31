@@ -682,9 +682,11 @@ impl Element {
     fn expand(&self, rake: &TokenStream, next: &mut usize) -> syn::Result<TokenStream> {
         if self.resolved == Tag::Entity {
             let index = *next;
+
             *next += 1;
             let element = self.expand_entity(rake)?;
             let definition = self.inspection_definition(rake, index);
+
             return Ok(quote!(#rake::__private::inspection!(
                 #element,
                 |__rake_entity| #rake::__private::view_inspect_component(__rake_entity, #definition,
@@ -769,6 +771,7 @@ impl Element {
         if self.resolved.composes_text() {
             let paragraph = self.expand_paragraph(builder, rake, next)?;
             let output = self.inspect_output(paragraph, rake, index);
+
             return Ok(quote!({ #setup #output }));
         }
 
@@ -786,6 +789,7 @@ impl Element {
         };
 
         let output = self.inspect_output(output, rake, index);
+
         Ok(quote!({ #setup #output }))
     }
 
@@ -1262,7 +1266,9 @@ fn expand_text_child(
     } else {
         "Expression"
     };
+
     let definition = inspection::definition(tag, source, index, TokenStream::new(), rake);
+
     quote_spanned!(source=> #rake::__private::inspection!(#value, |__rake_child| #rake::__private::view_inspect_child(
         &mut #siblings, &mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index)), #definition
     ), |__rake_child| #siblings.push_child(&mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index))));)

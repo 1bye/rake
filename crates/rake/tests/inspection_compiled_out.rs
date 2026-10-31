@@ -22,13 +22,17 @@ impl gpui::RenderOnce for Panel {
 fn markup_returns_original_types_and_removes_metadata_tokens() {
     let _: gpui::Stateful<gpui::Div> =
         rake::view! { <div class="p-2"><p>Text</p>{"Accessible text"}</div> };
+
     let _: Panel = rake::view! { <Panel id={"owned".to_owned()}/> };
+
     let _: gpui::Div = rake::__private::inspection!(
         compile_error!("inspection-only code must not expand in this build"),
         gpui::div()
     );
+
     let _: gpui::Div =
         gpui::div().inspect_with(|| panic!("production must not construct inspection names"));
+
     let _: gpui::Div = rake::inspection::inspect(gpui::div());
 }
 
@@ -39,6 +43,7 @@ fn production_capabilities_cannot_enable_inspection_or_edits() {
     use rake::router::{NoRoute, Router, RouterConfig};
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let client = router.client();
+
     assert_eq!(client.info().element_inspection, Status::Unavailable);
     assert!(!client.info().element_interaction);
     assert!(
@@ -61,14 +66,17 @@ fn production_capabilities_cannot_enable_inspection_or_edits() {
         key: None,
         message,
     };
+
     let Reply::Elements(tree) = client
         .request(request(Message::Query(Query::InspectTree {})))
         .unwrap()
     else {
         panic!("expected tree");
     };
+
     assert!(tree.elements.is_empty());
     assert!(tree.coverage.contains("compiled out"));
+
     for command in [
         Command::PreviewInput {
             point: rake::inspection::preview::Point {

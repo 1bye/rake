@@ -7,6 +7,7 @@ pub(super) fn available() -> bool {
     {
         crate::memory::installed()
     }
+
     #[cfg(not(all(feature = "devtools-memory", unix)))]
     {
         false
@@ -23,11 +24,14 @@ pub(super) fn record(
     {
         crate::memory::record(owner, enabled, interval, lease_ms)
             .map_err(|reason| ControlError::Memory { reason })?;
+
         Ok(Reply::Acknowledged)
     }
+
     #[cfg(not(all(feature = "devtools-memory", unix)))]
     {
         let _ = (owner, enabled, interval, lease_ms);
+
         Err(ControlError::Unsupported {
             operation: "native memory recording".into(),
         })
@@ -41,9 +45,11 @@ pub(super) fn snapshot(owner: &str, include_freed: bool) -> Result<Reply, Contro
             .map(Reply::Memory)
             .map_err(|reason| ControlError::Memory { reason })
     }
+
     #[cfg(not(all(feature = "devtools-memory", unix)))]
     {
         let _ = (owner, include_freed);
+
         Err(ControlError::Unsupported {
             operation: "native memory recording".into(),
         })

@@ -708,9 +708,11 @@ impl<R: Route> Router<R> {
             serde_json::to_value(self.0.collector.http_body(request_id, response))
                 .unwrap_or_default()
         }
+
         #[cfg(not(feature = "devtools"))]
         {
             let _ = (request_id, response);
+
             serde_json::Value::Null
         }
     }

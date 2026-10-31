@@ -14,6 +14,7 @@ fn nodes() -> Vec<Element> {
 #[test]
 fn copy_preserves_text_and_escapes_synthetic_markup() {
     let nodes = nodes();
+
     assert_eq!(
         tree::text(&nodes, "p").as_deref(),
         Some("<script>世界</script>")
@@ -33,6 +34,7 @@ fn copy_preserves_text_and_escapes_synthetic_markup() {
 #[test]
 fn invalid_graphs_and_oversized_payloads_fail_without_partial_copies() {
     let mut nodes = nodes();
+
     nodes[0].parent = Some("text".into());
     assert!(tree::markup(&nodes, "p").is_none());
     assert!(tree::path(&nodes, "text").is_none());

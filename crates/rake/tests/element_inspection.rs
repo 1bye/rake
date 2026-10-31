@@ -79,5 +79,6 @@ fn manual_handler_metadata_is_available_through_the_public_builder_api() {
         .on_click(|_, _, _| {})
         .inspect("save")
         .inspect_handler("click");
+
     assert!(rake::gpui::Element::id(&element.into_inner()).is_some());
 }

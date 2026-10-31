@@ -31,9 +31,11 @@ impl Backend for MemoryBackend {
     ) -> LocalBoxFuture<'a, Result<Option<Vec<u8>>, StorageError>> {
         Box::pin(async move {
             validate_key(key)?;
+
             Ok(self.0.borrow().get(key).cloned())
         })
     }
+
     fn set<'a>(
         &'a self,
         key: &'a str,
@@ -43,16 +45,20 @@ impl Backend for MemoryBackend {
             validate_key(key)?;
             validate_value(value)?;
             self.0.borrow_mut().insert(key.into(), value.into());
+
             Ok(())
         })
     }
+
     fn remove<'a>(&'a self, key: &'a str) -> LocalBoxFuture<'a, Result<(), StorageError>> {
         Box::pin(async move {
             validate_key(key)?;
             self.0.borrow_mut().remove(key);
+
             Ok(())
         })
     }
+
     fn keys<'a>(
         &'a self,
         after: Option<&'a str>,
@@ -62,9 +68,11 @@ impl Backend for MemoryBackend {
             if let Some(after) = after {
                 validate_key(after)?;
             }
+
             if !(1..=MAX_PAGE_SIZE).contains(&limit) {
                 return Err(StorageError::InvalidPage);
             }
+
             Ok(self
                 .0
                 .borrow()

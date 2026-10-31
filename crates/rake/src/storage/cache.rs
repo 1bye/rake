@@ -17,6 +17,7 @@ impl CacheConfig {
         if max_entries == 0 || max_bytes == 0 {
             return Err(StorageError::InvalidCacheConfig);
         }
+
         Ok(Self {
             entries: max_entries,
             bytes: max_bytes,
@@ -40,37 +41,49 @@ impl Cache {
             bytes: 0,
         }
     }
+
     pub(super) fn clear(&mut self) {
         self.values.clear();
         self.order.clear();
         self.bytes = 0;
     }
+
     pub(super) fn get(&mut self, key: &str) -> Option<Option<Vec<u8>>> {
         let value = self.values.get(key)?.clone();
+
         self.order.retain(|existing| existing != key);
         self.order.push_back(key.to_owned());
+
         Some(value)
     }
+
     pub(super) fn insert(&mut self, key: &str, value: Option<Vec<u8>>) {
         let cost = key.len() + value.as_ref().map_or(0, Vec::len);
+
         if cost > self.config.bytes {
             return;
         }
+
         self.remove(key);
+
         while self.values.len() >= self.config.entries || self.bytes > self.config.bytes - cost {
             let Some(oldest) = self.order.front().cloned() else {
                 break;
             };
+
             self.remove(&oldest);
         }
+
         self.bytes += cost;
         self.order.push_back(key.to_owned());
         self.values.insert(key.to_owned(), value);
     }
+
     fn remove(&mut self, key: &str) {
         if let Some(value) = self.values.remove(key) {
             self.bytes -= key.len() + value.as_ref().map_or(0, Vec::len);
         }
+
         self.order.retain(|existing| existing != key);
     }
 }

@@ -19,7 +19,9 @@ fn nested_deadlines_cannot_extend_or_leak_into_later_operations() {
     let instance = instance(Endpoint::Local {
         path: PathBuf::from("/unused-expired-deadline.sock"),
     });
+
     let expired = Instant::now() - Duration::from_secs(1);
+
     assert!(rake_client::current_deadline().is_none());
     rake_client::with_deadline(expired, || {
         assert_eq!(rake_client::current_deadline(), Some(expired));

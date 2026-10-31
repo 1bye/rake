@@ -17,6 +17,7 @@ impl Store {
     ) -> Result<WindowPage, InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn preview_enabled(&self) -> bool {
         false
     }
@@ -40,9 +41,11 @@ impl Store {
     pub(crate) fn edit_text(&self, _: &str, _: &str, _: &TextEdit) -> Result<(), InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn status(&self) -> Status {
         Status::Unavailable
     }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
         Snapshot {
             status: Status::Unavailable,
@@ -53,9 +56,11 @@ impl Store {
             coverage: "Inspection was compiled out; enable rake/devtools".into(),
         }
     }
+
     pub(crate) fn tree_page(&self, _: Option<&str>, _: usize) -> Result<TreePage, InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn tree_revision(&self) -> TreeRevision {
         TreeRevision {
             metadata: None,
@@ -63,18 +68,23 @@ impl Store {
             status: Status::Unavailable,
         }
     }
+
     pub(crate) fn element(&self, _: &str) -> Result<Element, InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn pick(&self) -> Result<Pick, InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn highlight(&self, _: Option<&str>, _: &str) -> Result<(), InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn inspect_mode(&self, _: bool, _: u64) -> Result<(), InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn navigate(
         &self,
         _: &str,
@@ -83,6 +93,7 @@ impl Store {
     ) -> Result<(), InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn edit_style(
         &self,
         _: &str,
@@ -91,9 +102,11 @@ impl Store {
     ) -> Result<(), InspectionError> {
         Err(InspectionError::Unavailable)
     }
+
     pub(crate) fn record_frames(&self, _: bool, _: u64) -> Result<(), InspectionError> {
         Err(InspectionError::RecordingUnavailable)
     }
+
     pub(crate) fn frames(&self, _: u64, _: &rake_diagnostics::Collector) -> Frames {
         Frames {
             clock: None,
@@ -129,32 +142,38 @@ mod view {
         fn inspect(self, _: impl Into<String>) -> Self {
             self
         }
+
         /// Returns the original value without invoking the name builder.
         #[inline(always)]
         fn inspect_with(self, _: impl FnOnce() -> String) -> Self {
             self
         }
+
         /// Returns the original value without retaining handler metadata.
         #[inline(always)]
         fn inspect_handler(self, _: impl Into<String>) -> Self {
             self
         }
+
         /// Returns the original value without retaining an identity.
         #[inline(always)]
         fn semantic_id(self, _: impl Into<String>) -> Self {
             self
         }
+
         /// Returns the original value without cloning the focus handle.
         #[inline(always)]
         fn focus_handle(self, _: &gpui::FocusHandle) -> Self {
             self
         }
+
         /// Returns the original value without cloning the scroll handle.
         #[inline(always)]
         fn scroll_handle(self, _: &gpui::ScrollHandle) -> Self {
             self
         }
     }
+
     impl<T: IntoElement> InspectElement for T {}
 
     pub(crate) trait InspectRoot: IntoElement {
@@ -163,8 +182,10 @@ mod view {
             self
         }
     }
+
     impl<T: IntoElement> InspectRoot for T {}
 }
+
 #[cfg(feature = "gpui")]
 pub(crate) use view::InspectRoot;
 #[cfg(feature = "gpui")]

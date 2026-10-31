@@ -62,10 +62,12 @@ pub(super) fn translate(record: &Record, epoch: f64) -> Option<Event> {
         (epoch + record.elapsed_us as f64 / 1e6) * 1000.,
         &record.target,
     );
+
     if let Some(source) = &record.source {
         event.params["entry"]["url"] = json!(source_url(source));
         event.params["entry"]["lineNumber"] = json!(source.line.saturating_sub(1));
     }
+
     Some(event)
 }
 
@@ -189,8 +191,10 @@ impl Objects {
     pub fn logged(&mut self, record: &Record, epoch: f64) -> Event {
         let called = self.called(record, epoch);
         let mut event = translate(record, epoch).expect("event records only");
+
         event.params["entry"]["text"] = called.params["args"][0]["value"].clone();
         event.params["entry"]["args"] = json!([called.params["args"][1]]);
+
         event
     }
 
@@ -214,10 +218,12 @@ impl Objects {
 
         let mut params = json!({"type":kind,"args":[self.remote_in(json!(message), Some("console")),self.remote_in(fields, Some("console"))],
             "executionContextId":1,"timestamp":(epoch+record.elapsed_us as f64/1e6)*1000.});
+
         if let Some(source) = &record.source {
             params["stackTrace"] = json!({"callFrames":[{"functionName":record.target,"scriptId":"",
                 "url":source_url(source),"lineNumber":source.line.saturating_sub(1),"columnNumber":0}]});
         }
+
         Event::new("Runtime.consoleAPICalled", params)
     }
 }
@@ -254,6 +260,7 @@ impl Loss {
         }
 
         let unrecorded = snapshot.dropped.saturating_sub(snapshot.evicted);
+
         let changed = unrecorded > self.unrecorded
             || snapshot.output_dropped > self.output_dropped
             || skipped > 0;
@@ -370,9 +377,11 @@ impl ProcessOutput {
 
             skipped += sequence.saturating_sub(self.cursor + 1);
             self.cursor = sequence;
+
             if !include_mirrors && record["structured"] == true {
                 continue;
             }
+
             let stream = record["stream"].as_str().unwrap_or("output");
             let text = record["text"].as_str().unwrap_or_default();
 
@@ -387,6 +396,7 @@ impl ProcessOutput {
                 _ if stream == "stderr" => "error",
                 _ => "info",
             };
+
             events.push(entry(
                 severity,
                 format!("[{stream}] {text}"),
@@ -420,6 +430,7 @@ pub(super) fn source_url(source: &rake_diagnostics::Source) -> String {
 pub(super) fn exception(error: Error, sequence: u64) -> Value {
     let description = format!("RakeError ({}): {}", error.code, error.message);
     let remote = json!({"type":"object","subtype":"error","className":"RakeError","description":description});
+
     json!({"result":remote,"exceptionDetails":{"exceptionId":sequence,"text":"Uncaught",
         "lineNumber":0,"columnNumber":0,"exception":remote}})
 }
@@ -434,10 +445,12 @@ mod tests {
         let first = objects.remote_in(json!({"nested":{"text":"hello"}}), Some("console"));
         let other = objects.remote_in(json!({"kept":true}), Some("watch"));
         let first_id = first["objectId"].as_str().unwrap();
+
         let nested = objects.properties(first_id).unwrap()["result"][0]["value"]["objectId"]
             .as_str()
             .unwrap()
             .to_owned();
+
         objects.release_group("console");
         assert!(objects.properties(first_id).is_err());
         assert!(objects.properties(&nested).is_err());
@@ -448,6 +461,7 @@ mod tests {
         );
         objects.clear();
         let fresh = objects.remote_in(json!({"fresh":true}), None);
+
         assert_ne!(
             fresh["objectId"], first["objectId"],
             "expired handles must never retarget"
@@ -493,19 +507,24 @@ mod tests {
         let collector = rake_diagnostics::Collector::new(2);
         let mut loss = Loss::default();
         let mut cursor = 0;
+
         for _ in 0..5 {
             collector.record("INFO", "test", "event", vec![], Default::default());
             let snapshot = collector.snapshot_after(cursor, None);
+
             assert!(
                 loss.observe(&snapshot, cursor).is_none(),
                 "consumed history is not new loss"
             );
             cursor = snapshot.records.last().unwrap().sequence;
         }
+
         for _ in 0..4 {
             collector.record("INFO", "test", "event", vec![], Default::default());
         }
+
         let snapshot = collector.snapshot_after(cursor, None);
+
         assert!(
             loss.observe(&snapshot, cursor)
                 .unwrap()
@@ -534,16 +553,19 @@ mod tests {
     fn marked_mirrors_are_hidden_live_but_retained_after_runtime_failure() {
         use std::os::unix::fs::OpenOptionsExt;
         let path = std::env::temp_dir().join(format!("rake-mirror-{}.json", uuid::Uuid::new_v4()));
+
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+
         serde_json::to_writer(file,&json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr","text":"INFO app mirrored","structured":true},
             {"sequence":2,"elapsed_us":1,"stream":"stderr","text":"panic output","structured":false}],"dropped":0})).unwrap();
         let mut live = ProcessOutput::new(Some(path.clone()));
         let live_entries = live.poll(10., false);
+
         assert_eq!(live_entries.len(), 1);
         assert_eq!(
             live_entries[0].params["entry"]["text"],
@@ -551,6 +573,7 @@ mod tests {
         );
         assert!(live.poll(11., false).is_empty());
         let mut disconnected = ProcessOutput::new(Some(path.clone()));
+
         assert_eq!(disconnected.poll(10., true).len(), 2);
         std::fs::remove_file(path).unwrap();
     }

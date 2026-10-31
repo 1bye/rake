@@ -22,6 +22,7 @@
 
 use futures::future::LocalBoxFuture;
 use serde::{Serialize, de::DeserializeOwned};
+
 use std::{
     cell::{Cell, RefCell},
     marker::PhantomData,
@@ -29,14 +30,19 @@ use std::{
 };
 
 mod cache;
+
 pub use cache::CacheConfig;
+
 #[cfg(feature = "devtools")]
 pub mod devtools;
 
 mod memory;
+
 pub use memory::MemoryBackend;
+
 #[cfg(not(target_family = "wasm"))]
 mod file;
+
 #[cfg(not(target_family = "wasm"))]
 pub use file::FileBackend;
 
@@ -97,14 +103,17 @@ pub trait Backend: 'static {
     /// Reads an owned value, or `None` when absent.
     fn get<'a>(&'a self, key: &'a str)
     -> LocalBoxFuture<'a, Result<Option<Vec<u8>>, StorageError>>;
+
     /// Atomically replaces a value. Backend errors preserve the previous value.
     fn set<'a>(
         &'a self,
         key: &'a str,
         value: &'a [u8],
     ) -> LocalBoxFuture<'a, Result<(), StorageError>>;
+
     /// Removes one value; absence is a success.
     fn remove<'a>(&'a self, key: &'a str) -> LocalBoxFuture<'a, Result<(), StorageError>>;
+
     /// Reads a bounded, sorted key page. Callers pass a valid key cursor and limit.
     fn keys<'a>(
         &'a self,
@@ -133,10 +142,12 @@ impl Inner {
         self.epoch.set(self.epoch.get().wrapping_add(1));
         #[cfg(feature = "devtools")]
         self.revision.set(self.revision.get().wrapping_add(1));
+
         if let Some(cache) = self.cache.borrow_mut().as_mut() {
             cache.clear();
         }
     }
+
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
         if self.writes.get() == 0 {
             let cached = self
@@ -144,21 +155,26 @@ impl Inner {
                 .borrow_mut()
                 .as_mut()
                 .and_then(|cache| cache.get(key));
+
             if let Some(value) = cached {
                 return Ok(value);
             }
         }
+
         let epoch = self.epoch.get();
         let value = self.backend.get(key).await?;
+
         if let Some(value) = &value {
             validate_value(value)?;
         }
+
         if self.writes.get() == 0
             && epoch == self.epoch.get()
             && let Some(cache) = self.cache.borrow_mut().as_mut()
         {
             cache.insert(key, value.clone());
         }
+
         Ok(value)
     }
 }
@@ -167,23 +183,28 @@ struct Mutation<'a> {
     inner: &'a Inner,
     finished: bool,
 }
+
 impl<'a> Mutation<'a> {
     fn new(inner: &'a Inner) -> Self {
         inner.writes.set(inner.writes.get() + 1);
         inner.invalidate();
+
         Self {
             inner,
             finished: false,
         }
     }
+
     fn finish(mut self) {
         self.finished = true;
     }
 }
+
 impl Drop for Mutation<'_> {
     fn drop(&mut self) {
         self.inner.writes.set(self.inner.writes.get() - 1);
         self.inner.invalidate();
+
         // A cancelled backend future can still commit on a worker. Bypass caching
         // rather than retaining data read before that unknown commit point.
         if !self.finished {
@@ -230,6 +251,7 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     pub fn with_cache(self, config: CacheConfig) -> Self {
         self.inner.invalidate();
         *self.inner.cache.borrow_mut() = Some(cache::Cache::new(config));
+
         self
     }
 
@@ -242,11 +264,13 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     /// Loads and decodes a value. Invalid JSON/type data returns a codec error.
     pub async fn get(&self, key: &str) -> Result<Option<T>, StorageError> {
         validate_key(key)?;
+
         self.inner
             .get(key)
             .await?
             .map(|bytes| {
                 validate_value(&bytes)?;
+
                 Ok(serde_json::from_slice(&bytes)?)
             })
             .transpose()
@@ -257,10 +281,13 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     pub async fn set(&self, key: &str, value: &T) -> Result<(), StorageError> {
         validate_key(key)?;
         let bytes = serde_json::to_vec(value)?;
+
         validate_value(&bytes)?;
         let mutation = Mutation::new(&self.inner);
         let result = self.inner.backend.set(key, &bytes).await;
+
         mutation.finish();
+
         result
     }
 
@@ -269,7 +296,9 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
         validate_key(key)?;
         let mutation = Mutation::new(&self.inner);
         let result = self.inner.backend.remove(key).await;
+
         mutation.finish();
+
         result
     }
 
@@ -284,10 +313,13 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
         if let Some(after) = after {
             validate_key(after)?;
         }
+
         if !(1..=MAX_PAGE_SIZE).contains(&limit) {
             return Err(StorageError::InvalidPage);
         }
+
         let keys = self.inner.backend.keys(after, limit).await?;
+
         if keys.len() > limit
             || keys
                 .iter()
@@ -296,6 +328,7 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
         {
             return Err(StorageError::InvalidBackendPage);
         }
+
         Ok(keys)
     }
 }
@@ -304,6 +337,7 @@ fn validate_key(key: &str) -> Result<(), StorageError> {
     if key.is_empty() || key.len() > MAX_KEY_BYTES || key.contains('\0') {
         return Err(StorageError::InvalidKey);
     }
+
     Ok(())
 }
 
@@ -311,5 +345,6 @@ fn validate_value(bytes: &[u8]) -> Result<(), StorageError> {
     if bytes.len() > MAX_VALUE_BYTES {
         return Err(StorageError::ValueTooLarge);
     }
+
     Ok(())
 }

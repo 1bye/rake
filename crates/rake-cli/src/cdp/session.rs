@@ -122,16 +122,19 @@ impl Session {
 
     fn encoded_event(&mut self, event: Option<EncodedEvent>) {
         let previous_dropped = self.dropped;
+
         if let Some(event) = event.filter(|event| {
             self.outbound.len() < QUEUE_LIMIT
                 && self.outbound_bytes.saturating_add(event.text.len()) <= 1024 * 1024
         }) {
             let bytes = event.text.len();
+
             self.outbound_bytes += bytes;
             self.outbound.push_back((event, bytes));
         } else {
             self.dropped = self.dropped.saturating_add(1);
         }
+
         if previous_dropped == 0 && self.dropped > 0 {
             self.sources.republish();
         }
@@ -150,7 +153,9 @@ impl Session {
         }
 
         let method = request.method.as_str();
+
         super::params::validate(method, &request.params)?;
+
         if let Some(reason) = &self.detached
             && !matches!(
                 method,
@@ -166,6 +171,7 @@ impl Session {
         if let Some(result) = super::compatibility::handle(method) {
             return Ok(result);
         }
+
         match method {
             "Rake.getActionability" => self.actionability(&request.params),
             "Rake.getEvidence" => self.evidence(&request.params),
@@ -175,6 +181,7 @@ impl Session {
                 else {
                     return Err(Error::new(-32000, "Unexpected runtime capability reply"));
                 };
+
                 if info.runtime_id != self.instance.info.runtime_id {
                     return Err(Error::agent(
                         -32010,
@@ -184,7 +191,9 @@ impl Session {
                         "Runtime identity changed",
                     ));
                 }
+
                 let native = super::native_input::windows(&self.instance);
+
                 Ok(super::capabilities::describe(
                     &info,
                     native.as_ref().map(|w| !w.is_empty()).unwrap_or(false),
@@ -195,6 +204,7 @@ impl Session {
             }
             "Rake.waitFor" => {
                 let window = self.native_input.target(&self.instance)?.window;
+
                 self.native_input.window = Some(window);
                 let id = self.waits.start(
                     &request.params,
@@ -202,6 +212,7 @@ impl Session {
                     window,
                     Instant::now(),
                 )?;
+
                 self.poll_wait(&id)
             }
             "Rake.getWait" | "Rake.cancelWait" => {
@@ -209,6 +220,7 @@ impl Session {
                     .as_str()
                     .filter(|s| s.len() <= 128)
                     .ok_or_else(|| Error::new(-32602, "waitId required"))?;
+
                 if method == "Rake.cancelWait" {
                     self.waits.cancel(id, Instant::now())
                 } else {
@@ -220,14 +232,17 @@ impl Session {
             ),
             "Page.captureScreenshot" => {
                 let target = self.native_input.target(&self.instance)?;
+
                 let screenshots = self.screenshots.as_ref().ok_or_else(|| {
                     Error::new(
                         -32000,
                         "Start the CDP adapter with --capture to enable native screenshots",
                     )
                 })?;
+
                 let result = screenshots.capture(&self.instance, &target, &request.params)?;
                 let after = self.native_input.target(&self.instance)?;
+
                 if after.native_id != target.native_id
                     || after.frame != target.frame
                     || after.content != target.content
@@ -237,6 +252,7 @@ impl Session {
                         "Native window geometry changed during capture; request a fresh screenshot",
                     ));
                 }
+
                 Ok(result)
             }
             "Rake.getWindows" => {
@@ -245,16 +261,19 @@ impl Session {
             "Rake.selectWindow" => {
                 let before = self.native_input.window;
                 let result = self.native_input.select(&self.instance, &request.params)?;
+
                 if before != self.native_input.window {
                     self.waits.invalidate("Selected window changed");
                     self.dom.clear();
                     self.index_revision = None;
                     self.tracked_style_node = None;
                     self.edit_sheets.clear();
+
                     if self.domains.contains(&Domain::Dom) {
                         self.event(Event::new("DOM.documentUpdated", json!({})));
                     }
                 }
+
                 Ok(result)
             }
             "Rake.getSnapshot" | "Rake.findElements" => self.agent_snapshot(&request.params),
@@ -262,6 +281,7 @@ impl Session {
                 let command = self
                     .native_input
                     .command(&self.instance, method, &request.params)?;
+
                 let reply = self.send_control(command).map_err(|error| {
                     let stale = matches!(
                         error,
@@ -272,6 +292,7 @@ impl Session {
                             )
                         )
                     );
+
                     if stale {
                         Error::agent(
                             -32010,
@@ -290,18 +311,22 @@ impl Session {
                         )
                     }
                 })?;
+
                 if !matches!(reply, Reply::Acknowledged) {
                     return Err(Error::new(-32000, "Unexpected native input reply"));
                 }
+
                 Ok(json!({"accepted":true}))
             }
             "DOMStorage.enable" => {
                 self.domains.insert(Domain::DomStorage);
+
                 Ok(json!({}))
             }
             "DOMStorage.disable" => {
                 self.domains.remove(&Domain::DomStorage);
                 self.storage.clear();
+
                 Ok(json!({}))
             }
             "Storage.getStorageKeyForFrame" | "Storage.getStorageKey" => {
@@ -327,43 +352,53 @@ impl Session {
                                 let events = self
                                     .storage
                                     .recover_mutation(&self.instance, &request.params);
+
                                 if self.domains.contains(&Domain::DomStorage) {
                                     for event in events {
                                         self.event(event);
                                     }
                                 }
+
                                 self.warning(format!("Storage edit rejected: {}", error.message));
                             }
+
                             return Err(error);
                         }
                     };
+
                 if self.domains.contains(&Domain::DomStorage) {
                     for event in events {
                         self.event(event);
                     }
                 }
+
                 Ok(result)
             }
             "HeapProfiler.enable" => Ok(json!({})),
             "HeapProfiler.disable" => {
                 self.stop_memory();
                 self.memory = super::memory::Memory::default();
+
                 Ok(json!({}))
             }
             "Runtime.getIsolateId" => Ok(json!({"id":self.instance.info.runtime_id.to_string()})),
             "Runtime.getHeapUsage" => Ok(json!({"usedSize":0,"totalSize":0})), // Native host has no JavaScript heap.
             "HeapProfiler.startSampling" => {
                 self.start_memory(&request.params)?;
+
                 Ok(json!({}))
             }
             "HeapProfiler.getSamplingProfile" | "HeapProfiler.stopSampling" => {
                 let mut profile = self.memory_profile();
+
                 if method == "HeapProfiler.stopSampling" {
                     self.stop_memory();
+
                     if let Ok(profile) = &mut profile {
                         profile["rake"]["recording"] = json!(false);
                     }
                 }
+
                 Ok(json!({"profile":profile?}))
             }
             "Rake.getMemorySummary" => Ok(self.memory_status()),
@@ -371,22 +406,27 @@ impl Session {
                 self.stop_memory();
                 self.memory = super::memory::Memory::default();
                 self.event(Event::new("HeapProfiler.resetProfiles", json!({})));
+
                 Ok(self.memory_status())
             }
             "HeapProfiler.takeHeapSnapshot" => {
                 if !self.memory.active {
                     self.start_memory(&json!({}))?;
                 }
+
                 let capture = self.memory_capture(false)?;
+
                 if !capture.recording {
                     return Err(Error::new(
                         -32000,
                         "Native memory lease expired; use rake.stopMemory() before a new capture",
                     ));
                 }
+
                 let frames = self.memory_frames(&capture);
                 let text = self.memory.heap_snapshot(&capture, &frames)?;
                 let mut events = Vec::new();
+
                 if request.params["reportProgress"] == true {
                     // Chrome prepares its worker on finished progress, before chunks arrive.
                     events.push(Event::new(
@@ -394,23 +434,30 @@ impl Session {
                         json!({"done":1,"total":1,"finished":true}),
                     ));
                 }
+
                 let mut offset = 0;
+
                 while offset < text.len() {
                     let mut end = (offset + 32 * 1024).min(text.len());
+
                     while !text.is_char_boundary(end) {
                         end -= 1;
                     }
+
                     events.push(Event::new(
                         "HeapProfiler.addHeapSnapshotChunk",
                         json!({"chunk":&text[offset..end]}),
                     ));
                     offset = end;
                 }
+
                 let events = events
                     .into_iter()
                     .map(EncodedEvent::new)
                     .collect::<Vec<_>>();
+
                 let bytes = encoded_bytes(&events);
+
                 if self.outbound.len() + events.len() > QUEUE_LIMIT
                     || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
                 {
@@ -419,9 +466,11 @@ impl Session {
                         "Outbound queue busy; retry the heap snapshot",
                     ));
                 }
+
                 for event in events {
                     self.encoded_event(event);
                 }
+
                 Ok(json!({}))
             }
             "HeapProfiler.collectGarbage" => Err(Error::new(
@@ -430,10 +479,12 @@ impl Session {
             )),
             "Accessibility.enable" => {
                 self.domains.insert(Domain::Accessibility);
+
                 Ok(json!({}))
             }
             "Accessibility.disable" => {
                 self.domains.remove(&Domain::Accessibility);
+
                 Ok(json!({}))
             }
             "Accessibility.getRootAXNode"
@@ -442,6 +493,7 @@ impl Session {
             | "Accessibility.getChildAXNodes"
             | "Accessibility.getAXNodeAndAncestors" => {
                 self.refresh_dom()?;
+
                 self.dom.accessibility(method, &request.params)
             }
             "Rake.getPerformanceSummary" => Ok(self.frame_trace.summary()),
@@ -452,6 +504,7 @@ impl Session {
                 if self.pending_trace_complete.is_some() {
                     return Err(Error::new(-32000, "Stop the previous recording first"));
                 }
+
                 if !self
                     .instance
                     .info
@@ -461,14 +514,18 @@ impl Session {
                 {
                     return Err(Error::new(-32000, "Frame recording is unavailable"));
                 }
+
                 self.frame_trace.begin(&request.params)?;
+
                 if let Err(error) = self.control(Command::RecordFrames {
                     enabled: true,
                     lease_ms: 5000,
                 }) {
                     self.frame_trace.active = false;
+
                     return Err(error);
                 }
+
                 let baseline = query(
                     &self.instance,
                     Query::Frames {
@@ -476,12 +533,15 @@ impl Session {
                     },
                     TIMEOUT,
                 );
+
                 match baseline {
                     Ok(Reply::Frames(baseline)) => {
                         self.frame_trace.cursor = baseline.cursor;
+
                         if let Some(clock) = &baseline.clock {
                             self.frame_trace.causal.calibrate(clock);
                         }
+
                         self.frame_trace.source_prefix = self.source_base.as_ref().map(|base| {
                             format!("{base}/{}/source/frame", self.instance.info.runtime_id)
                         });
@@ -491,28 +551,35 @@ impl Session {
                             enabled: false,
                             lease_ms: 0,
                         });
+
                         self.frame_trace.active = false;
+
                         return Err(Error::new(
                             -32000,
                             format!("Frame baseline unavailable: {other:?}"),
                         ));
                     }
                 }
+
                 Ok(json!({}))
             }
             "Tracing.end" => {
                 if !self.frame_trace.active {
                     if let Some(complete) = self.pending_trace_complete.take() {
                         self.event(Event::new("Tracing.tracingComplete", complete));
+
                         return Ok(json!({}));
                     }
+
                     return if self.frame_trace.has_stream() {
                         Ok(json!({}))
                     } else {
                         Err(Error::new(-32000, "Frame tracing is not active"))
                     };
                 }
+
                 self.finish_trace(None);
+
                 Ok(json!({}))
             }
             "IO.read"
@@ -528,13 +595,16 @@ impl Session {
                     .is_some_and(|handle| handle.starts_with("rake-frames-")) =>
             {
                 self.frame_trace.close(&request.params)?;
+
                 Ok(json!({}))
             }
             "Runtime.evaluate" => {
                 let expression = request.params["expression"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "expression required"))?;
+
                 let expression = expression.trim().trim_end_matches(';').trim();
+
                 if request
                     .params
                     .get("contextId")
@@ -552,11 +622,14 @@ impl Session {
                 if expression == "$0" {
                     self.refresh_dom()?;
                     let node = self.dom.inspected_node()?;
+
                     let object = self.dom.resolve_node(
                         &json!({"nodeId":node,"objectGroup":request.params["objectGroup"]}),
                     )?;
+
                     return Ok(json!({"result":object["object"]}));
                 }
+
                 let read_only = if expression == "rake.memory()" {
                     Some(self.memory_status())
                 } else if expression == "rake.sources()" {
@@ -579,6 +652,7 @@ impl Session {
                 } else {
                     None
                 };
+
                 if let Some(value) = read_only {
                     let remote = if request.params["returnByValue"] == true {
                         json!({"type":"object","value":value})
@@ -586,8 +660,10 @@ impl Session {
                         self.objects
                             .remote_in(value, request.params["objectGroup"].as_str())
                     };
+
                     return Ok(json!({"result":remote}));
                 }
+
                 if request.params["throwOnSideEffect"] == true {
                     return Err(Error::new(
                         -32000,
@@ -609,6 +685,7 @@ impl Session {
                         let id: String = serde_json::from_str(argument).map_err(|_| {
                             Error::new(-32602, "Command name must be a JSON string")
                         })?;
+
                         super::evaluate::registry(&self.instance)?
                             .as_array()
                             .unwrap()
@@ -625,6 +702,7 @@ impl Session {
                         let token: Value = serde_json::from_str(argument).map_err(|_| {
                             Error::new(-32602, "Operation observation requires a JSON token")
                         })?;
+
                         super::evaluate::observation(&self.instance, &token)?
                     } else if let Some(argument) = expression
                         .strip_prefix("rake.source(")
@@ -632,6 +710,7 @@ impl Session {
                     {
                         let selector = self.source_selector(argument)?;
                         let location = self.source_location(&selector)?;
+
                         self.source_descriptor(&location)
                     } else if let Some(argument) = expression
                         .trim()
@@ -642,6 +721,7 @@ impl Session {
                     {
                         let selector = self.source_selector(argument)?;
                         let location = self.source_location(&selector)?;
+
                         crate::source::open(&location)
                             .map_err(|error| Error::new(-32000, error.to_string()))?
                     } else if let Some(method) = match expression {
@@ -652,6 +732,7 @@ impl Session {
                         _ => None,
                     } {
                         let node = self.dom.inspected_node()?;
+
                         self.handle(&Request {
                             id: request.id,
                             method: method.into(),
@@ -665,25 +746,31 @@ impl Session {
                         json!({"type":"object","value":value})
                     } else {
                         let status = value["status"].as_str().map(str::to_owned);
+
                         let id = value["observe"]["id"]
                             .as_str()
                             .unwrap_or_default()
                             .to_owned();
+
                         let mut remote = self
                             .objects
                             .remote_in(value, request.params["objectGroup"].as_str());
+
                         if let Some(status) = status {
                             remote["description"] = json!(format!("Command {status} · {id}"));
                         }
+
                         remote
                     };
 
                     Ok(json!({"result":remote}))
                 })();
+
                 Ok(match outcome {
                     Ok(value) => value,
                     Err(error) => {
                         self.exception_sequence += 1;
+
                         super::console::exception(error, self.exception_sequence)
                     }
                 })
@@ -777,6 +864,7 @@ impl Session {
             }
             "DOM.requestChildNodes" => {
                 let events = self.dom.request_children(&request.params)?;
+
                 self.child_events(events)?;
 
                 Ok(json!({}))
@@ -786,16 +874,20 @@ impl Session {
                 let query = request.params["query"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "query required"))?;
+
                 self.dom.search(query)
             }
             "DOM.getOuterHTML" => {
                 self.refresh_dom()?;
+
                 self.dom.outer_html(&request.params)
             }
             "DOM.getSearchResults" => {
                 self.refresh_dom()?;
                 let (result, events) = self.dom.search_results(&request.params)?;
+
                 self.child_events(events)?;
+
                 Ok(result)
             }
             "DOM.discardSearchResults" => self.dom.discard_search(&request.params),
@@ -811,9 +903,11 @@ impl Session {
                             .into(),
                     },
                 };
+
                 self.edit_control(|dom| {
                     dom.text_command(&request.params, edit.clone(), method != "DOM.setNodeValue")
                 })?;
+
                 // Character-data events follow the actual GPUI draw, including layout and AX updates.
                 Ok(json!({}))
             }
@@ -822,34 +916,42 @@ impl Session {
                 // Map the retained CDP identity to the latest exact runtime capture.
                 self.refresh_dom()?;
                 self.control(self.dom.navigation_command(method, &request.params)?)?;
+
                 Ok(json!({}))
             }
             "Rake.getSources" => Ok(self.sources.status()),
             "Rake.getSourceLocation" => {
                 let location = self.source_location(&request.params)?;
+
                 Ok(self.source_descriptor(&location))
             }
             "Rake.openSource" => {
                 let location = self.source_location(&request.params)?;
+
                 crate::source::open(&location)
                     .map_err(|error| Error::new(-32000, error.to_string()))
             }
             "DOM.resolveNode" => {
                 self.refresh_dom()?;
+
                 self.dom.resolve_node(&request.params)
             }
             "DOM.requestNode" => {
                 let object = request.params["objectId"]
                     .as_str()
                     .ok_or_else(|| Error::new(-32602, "objectId required"))?;
+
                 let node = self.dom.object_node(object)?;
                 let (_, events) = self.dom.push_nodes(&json!({"backendNodeIds":[node]}))?;
+
                 self.child_events(events)?;
+
                 Ok(json!({"nodeId":node}))
             }
             "Runtime.callFunctionOn" => {
                 self.refresh_dom()?;
                 self.control(self.dom.call_navigation(&request.params)?)?;
+
                 Ok(json!({"result":{"type":"undefined"}}))
             }
             "Page.bringToFront" => Ok(json!({})), // Focus navigation activates the actual target window.
@@ -860,9 +962,11 @@ impl Session {
             | "CSS.getMatchedStylesForNode"
             | "CSS.getComputedStyleForNode" => {
                 let node = super::params::node_id(&request.params)?;
+
                 if node != 1 {
                     self.load_details(node)?;
                 }
+
                 if method == "CSS.getMatchedStylesForNode"
                     && let Some(node) = request.params["nodeId"]
                         .as_i64()
@@ -876,6 +980,7 @@ impl Session {
                         "isConstructed":false,"startLine":0,"startColumn":0,"length":self.dom.edit_text(node)?.len(),"endLine":0,"endColumn":0
                     }})));
                 }
+
                 self.dom.handle(method, &request.params)
             }
             "CSS.getStyleSheetText"
@@ -884,7 +989,9 @@ impl Session {
                     .is_some_and(|id| id.starts_with("rake-edit-")) =>
             {
                 let node = edit_node(&request.params["styleSheetId"])?;
+
                 self.load_details(node)?;
+
                 Ok(json!({"text":self.dom.edit_text(node)?}))
             }
             "CSS.setStyleTexts"
@@ -898,12 +1005,15 @@ impl Session {
                         .as_i64()
                         .and_then(|id| i32::try_from(id).ok())
                         .ok_or_else(|| Error::new(-32602, "nodeId required"))?;
+
                     let property = request.params["propertyName"]
                         .as_str()
                         .ok_or_else(|| Error::new(-32602, "propertyName required"))?;
+
                     let value = request.params["value"]
                         .as_str()
                         .ok_or_else(|| Error::new(-32602, "value required"))?;
+
                     (
                         node,
                         rake_protocol::inspection::StyleEdit::Set {
@@ -919,6 +1029,7 @@ impl Session {
                         .as_i64()
                         .and_then(|id| i32::try_from(id).ok())
                         .ok_or_else(|| Error::new(-32602, "nodeId required"))?;
+
                     (
                         node,
                         if method == "Rake.resetStyles" {
@@ -938,15 +1049,19 @@ impl Session {
                                     "Exactly one style edit per request is supported",
                                 )
                             })?;
+
                         &edits[0]
                     } else {
                         &request.params
                     };
+
                     let node = edit_node(&edit["styleSheetId"])?;
+
                     self.load_details(node)?;
                     let text = edit["text"]
                         .as_str()
                         .ok_or_else(|| Error::new(-32602, "text required"))?;
+
                     let text = if method == "CSS.setStyleTexts" {
                         super::editing::replace_range(
                             &self.dom.edit_text(node)?,
@@ -956,6 +1071,7 @@ impl Session {
                     } else {
                         text.into()
                     };
+
                     (
                         node,
                         rake_protocol::inspection::StyleEdit::Replace {
@@ -963,6 +1079,7 @@ impl Session {
                         },
                     )
                 };
+
                 self.edit_control(|dom| dom.edit_command(node, edit.clone()))?;
                 // The mutation is acknowledged. A redraw can expire the capture before a
                 // follow-up read; that must not turn an applied edit into an apparent failure.
@@ -971,6 +1088,7 @@ impl Session {
                     "CSS.styleSheetChanged",
                     json!({"styleSheetId":format!("rake-edit-{node}")}),
                 ));
+
                 if method == "CSS.setStyleTexts" {
                     Ok(json!({"styles":[self.dom.edit_style(node)?]}))
                 } else {
@@ -1068,17 +1186,22 @@ impl Session {
 
                 if id.starts_with("rake-node-") {
                     let node = self.dom.object_node(id)?;
+
                     self.load_details(node)?;
                     let mut properties = self.dom.node_properties(id)?;
+
                     if let Ok(location) = self.dom.source(&json!(node)).cloned() {
                         let source = self.source_descriptor(&location);
+
                         if let Some(url) = source.get("url") {
                             properties["result"].as_array_mut().expect("node properties array").push(json!({"name":"rakeSourceURL","value":{"type":"string","value":url},"configurable":false,"enumerable":true}));
                         }
+
                         if let Some(location) = source.get("location") {
                             properties["result"].as_array_mut().expect("node properties array").push(json!({"name":"rakeSourceLocation","value":{"type":"string","value":location},"configurable":false,"enumerable":true}));
                         }
                     }
+
                     return Ok(properties);
                 }
 
@@ -1096,13 +1219,16 @@ impl Session {
                 if let Some(group) = request.params["objectGroup"].as_str() {
                     self.dom.release_node_group(group);
                 }
+
                 if let Some(group) = request.params["objectGroup"].as_str() {
                     self.objects.release_group(group);
                 }
+
                 Ok(json!({}))
             }
             "Runtime.discardConsoleEntries" | "Log.clear" => {
                 self.clear_console();
+
                 Ok(json!({}))
             }
             "Network.getResponseBody" | "Network.getRequestPostData" => {
@@ -1110,6 +1236,7 @@ impl Session {
             }
             "Network.searchInResponseBody" => {
                 let body = self.network_body(&request.params, true)?;
+
                 super::network::search(&body, &request.params)
             }
             "Network.setCacheDisabled" if request.params["cacheDisabled"] == false => Ok(json!({})),
@@ -1124,6 +1251,7 @@ impl Session {
                         .map_err(|error| Error::new(-32000, error.to_string()))?;
                     self.network_paused = false;
                 }
+
                 if domain == Domain::Runtime && fresh {
                     self.event(Event::new("Runtime.executionContextCreated", json!({"context":{
                         "id":1, "origin":"rake://runtime", "name":self.instance.application_id,
@@ -1136,6 +1264,7 @@ impl Session {
                 if method == "Network.disable" {
                     self.network_paused = true;
                 }
+
                 self.domains
                     .remove(&Domain::of(method).expect("matched supported domain"));
 
@@ -1143,11 +1272,13 @@ impl Session {
             }
             "Page.enable" => {
                 self.domains.insert(Domain::Page);
+
                 Ok(json!({}))
             }
             "Page.disable" => {
                 self.domains.remove(&Domain::Page);
                 self.source_tree_loaded = false;
+
                 Ok(json!({}))
             }
             "Page.getResourceTree" => {
@@ -1160,7 +1291,9 @@ impl Session {
                 {
                     self.refresh_dom()?;
                 }
+
                 self.source_tree_loaded = true;
+
                 Ok(
                     json!({"frameTree":{"frame":frame(&self.instance.info.runtime_id.to_string()),"resources":self.sources.resources(),"childFrames":self.sources.documents()}}),
                 )
@@ -1169,9 +1302,11 @@ impl Session {
                 let result = self
                     .source_content(&request.params)
                     .and_then(|text| super::sources::search(&text, &request.params));
+
                 if let Err(error) = &result {
                     self.warning(format!("Rust source search failed: {}", error.message));
                 }
+
                 result
             }
             "Page.getResourceContent" => {
@@ -1179,6 +1314,7 @@ impl Session {
             }
             "Network.loadNetworkResource" => {
                 let text = self.source_content(&request.params)?;
+
                 self.sources.stream(text)
             }
             "IO.read"
@@ -1194,6 +1330,7 @@ impl Session {
                     .is_some_and(|h| h.starts_with("rake-source-")) =>
             {
                 self.sources.close(&request.params);
+
                 Ok(json!({}))
             }
             "Page.getFrameTree" => Ok(
@@ -1210,13 +1347,16 @@ impl Session {
         if params["url"] == "rake://runtime" {
             return Ok("Rake native runtime. Captured Rust files are read-only source documents; JavaScript execution and Rust debugging are unavailable here.\n".into());
         }
+
         if let (Some(base), Some(url)) = (&self.source_base, params["url"].as_str()) {
             let prefix = format!("{base}/{}/source/frame/", self.instance.info.runtime_id);
+
             if let Some(tail) = url.strip_prefix(&prefix) {
                 return super::server::frame_source_content(&self.instance, tail)
                     .map_err(|error| Error::new(-32000, error.to_string()));
             }
         }
+
         self.sources.content(params)
     }
 
@@ -1232,6 +1372,7 @@ impl Session {
         {
             self.network_cursor = record.sequence;
         }
+
         Ok(())
     }
 
@@ -1239,10 +1380,13 @@ impl Session {
         let id = params["requestId"]
             .as_str()
             .ok_or_else(|| Error::new(-32602, "Request ID required"))?;
+
         if let Some(body) = self.network_bodies.get(id, response) {
             return super::network::body(body, response);
         }
+
         let id = super::network::local_id(id, &self.instance.info.runtime_id.to_string())?;
+
         let Reply::Data(body) = query(
             &self.instance,
             Query::HttpBody {
@@ -1255,21 +1399,26 @@ impl Session {
         else {
             return Err(Error::new(-32000, "HTTP capture unavailable"));
         };
+
         super::network::body(body, response)
     }
 
     fn retain_network_bodies(&mut self, record: &rake_diagnostics::Record, id: &str) {
         let phase = record.fields["phase"].as_str().unwrap_or_default();
+
         if !matches!(
             phase,
             "completed" | "failed" | "timed_out" | "cancelled" | "abandoned"
         ) {
             return;
         }
+
         let Some(request_id) = record.fields["request_id"].as_u64() else {
             return;
         };
+
         let mut bodies = [Value::Null, Value::Null];
+
         for (index, body) in bodies.iter_mut().enumerate() {
             if let Ok(Reply::Data(value)) = query(
                 &self.instance,
@@ -1282,6 +1431,7 @@ impl Session {
                 *body = value;
             }
         }
+
         self.network_bodies.insert(id.into(), bodies);
     }
 
@@ -1292,16 +1442,20 @@ impl Session {
                 line: source.line,
                 column: 1,
             };
+
             if let Some(url) = self.sources.admit(&site) {
                 self.publish_sources();
+
                 return Some(url);
             }
         }
+
         if let (Some(base), Some(source)) = (&self.source_base, &record.source) {
             let filename = std::path::Path::new(&source.file)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("source.rs");
+
             let filename: String = filename
                 .chars()
                 .map(|c| {
@@ -1312,11 +1466,14 @@ impl Session {
                     }
                 })
                 .collect();
+
             let url = format!(
                 "{base}/{}/source/{}/{filename}",
                 self.instance.info.runtime_id, record.sequence
             );
+
             self.sources.alias(url.clone(), record);
+
             Some(url)
         } else {
             None
@@ -1337,6 +1494,7 @@ impl Session {
 
     fn source_descriptor(&mut self, location: &rake_protocol::inspection::SourceLocation) -> Value {
         let mut value = serde_json::to_value(location).expect("source location serialization");
+
         if let Some(url) = self.sources.admit(location) {
             value["url"] = json!(url);
             value["lineNumber"] = json!(location.line.saturating_sub(1));
@@ -1352,6 +1510,7 @@ impl Session {
             ));
             self.publish_sources();
         }
+
         value
     }
 
@@ -1359,6 +1518,7 @@ impl Session {
         self.objects.release_group("console");
         // Captured source aliases also belong to Network and stay independently bounded.
         self.discard_diagnostics = true;
+
         // Advance the per-connection cursor, without deleting application diagnostics.
         if let Ok(Reply::Diagnostics(snapshot)) = query(
             &self.instance,
@@ -1371,6 +1531,7 @@ impl Session {
             self.accept_diagnostics(&snapshot);
             self.discard_diagnostics = false;
         }
+
         self.process_output.poll(unix_seconds(), true);
         self.outbound.retain(|(event, _)| {
             !matches!(
@@ -1383,6 +1544,7 @@ impl Session {
 
     fn accept_diagnostics(&mut self, snapshot: &rake_diagnostics::Snapshot) {
         self.loss.observe(snapshot, self.cursor);
+
         if let Some(record) = snapshot.records.last() {
             self.cursor = record.sequence;
         }
@@ -1413,13 +1575,17 @@ impl Session {
                 }
             }
         }
+
         let live = query(&self.instance, Query::Info {}, TIMEOUT);
+
         // Raw stdout/stderr survive failed IPC; marked diagnostic mirrors are fallback only.
         self.poll_output(live.is_err());
+
         match live? {
             Reply::Info(info) if info.runtime_id == self.instance.info.runtime_id => {}
             _ => return Err("runtime identity changed".into()),
         }
+
         if self.memory.active
             && self
                 .memory
@@ -1443,10 +1609,12 @@ impl Session {
         }
 
         self.poll_overlay().map_err(|error| error.message)?;
+
         if self.frame_trace.active {
             let result = self
                 .poll_frames(true)
                 .and_then(|_| self.poll_performance_diagnostics());
+
             if let Err(error) = result {
                 if matches!(
                     error.kind,
@@ -1462,15 +1630,19 @@ impl Session {
         self.publish_sources();
         let console =
             self.domains.contains(&Domain::Log) || self.domains.contains(&Domain::Runtime);
+
         let network = self.domains.contains(&Domain::Network);
+
         if !console && !network {
             return Ok(());
         }
+
         let after = match (console, network) {
             (true, true) => self.cursor.min(self.network_cursor),
             (false, true) => self.network_cursor,
             _ => self.cursor,
         };
+
         let Reply::Diagnostics(snapshot) = query(
             &self.instance,
             Query::Diagnostics { after, kind: None },
@@ -1481,6 +1653,7 @@ impl Session {
         };
 
         let discard = std::mem::take(&mut self.discard_diagnostics);
+
         let warning = console
             .then(|| self.loss.observe(&snapshot, self.cursor))
             .flatten();
@@ -1503,9 +1676,11 @@ impl Session {
                 .filter(|record| record.sequence > after)
             {
                 self.sources.observe(record);
+
                 if record.sequence <= self.cursor || record.kind != "event" {
                     continue;
                 }
+
                 let mut event = if self.domains.contains(&Domain::Log) {
                     self.objects
                         .logged(record, self.epoch_seconds.unwrap_or_default())
@@ -1513,6 +1688,7 @@ impl Session {
                     self.objects
                         .called(record, self.epoch_seconds.unwrap_or_default())
                 };
+
                 if let Some(url) = self.source_link(record) {
                     if event.method == "Log.entryAdded" {
                         event.params["entry"]["url"] = json!(url);
@@ -1520,9 +1696,11 @@ impl Session {
                         event.params["stackTrace"]["callFrames"][0]["url"] = json!(url);
                     }
                 }
+
                 self.event(event);
             }
         }
+
         if console && let Some(record) = snapshot.records.last() {
             self.cursor = record.sequence;
         }
@@ -1532,32 +1710,42 @@ impl Session {
                 if record.sequence <= self.network_cursor {
                     continue;
                 }
+
                 self.sources.observe(record);
+
                 for mut event in super::network::translate(record) {
                     let runtime = self.instance.info.runtime_id.to_string();
+
                     let id = format!(
                         "{runtime}:{}",
                         event.params["requestId"].as_str().unwrap_or_default()
                     );
+
                     event.params["requestId"] = json!(id);
+
                     if event.params.get("loaderId").is_some() {
                         event.params["loaderId"] = json!(runtime);
                     }
+
                     self.retain_network_bodies(record, &id);
                     let epoch = self.epoch_seconds.unwrap_or_default();
                     let origin = *self.network_epoch.get_or_insert(epoch);
                     let offset = epoch - origin;
                     let timestamp = event.params["timestamp"].as_f64().unwrap_or_default();
+
                     event.params["timestamp"] = json!(timestamp + offset);
+
                     if let Some(time) = event.params["response"]["timing"]["requestTime"].as_f64() {
                         event.params["response"]["timing"]["requestTime"] = json!(time + offset);
                     }
+
                     if event.method == "Network.requestWillBeSent" {
                         if record.source.is_some()
                             && let Some(url) = self.source_link(record)
                         {
                             event.params["initiator"]["stack"]["callFrames"][0]["url"] = json!(url);
                         }
+
                         event.params["wallTime"] = json!(epoch + timestamp);
                     }
 
@@ -1586,10 +1774,13 @@ impl Session {
                 "Native memory capture requires devtools-memory and an installed TrackingAllocator",
             ));
         }
+
         let command = self.memory.begin(params)?;
+
         self.control(command)?;
         self.memory.active = true;
         self.memory.renewed = Some(Instant::now());
+
         Ok(())
     }
 
@@ -1602,6 +1793,7 @@ impl Session {
             .owner
             .as_ref()
             .ok_or_else(|| Error::new(-32000, "Start a native memory recording first"))?;
+
         let reply = query(
             &self.instance,
             Query::Memory {
@@ -1611,12 +1803,15 @@ impl Session {
             Duration::from_secs(30),
         )
         .map_err(|error| Error::new(-32000, error.to_string()))?;
+
         let Reply::Memory(capture) = reply else {
             return Err(Error::new(-32000, "Unexpected memory capture reply"));
         };
+
         if !capture.recording {
             self.memory.active = false;
         }
+
         Ok(capture)
     }
 
@@ -1626,6 +1821,7 @@ impl Session {
         } else {
             json!({})
         };
+
         value["available"] = json!(
             self.instance
                 .info
@@ -1634,6 +1830,7 @@ impl Session {
                 .any(|query| query == "memory")
         );
         value["recording"] = json!(self.memory.active);
+
         value
     }
 
@@ -1641,6 +1838,7 @@ impl Session {
         let capture = self.memory_capture(self.memory.include_freed)?;
         let frames = self.memory_frames(&capture);
         let profile = self.memory.profile(&capture, &frames)?;
+
         if let Some(omitted) = self.memory.metadata["omitted"]
             .as_u64()
             .filter(|omitted| *omitted > 0)
@@ -1650,6 +1848,7 @@ impl Session {
                 omitted
             ));
         }
+
         Ok(profile)
     }
 
@@ -1661,6 +1860,7 @@ impl Session {
             let source = if let (Some(file),Some(line)) = (&site.file,site.line) {
                 self.source_descriptor(&rake_protocol::inspection::SourceLocation { file: file.clone(), line, column: site.column.unwrap_or(1).max(1) })
             } else { json!({}) };
+
             json!({"functionName":site.function,"scriptId":"","url":source["url"].as_str().unwrap_or(""),
                 "lineNumber":source["lineNumber"].as_i64().unwrap_or(-1),"columnNumber":source["columnNumber"].as_i64().unwrap_or(-1)})
         }).collect()
@@ -1670,6 +1870,7 @@ impl Session {
         // A start may have reached the runtime even if its acknowledgement was lost.
         if self.memory.owner.is_some() {
             let _ = self.control(self.memory.command(false));
+
             self.memory.active = false;
             self.memory.metadata["recording"] = json!(false);
         }
@@ -1705,6 +1906,7 @@ impl Session {
         command: impl Fn(&super::dom::Dom) -> std::result::Result<Command, Error>,
     ) -> std::result::Result<(), Error> {
         let reply = self.send_control(command(&self.dom)?);
+
         if matches!(
             reply,
             Err(rake_client::Error::Control(
@@ -1716,6 +1918,7 @@ impl Session {
             // A draw can land between lookup and admission. This rejection proves no edit ran.
             // Remap the retained CDP identity once; never repeat an uncertain transport outcome.
             self.refresh_dom()?;
+
             return self.control(command(&self.dom)?);
         }
 
@@ -1730,13 +1933,16 @@ impl Session {
 
     fn cleanup(&mut self) {
         self.stop_memory();
+
         if self.frame_trace.active {
             let _ = self.control(Command::RecordFrames {
                 enabled: false,
                 lease_ms: 0,
             });
+
             self.frame_trace.active = false;
         }
+
         self.cleanup_overlay();
     }
 
@@ -1841,11 +2047,14 @@ impl Session {
             .into_iter()
             .map(|params| Event::new("DOM.setChildNodes", params))
             .collect::<Vec<_>>();
+
         let events = events
             .into_iter()
             .map(EncodedEvent::new)
             .collect::<Vec<_>>();
+
         let bytes = encoded_bytes(&events);
+
         if self.outbound.len() + events.len() > QUEUE_LIMIT
             || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
         {
@@ -1856,28 +2065,34 @@ impl Session {
             self.dom.reset_delivery();
             self.tracked_style_node = None;
             self.event(Event::new("DOM.documentUpdated", json!({})));
+
             return Err(Error::new(
                 -32000,
                 "Tree delivery exceeded the queue budget; request the document and repeat navigation",
             ));
         }
+
         for event in events {
             self.encoded_event(event);
         }
+
         Ok(())
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
         if let Some(window) = self.native_input.window {
             self.refresh_window(window)?;
+
             return Ok(());
         }
+
         let paged = self
             .instance
             .info
             .queries
             .iter()
             .any(|q| q == "inspect_tree_page");
+
         // Full captures contain live styles; their index identity cannot cache those details.
         let revision = if paged
             && self
@@ -1893,23 +2108,29 @@ impl Session {
             else {
                 return Err(Error::new(-32000, "Unexpected inspection revision reply"));
             };
+
             Some(revision)
         } else {
             None
         };
+
         let unchanged = revision
             .as_ref()
             .is_some_and(|revision| self.index_revision.as_ref() == Some(revision));
+
         let mut reset = false;
+
         if !unchanged {
             let cached = revision.as_ref().and_then(|revision| {
                 self.captures
                     .find(self.instance.info.runtime_id.0, revision)
             });
+
             let snapshot = if let Some(snapshot) = cached {
                 snapshot
             } else {
                 let snapshot = std::sync::Arc::new(self.read_index()?);
+
                 if let Some(revision) = &revision {
                     self.captures.retain(
                         self.instance.info.runtime_id.0,
@@ -1917,13 +2138,16 @@ impl Session {
                         std::sync::Arc::clone(&snapshot),
                     );
                 }
+
                 snapshot
             };
+
             for element in &snapshot.elements {
                 if let Some(source) = &element.source {
                     self.sources.admit(source);
                 }
             }
+
             self.publish_sources();
             reset = if paged {
                 self.dom.update_shared_index(snapshot)?
@@ -1931,7 +2155,9 @@ impl Session {
                 self.dom.update((*snapshot).clone())?
             };
         }
+
         self.index_revision = revision;
+
         self.deliver_dom_updates(reset)
     }
 
@@ -1940,20 +2166,25 @@ impl Session {
         window: rake_protocol::router::WindowId,
     ) -> std::result::Result<super::semantic::Presentation, Error> {
         let presentation = super::semantic::read(&self.instance, &self.captures, window)?;
+
         let reset = if self.index_revision.as_ref() != Some(&presentation.revision) {
             for element in &presentation.tree.elements {
                 if let Some(source) = &element.source {
                     self.sources.admit(source);
                 }
             }
+
             self.publish_sources();
+
             self.dom
                 .update_shared_index(std::sync::Arc::clone(&presentation.tree))?
         } else {
             false
         };
+
         self.index_revision = Some(presentation.revision.clone());
         self.deliver_dom_updates(reset)?;
+
         Ok(presentation)
     }
 
@@ -1961,20 +2192,25 @@ impl Session {
         // Validate filters before performing runtime work.
         super::semantic::selector(params)?;
         let window = self.native_input.target(&self.instance)?.window;
+
         self.native_input.window = Some(window);
         let presentation = self.refresh_window(window)?;
         let mut result = super::semantic::project(&presentation, &self.dom, params)?;
+
         result["runtimeId"] = json!(self.instance.info.runtime_id);
+
         if let Some(elements) = result["elements"].as_array_mut() {
             for element in elements {
                 if !element["source"].is_null() {
                     let source: rake_protocol::inspection::SourceLocation =
                         serde_json::from_value(element["source"].clone())
                             .map_err(|e| Error::new(-32000, e.to_string()))?;
+
                     element["source"] = self.source_descriptor(&source);
                 }
             }
         }
+
         Ok(result)
     }
 
@@ -1984,6 +2220,7 @@ impl Session {
                 .arguments(id, self.native_input.window, Instant::now())?
         {
             let result = self.agent_snapshot(&arguments);
+
             self.waits.observe(id, result, Instant::now())
         } else {
             self.waits.response(id, Instant::now())
@@ -1997,11 +2234,13 @@ impl Session {
             .queries
             .iter()
             .any(|q| q == "inspect_tree_page");
+
         let snapshot = if paged {
             let mut generation = None;
             let mut offset = 0;
             let mut combined: Option<rake_protocol::inspection::Snapshot> = None;
             let mut total = None;
+
             loop {
                 let reply = query(
                     &self.instance,
@@ -2012,9 +2251,11 @@ impl Session {
                     TIMEOUT,
                 )
                 .map_err(|e| Error::new(-32000, e.to_string()))?;
+
                 let Reply::ElementPage(page) = reply else {
                     return Err(Error::new(-32000, "Unexpected tree page reply"));
                 };
+
                 if total.is_some_and(|total| total != page.total)
                     || page.total > rake_protocol::inspection::MAX_ELEMENTS
                     || page.snapshot.elements.len() > rake_protocol::inspection::TREE_PAGE_SIZE
@@ -2024,12 +2265,15 @@ impl Session {
                 {
                     return Err(Error::new(-32000, "Invalid tree page"));
                 }
+
                 total = Some(page.total);
                 generation = Some(page.snapshot.capture.clone());
                 let previous = combined
                     .as_ref()
                     .map_or(0, |snapshot| snapshot.elements.len());
+
                 let received = previous + page.snapshot.elements.len();
+
                 if offset != previous
                     || received > page.total
                     || page
@@ -2043,23 +2287,28 @@ impl Session {
                 {
                     return Err(Error::new(-32000, "Incomplete or inconsistent tree page"));
                 }
+
                 if let Some(snapshot) = &mut combined {
                     snapshot.elements.extend(page.snapshot.elements);
                 } else {
                     combined = Some(page.snapshot);
                 }
+
                 match page.next {
                     Some(next) => offset = next,
                     None => break,
                 }
             }
+
             combined.expect("first page always supplies metadata")
         } else {
             let reply = query(&self.instance, Query::InspectTree {}, TIMEOUT)
                 .map_err(|e| Error::new(-32000, e.to_string()))?;
+
             let Reply::Elements(snapshot) = reply else {
                 return Err(Error::new(-32000, "Unexpected inspection reply"));
             };
+
             snapshot
         };
 
@@ -2068,10 +2317,12 @@ impl Session {
 
     fn deliver_dom_updates(&mut self, mut reset: bool) -> std::result::Result<(), Error> {
         let updates = self.dom.take_updates();
+
         let updates = updates
             .into_iter()
             .map(EncodedEvent::new)
             .collect::<Vec<_>>();
+
         let bytes = encoded_bytes(&updates);
 
         // A partial mutation batch would leave Chrome permanently out of sync.
@@ -2104,9 +2355,12 @@ impl Session {
         {
             self.load_details(node)?;
         }
+
         let accessibility = self.dom.take_accessibility_updates();
+
         if self.domains.contains(&Domain::Accessibility) {
             let bytes = serde_json::to_vec(&accessibility).map_or(usize::MAX, |value| value.len());
+
             if reset || bytes > 256 * 1024 {
                 if let Ok(root) = self
                     .dom
@@ -2124,6 +2378,7 @@ impl Session {
                 ));
             }
         }
+
         let changed = self.dom.take_style_updates();
 
         if !changed.is_empty() && self.domains.contains(&Domain::Css) {
@@ -2146,7 +2401,9 @@ impl Session {
         if !self.frame_trace.active {
             return;
         }
+
         self.frame_trace.loss |= reason.is_some();
+
         if self
             .control(Command::RecordFrames {
                 enabled: false,
@@ -2167,13 +2424,17 @@ impl Session {
                 }
             }
         }
+
         if self.poll_performance_diagnostics().is_err() {
             self.frame_trace.loss = true;
         }
+
         let mut complete = self.frame_trace.end();
         let report = self.frame_trace.report();
+
         self.trace_events(report);
         complete["dataLossOccurred"] = json!(self.frame_trace.loss);
+
         if reason.is_some() && !self.frame_trace.has_stream() {
             // Chrome's ReportEvents client must remain active until the user presses Stop.
             self.pending_trace_complete = Some(complete);
@@ -2185,6 +2446,7 @@ impl Session {
     fn trace_events(&mut self, events: Vec<Value>) {
         for chunk in events.chunks(128) {
             let before = self.dropped;
+
             self.event(Event::new("Tracing.dataCollected", json!({"value":chunk})));
             self.frame_trace.loss |= self.dropped != before;
         }
@@ -2194,6 +2456,7 @@ impl Session {
         if !self.frame_trace.causal.enabled() {
             return Ok(());
         }
+
         let Reply::Diagnostics(snapshot) = query(
             &self.instance,
             Query::Diagnostics {
@@ -2206,7 +2469,9 @@ impl Session {
         else {
             return Err(Error::new(-32000, "Unexpected performance diagnostics"));
         };
+
         let mut sources = std::collections::BTreeMap::new();
+
         for record in &snapshot.records {
             if record.source.is_some()
                 && let Some(url) = self.source_link(record)
@@ -2214,8 +2479,11 @@ impl Session {
                 sources.insert(record.sequence, url);
             }
         }
+
         let events = self.frame_trace.diagnostics(&snapshot, &sources);
+
         self.trace_events(events);
+
         Ok(())
     }
 
@@ -2226,6 +2494,7 @@ impl Session {
                 lease_ms: 5000,
             })?;
         }
+
         let Reply::Frames(frames) = query(
             &self.instance,
             Query::Frames {
@@ -2237,12 +2506,14 @@ impl Session {
         else {
             return Err(Error::new(-32000, "Unexpected frames reply"));
         };
+
         if renew && !frames.recording {
             return Err(Error::recording(
                 ErrorKind::RecordingLeaseExpired,
                 "Recording lease expired",
             ));
         }
+
         if frames
             .clock
             .as_ref()
@@ -2253,6 +2524,7 @@ impl Session {
                 "Recording clock restarted; ending partial capture",
             ));
         }
+
         for frame in &frames.frames {
             for (index, node) in frame.nodes.iter().enumerate() {
                 let url = super::frames::source_url(
@@ -2261,7 +2533,9 @@ impl Session {
                     index,
                     node,
                 );
+
                 self.sources.capture(url, node.source.clone());
+
                 if let Some(url) = self.sources.admit(&node.source) {
                     self.frame_trace
                         .source_urls
@@ -2269,8 +2543,11 @@ impl Session {
                 }
             }
         }
+
         let events = self.frame_trace.collect(&frames);
+
         self.trace_events(events);
+
         Ok(frames.more)
     }
 
@@ -2281,25 +2558,32 @@ impl Session {
         if selector.get("url").is_some() {
             return self.sources.site(selector);
         }
+
         self.refresh_dom()?;
         let node = self.dom.source_node(selector)?;
+
         self.load_details(node)?;
+
         self.dom.source(selector).cloned()
     }
 
     fn source_selector(&self, argument: &str) -> std::result::Result<Value, Error> {
         if let Some(rest) = argument.trim().strip_prefix("$0") {
             let node = self.dom.inspected_node()?;
+
             if rest.trim().is_empty() {
                 return Ok(json!(node));
             }
+
             let target = rest
                 .trim()
                 .strip_prefix(',')
                 .and_then(|text| serde_json::from_str::<Value>(text).ok())
                 .ok_or_else(|| Error::new(-32602, "Expected a JSON source target after $0"))?;
+
             return Ok(json!({"nodeId":node,"target":target}));
         }
+
         serde_json::from_str(argument).map_err(|_| {
             Error::new(
                 -32602,
@@ -2318,24 +2602,31 @@ impl Session {
         {
             return Ok(());
         }
+
         let id = self.dom.control_id(node)?.to_owned();
+
         let Reply::Element(element) = query(&self.instance, Query::InspectElement { id }, TIMEOUT)
             .map_err(|e| Error::new(-32000, e.to_string()))?
         else {
             return Err(Error::new(-32000, "Unexpected detail reply"));
         };
+
         if let Some(source) = &element.source {
             self.sources.admit(source);
         }
+
         if let Some(view) = &element.view {
             for style in &view.style_sources {
                 self.sources.admit(&style.source);
             }
         }
+
         for handler in &element.handlers {
             self.sources.admit(&handler.source);
         }
+
         self.publish_sources();
+
         self.dom.details(node, element)
     }
 
@@ -2357,10 +2648,12 @@ impl Session {
         self.epoch_seconds = None;
         self.objects.clear();
         self.sources.clear();
+
         if let Some(base) = &self.source_base {
             self.sources
                 .bind(base, &self.instance.info.runtime_id.to_string());
         }
+
         self.discard_diagnostics = false;
         self.loss = super::console::Loss::default();
         self.dom.clear();
@@ -2371,11 +2664,13 @@ impl Session {
         self.outbound_bytes = self.outbound.iter().map(|(_, bytes)| bytes).sum();
         self.dropped = 0;
         self.event(Event::new("HeapProfiler.resetProfiles", json!({})));
+
         if self.domains.contains(&Domain::DomStorage) {
             for event in self.storage.reset() {
                 self.event(event);
             }
         }
+
         if self.domains.contains(&Domain::Page) && self.source_tree_loaded {
             for document in old_sources {
                 self.event(Event::new(
@@ -2384,6 +2679,7 @@ impl Session {
                 ));
             }
         }
+
         self.event(Event::new("Page.frameNavigated", json!({"frame": {"id":"rake","loaderId":self.instance.info.runtime_id.to_string(),
             "url":"rake://runtime","domainAndRegistry":"","securityOrigin":"rake://runtime","mimeType":"text/plain",
             "secureContextType":"Secure","crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]}, "type":"Navigation"})));
@@ -2462,6 +2758,7 @@ pub(super) fn run(
     resources: super::ServerResources,
 ) -> Result<()> {
     let mut session = Session::new(instance, output);
+
     session.captures = resources.captures;
     session.screenshots = resources.screenshots;
     session
@@ -2471,11 +2768,14 @@ pub(super) fn run(
         .register(&session.sources)
         .map_err(|error| error.message)?;
     session.source_base = Some(source_base);
+
     super::transport::serve(socket, move |mut socket| {
         let result = run_worker(&mut socket, &mut session, directory);
+
         rake_client::with_deadline(Instant::now() + Duration::from_millis(100), || {
             session.cleanup()
         });
+
         result
     })
 }
@@ -2499,6 +2799,7 @@ fn run_worker(
                 } else {
                     rake_client::with_deadline(work.deadline, || session.handle(&work.request))
                 };
+
                 session.flush(socket)?;
                 socket.reply(Response::new(Some(work.request.id), result))?;
             }
@@ -2533,10 +2834,12 @@ fn run_worker(
                             session.flush(socket)?;
                             continue;
                         }
+
                         session.poll_output(true);
                         let text = format!(
                             "Runtime disconnected: {error}. Retained supervisor output is shown above."
                         );
+
                         if session.domains.contains(&Domain::Log) {
                             session.event(super::console::entry(
                                 "error",
@@ -2547,6 +2850,7 @@ fn run_worker(
                         } else if session.domains.contains(&Domain::Runtime) {
                             session.event(Event::new("Runtime.consoleAPICalled",json!({"type":"error","args":[{"type":"string","value":text}],"executionContextId":1,"timestamp":unix_seconds()*1000.})));
                         }
+
                         session.flush(socket)?;
                         socket.send(Message::text(serde_json::to_string(&Event::new(
                             "Inspector.detached",
@@ -2567,6 +2871,7 @@ fn run_worker(
         }
 
         session.flush(socket)?;
+
         if let Some(reason) = &session.detached
             && !session.frame_trace.has_stream()
             && session.pending_trace_complete.is_none()
@@ -2575,6 +2880,7 @@ fn run_worker(
                 "Inspector.detached",
                 json!({"reason":reason}),
             ))?))?;
+
             return Ok(());
         }
 
@@ -2597,6 +2903,7 @@ mod tests {
     fn malformed_navigation_never_queries_runtime_and_unknown_domains_stay_unsupported() {
         let (instance, worker, path) = fixture(|_| panic!("invalid request reached runtime"), 0);
         let mut session = Session::new(instance, None);
+
         for (method, params) in [
             ("DOM.requestChildNodes", json!({"nodeId":2,"depth":-3})),
             (
@@ -2615,8 +2922,10 @@ mod tests {
                     params,
                 })
                 .unwrap_err();
+
             assert_eq!(error.code, -32602);
         }
+
         let error = session
             .handle(&Request {
                 id: 2,
@@ -2624,6 +2933,7 @@ mod tests {
                 params: json!({}),
             })
             .unwrap_err();
+
         assert_eq!(error.code, -32601);
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
@@ -2661,13 +2971,16 @@ mod tests {
             },
             4,
         );
+
         let mut session = Session::new(instance, None);
+
         session.instance.info.queries.push("memory".into());
         let call = |method: &str, params: Value| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session
             .handle(&call("HeapProfiler.startSampling", json!({})))
             .unwrap();
@@ -2691,9 +3004,11 @@ mod tests {
                 .is_err()
         );
         assert!(session.memory.active);
+
         for _ in 0..QUEUE_LIMIT {
             session.event(Event::new("occupied", json!({})));
         }
+
         assert!(
             session
                 .handle(&call(
@@ -2726,7 +3041,9 @@ mod tests {
             .filter(|(event, _)| event.method == "HeapProfiler.addHeapSnapshotChunk")
             .map(|(event, _)| event.params["chunk"].as_str().unwrap())
             .collect();
+
         let snapshot: Value = serde_json::from_str(&text).unwrap();
+
         assert_eq!(snapshot["snapshot"]["node_count"], 2);
         session.handle(&call("Rake.stopMemory", json!({}))).unwrap();
         assert_eq!(session.memory_status()["recording"], false);
@@ -2739,10 +3056,15 @@ mod tests {
         let info = rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default())
             .client()
             .info();
+
         let (instance, worker, path) = fixture(
             move |request| {
                 match request.message {
-            RuntimeMessage::Query(Query::Info {}) => {let mut info=info.clone();info.runtime_id=request.runtime_id;Reply::Info(info)},
+            RuntimeMessage::Query(Query::Info {}) => {let mut info=info.clone();
+
+                info.runtime_id=request.runtime_id;
+
+                Reply::Info(info)},
             RuntimeMessage::Query(Query::Diagnostics {after,..}) => Reply::Diagnostics(rake_diagnostics::Snapshot {
                 records:vec![serde_json::from_value(json!({"sequence":after+1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"fields":{"message":format!("event-{}",after+1)}})).unwrap()],
                 dropped:0,output_dropped:0,evicted:0 }),
@@ -2751,13 +3073,16 @@ mod tests {
             },
             5,
         );
+
         let mut session = Session::new(instance, None);
+
         session.domains.insert(Domain::Runtime);
         session.poll().unwrap();
         let old = session.outbound[0].0.params["args"][1]["objectId"]
             .as_str()
             .unwrap()
             .to_owned();
+
         session
             .handle(&Request {
                 id: 1,
@@ -2775,7 +3100,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+
         let mut successor = session.instance.clone();
+
         successor.info.runtime_id = rake_protocol::router::RuntimeId(uuid::Uuid::new_v4());
         session.replace(successor);
         assert!(session.objects.properties(&retained).is_err());
@@ -2799,7 +3126,9 @@ mod tests {
     fn standalone_console_has_discoverable_helpers_without_application_commands() {
         let router =
             rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default());
+
         let mut info = router.client().info();
+
         info.queries.retain(|q| q != "commands");
         let instance = Instance {
             application_id: "standalone".into(),
@@ -2809,15 +3138,20 @@ mod tests {
                 path: "/never-connect".into(),
             },
         };
+
         let mut session = Session::new(instance, None);
+
         let call = |expression| Request {
             id: 1,
             method: "Runtime.evaluate".into(),
             params: json!({"expression":expression,"throwOnSideEffect":true,"returnByValue":true}),
         };
+
         let help = session.handle(&call("rake.help()")).unwrap();
+
         assert_eq!(help["result"]["value"]["undoText"], "rake.undoText($0)");
         let commands = session.handle(&call("rake.commands()")).unwrap();
+
         assert_eq!(commands["result"]["value"], json!([]));
         assert!(
             session.handle(&call("rake.resetText($0)")).is_err(),
@@ -2829,16 +3163,19 @@ mod tests {
     fn evaluation_errors_are_visible_exceptions_and_crash_output_survives_dead_ipc() {
         use std::os::unix::fs::OpenOptionsExt;
         let path = std::env::temp_dir().join(format!("rake-crash-{}.json", uuid::Uuid::new_v4()));
+
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+
         serde_json::to_writer(file, &json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr",
             "text":"thread 'main' panicked at app.rs:42:1: fixture panic\nstack backtrace:"}],"dropped":0})).unwrap();
         let router =
             rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default());
+
         let instance = Instance {
             application_id: "crash".into(),
             pid: 0,
@@ -2847,7 +3184,9 @@ mod tests {
                 path: path.with_extension("missing.sock"),
             },
         };
+
         let mut session = Session::new(instance, Some(path.clone()));
+
         session.domains.insert(Domain::Log);
         assert!(session.poll().is_err());
         assert_eq!(session.outbound.len(), 1);
@@ -2865,6 +3204,7 @@ mod tests {
                 params: json!({"expression":"1+1"}),
             })
             .unwrap();
+
         assert_eq!(error["result"]["subtype"], "error");
         assert!(
             error["result"]["description"]
@@ -2882,14 +3222,18 @@ mod tests {
             "level":"WARN","target":"app::export","kind":"event","spans":["export"],
             "source":{"file":"app.rs","line":42},"fields":{"message":"export started","rows":3}}))
             .unwrap();
+
         let info = rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default())
             .client()
             .info();
+
         let (instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::Info {}) => {
                     let mut info = info.clone();
+
                     info.runtime_id = request.runtime_id;
+
                     Reply::Info(info)
                 }
                 RuntimeMessage::Query(Query::Diagnostics { after, .. }) => {
@@ -2908,7 +3252,9 @@ mod tests {
             },
             4,
         );
+
         let mut session = Session::new(instance, None);
+
         session.domains.extend([Domain::Log, Domain::Runtime]);
         session.poll().unwrap();
         session.poll().unwrap();
@@ -2918,6 +3264,7 @@ mod tests {
             "Log and Runtime must not duplicate diagnostics"
         );
         let event = &session.outbound[0].0;
+
         assert_eq!(event.method, "Log.entryAdded");
         assert_eq!(event.params["entry"]["level"], "warning");
         assert_eq!(event.params["entry"]["lineNumber"], 41);
@@ -2925,7 +3272,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+
         let props = session.objects.properties(&id).unwrap();
+
         assert!(
             props["result"]
                 .as_array()
@@ -2976,6 +3325,7 @@ mod tests {
         for _ in 0..QUEUE_LIMIT {
             session.event(Event::new("Log.entryAdded", json!({})));
         }
+
         assert!(
             session
                 .child_events(vec![json!({"parentId":1,"nodes":[]})])
@@ -3053,15 +3403,19 @@ mod tests {
         let info = rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default())
             .client()
             .info();
+
         let (instance, worker, path) =
             fixture(|_| panic!("source catalog needs no runtime command"), 0);
+
         let mut session = Session::new(instance, None);
+
         session
             .sources
             .bind("http://localhost/token", &info.runtime_id.to_string());
         session.domains.insert(Domain::Page);
         let mut record: rake_diagnostics::Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":0,"level":"INFO","target":"test","kind":"event","spans":[],"source":{"file":"src/cdp/session.rs","line":2},"fields":{}})).unwrap();
         let first = session.source_link(&record).unwrap();
+
         assert!(
             session.outbound.is_empty(),
             "wait for Chrome's root resource tree"
@@ -3081,6 +3435,7 @@ mod tests {
             line: 20,
             column: 3,
         });
+
         assert_eq!(descriptor["url"], first);
         assert_eq!(descriptor["lineNumber"], 19);
         assert_eq!(descriptor["columnNumber"], 2);
@@ -3094,6 +3449,7 @@ mod tests {
             "dropped output schedules source documents for resynchronization"
         );
         let mut successor = session.instance.clone();
+
         successor.info.runtime_id = rake_protocol::router::RuntimeId(uuid::Uuid::new_v4());
         session.replace(successor);
         assert!(
@@ -3118,7 +3474,9 @@ mod tests {
             },
             1,
         );
+
         let mut session = Session::new(instance, None);
+
         session
             .frame_trace
             .begin(&json!({"transferMode":"ReportEvents"}))
@@ -3137,10 +3495,12 @@ mod tests {
             method: method.into(),
             params: json!({}),
         };
+
         assert!(session.handle(&request("Tracing.start")).is_err());
         session.handle(&request("Tracing.end")).unwrap();
         assert!(session.pending_trace_complete.is_none());
         let complete = &session.outbound.back().unwrap().0;
+
         assert_eq!(complete.method, "Tracing.tracingComplete");
         assert_eq!(complete.params["dataLossOccurred"], true);
         worker.join().unwrap();
@@ -3178,12 +3538,15 @@ mod tests {
                 },
                 3,
             );
+
             let mut session = Session::new(instance, None);
+
             let start = session.handle(&Request {
                 id: 1,
                 method: "Tracing.start".into(),
                 params: json!({"transferMode":"ReturnAsStream"}),
             });
+
             if bad_baseline {
                 assert!(start.is_err());
                 assert!(!session.frame_trace.active);
@@ -3202,6 +3565,7 @@ mod tests {
                 );
                 assert!(session.frame_trace.has_stream());
             }
+
             worker.join().unwrap();
             std::fs::remove_file(path).unwrap();
         }
@@ -3244,12 +3608,15 @@ mod tests {
             },
             6,
         );
+
         let mut session = Session::new(instance, None);
+
         let request = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session
             .handle(&request(
                 "Tracing.start",
@@ -3268,7 +3635,9 @@ mod tests {
                 json!({"handle":session.outbound.back().unwrap().0.params["stream"]}),
             ))
             .unwrap();
+
         let trace: Value = serde_json::from_str(read["data"].as_str().unwrap()).unwrap();
+
         assert!(
             trace["traceEvents"]
                 .as_array()
@@ -3290,6 +3659,7 @@ mod tests {
             InspectionError::NotRetained,
         ] {
             let expected = rejection.clone();
+
             let (instance, worker, path) = fixture_result(
                 move |request| match request.message {
                     RuntimeMessage::Query(Query::Preview {}) => Ok(Reply::Data(json!([{
@@ -3304,13 +3674,16 @@ mod tests {
                             point.geometry, None,
                             "guarded input requires exact capture admission"
                         );
+
                         Err(ControlError::Inspection(expected.clone()))
                     }
                     _ => panic!("unexpected input exchange"),
                 },
                 2,
             );
+
             let mut session = Session::new(instance, None);
+
             let error = session.handle(&Request {
                 id:1, method:"Input.dispatchMouseEvent".into(),
                 params:json!({"type":"mousePressed","button":"left","x":10,"y":10,"rakeWindowId":1,"rakeCapture":"current"}),
@@ -3332,20 +3705,25 @@ mod tests {
             ("DOM.setNodeValue", true),
         ] {
             let mut before = capture("before-edit");
+
             before.elements[0].stable_id = Some("retained".into());
             before.elements[0].text = Some("Original".into());
             before.elements[0].text_editable = true;
             before.elements[0].style_editable = true;
             let mut after = before.clone();
+
             after.capture = "after-draw".into();
             after.elements[0].id = "element-after-draw-0".into();
+
             if removed {
                 after.elements[0].stable_id = Some("replacement".into());
             }
+
             let mut visible = before.clone();
             let next = after.clone();
             let mut attempts = 0;
             let requests = if removed { 3 } else { 4 };
+
             let (instance, worker, path) = fixture_result(
                 move |request| match request.message {
                     RuntimeMessage::Query(Query::InspectTree {}) => {
@@ -3357,6 +3735,7 @@ mod tests {
                             | Command::EditElementStyle { id, generation, .. } => (id, generation),
                             _ => panic!("unexpected edit"),
                         };
+
                         attempts += 1;
                         assert_eq!(
                             generation,
@@ -3367,11 +3746,14 @@ mod tests {
                             }
                         );
                         assert_eq!(id, format!("element-{generation}-0"));
+
                         if attempts == 1 {
                             visible = next.clone();
+
                             Err(ControlError::Inspection(InspectionError::StaleGeneration))
                         } else {
                             assert_eq!(attempts, 2);
+
                             Ok(Reply::Acknowledged)
                         }
                     }
@@ -3379,7 +3761,9 @@ mod tests {
                 },
                 requests,
             );
+
             let mut session = Session::new(instance, None);
+
             session.dom.update(before).unwrap();
             let node = session.dom.node_id("element-before-edit-0").unwrap();
 
@@ -3390,9 +3774,11 @@ mod tests {
             });
 
             assert_eq!(result.is_err(), removed);
+
             if !removed {
                 assert_eq!(session.dom.node_id("element-after-draw-0"), Some(node));
             }
+
             worker.join().unwrap();
             std::fs::remove_file(path).unwrap();
         }
@@ -3407,13 +3793,17 @@ mod tests {
             ControlError::RuntimeShutdown,
         ] {
             let mut snapshot = capture("edit");
+
             snapshot.elements[0].style_editable = true;
             let returned = snapshot.clone();
+
             let stale = matches!(
                 rejection,
                 ControlError::Inspection(InspectionError::StaleGeneration)
             );
+
             let expected = rejection.to_string();
+
             let (instance, worker, path) = fixture_result(
                 move |request| match request.message {
                     RuntimeMessage::Query(Query::InspectTree {}) => {
@@ -3426,7 +3816,9 @@ mod tests {
                 },
                 if stale { 4 } else { 2 },
             );
+
             let mut session = Session::new(instance, None);
+
             session.dom.update(snapshot).unwrap();
             let node = session.dom.node_id("element-edit-0").unwrap();
 
@@ -3449,24 +3841,30 @@ mod tests {
         use std::io::{BufRead, BufReader, Write};
 
         let (instance, worker, path) = fixture(|_| unreachable!(), 0);
+
         worker.join().unwrap();
         std::fs::remove_file(&path).unwrap();
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
         let server = listener.try_clone().unwrap();
         let mut snapshot = capture("lost-edit-ack");
+
         snapshot.elements[0].style_editable = true;
         let returned = snapshot.clone();
+
         let worker = std::thread::spawn(move || {
             for query in [true, false] {
                 let (mut socket, _) = server.accept().unwrap();
+
                 socket
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
                 let mut line = String::new();
+
                 BufReader::new(socket.try_clone().unwrap())
                     .read_line(&mut line)
                     .unwrap();
                 let request: RuntimeRequest = serde_json::from_str(&line).unwrap();
+
                 if query {
                     assert!(matches!(
                         request.message,
@@ -3474,6 +3872,7 @@ mod tests {
                     ));
                     let reply: std::result::Result<Reply, rake_protocol::control::ControlError> =
                         Ok(Reply::Elements(returned.clone()));
+
                     writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
                 } else {
                     assert!(matches!(
@@ -3484,7 +3883,9 @@ mod tests {
                 }
             }
         });
+
         let mut session = Session::new(instance, None);
+
         session.dom.update(snapshot).unwrap();
         let node = session.dom.node_id("element-lost-edit-ack-0").unwrap();
 
@@ -3511,8 +3912,10 @@ mod tests {
     fn acknowledged_style_edits_do_not_depend_on_followup_reads() {
         for method in ["CSS.setStyleTexts", "Rake.resetStyles", "Rake.undoStyles"] {
             let mut snapshot = capture("ack-edit");
+
             snapshot.elements[0].style_editable = true;
             let returned = snapshot.clone();
+
             // The host closes immediately after committing: no capture/detail read is available.
             let (instance, worker, path) = fixture(
                 move |request| match request.message {
@@ -3526,7 +3929,9 @@ mod tests {
                 },
                 2,
             );
+
             let mut session = Session::new(instance, None);
+
             session.dom.update(snapshot).unwrap();
             let node = session.dom.node_id("element-ack-edit-0").unwrap();
 
@@ -3546,6 +3951,7 @@ mod tests {
                 assert_eq!(result["styles"][0]["cssProperties"][0]["value"], "240px");
                 assert_eq!(session.dom.edit_text(node).unwrap(), "width: 240px;");
             }
+
             worker.join().unwrap();
             std::fs::remove_file(path).unwrap();
         }
@@ -3554,6 +3960,7 @@ mod tests {
     #[test]
     fn style_edits_cross_runtime_once_and_never_edit_authored_sheets() {
         let mut snapshot = capture("style-edit");
+
         snapshot.elements[0].style_editable = true;
         let (instance, worker, path) = fixture(
             move |request| match request.message {
@@ -3566,6 +3973,7 @@ mod tests {
                     assert_eq!(id, "element-style-edit-0");
                     assert_eq!(generation, "style-edit");
                     assert!(request.key.is_none());
+
                     match edit {
                         rake_protocol::inspection::StyleEdit::Set { declaration } => {
                             snapshot.elements[0].style_overrides = vec![declaration]
@@ -3575,20 +3983,25 @@ mod tests {
                         }
                         _ => panic!("unexpected edit"),
                     }
+
                     Reply::Acknowledged
                 }
                 _ => panic!("unexpected style request"),
             },
             4,
         );
+
         let mut session = Session::new(instance, None);
+
         session.dom.update(capture("style-edit")).unwrap();
         let node = session.dom.node_id("element-style-edit-0").unwrap();
+
         let request = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session
             .handle(&request(
                 "CSS.setEffectivePropertyValueForNode",
@@ -3621,6 +4034,7 @@ mod tests {
     #[test]
     fn selected_element_console_handle_validates_context_and_source_targets() {
         let snapshot = capture("selected");
+
         let (instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(snapshot.clone()),
@@ -3628,14 +4042,18 @@ mod tests {
             },
             1,
         );
+
         let mut session = Session::new(instance, None);
+
         session.dom.update(capture("selected")).unwrap();
         let node = session.dom.node_id("element-selected-0").unwrap();
+
         let call = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session
             .handle(&call("DOM.setInspectedNode", json!({"nodeId":node})))
             .unwrap();
@@ -3648,6 +4066,7 @@ mod tests {
                 .is_err()
         );
         let result = session.handle(&call("Runtime.evaluate", json!({"expression":"$0","contextId":1,"throwOnSideEffect":true,"objectGroup":"console"}))).unwrap();
+
         assert_eq!(
             session
                 .dom
@@ -3662,9 +4081,11 @@ mod tests {
                 .unwrap(),
             json!({"nodeId":node,"target":{"kind":"handler","index":0}})
         );
+
         for invalid in ["$0.id", "$0, other()", "$0; evil()", "$01"] {
             assert!(session.source_selector(invalid).is_err());
         }
+
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }
@@ -3673,10 +4094,12 @@ mod tests {
     fn chrome_text_edits_and_selected_reset_undo_cross_runtime_once_without_operation_keys() {
         use rake_protocol::inspection::TextEdit;
         let mut snapshot = capture("edit-text");
+
         snapshot.elements[0].text = Some("Original".into());
         snapshot.elements[0].text_editable = true;
         let returned = snapshot.clone();
         let mut mutation = 0;
+
         let (instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(returned.clone()),
@@ -3695,22 +4118,28 @@ mod tests {
                         TextEdit::Reset {},
                         TextEdit::Undo {},
                     ];
+
                     assert_eq!(edit, expected[mutation]);
                     mutation += 1;
+
                     Reply::Acknowledged
                 }
                 _ => panic!("unexpected text edit request"),
             },
             6,
         );
+
         let mut session = Session::new(instance, None);
+
         session.dom.update(snapshot).unwrap();
         let node = session.dom.node_id("element-edit-text-0").unwrap();
+
         let call = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session
             .handle(&call("DOM.setInspectedNode", json!({"nodeId":node})))
             .unwrap();
@@ -3739,6 +4168,7 @@ mod tests {
     #[test]
     fn source_targets_load_exact_details_omitted_from_the_paged_index() {
         let mut snapshot = capture("source");
+
         snapshot.elements[0].semantic_id = Some("root".into());
         snapshot.elements[0].view = Some(serde_json::from_value(json!({"tag":"div","style_sources":[{"scope":"div","attribute":"class","expression":"p-2","source":{"file":"src/view.rs","line":20,"column":4}}]})).unwrap());
         snapshot.elements[0].handlers = vec![serde_json::from_value(json!({"name":"click","origin":"view","source":{"file":"src/view.rs","line":21,"column":7}})).unwrap()];
@@ -3746,6 +4176,7 @@ mod tests {
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectTreePage { .. }) => {
                     let mut page = snapshot.clone();
+
                     page.elements[0]
                         .view
                         .as_mut()
@@ -3753,6 +4184,7 @@ mod tests {
                         .style_sources
                         .clear();
                     page.elements[0].handlers.clear();
+
                     Reply::ElementPage(rake_protocol::inspection::TreePage {
                         total: page.elements.len(),
                         snapshot: page,
@@ -3771,14 +4203,18 @@ mod tests {
             },
             4,
         );
+
         instance.info.queries.push("inspect_tree_page".into());
         let mut session = Session::new(instance, None);
+
         let style = session
             .source_location(&json!({"nodeId":"root","target":{"kind":"style","index":0}}))
             .unwrap();
+
         let handler = session
             .source_location(&json!({"nodeId":"root","target":{"kind":"handler","index":0}}))
             .unwrap();
+
         assert_eq!((style.line, style.column), (20, 4));
         assert_eq!((handler.line, handler.column), (21, 7));
         worker.join().unwrap();
@@ -3789,19 +4225,24 @@ mod tests {
     fn paged_index_loads_large_trees_and_fetches_details_only_on_demand() {
         let mut snapshot = capture("paged");
         let template = snapshot.elements[0].clone();
+
         for i in 1..600 {
             let mut element = template.clone();
+
             element.id = format!("element-paged-{i}");
             element.stable_id = Some(format!("boundary-{i}"));
             snapshot.elements.push(element);
         }
+
         let (mut instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectTreePage { generation, offset }) => {
                     assert!(generation.is_none() || generation.as_deref() == Some("paged"));
                     let end = (offset + 256).min(600);
                     let mut page = snapshot.clone();
+
                     page.elements = snapshot.elements[offset..end].to_vec();
+
                     Reply::ElementPage(rake_protocol::inspection::TreePage {
                         snapshot: page,
                         total: 600,
@@ -3820,10 +4261,13 @@ mod tests {
             },
             4,
         );
+
         instance.info.queries.push("inspect_tree_page".into());
         let mut session = Session::new(instance, None);
+
         session.refresh_dom().unwrap();
         let node = session.dom.node_id("element-paged-599").unwrap();
+
         session.load_details(node).unwrap();
         assert_eq!(session.dom.search("Div").unwrap()["resultCount"], 600);
         worker.join().unwrap();
@@ -3834,6 +4278,7 @@ mod tests {
     fn expired_paged_capture_never_installs_a_partial_tree_and_recovers_on_next_read() {
         use rake_protocol::inspection::{InspectionError, TreePage};
         let mut request_index = 0;
+
         let (mut instance, worker, path) = fixture_result(
             move |request| {
                 let RuntimeMessage::Query(Query::InspectTreePage { generation, offset }) =
@@ -3841,10 +4286,13 @@ mod tests {
                 else {
                     panic!("unexpected request");
                 };
+
                 request_index += 1;
+
                 match request_index {
                     1 => {
                         assert!(generation.is_none());
+
                         Ok(Reply::ElementPage(TreePage {
                             snapshot: capture("expired"),
                             total: 2,
@@ -3854,10 +4302,12 @@ mod tests {
                     2 => {
                         assert_eq!(generation.as_deref(), Some("expired"));
                         assert_eq!(offset, 1);
+
                         Err(InspectionError::StaleGeneration.into())
                     }
                     3 => {
                         assert!(generation.is_none(), "recovery starts a new capture");
+
                         Ok(Reply::ElementPage(TreePage {
                             snapshot: capture("fresh"),
                             total: 1,
@@ -3869,8 +4319,10 @@ mod tests {
             },
             3,
         );
+
         instance.info.queries.push("inspect_tree_page".into());
         let mut session = Session::new(instance, None);
+
         session.dom.update(capture("before")).unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
         assert!(session.refresh_dom().is_err());
@@ -3896,8 +4348,10 @@ mod tests {
                 },
                 1,
             );
+
             instance.info.queries.push("inspect_tree_page".into());
             let mut session = Session::new(instance, None);
+
             assert!(session.refresh_dom().is_err());
             assert!(session.dom.generation().is_none());
             assert!(session.outbound.is_empty());
@@ -3910,23 +4364,29 @@ mod tests {
     #[ignore = "explicit release-mode IPC load measurement"]
     fn cdp_refresh_load_benchmark() {
         use rake_protocol::inspection::{TREE_PAGE_SIZE, TreePage, TreeRevision};
+
         use std::sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
         };
+
         const ITERATIONS: usize = 25;
         const NODES: usize = 8192;
+
         for clients in [1, 4] {
             for revision_enabled in [false, true] {
                 let mut metadata = super::super::benchmark::capture(NODES);
                 let elements = std::mem::take(&mut metadata.elements);
+
                 let pages: Vec<_> = elements
                     .chunks(TREE_PAGE_SIZE)
                     .enumerate()
                     .map(|(index, elements)| {
                         let mut snapshot = metadata.clone();
+
                         snapshot.elements = elements.to_vec();
                         let next = (index + 1) * TREE_PAGE_SIZE;
+
                         TreePage {
                             snapshot,
                             total: NODES,
@@ -3934,80 +4394,104 @@ mod tests {
                         }
                     })
                     .collect();
+
                 let revision = TreeRevision {
                     metadata: None,
                     capture: "one".into(),
                     status: metadata.status,
                 };
+
                 let encoded = |reply: Reply| {
                     serde_json::to_vec(&Ok::<_, rake_protocol::control::ControlError>(reply))
                         .unwrap()
                         .len()
                         + 1
                 };
+
                 let page_bytes: Vec<_> = pages
                     .iter()
                     .map(|page| encoded(Reply::ElementPage(page.clone())))
                     .collect();
+
                 let revision_bytes = encoded(Reply::InspectionRevision(revision.clone()));
                 let pages_count = NODES / TREE_PAGE_SIZE;
+
                 let reads = if revision_enabled {
                     pages_count + clients * (ITERATIONS + 1)
                 } else {
                     pages_count * clients * (ITERATIONS + 1)
                 };
+
                 let wire = Arc::new(AtomicUsize::new(0));
                 let observed = Arc::clone(&wire);
+
                 let (mut instance, worker, path) = fixture(
                     move |request| {
                         let bytes = serde_json::to_vec(&request).unwrap().len() + 1;
+
                         let (reply, response_bytes) = match request.message {
                             RuntimeMessage::Query(Query::InspectRevision {}) => {
                                 (Reply::InspectionRevision(revision.clone()), revision_bytes)
                             }
                             RuntimeMessage::Query(Query::InspectTreePage { offset, .. }) => {
                                 let index = offset / TREE_PAGE_SIZE;
+
                                 (Reply::ElementPage(pages[index].clone()), page_bytes[index])
                             }
                             _ => panic!("unexpected benchmark request"),
                         };
+
                         observed.fetch_add(bytes + response_bytes, Ordering::Relaxed);
+
                         reply
                     },
                     reads,
                 );
+
                 instance.info.queries.push("inspect_tree_page".into());
+
                 if revision_enabled {
                     instance.info.queries.push("inspect_revision".into());
                 }
+
                 let shared = Arc::default();
+
                 let mut sessions = (0..clients)
                     .map(|_| {
                         let mut session = Session::new(instance.clone(), None);
+
                         session.captures = Arc::clone(&shared);
+
                         session
                     })
                     .collect::<Vec<_>>();
+
                 let cold = Instant::now();
+
                 for session in &mut sessions {
                     session.refresh_dom().unwrap();
                 }
+
                 let cold_us = cold.elapsed().as_micros();
                 let mut times = Vec::new();
                 let mut allocations = 0;
                 let mut bytes = 0;
+
                 for _ in 0..ITERATIONS {
                     for session in &mut sessions {
                         let (result, elapsed, calls, allocated) =
                             super::super::benchmark::measure(|| session.refresh_dom());
+
                         result.unwrap();
                         times.push(elapsed);
                         allocations += calls;
                         bytes += allocated;
                     }
                 }
+
                 times.sort_unstable();
                 let samples = times.len();
+
                 println!(
                     "cdp_refresh clients={clients} revision={revision_enabled} cold_us={cold_us} median_us={} p95_us={} allocations={} allocated_bytes={} ipc_queries={reads} ipc_wire_bytes={}",
                     times[samples / 2],
@@ -4030,6 +4514,7 @@ mod tests {
         };
         let hovered = Arc::new(AtomicBool::new(false));
         let app = Arc::clone(&hovered);
+
         let (mut instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectRevision {}) => {
@@ -4041,21 +4526,26 @@ mod tests {
                 }
                 RuntimeMessage::Query(Query::InspectTree {}) => {
                     let mut snapshot = capture("fallback");
+
                     snapshot.elements[0].styles =
                         Some(json!({"opacity":if app.load(Ordering::Acquire) {0.75} else {0.25}}));
+
                     Reply::Elements(snapshot)
                 }
                 _ => panic!("unexpected fallback query"),
             },
             3,
         );
+
         // The revision capability alone does not provide independent live details.
         instance.info.queries.push("inspect_revision".into());
         let mut first = Session::new(instance.clone(), None);
+
         first.domains.insert(Domain::Css);
         first.refresh_dom().unwrap();
         first.dom.document(&json!({"depth":-1})).unwrap();
         let node = first.dom.node_id("element-fallback-0").unwrap();
+
         let styles = |session: &mut Session, node| {
             session
                 .handle(&Request {
@@ -4065,11 +4555,13 @@ mod tests {
                 })
                 .unwrap()
         };
+
         let before = styles(&mut first, node);
 
         hovered.store(true, Ordering::Release);
         first.refresh_dom().unwrap();
         let after = styles(&mut first, node);
+
         assert_ne!(
             after, before,
             "full captures must continue sampling live styles"
@@ -4083,9 +4575,11 @@ mod tests {
         );
 
         let mut second = Session::new(instance, None);
+
         second.captures = Arc::clone(&first.captures);
         second.refresh_dom().unwrap();
         let second_node = second.dom.node_id("element-fallback-0").unwrap();
+
         assert_eq!(
             styles(&mut second, second_node),
             after,
@@ -4104,6 +4598,7 @@ mod tests {
         };
         let focused = Arc::new(AtomicBool::new(false));
         let app = Arc::clone(&focused);
+
         let (mut instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectRevision {}) => {
@@ -4122,6 +4617,7 @@ mod tests {
                 }
                 RuntimeMessage::Query(Query::InspectTreePage { .. }) => {
                     let mut snapshot = capture("live-focus");
+
                     snapshot.elements[0].accessibility = Some(Box::new(
                         serde_json::from_value(json!({
                             "role":"Button", "disabled":false, "hidden":false, "focusable":true,
@@ -4129,6 +4625,7 @@ mod tests {
                         }))
                         .unwrap(),
                     ));
+
                     Reply::ElementPage(rake_protocol::inspection::TreePage {
                         snapshot,
                         total: 1,
@@ -4139,6 +4636,7 @@ mod tests {
             },
             5,
         );
+
         instance
             .info
             .queries
@@ -4148,12 +4646,15 @@ mod tests {
             method: "Accessibility.getFullAXTree".into(),
             params: json!({}),
         };
+
         let mut first = Session::new(instance.clone(), None);
+
         first.handle(&request).unwrap();
         let node = first.dom.node_id("element-live-focus-0").unwrap();
 
         focused.store(true, Ordering::Release);
         let updated = first.handle(&request).unwrap();
+
         assert_eq!(first.dom.node_id("element-live-focus-0"), Some(node));
         let property = updated["nodes"]
             .as_array()
@@ -4166,9 +4667,11 @@ mod tests {
             .iter()
             .find(|property| property["name"] == "focused")
             .unwrap();
+
         assert_eq!(property["value"]["value"], true);
 
         let mut second = Session::new(instance, None);
+
         second.captures = Arc::clone(&first.captures);
         assert_eq!(
             second.handle(&request).unwrap(),
@@ -4182,6 +4685,7 @@ mod tests {
     #[test]
     fn revisions_skip_unchanged_indexes_and_share_only_immutable_captures() {
         let snapshot = capture("shared");
+
         let (mut instance, worker, path) = fixture(
             move |request| match request.message {
                 RuntimeMessage::Query(Query::InspectRevision {}) => {
@@ -4194,6 +4698,7 @@ mod tests {
                 RuntimeMessage::Query(Query::InspectTreePage { generation, offset }) => {
                     assert!(generation.is_none());
                     assert_eq!(offset, 0);
+
                     Reply::ElementPage(rake_protocol::inspection::TreePage {
                         snapshot: snapshot.clone(),
                         total: 1,
@@ -4204,12 +4709,14 @@ mod tests {
             },
             5,
         );
+
         instance
             .info
             .queries
             .extend(["inspect_tree_page".into(), "inspect_revision".into()]);
         let mut first = Session::new(instance.clone(), None);
         let mut second = Session::new(instance, None);
+
         second.captures = std::sync::Arc::clone(&first.captures);
         first.refresh_dom().unwrap();
         first.dom.document(&json!({})).unwrap();
@@ -4228,6 +4735,7 @@ mod tests {
     #[test]
     fn unchanged_index_still_refreshes_live_styles() {
         let mut snapshot = capture("hover");
+
         snapshot.elements[0].styles = Some(json!({"background":"red"}));
         let (mut instance, worker, path) = fixture(
             move |request| match request.message {
@@ -4247,18 +4755,22 @@ mod tests {
                 }
                 RuntimeMessage::Query(Query::InspectElement { .. }) => {
                     let mut element = snapshot.elements[0].clone();
+
                     element.styles = Some(json!({"background":"blue"}));
+
                     Reply::Element(element)
                 }
                 _ => panic!("unexpected style refresh"),
             },
             4,
         );
+
         instance
             .info
             .queries
             .extend(["inspect_tree_page".into(), "inspect_revision".into()]);
         let mut session = Session::new(instance, None);
+
         session.refresh_dom().unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
         session.tracked_style_node = Some(2);
@@ -4468,6 +4980,7 @@ mod tests {
     #[test]
     fn search_and_chrome_focus_helper_cross_the_runtime_protocol_without_evaluation() {
         let mut snapshot = capture("navigation");
+
         snapshot.elements[0].semantic_id = Some("save".into());
         snapshot.elements[0].navigation.focus = true;
         let (instance, worker, path) = fixture(
@@ -4482,35 +4995,43 @@ mod tests {
                     assert_eq!(generation, "navigation");
                     assert_eq!(action, rake_protocol::inspection::NavigationAction::Focus);
                     assert!(request.key.is_none());
+
                     Reply::Acknowledged
                 }
                 _ => panic!("Unexpected navigation request"),
             },
             6,
         );
+
         let mut session = Session::new(instance, None);
+
         let call = |method: &str, params| Request {
             id: 1,
             method: method.into(),
             params,
         };
+
         session.handle(&call("DOM.getDocument", json!({}))).unwrap();
         let search = session
             .handle(&call("DOM.performSearch", json!({"query":"#save"})))
             .unwrap();
+
         let result = session
             .handle(&call(
                 "DOM.getSearchResults",
                 json!({"searchId":search["searchId"],"fromIndex":0,"toIndex":1}),
             ))
             .unwrap();
+
         let object = session
             .handle(&call(
                 "DOM.resolveNode",
                 json!({"nodeId":result["nodeIds"][0]}),
             ))
             .unwrap();
+
         let result = session.handle(&call("Runtime.callFunctionOn", json!({"objectId":object["object"]["objectId"],"functionDeclaration":"function focusInPage(){ this.focus(); }"}))).unwrap();
+
         assert_eq!(result["result"]["type"], "undefined");
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
@@ -4520,6 +5041,7 @@ mod tests {
     fn incremental_capture_updates_preserve_tracking_and_renew_highlights_with_current_control_ids()
     {
         let mut initial = capture("1");
+
         initial.elements[0].stable_id = Some("root".into());
         initial.elements[0].layout = Some(rake_protocol::inspection::Layout {
             x: 0.,
@@ -4528,6 +5050,7 @@ mod tests {
             height: 10.,
         });
         let mut next = capture("2");
+
         next.elements[0].stable_id = Some("root".into());
         next.elements[0].layout = Some(rake_protocol::inspection::Layout {
             x: 0.,
@@ -4536,6 +5059,7 @@ mod tests {
             height: 10.,
         });
         let mut child = next.elements[0].clone();
+
         child.id = "element-2-1".into();
         child.stable_id = Some("child".into());
         child.parent = Some("element-2-0".into());
@@ -4546,16 +5070,20 @@ mod tests {
                 RuntimeMessage::Command(Command::HighlightElement { id, generation }) => {
                     assert_eq!(id.as_deref(), Some("element-2-0"));
                     assert_eq!(generation, "2");
+
                     Reply::Acknowledged
                 }
                 _ => panic!("unexpected runtime request"),
             },
             2,
         );
+
         let mut session = Session::new(instance, None);
+
         session.dom.update(initial).unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
         let root = session.dom.node_id("element-1-0").unwrap();
+
         session.domains.extend([Domain::Dom, Domain::Css]);
         session.tracked_style_node = Some(root);
         session.highlight = Some(root);
@@ -4566,6 +5094,7 @@ mod tests {
             .iter()
             .map(|(event, _)| event.method.as_str())
             .collect::<Vec<_>>();
+
         assert_eq!(
             events,
             [
@@ -4585,19 +5114,24 @@ mod tests {
     #[test]
     fn oversized_mutation_batches_resynchronize_instead_of_dropping_part_of_the_tree() {
         let mut initial = capture("1");
+
         initial.elements[0].stable_id = Some("root".into());
         let mut next = capture("2");
+
         next.elements[0].stable_id = Some("root".into());
         let mut child = next.elements[0].clone();
+
         child.id = "element-2-1".into();
         child.stable_id = Some("child".into());
         child.parent = Some("element-2-0".into());
         next.elements.push(child);
         let (instance, worker, path) = fixture(move |_| Reply::Elements(next.clone()), 1);
         let mut session = Session::new(instance, None);
+
         session.dom.update(initial).unwrap();
         session.dom.document(&json!({"depth":-1})).unwrap();
         session.domains.insert(Domain::Dom);
+
         for _ in 0..QUEUE_LIMIT {
             session.event(Event::new("Log.entryAdded", json!({})));
         }
@@ -4607,6 +5141,7 @@ mod tests {
         assert_eq!(session.outbound[0].0.method, "DOM.documentUpdated");
         assert_eq!(session.dropped, QUEUE_LIMIT as u64);
         let document = session.dom.document(&json!({"depth":-1})).unwrap();
+
         assert_eq!(
             document["children"][0]["children"]
                 .as_array()

@@ -23,6 +23,7 @@ thread_local! {
 #[cfg(not(target_family = "wasm"))]
 pub fn with_deadline<T>(deadline: std::time::Instant, operation: impl FnOnce() -> T) -> T {
     struct Restore(Option<std::time::Instant>);
+
     impl Drop for Restore {
         fn drop(&mut self) {
             DEADLINE.set(self.0);
@@ -30,7 +31,9 @@ pub fn with_deadline<T>(deadline: std::time::Instant, operation: impl FnOnce() -
     }
     let previous = DEADLINE.get();
     let _restore = Restore(previous);
+
     DEADLINE.set(Some(previous.map_or(deadline, |old| old.min(deadline))));
+
     operation()
 }
 
@@ -58,9 +61,11 @@ fn remaining(timeout: Duration) -> std::io::Result<Duration> {
             "invalid control timeout",
         ));
     }
+
     let timeout = DEADLINE.get().map_or(timeout, |deadline| {
         timeout.min(deadline.saturating_duration_since(std::time::Instant::now()))
     });
+
     if timeout.is_zero() {
         Err(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
@@ -167,6 +172,7 @@ pub fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Rep
 #[cfg(not(target_family = "wasm"))]
 pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply, Error> {
     let timeout = remaining(timeout)?;
+
     let reply = match &instance.endpoint {
         Endpoint::Local { path } => {
             #[cfg(unix)]

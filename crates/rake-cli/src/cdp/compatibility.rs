@@ -57,22 +57,27 @@ mod tests {
     #[test]
     fn version_reply_conforms_to_pinned_upstream_return_types() {
         let contract: Value = serde_json::from_str(include_str!("contract.json")).unwrap();
+
         let domain = contract["domains"]
             .as_array()
             .unwrap()
             .iter()
             .find(|domain| domain["domain"] == "Browser")
             .unwrap();
+
         let command = &domain["commands"][0];
         let reply = handle("Browser.getVersion").unwrap();
+
         for field in command["returns"].as_array().unwrap() {
             assert_eq!(field["type"], "string");
             assert!(reply[field["name"].as_str().unwrap()].is_string());
         }
+
         assert_eq!(reply["protocolVersion"], VERSION);
         assert_eq!(reply["jsVersion"], "", "there is no JavaScript VM");
         assert!(handle("Debugger.enable").is_none());
         let domains = handle("Schema.getDomains").unwrap();
+
         assert!(
             !domains["domains"]
                 .as_array()

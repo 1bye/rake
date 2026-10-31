@@ -7,6 +7,7 @@
 #![cfg(feature = "devtools")]
 
 use futures::executor::block_on;
+
 use rake::{
     control::{
         Command, ControlError, Message, PROTOCOL_VERSION, Query, Reply, Request, RuntimeClient,
@@ -18,6 +19,7 @@ use rake::{
         devtools::{Area, Storage},
     },
 };
+
 use rake_protocol::storage::{Edit, Page, Read};
 
 fn request(client: &RuntimeClient<NoRoute>, message: Message, key: Option<&str>) -> Request {
@@ -28,6 +30,7 @@ fn request(client: &RuntimeClient<NoRoute>, message: Message, key: Option<&str>)
         key: key.map(str::to_owned),
     }
 }
+
 fn edit(value: Option<&str>) -> Message {
     Message::Command(Command::EditStorage {
         edit: Edit {
@@ -43,6 +46,7 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
     block_on(async {
         let store = Store::<String>::new(MemoryBackend::new())
             .with_cache(CacheConfig::new(8, 1024).unwrap());
+
         store.set("theme", &"dark".into()).await.unwrap();
         assert_eq!(store.get("theme").await.unwrap().as_deref(), Some("dark"));
         let registry = Storage::new()
@@ -50,6 +54,7 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
             .unwrap()
             .read_only("session", Area::Session, store.clone())
             .unwrap();
+
         assert!(
             registry
                 .clone()
@@ -65,8 +70,10 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
             RouterConfig::default(),
             ServiceRegistry::new().with(registry).unwrap(),
         );
+
         let client = router.client();
         let first = request(&client, edit(Some("\"light\"")), Some("edit-1"));
+
         assert!(matches!(
             client.request_async(first.clone()).await.unwrap(),
             Reply::Acknowledged
@@ -77,6 +84,7 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
             id: "not-registered".into(),
             arguments: serde_json::Value::Null,
         });
+
         assert!(matches!(
             client.request(request(&client, ordinary.clone(), Some("edit-1"))),
             Err(ControlError::KeyConflict)
@@ -121,6 +129,7 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
                 value: None,
             },
         });
+
         assert!(matches!(
             client
                 .request_async(request(&client, readonly, Some("readonly")))
@@ -134,12 +143,14 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
             Err(ControlError::InvalidRequestKey)
         ));
         let mut wrong = request(&client, edit(None), Some("wrong"));
+
         wrong.runtime_id = Router::<NoRoute>::new(RouterConfig::default()).runtime_id();
         assert!(matches!(
             client.request_async(wrong).await,
             Err(ControlError::WrongRuntime)
         ));
         let mut wrong = request(&client, edit(None), Some("wrong"));
+
         wrong.protocol += 1;
         assert!(matches!(
             client.request_async(wrong).await,
@@ -164,19 +175,24 @@ fn registered_typed_edits_permissions_and_retry_lifetimes() {
 fn large_pages_continue_without_losing_keys() {
     block_on(async {
         let store = Store::<String>::new(MemoryBackend::new());
+
         for key in ["a", "b", "c"] {
             store.set(key, &"x".repeat(200 * 1024)).await.unwrap();
         }
+
         let registry = Storage::new()
             .read_only("large", Area::Local, store)
             .unwrap();
+
         let router = Router::<NoRoute>::with_services(
             RouterConfig::default(),
             ServiceRegistry::new().with(registry).unwrap(),
         );
+
         let client = router.client();
         let mut after = None;
         let mut keys = Vec::new();
+
         loop {
             let message = Message::Query(Query::Storage {
                 read: Read::Entries {
@@ -185,6 +201,7 @@ fn large_pages_continue_without_losing_keys() {
                     limit: 256,
                 },
             });
+
             let Reply::Data(data) = client
                 .request_async(request(&client, message, None))
                 .await
@@ -192,14 +209,19 @@ fn large_pages_continue_without_losing_keys() {
             else {
                 panic!("expected page");
             };
+
             let page: Page = serde_json::from_value(data).unwrap();
+
             assert_eq!(page.entries.len(), 1);
             keys.extend(page.entries.into_iter().map(|(key, _)| key));
+
             let Some(next) = page.next else {
                 break;
             };
+
             after = Some(next);
         }
+
         assert_eq!(keys, ["a", "b", "c"]);
     });
 }
@@ -209,7 +231,9 @@ fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
     use futures::future::LocalBoxFuture;
     use rake::storage::{Backend, StorageError};
     use std::{cell::Cell, rc::Rc};
+
     struct Pending(Rc<Cell<usize>>);
+
     impl Backend for Pending {
         fn get<'a>(
             &'a self,
@@ -217,6 +241,7 @@ fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
         ) -> LocalBoxFuture<'a, Result<Option<Vec<u8>>, StorageError>> {
             Box::pin(async { Ok(None) })
         }
+
         fn set<'a>(
             &'a self,
             _: &'a str,
@@ -224,12 +249,15 @@ fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
         ) -> LocalBoxFuture<'a, Result<(), StorageError>> {
             Box::pin(async {
                 self.0.set(self.0.get() + 1);
+
                 futures::future::pending().await
             })
         }
+
         fn remove<'a>(&'a self, _: &'a str) -> LocalBoxFuture<'a, Result<(), StorageError>> {
             Box::pin(async { Ok(()) })
         }
+
         fn keys<'a>(
             &'a self,
             _: Option<&'a str>,
@@ -240,6 +268,7 @@ fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
     }
     block_on(async {
         let writes = Rc::new(Cell::new(0));
+
         let registry = Storage::new()
             .read_write(
                 "preferences",
@@ -247,13 +276,16 @@ fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
                 Store::<String>::new(Pending(writes.clone())),
             )
             .unwrap();
+
         let router = Router::<NoRoute>::with_services(
             RouterConfig::default(),
             ServiceRegistry::new().with(registry).unwrap(),
         );
+
         let client = router.client();
         let request = request(&client, edit(Some("\"dark\"")), Some("pending"));
         let mut first = Box::pin(client.request_async(request.clone()));
+
         assert!(futures::poll!(&mut first).is_pending());
         assert!(matches!(
             client.request_async(request.clone()).await,
@@ -273,12 +305,15 @@ fn pending_and_cancelled_edits_never_repeat_the_backend_write() {
 fn shared_registry_keeps_retry_keys_scoped_to_each_runtime() {
     block_on(async {
         let store = Store::<String>::new(MemoryBackend::new());
+
         let storage = Storage::new()
             .read_write("preferences", Area::Local, store.clone())
             .unwrap();
+
         let services = ServiceRegistry::new().with(storage).unwrap();
         let first = Router::<NoRoute>::with_services(RouterConfig::default(), services.clone());
         let second = Router::<NoRoute>::with_services(RouterConfig::default(), services);
+
         for client in [first.client(), second.client()] {
             store.set("theme", &"application".into()).await.unwrap();
             client

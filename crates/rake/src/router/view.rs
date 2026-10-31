@@ -353,6 +353,7 @@ impl<R: Route> RenderOnce for RouteOutlet<R> {
                 outlet
             }
         }
+
         #[cfg(not(feature = "devtools"))]
         {
             outlet
@@ -721,6 +722,7 @@ impl<R: Route> Render for Workspace<R> {
             let choices = decision.choices.into_iter().map(|choice| {
                 let navigator = navigator.clone();
                 let id = decision.id;
+
                 #[cfg(feature = "devtools")]
                 let semantic_id = format!("rake.decision.{id}.{}", choice.id);
 

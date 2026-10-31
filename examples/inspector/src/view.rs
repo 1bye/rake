@@ -140,6 +140,7 @@ impl RouteViews<Destination> for Views {
             });
 
             let edit_owner = cx.weak_entity();
+
             let style_editor = cx.new(|cx| {
                 FilterInput::new(
                     "Temporary style declaration",
@@ -154,6 +155,7 @@ impl RouteViews<Destination> for Views {
                     cx,
                 )
             });
+
             let tree_focus = cx.focus_handle();
 
             let focus_observers = [
@@ -293,20 +295,26 @@ impl RouteViews<Destination> for Views {
                         if let Some(runtime) = target {
                             let (navigation, source) = {
                                 let mut model = observed.borrow_mut();
+
                                 (model.navigation_pending.take(), model.source_pending.take())
                             };
+
                             if let Some(command) = navigation {
                                 let result = connection
                                     .control(runtime, command, run.cancellation())
                                     .await;
+
                                 run.publish(Update::Navigation(epoch, runtime, result))?;
                             }
+
                             if let Some((id, target)) = source {
                                 let result = connection
                                     .open_source_target(runtime, &id, &target, run.cancellation())
                                     .await;
+
                                 run.publish(Update::Navigation(epoch, runtime, result))?;
                             }
+
                             if let Some(enabled) = pending {
                                 let result = connection
                                     .control(
@@ -469,6 +477,7 @@ fn source_label(element: &rake::inspection::Element) -> String {
 impl ElementsView {
     fn edit_style(&self, edit: rake::inspection::StyleEdit) {
         let mut model = self.model.borrow_mut();
+
         if !model.stale()
             && let (Some(id), Some(tree)) = (model.selected.clone(), &model.tree)
         {
@@ -482,6 +491,7 @@ impl ElementsView {
 
     fn navigate(&self, action: rake::inspection::NavigationAction) {
         let mut model = self.model.borrow_mut();
+
         if let (Some(id), Some(tree)) = (&model.selected, &model.tree)
             && tree.elements.iter().any(|element| &element.id == id)
         {
@@ -741,8 +751,10 @@ impl ElementsView {
             window.prevent_default();
             cx.stop_propagation();
             cx.notify();
+
             return;
         }
+
         if self.context_menu.is_some() {
             match key.as_str() {
                 "up" => {
@@ -760,10 +772,12 @@ impl ElementsView {
                 "tab" => self.context_menu = None,
                 _ => return,
             }
+
             for _ in 0..TREE_ACTIONS.len() {
                 if self.tree_action_enabled(TREE_ACTIONS[self.context_index].0) {
                     break;
                 }
+
                 self.context_index = (self.context_index
                     + if matches!(key.as_str(), "up" | "end") {
                         TREE_ACTIONS.len() - 1
@@ -772,11 +786,14 @@ impl ElementsView {
                     })
                     % TREE_ACTIONS.len();
             }
+
             window.prevent_default();
             cx.stop_propagation();
             cx.notify();
+
             return;
         }
+
         if key == "c"
             && (modifiers.platform || modifiers.control)
             && self.tree_focus.is_focused(window)
@@ -812,12 +829,15 @@ impl ElementsView {
 
     fn tree_action_enabled(&self, action: &str) -> bool {
         let model = self.model.borrow();
+
         let Some(tree) = &model.tree else {
             return false;
         };
+
         if matches!(action, "expand-all" | "collapse-all") {
             return true;
         }
+
         let Some(element) = tree
             .elements
             .iter()
@@ -825,6 +845,7 @@ impl ElementsView {
         else {
             return false;
         };
+
         match action {
             "focus" => element.navigation.focus && !model.disconnected,
             "scroll" => element.navigation.scroll_into_view && !model.disconnected,
@@ -856,31 +877,38 @@ impl ElementsView {
 
     fn tree_action(&mut self, action: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.context_menu = None;
+
         if !self.tree_action_enabled(action) {
             window.focus(&self.tree_focus, cx);
             cx.notify();
+
             return;
         }
+
         if action == "focus" {
             self.navigate(rake::inspection::NavigationAction::Focus);
         } else if action == "scroll" {
             self.navigate(rake::inspection::NavigationAction::ScrollIntoView);
         } else if action == "source" {
             let mut model = self.model.borrow_mut();
+
             model.source_pending = model
                 .selected
                 .clone()
                 .map(|id| (id, rake::inspection::SourceTarget::Boundary {}));
         } else {
             let mut model = self.model.borrow_mut();
+
             if let Some(capture) = &model.tree {
                 let selected = model.selected.as_deref();
+
                 if action.starts_with("copy-") {
                     let value = selected.and_then(|id| match action {
                         "copy-path" => rake::inspection::tree::path(&capture.elements, id),
                         "copy-text" => rake::inspection::tree::text(&capture.elements, id),
                         _ => rake::inspection::tree::markup(&capture.elements, id),
                     });
+
                     if let Some(value) = value {
                         cx.write_to_clipboard(ClipboardItem::new_string(value));
                     } else {
@@ -898,6 +926,7 @@ impl ElementsView {
                             .and_then(|id| rake::inspection::tree::subtree(&capture.elements, id))
                             .unwrap_or_default()
                     };
+
                     for element in targets {
                         if action == "expand-branch" {
                             self.collapsed.remove(&element.id);
@@ -905,6 +934,7 @@ impl ElementsView {
                             self.collapsed.insert(element.id.clone());
                         }
                     }
+
                     if action == "collapse-all"
                         && let Some(root) = selected.and_then(|id| {
                             tree::ancestors(&capture.elements, id)
@@ -917,6 +947,7 @@ impl ElementsView {
                 }
             }
         }
+
         window.focus(&self.tree_focus, cx);
         cx.notify();
     }

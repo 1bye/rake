@@ -77,14 +77,17 @@ fn tracing_retains_the_event_callsite_and_causal_context() {
     let collector = Collector::new(8);
     let subscriber = tracing_subscriber::registry().with(collector.layer());
     let mut event_line = 0;
+
     tracing::subscriber::with_default(subscriber, || {
         let span = tracing::info_span!("export", job = 42);
         let _guard = span.enter();
+
         event_line = line!() + 1;
         tracing::warn!(rows = 3, "source fixture");
     });
     let event = collector.snapshot_after(0, Some("event")).records.remove(0);
     let source = event.source.unwrap();
+
     assert_eq!(source.file, file!());
     assert_eq!(source.line, event_line);
     assert_eq!(event.spans, ["export"]);
@@ -93,6 +96,7 @@ fn tracing_retains_the_event_callsite_and_causal_context() {
     let old: rake_diagnostics::Record = serde_json::from_value(json!({"sequence":1,"elapsed_us":0,
         "level":"INFO","target":"old","kind":"event","spans":[],"fields":{}}))
     .unwrap();
+
     assert!(old.source.is_none());
 }
 
@@ -100,6 +104,7 @@ fn tracing_retains_the_event_callsite_and_causal_context() {
 #[test]
 fn rich_diagnostics_stay_within_the_private_ipc_envelope() {
     let collector = rake_diagnostics::Collector::new(1024);
+
     for _ in 0..100 {
         collector.record(
             "INFO",
@@ -112,7 +117,9 @@ fn rich_diagnostics_stay_within_the_private_ipc_envelope() {
             )]),
         );
     }
+
     let snapshot = collector.snapshot();
+
     assert!(snapshot.dropped > 0);
     assert!(snapshot.records.last().unwrap().sequence > 90);
     assert_eq!(snapshot.evicted, snapshot.dropped);

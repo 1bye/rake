@@ -37,6 +37,7 @@ pub(super) struct EncodedEvent {
 impl EncodedEvent {
     pub fn new(event: Event) -> Option<Self> {
         let text = encode_bounded(&event, 1024 * 1024).ok()??;
+
         Some(Self {
             method: event.method,
             text,
@@ -56,15 +57,20 @@ fn encode_bounded(
         limit: usize,
         exceeded: bool,
     }
+
     impl std::io::Write for Limited {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
                 self.exceeded = true;
+
                 return Err(std::io::Error::other("CDP payload budget exceeded"));
             }
+
             self.bytes.extend_from_slice(bytes);
+
             Ok(bytes.len())
         }
+
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
@@ -74,11 +80,15 @@ fn encode_bounded(
         limit,
         exceeded: false,
     };
+
     let result = serde_json::to_writer(&mut output, value);
+
     if output.exceeded {
         return Ok(None);
     }
+
     result?;
+
     Ok(Some(
         String::from_utf8(output.bytes).expect("JSON serializer produces UTF-8"),
     ))
@@ -87,20 +97,25 @@ fn encode_bounded(
 /// Count cache metadata without constructing another serialized copy.
 pub(super) fn serialized_len(value: &impl Serialize) -> Result<usize, serde_json::Error> {
     struct Counter(usize);
+
     impl std::io::Write for Counter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0 = self
                 .0
                 .checked_add(bytes.len())
                 .ok_or_else(|| std::io::Error::other("size overflow"))?;
+
             Ok(bytes.len())
         }
+
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
     let mut count = Counter(0);
+
     serde_json::to_writer(&mut count, value)?;
+
     Ok(count.0)
 }
 
@@ -135,6 +150,7 @@ impl std::fmt::Display for Error {
         formatter.write_str(&self.message)
     }
 }
+
 impl std::error::Error for Error {}
 
 impl Error {
@@ -146,9 +162,11 @@ impl Error {
         message: impl Into<String>,
     ) -> Self {
         let mut error = Self::new(code, message);
+
         error.data = Some(
             serde_json::json!({"category":category,"recovery":recovery,"outcome":outcome,"automaticReplay":false}),
         );
+
         error
     }
 
@@ -236,6 +254,7 @@ mod tests {
     fn encoding_budget_counts_escaped_utf8_bytes_and_keeps_valid_json() {
         let value = serde_json::json!({"text":"世\n\"🌍"});
         let expected = serde_json::to_string(&value).unwrap();
+
         assert_eq!(
             encode_bounded(&value, expected.len()).unwrap(),
             Some(expected.clone())
@@ -248,6 +267,7 @@ mod tests {
         assert_eq!(serialized_len(&value).unwrap(), expected.len());
         let event = EncodedEvent::new(Event::new("test", value)).unwrap();
         let decoded: Value = serde_json::from_str(&event.text).unwrap();
+
         assert_eq!(decoded["method"], "test");
         assert_eq!(decoded["params"]["text"], "世\n\"🌍");
     }

@@ -21,15 +21,18 @@ fn allocation_probe() -> Vec<u8> {
 fn allocation_cost(allocator: &impl std::alloc::GlobalAlloc) -> u128 {
     let layout = std::alloc::Layout::from_size_align(64, 8).unwrap();
     let started = std::time::Instant::now();
+
     for _ in 0..50000 {
         // SAFETY: Each non-null block is freed through the same allocator/layout.
         unsafe {
             let pointer = allocator.alloc(layout);
+
             assert!(!pointer.is_null());
             std::hint::black_box(pointer);
             allocator.dealloc(pointer, layout);
         }
     }
+
     started.elapsed().as_micros()
 }
 
@@ -37,6 +40,7 @@ fn allocation_cost(allocator: &impl std::alloc::GlobalAlloc) -> u128 {
 fn public_allocator_reports_real_allocations_and_releases() {
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let client = router.client();
+
     let request = |message| {
         client
             .request(Request {
@@ -47,6 +51,7 @@ fn public_allocator_reports_real_allocations_and_releases() {
             })
             .unwrap()
     };
+
     assert!(client.info().queries.iter().any(|query| query == "memory"));
     request(Message::Command(Command::RecordMemory {
         owner: "consumer".into(),
@@ -55,17 +60,20 @@ fn public_allocator_reports_real_allocations_and_releases() {
         lease_ms: 5000,
     }));
     let value = allocation_probe();
+
     let Reply::Memory(before) = request(Message::Query(Query::Memory {
         owner: "consumer".into(),
         include_freed: false,
     })) else {
         panic!("memory reply");
     };
+
     let block = before
         .samples
         .iter()
         .find(|sample| sample.size == value.len() as u64)
         .expect("actual probe allocation captured");
+
     assert!(
         block.stack.iter().any(|index| before.sites[*index as usize]
             .function
@@ -73,6 +81,7 @@ fn public_allocator_reports_real_allocations_and_releases() {
         "native stack resolves the Rust allocation caller"
     );
     let ordinal = block.ordinal;
+
     // Symbolization can consume the finite lease; renew only a still-active capture.
     assert!(before.recording);
     request(Message::Command(Command::RecordMemory {
@@ -82,12 +91,14 @@ fn public_allocator_reports_real_allocations_and_releases() {
         lease_ms: 5000,
     }));
     drop(value);
+
     let Reply::Memory(after) = request(Message::Query(Query::Memory {
         owner: "consumer".into(),
         include_freed: true,
     })) else {
         panic!("memory reply");
     };
+
     assert!(
         after
             .samples
@@ -102,6 +113,7 @@ fn public_allocator_reports_real_allocations_and_releases() {
     }));
     let baseline_us = allocation_cost(&std::alloc::System);
     let dormant_us = allocation_cost(&ALLOCATOR);
+
     request(Message::Command(Command::RecordMemory {
         owner: "cost".into(),
         enabled: true,
@@ -109,6 +121,7 @@ fn public_allocator_reports_real_allocations_and_releases() {
         lease_ms: 5000,
     }));
     let active_us = allocation_cost(&ALLOCATOR);
+
     request(Message::Command(Command::RecordMemory {
         owner: "cost".into(),
         enabled: false,

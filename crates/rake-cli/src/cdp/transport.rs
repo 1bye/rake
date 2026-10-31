@@ -35,16 +35,20 @@ impl Worker {
         if self.closed.load(Ordering::Acquire) {
             return Err(mpsc::RecvTimeoutError::Disconnected);
         }
+
         // A per-worker scheduling point lets tests close during the blocking receive.
         #[cfg(test)]
         if let Some(gates) = &self.before_receive {
             gates.0.wait();
             gates.1.wait();
         }
+
         let work = self.input.recv_timeout(Duration::from_millis(20));
+
         if self.closed.load(Ordering::Acquire) {
             return Err(mpsc::RecvTimeoutError::Disconnected);
         }
+
         work
     }
 
@@ -82,6 +86,7 @@ pub(super) fn serve(
     // At most two encoded messages in addition to the session's byte-bounded queue.
     let (events, output) = mpsc::sync_channel(2);
     let closed = Arc::new(AtomicBool::new(false));
+
     let worker = Worker {
         input: requests,
         output: events,
@@ -89,12 +94,15 @@ pub(super) fn serve(
         #[cfg(test)]
         before_receive: None,
     };
+
     let thread = std::thread::spawn(move || work(worker).map_err(|error| error.to_string()));
     let mut peer_closed = false;
+
     let result = (|| -> Result<()> {
         let mut pending = VecDeque::new();
         let mut pending_bytes = 0usize;
         let mut busy = false;
+
         loop {
             for _ in 0..32 {
                 match output.try_recv() {
@@ -102,23 +110,28 @@ pub(super) fn serve(
                         if output.completed {
                             pending_bytes -= pending.pop_front().unwrap_or(0);
                         }
+
                         socket.write(output.message)?;
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         socket.flush()?;
+
                         return Ok(());
                     }
                 }
             }
+
             socket.flush()?;
             let has_pending = !pending.is_empty();
+
             if busy != has_pending {
                 busy = has_pending;
                 socket
                     .get_mut()
                     .set_read_timeout(Some(Duration::from_millis(if busy { 2 } else { 20 })))?;
             }
+
             match socket.read() {
                 Ok(Message::Text(text)) => {
                     let request = match serde_json::from_str::<Request>(&text) {
@@ -131,6 +144,7 @@ pub(super) fn serve(
                             continue;
                         }
                     };
+
                     // These startup acknowledgements have no session state or runtime work.
                     if matches!(
                         request.method.as_str(),
@@ -142,8 +156,10 @@ pub(super) fn serve(
                         ))?;
                         continue;
                     }
+
                     let id = request.id;
                     let bytes = text.len();
+
                     if pending.len() >= REQUEST_LIMIT
                         || pending_bytes.saturating_add(bytes) > REQUEST_BYTES
                     {
@@ -159,6 +175,7 @@ pub(super) fn serve(
                         ))?;
                         continue;
                     }
+
                     match input.try_send(Work {
                         request,
                         deadline: Instant::now() + TIMEOUT,
@@ -186,6 +203,7 @@ pub(super) fn serve(
                     peer_closed = true;
                     closed.store(true, Ordering::Release);
                     let _ = socket.flush();
+
                     return Ok(());
                 }
                 Ok(_) => {
@@ -200,15 +218,19 @@ pub(super) fn serve(
             }
         }
     })();
+
     closed.store(true, Ordering::Release);
     drop(input);
     drop(output);
     let _ = socket.close(None);
     let worker_result = thread.join().map_err(|_| "CDP session worker panicked")?;
+
     result?;
+
     if peer_closed {
         return Ok(());
     }
+
     worker_result.map_err(Into::into)
 }
 

@@ -164,6 +164,7 @@ impl Connection {
         else {
             return Err("Unexpected info reply".into());
         };
+
         if !info.queries.iter().any(|q| q == "inspect_tree_page") {
             return match self
                 .query(runtime, Query::InspectTree {}, cancellation)
@@ -173,8 +174,10 @@ impl Connection {
                 _ => Err("Unexpected tree reply".into()),
             };
         }
+
         let mut tree: Option<rake::inspection::Snapshot> = None;
         let mut offset = 0;
+
         loop {
             let Reply::ElementPage(page) = self
                 .query(
@@ -189,6 +192,7 @@ impl Connection {
             else {
                 return Err("Unexpected page reply".into());
             };
+
             if page.total > rake::inspection::MAX_ELEMENTS
                 || page.snapshot.elements.len() > rake::inspection::TREE_PAGE_SIZE
                 || tree
@@ -197,17 +201,20 @@ impl Connection {
             {
                 return Err("Invalid tree page".into());
             }
+
             if let Some(tree) = &mut tree {
                 tree.elements.extend(page.snapshot.elements);
             } else {
                 tree = Some(page.snapshot);
             }
+
             match page.next {
                 Some(next) if next > offset && next <= page.total => offset = next,
                 Some(_) => return Err("Invalid tree cursor".into()),
                 None => break,
             }
         }
+
         tree.ok_or_else(|| "Missing tree metadata".into())
     }
 
@@ -316,6 +323,7 @@ impl Connection {
                 cancellation,
             )
             .await?;
+
         Ok(())
     }
 

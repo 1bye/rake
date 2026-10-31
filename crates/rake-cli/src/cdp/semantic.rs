@@ -2,11 +2,13 @@
 
 use super::{TIMEOUT, captures::Captures, dom::Dom, wire::Error};
 use rake_client::local::Instance;
+
 use rake_protocol::{
     control::{Query, Reply},
     inspection::{MAX_ELEMENTS, Snapshot, TREE_PAGE_SIZE, TreeRevision, WindowPage},
     router::WindowId,
 };
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -31,6 +33,7 @@ pub(super) fn read(
             "Runtime does not support window-specific inspection",
         ));
     }
+
     let page = |presentation: Option<String>, offset| -> Result<WindowPage, Error> {
         let Reply::InspectionWindow(page) = crate::terminal::query(
             instance,
@@ -45,21 +48,27 @@ pub(super) fn read(
         else {
             return Err(Error::new(-32000, "Unexpected window inspection reply"));
         };
+
         Ok(page)
     };
+
     let first = page(None, 0)?;
+
     let revision = TreeRevision {
         capture: first.page.snapshot.capture.clone(),
         metadata: Some(first.metadata_revision.clone()),
         status: first.page.snapshot.status,
     };
+
     if first.window != window {
         return Err(Error::new(
             -32000,
             "Inspection reply targets another window",
         ));
     }
+
     let first_count = first.page.snapshot.elements.len();
+
     if first.page.total > MAX_ELEMENTS
         || first_count > TREE_PAGE_SIZE
         || first_count > first.page.total
@@ -72,6 +81,7 @@ pub(super) fn read(
     {
         return Err(Error::new(-32000, "Invalid first window inspection page"));
     }
+
     if let Some(tree) = cache.find(instance.info.runtime_id.0, &revision) {
         if tree.elements.len() != first.page.total {
             return Err(Error::new(
@@ -79,6 +89,7 @@ pub(super) fn read(
                 "Window index total changed without a new revision",
             ));
         }
+
         return Ok(Presentation {
             window,
             frame: first.frame_sequence,
@@ -86,15 +97,18 @@ pub(super) fn read(
             tree,
         });
     }
+
     let lease = first.presentation.clone();
     let frame = first.frame_sequence.clone();
     let total = first.page.total;
     let mut next_page = first;
     let mut combined: Option<Snapshot> = None;
+
     loop {
         let offset = combined.as_ref().map_or(0, |tree| tree.elements.len());
         let count = next_page.page.snapshot.elements.len();
         let received = offset + count;
+
         if next_page.window != window
             || next_page.presentation != lease
             || next_page.frame_sequence != frame
@@ -116,20 +130,26 @@ pub(super) fn read(
                 "Incomplete or inconsistent window inspection page",
             ));
         }
+
         let next = next_page.page.next;
+
         if let Some(tree) = &mut combined {
             tree.elements.extend(next_page.page.snapshot.elements);
         } else {
             combined = Some(next_page.page.snapshot);
         }
+
         if let Some(offset) = next {
             next_page = page(Some(lease.clone()), offset)?;
         } else {
             break;
         }
     }
+
     let tree = Arc::new(combined.expect("first page supplies metadata"));
+
     cache.retain(instance.info.runtime_id.0, &revision, Arc::clone(&tree));
+
     Ok(Presentation {
         window,
         frame,
@@ -165,9 +185,11 @@ pub(super) struct Bounds {
     #[serde(default = "default_tolerance")]
     tolerance: f32,
 }
+
 fn default_tolerance() -> f32 {
     0.5
 }
+
 impl Bounds {
     fn valid(&self) -> bool {
         self.tolerance.is_finite()
@@ -179,6 +201,7 @@ impl Bounds {
             && self.width.is_none_or(|v| v >= 0.)
             && self.height.is_none_or(|v| v >= 0.)
     }
+
     fn matches(&self, bounds: Option<rake_protocol::inspection::Layout>) -> bool {
         bounds.is_some_and(|b| {
             [
@@ -197,14 +220,18 @@ impl Bounds {
 
 pub(super) fn selector(params: &Value) -> Result<Selector, Error> {
     let query = params.get("query").cloned().unwrap_or_else(|| json!({}));
+
     if serde_json::to_vec(&query).map_or(true, |v| v.len() > 4096) {
         return Err(Error::new(-32602, "Semantic query exceeds 4 KiB"));
     }
+
     let selector: Selector =
         serde_json::from_value(query).map_err(|e| Error::new(-32602, e.to_string()))?;
+
     if selector.bounds.as_ref().is_some_and(|b| !b.valid()) {
         return Err(Error::new(-32602, "Invalid bounds predicate"));
     }
+
     Ok(selector)
 }
 
@@ -223,9 +250,11 @@ pub(super) fn root_node(params: &Value) -> Result<Option<i32>, Error> {
 
 fn prefix(value: &str) -> &str {
     let mut end = value.len().min(512);
+
     while !value.is_char_boundary(end) {
         end -= 1;
     }
+
     &value[..end]
 }
 
@@ -235,6 +264,7 @@ pub(super) fn project(
     params: &Value,
 ) -> Result<Value, Error> {
     let selector = selector(params)?;
+
     let number = |name: &str, default: usize, max: usize| match params.get(name) {
         None => Ok(default),
         Some(v) => v
@@ -243,13 +273,17 @@ pub(super) fn project(
             .map(|n| n as usize)
             .ok_or_else(|| Error::new(-32602, format!("Invalid {name}"))),
     };
+
     let limit = number("limit", 100, 256)?;
     let offset = number("offset", 0, MAX_ELEMENTS)?;
+
     if limit == 0 {
         return Err(Error::new(-32602, "limit must be within 1–256"));
     }
+
     let revision =
         json!({"capture":presentation.revision.capture,"metadata":presentation.revision.metadata});
+
     if params
         .get("expectedRevision")
         .is_some_and(|expected| *expected != revision)
@@ -263,8 +297,10 @@ pub(super) fn project(
             "Snapshot revision changed or is missing; restart pagination",
         ));
     }
+
     let content = content::Content::new(&presentation.tree)?;
     let root = root_node(params)?;
+
     let scope = root
         .map(|node| {
             presentation
@@ -284,25 +320,31 @@ pub(super) fn project(
                 })
         })
         .transpose()?;
+
     let contains = selector
         .text_content_contains
         .as_deref()
         .map(|needle| content.contains(needle));
+
     let query_complete = (selector.text_content.is_none()
         && selector.text_content_contains.is_none())
         || (0..presentation.tree.elements.len())
             .filter(|i| scope.as_ref().is_none_or(|scope| scope[*i]))
             .all(|i| content.complete(i));
+
     let mut matches = 0usize;
     let mut elements = Vec::new();
+
     for (index, element) in presentation.tree.elements.iter().enumerate() {
         let node = dom
             .node_id(&element.id)
             .ok_or_else(|| Error::new(-32000, "Semantic node is no longer retained"))?;
+
         let ax = element.accessibility.as_ref();
         let name = ax.and_then(|a| a.name.as_deref().or(a.label.as_deref()));
         let role = ax.and_then(|a| a.role.as_deref());
         let enabled = ax.map(|a| !a.disabled);
+
         let visible = element.layout.map(|b| {
             b.width > 0.
                 && b.height > 0.
@@ -311,6 +353,7 @@ pub(super) fn project(
                     .content_mask
                     .is_none_or(|b| b.width > 0. && b.height > 0.)
         });
+
         if scope.as_ref().is_some_and(|scope| !scope[index])
             || selector
                 .text_content
@@ -351,10 +394,13 @@ pub(super) fn project(
         {
             continue;
         }
+
         matches += 1;
+
         if matches <= offset || elements.len() == limit {
             continue;
         }
+
         elements.push(json!({"nodeId":node,"stableId":element.stable_id,"id":element.semantic_id,
             "parentId":element.parent.as_deref().and_then(|p|dom.node_id(p)),"type":element.display_name(),
             "role":role,"name":name.map(prefix),"nameTruncated":name.is_some_and(|n|n.len()>512),"text":element.text.as_deref().map(prefix),
@@ -364,6 +410,7 @@ pub(super) fn project(
             "focused":ax.and_then(|a|a.focused),"states":ax.map(|a|&a.states),"source":element.source,
             "metadataTruncated":element.metadata_truncated,"styleEditable":element.style_editable,"textEditable":element.text_editable}));
     }
+
     Ok(
         json!({"windowId":presentation.window,"frameSequence":presentation.frame,"revision":revision,"rootNodeId":root,"queryComplete":query_complete,
         "elements":elements,"totalMatches":matches,"offset":offset,"hasMore":matches>offset+limit,
@@ -375,9 +422,11 @@ pub(super) fn project(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn geometry_predicates_have_explicit_finite_tolerances() {
         let bounds: Bounds = serde_json::from_value(json!({"width":10.2})).unwrap();
+
         assert!(bounds.matches(Some(rake_protocol::inspection::Layout {
             x: 0.,
             y: 0.,
@@ -389,10 +438,12 @@ mod tests {
         assert!(selector(&json!({"query":{"bounds":{"tolerance":101}}})).is_err());
         assert!(selector(&json!({"query":{"bounds":{"width":1e300}}})).is_err());
     }
+
     #[test]
     fn semantic_queries_preserve_identity_and_bound_unicode_and_pagination() {
         let tree:Snapshot=serde_json::from_value(json!({"status":"captured","capture":"1","router_revision":0,"omitted":0,"coverage":"test","elements":[{"id":"one","stable_id":"s1","kind":"Button","semantic_id":"save","metadata_truncated":false,"text":"🙂".repeat(200)}]})).unwrap();
         let mut dom = Dom::default();
+
         dom.update(tree.clone()).unwrap();
         let p = Presentation {
             window: WindowId(1),
@@ -404,7 +455,9 @@ mod tests {
             },
             tree: Arc::new(tree),
         };
+
         let result = project(&p, &dom, &json!({"query":{"id":"save"},"limit":1})).unwrap();
+
         assert_eq!(result["totalMatches"], 1);
         assert_eq!(result["elements"][0]["stableId"], "s1");
         assert_eq!(result["elements"][0]["text"].as_str().unwrap().len(), 512);

@@ -14,6 +14,7 @@ pub(super) struct NodeId(i32);
 
 impl TryFrom<i32> for NodeId {
     type Error = &'static str;
+
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         if value > 0 {
             Ok(Self(value))
@@ -38,6 +39,7 @@ struct NodeSelector {
 
 pub(super) fn node_id(params: &Value) -> Result<i32, Error> {
     let selector: NodeSelector = decode(params)?;
+
     selector
         .node_id
         .or(selector.backend_node_id)
@@ -51,8 +53,10 @@ struct Depth(usize);
 
 impl TryFrom<i64> for Depth {
     type Error = &'static str;
+
     fn try_from(value: i64) -> Result<Self, Self::Error> {
         let limit = rake_protocol::inspection::MAX_ELEMENTS + 1;
+
         match value {
             -1 => Ok(Self(limit)),
             0.. => Ok(Self(
@@ -86,9 +90,11 @@ pub(super) fn validate(method: &str, params: &Value) -> Result<(), Error> {
     match method {
         "DOM.getDocument" | "DOM.requestChildNodes" => {
             depth(params, 1)?;
+
             if let Some(pierce) = params.get("pierce") {
                 decode::<bool>(pierce)?;
             }
+
             if method == "DOM.requestChildNodes" {
                 node_id(params)?;
             }
@@ -96,6 +102,7 @@ pub(super) fn validate(method: &str, params: &Value) -> Result<(), Error> {
         "DOM.getSearchResults" => {
             decode::<&str>(&params["searchId"])?;
             let range: SearchRange = decode(params)?;
+
             if range.from_index >= range.to_index {
                 return Err(Error::new(-32602, "Invalid search result range"));
             }
@@ -115,6 +122,7 @@ pub(super) fn validate(method: &str, params: &Value) -> Result<(), Error> {
         }
         _ => {}
     }
+
     Ok(())
 }
 
@@ -126,15 +134,18 @@ mod tests {
     #[test]
     fn typed_dom_parameters_cover_pinned_schema_fields() {
         let contract: Value = serde_json::from_str(include_str!("contract.json")).unwrap();
+
         let dom = contract["domains"]
             .as_array()
             .unwrap()
             .iter()
             .find(|domain| domain["domain"] == "DOM")
             .unwrap();
+
         for command in dom["commands"].as_array().unwrap() {
             let name = command["name"].as_str().unwrap();
             let method = format!("DOM.{name}");
+
             let params = match name {
                 "getDocument" => json!({"depth":1,"pierce":false}),
                 "requestChildNodes" => json!({"nodeId":2,"depth":-1,"pierce":true}),
@@ -142,9 +153,12 @@ mod tests {
                 "pushNodesByBackendIdsToFrontend" => json!({"backendNodeIds":[2,3]}),
                 _ => panic!("uncovered contract command"),
             };
+
             validate(&method, &params).unwrap();
+
             for field in command["parameters"].as_array().unwrap() {
                 let mut invalid = params.clone();
+
                 invalid[field["name"].as_str().unwrap()] = json!({"wrong":"type"});
                 assert_eq!(validate(&method, &invalid).unwrap_err().code, -32602);
             }
@@ -165,6 +179,7 @@ mod tests {
                 -32602
             );
         }
+
         assert_eq!(
             node_id(&json!({"backendNodeId":2,"futureOption":true})).unwrap(),
             2

@@ -13,6 +13,7 @@ fn memory_namespaces_are_shared_only_when_cloned() {
         let backend = MemoryBackend::new();
         let first = Store::<String>::new(backend.clone());
         let second = Store::<String>::new(backend);
+
         first.set("../é", &"value".into()).await.unwrap();
         assert_eq!(second.get("../é").await.unwrap().as_deref(), Some("value"));
         assert!(
@@ -32,11 +33,13 @@ mod native {
     use std::{fs, path::PathBuf};
 
     struct Directory(PathBuf);
+
     impl Directory {
         fn new() -> Self {
             Self(std::env::temp_dir().join(format!("rake-storage-{}", uuid::Uuid::new_v4())))
         }
     }
+
     impl Drop for Directory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -52,9 +55,11 @@ mod native {
             let a = "dark".into();
             let b = "日本語".into();
             let (a, b) = futures::join!(first.set("theme", &a), second.set("../language", &b));
+
             a.unwrap();
             b.unwrap();
             let reopened = Store::<String>::new(FileBackend::open(&directory.0).await.unwrap());
+
             assert_eq!(
                 reopened.get("theme").await.unwrap().as_deref(),
                 Some("dark")
@@ -72,6 +77,7 @@ mod native {
             assert!(first.get("theme").await.unwrap().is_none());
 
             let path = directory.0.join("store.json");
+
             fs::write(&path, b"corrupt data").unwrap();
             assert!(matches!(
                 first.get("theme").await,
@@ -93,12 +99,14 @@ mod native {
         use std::os::unix::fs::{PermissionsExt, symlink};
         block_on(async {
             let directory = Directory::new();
+
             fs::create_dir(&directory.0).unwrap();
             fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o755)).unwrap();
             assert!(FileBackend::open(&directory.0).await.is_err());
             fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o700)).unwrap();
             let store = Store::<String>::new(FileBackend::open(&directory.0).await.unwrap());
             let outside = directory.0.join("outside");
+
             fs::write(&outside, b"untouched").unwrap();
             symlink(&outside, directory.0.join("store.json")).unwrap();
             assert!(store.set("key", &"data".into()).await.is_err());
@@ -111,12 +119,15 @@ mod native {
         block_on(async {
             let directory = Directory::new();
             let store = Store::<u8>::new(FileBackend::open(&directory.0).await.unwrap());
+
             store.set("initial", &0).await.unwrap();
             let values: std::collections::BTreeMap<_, _> = (0..4096)
                 .map(|index| (format!("key-{index:04}"), vec![b'0']))
                 .collect();
+
             let bytes = serde_json::to_vec(&values).unwrap();
             let path = directory.0.join("store.json");
+
             fs::write(&path, &bytes).unwrap();
             assert_eq!(store.get("key-0000").await.unwrap(), Some(0));
             assert!(matches!(

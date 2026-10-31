@@ -23,6 +23,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
                 count.set(Some((allocations + 1, bytes + layout.size())));
             }
         });
+
         // SAFETY: the caller supplies the GlobalAlloc layout contract unchanged.
         unsafe { System.alloc(layout) }
     }
@@ -41,6 +42,7 @@ pub(super) fn capture(count: usize) -> Snapshot {
         "id":"root", "kind":"Div", "metadata_truncated":false
     }))
     .unwrap();
+
     Snapshot {
         status: Status::Captured,
         capture: "one".into(),
@@ -65,6 +67,7 @@ pub(super) fn measure<T>(operation: impl FnOnce() -> T) -> (T, u128, usize, usiz
     let result = operation();
     let micros = start.elapsed().as_micros();
     let (allocations, bytes) = COUNT.replace(None).unwrap();
+
     (result, micros, allocations, bytes)
 }
 
@@ -74,21 +77,27 @@ fn cdp_projection_baseline() {
     for count in [1_000, 8_192] {
         let snapshot = capture(count);
         let mut dom = Dom::default();
+
         dom.update_index(snapshot.clone()).unwrap();
         let mut times = Vec::with_capacity(25);
         let mut allocations = 0;
         let mut allocated_bytes = 0;
+
         for _ in 0..25 {
             let input = snapshot.clone();
+
             COUNT.set(Some((0, 0)));
             let start = Instant::now();
+
             dom.update_index(input).unwrap();
             let elapsed = start.elapsed().as_micros();
             let (calls, bytes) = COUNT.replace(None).unwrap();
+
             times.push(elapsed);
             allocations += calls;
             allocated_bytes += bytes;
         }
+
         times.sort_unstable();
         println!(
             "cdp_projection nodes={count} median_us={} p95_us={} allocations={} allocated_bytes={}",

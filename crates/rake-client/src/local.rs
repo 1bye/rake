@@ -106,6 +106,7 @@ pub fn exchange(
     timeout: Duration,
 ) -> io::Result<Result<Reply, ControlError>> {
     let timeout = crate::remaining(timeout)?;
+
     let deadline = Instant::now()
         .checked_add(timeout)
         .filter(|_| !timeout.is_zero())

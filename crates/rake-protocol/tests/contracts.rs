@@ -46,7 +46,9 @@ fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots
     use serde_json::json;
     let legacy = json!({"id":"element-1-0","parent":null,"kind":"Div", "metadata_truncated":false,
         "resolved":{"properties":{"opacity":1.0},"hovered":false}});
+
     let element: Element = serde_json::from_value(legacy.clone()).unwrap();
+
     assert!(element.box_model.is_none());
     assert!(element.view.is_none());
     assert!(element.text.is_none());
@@ -54,6 +56,7 @@ fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots
     assert!(element.resolved.unwrap().layers.is_empty());
 
     let mut current = legacy;
+
     current["text"] = json!("Hello 世界\n🌍");
     current["text_editable"] = json!(true);
     current["view"] = json!({"tag":"section","style_sources":[{"scope":"section","attribute":"class","expression":"\"p-2\"","source":{"file":"app.rs","line":8,"column":4}}]});
@@ -63,6 +66,7 @@ fn inspection_origins_and_partial_boxes_roundtrip_without_breaking_old_snapshots
     });
     current["resolved"]["layers"] = json!([{"origin":"default","properties":{"opacity":1.0}}]);
     let element: Element = serde_json::from_value(current).unwrap();
+
     assert_eq!(element.text.as_deref(), Some("Hello 世界\n🌍"));
     assert_eq!(
         element.resolved.as_ref().unwrap().layers[0].origin,
@@ -83,6 +87,7 @@ fn literal_text_edit_commands_are_strict_and_portable() {
         "edit":{"action":"set","text":"<literal> café 你好 🙂\n"}
     }))
     .unwrap();
+
     assert!(
         matches!(&command, Command::EditElementText { edit: TextEdit::Set { text }, .. } if text == "<literal> café 你好 🙂\n")
     );

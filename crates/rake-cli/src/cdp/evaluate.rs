@@ -43,6 +43,7 @@ pub(super) fn registry(instance: &Instance) -> Result<Value, Error> {
     {
         return Ok(json!([]));
     }
+
     match crate::terminal::query(instance, Query::Commands {}, super::TIMEOUT)
         .map_err(|e| Error::new(-32000, e.to_string()))?
     {
@@ -71,25 +72,32 @@ pub(super) fn help() -> Value {
 
 pub(super) fn completion(expression: &str, names: &[String]) -> Option<Value> {
     let helpers = help();
+
     if expression == "rake" {
         return Some(helpers);
     }
+
     let prefix = format!("{expression}.");
     let mut properties = serde_json::Map::new();
+
     for name in names {
         if let Some(suffix) = name.strip_prefix(&prefix) {
             let child = suffix.split('.').next().unwrap();
+
             properties.insert(child.into(), json!(format!("{name}(JSON)")));
         }
     }
+
     (!properties.is_empty()).then_some(Value::Object(properties))
 }
 
 pub(super) fn lexical_names(names: &[String]) -> Vec<String> {
     let mut result = std::collections::BTreeSet::from(["rake".to_owned(), "$0".to_owned()]);
+
     for name in names {
         result.insert(name.split('.').next().unwrap().to_owned());
     }
+
     result.into_iter().collect()
 }
 
@@ -100,10 +108,12 @@ pub(super) fn observation(instance: &Instance, argument: &Value) -> Result<Value
             "Operation belongs to a different runtime; use the returned observation token",
         ));
     }
+
     let operation = argument["id"]
         .as_str()
         .and_then(|id| id.parse().ok())
         .ok_or_else(|| Error::new(-32602, "Expected {runtimeId,id:\"op-N\"}"))?;
+
     match crate::terminal::query(instance, Query::Operation { operation }, super::TIMEOUT)
         .map_err(|error| Error::new(-32000, error.to_string()))?
     {
@@ -127,6 +137,7 @@ fn outcome(
         OperationState::Blocked(_) => "blocked",
         OperationState::Failed(_) => "failed",
     };
+
     json!({"requestKey":key,"status":status,"operation":record,"observe":{"runtimeId":instance.info.runtime_id.to_string(),"id":record.operation_id.to_string()}})
 }
 
@@ -143,6 +154,7 @@ pub(super) fn validate(instance: &Instance, expression: &str) -> Result<(String,
 pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Error> {
     let deadline =
         rake_client::current_deadline().unwrap_or_else(|| Instant::now() + super::TIMEOUT);
+
     let (id, arguments) = validate(instance, expression)?;
     let key = uuid::Uuid::new_v4().to_string();
 
@@ -161,6 +173,7 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
     };
 
     let mut observed = None;
+
     loop {
         match crate::terminal::query(
             instance,
@@ -195,11 +208,14 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
                     && let Some(record) = observed
                 {
                     let mut value = outcome(instance, Some(&key), &record);
+
                     value["observationWarning"] = json!(format!(
                         "Observation deadline reached: {e}; use the observation token for a fresh state"
                     ));
+
                     return Ok(value);
                 }
+
                 return Err(delivery_error(
                     format!("Operation {operation_id} observation failed: {e}"),
                     &key,
@@ -227,14 +243,17 @@ mod tests {
     #[test]
     fn discovery_is_static_and_outcomes_carry_runtime_scoped_observation_tokens() {
         let names = vec!["demo.echo".into(), "demo.files.list".into()];
+
         assert_eq!(lexical_names(&names), ["$0", "demo", "rake"]);
         let namespace = completion("demo", &names).unwrap();
+
         assert_eq!(namespace["echo"], "demo.echo(JSON)");
         assert!(namespace.get("files").is_some());
         assert!(completion("demo.echo({})", &names).is_none());
         assert!(help()["resetText"].as_str().unwrap().contains("$0"));
         let router =
             rake::router::Router::<rake_protocol::router::NoRoute>::new(Default::default());
+
         let instance = Instance {
             application_id: "observe".into(),
             pid: 0,
@@ -243,6 +262,7 @@ mod tests {
                 path: "/never-connect".into(),
             },
         };
+
         let record = rake_protocol::control::OperationRecord {
             operation_id: rake_protocol::router::OperationId(3),
             state: rake_protocol::router::OperationState::AwaitingDecision(
@@ -250,7 +270,9 @@ mod tests {
             ),
             result: None,
         };
+
         let result = outcome(&instance, Some("key"), &record);
+
         assert_eq!(result["status"], "awaiting decision");
         assert_eq!(result["observe"]["id"], "op-3");
         assert_eq!(result["requestKey"], "key");
@@ -262,7 +284,9 @@ mod tests {
         let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
         );
+
         let mut info = router.client().info();
+
         info.queries = vec!["info".into(), "inspect_tree".into()];
         let instance = Instance {
             application_id: "standalone".into(),
@@ -272,6 +296,7 @@ mod tests {
                 path: "/no/inspection-socket".into(),
             },
         };
+
         assert!(names(&instance).unwrap().is_empty());
         assert!(
             validate(&instance, "app.command(null)")
@@ -305,6 +330,7 @@ mod tests {
     fn lost_submission_and_pending_observation_never_resend_commands() {
         use std::io::{BufRead, BufReader, Write};
         use std::os::unix::net::UnixListener;
+
         for submitted in [false, true] {
             let path =
                 std::path::PathBuf::from(format!("/tmp/rake-eval-{}.sock", uuid::Uuid::new_v4()));
@@ -364,12 +390,14 @@ mod tests {
                         }
                         Message::Command(Command::Run { .. }) => {
                             keys.push(request.key.unwrap());
+
                             if submitted {
                                 let reply = Ok::<_, rake_protocol::control::ControlError>(
                                     Reply::Submitted {
                                         operation_id: rake_protocol::router::OperationId(1),
                                     },
                                 );
+
                                 writeln!(socket, "{}", serde_json::to_string(&reply).unwrap())
                                     .unwrap();
                             }
@@ -383,6 +411,7 @@ mod tests {
                                     result: None,
                                 }),
                             );
+
                             writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
                         }
                         _ => panic!("unexpected fixture request"),
@@ -401,16 +430,20 @@ mod tests {
             let keys = worker.join().unwrap();
 
             assert_eq!(keys.len(), 1);
+
             if submitted {
                 let value = result.unwrap();
+
                 assert_eq!(value["status"], "running");
                 assert_eq!(value["requestKey"], keys[0]);
                 assert_eq!(value["observe"]["id"], "op-1");
             } else {
                 let error = result.unwrap_err();
+
                 assert!(error.message.contains(&keys[0]));
                 assert!(error.message.contains("not resent"));
             }
+
             std::fs::remove_file(path).unwrap();
         }
     }

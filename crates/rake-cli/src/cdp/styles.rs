@@ -9,6 +9,7 @@ pub(super) fn matched(element: &Element) -> Vec<Value> {
     let Some(resolved) = &element.resolved else {
         return Vec::new();
     };
+
     [
         StyleOrigin::Default,
         StyleOrigin::Inherited,
@@ -20,6 +21,7 @@ pub(super) fn matched(element: &Element) -> Vec<Value> {
     .into_iter()
     .filter_map(|origin| {
         let layer = resolved.layers.iter().find(|layer| layer.origin == origin);
+
         let value = if origin == StyleOrigin::Authored {
             element
                 .styles
@@ -28,7 +30,9 @@ pub(super) fn matched(element: &Element) -> Vec<Value> {
         } else {
             layer.map(|layer| &layer.properties)
         }?;
+
         let selector = format!("[rake-origin=\"{}\"]", origin.label());
+
         Some(json!({"rule":{
             "selectorList":{"selectors":[{"text":selector}],"text":selector},
             "origin":"regular","style":inline(Some(value))
@@ -52,12 +56,14 @@ pub(super) fn properties(value: Option<&Value>) -> Vec<Value> {
                 Some("MaxContent") => Some("max-content"),
                 _ => None,
             };
+
             if let (Some(count), Some(minimum)) = (value["repeat"].as_u64(), minimum) {
                 properties.push(json!({"name":if key == "grid_cols" { "grid-template-columns" } else { "grid-template-rows" },
                     "value":format!("repeat({count}, minmax({minimum}, 1fr))")}));
                 continue;
             }
         }
+
         if let Some(fields) = value.as_object().filter(|_| {
             matches!(
                 key.as_str(),
@@ -230,6 +236,7 @@ mod tests {
         let properties = properties(Some(
             &json!({"grid_cols":{"repeat":3,"min_size":"Zero"},"grid_rows":{"repeat":2,"min_size":"MinContent"}}),
         ));
+
         assert!(
             properties
                 .iter()

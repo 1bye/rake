@@ -236,9 +236,11 @@ impl<R: Route> RuntimeClient<R> {
     #[cfg(feature = "devtools")]
     pub async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
         use crate::storage::devtools::Storage;
+
         if !Storage::accepts(&request) {
             return self.request(request);
         }
+
         self.request(Request {
             message: Message::Query(Query::Info {}),
             ..request.clone()
@@ -248,17 +250,21 @@ impl<R: Route> RuntimeClient<R> {
             .get::<Storage>()
             .map(|storage| storage.as_ref().clone())
             .unwrap_or_default();
+
         let Message::Command(command) = &request.message else {
             return storage.request(request).await;
         };
+
         let key = request
             .key
             .as_ref()
             .filter(|key| !key.is_empty() && key.len() <= 128)
             .ok_or(ControlError::InvalidRequestKey)?
             .clone();
+
         {
             let requests = self.state.requests.borrow();
+
             if let Some(saved) = requests.get(&key) {
                 return if saved.command == *command {
                     saved.reply.clone()
@@ -266,11 +272,13 @@ impl<R: Route> RuntimeClient<R> {
                     Err(ControlError::KeyConflict)
                 };
             }
+
             if requests.len() >= self.state.capacity {
                 return Err(ControlError::RequestCapacity);
             }
         }
         let command = command.clone();
+
         // Reserve in the same lifetime key space as all other app mutations.
         // Cancellation retains uncertainty instead of admitting a duplicate write.
         self.state.requests.borrow_mut().insert(
@@ -285,6 +293,7 @@ impl<R: Route> RuntimeClient<R> {
             },
         );
         let reply = storage.request(request).await;
+
         self.state.requests.borrow_mut().insert(
             key,
             SavedRequest {
@@ -292,6 +301,7 @@ impl<R: Route> RuntimeClient<R> {
                 reply: reply.clone(),
             },
         );
+
         reply
     }
 
@@ -363,6 +373,7 @@ impl<R: Route> RuntimeClient<R> {
             }
             Command::RecordFrames { enabled, lease_ms } => {
                 self.state.inspection.record_frames(*enabled, *lease_ms)?;
+
                 return Ok(Reply::Acknowledged);
             }
             Command::EditElementText {
@@ -371,6 +382,7 @@ impl<R: Route> RuntimeClient<R> {
                 edit,
             } => {
                 self.state.inspection.edit_text(id, generation, edit)?;
+
                 return Ok(Reply::Acknowledged);
             }
             Command::EditElementStyle {
@@ -379,6 +391,7 @@ impl<R: Route> RuntimeClient<R> {
                 edit,
             } => {
                 self.state.inspection.edit_style(id, generation, edit)?;
+
                 return Ok(Reply::Acknowledged);
             }
             Command::NavigateElement {
@@ -694,6 +707,7 @@ impl ControlConfig {
         #[cfg(not(feature = "devtools"))]
         {
             let _ = self;
+
             false
         }
 

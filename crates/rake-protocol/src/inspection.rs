@@ -14,6 +14,7 @@ pub mod preview;
 pub mod styles;
 /// Bounded inspection paths, subtree text and synthetic markup for copy actions.
 pub mod tree;
+
 pub use performance::{FrameClock, FramePhase, FrameTiming, Frames, NodeTiming};
 
 /// Maximum nodes in a captured tree. Remaining nodes are counted as omitted.
@@ -273,6 +274,7 @@ impl Element {
             SourceTarget::Handler { index } => self.handlers.get(*index).map(|site| &site.source),
         }
     }
+
     /// Authored view tag when known, otherwise a shortened Rust element name.
     #[must_use]
     pub fn display_name(&self) -> &str {

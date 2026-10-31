@@ -7,6 +7,7 @@ use crate::router::Route;
 
 pub(super) trait Host {
     fn info(&self) -> RuntimeInfo;
+
     fn request(&self, request: Request) -> Result<Reply, ControlError>;
 
     #[cfg(feature = "devtools")]
@@ -21,8 +22,10 @@ pub(super) trait Host {
                     message: super::Message::Query(super::Query::Info {}),
                     ..request.clone()
                 })?;
+
                 return self.storage().request(request).await;
             }
+
             self.request(request)
         })
     }
@@ -58,14 +61,17 @@ impl HostClient {
     pub(super) fn new(client: impl Host + 'static) -> Self {
         Self(Rc::new(client))
     }
+
     pub(crate) fn info(&self) -> RuntimeInfo {
         self.0.info()
     }
+
     pub(crate) async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
         #[cfg(feature = "devtools")]
         {
             self.0.request_async(request).await
         }
+
         #[cfg(not(feature = "devtools"))]
         {
             self.0.request(request)
@@ -101,6 +107,7 @@ impl<R: Route> Host for RuntimeClient<R> {
     ) -> futures::future::LocalBoxFuture<'_, Result<Reply, ControlError>> {
         Box::pin(RuntimeClient::request_async(self, request))
     }
+
     #[cfg(feature = "devtools")]
     fn storage(&self) -> crate::storage::devtools::Storage {
         self.services()
@@ -108,9 +115,11 @@ impl<R: Route> Host for RuntimeClient<R> {
             .map(|storage| storage.as_ref().clone())
             .unwrap_or_default()
     }
+
     fn info(&self) -> RuntimeInfo {
         self.info()
     }
+
     fn request(&self, request: Request) -> Result<Reply, ControlError> {
         self.request(request)
     }

@@ -13,6 +13,7 @@ pub(super) fn describe(
     let inspection = info.queries.iter().any(|q| q == "inspect_window");
     let input = native && info.commands.iter().any(|c| c == "preview_input");
     let mut methods = serde_json::Map::new();
+
     for (method, supported) in [
         ("Rake.getCapabilities", true),
         (
@@ -36,6 +37,7 @@ pub(super) fn describe(
     ] {
         methods.insert(method.into(), json!({"supported":supported}));
     }
+
     json!({
         "version":1,"runtimeId":info.runtime_id,"platform":info.platform,"methods":methods,
         "errorContractVersion":1,
@@ -50,16 +52,19 @@ pub(super) fn describe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn unavailable_native_targets_do_not_advertise_input_or_images() {
         let info:RuntimeInfo=serde_json::from_value(json!({"protocol":1,"runtime_id":"00000000-0000-0000-0000-000000000001","platform":"native","commands":["preview_input"],"queries":["preview","inspect_window"],"supported_targets":[],"completed_operations":0,"pending_operations":0,"idempotency_capacity":0})).unwrap();
         let absent = describe(&info, false, Some("unavailable".into()), true, true);
+
         assert_eq!(absent["methods"]["Input.insertText"]["supported"], false);
         assert_eq!(
             absent["methods"]["Page.captureScreenshot"]["supported"],
             false
         );
         let live = describe(&info, true, None, false, true);
+
         assert_eq!(live["methods"]["Input.insertText"]["supported"], true);
         assert_eq!(
             live["methods"]["Page.captureScreenshot"]["supported"],

@@ -10,6 +10,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[derive(Clone, Default)]
 struct Bytes(Rc<RefCell<BTreeMap<String, Vec<u8>>>>);
+
 impl Backend for Bytes {
     fn get<'a>(
         &'a self,
@@ -17,6 +18,7 @@ impl Backend for Bytes {
     ) -> LocalBoxFuture<'a, Result<Option<Vec<u8>>, StorageError>> {
         Box::pin(async move { Ok(self.0.borrow().get(key).cloned()) })
     }
+
     fn set<'a>(
         &'a self,
         key: &'a str,
@@ -24,15 +26,19 @@ impl Backend for Bytes {
     ) -> LocalBoxFuture<'a, Result<(), StorageError>> {
         Box::pin(async move {
             self.0.borrow_mut().insert(key.into(), value.into());
+
             Ok(())
         })
     }
+
     fn remove<'a>(&'a self, key: &'a str) -> LocalBoxFuture<'a, Result<(), StorageError>> {
         Box::pin(async move {
             self.0.borrow_mut().remove(key);
+
             Ok(())
         })
     }
+
     fn keys<'a>(
         &'a self,
         after: Option<&'a str>,
@@ -62,6 +68,7 @@ struct Preferences {
 fn production_runtime_does_not_advertise_storage_inspection() {
     let router = rake::router::Router::<rake::router::NoRoute>::new(Default::default());
     let info = router.client().info();
+
     assert!(!info.queries.iter().any(|query| query == "storage"));
     assert!(
         !info
@@ -77,10 +84,12 @@ fn typed_roundtrip_shared_handles_and_failed_conversion() {
         let bytes = Bytes::default();
         let store = Store::<Preferences>::new(bytes.clone());
         let shared = store.clone(); // Preferences deliberately does not implement Clone.
+
         assert_eq!(store.get("settings").await.unwrap(), None);
         let preferences = Preferences {
             theme: "dark".into(),
         };
+
         store.set("settings", &preferences).await.unwrap();
         assert_eq!(shared.get("settings").await.unwrap(), Some(preferences));
         assert!(matches!(
@@ -119,8 +128,10 @@ fn size_bounds_preserve_existing_values() {
     block_on(async {
         let bytes = Bytes::default();
         let store = Store::<String>::new(bytes.clone());
+
         store.set("key", &"old".into()).await.unwrap();
         let oversized = "x".repeat(rake::storage::MAX_VALUE_BYTES);
+
         assert!(matches!(
             store.set("key", &oversized).await,
             Err(StorageError::ValueTooLarge)

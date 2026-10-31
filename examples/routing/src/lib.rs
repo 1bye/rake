@@ -223,6 +223,7 @@ impl Render for Screen {
                                 {
                                     Some(performance_fixture::probe(cx))
                                 }
+
                                 #[cfg(not(feature = "performance-test"))]
                                 {
                                     None::<rake::gpui::AnyElement>
@@ -230,6 +231,7 @@ impl Render for Screen {
                             }),
                     )
                 }
+
                 #[cfg(not(feature = "network-test"))]
                 {
                     None::<rake::gpui::AnyElement>
