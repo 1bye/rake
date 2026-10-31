@@ -7,6 +7,9 @@ struct Demo {
     count: usize,
     keys: usize,
     ticks: usize,
+    http: Option<rake::http::HttpClient>,
+    http_status: String,
+    network: Option<Task<()>>,
     animation: Option<Task<()>>,
     drags: usize,
     text: String,
@@ -35,6 +38,9 @@ impl Demo {
             count: 0,
             keys: 0,
             ticks: 0,
+            http: None,
+            http_status: "idle".into(),
+            network: None,
             animation: None,
             drags: 0,
             text: String::new(),
@@ -162,6 +168,7 @@ impl Render for Demo {
         let keys = self.keys;
         let drags = self.drags;
         let ticks = self.ticks;
+        let http_status = self.http_status.clone();
         let text = self.text.clone();
         let entity = cx.entity();
         let painted = entity.clone();
@@ -188,6 +195,17 @@ impl Render for Demo {
                             }
                         }));
                     }
+                    if event.keystroke.key == "f5" && let Some(http)=this.http.clone() {
+                        let url=std::env::var("RAKE_AGENT_HTTP_URL").unwrap_or_else(|_|"http://127.0.0.1:1".into());
+                        this.network=Some(cx.spawn(async move |view,cx| {
+                            let status=match http.get(&url).send().await {
+                                Ok(response)=>{let status=response.status();let _=response.bytes().await;status.to_string()},
+                                Err(error)=>error.to_string(),
+                            };
+                            rake::warn!(status=%status,"Agent HTTP diagnostic");
+                            let _=view.update(cx,|this,cx|{this.http_status=status;cx.notify();});
+                        }));
+                    }
                     if event.keystroke.modifiers.platform && event.keystroke.key == "a" { this.selection = 0..this.text.len(); cx.stop_propagation(); }
                 })}>
                 <h1>"Native agent workflow"</h1>
@@ -201,6 +219,7 @@ impl Render for Demo {
                     {input}
                 </div>
                 <p id="agent-echo">{format!("Text: {text}")}</p>
+                <p id="agent-http">{format!("HTTP: {http_status}")}</p>
                 <p id="agent-keys">{format!("Keys: {keys}; ticks: {ticks}")}</p>
                 <div id="agent-drag" class="p-3 rounded-md" style={|s|s.bg(rgb(0x395b4b))}
                     on:mouse-move={cx.listener(|this, event: &MouseMoveEvent, _, cx| {if event.dragging() {this.drags+=1;cx.notify();}})}>
@@ -252,6 +271,14 @@ fn main() -> Result<(), rake::AppError> {
             .initial(Destination::Demo)
             .run()
     } else {
-        app.root(|_, _, cx| cx.new(Demo::new).into()).run()
+        app.root(|services, _, cx| {
+            cx.new(|cx| {
+                let mut demo = Demo::new(cx);
+                demo.http = Some(services.http());
+                demo
+            })
+            .into()
+        })
+        .run()
     }
 }

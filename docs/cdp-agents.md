@@ -191,3 +191,29 @@ selection. Each window retains its own counter. The fixture uses F3 to resize,
 F4 for 24 timer-driven updates, and `RAKE_AGENT_ROUTER=1` for router mode. When
 macOS occludes the window, the suite supplies harmless pointer moves to request
 native draws; it does not claim an occluded-window frame-rate measurement.
+
+## Evidence bundles
+
+`Rake.getEvidence { query?, limit?: 1..64, screenshot?: true,
+diagnosticsAfter?: 0 }` collects one bounded bundle. The SDK exposes
+`app.evidence(options)`; the CLI action is `evidence`. A query selects exactly one
+element; without it, Chrome's current inspected node is used. The tree and
+selection share a pinned inspection draw. Rust source (seven lines around the
+construction site), retained logs/network errors and a JPEG are independently
+sampled and labelled accordingly. The request uses the normal two-second total
+deadline; it never waits for global application idle or retries a mutation.
+
+Sections report `ok`, `partial` (data present with explicit omission/loss counts),
+`error`, `truncated` (byte budget exceeded), or `omitted` (screenshot disabled).
+`complete` refers to requested sections being available without reported loss;
+it does not mean complete GPU coverage. An unavailable screenshot or missing
+selection leaves the other sections usable. The complete response stays below
+900 KiB by individual section budgets. Diagnostics retain at most 16 logs and
+16 HTTP error records, expose loss and their observed sequence, omit HTTP bodies,
+and leave Console/Network cursors untouched. Source reads retain the existing
+workspace and Rust-file restrictions.
+
+The native suite issues an actual request to its own local HTTP 503 fixture and
+verifies that the bundle contains the resulting diagnostic, failure metadata,
+Rust source, tree/selection revision and a native image. Missing selections and
+truncated tree prefixes remain explicit partial evidence.

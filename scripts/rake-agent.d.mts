@@ -39,6 +39,11 @@ export interface Wait {
   status: 'pending' | 'satisfied' | 'timed_out' | 'cancelled' | 'invalidated';
   remainingMs: number; observation: Snapshot | null;
 }
+export interface Evidence {
+  runtimeId: string; windowId: number; frameSequence: string; revision: Revision;
+  startedAtUnixMs: number; durationMs: number; complete: boolean; sampling: string;
+  sections: Record<'tree' | 'selected' | 'source' | 'diagnostics' | 'screenshot', {status: 'ok' | 'partial' | 'error' | 'truncated' | 'omitted'; data?: unknown; error?: {code: number; message: string}}>;
+}
 export class ProtocolError extends Error {code: number; method: string}
 export class RakeAgent {
   private constructor();
@@ -58,6 +63,7 @@ export class RakeAgent {
   key(key: string, modifiers?: number): Promise<{accepted: true}>;
   typeText(text: string): Promise<{accepted: true}>;
   waitFor(query: Query, options?: {state?: 'present' | 'absent'; timeoutMs?: number; afterFrame?: string; signal?: AbortSignal}): Promise<Wait>;
+  evidence(options?: {query?: Query; limit?: number; screenshot?: boolean; diagnosticsAfter?: number}): Promise<Evidence>;
   screenshot(options?: {format?: 'png' | 'jpeg'; quality?: number}): Promise<{bytes: Uint8Array; metadata: Record<string, unknown>}>;
   source(reference: ElementReference, radius?: number): Promise<{file: string; line: number; column: number; startLine: number; text: string}>;
   close(): void;

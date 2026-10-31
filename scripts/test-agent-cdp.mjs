@@ -4,6 +4,7 @@
 // Build: cargo build -p rake-cli -p rake-agent-example --features rake-agent-example/devtools
 // Run: node scripts/test-agent-cdp.mjs
 import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
 import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,openSync,closeSync,writeFileSync,readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
@@ -14,7 +15,9 @@ import {RakeAgent} from './rake-agent.mjs';
 assert.equal(process.platform,'darwin','requires a native macOS GUI; never silently skip');
 const root=fileURLToPath(new URL('../',import.meta.url)), directory=mkdtempSync('/tmp/rake-agent-cdp-');
 const control=join(directory,'control');mkdirSync(control,{mode:0o700});
-const env={...process.env,RAKE_DEV_CONTROL:'1',RAKE_CONTROL_DIR:control,RAKE_DEV_PREVIEW:'1'};
+const http=createServer((_,res)=>{res.writeHead(503,{'content-type':'text/plain'});res.end('native diagnostic fixture');});
+await new Promise(resolve=>http.listen(0,'127.0.0.1',resolve));
+const env={...process.env,RAKE_DEV_CONTROL:'1',RAKE_CONTROL_DIR:control,RAKE_DEV_PREVIEW:'1',RAKE_AGENT_HTTP_URL:`http://127.0.0.1:${http.address().port}/failure`};
 const log=openSync(join(directory,'runtime.log'),'w',0o600),children=[];
 const rake=join(root,'target/debug/rake');let client, native;
 async function eventually(check,timeoutMs=20000) {
@@ -72,6 +75,22 @@ try {
   const invalid=spawnSync(rake,['agent','--url',endpoint,'{bad'],{env,timeout:5000,encoding:'utf8'});
   assert.equal(invalid.status,1);assert.equal(invalid.stdout,'');assert.match(invalid.stderr,/JSON|property name/i);
   console.log('Rust source snippet, real native PNG, bundled rake agent CLI');
+  await client.key('F5');
+  await eventually(async()=>{await client.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});return (await client.snapshot({text:'HTTP: 503'})).totalMatches===1;});
+  const evidence=await client.evidence({query:{id:'agent-increment'},limit:64});
+  for(const name of ['tree','selected','source','diagnostics','screenshot']) assert.ok(['ok','partial'].includes(evidence.sections[name].status),JSON.stringify(evidence.sections[name]));
+  assert.equal(evidence.sections.selected.data.id,'agent-increment');
+  assert.ok(evidence.sections.source.data.text.includes('agent-increment'));
+  assert.ok(evidence.sections.diagnostics.data.logs.some(r=>r.fields.message==='Agent HTTP diagnostic'));
+  assert.ok(evidence.sections.diagnostics.data.networkErrors.some(r=>r.fields.status===503));
+  assert.ok(evidence.sections.screenshot.data.data.length>0);
+  assert.equal(evidence.sections.tree.data.revision.capture,evidence.revision.capture);
+  assert.ok(Buffer.byteLength(JSON.stringify(evidence))<900*1024);
+  const partial=await client.evidence({query:{id:'missing'},screenshot:false,limit:1});
+  assert.equal(partial.complete,false);assert.equal(partial.sections.selected.status,'error');assert.equal(partial.sections.screenshot.status,'omitted');
+  assert.equal(partial.sections.tree.status,'partial');
+  console.log('Evidence bundle contains correlated tree/selection, source, logs, HTTP failure and independent image');
+
   await assert.rejects(client.find({}),/exactly one/);
   await assert.rejects(client.find({id:'missing'}),/found 0/);
   await assert.rejects(client.waitFor({id:'missing'},{timeoutMs:20}),/timed_out/);
@@ -132,5 +151,6 @@ try {
     await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(1000)]);
     if(child.exitCode===null)child.kill('SIGKILL');
   }
+  http.closeAllConnections();await new Promise(resolve=>http.close(resolve));
   closeSync(log);
 }

@@ -16,6 +16,8 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tungstenite::{Message, WebSocket};
 
+mod evidence;
+
 const INTERVAL: Duration = Duration::from_millis(250);
 const QUEUE_LIMIT: usize = 256;
 // Browser proxies must preserve the future cursor exactly when reading the high-water mark.
@@ -164,6 +166,7 @@ impl Session {
             return Ok(result);
         }
         match method {
+            "Rake.getEvidence" => self.evidence(&request.params),
             "Rake.getCapabilities" => {
                 let Reply::Info(info) = query(&self.instance, Query::Info {}, TIMEOUT)
                     .map_err(|e| Error::new(-32000, e.to_string()))?

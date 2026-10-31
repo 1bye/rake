@@ -172,6 +172,10 @@ export class RakeAgent {
       if (wait.status === 'pending' && !this.#closed) await this.call('Rake.cancelWait',{waitId:wait.waitId}).catch(()=>{});
     }
   }
+  async evidence(options = {}) {
+    this.#window(); this.#require("Rake.getEvidence");
+    return this.call("Rake.getEvidence", options);
+  }
   async screenshot(options = {}) {
     this.#window(); this.#require('Page.captureScreenshot');
     const result = await this.call('Page.captureScreenshot',options);
@@ -199,7 +203,7 @@ export async function cli(args) {
     else if(arg==='--target') targetId=args.shift();
     else if(arg==='--window') windowId=Number(args.shift());
     else if(arg==='--json') continue;
-    else if(arg==='--help') { console.log('rake agent --url http://127.0.0.1:PORT/TOKEN [--target ID] [--window ID] JSON_ACTION\nActions: capabilities, windows, snapshot, find, click, hover, scroll, drag, key, typeText, waitFor, screenshot, source. Screenshot requires path.'); return; }
+    else if(arg==='--help') { console.log('rake agent --url http://127.0.0.1:PORT/TOKEN [--target ID] [--window ID] JSON_ACTION\nActions: capabilities, windows, snapshot, find, click, hover, scroll, drag, key, typeText, waitFor, evidence, screenshot, source. Screenshot requires path.'); return; }
     else if(!action) action=JSON.parse(arg); else throw new Error('Unexpected argument');
   }
   if(!endpoint || !action) throw new Error('--url and one JSON action are required');
@@ -210,6 +214,7 @@ export async function cli(args) {
     switch(action.action) {
       case 'capabilities': result=client.capabilities; break;
       case 'windows': result=await client.windows(); break;
+      case 'evidence': result=await client.evidence({...action.options,query:action.query}); break;
       case 'snapshot': result=await client.snapshot(action.query,action.options); break;
       case 'find': result=await ref(); break;
       case 'click': case 'hover': case 'source': result=await client[action.action](await ref()); break;
