@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::http::CancellationToken;
+use futures::future::{Either, select};
 
 use crate::reload::{
     Checkpoint, EntryCheckpoint, MAX_CHECKPOINT_BYTES, ReloadError, ReloadPhase, ReloadRequest,
@@ -476,25 +477,10 @@ impl<R: Route> Router<R> {
             ));
         }
 
-        let mut provisional = Vec::new();
-
-        for window in windows {
-            if window.id != self.0.initial_window.get() {
-                let mut host = super::windows::ProvisionalWindow::new(
-                    self.0.clone(),
-                    window.id,
-                    super::OperationId(0),
-                );
-
-                host.open(super::Activation::PreserveSelection)
-                    .await
-                    .map_err(|_| ReloadError::State("cannot create replacement window".into()))?;
-                provisional.push(host);
-            }
-        }
-
-        let mut tabs = Vec::new();
-
+        // Prepare every retained entry before opening any secondary host. A
+        // route loader failure must not create a physical window or partially
+        // restore the workspace.
+        let mut prepared_tabs = Vec::new();
         for (tab, destinations) in checkpoint.tabs.iter().zip(decoded) {
             let scope = self.0.tasks.scope(TaskOwner::Tab(tab.id));
             let mut entries = Vec::new();
@@ -528,9 +514,67 @@ impl<R: Route> Router<R> {
                 navigator.tab = Some(tab.id);
                 navigator.origin_entry = Some(saved.id);
                 navigator.origin_scope = Rc::downgrade(&entry.scope);
-                let resource = (self.0.mount)(entry.destination.clone(), handle, navigator)
+
+                let loading = (self.0.prepare)(
+                    entry.destination.clone(),
+                    handle.clone(),
+                    navigator.clone(),
+                    entry.cancellation.clone(),
+                );
+                let stopped = navigator.stopped();
+                let prepared = match select(Box::pin(loading), Box::pin(stopped)).await {
+                    Either::Left((result, _)) => {
+                        result.map_err(|error| ReloadError::State(error.to_string()))?
+                    }
+                    Either::Right(((), _)) => {
+                        return Err(ReloadError::State("routing runtime stopped".into()));
+                    }
+                };
+
+                if self.0.shutdown.get() {
+                    return Err(ReloadError::State("routing runtime stopped".into()));
+                }
+
+                entries.push((saved.clone(), entry, handle, navigator, prepared));
+            }
+
+            prepared_tabs.push((tab.clone(), scope, entries));
+        }
+
+        let mut provisional = Vec::new();
+
+        for window in windows {
+            if self.0.shutdown.get() {
+                return Err(ReloadError::State("routing runtime stopped".into()));
+            }
+            if window.id != self.0.initial_window.get() {
+                let mut host = super::windows::ProvisionalWindow::new(
+                    self.0.clone(),
+                    window.id,
+                    super::OperationId(0),
+                );
+
+                host.open(super::Activation::PreserveSelection)
                     .await
-                    .map_err(|error| ReloadError::State(error.to_string()))?;
+                    .map_err(|_| ReloadError::State("cannot create replacement window".into()))?;
+                provisional.push(host);
+            }
+        }
+
+        let mut tabs = Vec::new();
+
+        for (tab, scope, pending_entries) in prepared_tabs {
+            let mut entries = Vec::new();
+
+            for (saved, entry, handle, navigator, prepared) in pending_entries {
+                let resource =
+                    (self.0.prepared_mount)(entry.destination.clone(), handle, navigator, prepared)
+                        .await
+                        .map_err(|error| ReloadError::State(error.to_string()))?;
+
+                if self.0.shutdown.get() {
+                    return Err(ReloadError::State("routing runtime stopped".into()));
+                }
 
                 if saved.state.is_some() && !entry.state_consumed.get() {
                     return Err(ReloadError::Incompatible(format!(
@@ -687,7 +731,11 @@ mod tests {
     //! Requires: no display or platform services.
     use super::*;
     use crate::diagnostics::Collector;
-    use crate::router::{OpenOptions, Outcome, RouterConfig};
+    use crate::reload::{EntryCheckpoint, WindowCheckpoint};
+    use crate::router::{
+        EntryId, GenerationId, MountError, OpenOptions, Outcome, RouterConfig, RuntimeId, TabId,
+        TabMode, WindowHost, WindowId,
+    };
     use futures::executor::{LocalPool, block_on};
     use futures::task::LocalSpawnExt;
 
@@ -822,5 +870,112 @@ mod tests {
             failed.snapshot().tabs.is_empty(),
             "earlier provisional mounts must not attach"
         );
+    }
+
+    #[test]
+    fn loaded_checkpoint_failure_happens_before_secondary_host_creation() {
+        struct Host(Rc<Cell<usize>>);
+
+        impl WindowHost for Host {
+            fn open(
+                &self,
+                _: WindowId,
+                _: super::super::Activation,
+            ) -> futures::future::LocalBoxFuture<'static, Result<(), MountError>> {
+                self.0.set(self.0.get() + 1);
+                Box::pin(async { Ok(()) })
+            }
+
+            fn close(&self, _: WindowId) {}
+
+            fn activate(&self, _: WindowId) {}
+        }
+
+        let opened = Rc::new(Cell::new(0));
+        let prepare: super::super::Prepare<Destination> = Rc::new(|_, _, _, _| {
+            Box::pin(async { Err(MountError("checkpoint loader failed".into())) })
+        });
+        let mount: super::super::PreparedMount<Destination> = Rc::new(|_, _, _, prepared| {
+            Box::pin(async move {
+                prepared.downcast::<()>()?;
+                Ok(Rc::new(()) as super::super::Resource)
+            })
+        });
+        let router = Router::with_prepared_mount(
+            RouterConfig::default(),
+            Collector::default(),
+            prepare,
+            mount,
+        );
+        router.window_host(Host(opened.clone())).unwrap();
+
+        let tab = TabId(2);
+        let checkpoint = WorkspaceCheckpoint {
+            windows: vec![
+                WindowCheckpoint {
+                    id: WindowId(1),
+                    selected: None,
+                },
+                WindowCheckpoint {
+                    id: WindowId(2),
+                    selected: Some(tab),
+                },
+            ],
+            version: 2,
+            application_id: "app".into(),
+            source_runtime: RuntimeId(uuid::Uuid::new_v4()),
+            generation: GenerationId(1),
+            run_sequence: 0,
+            selected: Some(tab),
+            tabs: vec![TabCheckpoint {
+                window_id: WindowId(2),
+                id: tab,
+                mode: TabMode::Foreground,
+                cursor: 0,
+                selected_at: 0,
+                entries: vec![EntryCheckpoint {
+                    id: EntryId(2),
+                    destination: Destination::Page(7).encode(),
+                    dirty: false,
+                    revision: 0,
+                    state: None,
+                }],
+            }],
+        };
+
+        assert!(block_on(router.restore_workspace(&checkpoint, "app")).is_err());
+        assert_eq!(opened.get(), 0);
+        assert!(router.snapshot().tabs.is_empty());
+
+        // A ready loader can shut down its runtime in the same poll. The
+        // shutdown branch of select may not win, so revalidate before hosts.
+        let stop = Rc::new(RefCell::new(
+            None::<std::rc::Weak<super::super::Core<Destination>>>,
+        ));
+        let signal = stop.clone();
+        let prepare = Rc::new(move |_, _, _, _| {
+            let signal = signal.clone();
+            Box::pin(async move {
+                if let Some(core) = signal.borrow().as_ref().and_then(std::rc::Weak::upgrade) {
+                    Router(core).shutdown();
+                }
+                Ok(super::super::PreparedPage::from_value(()))
+            }) as futures::future::LocalBoxFuture<'static, _>
+        });
+        let mount = Rc::new(|_, _, _, _| {
+            Box::pin(async { Ok(Rc::new(()) as super::super::Resource) })
+                as futures::future::LocalBoxFuture<'static, _>
+        });
+        let stopped = Router::with_prepared_mount(
+            RouterConfig::default(),
+            Collector::default(),
+            prepare,
+            mount,
+        );
+        *stop.borrow_mut() = Some(Rc::downgrade(&stopped.0));
+        stopped.window_host(Host(opened.clone())).unwrap();
+        assert!(block_on(stopped.restore_workspace(&checkpoint, "app")).is_err());
+        assert_eq!(opened.get(), 0);
+        assert!(stopped.snapshot().tabs.is_empty());
     }
 }

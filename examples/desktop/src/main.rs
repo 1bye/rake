@@ -31,7 +31,7 @@ fn application() -> Result<App<pages::Destination>, rake::AppError> {
             accent: rake::gpui::rgb(0x365849),
         })
         .routes(rake::routes! {
-            pages::Destination::Home => pages::Home,
+            pages::Destination::Home => loaded(pages::Home),
             pages::Destination::Updates => pages::Updates,
         })
         .runtime_config(RouterConfig {

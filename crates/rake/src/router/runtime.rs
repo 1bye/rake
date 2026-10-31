@@ -26,9 +26,10 @@ use super::{
     DecisionError, DecisionId, DecisionRequest, DecisionSnapshot, DisposeReason, Entered, EntryId,
     EntrySnapshot, GuardContext, GuardKind, GuardReason, GuardResult, HistoryChange, ModeChanged,
     MountError, NavigationKey, NavigationState, NavigationStatus, OpenOptions, OpenTarget, Opened,
-    Operation, OperationError, OperationId, OperationState, Outcome, QuitGuardContext, RevealScope,
-    Revealed, Route, RouteDecodeError, RouterConfig, RouterSnapshot, RuntimeId, Selected, TabId,
-    TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId, WindowSnapshot,
+    Operation, OperationError, OperationId, OperationState, Outcome, PreparedPage,
+    QuitGuardContext, RevealScope, Revealed, Route, RouteDecodeError, RouterConfig, RouterSnapshot,
+    RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId,
+    WindowSnapshot,
 };
 
 mod admission;
@@ -63,6 +64,24 @@ pub(crate) type Mount<R> = Rc<
         R,
         EntryHandle<R>,
         Navigator<R>,
+    ) -> LocalBoxFuture<'static, Result<Resource, MountError>>,
+>;
+
+pub(crate) type Prepare<R> = Rc<
+    dyn Fn(
+        R,
+        EntryHandle<R>,
+        Navigator<R>,
+        CancellationToken,
+    ) -> LocalBoxFuture<'static, Result<PreparedPage, MountError>>,
+>;
+
+pub(crate) type PreparedMount<R> = Rc<
+    dyn Fn(
+        R,
+        EntryHandle<R>,
+        Navigator<R>,
+        PreparedPage,
     ) -> LocalBoxFuture<'static, Result<Resource, MountError>>,
 >;
 
@@ -294,7 +313,8 @@ struct Core<R: Route> {
     initial_window: Cell<WindowId>,
     config: RouterConfig,
     collector: Collector,
-    mount: Mount<R>,
+    prepare: Prepare<R>,
+    prepared_mount: PreparedMount<R>,
     window_host: RefCell<Option<Rc<dyn WindowHost>>>,
     window_closes: RefCell<BTreeMap<WindowId, Operation<WindowClosed>>>,
     guards: RefCell<Vec<Guard<R>>>,
@@ -696,6 +716,20 @@ impl<R: Route> Router<R> {
     }
 
     pub(crate) fn with_mount(config: RouterConfig, collector: Collector, mount: Mount<R>) -> Self {
+        let prepared_mount: PreparedMount<R> =
+            Rc::new(move |destination, entry, navigator, _| mount(destination, entry, navigator));
+        let prepare: Prepare<R> =
+            Rc::new(|_, _, _, _| Box::pin(async { Ok(PreparedPage::empty()) }));
+
+        Self::with_prepared_mount(config, collector, prepare, prepared_mount)
+    }
+
+    pub(crate) fn with_prepared_mount(
+        config: RouterConfig,
+        collector: Collector,
+        prepare: Prepare<R>,
+        mount: PreparedMount<R>,
+    ) -> Self {
         let runtime = RuntimeId(uuid::Uuid::new_v4());
         let tasks = WorkRuntime::new(runtime, config.tasks.clone(), collector.clone());
 
@@ -738,7 +772,8 @@ impl<R: Route> Router<R> {
             initial_window: Cell::new(WindowId(1)),
             config,
             collector,
-            mount,
+            prepare,
+            prepared_mount: mount,
             window_host: RefCell::new(None),
             window_closes: RefCell::new(BTreeMap::new()),
             guards: RefCell::new(Vec::new()),
@@ -1533,6 +1568,23 @@ pub struct Navigator<R: Route> {
 }
 
 impl<R: Route> Navigator<R> {
+    /// Waits without retaining the runtime until it shuts down or disappears.
+    pub(crate) async fn stopped(&self) {
+        loop {
+            let Some(core) = self.core.upgrade() else {
+                return;
+            };
+            let listener = core.work.listen();
+
+            if core.shutdown.get() {
+                return;
+            }
+
+            drop(core);
+            listener.await;
+        }
+    }
+
     /// Dispatches typed application arguments through the same operation as the CLI.
     /// The page keeps only its weak navigator, avoiding a retained-view ownership cycle.
     pub fn dispatch<C: crate::control::ApplicationCommand>(
@@ -2798,6 +2850,111 @@ async fn transition<R: Route>(
                 ));
             }
 
+            let mut prepared = PreparedPage::empty();
+            let mut mount_input = None;
+
+            if plan.entry.resource.borrow().is_none()
+                && !matches!(plan.transition, Transition::Close | Transition::Mode(_))
+            {
+                let handle = EntryHandle {
+                    core: Rc::downgrade(core),
+                    entry: Rc::downgrade(&plan.entry),
+                };
+
+                let navigator = Navigator {
+                    core: Rc::downgrade(core),
+                    window: plan.entry.window,
+                    tab: Some(plan.entry.tab),
+                    origin_entry: Some(plan.entry.id),
+                    origin_scope: Rc::downgrade(&plan.entry.tab_scope),
+                };
+                let token = core
+                    .state
+                    .borrow()
+                    .tokens
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_default();
+
+                if token.is_cancelled() {
+                    return Err(Stop::Cancelled(CancelReason::Requested));
+                }
+
+                prepared = (core.prepare)(
+                    plan.entry.destination.clone(),
+                    handle.clone(),
+                    navigator.clone(),
+                    token.clone(),
+                )
+                .instrument(tracing::info_span!("router.prepare", entry_id = %plan.entry.id))
+                .await
+                .map_err(|error| {
+                    core.navigation_mount_failed(id, &action, window, &plan.entry, error.clone());
+                    OperationError::Mount(error)
+                })?;
+
+                action.check(core)?;
+
+                // A loader may cancel its own operation while returning a ready
+                // value in the same poll. Do not create a host in that case.
+                if token.is_cancelled() {
+                    return Err(Stop::Cancelled(CancelReason::Requested));
+                }
+
+                if approvals.iter().any(|(entry, _)| !entry.alive.get()) {
+                    return Err(OperationError::ClosedTarget.into());
+                }
+
+                if approvals
+                    .iter()
+                    .any(|(entry, revision)| entry.revision.get() != *revision)
+                {
+                    continue;
+                }
+
+                let state = core.state.borrow();
+
+                if let Some(expected) = plan.expected
+                    && state.tab(plan.entry.tab)?.current().id != expected
+                {
+                    continue 'plan;
+                }
+
+                if let Action::Reveal(destination, _) = &action
+                    && state
+                        .matching(
+                            destination,
+                            match &action {
+                                Action::Reveal(_, RevealScope::Application) => None,
+                                _ => Some(window),
+                            },
+                        )
+                        .map(|entry| entry.id)
+                        != plan.expected
+                {
+                    continue 'plan;
+                }
+
+                if let Action::Restore(destination, _, _) = &action
+                    && matches!(plan.transition, Transition::New(..) | Transition::Select)
+                    && state
+                        .matching(
+                            destination,
+                            match &action {
+                                Action::Reveal(_, RevealScope::Application) => None,
+                                _ => Some(window),
+                            },
+                        )
+                        .map(|entry| entry.id)
+                        != plan.expected
+                {
+                    continue 'plan;
+                }
+
+                drop(state);
+                mount_input = Some((handle, navigator));
+            }
+
             if provisional.is_none()
                 && matches!(&action, Action::Open(_, options, _) if options.target == OpenTarget::NewWindow)
             {
@@ -2817,35 +2974,19 @@ async fn transition<R: Route>(
                     .await?;
             }
 
-            if plan.entry.resource.borrow().is_none()
-                && !matches!(plan.transition, Transition::Close | Transition::Mode(_))
-            {
-                let handle = EntryHandle {
-                    core: Rc::downgrade(core),
-                    entry: Rc::downgrade(&plan.entry),
-                };
-
-                let navigator = Navigator {
-                    core: Rc::downgrade(core),
-                    window: plan.entry.window,
-                    tab: Some(plan.entry.tab),
-                    origin_entry: Some(plan.entry.id),
-                    origin_scope: Rc::downgrade(&plan.entry.tab_scope),
-                };
-
-                let resource = (core.mount)(plan.entry.destination.clone(), handle, navigator)
-                    .instrument(tracing::info_span!("router.mount", entry_id = %plan.entry.id))
-                    .await
-                    .map_err(|error| {
-                        core.navigation_mount_failed(
-                            id,
-                            &action,
-                            window,
-                            &plan.entry,
-                            error.clone(),
-                        );
-                        OperationError::Mount(error)
-                    })?;
+            if let Some((handle, navigator)) = mount_input {
+                let resource = (core.prepared_mount)(
+                    plan.entry.destination.clone(),
+                    handle,
+                    navigator,
+                    prepared,
+                )
+                .instrument(tracing::info_span!("router.mount", entry_id = %plan.entry.id))
+                .await
+                .map_err(|error| {
+                    core.navigation_mount_failed(id, &action, window, &plan.entry, error.clone());
+                    OperationError::Mount(error)
+                })?;
 
                 *plan.entry.resource.borrow_mut() = Some(resource);
             }

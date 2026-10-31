@@ -14,6 +14,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = "layout_smoke"
 PASS_MARKERS = (
+    "LAYOUT_SMOKE_PASS loader-before-host",
     "LAYOUT_SMOKE_PASS persistent-layout",
     "LAYOUT_SMOKE_PASS failed-secondary-window",
     "LAYOUT_SMOKE_PASS guarded-quit-requested",

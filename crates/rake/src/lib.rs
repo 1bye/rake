@@ -273,9 +273,9 @@ pub mod prelude {
 
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
-    pub use crate::loading::{LoadState, LoadStatus, LoadToken};
     #[cfg(feature = "gpui")]
     pub use crate::loading::{LoadContext, LoadError, Loader};
+    pub use crate::loading::{LoadState, LoadStatus, LoadToken};
     pub use crate::quit::{
         QuitGuardContext, QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus,
     };
@@ -296,7 +296,8 @@ pub mod prelude {
     pub use crate::inspection::InspectElement;
     #[cfg(feature = "gpui")]
     pub use crate::router::{
-        LayoutContext, NavigationBoundary, Page, PageContext, RouteOutlet, RouteViews, TabBar,
+        LayoutContext, LoadedPage, NavigationBoundary, Page, PageContext, RouteOutlet, RouteViews,
+        TabBar,
     };
     pub use rake_macros::{Command, Route};
 }

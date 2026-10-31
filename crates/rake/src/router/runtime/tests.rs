@@ -9,11 +9,11 @@ use std::rc::Rc;
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
 
-use super::{Mount, Resource};
+use super::{Mount, Prepare, PreparedMount, Resource};
 use crate::diagnostics::Collector;
 use crate::router::{
-    Admission, BrowserCheckpoint, HistoryChange, MountError, NavigationState, OpenTarget,
-    OperationError, Outcome, Route, Router, RouterConfig,
+    Admission, BrowserCheckpoint, GuardResult, HistoryChange, MountError, NavigationState,
+    OpenTarget, OperationError, OperationId, Outcome, PreparedPage, Route, Router, RouterConfig,
 };
 
 #[derive(Clone, crate::Route)]
@@ -66,6 +66,332 @@ impl crate::router::WindowHost for WindowHost {
     }
 
     fn activate(&self, _: crate::router::WindowId) {}
+}
+
+fn prepared_mount() -> PreparedMount<Destination> {
+    Rc::new(|_, _, _, prepared| {
+        Box::pin(async move {
+            if !prepared.is_empty() {
+                return Err(MountError("unexpected prepared data".into()));
+            }
+
+            Ok(Rc::new(()) as Resource)
+        })
+    })
+}
+
+#[test]
+fn route_loader_failure_happens_before_new_window_host_creation() {
+    let opened = Rc::new(Cell::new(0));
+    let closed = Rc::new(Cell::new(0));
+    let prepare: Prepare<Destination> = Rc::new(|destination, _, _, _| {
+        Box::pin(async move {
+            if matches!(destination, Destination::Broken) {
+                Err(MountError("loader failed".into()))
+            } else {
+                Ok(PreparedPage::empty())
+            }
+        })
+    });
+    let router = Router::with_prepared_mount(
+        RouterConfig::default(),
+        Collector::default(),
+        prepare,
+        prepared_mount(),
+    );
+
+    router
+        .window_host(CountingHost {
+            opened: opened.clone(),
+            closed,
+        })
+        .unwrap();
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+    pool.spawner()
+        .spawn_local(async move { driven.run().await.unwrap() })
+        .unwrap();
+    pool.run_until(
+        router
+            .navigator()
+            .open(Destination::Home, OpenTarget::NewTab)
+            .wait(),
+    )
+    .unwrap();
+    let before = router.snapshot();
+
+    assert!(matches!(
+        pool.run_until(
+            router
+                .navigator()
+                .open(Destination::Broken, OpenTarget::NewWindow)
+                .wait()
+        ),
+        Err(OperationError::Mount(_))
+    ));
+    assert_eq!(opened.get(), 0);
+    assert_eq!(router.snapshot().windows.len(), before.windows.len());
+
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn pending_route_loader_cancels_without_opening_new_window() {
+    let opened = Rc::new(Cell::new(0));
+    let started = Rc::new(Cell::new(false));
+    let observed = started.clone();
+    let prepare: Prepare<Destination> = Rc::new(move |destination, _, _, cancellation| {
+        let started = observed.clone();
+        Box::pin(async move {
+            if matches!(destination, Destination::Broken) {
+                started.set(true);
+                cancellation.cancelled().await;
+            }
+
+            Ok(PreparedPage::empty())
+        })
+    });
+    let router = Router::with_prepared_mount(
+        RouterConfig::default(),
+        Collector::default(),
+        prepare,
+        prepared_mount(),
+    );
+    router
+        .window_host(CountingHost {
+            opened: opened.clone(),
+            closed: Rc::new(Cell::new(0)),
+        })
+        .unwrap();
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+    pool.spawner()
+        .spawn_local(async move { driven.run().await.unwrap() })
+        .unwrap();
+
+    let operation = router
+        .navigator()
+        .open(Destination::Broken, OpenTarget::NewWindow);
+    pool.run_until_stalled();
+    assert!(started.get());
+    assert!(router.cancel(operation.id()).unwrap());
+    assert!(matches!(
+        pool.run_until(operation.wait()),
+        Ok(Outcome::Cancelled(crate::router::CancelReason::Requested))
+    ));
+    assert_eq!(opened.get(), 0);
+    assert!(router.snapshot().tabs.is_empty());
+
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn synchronous_loader_cancellation_is_checked_before_new_window_host_creation() {
+    let opened = Rc::new(Cell::new(0));
+    let target = Rc::new(Cell::new(None::<OperationId>));
+    let router_slot = Rc::new(RefCell::new(None::<Router<Destination>>));
+    let cancelled = Rc::new(Cell::new(false));
+    let target_id = target.clone();
+    let slot = router_slot.clone();
+    let did_cancel = cancelled.clone();
+    let prepare: Prepare<Destination> = Rc::new(move |destination, _, _, _| {
+        let target_id = target_id.clone();
+        let slot = slot.clone();
+        let did_cancel = did_cancel.clone();
+        Box::pin(async move {
+            if matches!(destination, Destination::Broken)
+                && !did_cancel.replace(true)
+                && let (Some(router), Some(id)) = (slot.borrow().clone(), target_id.get())
+            {
+                router.cancel(id).unwrap();
+            }
+
+            Ok(PreparedPage::empty())
+        })
+    });
+    let router = Router::with_prepared_mount(
+        RouterConfig::default(),
+        Collector::default(),
+        prepare,
+        prepared_mount(),
+    );
+    *router_slot.borrow_mut() = Some(router.clone());
+    router
+        .window_host(CountingHost {
+            opened: opened.clone(),
+            closed: Rc::new(Cell::new(0)),
+        })
+        .unwrap();
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+    pool.spawner()
+        .spawn_local(async move { driven.run().await.unwrap() })
+        .unwrap();
+
+    let operation = router
+        .navigator()
+        .open(Destination::Broken, OpenTarget::NewWindow);
+    target.set(Some(operation.id()));
+    assert!(matches!(
+        pool.run_until(operation.wait()),
+        Ok(Outcome::Cancelled(crate::router::CancelReason::Requested))
+    ));
+    assert_eq!(opened.get(), 0);
+    assert!(router.snapshot().tabs.is_empty());
+
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn loader_revision_change_rechecks_entry_guards_before_host_creation() {
+    let opened = Rc::new(Cell::new(0));
+    let guard_runs = Rc::new(Cell::new(0));
+    let touched = Rc::new(Cell::new(false));
+    let observed_touched = touched.clone();
+    let prepare: Prepare<Destination> = Rc::new(move |destination, entry, _, _| {
+        let touched = observed_touched.clone();
+        Box::pin(async move {
+            if matches!(destination, Destination::Broken) && !touched.replace(true) {
+                entry.set_dirty(true).unwrap();
+            }
+
+            Ok(PreparedPage::empty())
+        })
+    });
+    let router = Router::with_prepared_mount(
+        RouterConfig::default(),
+        Collector::default(),
+        prepare,
+        prepared_mount(),
+    );
+    let observed_guards = guard_runs.clone();
+    router
+        .entry_guard(move |_| {
+            observed_guards.set(observed_guards.get() + 1);
+            async { GuardResult::Allow }
+        })
+        .unwrap();
+    router
+        .window_host(CountingHost {
+            opened: opened.clone(),
+            closed: Rc::new(Cell::new(0)),
+        })
+        .unwrap();
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+    pool.spawner()
+        .spawn_local(async move { driven.run().await.unwrap() })
+        .unwrap();
+
+    assert!(matches!(
+        pool.run_until(
+            router
+                .navigator()
+                .open(Destination::Broken, OpenTarget::NewWindow)
+                .wait()
+        ),
+        Ok(Outcome::Committed(_))
+    ));
+    assert!(guard_runs.get() >= 2);
+    assert_eq!(opened.get(), 1);
+
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn prepared_data_is_dropped_when_mount_fails() {
+    struct DropProbe(Rc<Cell<usize>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    let dropped = Rc::new(Cell::new(0));
+    let observed = dropped.clone();
+    let prepare: Prepare<Destination> = Rc::new(move |_, _, _, _| {
+        let dropped = observed.clone();
+        Box::pin(async move { Ok(PreparedPage::from_value(DropProbe(dropped))) })
+    });
+    let mount: PreparedMount<Destination> = Rc::new(|_, _, _, prepared| {
+        Box::pin(async move {
+            let _probe = prepared.downcast::<DropProbe>()?;
+            Err(MountError("mount failed after load".into()))
+        })
+    });
+    let router = Router::with_prepared_mount(
+        RouterConfig::default(),
+        Collector::default(),
+        prepare,
+        mount,
+    );
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+    pool.spawner()
+        .spawn_local(async move { driven.run().await.unwrap() })
+        .unwrap();
+
+    assert!(matches!(
+        pool.run_until(
+            router
+                .navigator()
+                .open(Destination::Home, OpenTarget::NewTab)
+                .wait()
+        ),
+        Err(OperationError::Mount(_))
+    ));
+    assert_eq!(dropped.get(), 1);
+
+    router.shutdown();
+    pool.run_until_stalled();
+}
+
+#[test]
+fn reused_history_resource_does_not_run_route_loader_again() {
+    let prepared = Rc::new(Cell::new(0));
+    let observed = prepared.clone();
+    let prepare: Prepare<Destination> = Rc::new(move |_, _, _, _| {
+        observed.set(observed.get() + 1);
+        Box::pin(async { Ok(PreparedPage::empty()) })
+    });
+    let router = Router::with_prepared_mount(
+        RouterConfig::default(),
+        Collector::default(),
+        prepare,
+        prepared_mount(),
+    );
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+    pool.spawner()
+        .spawn_local(async move { driven.run().await.unwrap() })
+        .unwrap();
+
+    let opened = match pool
+        .run_until(
+            router
+                .navigator()
+                .open(Destination::Home, OpenTarget::NewTab)
+                .wait(),
+        )
+        .unwrap()
+    {
+        Outcome::Committed(opened) => opened,
+        _ => panic!("home must commit"),
+    };
+    let tab = router.navigator().tab(opened.tab_id);
+    pool.run_until(tab.navigate(Destination::Other).wait())
+        .unwrap();
+    assert_eq!(prepared.get(), 2);
+    pool.run_until(tab.back().wait()).unwrap();
+    assert_eq!(prepared.get(), 2);
+
+    router.shutdown();
+    pool.run_until_stalled();
 }
 
 #[test]

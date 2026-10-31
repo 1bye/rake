@@ -4,6 +4,9 @@
 #[path = "view/layout_tests.rs"]
 mod layout_tests;
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/loaded_page_tests.rs"]
+mod loaded_page_tests;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
 #[path = "view/navigation_tests.rs"]
 mod navigation_tests;
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
@@ -27,11 +30,11 @@ use crate::Services;
 use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 
 use super::layout::{LayoutContext, LayoutFactory};
-use super::runtime::{AdmissionCallback, Guard, Mount, Resource};
+use super::runtime::{AdmissionCallback, Guard, Prepare, PreparedMount, Resource};
 
 use super::{
-    EntryHandle, MountError, Navigator, Route, Router, RouterConfig, TabHandle, TabId, WebConfig,
-    WindowId,
+    EntryHandle, MountError, Navigator, PreparedPage, Route, Router, RouterConfig, TabHandle,
+    TabId, WebConfig, WindowId,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -39,6 +42,16 @@ use super::{Activation, WindowHost};
 
 /// Application mapping from compact destinations to ordinary GPUI view instances.
 pub trait RouteViews<R: Route>: 'static {
+    /// Prepares owned route data before any physical NewWindow host is created.
+    /// Existing synchronous implementations receive an empty preparation.
+    fn prepare(
+        &self,
+        _destination: &R,
+        _context: crate::loading::LoadContext,
+    ) -> futures::future::LocalBoxFuture<'static, Result<PreparedPage, MountError>> {
+        Box::pin(async { Ok(PreparedPage::empty()) })
+    }
+
     /// Constructs a fresh screen on the UI loop, once per newly created retained entry.
     /// Domain models may be shared; local view state belongs to this entry.
     fn mount(
@@ -48,6 +61,23 @@ pub trait RouteViews<R: Route>: 'static {
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> Result<AnyView, MountError>;
+
+    /// Mounts a prepared route value. Synchronous views can keep implementing
+    /// only [`Self::mount`].
+    fn mount_prepared(
+        &self,
+        destination: &R,
+        prepared: PreparedPage,
+        page: PageContext<R>,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> Result<AnyView, MountError> {
+        if !prepared.is_empty() {
+            return Err(MountError("route preparation was not consumed".into()));
+        }
+
+        self.mount(destination, page, window, cx)
+    }
 }
 
 /// Owned route-scoped services and weak runtime handles, safe to capture across waits.
@@ -208,8 +238,22 @@ impl<R: Route> Router<R> {
         let collector = services.diagnostics();
         let registry = services.registry();
         let mounting_contexts = contexts.clone();
+        let background = cx.background_executor().clone();
 
-        let mount: Mount<R> = Rc::new(move |destination, entry, navigator| {
+        let preparing_views = views.clone();
+        let preparing_services = services.clone();
+        let prepare: Prepare<R> = Rc::new(move |destination, _entry, _navigator, cancellation| {
+            let views = preparing_views.clone();
+            let context = crate::loading::LoadContext::new(
+                preparing_services.clone(),
+                cancellation,
+                background.clone(),
+            );
+
+            Box::pin(async move { views.prepare(&destination, context).await })
+        });
+
+        let mount: PreparedMount<R> = Rc::new(move |destination, entry, navigator, prepared| {
             let context = mounting_contexts
                 .borrow()
                 .get(&navigator.window_id())
@@ -231,13 +275,15 @@ impl<R: Route> Router<R> {
                 };
 
                 context
-                    .update(|window, cx| views.mount(&destination, page, window, cx))
+                    .update(|window, cx| {
+                        views.mount_prepared(&destination, prepared, page, window, cx)
+                    })
                     .map_err(|error| MountError(error.to_string()))?
                     .map(|view| Rc::new(view) as Resource)
             })
         });
 
-        let router = Router::with_mount(config, collector, mount);
+        let router = Router::with_prepared_mount(config, collector, prepare, mount);
 
         router.bind_initial_window(initial_window, contexts);
         router.client().set_services(registry);

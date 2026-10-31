@@ -126,6 +126,39 @@ completed-operation retention have configurable count bounds. An evicted complet
 operation reports `OperationExpired`; its existing handle still owns its result.
 IDs belong to one fresh `RuntimeId` and must not be reused across runtimes.
 
+### Route loaders
+
+Use `loaded(PageType)` to opt a route into asynchronous preparation:
+
+```rust
+rake::routes! {
+    Destination::Home => loaded(Home),
+    Destination::Updates => Updates,
+}
+```
+
+`Home` implements `LoadedPage<Destination>` with owned `Data`, a typed `Error`,
+`async fn load(destination: Destination, load: LoadContext)`, and
+`mount(destination, data, page, window, cx)`. Ordinary `Page` implementations
+continue to work in the same registration. Loaders can query application services,
+read local databases/files, or prepare domain resources; they need not use HTTP.
+They run on the UI event loop without a `Send` requirement, so blocking work must
+explicitly use `load.background_executor()` or an application worker service.
+
+Admission and guards run before preparation. Rake awaits the result, revalidates
+cancellation and entry revisions, then mounts and commits the page. A navigation
+that creates a native window prepares its data before opening that host. Failed
+or cancelled preparation leaves the existing page/history/URL intact and uses the
+normal navigation recovery controls. Retry reruns admission, guards and loading.
+Owned prepared data is dropped when the attempt is cancelled or mounting fails.
+
+Each fresh retained entry loads once. Back/Forward reuse its data and view;
+reconstructed entries after process/browser reload prepare again. There is no
+implicit cross-route cache or background revalidation. A loader must tolerate
+repetition on retry; explicit writes such as document saves and update installation
+belong in commands/actions. The [desktop Home page](../examples/desktop/src/pages/home.rs)
+demonstrates worker-backed bundled resource preparation and retained dirty state.
+
 ### Admission and navigation recovery
 
 Custom router hosts can register a typed admission callback before starting the

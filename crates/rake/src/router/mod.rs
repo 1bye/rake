@@ -52,10 +52,12 @@ pub(crate) mod web;
 
 pub use admission::{Admission, AdmissionContext};
 #[cfg(feature = "gpui")]
-pub use page::Page;
-#[cfg(feature = "gpui")]
 #[doc(hidden)]
-pub use page::{__mount_page, __routes};
+pub use page::{
+    __mount_loaded_page, __mount_page, __prepare_loaded_page, __routes, __routes_prepared,
+};
+#[cfg(feature = "gpui")]
+pub use page::{LoadedPage, Page};
 pub use rake_protocol::router::*;
 pub use runtime::{EntryHandle, Navigator, Router, TabHandle};
 pub use types::*;

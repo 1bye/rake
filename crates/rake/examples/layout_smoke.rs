@@ -12,6 +12,8 @@
 #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
 mod native {
     use std::cell::{Cell, RefCell};
+    use std::error::Error;
+    use std::fmt::{Display, Formatter};
     use std::rc::Rc;
 
     use rake::gpui::{self, Context, Entity, Task, Window, WindowOptions, prelude::*};
@@ -24,6 +26,8 @@ mod native {
     enum Destination {
         #[route(id = "home", path = "/")]
         Home,
+        #[route(id = "load-failure", path = "/load-failure")]
+        LoadFailure,
         #[route(id = "other", path = "/other")]
         Other,
     }
@@ -36,6 +40,11 @@ mod native {
         layout_calls: Rc<Cell<usize>>,
         initial_layout_calls: Rc<Cell<usize>>,
         failed_layout_calls: Rc<Cell<usize>>,
+        load_calls: Rc<Cell<usize>>,
+        load_failure_calls: Rc<Cell<usize>>,
+        load_http_checks: Rc<Cell<usize>>,
+        home_mounts: Rc<Cell<usize>>,
+        load_failure_mounts: Rc<Cell<usize>>,
         first_http: Rc<RefCell<Option<HttpClient>>>,
         page_mounts: Rc<Cell<usize>>,
         page_pool_checks: Rc<Cell<usize>>,
@@ -54,6 +63,11 @@ mod native {
                 layout_calls: Rc::new(Cell::new(0)),
                 initial_layout_calls: Rc::new(Cell::new(0)),
                 failed_layout_calls: Rc::new(Cell::new(0)),
+                load_calls: Rc::new(Cell::new(0)),
+                load_failure_calls: Rc::new(Cell::new(0)),
+                load_http_checks: Rc::new(Cell::new(0)),
+                home_mounts: Rc::new(Cell::new(0)),
+                load_failure_mounts: Rc::new(Cell::new(0)),
                 first_http: Rc::new(RefCell::new(None)),
                 page_mounts: Rc::new(Cell::new(0)),
                 page_pool_checks: Rc::new(Cell::new(0)),
@@ -67,7 +81,22 @@ mod native {
         }
     }
 
-    struct Home;
+    #[derive(Debug)]
+    struct LoadFailureError(&'static str);
+
+    impl Display for LoadFailureError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(self.0)
+        }
+    }
+
+    impl Error for LoadFailureError {}
+
+    struct Home {
+        service: Rc<ProbeService>,
+    }
+
+    struct LoadFailurePage;
     struct Other;
 
     fn page_probe<R: Route>(page: &PageContext<R>) -> Result<Rc<ProbeService>, MountError> {
@@ -104,22 +133,126 @@ mod native {
         Ok(service)
     }
 
-    impl Page<Destination> for Home {
+    impl LoadedPage<Destination> for Home {
+        type Data = Rc<ProbeService>;
+        type Error = LoadFailureError;
+
+        async fn load(
+            destination: Destination,
+            context: LoadContext,
+        ) -> Result<Self::Data, Self::Error> {
+            if !matches!(destination, Destination::Home) {
+                return Err(LoadFailureError("home loader received another destination"));
+            }
+            let service = context
+                .services()
+                .get::<ProbeService>()
+                .map_err(|_| LoadFailureError("probe service missing"))?;
+            let same = context
+                .services()
+                .get::<ProbeService>()
+                .map_err(|_| LoadFailureError("probe service missing"))?;
+            assert!(
+                Rc::ptr_eq(&service, &same),
+                "loader must use one service pool"
+            );
+            let first_http = service
+                .first_http
+                .borrow()
+                .clone()
+                .ok_or(LoadFailureError("layout HTTP was not captured"))?;
+            assert!(
+                context.services().http().shares_transport_with(&first_http),
+                "loader standard HTTP must share the layout transport"
+            );
+            service.load_calls.set(service.load_calls.get() + 1);
+            service
+                .load_http_checks
+                .set(service.load_http_checks.get() + 1);
+            Ok(service)
+        }
+
         fn mount(
-            _: &Destination,
+            destination: &Destination,
+            data: Self::Data,
             page: PageContext<Destination>,
             _: &mut Window,
             cx: &mut gpui::App,
         ) -> Result<Entity<Self>, MountError> {
-            let service = page_probe(&page)?;
+            if !matches!(destination, Destination::Home) {
+                return Err(MountError(
+                    "loaded home mount received another destination".into(),
+                ));
+            }
+            let service = page
+                .services()
+                .get::<ProbeService>()
+                .map_err(|error| MountError(error.to_string()))?;
+            assert!(
+                Rc::ptr_eq(&service, &data),
+                "load and mount lost service identity"
+            );
+            service
+                .page_pool_checks
+                .set(service.page_pool_checks.get() + 1);
+            service.home_mounts.set(service.home_mounts.get() + 1);
             service.page_mounts.set(service.page_mounts.get() + 1);
-            Ok(cx.new(|_| Self))
+            Ok(cx.new(|_| Self { service }))
         }
     }
 
     impl Render for Home {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            gpui::div().child("home")
+            gpui::div().child(format!("home loads {}", self.service.load_calls.get()))
+        }
+    }
+
+    impl LoadedPage<Destination> for LoadFailurePage {
+        type Data = ();
+        type Error = LoadFailureError;
+
+        async fn load(
+            destination: Destination,
+            context: LoadContext,
+        ) -> Result<Self::Data, Self::Error> {
+            if !matches!(destination, Destination::LoadFailure) {
+                return Err(LoadFailureError(
+                    "failing loader received another destination",
+                ));
+            }
+            let service = context
+                .services()
+                .get::<ProbeService>()
+                .map_err(|_| LoadFailureError("probe service missing"))?;
+            service
+                .load_failure_calls
+                .set(service.load_failure_calls.get() + 1);
+            // This route deliberately fails before a physical host is opened.
+            // The workflow checks that its mount function is never reached.
+            Err(LoadFailureError("intentional pre-host load failure"))
+        }
+
+        fn mount(
+            _: &Destination,
+            _: Self::Data,
+            page: PageContext<Destination>,
+            _: &mut Window,
+            _: &mut gpui::App,
+        ) -> Result<Entity<Self>, MountError> {
+            let service = page
+                .services()
+                .get::<ProbeService>()
+                .map_err(|error| MountError(error.to_string()))?;
+            service
+                .load_failure_mounts
+                .set(service.load_failure_mounts.get() + 1);
+            Err(MountError("failing loader page must not mount".into()))
+        }
+    }
+
+    impl Render for LoadFailurePage {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div().child("unexpected load failure page")
         }
     }
 
@@ -250,7 +383,50 @@ mod native {
         assert_eq!(service.initial_layout_calls.get(), 1);
         assert_eq!(service.layout_calls.get(), 1);
         assert!(service.first_http.borrow().is_some());
+        assert_eq!(service.load_calls.get(), 1);
+        assert_eq!(service.load_http_checks.get(), 1);
+        assert_eq!(service.home_mounts.get(), 1);
         assert_eq!(service.shell_entity.get(), Some(view.entity_id()));
+
+        let before_load_failure = router
+            .snapshot_in_window(INITIAL_WINDOW)
+            .expect("initial window exists");
+        let before_tab = before_load_failure
+            .selected
+            .and_then(|id| before_load_failure.tabs.iter().find(|tab| tab.id == id))
+            .expect("initial history exists");
+        let before_entry_count = before_tab.entries.len();
+        let before_cursor = before_tab.cursor;
+        let before_entry_id = before_tab.entries[before_cursor].id;
+        let before_selected = before_load_failure.selected;
+        let load_failure = router
+            .navigator()
+            .for_window(INITIAL_WINDOW)
+            .open(Destination::LoadFailure, OpenTarget::NewWindow);
+        let result = load_failure.wait().await;
+        assert!(
+            matches!(result, Err(OperationError::Mount(ref error)) if error.0.contains("route load failed")),
+            "{result:?}"
+        );
+        assert_eq!(service.load_failure_calls.get(), 1);
+        assert_eq!(service.load_failure_mounts.get(), 0);
+        assert_eq!(service.options_calls.get(), 0);
+        assert_eq!(service.layout_calls.get(), 1);
+        assert_eq!(service.failed_layout_calls.get(), 0);
+        assert_eq!(router.snapshot().windows.len(), 1);
+        assert_eq!(current_route(&router).as_deref(), Some("home"));
+        let after_load_failure = router
+            .snapshot_in_window(INITIAL_WINDOW)
+            .expect("initial window remains");
+        assert_eq!(after_load_failure.selected, before_selected);
+        let after_tab = after_load_failure
+            .selected
+            .and_then(|id| after_load_failure.tabs.iter().find(|tab| tab.id == id))
+            .expect("initial history remains");
+        assert_eq!(after_tab.entries.len(), before_entry_count);
+        assert_eq!(after_tab.cursor, before_cursor);
+        assert_eq!(after_tab.entries[after_tab.cursor].id, before_entry_id);
+        println!("LAYOUT_SMOKE_PASS loader-before-host");
 
         let tab_id = router
             .snapshot_in_window(INITIAL_WINDOW)
@@ -274,6 +450,8 @@ mod native {
                 .expect("shell remains readable"),
             1
         );
+        assert_eq!(service.load_calls.get(), 1);
+        assert_eq!(service.home_mounts.get(), 1);
         assert_eq!(service.shell_entity.get(), Some(view.entity_id()));
         println!("LAYOUT_SMOKE_PASS persistent-layout");
 
@@ -335,7 +513,8 @@ mod native {
         Ok(App::new("example.layout-smoke")
             .service(probe)?
             .routes(rake::routes! {
-                Destination::Home => Home,
+                Destination::Home => loaded(Home),
+                Destination::LoadFailure => loaded(LoadFailurePage),
                 Destination::Other => Other,
             })
             .try_layout(move |layout, window, cx| {

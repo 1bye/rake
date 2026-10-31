@@ -52,15 +52,16 @@ The app registers its page types directly:
 App::new("dev.rake.starter")
     .theme(colors)
     .routes(rake::routes! {
-        Destination::Home => Home,
+        Destination::Home => loaded(Home),
         Destination::Updates => Updates,
     })
     .try_layout(Shell::mount)
     .initial(Destination::Home)
 ```
 
-`Home` and `Updates` each implement `Page<Destination>` and `Render` in their own
-files. The macro checks every destination and calls the selected `Page::mount`;
+`Home` implements `LoadedPage<Destination>` and `Updates` implements
+`Page<Destination>`, with ordinary `Render` implementations in their own files.
+The macro checks every destination and calls the selected page's constructor;
 there is no application-owned dispatcher. Mount returns an `Entity<Self>` and
 runs only for a new or reconstructed history entry. Theme installation runs once
 at app startup before any page mounts. `Shell` is one persistent `Render` entity
@@ -69,9 +70,12 @@ outlet. Pages render their bodies; they do not construct the shell. The shell's
 navigation-click count survives page changes independently of retained page edits.
 `try_layout` reports initialization failures without panicking.
 
-Home loads its bundled welcome text with `page.tasks()`, away from the UI loop.
-Its `LoadState` rejects results from older retries. Finite entry work survives
-navigation into history and is cancelled when the entry is disposed.
+Home's route loader reads the bundled welcome text on a background worker and
+passes an owned `String` into mount. A failed load leaves the old page intact and
+shows the host's Retry control. It completes before a new physical window opens.
+Back/Forward reuse the retained view and data; selecting Home again creates a
+fresh entry and loads again. Loaders may prepare files, services or domain models;
+they are not limited to HTTP. Blocking work must explicitly use a worker.
 
 Updates resolves the automatically registered `UpdateController` during mount.
 Its `page.while_visible` observer awaits `changed(revision)` to redraw, pauses
