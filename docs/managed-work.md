@@ -34,6 +34,43 @@ alive even though their activity stopped.
 
 ## Using the API
 
+### View-bound loading
+
+`runtime.load(cx, factory)` starts an arbitrary asynchronous value and redraws
+its owning GPUI view automatically. `page.load(cx, factory)` uses the retained
+entry's finite task scope, so hiding the page does not cancel it. Dropping the
+loader or disposing its owner cancels the attempt. Neither results nor errors
+need `Clone` or `Send`.
+
+```rust,no_run
+use rake::prelude::*;
+struct Screen;
+fn bind(runtime: &RuntimeContext, cx: &mut rake::gpui::Context<Screen>)
+    -> Loader<String, std::io::Error>
+{
+    runtime.load(cx, |load| async move {
+        load.background_executor()
+            .spawn(async { std::fs::read_to_string("welcome.txt") })
+            .await
+    })
+}
+```
+
+The factory receives `LoadContext` with shared `services()`, `http()`,
+`cancellation()`, and `background_executor()`. Async I/O runs on the UI loop;
+blocking/CPU work must use a worker. A separately spawned worker may keep
+running after cancellation, but cannot replace a newer result.
+
+Read `loader.state(cx)` in `Render`, call `loader.retry(cx)` to start a fresh
+attempt, or `loader.cancel(cx)` to stop. Failures distinguish typed
+`LoadError::Source`, managed-work `LoadError::Task`, and `LoadError::Cancelled`.
+Task admission failures are visible immediately. Rake retains subscriptions and
+terminal observation internally; applications do not register completion events.
+
+The [foundation example](../examples/foundation/src/lib.rs) shows this API with
+`rake::view!`. Its configured HTTP endpoint must be served for the request to
+succeed; a connection failure is shown with a retry button.
+
 The [routing example](../examples/routing/src/lib.rs) registers refresh and preview
 clocks and displays their counters and run identities. Its Foreground/Live buttons
 change policy; tab download and app export buttons exercise longer-lived scopes.

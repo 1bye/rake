@@ -17,6 +17,11 @@
 
 use std::fmt;
 
+#[cfg(feature = "gpui")]
+mod binding;
+#[cfg(feature = "gpui")]
+pub use binding::{LoadContext, LoadError, Loader};
+
 /// One private generation identity returned by [`LoadState::begin`].
 ///
 /// Both fields are private so callers can retain and compare tokens only

@@ -1,7 +1,6 @@
-//! One ordinary application with only the Rake facade as a dependency.
+//! One route-free application with automatically bound asynchronous loading.
 
-use rake::gpui::prelude::*;
-use rake::gpui::{Context, Task, Window, div, rgb};
+use rake::gpui::{Context, Window, prelude::*};
 use rake::prelude::*;
 
 #[rake::data]
@@ -10,85 +9,52 @@ struct Message {
 }
 
 struct Foundation {
+    message: Loader<Message, rake::http::Error>,
     status: String,
     runtime: RuntimeContext,
-    request: Option<Task<()>>,
 }
 
 #[rake::instrument(skip_all)]
-async fn load_message(http: HttpClient) -> rake::http::Result<Message> {
-    http.get("message.json").send_json().await
+async fn load_message(load: LoadContext) -> rake::http::Result<Message> {
+    load.http()
+        .get("message.json")
+        .cancellation(load.cancellation())
+        .send_json()
+        .await
 }
 
 impl Render for Foundation {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .justify_center()
-            .items_center()
-            .gap_4()
-            .bg(rgb(0x18232b))
-            .text_color(rgb(0xf0f4e8))
-            .font_family("IBM Plex Sans")
-            .child(div().text_3xl().child("Rake"))
-            .child(self.status.clone())
-            .child(
-                div()
-                    .id("load-message")
-                    .px_4()
-                    .py_2()
-                    .rounded_md()
-                    .bg(rgb(0x365849))
-                    .cursor_pointer()
-                    .child("Load JSON")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let http = this.runtime.services().http();
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let loading = self.message.is_loading(cx);
+        let message = match self.message.state(cx) {
+            LoadStatus::Idle | LoadStatus::Loading(_) => "Loading…".into(),
+            LoadStatus::Ready(message) => message.title.clone(),
+            LoadStatus::Failed(error) => error.to_string(),
+        };
 
-                        this.status = "Loading…".into();
-                        this.request = Some(cx.spawn(async move |view, cx| {
-                            let result = load_message(http).await;
-
-                            let _ = view.update(cx, |view, cx| {
-                                view.status = match result {
-                                    Ok(message) => {
-                                        rake::info!(title = %message.title, "Message loaded");
-
-                                        message.title
-                                    }
-                                    Err(error) => {
-                                        rake::warn!(%error, "Message request failed");
-
-                                        error.to_string()
-                                    }
-                                };
-                                cx.notify();
-                            });
-                        }));
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    .id("managed-job")
-                    .px_4()
-                    .py_2()
-                    .cursor_pointer()
-                    .child("Run managed job")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let work = this.runtime.tasks().spawn("example-job", async {
-                            rake::tasks::sleep(std::time::Duration::from_secs(1)).await;
-                            rake::info!("Managed example job finished");
-                            Ok(())
-                        });
-                        this.status = match work {
-                            Ok(_) => "Job started; normal quit waits for it to finish".into(),
-                            Err(error) => error.to_string(),
-                        };
-                        cx.notify();
-                    })),
-            )
+        rake::view! {
+            <main class="size-full p-6 gap-4 bg-[#18232b] text-[#f0f4e8]" tab-navigation>
+                <h1>"Rake"</h1>
+                <p>{message}</p>
+                <button id="load-message" disabled={loading}
+                    on:click={cx.listener(|this, _, _, cx| this.message.retry(cx))}>
+                    "Reload / Retry"
+                </button>
+                <button id="managed-job" on:click={cx.listener(|this, _, _, cx| {
+                    let work = this.runtime.tasks().spawn("example-job", async {
+                        rake::tasks::sleep(std::time::Duration::from_secs(1)).await;
+                        rake::info!("Managed example job finished");
+                        Ok(())
+                    });
+                    this.status = match work {
+                        Ok(_) => "Job started; normal quit waits for it to finish".into(),
+                        Err(error) => error.to_string(),
+                    };
+                    cx.notify();
+                })}>"Run managed job"</button>
+                <p>{self.status.clone()}</p>
+            </main>
+        }
     }
 }
 
@@ -97,10 +63,10 @@ pub fn application() -> App {
     App::new("com.example.rake.foundation")
         .http(HttpConfig::new().base_url("http://127.0.0.1:8080/"))
         .root_with(|runtime, _, cx| {
-            cx.new(|_| Foundation {
+            cx.new(|cx| Foundation {
+                message: runtime.load(cx, load_message),
                 status: "Portable application foundation".into(),
                 runtime,
-                request: None,
             })
             .into()
         })

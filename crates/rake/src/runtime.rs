@@ -150,6 +150,23 @@ pub struct RuntimeContext<R: Route = NoRoute> {
 }
 
 impl<R: Route> RuntimeContext<R> {
+    /// Starts a view-owned asynchronous value and automatically redraws its view.
+    /// Work survives hidden views and is cancelled when the loader is dropped.
+    /// Admission and source failures are exposed by the returned handle.
+    #[cfg(feature = "gpui")]
+    pub fn load<V: 'static, T: 'static, E, F, Fut>(
+        &self,
+        cx: &mut gpui::Context<V>,
+        factory: F,
+    ) -> crate::loading::Loader<T, E>
+    where
+        E: std::error::Error + 'static,
+        F: Fn(crate::loading::LoadContext) -> Fut + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + 'static,
+    {
+        crate::loading::Loader::new(Ok(self.tasks()), self.services(), factory, cx)
+    }
+
     pub(crate) fn from_router(router: &Router<R>, services: Services) -> Self {
         Self::from_navigator(router.navigator(), services)
     }

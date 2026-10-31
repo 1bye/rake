@@ -60,6 +60,21 @@ pub struct PageContext<R: Route> {
 }
 
 impl<R: Route> PageContext<R> {
+    /// Starts entry-owned asynchronous data with automatic redraw and checked retries.
+    /// Loading continues while retained in history and stops when this entry is disposed.
+    pub fn load<V: 'static, T: 'static, E, F, Fut>(
+        &self,
+        cx: &mut Context<V>,
+        factory: F,
+    ) -> crate::loading::Loader<T, E>
+    where
+        E: std::error::Error + 'static,
+        F: Fn(crate::loading::LoadContext) -> Fut + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + 'static,
+    {
+        crate::loading::Loader::new(self.tasks(), self.services(), factory, cx)
+    }
+
     /// Application capabilities independent of this entry's navigation lifetime.
     /// The context contains weak runtime handles and preserves service identity.
     pub fn runtime(&self) -> crate::runtime::RuntimeContext<R> {

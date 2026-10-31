@@ -680,6 +680,11 @@ pub struct ActivityRun {
 }
 
 impl ActivityRun {
+    #[cfg(feature = "gpui")]
+    pub(crate) fn check(&self) -> Result<(), TaskError> {
+        self.validate().map(|_| ())
+    }
+
     /// Identifies this execution, changing on every factory restart.
     pub fn id(&self) -> RunId {
         self.run_id
