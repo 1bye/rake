@@ -105,3 +105,32 @@ the historical Elements-only pass.
 
 The five Network steps, capture limits and verification evidence are recorded in
 [the Network checklist](devtools-network.md).
+
+## Performance coverage
+
+The five Performance steps, native regression fixture, stock Chrome verification
+and remaining engine boundaries are recorded in
+[the Performance checklist](devtools-performance.md).
+
+## Sources coverage
+
+The five Sources steps, source access limits, native regression fixture and stock
+Chrome verification are recorded in [the Sources checklist](devtools-sources.md).
+This provides read-only Rust browsing and navigation; Rust debugging still
+requires a native debugger.
+
+## Memory coverage
+
+The five Memory steps, native allocator setup, bounds, production feature gate
+and stock Chrome verification are recorded in [the Memory checklist](devtools-memory.md).
+Sampling and live-block comparisons are supported; full Rust ownership and GPU
+memory graphs remain unavailable.
+
+## Application storage coverage
+
+Typed memory/file stores, optional shared caching and explicitly registered
+read-only/writable Chrome storage projections are described in
+[typed storage](storage.md). Inspection is compiled only with `rake/devtools`.
+Browser-only Application features (service workers, manifests, cookies,
+IndexedDB, cache storage and browser storage quotas) are not emulated for native
+stores. Platform encryption/Keychain backends remain separate integrations.

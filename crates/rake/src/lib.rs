@@ -50,6 +50,9 @@ macro_rules! early_startup {
 
 pub mod control;
 
+#[cfg(all(feature = "devtools-memory", unix))]
+pub mod memory;
+
 pub use rake_diagnostics as diagnostics;
 
 pub use rake_http as http;
@@ -66,6 +69,7 @@ pub mod reload;
 pub mod router;
 pub mod runtime;
 pub mod services;
+pub mod storage;
 pub mod tasks;
 pub mod web;
 

@@ -1,6 +1,8 @@
 //! Terminal adapter for the shared development control protocol.
 
 #[cfg(unix)]
+mod agent;
+#[cfg(unix)]
 mod cdp;
 #[cfg(unix)]
 mod project;
@@ -126,7 +128,9 @@ fn main() {
     }
 
     #[cfg(unix)]
-    let result = if arguments.first().is_some_and(|command| command == "cdp") {
+    let result = if arguments.first().is_some_and(|command| command == "agent") {
+        agent::run(arguments)
+    } else if arguments.first().is_some_and(|command| command == "cdp") {
         cdp::run(arguments)
     } else if arguments.first().is_some_and(|c| c == "inspect")
         && arguments.get(1).is_some_and(|c| c == "pick")

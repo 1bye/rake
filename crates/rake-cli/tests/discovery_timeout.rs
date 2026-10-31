@@ -56,6 +56,8 @@ fn explicit_timeout_allows_a_slow_identity_probe() {
                 }
             };
 
+            // Accepted sockets can inherit the listener's nonblocking mode on macOS.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(4)))
                 .unwrap();

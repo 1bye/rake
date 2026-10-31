@@ -6,4 +6,5 @@ pub mod inspection;
 pub mod quit;
 pub mod reload;
 pub mod router;
+pub mod storage;
 pub mod tasks;

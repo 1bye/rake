@@ -136,6 +136,7 @@ fn configure(runtime: &Runtime, config: &ManagedConfig) {
 struct ManagedRoot {
     content: AnyView,
     router: crate::router::Router<crate::router::NoRoute>,
+    close_policy: ClosePolicy,
 }
 
 impl ManagedRoot {
@@ -147,6 +148,7 @@ impl ManagedRoot {
     ) -> Self {
         let view = cx.weak_entity();
         let router = runtime.router.clone();
+        let close_policy = config.close_policy;
         let driver = spawn_root_driver(runtime, config, Some(view), cx);
         let quit_router = router.clone();
 
@@ -161,7 +163,11 @@ impl ManagedRoot {
             _quit: quit,
         });
 
-        Self { content, router }
+        Self {
+            content,
+            router,
+            close_policy,
+        }
     }
 }
 
@@ -173,6 +179,12 @@ impl Drop for ManagedRoot {
             .client()
             .inspection()
             .detach_window(crate::router::WindowId(1));
+
+        // Normal close was guarded before removal. If an embedding host removes
+        // the root directly, its default window-owned runtime must still stop.
+        if self.close_policy == ClosePolicy::Quit {
+            self.router.shutdown();
+        }
     }
 }
 
@@ -383,19 +395,25 @@ async fn drive(
             let changed = Box::pin(observed.changed(revision));
 
             #[cfg(feature = "devtools")]
-            {
+            let content_changed = {
                 let inspection = observed.client().inspection().listen();
 
-                if let futures::future::Either::Left((next, _)) =
-                    futures::future::select(changed, Box::pin(inspection)).await
-                {
-                    revision = next;
+                match futures::future::select(changed, Box::pin(inspection)).await {
+                    futures::future::Either::Left((next, _)) => {
+                        revision = next;
+
+                        false
+                    }
+                    futures::future::Either::Right(_) => true,
                 }
-            }
+            };
+
             #[cfg(not(feature = "devtools"))]
-            {
+            let content_changed = {
                 revision = changed.await;
-            }
+
+                false
+            };
 
             #[cfg(not(target_family = "wasm"))]
             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
@@ -415,7 +433,7 @@ async fn drive(
                             observed.prepare_native_exit(true);
                         }
                         crate::error!(%error, "managed update handoff failed; manual restart required");
-                        notify(view.as_ref(), cx).await;
+                        notify(view.as_ref(), content_changed, cx).await;
                         break;
                     }
                 }
@@ -429,13 +447,21 @@ async fn drive(
 
             #[cfg(target_family = "wasm")]
             if let Some(view) = &view
-                && view.update(cx, |_, cx| cx.notify()).is_err()
+                && view
+                    .update(cx, |root, cx| {
+                        if content_changed {
+                            gpui::App::notify(cx, root.content.entity_id());
+                        }
+
+                        cx.notify();
+                    })
+                    .is_err()
             {
                 break;
             }
 
             #[cfg(not(target_family = "wasm"))]
-            notify(view.as_ref(), cx).await;
+            notify(view.as_ref(), content_changed, cx).await;
         }
     };
 
@@ -446,9 +472,19 @@ async fn drive(
 }
 
 #[cfg(not(target_family = "wasm"))]
-async fn notify(view: Option<&gpui::WeakEntity<ManagedRoot>>, cx: &mut gpui::AsyncApp) {
+async fn notify(
+    view: Option<&gpui::WeakEntity<ManagedRoot>>,
+    content_changed: bool,
+    cx: &mut gpui::AsyncApp,
+) {
     if let Some(view) = view {
-        let _ = view.update(cx, |_, cx| cx.notify());
+        let _ = view.update(cx, |root, cx| {
+            if content_changed {
+                gpui::App::notify(cx, root.content.entity_id());
+            }
+
+            cx.notify();
+        });
     }
 }
 
@@ -618,3 +654,12 @@ mod tests {
         ));
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "view-test-support",
+    feature = "devtools",
+    not(target_family = "wasm")
+))]
+#[path = "managed_tooling_tests.rs"]
+mod tooling_tests;

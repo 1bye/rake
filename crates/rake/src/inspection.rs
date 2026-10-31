@@ -7,8 +7,15 @@
 //! Rendered text and accessibility metadata are bounded owned strings. Editable
 //! control values, views and source contents are not retained.
 
+mod budget;
 mod editing;
+#[path = "inspection/preview.rs"]
+mod native_preview;
 mod recording;
+mod snapshot;
+
+use snapshot::Captured;
+
 mod text_editing;
 #[cfg(feature = "gpui")]
 mod view;
@@ -32,11 +39,11 @@ pub use rake_protocol::inspection::*;
 pub(crate) struct Store(Rc<RefCell<State>>);
 
 struct State {
-    latest: Rc<Snapshot>,
+    latest: Rc<Captured>,
     edits: BTreeMap<String, editing::History>,
     text_edits: BTreeMap<String, text_editing::History>,
     frames: recording::Recording,
-    pages: BTreeMap<String, (Rc<Snapshot>, Instant)>,
+    pages: BTreeMap<String, (Rc<Captured>, Instant)>,
     #[cfg(any(feature = "gpui", test))]
     next_capture: u64,
     #[cfg(feature = "gpui")]
@@ -51,9 +58,13 @@ struct State {
 }
 
 struct WindowState {
-    snapshot: Rc<Snapshot>,
+    #[cfg(all(feature = "gpui", target_os = "macos"))]
+    preview: Option<native_preview::native::Target>,
+    snapshot: Rc<Captured>,
     #[cfg(feature = "gpui")]
-    identities: Vec<view::BoundaryIdentity>,
+    identities: view::BoundaryIndex,
+    #[cfg(feature = "gpui")]
+    caches: std::collections::HashMap<String, Rc<RefCell<view::BoundaryCache>>>,
     #[cfg(feature = "gpui")]
     navigation: BTreeMap<String, view::NavigationTarget>,
     #[cfg(feature = "gpui")]
@@ -70,14 +81,14 @@ struct WindowState {
 impl Default for Store {
     fn default() -> Self {
         Self(Rc::new(RefCell::new(State {
-            latest: Rc::new(Snapshot {
+            latest: Rc::new(Captured::from(Snapshot {
                 status: Status::Unavailable,
                 capture: "0".into(),
                 router_revision: 0,
                 elements: Vec::new(),
                 omitted: 0,
                 coverage: "Rake inspection boundaries, including automatic view! nodes; opaque GPUI descendants and reused cached subtrees are not enumerated. Layout is before clipping; content_mask records the visible intersection. Authored styles are separate from live resolved Div/Stateful<Div>/view! button styles, which include current interaction states and inherited text. Relative layout lengths retain their units. Box geometry resolves absolute edges from the layout-phase style; used auto/percentage edges and scrollbar metrics may be unavailable. Style origins describe observed defaults, inherited text, authored base, interaction changes and measured size; macro-authored style attribute locations are captured separately, while opaque per-method declaration locations and equal-valued overrides are unavailable. Rendered text is captured at text boundaries (16 KiB UTF-8 prefix); editable control values are excluded. Bounded accessibility labels and descriptions include macro-generated control names.".into(),
-            }),
+            })),
             edits: BTreeMap::new(),
             text_edits: BTreeMap::new(),
             frames: recording::Recording::default(),
@@ -168,7 +179,7 @@ impl Store {
             .then_some(focus)
     }
 
-    fn full_snapshot(&self) -> Rc<Snapshot> {
+    fn full_snapshot(&self) -> Rc<Captured> {
         let state = self.0.borrow();
 
         state
@@ -179,29 +190,97 @@ impl Store {
             .clone()
     }
 
+    pub(crate) fn tree_revision(&self) -> TreeRevision {
+        let snapshot = self.full_snapshot();
+        TreeRevision {
+            capture: snapshot.capture.clone(),
+            metadata: Some(snapshot.index_revision.clone()),
+            status: snapshot.status,
+        }
+    }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
         let full = self.full_snapshot();
         let mut snapshot = Snapshot {
             status: full.status,
             capture: full.capture.clone(),
             router_revision: full.router_revision,
-            elements: full.elements.iter().take(TREE_PAGE_SIZE).cloned().collect(),
+            elements: Vec::new(),
             omitted: full.omitted + full.elements.len().saturating_sub(TREE_PAGE_SIZE),
             coverage: full.coverage.clone(),
         };
         let mut bytes = 4096;
-        let retained = snapshot
-            .elements
-            .iter()
-            .take(TREE_PAGE_SIZE)
-            .take_while(|e| {
-                bytes += serde_json::to_vec(e).map_or(MAX_SNAPSHOT_BYTES, |v| v.len()) + 1;
-                bytes < MAX_SNAPSHOT_BYTES
-            })
-            .count();
-        snapshot.omitted += snapshot.elements.len() - retained;
-        snapshot.elements.truncate(retained);
+        for (index, element) in full.elements.iter().take(TREE_PAGE_SIZE).enumerate() {
+            let size = budget::size(element, MAX_SNAPSHOT_BYTES)
+                + full.details.get(index).map_or(0, snapshot::Details::bytes)
+                + 1;
+
+            if bytes + size >= MAX_SNAPSHOT_BYTES {
+                break;
+            }
+
+            bytes += size;
+            snapshot.elements.push(full.element(index));
+        }
+
+        snapshot.omitted += full.elements.len().min(TREE_PAGE_SIZE) - snapshot.elements.len();
+
         snapshot
+    }
+
+    pub(crate) fn window_page(
+        &self,
+        window: WindowId,
+        presentation: Option<&str>,
+        offset: usize,
+    ) -> Result<WindowPage, InspectionError> {
+        self.available()?;
+        let mut state = self.0.borrow_mut();
+        let now = Instant::now();
+        state.pages.retain(|_, (_, until)| *until > now);
+        let prefix = format!("window-{}-frame-", window.0);
+        let (lease, full) = if let Some(lease) = presentation {
+            if !lease.starts_with(&prefix) {
+                return Err(InspectionError::StaleGeneration);
+            }
+            let full = state
+                .pages
+                .get(lease)
+                .map(|(capture, _)| capture.clone())
+                .ok_or(InspectionError::StaleGeneration)?;
+            (lease.to_owned(), full)
+        } else {
+            let full = state
+                .windows
+                .get(&window)
+                .map(|host| host.snapshot.clone())
+                .ok_or(InspectionError::NotRetained)?;
+            let lease = format!("{prefix}{}", full.frame_sequence);
+            if !state.pages.contains_key(&lease) {
+                if state.pages.len() >= 4 {
+                    let oldest = state
+                        .pages
+                        .iter()
+                        .min_by_key(|(_, (_, until))| *until)
+                        .map(|(key, _)| key.clone());
+                    if let Some(key) = oldest {
+                        state.pages.remove(&key);
+                    }
+                }
+                state
+                    .pages
+                    .insert(lease.clone(), (full.clone(), now + Duration::from_secs(5)));
+            }
+            (lease, full)
+        };
+        drop(state);
+        Ok(WindowPage {
+            window,
+            presentation: lease,
+            frame_sequence: full.frame_sequence.clone(),
+            metadata_revision: full.index_revision.clone(),
+            page: index_page(&full, offset)?,
+        })
     }
 
     pub(crate) fn tree_page(
@@ -243,52 +322,7 @@ impl Store {
             current
         };
         drop(state);
-        if offset > full.elements.len() {
-            return Err(InspectionError::InvalidPage);
-        }
-        let end = offset
-            .saturating_add(TREE_PAGE_SIZE)
-            .min(full.elements.len());
-        let mut snapshot = Snapshot {
-            elements: Vec::new(),
-            status: full.status,
-            capture: full.capture.clone(),
-            router_revision: full.router_revision,
-            omitted: full.omitted,
-            coverage: full.coverage.clone(),
-        };
-        snapshot.elements = full.elements[offset..end]
-            .iter()
-            .cloned()
-            .map(|mut element| {
-                element.styles = None;
-                element.resolved = None;
-                element.box_model = None;
-                element.style_overrides.clear();
-                element.handlers.clear();
-                if let Some(view) = &mut element.view {
-                    view.style_sources.clear();
-                }
-                element
-            })
-            .collect();
-        let mut bytes = 4096;
-        let count = snapshot
-            .elements
-            .iter()
-            .take_while(|element| {
-                bytes +=
-                    serde_json::to_vec(element).map_or(MAX_SNAPSHOT_BYTES, |bytes| bytes.len()) + 1;
-                bytes < MAX_SNAPSHOT_BYTES
-            })
-            .count();
-        snapshot.elements.truncate(count);
-        let end = offset + count;
-        Ok(TreePage {
-            snapshot,
-            next: (end < full.elements.len()).then_some(end),
-            total: full.elements.len(),
-        })
+        index_page(&full, offset)
     }
 
     pub(crate) fn element(&self, id: &str) -> Result<Element, InspectionError> {
@@ -301,20 +335,23 @@ impl Store {
                 let mut element = state
                     .windows
                     .values()
-                    .flat_map(|host| &host.snapshot.elements)
-                    .chain(&state.latest.elements)
+                    .map(|host| &host.snapshot)
+                    .chain(std::iter::once(&state.latest))
                     .chain(
                         state
                             .pages
                             .values()
                             .filter(|(_, until)| *until > Instant::now())
-                            .flat_map(|(snapshot, _)| &snapshot.elements),
+                            .map(|(snapshot, _)| snapshot),
                     )
-                    .find(|element| element.id == id)
-                    .cloned()
+                    .find_map(|snapshot| {
+                        snapshot
+                            .elements
+                            .iter()
+                            .position(|element| element.id == id)
+                            .map(|index| snapshot.element(index))
+                    })
                     .ok_or(InspectionError::NotRetained)?;
-                // An edit is acknowledged before the next draw. Its declaration
-                // state is current even while resolved values await that draw.
                 if let Some(history) = element
                     .stable_id
                     .as_ref()
@@ -503,8 +540,13 @@ impl Store {
         Rc::make_mut(&mut self.0.borrow_mut().latest).status = Status::Waiting;
     }
 
+    #[cfg(test)]
+    pub(crate) fn publish(&self, window: WindowId, snapshot: Snapshot) {
+        self.publish_captured(window, snapshot.into());
+    }
+
     #[cfg(any(feature = "gpui", test))]
-    pub(crate) fn publish(&self, window: WindowId, mut snapshot: Snapshot) {
+    fn publish_captured(&self, window: WindowId, mut snapshot: Captured) {
         let mut state = self.0.borrow_mut();
 
         if let Some(host) = state.windows.get(&window) {
@@ -549,6 +591,15 @@ impl Store {
                 );
 
             if same_boundaries {
+                // Live focus invalidates the index without expiring control IDs or edits.
+                if snapshot
+                    .elements
+                    .iter()
+                    .zip(&old.elements)
+                    .all(|(a, b)| a.accessibility == b.accessibility)
+                {
+                    snapshot.index_revision.clone_from(&old.index_revision);
+                }
                 snapshot.capture.clone_from(&old.capture);
 
                 for (element, old) in snapshot.elements.iter_mut().zip(&old.elements) {
@@ -561,9 +612,13 @@ impl Store {
         let snapshot = Rc::new(snapshot);
 
         let host = state.windows.entry(window).or_insert_with(|| WindowState {
+            #[cfg(all(feature = "gpui", target_os = "macos"))]
+            preview: None,
             snapshot: Rc::clone(&snapshot),
             #[cfg(feature = "gpui")]
-            identities: Vec::new(),
+            identities: view::BoundaryIndex::new(),
+            #[cfg(feature = "gpui")]
+            caches: std::collections::HashMap::new(),
             #[cfg(feature = "gpui")]
             navigation: BTreeMap::new(),
             #[cfg(feature = "gpui")]
@@ -708,14 +763,45 @@ fn contains(bounds: Layout, x: f32, y: f32) -> bool {
         && bounds.height > 0.
 }
 
-#[cfg(feature = "gpui")]
+fn tree_entry(element: &Element) -> Element {
+    Element {
+        id: element.id.clone(),
+        stable_id: element.stable_id.clone(),
+        navigation: element.navigation.clone(),
+        parent: element.parent.clone(),
+        kind: element.kind.clone(),
+        text: element.text.clone(),
+        text_editable: element.text_editable,
+        semantic_id: element.semantic_id.clone(),
+        source: element.source.clone(),
+        view: element.view.as_ref().map(|view| ViewMetadata {
+            tag: view.tag.clone(),
+            style_sources: Vec::new(),
+        }),
+        paint_order: element.paint_order,
+        style_editable: element.style_editable,
+        style_overrides: Vec::new(),
+        accessibility: element.accessibility.clone(),
+        handlers: Vec::new(),
+        layout: element.layout,
+        box_model: None,
+        content_mask: element.content_mask,
+        styles: None,
+        resolved: None,
+        metadata_truncated: element.metadata_truncated,
+        tab_id: element.tab_id,
+        entry_id: element.entry_id,
+    }
+}
+
+#[cfg(all(feature = "gpui", test))]
 fn bound_resolved_styles(snapshot: &mut Snapshot) {
     let mut base_bytes = 0;
 
     for element in &mut snapshot.elements {
         let resolved = element.resolved.take();
 
-        base_bytes += serde_json::to_vec(&*element).map_or(MAX_CAPTURE_BYTES, |bytes| bytes.len());
+        base_bytes += budget::size(&*element, MAX_CAPTURE_BYTES);
         element.resolved = resolved;
     }
 
@@ -723,8 +809,7 @@ fn bound_resolved_styles(snapshot: &mut Snapshot) {
 
     for element in &mut snapshot.elements {
         if let Some(resolved) = &element.resolved {
-            let bytes =
-                serde_json::to_vec(resolved).map_or(MAX_CAPTURE_BYTES, |bytes| bytes.len()) + 16;
+            let bytes = budget::size(resolved, MAX_RESOLVED_STYLE_BYTES) + 16;
 
             if bytes > remaining || bytes > MAX_RESOLVED_STYLE_BYTES {
                 element.resolved = None;
@@ -737,8 +822,20 @@ fn bound_resolved_styles(snapshot: &mut Snapshot) {
 }
 
 // Leaves room for envelope, coverage and JSON separators below the wire limit.
-#[cfg(any(feature = "gpui", test))]
+#[cfg(test)]
 fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Option<String> {
+    let size = budget::size(&element, MAX_CAPTURE_BYTES);
+
+    retain_with_size(snapshot, element, bytes, size)
+}
+
+#[cfg(any(feature = "gpui", test))]
+fn retain_with_size(
+    snapshot: &mut Snapshot,
+    element: Element,
+    bytes: &mut usize,
+    estimated: usize,
+) -> Option<String> {
     // Presentation identities are assigned after traversal; reserve their maximum wire size.
     // Reserve the worst-case escaped name derived after descendants have been captured.
     let name_reserve = if element
@@ -750,9 +847,7 @@ fn retain(snapshot: &mut Snapshot, element: Element, bytes: &mut usize) -> Optio
     } else {
         0
     };
-    let size = serde_json::to_vec(&element).map_or(MAX_CAPTURE_BYTES, |value| value.len())
-        + 64
-        + name_reserve;
+    let size = estimated + 128 + name_reserve;
 
     if snapshot.elements.len() >= MAX_ELEMENTS || *bytes + size >= MAX_CAPTURE_BYTES - 4096 {
         snapshot.omitted += 1;
@@ -781,4 +876,39 @@ fn same_parent(parent: Option<&str>, old: Option<&str>, capture: &str) -> bool {
         }
         None => parent == old,
     }
+}
+
+fn index_page(full: &Captured, offset: usize) -> Result<TreePage, InspectionError> {
+    if offset > full.elements.len() {
+        return Err(InspectionError::InvalidPage);
+    }
+    let end = offset
+        .saturating_add(TREE_PAGE_SIZE)
+        .min(full.elements.len());
+    let mut snapshot = Snapshot {
+        elements: Vec::new(),
+        status: full.status,
+        capture: full.capture.clone(),
+        router_revision: full.router_revision,
+        omitted: full.omitted,
+        coverage: full.coverage.clone(),
+    };
+    snapshot.elements = full.elements[offset..end].iter().map(tree_entry).collect();
+    let mut bytes = 4096;
+    let count = snapshot
+        .elements
+        .iter()
+        .take_while(|element| {
+            bytes += budget::size(element, MAX_SNAPSHOT_BYTES) + 1;
+
+            bytes < MAX_SNAPSHOT_BYTES
+        })
+        .count();
+    snapshot.elements.truncate(count);
+    let end = offset + count;
+    Ok(TreePage {
+        snapshot,
+        next: (end < full.elements.len()).then_some(end),
+        total: full.elements.len(),
+    })
 }

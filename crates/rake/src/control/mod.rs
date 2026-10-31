@@ -17,6 +17,7 @@
 
 mod commands;
 mod host;
+mod memory;
 
 pub(crate) use host::HostClient;
 
@@ -136,8 +137,22 @@ impl<R: Route> RuntimeClient<R> {
                 "native"
             }
             .into(),
-            commands: Command::names().iter().map(|name| (*name).into()).collect(),
-            queries: Query::names().iter().map(|name| (*name).into()).collect(),
+            commands: Command::names()
+                .iter()
+                .filter(|name| **name != "record_memory" || memory::available())
+                .filter(|name| **name != "edit_storage" || cfg!(feature = "devtools"))
+                .filter(|name| **name != "preview_input" || self.state.inspection.preview_enabled())
+                .map(|name| (*name).into())
+                .collect(),
+            queries: Query::names()
+                .iter()
+                .filter(|name| **name != "memory" || memory::available())
+                .filter(|name| **name != "storage" || cfg!(feature = "devtools"))
+                .filter(|name| {
+                    !name.starts_with("preview") || self.state.inspection.preview_enabled()
+                })
+                .map(|name| (*name).into())
+                .collect(),
             supported_targets: self.router.supported_targets(),
             completed_operations,
             pending_operations,
@@ -170,12 +185,14 @@ impl<R: Route> RuntimeClient<R> {
                 // Transient inspection controls must not fill the lifetime mutation-key registry.
                 if matches!(
                     command,
-                    Command::HighlightElement { .. }
+                    Command::PreviewInput { .. }
+                        | Command::HighlightElement { .. }
                         | Command::InspectMode { .. }
                         | Command::NavigateElement { .. }
                         | Command::EditElementStyle { .. }
                         | Command::EditElementText { .. }
                         | Command::RecordFrames { .. }
+                        | Command::RecordMemory { .. }
                 ) {
                     return self.command(&command);
                 }
@@ -210,6 +227,80 @@ impl<R: Route> RuntimeClient<R> {
                 reply
             }
         }
+    }
+
+    /// Dispatches async storage inspection as well as ordinary runtime requests.
+    /// Backend I/O runs on the caller's local executor; transports use this path.
+    #[cfg(feature = "devtools")]
+    pub async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
+        use crate::storage::devtools::Storage;
+
+        if !Storage::accepts(&request) {
+            return self.request(request);
+        }
+
+        self.request(Request {
+            message: Message::Query(Query::Info {}),
+            ..request.clone()
+        })?;
+        let storage = self
+            .services()
+            .get::<Storage>()
+            .map(|storage| storage.as_ref().clone())
+            .unwrap_or_default();
+
+        let Message::Command(command) = &request.message else {
+            return storage.request(request).await;
+        };
+
+        let key = request
+            .key
+            .as_ref()
+            .filter(|key| !key.is_empty() && key.len() <= 128)
+            .ok_or(ControlError::InvalidRequestKey)?
+            .clone();
+
+        {
+            let requests = self.state.requests.borrow();
+
+            if let Some(saved) = requests.get(&key) {
+                return if saved.command == *command {
+                    saved.reply.clone()
+                } else {
+                    Err(ControlError::KeyConflict)
+                };
+            }
+
+            if requests.len() >= self.state.capacity {
+                return Err(ControlError::RequestCapacity);
+            }
+        }
+        let command = command.clone();
+
+        // Reserve in the same lifetime key space as all other app mutations.
+        // Cancellation retains uncertainty instead of admitting a duplicate write.
+        self.state.requests.borrow_mut().insert(
+            key.clone(),
+            SavedRequest {
+                command: command.clone(),
+                reply: Err(ControlError::Storage {
+                    reason:
+                        "edit pending or response cancelled; inspect storage before another write"
+                            .into(),
+                }),
+            },
+        );
+        let reply = storage.request(request).await;
+
+        self.state.requests.borrow_mut().insert(
+            key,
+            SavedRequest {
+                command,
+                reply: reply.clone(),
+            },
+        );
+
+        reply
     }
 
     /// Captures an initial snapshot and revision atomically on the local event loop.
@@ -263,6 +354,21 @@ impl<R: Route> RuntimeClient<R> {
         let navigator = self.router.navigator();
 
         let id: OperationId = match command {
+            Command::EditStorage { .. } => {
+                return Err(ControlError::Unsupported {
+                    operation:
+                        "async storage dispatch; use request_async or the development transport"
+                            .into(),
+                });
+            }
+            Command::RecordMemory {
+                owner,
+                enabled,
+                interval,
+                lease_ms,
+            } => {
+                return memory::record(owner, *enabled, *interval, *lease_ms);
+            }
             Command::RecordFrames { enabled, lease_ms } => {
                 self.state.inspection.record_frames(*enabled, *lease_ms)?;
 
@@ -292,6 +398,11 @@ impl<R: Route> RuntimeClient<R> {
                 action,
             } => {
                 self.state.inspection.navigate(id, generation, *action)?;
+
+                return Ok(Reply::Acknowledged);
+            }
+            Command::PreviewInput { point, input } => {
+                self.state.inspection.preview_input(point, input)?;
 
                 return Ok(Reply::Acknowledged);
             }
@@ -394,6 +505,10 @@ impl<R: Route> RuntimeClient<R> {
 
     fn query(&self, query: Query) -> Result<Reply, ControlError> {
         match query {
+            Query::Storage { .. } => Err(ControlError::Unsupported {
+                operation: "async storage dispatch; use request_async or the development transport"
+                    .into(),
+            }),
             Query::Windows {} => Ok(Reply::Data(
                 serde_json::to_value(self.router.window_snapshots())
                     .expect("window snapshots serialize"),
@@ -403,6 +518,13 @@ impl<R: Route> RuntimeClient<R> {
             }
             Query::Quit {} => Ok(Reply::Quit(self.router.quit_status())),
             Query::InspectPick {} => Ok(Reply::InspectPick(self.state.inspection.pick()?)),
+            Query::Preview {} => Ok(Reply::Data(
+                serde_json::to_value(self.state.inspection.preview_windows())
+                    .expect("preview windows serialize"),
+            )),
+            Query::PreviewElement { point } => Ok(Reply::Element(
+                self.state.inspection.preview_element(&point)?,
+            )),
             Query::InspectTreePage { generation, offset } => Ok(Reply::ElementPage(
                 self.state
                     .inspection
@@ -411,7 +533,23 @@ impl<R: Route> RuntimeClient<R> {
             Query::Frames { after } => Ok(Reply::Frames(
                 self.router.frame_records(&self.state.inspection, after),
             )),
+            Query::Memory {
+                owner,
+                include_freed,
+            } => memory::snapshot(&owner, include_freed),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
+            Query::InspectWindow {
+                window,
+                presentation,
+                offset,
+            } => Ok(Reply::InspectionWindow(self.state.inspection.window_page(
+                window,
+                presentation.as_deref(),
+                offset,
+            )?)),
+            Query::InspectRevision {} => Ok(Reply::InspectionRevision(
+                self.state.inspection.tree_revision(),
+            )),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),
             Query::Checkpoint { application_id } => Ok(Reply::Checkpoint(

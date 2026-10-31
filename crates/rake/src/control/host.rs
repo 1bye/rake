@@ -10,6 +10,31 @@ pub(super) trait Host {
 
     fn request(&self, request: Request) -> Result<Reply, ControlError>;
 
+    #[cfg(feature = "devtools")]
+    fn request_async(
+        &self,
+        request: Request,
+    ) -> futures::future::LocalBoxFuture<'_, Result<Reply, ControlError>> {
+        Box::pin(async move {
+            #[cfg(feature = "devtools")]
+            if crate::storage::devtools::Storage::accepts(&request) {
+                self.request(Request {
+                    message: super::Message::Query(super::Query::Info {}),
+                    ..request.clone()
+                })?;
+
+                return self.storage().request(request).await;
+            }
+
+            self.request(request)
+        })
+    }
+
+    #[cfg(feature = "devtools")]
+    fn storage(&self) -> crate::storage::devtools::Storage {
+        crate::storage::devtools::Storage::new()
+    }
+
     #[cfg(any(unix, target_family = "wasm"))]
     fn begin_response(&self) -> Option<super::ResponseGuard> {
         None
@@ -41,8 +66,16 @@ impl HostClient {
         self.0.info()
     }
 
-    pub(crate) fn request(&self, request: Request) -> Result<Reply, ControlError> {
-        self.0.request(request)
+    pub(crate) async fn request_async(&self, request: Request) -> Result<Reply, ControlError> {
+        #[cfg(feature = "devtools")]
+        {
+            self.0.request_async(request).await
+        }
+
+        #[cfg(not(feature = "devtools"))]
+        {
+            self.0.request(request)
+        }
     }
 
     #[cfg(any(unix, target_family = "wasm"))]
@@ -67,6 +100,22 @@ impl HostClient {
 }
 
 impl<R: Route> Host for RuntimeClient<R> {
+    #[cfg(feature = "devtools")]
+    fn request_async(
+        &self,
+        request: Request,
+    ) -> futures::future::LocalBoxFuture<'_, Result<Reply, ControlError>> {
+        Box::pin(RuntimeClient::request_async(self, request))
+    }
+
+    #[cfg(feature = "devtools")]
+    fn storage(&self) -> crate::storage::devtools::Storage {
+        self.services()
+            .get::<crate::storage::devtools::Storage>()
+            .map(|storage| storage.as_ref().clone())
+            .unwrap_or_default()
+    }
+
     fn info(&self) -> RuntimeInfo {
         self.info()
     }

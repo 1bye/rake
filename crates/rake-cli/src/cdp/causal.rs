@@ -33,6 +33,21 @@ impl Causal {
         self.unrecorded = clock.unrecorded;
     }
 
+    pub fn consistent(&self, clock: &FrameClock) -> bool {
+        let Some(offset) = self.offset else {
+            return true;
+        };
+
+        let current = i128::from(clock.diagnostics_us) - i128::from(clock.recording_us);
+
+        (offset - current).unsigned_abs()
+            <= u128::from(
+                self.uncertainty
+                    .saturating_add(clock.uncertainty_us)
+                    .saturating_add(2),
+            )
+    }
+
     pub fn enabled(&self) -> bool {
         self.offset.is_some()
     }
@@ -111,8 +126,8 @@ impl Causal {
                                     record.parent_span_id.unwrap_or_default()
                                 );
 
-                                events.push(json!({"name":"Captured span parent","cat":"rake.causal","ph":"s","id":flow,"pid":1,"tid":1,"ts":parent.at}));
-                                events.push(json!({"name":"Captured span parent","cat":"rake.causal","ph":"f","bp":"e","id":flow,"pid":1,"tid":1,"ts":start}));
+                                events.push(json!({"name":"Captured span parent","cat":"rake.causal","ph":"s","id":flow,"pid":2,"tid":1,"ts":parent.at}));
+                                events.push(json!({"name":"Captured span parent","cat":"rake.causal","ph":"f","bp":"e","id":flow,"pid":2,"tid":1,"ts":start}));
                             }
 
                             events.extend(super::frames::track(
@@ -378,6 +393,20 @@ mod tests {
             diagnostics_sequence: 10,
             unrecorded: 0,
         }
+    }
+
+    #[test]
+    fn calibration_rejects_a_restarted_recording_clock() {
+        let mut causal = Causal::default();
+
+        causal.calibrate(&clock());
+        let mut later = clock();
+
+        later.recording_us += 1000;
+        later.diagnostics_us += 1001;
+        assert!(causal.consistent(&later));
+        later.recording_us = 0;
+        assert!(!causal.consistent(&later));
     }
 
     #[test]

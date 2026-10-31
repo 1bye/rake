@@ -4837,6 +4837,7 @@ dependencies = [
  "bitflags 2.13.2",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
 ]
 
 [[package]]
@@ -5943,6 +5944,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-io",
+ "backtrace",
  "blocking",
  "console_error_panic_hook",
  "event-listener",
@@ -5979,6 +5981,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-agent-example"
+version = "0.1.0"
+dependencies = [
+ "rake",
+]
+
+[[package]]
 name = "rake-build"
 version = "0.1.0"
 dependencies = [
@@ -5998,6 +6007,7 @@ dependencies = [
  "base64 0.22.1",
  "ctrlc",
  "futures",
+ "libc",
  "rake",
  "rake-client",
  "rake-diagnostics",
@@ -6229,6 +6239,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-preview"
+version = "0.1.0"
+dependencies = [
+ "rake",
+]
+
+[[package]]
 name = "rake-protocol"
 version = "0.1.0"
 dependencies = [
@@ -6258,6 +6275,7 @@ name = "rake-routing"
 version = "0.1.0"
 dependencies = [
  "rake",
+ "tracing",
 ]
 
 [[package]]

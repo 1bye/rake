@@ -21,6 +21,20 @@ fn resolve(root: &Path, source: &SourceLocation) -> Result<PathBuf> {
     Ok(path)
 }
 
+pub(crate) fn relative(source: &SourceLocation) -> Result<String> {
+    let root = std::env::var_os("RAKE_SOURCE_ROOT")
+        .map(PathBuf::from)
+        .map_or_else(std::env::current_dir, Ok)?
+        .canonicalize()?;
+
+    let path = resolve(&root, source)?;
+
+    Ok(path
+        .strip_prefix(root)?
+        .to_string_lossy()
+        .replace('\\', "/"))
+}
+
 pub(crate) fn read(source: &SourceLocation) -> Result<String> {
     use std::io::Read;
     let root = std::env::var_os("RAKE_SOURCE_ROOT")

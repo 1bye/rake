@@ -1,0 +1,131 @@
+{
+  "upstream": "9b417d8a187ae7ecff367d9a9741d564658029b2",
+  "version": {
+    "major": "1",
+    "minor": "3"
+  },
+  "domains": [
+    {
+      "domain": "Browser",
+      "commands": [
+        {
+          "name": "getVersion",
+          "returns": [
+            {
+              "name": "protocolVersion",
+              "type": "string"
+            },
+            {
+              "name": "product",
+              "type": "string"
+            },
+            {
+              "name": "revision",
+              "type": "string"
+            },
+            {
+              "name": "userAgent",
+              "type": "string"
+            },
+            {
+              "name": "jsVersion",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "DOM",
+      "commands": [
+        {
+          "name": "getDocument",
+          "parameters": [
+            {
+              "name": "depth",
+              "optional": true,
+              "type": "integer"
+            },
+            {
+              "name": "pierce",
+              "optional": true,
+              "type": "boolean"
+            }
+          ],
+          "returns": [
+            {
+              "name": "root",
+              "$ref": "Node"
+            }
+          ]
+        },
+        {
+          "name": "getSearchResults",
+          "parameters": [
+            {
+              "name": "searchId",
+              "type": "string"
+            },
+            {
+              "name": "fromIndex",
+              "type": "integer"
+            },
+            {
+              "name": "toIndex",
+              "type": "integer"
+            }
+          ],
+          "returns": [
+            {
+              "name": "nodeIds",
+              "type": "array",
+              "items": {
+                "$ref": "NodeId"
+              }
+            }
+          ]
+        },
+        {
+          "name": "pushNodesByBackendIdsToFrontend",
+          "parameters": [
+            {
+              "name": "backendNodeIds",
+              "type": "array",
+              "items": {
+                "$ref": "BackendNodeId"
+              }
+            }
+          ],
+          "returns": [
+            {
+              "name": "nodeIds",
+              "type": "array",
+              "items": {
+                "$ref": "NodeId"
+              }
+            }
+          ]
+        },
+        {
+          "name": "requestChildNodes",
+          "parameters": [
+            {
+              "name": "nodeId",
+              "$ref": "NodeId"
+            },
+            {
+              "name": "depth",
+              "optional": true,
+              "type": "integer"
+            },
+            {
+              "name": "pierce",
+              "optional": true,
+              "type": "boolean"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

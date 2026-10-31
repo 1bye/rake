@@ -48,6 +48,29 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Forward one non-retrying development preview input to an exact native window.
+    PreviewInput {
+        /// Exact window, presentation and content coordinates.
+        point: crate::inspection::preview::Point,
+        /// Atomic pointer operation.
+        input: crate::inspection::preview::Input,
+    },
+    /// Edits explicitly registered application storage; requires a retry key.
+    EditStorage {
+        /// Typed set or remove operation.
+        edit: crate::storage::Edit,
+    },
+    /// Starts/renews or stops a process-wide native allocation recording lease.
+    RecordMemory {
+        /// Unique client recording token, 1–128 bytes; never reused after stop/expiry.
+        owner: String,
+        /// Start/renew capture, or freeze retained samples.
+        enabled: bool,
+        /// Poisson sample interval, 256–16777216 requested bytes.
+        interval: u64,
+        /// Lease 1–5000 ms when enabled. Expiry stops hooks without client cleanup.
+        lease_ms: u64,
+    },
     /// Edits rendered text without changing application state or Rust source.
     EditElementText {
         /// Exact current text boundary.
@@ -207,6 +230,9 @@ impl Command {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "preview_input",
+            "edit_storage",
+            "record_memory",
             "record_frames",
             "edit_element_style",
             "edit_element_text",
@@ -237,6 +263,34 @@ impl Command {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
+    /// Lightweight inspection of one concrete window, pinned across pagination.
+    InspectWindow {
+        /// Runtime-scoped target.
+        window: WindowId,
+        /// None starts a new presentation; continue with the returned lease.
+        presentation: Option<String>,
+        /// Depth-first offset within that presentation.
+        offset: usize,
+    },
+    /// Describes inspected windows opted into the macOS development preview.
+    Preview {},
+    /// Hit-tests an exact inspected presentation without activating the element.
+    PreviewElement {
+        /// Exact window, presentation and content coordinates.
+        point: crate::inspection::preview::Point,
+    },
+    /// Reads explicitly registered typed application storage.
+    Storage {
+        /// Catalog or bounded entries page.
+        read: crate::storage::Read,
+    },
+    /// Samples owned by one exact native recording, with bounded symbolization.
+    Memory {
+        /// Exact recording token supplied to RecordMemory.
+        owner: String,
+        /// Include recently freed allocation samples for churn analysis.
+        include_freed: bool,
+    },
     /// Retained frame timings after a recording sequence, with loss and continuation metadata.
     Frames {
         /// Exclusive recording cursor, zero starts at retained history.
@@ -255,6 +309,8 @@ pub enum Query {
     Quit {},
     /// Latest bounded presented tree, with explicit availability and coverage.
     InspectTree {},
+    /// Cheap index identity; resolved style details can change independently.
+    InspectRevision {},
     /// Lightweight generation-pinned tree index, at most 256 boundaries per response.
     InspectTreePage {
         /// None starts at the current capture; subsequent pages must pin it.
@@ -326,11 +382,17 @@ impl Query {
     #[must_use]
     pub fn names() -> &'static [&'static str] {
         &[
+            "preview",
+            "preview_element",
+            "storage",
+            "memory",
             "windows",
             "window",
             "quit",
             "inspect_pick",
             "inspect_tree",
+            "inspect_revision",
+            "inspect_window",
             "inspect_tree_page",
             "frames",
             "inspect_element",
@@ -433,12 +495,18 @@ pub struct RuntimeEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    /// A window-specific, draw-pinned inspection page.
+    InspectionWindow(crate::inspection::WindowPage),
+    /// Native allocation samples, without ownership graph or exact heap claims.
+    Memory(crate::inspection::memory::Snapshot),
     /// Capture generation, hover and sequenced click selection.
     InspectPick(crate::inspection::Pick),
     /// Guarded application shutdown status.
     Quit(crate::quit::QuitStatus),
     /// Latest completed bounded element tree.
     Elements(crate::inspection::Snapshot),
+    /// Current index identity without serializing tree entries or style details.
+    InspectionRevision(crate::inspection::TreeRevision),
     /// Bounded live frame timings.
     Frames(crate::inspection::Frames),
     /// Generation-pinned tree index page.
@@ -478,6 +546,18 @@ pub enum Reply {
 /// Structured protocol errors; transport failures are reported separately as I/O errors.
 #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum ControlError {
+    /// Explicit storage registration, typed validation or backend failure.
+    #[error("storage inspection: {reason}")]
+    Storage {
+        /// Actionable failure without an implicit retry or data reset.
+        reason: String,
+    },
+    /// Invalid native recording parameters, unavailable allocator, or owner conflict.
+    #[error("memory recording: {reason}")]
+    Memory {
+        /// Actionable native recorder failure.
+        reason: String,
+    },
     /// This host does not implement the requested operation; consult RuntimeInfo capabilities.
     #[error("this host does not support {operation}")]
     Unsupported {

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const HELP: &str = "rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
+rake agent --url URL [--target ID] [--window ID] JSON_ACTION (Node 22+; see docs/cdp-agents.md)
 rake cdp [--session PATH] [--instance UUID|application-id] [--port PORT] [--no-open] [--json] [--export-trace FILE]
 rake highlight ID|none [--generation CAPTURE] [--instance UUID|application-id]
 rake inspect pick [--instance UUID|application-id]
@@ -210,6 +211,7 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
             Message::Command(Command::InspectMode { enabled, lease_ms })
         }
         ("inspect", "tree") => Message::Query(Query::InspectTree {}),
+        ("inspect", "revision") => Message::Query(Query::InspectRevision {}),
         ("inspect", "element") if args.len() == 1 => {
             Message::Query(Query::InspectElement { id: args.remove(0) })
         }
@@ -793,12 +795,38 @@ mod tests {
         let tab = "tab-1".parse().unwrap();
         let operation = "op-1".parse().unwrap();
 
+        let preview_point = rake_protocol::inspection::preview::Point {
+            window: "window-1".parse().unwrap(),
+            native_id: 42,
+            generation: "capture-1".into(),
+            geometry: None,
+            x: 10,
+            y: 20,
+        };
+
         let destination = RouteAddress {
             route: "home".into(),
             params: Default::default(),
         };
 
         let commands = vec![
+            Command::PreviewInput {
+                point: preview_point.clone(),
+                input: rake_protocol::inspection::preview::Input::Click,
+            },
+            Command::EditStorage {
+                edit: rake_protocol::storage::Edit {
+                    store: "preferences".into(),
+                    key: "theme".into(),
+                    value: Some("\"dark\"".into()),
+                },
+            },
+            Command::RecordMemory {
+                owner: "test".into(),
+                enabled: false,
+                interval: 32768,
+                lease_ms: 0,
+            },
             Command::EditElementText {
                 id: "boundary".into(),
                 generation: "1".into(),
@@ -880,6 +908,17 @@ mod tests {
         ];
 
         let queries = vec![
+            Query::Preview {},
+            Query::PreviewElement {
+                point: preview_point,
+            },
+            Query::Storage {
+                read: rake_protocol::storage::Read::Stores,
+            },
+            Query::Memory {
+                owner: "test".into(),
+                include_freed: false,
+            },
             Query::InspectPick {},
             Query::Frames { after: 0 },
             Query::Windows {},
@@ -888,6 +927,12 @@ mod tests {
             },
             Query::Quit {},
             Query::InspectTree {},
+            Query::InspectRevision {},
+            Query::InspectWindow {
+                window: "window-1".parse().unwrap(),
+                presentation: None,
+                offset: 0,
+            },
             Query::InspectTreePage {
                 generation: None,
                 offset: 0,

@@ -307,6 +307,16 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Explicitly exposes registered typed stores to development transports.
+    /// Available only with `devtools`; duplicate registries fail before startup.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_storage(
+        self,
+        storage: crate::storage::devtools::Storage,
+    ) -> Result<Self, ServiceError> {
+        self.service(storage)
+    }
+
     /// Configures the initial GPUI window; browser hosts apply supported options.
     pub fn window_options(mut self, options: WindowOptions) -> Self {
         self.window_options = options;

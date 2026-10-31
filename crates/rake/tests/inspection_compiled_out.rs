@@ -46,6 +46,20 @@ fn production_capabilities_cannot_enable_inspection_or_edits() {
 
     assert_eq!(client.info().element_inspection, Status::Unavailable);
     assert!(!client.info().element_interaction);
+    assert!(
+        !client
+            .info()
+            .commands
+            .iter()
+            .any(|name| name.starts_with("preview"))
+    );
+    assert!(
+        !client
+            .info()
+            .queries
+            .iter()
+            .any(|name| name.starts_with("preview"))
+    );
     let request = |message| Request {
         protocol: PROTOCOL_VERSION,
         runtime_id: router.runtime_id(),
@@ -64,6 +78,17 @@ fn production_capabilities_cannot_enable_inspection_or_edits() {
     assert!(tree.coverage.contains("compiled out"));
 
     for command in [
+        Command::PreviewInput {
+            point: rake::inspection::preview::Point {
+                window: rake::router::WindowId(1),
+                native_id: 42,
+                generation: "0".into(),
+                geometry: None,
+                x: 10,
+                y: 20,
+            },
+            input: rake::inspection::preview::Input::Click,
+        },
         Command::InspectMode {
             enabled: true,
             lease_ms: 1000,

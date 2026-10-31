@@ -46,7 +46,8 @@ impl Definition {
             style_sources: Vec::new(),
         };
         const MAX_SOURCE_BYTES: usize = 4096;
-        let mut bytes = serde_json::to_vec(&metadata).map_or(MAX_SOURCE_BYTES, |bytes| bytes.len());
+        let mut bytes = super::super::budget::size(&metadata, MAX_SOURCE_BYTES);
+
         for site in self.styles {
             let source = StyleSource {
                 scope: limited(site.scope, 128, truncated),
@@ -58,7 +59,8 @@ impl Definition {
                     column: site.source.column(),
                 },
             };
-            bytes += serde_json::to_vec(&source).map_or(MAX_SOURCE_BYTES, |bytes| bytes.len()) + 1;
+            bytes += super::super::budget::size(&source, MAX_SOURCE_BYTES) + 1;
+
             if bytes > MAX_SOURCE_BYTES {
                 *truncated = true;
                 break;

@@ -63,6 +63,9 @@ jobs:
               "--test", "platform",
               "--test", "web_deployment",
               "--test", "windows",
+              "--test", "storage",
+              "--test", "storage_backends",
+              "--test", "storage_cache",
           ]
           subprocess.run(
               ["cargo", "test", "-p", "rake", "--no-default-features", *tests, "--locked"],

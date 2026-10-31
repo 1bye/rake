@@ -4,8 +4,12 @@ use crate::router::{EntryId, TabId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Native allocator sampling contracts, independent of the renderer.
+pub mod memory;
 /// Live frame recording contracts.
 pub mod performance;
+/// Native preview window descriptions and development input.
+pub mod preview;
 /// Shared presentation of captured style values.
 pub mod styles;
 /// Bounded inspection paths, subtree text and synthetic markup for copy actions.
@@ -74,6 +78,7 @@ pub enum StyleOrigin {
 
 impl StyleOrigin {
     /// Human-readable provenance suitable for inspector details.
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Default => "GPUI defaults",
@@ -256,6 +261,7 @@ pub struct Element {
 
 impl Element {
     /// Looks up a captured site; missing metadata and out-of-range indices return `None`.
+    #[must_use]
     pub fn source_location(&self, target: &SourceTarget) -> Option<&SourceLocation> {
         match target {
             SourceTarget::Boundary {} => self.source.as_ref(),
@@ -270,6 +276,7 @@ impl Element {
     }
 
     /// Authored view tag when known, otherwise a shortened Rust element name.
+    #[must_use]
     pub fn display_name(&self) -> &str {
         self.view
             .as_ref()
@@ -336,6 +343,18 @@ pub struct Snapshot {
     pub coverage: String,
 }
 
+/// Lightweight index identity. Style-only redraws may retain this identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeRevision {
+    /// Control capture identity; changes to geometry, text and structure invalidate it.
+    pub capture: String,
+    /// Lightweight metadata revision, independent of control IDs. Absent on older hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
+    /// Distinguishes unavailable and waiting hosts, even before their first capture.
+    pub status: Status,
+}
+
 /// A generation-pinned page of lightweight tree metadata; details use `InspectElement`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TreePage {
@@ -345,6 +364,21 @@ pub struct TreePage {
     pub next: Option<usize>,
     /// Total retained boundaries, excluding genuinely omitted nodes.
     pub total: usize,
+}
+
+/// A window-specific page pinned to one completed draw, including unchanged-tree draws.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WindowPage {
+    /// Exact runtime-scoped window.
+    pub window: crate::router::WindowId,
+    /// Opaque five-second page lease; pass it unchanged for subsequent offsets.
+    pub presentation: String,
+    /// Monotonic draw sequence as a decimal string, independent of control capture IDs.
+    pub frame_sequence: String,
+    /// Index metadata identity, including focus changes.
+    pub metadata_revision: String,
+    /// Bounded lightweight metadata page.
+    pub page: TreePage,
 }
 
 /// Exact lookup failure. Clients refresh the tree after stale captures.
@@ -487,6 +521,7 @@ pub struct Accessibility {
 
 impl Accessibility {
     /// Compares structural facts independently of live focus and derived captured tab order.
+    #[must_use]
     pub fn same_properties(&self, other: &Self) -> bool {
         self.role == other.role
             && self.label == other.label

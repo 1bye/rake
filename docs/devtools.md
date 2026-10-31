@@ -4,6 +4,9 @@ Stock Chrome DevTools is the supported graphical frontend. Rake's older HTML and
 `rake-inspector` frontends are legacy prototypes; their controls and tests do not
 establish Chrome compatibility. New development targets the CDP adapter.
 
+AI agents can use the [CDP agent client](cdp-agents.md) for native input, semantic
+snapshots, condition waits, screenshots and Rust source lookup.
+
 Build the CLI with `cargo build -p rake-cli`, then run:
 
 ```sh
@@ -240,7 +243,7 @@ protection enabled and type reviewed commands manually when Chrome blocks pastin
 See [navigation and handle registration](element-inspection.md#elements-navigation).
 
 Supported CDP methods are the domain enable/disable methods for Network, Log,
-Runtime, DOM, CSS and Overlay; Inspector.enable; Page.enable/disable,
+Runtime, DOM, CSS, Overlay and DOMStorage; Inspector.enable; Page.enable/disable,
 Page.getResourceTree/getFrameTree/bringToFront; Runtime.runIfWaitingForDebugger,
 Runtime.evaluate, Runtime.compileScript (without persistence),
 Runtime.globalLexicalScopeNames, Runtime.getProperties,
@@ -258,6 +261,12 @@ CSS edits are restricted to temporary DevTools base override sheets; authored st
 Accessibility.enable/disable, getRootAXNode/getFullAXTree/getPartialAXTree/
 getChildAXNodes/getAXNodeAndAncestors, Tracing.start/end and IO.read/close are also
 supported. `Rake.openSource { nodeId, target? }` accepts captured construction/style/handler sites.
+Application storage supports `Storage.getStorageKey/getStorageKeyForFrame`,
+`DOMStorage.getDOMStorageItems/setDOMStorageItem/removeDOMStorageItem` and storage
+change events for explicitly registered typed stores. `Rake.getStorage` returns
+their catalog. Bulk clear is rejected and Chrome's optimistic table is restored;
+browser cookies, service workers, databases and quotas are not synthesized.
+See [typed storage](storage.md) for registration, production feature gates and limits.
 Chrome Copy element receives escaped
 synthetic markup. See the [Elements coverage checklist](devtools-next.md#elements-coverage-checklist)
 for verification evidence and remaining GPUI boundaries.
@@ -381,3 +390,14 @@ Console delivery progress and its verification are tracked in
 
 See the [Network checklist](devtools-network.md) for HTTP metadata, bounded body
 capture, origins, timing and Chrome workflows.
+
+See the [Performance checklist](devtools-performance.md) for live Record/Stop,
+frame and callback analysis, calibrated command/task/span/HTTP tracks, Rust source
+links, bounded trace export and stock Chrome verification.
+
+See the [Sources checklist](devtools-sources.md) for captured Rust files,
+read-only browsing, search, shared source links and runtime-scoped access.
+
+See the [Memory checklist](devtools-memory.md) for opt-in native allocator
+sampling, Rust call sites, sampled live-block comparisons and Chrome export.
+It requires `devtools-memory` and an explicitly installed allocator wrapper.

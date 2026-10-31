@@ -6,6 +6,49 @@ use super::*;
 use serde_json::Value;
 
 #[test]
+fn window_pages_pin_draws_without_expiring_control_ids_and_reject_other_windows() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut first = store.begin(0);
+    first
+        .elements
+        .push(boundary("element-1-0", None, bounds, bounds));
+    store.publish(WindowId(1), first);
+    let pinned = store.window_page(WindowId(1), None, 0).unwrap();
+    let revision = store.tree_revision();
+    let mut next = store.begin(0);
+    next.elements
+        .push(boundary("element-2-0", None, bounds, bounds));
+    store.publish(WindowId(1), next);
+    let current = store.window_page(WindowId(1), None, 0).unwrap();
+    assert_eq!(store.tree_revision(), revision);
+    assert_eq!(current.page.snapshot.capture, pinned.page.snapshot.capture);
+    assert_ne!(current.frame_sequence, pinned.frame_sequence);
+    assert_eq!(
+        store
+            .window_page(WindowId(1), Some(&pinned.presentation), 0)
+            .unwrap()
+            .frame_sequence,
+        pinned.frame_sequence
+    );
+    assert!(
+        store
+            .window_page(WindowId(2), Some(&pinned.presentation), 0)
+            .is_err()
+    );
+    assert!(
+        store
+            .window_page(WindowId(1), Some(&pinned.presentation), 2)
+            .is_err()
+    );
+}
+
+#[test]
 fn display_names_hide_wrappers_paths_and_generic_arguments() {
     for (kind, expected) in [
         ("gpui::elements::div::Div", "Div"),
@@ -396,7 +439,7 @@ fn unchanged_paints_keep_generation_and_windows_never_share_highlights() {
     let first = store.0.borrow().windows[&WindowId(1)]
         .snapshot
         .as_ref()
-        .clone();
+        .owned();
 
     store.publish(WindowId(1), first);
     assert_eq!(store.pick().unwrap().generation, generation);
@@ -652,4 +695,133 @@ fn picking_uses_paint_order_excludes_unpainted_and_respects_visible_mask() {
     assert_eq!(hit_test(&snapshot, 50., 25.).unwrap().id, "back");
     assert!(hit_test(&snapshot, f32::NAN, 25.).is_none());
     assert!(hit_test(&snapshot, 10., 120.).is_none());
+}
+
+#[test]
+fn shared_details_preserve_owned_replies_and_generation_pinned_pages() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut first = store.begin(0);
+    let mut element = boundary("element-1-0", None, bounds, bounds);
+    element.styles = Some(serde_json::json!({"background":"old"}));
+    first.elements.push(element);
+    store.publish(WindowId(1), first);
+    let pinned = store.tree_page(None, 0).unwrap();
+    assert!(pinned.snapshot.elements[0].styles.is_none());
+    let mut reply = store.element("element-1-0").unwrap();
+    reply.styles.as_mut().unwrap()["background"] = "caller mutation".into();
+    assert_eq!(
+        store.element("element-1-0").unwrap().styles.unwrap()["background"],
+        "old"
+    );
+
+    let mut next = store.begin(0);
+    let mut element = boundary("element-2-0", None, Layout { x: 1., ..bounds }, bounds);
+    element.styles = Some(serde_json::json!({"background":"new"}));
+    next.elements.push(element);
+    store.publish(WindowId(1), next);
+    assert_eq!(
+        store.element("element-1-0").unwrap().styles.unwrap()["background"],
+        "old"
+    );
+    assert_eq!(
+        store.element("element-2-0").unwrap().styles.unwrap()["background"],
+        "new"
+    );
+}
+
+#[test]
+fn index_revision_tracks_geometry_but_preserves_live_style_identity() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut first = store.begin(0);
+    let mut element = boundary("element-1-0", None, bounds, bounds);
+    element.styles = Some(serde_json::json!({"background":"red"}));
+    first.elements.push(element);
+    store.publish(WindowId(1), first);
+    let revision = store.tree_revision();
+    let mut next = store.begin(0);
+    let mut element = boundary("element-2-0", None, bounds, bounds);
+    element.styles = Some(serde_json::json!({"background":"blue"}));
+    next.elements.push(element);
+    store.publish(WindowId(1), next);
+    assert_eq!(store.tree_revision(), revision);
+    assert_eq!(
+        store.element("element-1-0").unwrap().styles.unwrap()["background"],
+        "blue"
+    );
+    let mut next = store.begin(0);
+    next.elements.push(boundary(
+        "element-3-0",
+        None,
+        Layout { x: 1., ..bounds },
+        bounds,
+    ));
+    store.publish(WindowId(1), next);
+    assert_ne!(store.tree_revision(), revision);
+}
+
+#[test]
+fn live_accessibility_changes_invalidate_the_index_without_geometry_changes() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut element = boundary("element-1-0", None, bounds, bounds);
+    element.stable_id = Some("button".into());
+    element.accessibility = Some(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "role":"Button", "disabled":false, "hidden":false,
+            "focusable":true, "focused":false, "contains_focus":false,
+            "captured_tab_order":0, "actions":[]
+        }))
+        .unwrap(),
+    ));
+    let mut first = store.begin(0);
+    first.elements.push(element.clone());
+    store.publish(WindowId(1), first);
+    let mut revision = store.tree_revision();
+
+    for (focused, contains_focus, tab_order) in [(true, false, 0), (true, true, 0), (true, true, 1)]
+    {
+        let mut next = store.begin(0);
+        element.id = format!("element-{}-0", next.capture);
+        let accessibility = element.accessibility.as_mut().unwrap();
+        accessibility.focused = Some(focused);
+        accessibility.contains_focus = Some(contains_focus);
+        accessibility.captured_tab_order = Some(tab_order);
+        next.elements.push(element.clone());
+        store.publish(WindowId(1), next);
+
+        let updated = store.tree_revision();
+        assert_eq!(
+            updated.capture, revision.capture,
+            "live focus must not expire control IDs"
+        );
+        assert_ne!(
+            updated, revision,
+            "live accessibility changes must invalidate cached indexes"
+        );
+        let page = store.tree_page(None, 0).unwrap();
+        assert_eq!(page.snapshot.capture, updated.capture);
+        assert_eq!(
+            page.snapshot.elements[0].accessibility,
+            element.accessibility
+        );
+        assert_eq!(page.snapshot.elements[0].layout, Some(bounds));
+        revision = updated;
+    }
 }

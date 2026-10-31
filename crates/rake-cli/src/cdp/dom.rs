@@ -1,14 +1,34 @@
 //! Incremental DOM/CSS projection. Presentation identities survive consecutive captures.
 
+use super::params::{depth, node_id};
 use super::wire::{Error, Event};
 use rake_protocol::inspection::{Element, Snapshot};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+/// An owning view into an immutable capture. Only hydrated nodes own a detail copy.
+#[derive(Clone)]
+struct CapturedElement {
+    capture: Arc<Snapshot>,
+    index: usize,
+    details: Option<Arc<Element>>,
+}
+
+impl std::ops::Deref for CapturedElement {
+    type Target = Element;
+
+    fn deref(&self) -> &Element {
+        self.details
+            .as_deref()
+            .unwrap_or(&self.capture.elements[self.index])
+    }
+}
 
 #[derive(Default)]
 pub(super) struct Dom {
-    snapshot: Option<Snapshot>,
-    nodes: BTreeMap<i32, Element>,
+    snapshot: Option<Arc<Snapshot>>,
+    nodes: BTreeMap<i32, CapturedElement>,
     next: i32,
     control_ids: BTreeMap<String, i32>,
     child_ids: BTreeMap<i32, Vec<i32>>,
@@ -27,14 +47,19 @@ pub(super) struct Dom {
 
 impl Dom {
     pub fn update(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
-        self.update_capture(snapshot, false)
+        self.update_capture(Arc::new(snapshot), false)
     }
 
+    #[cfg(test)]
     pub fn update_index(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
+        self.update_capture(Arc::new(snapshot), true)
+    }
+
+    pub fn update_shared_index(&mut self, snapshot: Arc<Snapshot>) -> Result<bool, Error> {
         self.update_capture(snapshot, true)
     }
 
-    fn update_capture(&mut self, snapshot: Snapshot, index_only: bool) -> Result<bool, Error> {
+    fn update_capture(&mut self, snapshot: Arc<Snapshot>, index_only: bool) -> Result<bool, Error> {
         let reset = self.snapshot.as_ref().is_some_and(|old| {
             old.status != snapshot.status
                 || (old.capture != snapshot.capture
@@ -98,18 +123,31 @@ impl Dom {
             })
             .collect();
 
-        for (element, existing) in snapshot.elements.iter().zip(existing) {
+        for (index, existing) in existing.into_iter().enumerate() {
             let existing = existing.filter(|(id, _)| !used.contains(id));
-            let mut element = element.clone();
+
+            let mut element = CapturedElement {
+                capture: Arc::clone(&snapshot),
+                index,
+                details: None,
+            };
 
             let id = if let Some((id, old)) = existing {
                 // A paged index intentionally omits details. Retain the last observed
                 // style until InspectElement refreshes it; absence is not a CSS change.
-                if index_only {
-                    element.styles = old.styles.clone();
-                    element.resolved = old.resolved.clone();
-                    element.box_model = old.box_model.clone();
-                    element.style_overrides = old.style_overrides.clone();
+                if index_only
+                    && (old.styles.is_some()
+                        || old.resolved.is_some()
+                        || old.box_model.is_some()
+                        || !old.style_overrides.is_empty())
+                {
+                    let mut hydrated = (*element).clone();
+
+                    hydrated.styles = old.styles.clone();
+                    hydrated.resolved = old.resolved.clone();
+                    hydrated.box_model = old.box_model.clone();
+                    hydrated.style_overrides = old.style_overrides.clone();
+                    element.details = Some(Arc::new(hydrated));
                 }
 
                 if old.accessibility != element.accessibility {
@@ -405,17 +443,8 @@ impl Dom {
             .get(&search)
             .ok_or_else(|| Error::new(-32000, "Search expired; repeat the search"))?;
 
-        let from = params["fromIndex"]
-            .as_u64()
-            .and_then(|v| usize::try_from(v).ok());
-
-        let to = params["toIndex"]
-            .as_u64()
-            .and_then(|v| usize::try_from(v).ok());
-
-        let (Some(from), Some(to)) = (from, to) else {
-            return Err(Error::new(-32602, "Search range requires integer indices"));
-        };
+        let range: super::params::SearchRange = super::params::decode(params)?;
+        let (from, to) = (range.from_index, range.to_index);
 
         if from >= to || to > results.len() {
             return Err(Error::new(-32602, "Invalid search result range"));
@@ -795,6 +824,7 @@ impl Dom {
     fn element(&self, id: i32) -> Result<&Element, Error> {
         self.nodes
             .get(&id)
+            .map(|element| &**element)
             .ok_or_else(|| Error::new(-32000, "Node is stale or unavailable; refresh the document"))
     }
 
@@ -803,7 +833,7 @@ impl Dom {
     }
 
     fn ax_node(&self, id: i32) -> Value {
-        let element = self.nodes.get(&id);
+        let element = self.nodes.get(&id).map(|element| &**element);
 
         let parent = element.map(|element| {
             element
@@ -1015,6 +1045,30 @@ impl Dom {
         })
     }
 
+    pub fn acknowledge_style(
+        &mut self,
+        id: i32,
+        edit: &rake_protocol::inspection::StyleEdit,
+    ) -> Result<(), Error> {
+        use rake_protocol::inspection::StyleEdit;
+        let mut element = self.element(id)?.clone();
+
+        match edit {
+            StyleEdit::Replace { declarations } => element.style_overrides.clone_from(declarations),
+            StyleEdit::Set { declaration } => {
+                element
+                    .style_overrides
+                    .retain(|old| old.property != declaration.property);
+                element.style_overrides.push(declaration.clone());
+            }
+            StyleEdit::Reset => element.style_overrides.clear(),
+            // Only the runtime owns undo history. Its next poll publishes the restored value.
+            StyleEdit::Undo => return Ok(()),
+        }
+
+        self.details(id, element)
+    }
+
     pub fn control_id(&self, id: i32) -> Result<&str, Error> {
         Ok(&self.element(id)?.id)
     }
@@ -1035,7 +1089,7 @@ impl Dom {
             self.style_updates.insert(id);
         }
 
-        self.nodes.insert(id, element);
+        self.nodes.get_mut(&id).expect("validated node").details = Some(Arc::new(element));
 
         Ok(())
     }
@@ -1199,9 +1253,7 @@ impl Dom {
     }
 
     pub fn push_nodes(&mut self, params: &Value) -> Result<(Value, Vec<Value>), Error> {
-        let ids = params["backendNodeIds"]
-            .as_array()
-            .ok_or_else(|| Error::new(-32602, "backendNodeIds required"))?;
+        let ids: Vec<super::params::NodeId> = super::params::decode(&params["backendNodeIds"])?;
 
         if !self.sent.contains(&1) {
             return Err(Error::new(-32000, "Request the document first"));
@@ -1212,10 +1264,7 @@ impl Dom {
         let nodes: Vec<_> = ids
             .iter()
             .map(|value| {
-                let id = value
-                    .as_i64()
-                    .and_then(|id| i32::try_from(id).ok())
-                    .unwrap_or(0);
+                let id = value.get();
 
                 if id == 1 || self.nodes.contains_key(&id) {
                     self.send_path(id, &mut events)?;
@@ -1400,30 +1449,6 @@ fn attributes(element: &Element) -> Vec<String> {
     }
 
     attrs
-}
-
-fn node_id(params: &Value) -> Result<i32, Error> {
-    params["nodeId"]
-        .as_i64()
-        .or_else(|| params["backendNodeId"].as_i64())
-        .and_then(|id| i32::try_from(id).ok())
-        .ok_or_else(|| Error::new(-32602, "nodeId required"))
-}
-
-fn depth(params: &Value, default: i64) -> Result<usize, Error> {
-    let depth = if params.get("depth").is_some() {
-        params["depth"]
-            .as_i64()
-            .ok_or_else(|| Error::new(-32602, "depth must be an integer"))?
-    } else {
-        default
-    };
-
-    match depth {
-        -1 => Ok(rake_protocol::inspection::MAX_ELEMENTS + 1),
-        0.. => Ok((depth as usize).min(rake_protocol::inspection::MAX_ELEMENTS + 1)),
-        _ => Err(Error::new(-32602, "depth must be -1 or nonnegative")),
-    }
 }
 
 #[cfg(test)]

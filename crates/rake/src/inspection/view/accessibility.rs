@@ -103,7 +103,7 @@ pub(super) fn capture<E: Element>(
 }
 
 pub(super) fn names(snapshot: &mut Snapshot) {
-    let indices: std::collections::BTreeMap<_, _> = snapshot
+    let indices: std::collections::HashMap<_, _> = snapshot
         .elements
         .iter()
         .enumerate()
@@ -130,11 +130,45 @@ pub(super) fn names(snapshot: &mut Snapshot) {
             }
         }
     }
+    let needs_name: Vec<_> = snapshot
+        .elements
+        .iter()
+        .map(|element| {
+            element.accessibility.as_ref().is_some_and(|a11y| {
+                a11y.label.is_none()
+                    && element.text.is_none()
+                    && matches!(
+                        a11y.role.as_deref(),
+                        Some(
+                            "Button"
+                                | "Link"
+                                | "Heading"
+                                | "CheckBox"
+                                | "RadioButton"
+                                | "Switch"
+                                | "MenuItem"
+                                | "Tab"
+                        )
+                    )
+            })
+        })
+        .collect();
+
+    let mut needed = needs_name.clone();
+
+    for i in 0..snapshot.elements.len() {
+        if needed[i] {
+            for &child in &children[i] {
+                needed[child] = true;
+            }
+        }
+    }
+
     let mut contents = vec![String::new(); snapshot.elements.len()];
     let mut clipped = vec![false; snapshot.elements.len()];
     for i in (0..snapshot.elements.len()).rev() {
         let element = &snapshot.elements[i];
-        if element.accessibility.as_ref().is_some_and(|a| a.hidden) {
+        if !needed[i] || element.accessibility.as_ref().is_some_and(|a| a.hidden) {
             continue;
         }
         if let Some(label) = element
@@ -164,22 +198,8 @@ pub(super) fn names(snapshot: &mut Snapshot) {
             }
         }
         let element = &mut snapshot.elements[i];
-        if let Some(a11y) = &mut element.accessibility
-            && a11y.label.is_none()
-            && element.text.is_none()
-            && matches!(
-                a11y.role.as_deref(),
-                Some(
-                    "Button"
-                        | "Link"
-                        | "Heading"
-                        | "CheckBox"
-                        | "RadioButton"
-                        | "Switch"
-                        | "MenuItem"
-                        | "Tab"
-                )
-            )
+        if needs_name[i]
+            && let Some(a11y) = &mut element.accessibility
         {
             a11y.name = (!contents[i].is_empty()).then(|| contents[i].clone());
             a11y.name_source = a11y.name.as_ref().map(|_| "contents".into());

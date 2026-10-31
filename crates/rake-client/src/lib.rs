@@ -11,6 +11,71 @@ use std::path::PathBuf;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
+#[cfg(not(target_family = "wasm"))]
+thread_local! {
+    static DEADLINE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Limits every blocking exchange in a synchronous operation to one total deadline.
+/// Nested scopes can shorten the deadline. The previous scope is restored on unwind.
+/// This does not cancel a request already delivered or automatically retry mutations.
+/// Do not return an unpolled future: the scope applies only while `operation` runs.
+#[cfg(not(target_family = "wasm"))]
+pub fn with_deadline<T>(deadline: std::time::Instant, operation: impl FnOnce() -> T) -> T {
+    struct Restore(Option<std::time::Instant>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DEADLINE.set(self.0);
+        }
+    }
+    let previous = DEADLINE.get();
+    let _restore = Restore(previous);
+
+    DEADLINE.set(Some(previous.map_or(deadline, |old| old.min(deadline))));
+
+    operation()
+}
+
+/// Returns the current thread's enclosing blocking-operation deadline, if any.
+/// Use it to stop polling or computation before another exchange exhausts the scope.
+/// A returned instant does not extend or cancel a scope established by [`with_deadline`].
+///
+/// Discarding the deadline is diagnosed when unused results are denied:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// rake_client::current_deadline();
+/// ```
+#[cfg(not(target_family = "wasm"))]
+#[must_use]
+pub fn current_deadline() -> Option<std::time::Instant> {
+    DEADLINE.get()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn remaining(timeout: Duration) -> std::io::Result<Duration> {
+    if timeout.is_zero() || std::time::Instant::now().checked_add(timeout).is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid control timeout",
+        ));
+    }
+
+    let timeout = DEADLINE.get().map_or(timeout, |deadline| {
+        timeout.min(deadline.saturating_duration_since(std::time::Instant::now()))
+    });
+
+    if timeout.is_zero() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "control operation deadline expired",
+        ))
+    } else {
+        Ok(timeout)
+    }
+}
+
 #[cfg(unix)]
 pub mod local;
 
@@ -106,6 +171,8 @@ pub fn query(instance: &Instance, query: Query, timeout: Duration) -> Result<Rep
 /// (including timeouts and redirects), and [`Error::Control`] for runtime rejection.
 #[cfg(not(target_family = "wasm"))]
 pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Result<Reply, Error> {
+    let timeout = remaining(timeout)?;
+
     let reply = match &instance.endpoint {
         Endpoint::Local { path } => {
             #[cfg(unix)]
