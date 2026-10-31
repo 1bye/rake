@@ -227,14 +227,16 @@ the library's whitespace suggestions and then reruns the check.
 
 ## Current boundary
 
-Installers, notarization and durable sessions remain subsequent stages. Native code
+Packaging, signing and publication are described in [distribution](docs/distribution.md).
+Durable sessions remain separate. Native code
 replacement awaits the external hot reloader; native dev currently uses an explicitly
 reported checkpointed restart. Runtime control is opt-in, native IPC currently requires Unix, and state watches coalesce with
 explicit revision gaps. Native routed applications support multiple windows; Web
 keeps one host and reports `NewWindow` as unsupported. Host visibility is measured in Web
 and on macOS; other native backends report Unknown. Development reload checkpoints
 restore compatible workspaces and opt-in entry data; durable sessions are separate.
-`App::root` remains available for applications that do not use routing.
+`App::root` and `App::root_with` support managed applications without navigation.
+See [application shapes](docs/application.md) for root, background and headless hosts.
 
 HTTP request diagnostics cover Rake clients and the native GPUI adapter; browser
 GPUI-internal requests currently use GPUI's own Fetch adapter. Third-party clients

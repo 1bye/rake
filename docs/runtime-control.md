@@ -22,21 +22,25 @@ use rake::prelude::*;
 // App::new("example.notes").routes(Views).control(ControlConfig::FromEnvironment)
 ```
 
-`App::root(...).control(ControlConfig::FromEnvironment)` opts a standalone root into
-inspection using the same native environment flag or authenticated Web metadata.
-It advertises only Info, Schema, diagnostics and element tree/lookup/picking queries,
-plus transient highlight, picker and registered focus/scroll actions. It creates
-no router workspace, application operations or retry-key registry. Unsupported
-requests return `ControlError::Unsupported`; clients must use the advertised
-capabilities. The HTML inspector opens Elements for these hosts and omits queries
-for absent workspace state. Native root disposal removes its discovery files and
-socket; Web disposal aborts its authenticated bridge and outstanding I/O.
+`App::root(...).control(ControlConfig::FromEnvironment)` and
+`App::root_with(...).control(ControlConfig::FromEnvironment)` opt a standalone root
+into the same native environment flag or authenticated Web metadata. `App::root`
+keeps its existing `Services` closure signature; `App::root_with` additionally
+receives a weak `RuntimeContext` for managed tasks, commands, guarded quit and
+update restart. A root has no router navigation, tabs or retained route workspace,
+but its `RuntimeClient<NoRoute>` still exposes commands, managed work, guarded quit,
+inspection and updater actions. Unsupported navigation requests return
+`ControlError::Unsupported`; clients must use the advertised capabilities. The HTML
+inspector omits queries for absent workspace state. Native root disposal removes its
+discovery files and socket; Web disposal aborts its authenticated bridge and
+outstanding I/O. `App::background(...)` provides the same managed context to a
+native-only host without opening an initial window.
 
-Registering application commands on `App::root` still returns
-`ControlRequiresRouter` before startup. Use `App::routes` for managed application
-commands, guards, tabs and checkpointed restoration. Headless hosts can construct a
-`Router<NoRoute>`, register handlers and drive it without a GUI. All hosts remain
-disabled by default, in debug and release builds.
+Standalone roots can register application commands, quit guards and managed work in
+the same application builder as routed apps. `App::routes` is still required for
+navigation, retained tabs/entries and checkpointed workspace restoration. Headless
+hosts can construct a `Router<NoRoute>`, register handlers and drive it without a
+GUI. All hosts remain disabled by default, in debug and release builds.
 
 Build and run the terminal client locally:
 
@@ -220,9 +224,10 @@ assert!(matches!(reply, Reply::Submitted { .. }));
 A GUI factory can use `App::commands(registry)` or fallible
 `App::command::<Describe, _, _>(handler)` before startup. The latter returns
 `Result<App<_>, CommandError>` so duplicate keys never silently replace handlers.
-Application commands currently require the routed runner (`App::routes`). A
-headless `Router<NoRoute>` can drive the same registry without mounting views.
-The registry accepts at most 256 commands; registration freezes each descriptor.
+Commands work in routed apps, managed standalone roots and headless
+`Router<NoRoute>` hosts. A root has no navigation surface, while a routed runner
+also provides tabs, entries and checkpointed restoration. The registry accepts at
+most 256 commands; registration freezes each descriptor.
 The derive requires a concrete struct and a 1–128 byte ID without whitespace;
 unknown/duplicate command options fail compilation. Named, tuple, newtype and unit
 structs are supported. `output` defaults to `()`; `capability` defaults to

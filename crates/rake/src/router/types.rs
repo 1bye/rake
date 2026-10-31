@@ -5,6 +5,8 @@ use super::{
     OperationError, OperationId, Outcome, Route, TabId, TabMode, WindowId,
 };
 
+use crate::quit::QuitOptions;
+
 use futures::future::{LocalBoxFuture, Shared};
 use std::rc::Rc;
 
@@ -56,6 +58,20 @@ impl<T: Clone> Operation<T> {
     pub async fn wait(self) -> Result<Outcome<T>, OperationError> {
         self.result.await
     }
+}
+
+/// Application-wide quit guard input.
+///
+/// Rake invokes these guards after finite work and retained-entry guards have
+/// approved the quit, immediately before managed work is stopped. The callback
+/// owns any application state it needs to inspect and should re-read that state
+/// before returning `Ok(())`; Rake cannot revalidate state outside the router.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuitGuardContext {
+    /// The quit operation being evaluated.
+    pub operation_id: OperationId,
+    /// The finite-work policy selected by the initiating quit request.
+    pub options: QuitOptions,
 }
 
 /// An owned guard input. No UI context is borrowed across its async work.

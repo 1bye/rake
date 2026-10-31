@@ -16,7 +16,21 @@ use crate::router::{
 
 use std::rc::Rc;
 
-type Root = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
+type Root = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut Window, &mut gpui::App) -> AnyView>;
+type WindowRoot = Box<dyn FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView>;
+type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
+
+/// What closing a standalone application's window requests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClosePolicy {
+    /// Run application quit guards and stop managed work before exiting.
+    #[default]
+    Quit,
+    /// Close the window while keeping the application's background runtime alive.
+    KeepRunning,
+}
+
+mod managed;
 
 #[cfg(feature = "experimental-view")]
 type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
@@ -27,9 +41,6 @@ fn install_themes(themes: Vec<ThemeInstaller>, cx: &mut gpui::App) {
         install(cx);
     }
 }
-
-#[cfg(feature = "devtools")]
-mod standalone;
 
 #[cfg(target_family = "wasm")]
 thread_local! {
@@ -49,6 +60,10 @@ pub struct App<R: Route = NoRoute> {
     http: HttpConfig,
     diagnostics: DiagnosticsConfig,
     root: Option<Root>,
+    background: Option<Background>,
+    close_policy: ClosePolicy,
+    route_options: bool,
+    quit_guards: Vec<crate::router::runtime::QuitGuard>,
     routes: Option<Rc<dyn RouteViews<R>>>,
     initial: Option<R>,
     router: RouterConfig,
@@ -73,6 +88,10 @@ impl App<NoRoute> {
             http: HttpConfig::new(),
             diagnostics: DiagnosticsConfig::new(),
             root: None,
+            background: None,
+            close_policy: ClosePolicy::default(),
+            route_options: false,
+            quit_guards: Vec::new(),
             routes: None,
             initial: None,
             router: RouterConfig::default(),
@@ -110,6 +129,10 @@ impl App<NoRoute> {
             http: self.http,
             diagnostics: self.diagnostics,
             root: self.root,
+            background: self.background,
+            close_policy: self.close_policy,
+            route_options: self.route_options,
+            quit_guards: self.quit_guards,
             routes: Some(Rc::new(routes)),
             initial: None,
             router: self.router,
@@ -190,6 +213,7 @@ impl<R: Route> App<R> {
     /// Shows the default routing tab/quit controls. Disable for an application-owned
     /// shell; shared guard decisions, errors, lifecycle and quit shortcuts remain active.
     pub fn workspace_chrome(mut self, visible: bool) -> Self {
+        self.route_options = true;
         self.workspace_chrome = visible;
 
         self
@@ -197,6 +221,7 @@ impl<R: Route> App<R> {
 
     /// Sets the native initial destination. Browser deep links take precedence.
     pub fn initial(mut self, destination: R) -> Self {
+        self.route_options = true;
         self.initial = Some(destination);
 
         self
@@ -204,6 +229,7 @@ impl<R: Route> App<R> {
 
     /// Configures browser path/hash routing.
     pub fn web(mut self, config: WebConfig) -> Self {
+        self.route_options = true;
         self.web = config;
 
         self
@@ -230,8 +256,8 @@ impl<R: Route> App<R> {
         self
     }
 
-    /// Opts into development control. Standalone roots expose inspection/diagnostics;
-    /// routed applications also expose workspace operations and registered commands.
+    /// Opts into development control for commands, work, shutdown and inspection.
+    /// Routed applications additionally expose workspace operations.
     /// Both release and debug builds default to disabled.
     pub fn control(mut self, config: crate::control::ControlConfig) -> Self {
         self.control = config;
@@ -252,6 +278,7 @@ impl<R: Route> App<R> {
         F: Fn(GuardContext<R>) -> Fut + 'static,
         Fut: std::future::Future<Output = GuardResult> + 'static,
     {
+        self.route_options = true;
         self.guards
             .push(Rc::new(move |context| Box::pin(guard(context))));
 
@@ -277,8 +304,60 @@ impl<R: Route> App<R> {
         mut self,
         mount: impl FnOnce(Services, &mut Window, &mut gpui::App) -> AnyView + 'static,
     ) -> Self {
-        self.root = Some(Box::new(mount));
+        self.root = Some(Box::new(move |runtime, window, cx| {
+            mount(runtime.services(), window, cx)
+        }));
 
+        self
+    }
+
+    /// Mounts a standalone view with managed tasks, commands, quit and update actions.
+    /// The context is weak: retaining it never keeps a closed runtime alive.
+    #[must_use]
+    pub fn root_with(
+        mut self,
+        mount: impl FnOnce(crate::runtime::RuntimeContext, &mut Window, &mut gpui::App) -> AnyView
+        + 'static,
+    ) -> Self {
+        self.root = Some(Box::new(mount));
+        self
+    }
+
+    /// Starts the native application runtime without opening an initial window.
+    /// Use the GPUI app context to install a tray or other platform-owned UI.
+    /// Browser hosts reject this mode explicitly.
+    #[must_use]
+    pub fn background(
+        mut self,
+        setup: impl FnOnce(crate::runtime::RuntimeContext, &mut gpui::App) + 'static,
+    ) -> Self {
+        self.background = Some(Box::new(setup));
+        self
+    }
+
+    /// Chooses standalone window close behavior consistently across native platforms.
+    #[must_use]
+    pub fn close_policy(mut self, policy: ClosePolicy) -> Self {
+        self.close_policy = policy;
+        self
+    }
+
+    /// Configures managed work and operation bounds for either application shape.
+    #[must_use]
+    pub fn runtime_config(self, config: RouterConfig) -> Self {
+        self.router(config)
+    }
+
+    /// Registers an application-wide asynchronous shutdown check before startup.
+    /// Guards apply to standalone, background and routed apps, including update restart.
+    #[must_use]
+    pub fn quit_guard<F, Fut>(mut self, guard: F) -> Self
+    where
+        F: Fn(crate::quit::QuitGuardContext) -> Fut + 'static,
+        Fut: std::future::Future<Output = Result<(), crate::router::GuardReason>> + 'static,
+    {
+        self.quit_guards
+            .push(Rc::new(move |context| Box::pin(guard(context))));
         self
     }
 
@@ -341,12 +420,20 @@ impl<R: Route> App<R> {
         }
         let services = self.services()?;
 
-        if self.root.is_some() && self.routes.is_some() {
+        if usize::from(self.root.is_some())
+            + usize::from(self.routes.is_some())
+            + usize::from(self.background.is_some())
+            > 1
+        {
             return Err(AppError::ConflictingRoots);
         }
 
-        if self.routes.is_none() && !self.commands.descriptors().is_empty() {
-            return Err(AppError::ControlRequiresRouter);
+        if self.routes.is_none() && self.route_options {
+            return Err(AppError::RoutingRequiresRoutes);
+        }
+        #[cfg(target_family = "wasm")]
+        if self.background.is_some() {
+            return Err(AppError::BackgroundUnsupported);
         }
 
         #[cfg(target_family = "wasm")]
@@ -359,7 +446,16 @@ impl<R: Route> App<R> {
             .as_ref()
             .and_then(|_| crate::reload::host::load(self.control));
 
-        let root: Root = if let Some(routes) = self.routes.take() {
+        let managed = managed::ManagedConfig {
+            config: self.router.clone(),
+            control: self.control,
+            commands: self.commands.clone(),
+            application_id: self.id.clone(),
+            close_policy: self.close_policy,
+            quit_guards: self.quit_guards.clone(),
+        };
+        let background_config = self.background.as_ref().map(|_| managed.clone());
+        let root: Option<WindowRoot> = if let Some(routes) = self.routes.take() {
             #[cfg(not(target_family = "wasm"))]
             let initial = {
                 let destination = self
@@ -393,8 +489,9 @@ impl<R: Route> App<R> {
             let commands = self.commands;
             let application_id = self.id.clone();
             let chrome = self.workspace_chrome;
+            let quit_guards = self.quit_guards;
 
-            Box::new(move |services, window, cx| {
+            Some(Box::new(move |services, window, cx| {
                 let root = crate::router::view::RoutingRoot {
                     views: routes,
                     initial,
@@ -406,6 +503,7 @@ impl<R: Route> App<R> {
                     commands,
                     application_id,
                     chrome,
+                    quit_guards,
                 };
 
                 match crate::router::view::Workspace::mount(services, root, window, cx) {
@@ -416,24 +514,15 @@ impl<R: Route> App<R> {
                         cx.new(|_| gpui::Empty).into()
                     }
                 }
-            })
+            }))
+        } else if let Some(mount) = self.root.take() {
+            Some(Box::new(move |services, window, cx| {
+                managed::mount(mount, services, managed, window, cx)
+            }))
+        } else if self.background.is_some() {
+            None
         } else {
-            let mount = self.root.take().ok_or(AppError::MissingRoot)?;
-            #[cfg(feature = "devtools")]
-            let control = self.control;
-            #[cfg(feature = "devtools")]
-            let application_id = self.id.clone();
-            Box::new(move |services, window, cx| {
-                #[cfg(feature = "devtools")]
-                {
-                    let content = mount(services.clone(), window, cx);
-                    standalone::mount(content, &services, control, application_id, cx)
-                }
-                #[cfg(not(feature = "devtools"))]
-                {
-                    mount(services, window, cx)
-                }
-            })
+            return Err(AppError::MissingRoot);
         };
 
         self.diagnostics.install()?;
@@ -477,6 +566,14 @@ impl<R: Route> App<R> {
                 });
                 cx.set_global(UpdatesDriver { _task: task });
             }
+            let Some(root) = root else {
+                if let Some(setup) = self.background {
+                    let managed = background_config
+                        .expect("background configuration validated before launch");
+                    managed::background(setup, services, managed, cx);
+                }
+                return;
+            };
             match cx.open_window(self.window_options, move |window, cx| {
                 let view = root(services, window, cx);
 
@@ -508,11 +605,19 @@ pub enum AppError {
     #[cfg(feature = "updates")]
     #[error(transparent)]
     Updates(#[from] rake_updates::Error),
+    /// A route-only builder option was supplied to a standalone app.
+    #[error("routing options require App::routes")]
+    RoutingRequiresRoutes,
+    /// Background native apps have no browser host equivalent.
+    #[error("background applications require a native host")]
+    BackgroundUnsupported,
+    /// Legacy error retained for source compatibility; standalone apps now support commands.
+    #[deprecated(note = "standalone application commands are supported")]
     /// Registered application commands require a typed router operation owner.
     #[error("application commands require App::routes; App::root supports inspection only")]
     ControlRequiresRouter,
     /// Configure a root-only view or a typed route registry, rather than both.
-    #[error("App::root and App::routes cannot both own the root")]
+    #[error("choose only one of App::root, App::root_with, App::routes or App::background")]
     ConflictingRoots,
     /// The initial deep link could not be decoded.
     #[error(transparent)]

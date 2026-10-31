@@ -64,9 +64,19 @@ needed; it may contain unsaved development data and large build artifacts.
 Routed and standalone root applications opt in with `ControlConfig::FromEnvironment`. Native dev sets
 `RAKE_DEV_CONTROL=1` and a private control directory; Web uses the authenticated
 same-origin development bridge. Ordinary builds enable neither adapter by default.
-Root-only applications cannot checkpoint a router workspace; native dev keeps an
-unmanaged app running when a reload cannot be coordinated. The explicit
-`--restart-without-state` option allows process restart for such apps.
+`App::root` keeps its `Services` mount signature; `App::root_with` receives a weak
+`RuntimeContext` with the managed command, task, quit and update-restart boundary.
+Standalone roots do not have router navigation or a checkpointed workspace. Their
+reload is a fresh root replacement, and the supervisor first ensures the old host
+reaches the managed runtime boundary before replacing it. If that host hand-off
+cannot be coordinated, the old app remains usable; `--restart-without-state`
+explicitly permits a process restart without restored state.
+
+`App::background(...)` is native-only and starts the managed runtime without an
+initial window; browser hosts reject it. Standalone window close uses
+`ClosePolicy::Quit` by default, running quit guards and stopping managed work.
+Choose `ClosePolicy::KeepRunning` explicitly when closing a window should leave the
+application runtime and its background work alive.
 
 The shared Rust/control/CLI surface provides:
 
@@ -78,11 +88,13 @@ ctl reload abort BOUNDARY_ID
 ctl reload apply BOUNDARY_ID
 ```
 
-Preparation requires settled operations and decisions. It stops navigation,
-application-command and one-shot task admission, rejects old publications, cancels
-managed futures, and detaches the route outlet at a UI frame boundary. `ready` means
-managed futures have been dropped and every window has acknowledged detachment
-(hidden hosts do not wait for a presentation frame). The checkpoint is captured only then.
+Preparation requires settled operations and decisions. Routed hosts stop navigation;
+all hosts stop application-command and one-shot task admission, reject old
+publications, cancel managed futures, and detach their managed root or route outlet
+at a UI frame boundary. `ready` means managed futures have been dropped and every
+window has acknowledged detachment (hidden hosts do not wait for a presentation
+frame). A routed checkpoint is captured only then; standalone roots use fresh state
+instead of inventing a router checkpoint.
 Abort resumes eligible factories with fresh RunIds. One-shot tasks are cancelled
 and are never automatically replayed. External saves and network effects are not
 rolled back by this boundary.
@@ -183,9 +195,9 @@ checkpoint for a later build or explicit restart. The page displays build/reload
 failures and reconnects to the broker independently of application diagnostics.
 Static production builds have no bridge or reload polling.
 
-Standalone `App::root` pages can also expose inspection through the authenticated
-Web bridge. Their published-build reload uses full-page replacement with fresh
-local state; no router checkpoint or `restored_from` lineage is invented. Select
-the new runtime explicitly in an attached inspector. Routed pages retain the
-checkpointed restoration behavior above. Controlled Wasm module swapping is not
-implemented.
+Standalone `App::root` and `App::root_with` pages can also expose inspection through
+the authenticated Web bridge. Their published-build reload uses full-page
+replacement with fresh local state; no router checkpoint or `restored_from` lineage
+is invented. Select the new runtime explicitly in an attached inspector. Routed
+pages retain the checkpointed restoration behavior above. Controlled Wasm module
+swapping is not implemented.

@@ -8,6 +8,22 @@ For navigation, retained `PageContext`, shared services, in-app update controls,
 dirty-state guards and a publishing configuration together, see the
 [small desktop app](../examples/desktop/README.md).
 
+## Application shapes
+
+`App::routes` is the routed desktop shape: it provides navigation, retained tabs and
+entries, workspace history and checkpointed restoration. `App::root` remains the
+compatible `Services`-based standalone mount. `App::root_with` gives the standalone
+mount a weak `RuntimeContext` for managed tasks, application commands, guarded quit
+and updater restart while deliberately omitting router navigation and retained
+workspace state. Both root forms share the application runtime and quit boundary;
+the old `Services` closure does not need to change when adopting the managed host.
+
+`App::background` is native-only and starts the managed runtime without an initial
+window. Standalone close uses `ClosePolicy::Quit` by default, so guards run and
+managed work stops; `ClosePolicy::KeepRunning` is an explicit opt-in for a window
+that may close while the runtime remains alive. Custom non-GPUI hosts still own
+their runtime driver and lifecycle integration directly.
+
 ```toml
 [package.metadata.rake.bundle]
 schema_version = 1
@@ -178,19 +194,22 @@ environment references or the macOS Keychain. See [release signing](distribution
 Ownership is bound into the executable and signed installation descriptor.
 Sparkle, Velopack and standalone AppImage have provider-specific adapters; APT,
 RPM, pacman, Flatpak and MSIX remain managed by their installation channel.
-Routed workspaces use their existing save/work/window quit guards for restart.
-Standalone roots and custom hosts must provide an explicit approval callback;
-staging alone never authorizes their shutdown. Blocking network/SDK operations
-belong on an application-owned background worker. Sparkle remains main-thread
-owned and its SDK UI is integrated with routed workspace update controls.
+Routed workspaces and managed standalone roots use their existing save/work/window
+quit guards for restart. A standalone `RuntimeContext` exposes the updater restart
+action through that same guarded boundary; staging alone never authorizes shutdown.
+Custom hosts must still provide an explicit approval callback and commit their own
+handoff. Blocking network/SDK operations belong on an application-owned background
+worker. Sparkle remains main-thread owned and its SDK UI is integrated with routed
+workspace update controls.
 
 ### In-app update state
 
 Native `App` instances register one shared `rake::updates::UpdateController` when
 installed policy is available. The application owns its foreground driver and
 background work. No periodic checks or downloads start automatically. Routed
-workspace chrome shows availability/progress and offers check, download/cancel,
-and guarded restart actions through the same controller on each platform.
+workspace chrome and managed standalone hosts expose availability/progress and
+offer check, download/cancel and guarded restart actions through the same controller
+on each platform.
 
 Custom views resolve the same service through `page.services()` or root `Services`:
 
@@ -220,9 +239,10 @@ native dialog. Its display version comes from the SDK's eligible appcast item.
 still owns download, extraction and installation. Windows and AppImage publish
 transfer progress directly into the shared model.
 
-`router.restart_for_update(options)` submits ready staging through existing
-save/work/window guards. Custom hosts take `updates.restart_handoff(args)` and
-commit it only after their own approval; dropping or declining it does not install.
+`router.restart_for_update(options)` and the standalone runtime's updater action
+submit ready staging through existing save/work/window guards. Custom hosts take
+`updates.restart_handoff(args)` and commit it only after their own approval;
+dropping or declining it does not install.
 Package-manager builds report `ManagedExternally`, and unbundled development apps
 normally have no installed update service.
 

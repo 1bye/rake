@@ -1,8 +1,8 @@
 //! One global quit operation reuses entry decisions and coordinates existing work.
 
 use super::{
-    Action, Core, DisposeReason, GuardKind, Job, Navigator, Operation, OperationError, OperationId,
-    OperationState, Outcome, Route, Router, Stop, guard,
+    Action, BlockReason, Core, DisposeReason, GuardKind, Job, Navigator, Operation, OperationError,
+    OperationId, OperationState, Outcome, QuitGuardContext, Route, Router, Stop, guard,
 };
 
 use crate::http::CancellationToken;
@@ -16,6 +16,7 @@ use futures::{
 };
 
 use std::rc::Rc;
+use tracing::Instrument;
 
 impl<R: Route> Core<R> {
     pub(super) fn quit_status(&self, work: &crate::tasks::WorkSnapshot) -> QuitStatus {
@@ -357,6 +358,21 @@ async fn transition<R: Route>(
             continue;
         }
 
+        core.quit.borrow_mut().phase = QuitPhase::Guarding;
+        core.notify();
+        run_quit_guards(core, id, options).await?;
+        let pending = core.quit_status(&core.tasks.snapshot());
+        if !pending.pending_tasks.is_empty() || !pending.pending_operations.is_empty() {
+            continue;
+        }
+
+        if approvals
+            .iter()
+            .any(|(entry, revision)| !entry.alive.get() || entry.revision.get() != *revision)
+        {
+            continue;
+        }
+
         // Last cancellation check, including a request made synchronously by a guard.
         if core
             .state
@@ -402,6 +418,30 @@ async fn transition<R: Route>(
 
         return Ok(());
     }
+}
+
+async fn run_quit_guards<R: Route>(
+    core: &Core<R>,
+    operation_id: OperationId,
+    options: QuitOptions,
+) -> Result<(), Stop> {
+    let context = QuitGuardContext {
+        operation_id,
+        options,
+    };
+    let guards = core.quit_guards.borrow().clone();
+
+    for guard in guards {
+        guard(context)
+            .instrument(tracing::info_span!(
+                "router.quit_guard",
+                operation_id = %operation_id
+            ))
+            .await
+            .map_err(|reason| Stop::Blocked(BlockReason::Guard(reason)))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(feature = "gpui")]

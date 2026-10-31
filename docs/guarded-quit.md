@@ -39,6 +39,17 @@ mark the saved state clean. Failed saves and denied guards block quit. Cancel
 preserves the workspace. No entries are partially disposed while later entries
 still need approval. Completed saves are external effects and are not rolled back.
 
+Applications can register `Router::quit_guard` before starting `Router::run` for
+state that is not represented by a retained route entry. These asynchronous
+callbacks run after finite work and entry approvals, immediately before
+`Stopping`; `QuitGuardContext` supplies the operation ID and selected
+`QuitOptions`. Return `Err(GuardReason(...))` to block quit. The callback owns
+its application state and must re-read it before returning `Ok(())`; Rake
+rechecks retained-entry revisions after the callback pass, but cannot
+revalidate arbitrary external state. Cancelling the quit while a callback is
+pending uses the same outer operation cancellation path and preserves the
+workspace.
+
 ## Running work and cancellation
 
 `QuitOptions::jobs` selects an explicit policy:
@@ -124,8 +135,9 @@ On Web, a committed quit disposes the workspace and shows “Application closed.
 The document and development bridge remain available for status queries. It does
 not attempt to close the browser window. Before a real browser close/reload or
 cross-document navigation, `beforeunload` requests the browser's standard warning
-when dirty entries, finite tasks or operations remain. Browsers control whether
-that warning appears, often requiring prior user interaction. They cannot run
+when dirty entries, finite tasks or operations remain, or when an application-wide
+quit guard is registered. The last condition is conservative: browsers control
+whether that warning appears, often requiring prior user interaction. They cannot run
 the asynchronous Rake decision flow during document destruction; no save or
 durable-job guarantee follows from that warning. A supervised Web reload permits
 its next unload only after saving the final compatible checkpoint; reload API

@@ -11,7 +11,7 @@ struct Message {
 
 struct Foundation {
     status: String,
-    services: Services,
+    runtime: RuntimeContext,
     request: Option<Task<()>>,
 }
 
@@ -44,7 +44,7 @@ impl Render for Foundation {
                     .cursor_pointer()
                     .child("Load JSON")
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let http = this.services.http();
+                        let http = this.runtime.services().http();
 
                         this.status = "Loading…".into();
                         this.request = Some(cx.spawn(async move |view, cx| {
@@ -69,6 +69,26 @@ impl Render for Foundation {
                         cx.notify();
                     })),
             )
+            .child(
+                div()
+                    .id("managed-job")
+                    .px_4()
+                    .py_2()
+                    .cursor_pointer()
+                    .child("Run managed job")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let work = this.runtime.tasks().spawn("example-job", async {
+                            rake::tasks::sleep(std::time::Duration::from_secs(1)).await;
+                            rake::info!("Managed example job finished");
+                            Ok(())
+                        });
+                        this.status = match work {
+                            Ok(_) => "Job started; normal quit waits for it to finish".into(),
+                            Err(error) => error.to_string(),
+                        };
+                        cx.notify();
+                    })),
+            )
     }
 }
 
@@ -76,10 +96,10 @@ impl Render for Foundation {
 pub fn application() -> App {
     App::new("com.example.rake.foundation")
         .http(HttpConfig::new().base_url("http://127.0.0.1:8080/"))
-        .root(|services, _, cx| {
+        .root_with(|runtime, _, cx| {
             cx.new(|_| Foundation {
                 status: "Portable application foundation".into(),
-                services,
+                runtime,
                 request: None,
             })
             .into()

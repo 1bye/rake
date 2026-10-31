@@ -24,11 +24,11 @@ use crate::tasks::{
 use super::{
     Activation, BlockReason, BrowserCheckpoint, CancelReason, ChoiceAction, Closed, DecisionChoice,
     DecisionError, DecisionId, DecisionRequest, DecisionSnapshot, DisposeReason, Entered, EntryId,
-    EntrySnapshot, GuardContext, GuardKind, GuardResult, HistoryChange, ModeChanged, MountError,
-    OpenOptions, OpenTarget, Opened, Operation, OperationError, OperationId, OperationState,
-    Outcome, RevealScope, Revealed, Route, RouteDecodeError, RouterConfig, RouterSnapshot,
-    RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowClosed, WindowHost, WindowId,
-    WindowSnapshot,
+    EntrySnapshot, GuardContext, GuardKind, GuardReason, GuardResult, HistoryChange, ModeChanged,
+    MountError, OpenOptions, OpenTarget, Opened, Operation, OperationError, OperationId,
+    OperationState, Outcome, QuitGuardContext, RevealScope, Revealed, Route, RouteDecodeError,
+    RouterConfig, RouterSnapshot, RuntimeId, Selected, TabId, TabMode, TabSnapshot, WindowClosed,
+    WindowHost, WindowId, WindowSnapshot,
 };
 
 mod quit;
@@ -41,10 +41,19 @@ mod windows;
 mod tests;
 
 pub(crate) type Guard<R> = Rc<dyn Fn(GuardContext<R>) -> LocalBoxFuture<'static, GuardResult>>;
+pub(crate) type QuitGuard =
+    Rc<dyn Fn(QuitGuardContext) -> LocalBoxFuture<'static, Result<(), GuardReason>>>;
 pub(crate) type Resource = Rc<dyn Any>;
 
 #[cfg(feature = "gpui")]
 type WindowContexts = Rc<RefCell<BTreeMap<WindowId, gpui::AsyncWindowContext>>>;
+
+#[cfg(feature = "gpui")]
+#[derive(Clone, Copy)]
+enum HostClosePolicy {
+    Guarded,
+    Detach,
+}
 
 pub(crate) type Mount<R> = Rc<
     dyn Fn(
@@ -249,6 +258,7 @@ struct Core<R: Route> {
     tasks: WorkRuntime,
     quit: RefCell<crate::quit::QuitStatus>,
     quit_handle: RefCell<Option<Operation<crate::quit::QuitResult>>>,
+    quit_guards: RefCell<Vec<QuitGuard>>,
     #[cfg(feature = "updates")]
     update_handoff: RefCell<Option<rake_updates::RestartHandoff>>,
     #[cfg(feature = "updates")]
@@ -477,6 +487,7 @@ impl<R: Route> Router<R> {
             driving: Cell::new(false),
             quit: RefCell::new(crate::quit::QuitStatus::default()),
             quit_handle: RefCell::new(None),
+            quit_guards: RefCell::new(Vec::new()),
             #[cfg(feature = "updates")]
             update_handoff: RefCell::new(None),
             #[cfg(feature = "updates")]
@@ -527,6 +538,34 @@ impl<R: Route> Router<R> {
 
         self.0
             .guards
+            .borrow_mut()
+            .push(Rc::new(move |context| Box::pin(guard(context))));
+
+        Ok(())
+    }
+
+    /// Registers an application-wide guard for every future quit.
+    ///
+    /// Guards run after finite work has settled or been cancelled and after all
+    /// retained entries have approved their disposal. They run immediately
+    /// before the router enters `Stopping`; return an error to keep the runtime
+    /// open. The callback owns its application state and must re-read mutable
+    /// state before approving, because the router cannot revalidate state that
+    /// lives outside its model.
+    ///
+    /// Register guards before [`Router::run`](Self::run) starts driving the
+    /// runtime. Registration after that point returns `InvalidOptions`.
+    pub fn quit_guard<F, Fut>(&self, guard: F) -> Result<(), OperationError>
+    where
+        F: Fn(QuitGuardContext) -> Fut + 'static,
+        Fut: Future<Output = Result<(), GuardReason>> + 'static,
+    {
+        if self.0.driving.get() {
+            return Err(OperationError::InvalidOptions);
+        }
+
+        self.0
+            .quit_guards
             .borrow_mut()
             .push(Rc::new(move |context| Box::pin(guard(context))));
 
@@ -927,11 +966,42 @@ impl<R: Route> Router<R> {
 
     #[cfg(feature = "gpui")]
     pub(crate) fn observe_host(&self, window: &gpui::Window, cx: &gpui::App) {
-        self.observe_host_in(self.0.initial_window.get(), window, cx);
+        self.observe_host_in_with_policy(
+            self.0.initial_window.get(),
+            window,
+            cx,
+            HostClosePolicy::Guarded,
+        );
+    }
+
+    /// Observes a standalone root while allowing its native window to close
+    /// without requesting application quit. The runtime remains available for
+    /// tray/background work until its owning host explicitly shuts it down.
+    #[cfg(feature = "gpui")]
+    pub(crate) fn observe_root_host(&self, window: &gpui::Window, cx: &gpui::App) {
+        self.observe_host_in_with_policy(
+            self.0.initial_window.get(),
+            window,
+            cx,
+            HostClosePolicy::Detach,
+        );
     }
 
     #[cfg(feature = "gpui")]
     pub(crate) fn observe_host_in(&self, id: WindowId, window: &gpui::Window, cx: &gpui::App) {
+        self.observe_host_in_with_policy(id, window, cx, HostClosePolicy::Guarded);
+    }
+
+    #[cfg(feature = "gpui")]
+    fn observe_host_in_with_policy(
+        &self,
+        id: WindowId,
+        window: &gpui::Window,
+        cx: &gpui::App,
+        close_policy: HostClosePolicy,
+    ) {
+        #[cfg(target_family = "wasm")]
+        let _ = close_policy;
         self.0.has_window.set(true);
         let core = Rc::downgrade(&self.0);
         let shutdown = core.clone();
@@ -945,6 +1015,11 @@ impl<R: Route> Router<R> {
                 let Some(core) = closing.upgrade() else {
                     return true;
                 };
+
+                if matches!(close_policy, HostClosePolicy::Detach) {
+                    Router(core).detach_host(id);
+                    return true;
+                }
 
                 if core.quit.borrow().phase == crate::quit::QuitPhase::Ready {
                     return true;
@@ -1007,13 +1082,28 @@ impl<R: Route> Router<R> {
                             .flat_map(|tab| &tab.entries)
                             .any(|entry| entry.dirty)
                         || !snapshot.quit.pending_tasks.is_empty()
-                        || !snapshot.quit.pending_operations.is_empty())
+                        || !snapshot.quit.pending_operations.is_empty()
+                        || !router.0.quit_guards.borrow().is_empty())
             },
             window,
             cx,
         );
 
         self.0.host.borrow_mut().insert(id, observer);
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn detach_host(&self, id: WindowId) {
+        let _ = self.set_window_visibility(id, HostVisibility::Hidden);
+        let empty = {
+            let mut hosts = self.0.host.borrow_mut();
+            hosts.remove(&id);
+            hosts.is_empty()
+        };
+
+        if empty {
+            self.0.has_window.set(false);
+        }
     }
 
     #[cfg(feature = "gpui")]
@@ -1073,6 +1163,16 @@ impl<R: Route> Navigator<R> {
         } else {
             AppHandle(TaskScope::unavailable())
         }
+    }
+
+    pub(crate) fn runtime(&self) -> Result<Router<R>, OperationError> {
+        let core = self.core.upgrade().ok_or(OperationError::RuntimeShutdown)?;
+
+        if core.shutdown.get() {
+            return Err(OperationError::RuntimeShutdown);
+        }
+
+        Ok(Router(core))
     }
 
     /// Eagerly opens a destination with default activation and tab mode.

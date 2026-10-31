@@ -15,8 +15,8 @@ use rake::quit::{QuitJobs, QuitOptions, QuitPhase};
 use rake::reload::{ReloadError, ReloadMechanism, ReloadRequest};
 
 use rake::router::{
-    CancelReason, DecisionError, DisposeReason, EntryHandle, GuardKind, GuardReason, Operation,
-    OperationError, OperationState,
+    CancelReason, DecisionError, DisposeReason, EntryHandle, GuardKind, GuardReason, NoRoute,
+    Operation, OperationError, OperationState,
 };
 
 use rake::tasks::TaskState;
@@ -29,6 +29,12 @@ enum Destination {
 
 fn harness() -> (Router<Destination>, LocalPool) {
     let router = Router::new(RouterConfig::default());
+    let pool = running(&router);
+
+    (router, pool)
+}
+
+fn running<R: Route>(router: &Router<R>) -> LocalPool {
     let pool = LocalPool::new();
     let driven = router.clone();
 
@@ -38,7 +44,7 @@ fn harness() -> (Router<Destination>, LocalPool) {
         })
         .unwrap();
 
-    (router, pool)
+    pool
 }
 
 fn commit<T: Clone>(pool: &mut LocalPool, operation: Operation<T>) -> T {
@@ -57,6 +63,123 @@ fn open(router: &Router<Destination>, pool: &mut LocalPool, id: u64) -> EntryHan
     );
 
     router.entry(opened.entry_id).unwrap()
+}
+
+#[test]
+fn app_quit_guard_denies_a_route_free_quit() {
+    let router = Router::<NoRoute>::new(RouterConfig::default());
+    let invoked = Rc::new(Cell::new(false));
+    let observed = invoked.clone();
+
+    router
+        .quit_guard(move |_| {
+            observed.set(true);
+            async { Err(GuardReason("application is busy".into())) }
+        })
+        .unwrap();
+    let mut pool = running(&router);
+    let quit = router.quit(QuitOptions::default());
+
+    assert!(matches!(
+        pool.run_until(quit.wait()).unwrap(),
+        Outcome::Blocked(_)
+    ));
+    assert!(invoked.get());
+    assert_eq!(router.quit_status().phase, QuitPhase::Blocked);
+}
+
+#[test]
+fn app_quit_guard_cancellation_wins_while_the_guard_is_pending() {
+    let router = Router::<NoRoute>::new(RouterConfig::default());
+    let (sender, receiver) = oneshot::channel::<()>();
+    let receiver = Rc::new(RefCell::new(Some(receiver)));
+
+    router
+        .quit_guard(move |_| {
+            let receiver = receiver.borrow_mut().take().unwrap();
+
+            async move {
+                receiver.await.unwrap();
+                Ok(())
+            }
+        })
+        .unwrap();
+    let mut pool = running(&router);
+    let quit = router.quit(QuitOptions::default());
+
+    pool.run_until_stalled();
+    assert_eq!(router.quit_status().phase, QuitPhase::Guarding);
+    assert!(router.cancel(quit.id()).unwrap());
+    assert!(matches!(
+        pool.run_until(quit.wait()).unwrap(),
+        Outcome::Cancelled(CancelReason::Requested)
+    ));
+    assert_eq!(router.quit_status().phase, QuitPhase::Cancelled);
+    drop(sender);
+}
+
+#[test]
+fn app_quit_guard_approves_with_operation_context_and_options() {
+    let router = Router::<NoRoute>::new(RouterConfig::default());
+    let operation_id = Rc::new(Cell::new(None));
+    let observed_id = operation_id.clone();
+    let options = Rc::new(Cell::new(None));
+    let observed_options = options.clone();
+
+    router
+        .quit_guard(move |context| {
+            observed_id.set(Some(context.operation_id));
+            observed_options.set(Some(context.options));
+            async { Ok(()) }
+        })
+        .unwrap();
+    let mut pool = running(&router);
+    let expected_options = QuitOptions {
+        jobs: QuitJobs::Cancel,
+    };
+    let quit = router.quit(expected_options);
+    let expected_id = quit.id();
+
+    commit(&mut pool, quit);
+    assert_eq!(operation_id.get(), Some(expected_id));
+    assert_eq!(options.get(), Some(expected_options));
+    assert_eq!(router.quit_status().phase, QuitPhase::Ready);
+}
+
+#[test]
+fn app_quit_guard_runs_after_finite_work_settles() {
+    let router = Router::<NoRoute>::new(RouterConfig::default());
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let task_order = order.clone();
+    let (sender, receiver) = oneshot::channel::<()>();
+
+    router
+        .app()
+        .tasks()
+        .spawn("flush", async move {
+            receiver.await.unwrap();
+            task_order.borrow_mut().push("task");
+            Ok(())
+        })
+        .unwrap();
+
+    let guard_order = order.clone();
+    router
+        .quit_guard(move |_| {
+            guard_order.borrow_mut().push("guard");
+            async { Ok(()) }
+        })
+        .unwrap();
+    let mut pool = running(&router);
+    let quit = router.quit(QuitOptions::default());
+
+    pool.run_until_stalled();
+    assert_eq!(router.quit_status().phase, QuitPhase::WaitingForJobs);
+    assert!(order.borrow().is_empty());
+
+    sender.send(()).unwrap();
+    commit(&mut pool, quit);
+    assert_eq!(&*order.borrow(), &["task", "guard"]);
 }
 
 fn respond(router: &Router<Destination>, choice: &str) {
@@ -178,7 +301,7 @@ fn wait_keeps_finite_jobs_and_activities_until_approval_then_drops_all_futures()
             }
         })
         .unwrap();
-    let (sender, receiver) = oneshot::channel();
+    let (sender, receiver) = oneshot::channel::<()>();
 
     let task = router
         .app()
@@ -285,7 +408,7 @@ fn late_job_edits_and_stale_responses_require_fresh_approval() {
 
     entry.set_dirty(true).unwrap();
     let changed = entry.clone();
-    let (sender, receiver) = oneshot::channel();
+    let (sender, receiver) = oneshot::channel::<()>();
 
     router
         .app()
@@ -327,7 +450,7 @@ fn save_preparation_can_await_a_shared_typed_command_without_holding_router_lane
     let entry = open(&router, &mut pool, 1);
 
     entry.set_dirty(true).unwrap();
-    let (sender, receiver) = oneshot::channel();
+    let (sender, receiver) = oneshot::channel::<()>();
     let sender = Rc::new(RefCell::new(Some(sender)));
     let saved = entry.clone();
 
@@ -486,7 +609,7 @@ fn shared_control_requests_join_quit_and_preserve_first_policy_and_retry_identit
 fn cancellation_wins_simultaneous_job_readiness_and_synchronous_guard_cancellation() {
     let (router, mut pool) = harness();
     let entry = open(&router, &mut pool, 1);
-    let (sender, receiver) = oneshot::channel();
+    let (sender, receiver) = oneshot::channel::<()>();
 
     router
         .app()
@@ -591,7 +714,7 @@ fn reload_and_quit_are_exclusive_and_dropping_an_unstarted_runtime_has_no_cycle(
 fn existing_operations_settle_or_cancel_before_quit_scans_the_final_workspace() {
     for policy in [QuitJobs::Wait, QuitJobs::Cancel] {
         let router = Router::<Destination>::new(RouterConfig::default());
-        let (sender, receiver) = oneshot::channel();
+        let (sender, receiver) = oneshot::channel::<()>();
         let receiver = Rc::new(RefCell::new(Some(receiver)));
 
         router

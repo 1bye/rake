@@ -53,6 +53,15 @@ pub struct PageContext<R: Route> {
 }
 
 impl<R: Route> PageContext<R> {
+    /// Application capabilities independent of this entry's navigation lifetime.
+    /// The context contains weak runtime handles and preserves service identity.
+    pub fn runtime(&self) -> crate::runtime::RuntimeContext<R> {
+        crate::runtime::RuntimeContext::from_navigator(
+            self.navigator.clone(),
+            self.services.clone(),
+        )
+    }
+
     /// Dispatches a registered command through the shared operation registry.
     pub fn dispatch<C: crate::control::ApplicationCommand>(
         &self,
@@ -396,6 +405,7 @@ impl<R: Route> Drop for Workspace<R> {
 
 pub(crate) struct RoutingRoot<R: Route> {
     pub(crate) chrome: bool,
+    pub(crate) quit_guards: Vec<super::runtime::QuitGuard>,
     pub(crate) views: Rc<dyn RouteViews<R>>,
     pub(crate) initial: Option<R>,
     pub(crate) checkpoint: Option<Result<crate::reload::WorkspaceCheckpoint, String>>,
@@ -428,6 +438,7 @@ impl<R: Route> Workspace<R> {
             commands,
             application_id,
             chrome,
+            quit_guards,
         } = root;
 
         let initial_window = checkpoint
@@ -462,6 +473,11 @@ impl<R: Route> Workspace<R> {
             .window_host(native.clone())
             .map_err(|error| MountError(error.to_string()))?;
 
+        for guard in quit_guards {
+            router
+                .quit_guard(move |context| guard(context))
+                .map_err(|error| MountError(error.to_string()))?;
+        }
         router.install_quit_action(cx);
         #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
         if let Err(error) = router.install_sparkle() {

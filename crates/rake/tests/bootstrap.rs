@@ -49,14 +49,15 @@ fn automatic_subscriber_conflicts_are_reported() {
 struct RootCommand;
 
 #[test]
-fn root_inspection_does_not_enable_registered_application_commands() {
+fn standalone_route_options_fail_instead_of_being_ignored() {
     let app = App::new("com.example.root")
         .root(|_, _, cx| {
             use rake::gpui::AppContext;
             cx.new(|_| rake::gpui::Empty).into()
         })
+        .workspace_chrome(false)
         .control(rake::control::ControlConfig::FromEnvironment)
         .command::<RootCommand, _, _>(|_, _| async { Ok(()) })
         .unwrap();
-    assert!(matches!(app.run(), Err(AppError::ControlRequiresRouter)));
+    assert!(matches!(app.run(), Err(AppError::RoutingRequiresRoutes)));
 }

@@ -60,6 +60,7 @@ pub mod inspection;
 pub mod quit;
 pub mod reload;
 pub mod router;
+pub mod runtime;
 pub mod services;
 pub mod tasks;
 
@@ -76,7 +77,7 @@ pub mod overlay;
 pub use rake_ui::theme;
 
 #[cfg(feature = "gpui")]
-pub use application::{App, AppError};
+pub use application::{App, AppError, ClosePolicy};
 #[cfg(feature = "gpui")]
 pub use gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
@@ -271,8 +272,11 @@ pub mod prelude {
 
     pub use crate::diagnostics::{Collector, DiagnosticsConfig, SubscriberMode};
     pub use crate::http::{CancellationToken, HttpClient, HttpConfig};
-    pub use crate::quit::{QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus};
+    pub use crate::quit::{
+        QuitGuardContext, QuitJobs, QuitOptions, QuitPhase, QuitResult, QuitStatus,
+    };
     pub use crate::reload::{Checkpoint, ReloadError, ReloadState};
+    pub use crate::runtime::{Runtime, RuntimeContext};
     pub use crate::services::{ServiceError, ServiceRegistry, Services};
     pub use crate::tasks::{ActivityRun, AppHandle, TaskError, TaskHandle, TaskScope};
 

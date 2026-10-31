@@ -62,9 +62,11 @@ absent Origin or `devtools://devtools`, and authenticates WebSockets with a rand
 session path. It limits connections, message sizes, event retention and I/O time.
 Treat discovery URLs as private development credentials. Sessions detach when a
 runtime disappears or changes identity. Unsupported CDP methods return `-32601`.
-Standalone `App::root` hosts support the same Elements, Console diagnostic, Network
-and trace inspection paths when explicitly enabled with `ControlConfig::FromEnvironment`.
-They advertise no routing/application commands; typed command completion is empty.
+Standalone `App::root` and `App::root_with` hosts support the same Elements, Console
+diagnostic, Network and trace inspection paths when explicitly enabled with
+`ControlConfig::FromEnvironment`. Their `RuntimeClient<NoRoute>` also advertises
+registered application commands, managed work, guarded quit and updater restart;
+navigation, tabs and route-history queries are absent because a root has no router.
 The `rake-view`
 example opts into this development policy, so `rake dev --target desktop --package
 rake-view --cdp` can inspect its automatic macro-authored tree.
