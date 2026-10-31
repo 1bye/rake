@@ -4,10 +4,11 @@ use super::wire::{Error, Event};
 use rake_protocol::inspection::{Element, Snapshot};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 #[derive(Default)]
 pub(super) struct Dom {
-    snapshot: Option<Snapshot>,
+    snapshot: Option<Arc<Snapshot>>,
     nodes: BTreeMap<i32, Element>,
     next: i32,
     control_ids: BTreeMap<String, i32>,
@@ -27,14 +28,19 @@ pub(super) struct Dom {
 
 impl Dom {
     pub fn update(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
-        self.update_capture(snapshot, false)
+        self.update_capture(Arc::new(snapshot), false)
     }
 
+    #[cfg(test)]
     pub fn update_index(&mut self, snapshot: Snapshot) -> Result<bool, Error> {
+        self.update_capture(Arc::new(snapshot), true)
+    }
+
+    pub fn update_shared_index(&mut self, snapshot: Arc<Snapshot>) -> Result<bool, Error> {
         self.update_capture(snapshot, true)
     }
 
-    fn update_capture(&mut self, snapshot: Snapshot, index_only: bool) -> Result<bool, Error> {
+    fn update_capture(&mut self, snapshot: Arc<Snapshot>, index_only: bool) -> Result<bool, Error> {
         let reset = self.snapshot.as_ref().is_some_and(|old| {
             old.status != snapshot.status
                 || (old.capture != snapshot.capture
@@ -310,6 +316,12 @@ impl Dom {
 
     pub fn generation(&self) -> Option<&str> {
         self.snapshot.as_ref().map(|s| s.capture.as_str())
+    }
+
+    pub fn matches(&self, revision: &rake_protocol::inspection::TreeRevision) -> bool {
+        self.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.capture == revision.capture && snapshot.status == revision.status
+        })
     }
 
     pub fn search(&mut self, query: &str) -> Result<Value, Error> {

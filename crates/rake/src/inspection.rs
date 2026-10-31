@@ -190,6 +190,14 @@ impl Store {
             .clone()
     }
 
+    pub(crate) fn tree_revision(&self) -> TreeRevision {
+        let snapshot = self.full_snapshot();
+        TreeRevision {
+            capture: snapshot.capture.clone(),
+            status: snapshot.status,
+        }
+    }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
         let full = self.full_snapshot();
         let mut snapshot = Snapshot {

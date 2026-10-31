@@ -691,3 +691,39 @@ fn shared_details_preserve_owned_replies_and_generation_pinned_pages() {
         "new"
     );
 }
+
+#[test]
+fn index_revision_tracks_geometry_but_preserves_live_style_identity() {
+    let store = Store::default();
+    let bounds = Layout {
+        x: 0.,
+        y: 0.,
+        width: 10.,
+        height: 10.,
+    };
+    let mut first = store.begin(0);
+    let mut element = boundary("element-1-0", None, bounds, bounds);
+    element.styles = Some(serde_json::json!({"background":"red"}));
+    first.elements.push(element);
+    store.publish(WindowId(1), first);
+    let revision = store.tree_revision();
+    let mut next = store.begin(0);
+    let mut element = boundary("element-2-0", None, bounds, bounds);
+    element.styles = Some(serde_json::json!({"background":"blue"}));
+    next.elements.push(element);
+    store.publish(WindowId(1), next);
+    assert_eq!(store.tree_revision(), revision);
+    assert_eq!(
+        store.element("element-1-0").unwrap().styles.unwrap()["background"],
+        "blue"
+    );
+    let mut next = store.begin(0);
+    next.elements.push(boundary(
+        "element-3-0",
+        None,
+        Layout { x: 1., ..bounds },
+        bounds,
+    ));
+    store.publish(WindowId(1), next);
+    assert_ne!(store.tree_revision(), revision);
+}

@@ -300,6 +300,8 @@ pub enum Query {
     Quit {},
     /// Latest bounded presented tree, with explicit availability and coverage.
     InspectTree {},
+    /// Cheap index identity; resolved style details can change independently.
+    InspectRevision {},
     /// Lightweight generation-pinned tree index, at most 256 boundaries per response.
     InspectTreePage {
         /// None starts at the current capture; subsequent pages must pin it.
@@ -380,6 +382,7 @@ impl Query {
             "quit",
             "inspect_pick",
             "inspect_tree",
+            "inspect_revision",
             "inspect_tree_page",
             "frames",
             "inspect_element",
@@ -490,6 +493,8 @@ pub enum Reply {
     Quit(crate::quit::QuitStatus),
     /// Latest completed bounded element tree.
     Elements(crate::inspection::Snapshot),
+    /// Current index identity without serializing tree entries or style details.
+    InspectionRevision(crate::inspection::TreeRevision),
     /// Bounded live frame timings.
     Frames(crate::inspection::Frames),
     /// Generation-pinned tree index page.

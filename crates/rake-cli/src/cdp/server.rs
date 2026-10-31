@@ -102,6 +102,7 @@ fn connection(
     authority: &str,
     token: &str,
     sources: &super::sources::Access,
+    captures: std::sync::Arc<super::captures::Captures>,
 ) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -258,6 +259,7 @@ fn connection(
         options.directory.clone(),
         format!("http://{authority}/{token}"),
         sources,
+        captures,
     )
 }
 
@@ -307,6 +309,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
 
     let active = AtomicUsize::new(0);
     let sources = super::sources::Access::default();
+    let captures = std::sync::Arc::new(super::captures::Captures::default());
 
     std::thread::scope(|scope| -> Result<()> {
         for stream in listener.incoming() {
@@ -319,9 +322,11 @@ pub(super) fn serve(options: Options) -> Result<()> {
             active.fetch_add(1, Ordering::Relaxed);
             let (options, authority, token, active, sources) =
                 (&options, &authority, &token, &active, &sources);
+            let captures = std::sync::Arc::clone(&captures);
 
             scope.spawn(move || {
-                if let Err(error) = connection(stream, options, authority, token, sources) {
+                if let Err(error) = connection(stream, options, authority, token, sources, captures)
+                {
                     eprintln!("CDP connection: {error}");
                 }
 

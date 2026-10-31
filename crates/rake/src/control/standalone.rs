@@ -103,6 +103,7 @@ impl super::host::Host for InspectionClient {
                 "diagnostics",
                 "http_body",
                 "inspect_tree",
+                "inspect_revision",
                 "inspect_tree_page",
                 "frames",
                 "inspect_element",
@@ -165,6 +166,9 @@ impl super::host::Host for InspectionClient {
                 lease_ms,
             }) => super::memory::record(&owner, enabled, interval, lease_ms),
             Message::Query(Query::InspectTree {}) => Ok(Reply::Elements(store.snapshot())),
+            Message::Query(Query::InspectRevision {}) => {
+                Ok(Reply::InspectionRevision(store.tree_revision()))
+            }
             Message::Query(Query::InspectElement { id }) => Ok(Reply::Element(store.element(&id)?)),
             Message::Query(Query::InspectPick {}) => Ok(Reply::InspectPick(store.pick()?)),
             Message::Query(Query::Preview {}) => Ok(Reply::Data(

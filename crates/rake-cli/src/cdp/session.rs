@@ -21,6 +21,7 @@ const QUEUE_LIMIT: usize = 256;
 const FRAME_HIGH_WATER_CURSOR: u64 = (1 << 53) - 1;
 
 struct Session {
+    captures: std::sync::Arc<super::captures::Captures>,
     instance: Instance,
     cursor: u64,
     network_cursor: u64,
@@ -58,6 +59,7 @@ struct Session {
 impl Session {
     fn new(instance: Instance, output: Option<std::path::PathBuf>) -> Self {
         Self {
+            captures: std::sync::Arc::default(),
             instance,
             cursor: 0,
             network_cursor: 0,
@@ -1674,6 +1676,66 @@ impl Session {
     }
 
     fn refresh_dom(&mut self) -> std::result::Result<(), Error> {
+        let revision = if self
+            .instance
+            .info
+            .queries
+            .iter()
+            .any(|q| q == "inspect_revision")
+        {
+            let Reply::InspectionRevision(revision) =
+                query(&self.instance, Query::InspectRevision {}, TIMEOUT)
+                    .map_err(|error| Error::new(-32000, error.to_string()))?
+            else {
+                return Err(Error::new(-32000, "Unexpected inspection revision reply"));
+            };
+            Some(revision)
+        } else {
+            None
+        };
+        let unchanged = revision
+            .as_ref()
+            .is_some_and(|revision| self.dom.matches(revision));
+        let mut reset = false;
+        if !unchanged {
+            let cached = revision.as_ref().and_then(|revision| {
+                self.captures
+                    .find(self.instance.info.runtime_id.0, revision)
+            });
+            let snapshot = if let Some(snapshot) = cached {
+                snapshot
+            } else {
+                let snapshot = std::sync::Arc::new(self.read_index()?);
+                if revision.is_some() {
+                    self.captures.retain(
+                        self.instance.info.runtime_id.0,
+                        std::sync::Arc::clone(&snapshot),
+                    );
+                }
+                snapshot
+            };
+            for element in &snapshot.elements {
+                if let Some(source) = &element.source {
+                    self.sources.admit(source);
+                }
+            }
+            self.publish_sources();
+            reset = if self
+                .instance
+                .info
+                .queries
+                .iter()
+                .any(|q| q == "inspect_tree_page")
+            {
+                self.dom.update_shared_index(snapshot)?
+            } else {
+                self.dom.update((*snapshot).clone())?
+            };
+        }
+        self.deliver_dom_updates(reset)
+    }
+
+    fn read_index(&self) -> std::result::Result<rake_protocol::inspection::Snapshot, Error> {
         let paged = self
             .instance
             .info
@@ -1707,6 +1769,12 @@ impl Session {
                 }
                 generation = Some(page.snapshot.capture.clone());
                 if let Some(snapshot) = &mut combined {
+                    if snapshot.elements.len() + page.snapshot.elements.len() > page.total {
+                        return Err(Error::new(
+                            -32000,
+                            "Tree pages exceeded their declared total",
+                        ));
+                    }
                     snapshot.elements.extend(page.snapshot.elements);
                 } else {
                     combined = Some(page.snapshot);
@@ -1727,17 +1795,10 @@ impl Session {
             snapshot
         };
 
-        for element in &snapshot.elements {
-            if let Some(source) = &element.source {
-                self.sources.admit(source);
-            }
-        }
-        self.publish_sources();
-        let mut reset = if paged {
-            self.dom.update_index(snapshot)?
-        } else {
-            self.dom.update(snapshot)?
-        };
+        Ok(snapshot)
+    }
+
+    fn deliver_dom_updates(&mut self, mut reset: bool) -> std::result::Result<(), Error> {
         let updates = self.dom.take_updates();
         let bytes = updates
             .iter()
@@ -2133,6 +2194,7 @@ pub(super) fn run(
     directory: std::path::PathBuf,
     source_base: String,
     access: &super::sources::Access,
+    captures: std::sync::Arc<super::captures::Captures>,
 ) -> Result<()> {
     socket
         .get_mut()
@@ -2141,6 +2203,7 @@ pub(super) fn run(
         .get_mut()
         .set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut session = Session::new(instance, output);
+    session.captures = captures;
     session
         .sources
         .bind(&source_base, &session.instance.info.runtime_id.to_string());
@@ -2627,7 +2690,8 @@ mod tests {
         let mut info = router.client().info();
 
         info.element_interaction = true;
-        info.queries.retain(|query| query != "inspect_tree_page");
+        info.queries
+            .retain(|query| !matches!(query.as_str(), "inspect_tree_page" | "inspect_revision"));
         let instance = Instance {
             application_id: "test.overlay".into(),
             pid: 1,
@@ -3165,6 +3229,88 @@ mod tests {
         let node = session.dom.node_id("element-paged-599").unwrap();
         session.load_details(node).unwrap();
         assert_eq!(session.dom.search("Div").unwrap()["resultCount"], 600);
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn revisions_skip_unchanged_indexes_and_share_only_immutable_captures() {
+        let snapshot = capture("shared");
+        let (mut instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectRevision {}) => {
+                    Reply::InspectionRevision(rake_protocol::inspection::TreeRevision {
+                        capture: "shared".into(),
+                        status: rake_protocol::inspection::Status::Captured,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectTree {}) => Reply::Elements(snapshot.clone()),
+                _ => panic!("unexpected revision read"),
+            },
+            5,
+        );
+        instance.info.queries.push("inspect_revision".into());
+        let mut first = Session::new(instance.clone(), None);
+        let mut second = Session::new(instance, None);
+        second.captures = std::sync::Arc::clone(&first.captures);
+        first.refresh_dom().unwrap();
+        first.dom.document(&json!({})).unwrap();
+        first.refresh_dom().unwrap();
+        second.refresh_dom().unwrap();
+        second.refresh_dom().unwrap();
+        assert!(first.dom.inspected_node().is_err());
+        assert!(
+            second.dom.reveal_node(2).unwrap().is_none(),
+            "delivery state must remain per connection"
+        );
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn unchanged_index_still_refreshes_live_styles() {
+        let mut snapshot = capture("hover");
+        snapshot.elements[0].styles = Some(json!({"background":"red"}));
+        let (mut instance, worker, path) = fixture(
+            move |request| match request.message {
+                RuntimeMessage::Query(Query::InspectRevision {}) => {
+                    Reply::InspectionRevision(rake_protocol::inspection::TreeRevision {
+                        capture: "hover".into(),
+                        status: rake_protocol::inspection::Status::Captured,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectTreePage { .. }) => {
+                    Reply::ElementPage(rake_protocol::inspection::TreePage {
+                        snapshot: snapshot.clone(),
+                        next: None,
+                        total: 1,
+                    })
+                }
+                RuntimeMessage::Query(Query::InspectElement { .. }) => {
+                    let mut element = snapshot.elements[0].clone();
+                    element.styles = Some(json!({"background":"blue"}));
+                    Reply::Element(element)
+                }
+                _ => panic!("unexpected style refresh"),
+            },
+            4,
+        );
+        instance
+            .info
+            .queries
+            .extend(["inspect_tree_page".into(), "inspect_revision".into()]);
+        let mut session = Session::new(instance, None);
+        session.refresh_dom().unwrap();
+        session.dom.document(&json!({"depth":-1})).unwrap();
+        session.tracked_style_node = Some(2);
+        session.domains.insert("CSS".into());
+        session.refresh_dom().unwrap();
+        assert!(
+            session
+                .outbound
+                .iter()
+                .any(|(event, _)| event.method == "CSS.computedStyleUpdated")
+        );
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
     }

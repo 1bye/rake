@@ -207,6 +207,7 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
             Message::Command(Command::InspectMode { enabled, lease_ms })
         }
         ("inspect", "tree") => Message::Query(Query::InspectTree {}),
+        ("inspect", "revision") => Message::Query(Query::InspectRevision {}),
         ("inspect", "element") if args.len() == 1 => {
             Message::Query(Query::InspectElement { id: args.remove(0) })
         }
@@ -911,6 +912,7 @@ mod tests {
             },
             Query::Quit {},
             Query::InspectTree {},
+            Query::InspectRevision {},
             Query::InspectTreePage {
                 generation: None,
                 offset: 0,

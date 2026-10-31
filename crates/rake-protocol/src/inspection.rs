@@ -338,6 +338,15 @@ pub struct Snapshot {
     pub coverage: String,
 }
 
+/// Lightweight index identity. Style-only redraws may retain this identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeRevision {
+    /// Index capture identity; changes to geometry, text and structure invalidate it.
+    pub capture: String,
+    /// Distinguishes unavailable and waiting hosts, even before their first capture.
+    pub status: Status,
+}
+
 /// A generation-pinned page of lightweight tree metadata; details use `InspectElement`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TreePage {

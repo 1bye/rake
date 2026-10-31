@@ -48,6 +48,12 @@ impl Store {
     pub(crate) fn tree_page(&self, _: Option<&str>, _: usize) -> Result<TreePage, InspectionError> {
         Err(InspectionError::Unavailable)
     }
+    pub(crate) fn tree_revision(&self) -> TreeRevision {
+        TreeRevision {
+            capture: "0".into(),
+            status: Status::Unavailable,
+        }
+    }
     pub(crate) fn element(&self, _: &str) -> Result<Element, InspectionError> {
         Err(InspectionError::Unavailable)
     }

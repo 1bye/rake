@@ -527,6 +527,9 @@ impl<R: Route> RuntimeClient<R> {
                 include_freed,
             } => memory::snapshot(&owner, include_freed),
             Query::InspectTree {} => Ok(Reply::Elements(self.state.inspection.snapshot())),
+            Query::InspectRevision {} => Ok(Reply::InspectionRevision(
+                self.state.inspection.tree_revision(),
+            )),
             Query::InspectElement { id } => Ok(Reply::Element(self.state.inspection.element(&id)?)),
             Query::Reload {} => Ok(Reply::Reload(self.router.reload_status())),
             Query::Checkpoint { application_id } => Ok(Reply::Checkpoint(
