@@ -4,6 +4,7 @@ use super::{Element, MAX_SNAPSHOT_BYTES};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Retained subtree in capture order. Missing targets, duplicate IDs and cycles return `None`.
+#[must_use]
 pub fn subtree<'a>(elements: &'a [Element], id: &str) -> Option<Vec<&'a Element>> {
     Some(
         walk(elements, id)?
@@ -46,6 +47,7 @@ fn walk<'a>(elements: &'a [Element], id: &str) -> Option<Vec<(&'a Element, bool)
 
 /// Concatenated retained text, including hidden descendants, like DOM textContent.
 /// Returns `None` for invalid trees or output above the inspection response budget.
+#[must_use]
 pub fn text(elements: &[Element], id: &str) -> Option<String> {
     let mut output = String::new();
     for node in subtree(elements, id)? {
@@ -61,6 +63,7 @@ pub fn text(elements: &[Element], id: &str) -> Option<String> {
 
 /// Escaped synthetic markup, not the Rust source or a browser DOM serialization.
 /// Returns `None` for invalid trees or output above the inspection response budget.
+#[must_use]
 pub fn markup(elements: &[Element], id: &str) -> Option<String> {
     let mut output = String::new();
     for (node, closing) in walk(elements, id)? {
@@ -95,6 +98,7 @@ fn escape(value: &str) -> String {
 /// Root-relative inspection path with sibling ordinals and JSON-quoted semantic IDs.
 /// This describes the captured hierarchy, not an executable CSS/XPath selector.
 /// Missing targets, duplicate IDs, cycles and oversized paths return `None`.
+#[must_use]
 pub fn path(elements: &[Element], id: &str) -> Option<String> {
     let index: BTreeMap<_, _> = elements.iter().map(|e| (e.id.as_str(), e)).collect();
     if index.len() != elements.len() {

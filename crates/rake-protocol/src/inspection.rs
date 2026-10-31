@@ -77,6 +77,7 @@ pub enum StyleOrigin {
 
 impl StyleOrigin {
     /// Human-readable provenance suitable for inspector details.
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Default => "GPUI defaults",
@@ -259,6 +260,7 @@ pub struct Element {
 
 impl Element {
     /// Looks up a captured site; missing metadata and out-of-range indices return `None`.
+    #[must_use]
     pub fn source_location(&self, target: &SourceTarget) -> Option<&SourceLocation> {
         match target {
             SourceTarget::Boundary {} => self.source.as_ref(),
@@ -272,6 +274,7 @@ impl Element {
         }
     }
     /// Authored view tag when known, otherwise a shortened Rust element name.
+    #[must_use]
     pub fn display_name(&self) -> &str {
         self.view
             .as_ref()
@@ -501,6 +504,7 @@ pub struct Accessibility {
 
 impl Accessibility {
     /// Compares structural facts independently of live focus and derived captured tab order.
+    #[must_use]
     pub fn same_properties(&self, other: &Self) -> bool {
         self.role == other.role
             && self.label == other.label
