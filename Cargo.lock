@@ -4561,6 +4561,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-agent-example"
+version = "0.1.0"
+dependencies = [
+ "rake",
+]
+
+[[package]]
 name = "rake-cli"
 version = "0.1.0"
 dependencies = [

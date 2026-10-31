@@ -68,6 +68,7 @@ impl NativeInput {
     ) -> Result<Command, Error> {
         let (position, input) = translate(method, params, self.pointer)?;
         let target = self.target(instance)?;
+        window_guard(params, &target)?;
         if position[0] < 0.
             || position[1] < 0.
             || position[0] >= f64::from(target.content.width)
@@ -93,7 +94,7 @@ impl NativeInput {
                 window: target.window,
                 native_id: target.native_id,
                 generation: target.generation,
-                geometry: Some(geometry),
+                geometry: params.get("rakeCapture").is_none().then_some(geometry),
                 x: position[0].round() as i32,
                 y: position[1].round() as i32,
             },
@@ -156,6 +157,10 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                 "Backspace" => "backspace",
                 "Delete" => "delete",
                 "Tab" => "tab",
+                "Home" => "home",
+                "End" => "end",
+                "PageUp" => "pageup",
+                "PageDown" => "pagedown",
                 " " => "space",
                 other => other,
             };
@@ -168,7 +173,13 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
                 pointer,
                 Input::Key {
                     down,
-                    key: key.into(),
+                    key: if key.starts_with('F')
+                        && key[1..].parse::<u8>().is_ok_and(|n| (1..=24).contains(&n))
+                    {
+                        key.to_ascii_lowercase()
+                    } else {
+                        key.into()
+                    },
                     text,
                     modifiers,
                 },
@@ -248,6 +259,45 @@ fn translate(method: &str, params: &Value, pointer: [f64; 2]) -> Result<([f64; 2
     }
 }
 
+/// Optional agent guards fail before dispatch; they never trigger mutation replay.
+pub(super) fn runtime_guard(params: &Value, runtime: &str) -> Result<(), Error> {
+    if let Some(expected) = params.get("rakeRuntimeId") {
+        let expected = expected
+            .as_str()
+            .ok_or_else(|| Error::new(-32602, "rakeRuntimeId must be a string"))?;
+        if expected != runtime {
+            return Err(Error::new(
+                -32010,
+                "Runtime precondition failed; reconnect explicitly",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn window_guard(params: &Value, target: &NativeWindow) -> Result<(), Error> {
+    if let Some(expected) = params.get("rakeWindowId") {
+        let expected = expected
+            .as_u64()
+            .ok_or_else(|| Error::new(-32602, "rakeWindowId must be an integer"))?;
+        if expected != target.window.0 {
+            return Err(Error::new(-32010, "Window precondition failed"));
+        }
+    }
+    if let Some(expected) = params.get("rakeCapture") {
+        let expected = expected
+            .as_str()
+            .ok_or_else(|| Error::new(-32602, "rakeCapture must be a string"))?;
+        if expected != target.generation {
+            return Err(Error::new(
+                -32010,
+                "Capture precondition failed; resolve the element again",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +358,20 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(input,Input::Key {key,text:None,..} if key=="left"));
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    #[test]
+    fn agent_guards_reject_wrong_owners_and_stale_captures() {
+        assert!(runtime_guard(&json!({"rakeRuntimeId":"old"}), "new").is_err());
+        assert!(runtime_guard(&json!({"rakeRuntimeId":1}), "new").is_err());
+        assert!(runtime_guard(&json!({"rakeRuntimeId":"new"}), "new").is_ok());
+        let target:NativeWindow=serde_json::from_value(json!({"window":1,"native_id":2,"generation":"3","frame":{"x":0,"y":0,"width":200,"height":200},"content":{"x":0,"y":20,"width":200,"height":180},"translucent":false})).unwrap();
+        assert!(window_guard(&json!({"rakeWindowId":2}), &target).is_err());
+        assert!(window_guard(&json!({"rakeCapture":"2"}), &target).is_err());
+        assert!(window_guard(&json!({"rakeWindowId":1,"rakeCapture":"3"}), &target).is_ok());
     }
 }

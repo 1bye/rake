@@ -20,6 +20,9 @@ enum Goal {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Request {
+    // Validated by Session before decoding this operation.
+    #[serde(rename = "rakeRuntimeId")]
+    _runtime: Option<String>,
     #[serde(default)]
     query: Value,
     #[serde(default)]

@@ -1,0 +1,65 @@
+/** Native development automation; actions acknowledge admission, waits observe rendering. */
+export interface Query {
+  nodeId?: number; stableId?: string; id?: string; role?: string; name?: string;
+  text?: string; textContains?: string; enabled?: boolean; visible?: boolean;
+  bounds?: Partial<Bounds> & {tolerance?: number};
+}
+export interface Bounds {x: number; y: number; width: number; height: number}
+export interface Revision {capture: string; metadata: string | null}
+export interface RustSource {file: string; line: number; column: number; url?: string}
+export interface Element {
+  nodeId: number; parentId: number | null; stableId: string | null; id: string | null;
+  type: string; role: string | null; name: string | null; text: string | null;
+  nameTruncated: boolean; textTruncated: boolean; bounds: Bounds | null;
+  visibleBounds: Bounds | null; visible: boolean | null; enabled: boolean | null;
+  focused: boolean | null; states: unknown; source: RustSource | null;
+  metadataTruncated: boolean; styleEditable: boolean; textEditable: boolean;
+}
+export interface ElementReference extends Element {
+  runtimeId: string; windowId: number; revision: Revision; frameSequence: string;
+}
+export interface Snapshot {
+  runtimeId: string; windowId: number; revision: Revision; frameSequence: string;
+  elements: Element[]; totalMatches: number; offset: number; hasMore: boolean;
+  omitted: number; coverage: unknown;
+}
+export interface NativeWindow {
+  window: number; native_id: number; generation: string; frame: Bounds; content: Bounds;
+  occluded: boolean; translucent: boolean;
+}
+export interface Capabilities {
+  version: number; runtimeId: string; platform: string;
+  methods: Record<string, {supported: boolean}>;
+  sourceRead: {supported: boolean; transport: string};
+  nativeWindowsAvailable: boolean; nativeError: string | null;
+  limits: Record<string, number>; semantics: Record<string, string>;
+}
+export interface Wait {
+  waitId: string; runtimeId: string; windowId: number;
+  status: 'pending' | 'satisfied' | 'timed_out' | 'cancelled' | 'invalidated';
+  remainingMs: number; observation: Snapshot | null;
+}
+export class ProtocolError extends Error {code: number; method: string}
+export class RakeAgent {
+  private constructor();
+  static connect(endpoint: string, options?: {targetId?: string; windowId?: number}): Promise<RakeAgent>;
+  readonly capabilities: Capabilities; readonly runtimeId: string; readonly windowId?: number;
+  /** Raw CDP; unknown transport outcomes are never automatically retried. */
+  call<T = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
+  windows(): Promise<NativeWindow[]>;
+  selectWindow(windowId: number): Promise<NativeWindow>;
+  snapshot(query?: Query, options?: {limit?: number; offset?: number; expectedRevision?: Revision}): Promise<Snapshot>;
+  /** Rejects missing and ambiguous matches. */
+  find(query: Query): Promise<ElementReference>;
+  hover(reference: ElementReference): Promise<{accepted: true; beforeFrame: string}>;
+  click(reference: ElementReference): Promise<{accepted: true; beforeFrame: string}>;
+  scroll(reference: ElementReference, deltaY: number, deltaX?: number): Promise<{accepted: true; beforeFrame: string}>;
+  drag(reference: ElementReference, dx: number, dy: number): Promise<{accepted: true; beforeFrame: string}>;
+  key(key: string, modifiers?: number): Promise<{accepted: true}>;
+  typeText(text: string): Promise<{accepted: true}>;
+  waitFor(query: Query, options?: {state?: 'present' | 'absent'; timeoutMs?: number; afterFrame?: string; signal?: AbortSignal}): Promise<Wait>;
+  screenshot(options?: {format?: 'png' | 'jpeg'; quality?: number}): Promise<{bytes: Uint8Array; metadata: Record<string, unknown>}>;
+  source(reference: ElementReference, radius?: number): Promise<{file: string; line: number; column: number; startLine: number; text: string}>;
+  close(): void;
+}
+export function cli(args: string[]): Promise<void>;

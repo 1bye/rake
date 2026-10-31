@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const HELP: &str = "rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
+rake agent --url URL [--target ID] [--window ID] JSON_ACTION (Node 22+; see docs/cdp-agents.md)
 rake cdp [--session PATH] [--instance UUID|application-id] [--port PORT] [--no-open] [--json] [--export-trace FILE]
 rake highlight ID|none [--generation CAPTURE] [--instance UUID|application-id]
 rake inspect pick [--instance UUID|application-id]

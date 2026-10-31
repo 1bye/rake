@@ -76,7 +76,9 @@ rake ctl commands run notes.list --args null --json
 The same runtime exposes routes, tasks, pending decisions, logs and inspected UI
 elements. Development control is opt-in; `rake dev` supplies the connection setup
 for examples that enable it. See [runtime control](docs/runtime-control.md) for
-application integration and the full command surface.
+application integration and the full command surface. For native UI automation,
+see the [CDP agent client](docs/cdp-agents.md): semantic queries, input, condition
+waits, screenshots and Rust source lookup.
 
 ## Documentation
 

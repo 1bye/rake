@@ -4,6 +4,9 @@ Stock Chrome DevTools is the supported graphical frontend. Rake's older HTML and
 `rake-inspector` frontends are legacy prototypes; their controls and tests do not
 establish Chrome compatibility. New development targets the CDP adapter.
 
+AI agents can use the [CDP agent client](cdp-agents.md) for native input, semantic
+snapshots, condition waits, screenshots and Rust source lookup.
+
 Build the CLI with `cargo build -p rake-cli`, then run:
 
 ```sh

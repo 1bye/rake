@@ -139,6 +139,13 @@ impl Session {
             return Err(Error::new(-32602, "params must be an object"));
         }
 
+        if request.params.get("rakeRuntimeId").is_some() {
+            super::native_input::runtime_guard(
+                &request.params,
+                &self.instance.info.runtime_id.to_string(),
+            )?;
+        }
+
         let method = request.method.as_str();
         super::params::validate(method, &request.params)?;
         if let Some(reason) = &self.detached
@@ -157,6 +164,24 @@ impl Session {
             return Ok(result);
         }
         match method {
+            "Rake.getCapabilities" => {
+                let Reply::Info(info) = query(&self.instance, Query::Info {}, TIMEOUT)
+                    .map_err(|e| Error::new(-32000, e.to_string()))?
+                else {
+                    return Err(Error::new(-32000, "Unexpected runtime capability reply"));
+                };
+                if info.runtime_id != self.instance.info.runtime_id {
+                    return Err(Error::new(-32010, "Runtime identity changed"));
+                }
+                let native = super::native_input::windows(&self.instance);
+                Ok(super::capabilities::describe(
+                    &info,
+                    native.as_ref().map(|w| !w.is_empty()).unwrap_or(false),
+                    native.err().map(|e| e.message),
+                    self.screenshots.as_ref().is_some_and(|s| s.available()),
+                    self.source_base.is_some(),
+                ))
+            }
             "Rake.waitFor" => {
                 let window = self.native_input.target(&self.instance)?.window;
                 self.native_input.window = Some(window);
@@ -226,8 +251,26 @@ impl Session {
                 let command = self
                     .native_input
                     .command(&self.instance, method, &request.params)?;
-                self.control(command)?;
-                Ok(json!({}))
+                let reply = self.send_control(command).map_err(|error| {
+                    let code = if matches!(
+                        error,
+                        rake_client::Error::Control(
+                            rake_protocol::control::ControlError::Inspection(
+                                rake_protocol::inspection::InspectionError::StaleGeneration
+                                    | rake_protocol::inspection::InspectionError::NotRetained
+                            )
+                        )
+                    ) {
+                        -32010
+                    } else {
+                        -32000
+                    };
+                    Error::new(code, error.to_string())
+                })?;
+                if !matches!(reply, Reply::Acknowledged) {
+                    return Err(Error::new(-32000, "Unexpected native input reply"));
+                }
+                Ok(json!({"accepted":true}))
             }
             "DOMStorage.enable" => {
                 self.domains.insert(Domain::DomStorage);
@@ -3213,6 +3256,47 @@ mod tests {
         assert!(!session.frame_trace.active);
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn native_input_reports_stale_admission_without_replaying_the_action() {
+        use rake_protocol::{control::ControlError, inspection::InspectionError};
+
+        for rejection in [
+            InspectionError::StaleGeneration,
+            InspectionError::NotRetained,
+        ] {
+            let expected = rejection.clone();
+            let (instance, worker, path) = fixture_result(
+                move |request| match request.message {
+                    RuntimeMessage::Query(Query::Preview {}) => Ok(Reply::Data(json!([{
+                        "window":1,"native_id":9,"generation":"current",
+                        "frame":{"x":0,"y":0,"width":100,"height":120},
+                        "content":{"x":0,"y":20,"width":100,"height":100},
+                        "translucent":false
+                    }]))),
+                    RuntimeMessage::Command(Command::PreviewInput { point, .. }) => {
+                        assert_eq!(point.generation, "current");
+                        assert_eq!(
+                            point.geometry, None,
+                            "guarded input requires exact capture admission"
+                        );
+                        Err(ControlError::Inspection(expected.clone()))
+                    }
+                    _ => panic!("unexpected input exchange"),
+                },
+                2,
+            );
+            let mut session = Session::new(instance, None);
+            let error = session.handle(&Request {
+                id:1, method:"Input.dispatchMouseEvent".into(),
+                params:json!({"type":"mousePressed","button":"left","x":10,"y":10,"rakeWindowId":1,"rakeCapture":"current"}),
+            }).unwrap_err();
+
+            assert_eq!(error.code, -32010);
+            worker.join().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
     }
 
     #[test]

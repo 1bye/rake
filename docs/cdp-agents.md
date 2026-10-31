@@ -101,3 +101,84 @@ the captured tree and cannot succeed while its omission count is nonzero.
 
 Each poll uses the normal finite request deadline. No long wait holds the worker,
 and no fixed sleep substitutes for a readiness condition.
+
+## Agent client and capabilities
+
+`Rake.getCapabilities` reports the live runtime identity, available agent methods,
+source-read transport, numeric budgets and coverage/acknowledgement semantics.
+This is an agent operation catalog, not a percentage of upstream CDP. Screenshot
+support requires `--capture`, a prepared helper and an available native window;
+Screen Recording permission is checked at capture time. Capture errors remain
+explicit through `Rake.getCaptureStatus` and `Page.captureScreenshot`.
+
+All methods accept an optional `rakeRuntimeId` precondition. Input additionally
+accepts `rakeWindowId` and `rakeCapture`; a failed owner/capture precondition returns
+`-32010`. Capture-guarded pointer input checks the exact generation again on the
+native UI thread. A stale-reference rejection admits no input; transport failure
+or a lost acknowledgement has an uncertain outcome and must not be replayed.
+
+The dependency-free Node 22+ client is `scripts/rake-agent.mjs`, with TypeScript
+exports in `scripts/rake-agent.d.mts`. It discovers exactly one runtime (or requires
+`targetId`), selects exactly one window (or requires `windowId`), rejects ambiguous
+queries, and resolves references by stable identity without a name-based fallback.
+Input stays inside the native application; the desktop cursor is unaffected.
+Only numeric loopback servers and same-origin, redirect-free source reads are
+accepted. Requests, source responses, pending work and timeouts have byte/count
+budgets. Disconnects/timeouts retire the client and never replay mutations.
+
+```js
+import {RakeAgent} from './scripts/rake-agent.mjs';
+const app = await RakeAgent.connect('http://127.0.0.1:PORT/TOKEN');
+try {
+  const button = await app.find({role: 'button', name: 'Increment counter'});
+  const action = await app.click(button);
+  await app.waitFor({text: 'Count: 1'}, {afterFrame: action.beforeFrame});
+  const {bytes, metadata} = await app.screenshot({format: 'png'});
+  const source = await app.source(button);
+} finally {
+  app.close();
+}
+```
+
+Rendered text can be a separate Text boundary below its paragraph/button. Text
+predicates match captured text boundaries; use `parentId` to relate those nodes
+to enclosing controls. Editable control values are not harvested. An application
+can deliberately render a separate echo/status value, as the agent fixture does.
+Snapshot text previews are bounded; the existing DOM text methods provide detail.
+
+The bundled CLI accepts one JSON action; arguments are passed separately from
+its fixed JavaScript program. JSON goes to stdout, failures to stderr:
+
+```sh
+rake agent --url http://127.0.0.1:PORT/TOKEN '{"action":"find","query":{"id":"agent-increment"}}'
+rake agent --url http://127.0.0.1:PORT/TOKEN '{"action":"click","query":{"role":"button","name":"Increment counter"}}'
+rake agent --url http://127.0.0.1:PORT/TOKEN '{"action":"waitFor","query":{"text":"Count: 1"}}'
+rake agent --url http://127.0.0.1:PORT/TOKEN '{"action":"screenshot","path":"/tmp/native.png"}'
+```
+
+Other actions: `capabilities`, `windows`, `snapshot`, `hover`, `scroll`, `drag`,
+`key`, `typeText` and `source`; `--window ID` and `--target ID` resolve ambiguity.
+Use a persistent client connection when a workflow needs retained references,
+wait cancellation or a selected window. Execute high-level actions sequentially;
+a failed multi-event gesture can have partially run. Condition waits observe
+captured state, not application-wide quiescence, GPU presentation or network idle.
+
+## Verification
+
+```sh
+cargo build -p rake-cli -p rake-agent-example --features rake-agent-example/devtools
+node --test scripts/test-agent-client.mjs
+node scripts/test-agent-cdp.mjs
+```
+
+The native suite requires an unlocked macOS 14+ desktop, Screen Recording
+permission, Node 22+ and Xcode command-line tools. It launches its own native
+fixture and local adapter, then exercises the public SDK and bundled CLI:
+capabilities → window selection → semantic lookup → guarded click → later-render
+wait → Unicode typing/replacement → keyboard shortcut → drag → scroll/clipping
+→ native PNG → Rust source snippet. It also checks ambiguity, missing nodes,
+timeout/cancellation, stable identity, and stale runtime/window/capture rejection.
+It closes only its own processes; logs and the native image stay in the printed
+private temporary directory. This suite passed on a real macOS window, including
+visual inspection of its PNG. It does not claim arbitrary browser/Puppeteer API
+compatibility or GPU-engine coverage beyond the reported inspection boundaries.

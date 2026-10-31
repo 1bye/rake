@@ -3,6 +3,7 @@
 mod accessibility;
 #[cfg(test)]
 mod benchmark;
+mod capabilities;
 mod captures;
 mod causal;
 mod compatibility;
