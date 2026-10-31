@@ -33,12 +33,19 @@
 //! }
 //! ```
 
+#[cfg(feature = "gpui")]
+mod page;
 pub(crate) mod runtime;
 mod types;
 #[cfg(feature = "gpui")]
 pub(crate) mod view;
 pub(crate) mod web;
 
+#[cfg(feature = "gpui")]
+pub use page::Page;
+#[cfg(feature = "gpui")]
+#[doc(hidden)]
+pub use page::{__mount_page, __routes};
 pub use rake_protocol::router::*;
 pub use runtime::{EntryHandle, Navigator, Router, TabHandle};
 pub use types::*;

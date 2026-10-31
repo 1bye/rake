@@ -287,7 +287,7 @@ pub mod prelude {
     #[cfg(feature = "gpui")]
     pub use crate::inspection::InspectElement;
     #[cfg(feature = "gpui")]
-    pub use crate::router::{PageContext, RouteOutlet, RouteViews, TabBar};
+    pub use crate::router::{Page, PageContext, RouteOutlet, RouteViews, TabBar};
     pub use rake_macros::{Command, Route};
 }
 

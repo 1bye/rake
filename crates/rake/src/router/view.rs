@@ -1,5 +1,9 @@
 //! GPUI mounting and presentation; retained entries own independent view entities.
 
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+#[path = "view/page_tests.rs"]
+mod page_tests;
+
 use crate::inspection::InspectElement as _;
 #[cfg(not(feature = "devtools"))]
 use crate::inspection::InspectRoot as _;
