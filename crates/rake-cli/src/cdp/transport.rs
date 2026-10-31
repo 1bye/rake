@@ -85,7 +85,10 @@ pub(super) fn serve(
                         socket.write(output.message)?;
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        socket.flush()?;
+                        return Ok(());
+                    }
                 }
             }
             socket.flush()?;
@@ -170,64 +173,4 @@ pub(super) fn serve(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn busy_worker_preserves_ping_startup_ack_and_bounded_admission() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let (started, ready) = mpsc::channel();
-        let (release, blocked) = mpsc::channel();
-        let server = std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            serve(tungstenite::accept(stream).unwrap(), move |worker| {
-                let first = worker.read().unwrap();
-                started.send(()).unwrap();
-                blocked.recv_timeout(Duration::from_secs(5)).unwrap();
-                let _ = worker.reply(Response::new(
-                    Some(first.request.id),
-                    Ok(serde_json::json!({})),
-                ));
-                assert!(worker.read().is_err(), "disconnect cancels queued requests");
-                Ok(())
-            })
-            .unwrap();
-        });
-        let stream = TcpStream::connect(address).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let (mut client, _) = tungstenite::client(format!("ws://{address}"), stream).unwrap();
-        client
-            .send(Message::text(r#"{"id":1,"method":"DOM.getDocument"}"#))
-            .unwrap();
-        ready.recv_timeout(Duration::from_secs(2)).unwrap();
-        client
-            .send(Message::text(r#"{"id":2,"method":"Inspector.enable"}"#))
-            .unwrap();
-        let response: serde_json::Value =
-            serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();
-        assert_eq!(
-            response["id"], 2,
-            "startup acknowledgement must not wait for the worker"
-        );
-        client.send(Message::Ping(vec![1, 2].into())).unwrap();
-        assert!(matches!(client.read().unwrap(), Message::Pong(_)));
-        for id in 3..=7 {
-            client
-                .send(Message::text(
-                    serde_json::json!({"id":id,"method":"DOM.getDocument"}).to_string(),
-                ))
-                .unwrap();
-        }
-        let response: serde_json::Value =
-            serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();
-        assert_eq!(response["id"], 7);
-        assert_eq!(response["error"]["code"], -32000);
-        client.close(None).unwrap();
-        assert!(matches!(client.read().unwrap(), Message::Close(_)));
-        release.send(()).unwrap();
-        server.join().unwrap();
-    }
-}
+mod tests;

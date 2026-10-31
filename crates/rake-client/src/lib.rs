@@ -34,6 +34,14 @@ pub fn with_deadline<T>(deadline: std::time::Instant, operation: impl FnOnce() -
     operation()
 }
 
+/// Returns the current thread's enclosing blocking-operation deadline, if any.
+/// Use it to stop polling or computation before another exchange exhausts the scope.
+/// A returned instant does not extend or cancel a scope established by [`with_deadline`].
+#[cfg(not(target_family = "wasm"))]
+pub fn current_deadline() -> Option<std::time::Instant> {
+    DEADLINE.get()
+}
+
 #[cfg(not(target_family = "wasm"))]
 fn remaining(timeout: Duration) -> std::io::Result<Duration> {
     if timeout.is_zero() || std::time::Instant::now().checked_add(timeout).is_none() {

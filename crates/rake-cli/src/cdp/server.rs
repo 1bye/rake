@@ -247,7 +247,8 @@ fn connection(
         Some(
             tungstenite::protocol::WebSocketConfig::default()
                 .max_message_size(Some(1024 * 1024))
-                .max_frame_size(Some(1024 * 1024)),
+                .max_frame_size(Some(1024 * 1024))
+                .max_write_buffer_size(2 * 1024 * 1024),
         ),
     )
     .map_err(|e| format!("CDP handshake: {e}"))?;

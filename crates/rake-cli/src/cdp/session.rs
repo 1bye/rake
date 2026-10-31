@@ -1760,6 +1760,7 @@ impl Session {
             let mut generation = None;
             let mut offset = 0;
             let mut combined: Option<rake_protocol::inspection::Snapshot> = None;
+            let mut total = None;
             loop {
                 let reply = query(
                     &self.instance,
@@ -1773,7 +1774,8 @@ impl Session {
                 let Reply::ElementPage(page) = reply else {
                     return Err(Error::new(-32000, "Unexpected tree page reply"));
                 };
-                if page.total > rake_protocol::inspection::MAX_ELEMENTS
+                if total.is_some_and(|total| total != page.total)
+                    || page.total > rake_protocol::inspection::MAX_ELEMENTS
                     || page.snapshot.elements.len() > rake_protocol::inspection::TREE_PAGE_SIZE
                     || generation
                         .as_ref()
@@ -1781,21 +1783,32 @@ impl Session {
                 {
                     return Err(Error::new(-32000, "Invalid tree page"));
                 }
+                total = Some(page.total);
                 generation = Some(page.snapshot.capture.clone());
+                let previous = combined
+                    .as_ref()
+                    .map_or(0, |snapshot| snapshot.elements.len());
+                let received = previous + page.snapshot.elements.len();
+                if offset != previous
+                    || received > page.total
+                    || page
+                        .next
+                        .is_some_and(|next| next != received || next >= page.total)
+                    || (page.next.is_none() && received != page.total)
+                    || (page.next.is_some() && received == previous)
+                    || combined
+                        .as_ref()
+                        .is_some_and(|snapshot| snapshot.status != page.snapshot.status)
+                {
+                    return Err(Error::new(-32000, "Incomplete or inconsistent tree page"));
+                }
                 if let Some(snapshot) = &mut combined {
-                    if snapshot.elements.len() + page.snapshot.elements.len() > page.total {
-                        return Err(Error::new(
-                            -32000,
-                            "Tree pages exceeded their declared total",
-                        ));
-                    }
                     snapshot.elements.extend(page.snapshot.elements);
                 } else {
                     combined = Some(page.snapshot);
                 }
                 match page.next {
-                    Some(next) if next > offset && next <= page.total => offset = next,
-                    Some(_) => return Err(Error::new(-32000, "Invalid tree page cursor")),
+                    Some(next) => offset = next,
                     None => break,
                 }
             }
@@ -2734,6 +2747,18 @@ mod tests {
         mut reply: impl FnMut(RuntimeRequest) -> Reply + Send + 'static,
         requests: usize,
     ) -> (Instance, std::thread::JoinHandle<()>, std::path::PathBuf) {
+        fixture_result(move |request| Ok(reply(request)), requests)
+    }
+
+    fn fixture_result(
+        mut reply: impl FnMut(
+            RuntimeRequest,
+        )
+            -> std::result::Result<Reply, rake_protocol::control::ControlError>
+        + Send
+        + 'static,
+        requests: usize,
+    ) -> (Instance, std::thread::JoinHandle<()>, std::path::PathBuf) {
         use std::io::{BufRead, BufReader, Write};
         let path =
             std::path::PathBuf::from(format!("/tmp/rake-overlay-{}.sock", uuid::Uuid::new_v4()));
@@ -2769,7 +2794,7 @@ mod tests {
                     .read_line(&mut line)
                     .unwrap();
                 let request: RuntimeRequest = serde_json::from_str(&line).unwrap();
-                let result = Ok::<_, rake_protocol::control::ControlError>(reply(request));
+                let result = reply(request);
 
                 writeln!(socket, "{}", serde_json::to_string(&result).unwrap()).unwrap();
             }
@@ -3288,6 +3313,197 @@ mod tests {
         assert_eq!(session.dom.search("Div").unwrap()["resultCount"], 600);
         worker.join().unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn expired_paged_capture_never_installs_a_partial_tree_and_recovers_on_next_read() {
+        use rake_protocol::inspection::{InspectionError, TreePage};
+        let mut request_index = 0;
+        let (mut instance, worker, path) = fixture_result(
+            move |request| {
+                let RuntimeMessage::Query(Query::InspectTreePage { generation, offset }) =
+                    request.message
+                else {
+                    panic!("unexpected request");
+                };
+                request_index += 1;
+                match request_index {
+                    1 => {
+                        assert!(generation.is_none());
+                        Ok(Reply::ElementPage(TreePage {
+                            snapshot: capture("expired"),
+                            total: 2,
+                            next: Some(1),
+                        }))
+                    }
+                    2 => {
+                        assert_eq!(generation.as_deref(), Some("expired"));
+                        assert_eq!(offset, 1);
+                        Err(InspectionError::StaleGeneration.into())
+                    }
+                    3 => {
+                        assert!(generation.is_none(), "recovery starts a new capture");
+                        Ok(Reply::ElementPage(TreePage {
+                            snapshot: capture("fresh"),
+                            total: 1,
+                            next: None,
+                        }))
+                    }
+                    _ => panic!("expired capture was silently retried"),
+                }
+            },
+            3,
+        );
+        instance.info.queries.push("inspect_tree_page".into());
+        let mut session = Session::new(instance, None);
+        session.dom.update(capture("before")).unwrap();
+        session.dom.document(&json!({"depth":-1})).unwrap();
+        assert!(session.refresh_dom().is_err());
+        assert!(session.dom.node_id("element-before-0").is_some());
+        assert!(session.dom.node_id("element-expired-0").is_none());
+        assert!(session.outbound.is_empty());
+        session.refresh_dom().unwrap();
+        assert!(session.dom.node_id("element-fresh-0").is_some());
+        worker.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn truncated_and_skipped_tree_pages_are_rejected_before_delivery() {
+        for (total, next) in [(2, None), (3, Some(2)), (1, Some(1))] {
+            let (mut instance, worker, path) = fixture(
+                move |_| {
+                    Reply::ElementPage(rake_protocol::inspection::TreePage {
+                        snapshot: capture("partial"),
+                        total,
+                        next,
+                    })
+                },
+                1,
+            );
+            instance.info.queries.push("inspect_tree_page".into());
+            let mut session = Session::new(instance, None);
+            assert!(session.refresh_dom().is_err());
+            assert!(session.dom.generation().is_none());
+            assert!(session.outbound.is_empty());
+            worker.join().unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "explicit release-mode IPC load measurement"]
+    fn cdp_refresh_load_benchmark() {
+        use rake_protocol::inspection::{TREE_PAGE_SIZE, TreePage, TreeRevision};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        const ITERATIONS: usize = 25;
+        const NODES: usize = 8192;
+        for clients in [1, 4] {
+            for revision_enabled in [false, true] {
+                let mut metadata = super::super::benchmark::capture(NODES);
+                let elements = std::mem::take(&mut metadata.elements);
+                let pages: Vec<_> = elements
+                    .chunks(TREE_PAGE_SIZE)
+                    .enumerate()
+                    .map(|(index, elements)| {
+                        let mut snapshot = metadata.clone();
+                        snapshot.elements = elements.to_vec();
+                        let next = (index + 1) * TREE_PAGE_SIZE;
+                        TreePage {
+                            snapshot,
+                            total: NODES,
+                            next: (next < NODES).then_some(next),
+                        }
+                    })
+                    .collect();
+                let revision = TreeRevision {
+                    capture: "one".into(),
+                    status: metadata.status,
+                };
+                let encoded = |reply: Reply| {
+                    serde_json::to_vec(&Ok::<_, rake_protocol::control::ControlError>(reply))
+                        .unwrap()
+                        .len()
+                        + 1
+                };
+                let page_bytes: Vec<_> = pages
+                    .iter()
+                    .map(|page| encoded(Reply::ElementPage(page.clone())))
+                    .collect();
+                let revision_bytes = encoded(Reply::InspectionRevision(revision.clone()));
+                let pages_count = NODES / TREE_PAGE_SIZE;
+                let reads = if revision_enabled {
+                    pages_count + clients * (ITERATIONS + 1)
+                } else {
+                    pages_count * clients * (ITERATIONS + 1)
+                };
+                let wire = Arc::new(AtomicUsize::new(0));
+                let observed = Arc::clone(&wire);
+                let (mut instance, worker, path) = fixture(
+                    move |request| {
+                        let bytes = serde_json::to_vec(&request).unwrap().len() + 1;
+                        let (reply, response_bytes) = match request.message {
+                            RuntimeMessage::Query(Query::InspectRevision {}) => {
+                                (Reply::InspectionRevision(revision.clone()), revision_bytes)
+                            }
+                            RuntimeMessage::Query(Query::InspectTreePage { offset, .. }) => {
+                                let index = offset / TREE_PAGE_SIZE;
+                                (Reply::ElementPage(pages[index].clone()), page_bytes[index])
+                            }
+                            _ => panic!("unexpected benchmark request"),
+                        };
+                        observed.fetch_add(bytes + response_bytes, Ordering::Relaxed);
+                        reply
+                    },
+                    reads,
+                );
+                instance.info.queries.push("inspect_tree_page".into());
+                if revision_enabled {
+                    instance.info.queries.push("inspect_revision".into());
+                }
+                let shared = Arc::default();
+                let mut sessions = (0..clients)
+                    .map(|_| {
+                        let mut session = Session::new(instance.clone(), None);
+                        session.captures = Arc::clone(&shared);
+                        session
+                    })
+                    .collect::<Vec<_>>();
+                let cold = Instant::now();
+                for session in &mut sessions {
+                    session.refresh_dom().unwrap();
+                }
+                let cold_us = cold.elapsed().as_micros();
+                let mut times = Vec::new();
+                let mut allocations = 0;
+                let mut bytes = 0;
+                for _ in 0..ITERATIONS {
+                    for session in &mut sessions {
+                        let (result, elapsed, calls, allocated) =
+                            super::super::benchmark::measure(|| session.refresh_dom());
+                        result.unwrap();
+                        times.push(elapsed);
+                        allocations += calls;
+                        bytes += allocated;
+                    }
+                }
+                times.sort_unstable();
+                let samples = times.len();
+                println!(
+                    "cdp_refresh clients={clients} revision={revision_enabled} cold_us={cold_us} median_us={} p95_us={} allocations={} allocated_bytes={} ipc_queries={reads} ipc_wire_bytes={}",
+                    times[samples / 2],
+                    times[samples * 95 / 100],
+                    allocations / samples,
+                    bytes / samples,
+                    wire.load(Ordering::Relaxed)
+                );
+                worker.join().unwrap();
+                std::fs::remove_file(path).unwrap();
+            }
+        }
     }
 
     #[test]

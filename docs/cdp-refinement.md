@@ -71,3 +71,87 @@ Before refinement on 2026-10-31:
 | --- | ---: | ---: | ---: | ---: |
 | 1,000 | 1,513 | 1,804 | 13,052 | 2,276,540 |
 | 8,192 | 15,382 | 16,398 | 106,603 | 18,797,756 |
+
+## Results and verification
+
+The same release projection benchmark after the ownership change:
+
+| Nodes | Median µs | p95 µs | Allocations/update | Requested bytes/update |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 | 1,086 | 1,292 | 3,055 | 611,314 |
+| 8,192 | 13,675 | 18,804 | 24,686 | 5,125,938 |
+
+At 8,192 nodes this removes 77% of allocation calls and 73% of requested bytes.
+Projection latency remains workload-sensitive; p95 did not improve in this run.
+The normal unchanged-revision path skips projection entirely.
+
+Measure that path through real private Unix sockets:
+
+```sh
+cargo test -p rake-cli --release --offline --bin rake cdp_refresh_load_benchmark -- --ignored --nocapture --test-threads=1
+```
+
+This compares the same implementation with revision negotiation disabled/enabled,
+using generated 8,192-node captures, 32 pages, one cold read per client and 25 warm
+refreshes per client. Four sessions share the immutable cache and are refreshed
+sequentially. Timings/allocations below describe one warm refresh on the client
+thread. Query counts and serialized request/reply bytes cover the entire run,
+including cold loads; they exclude TCP/WebSocket framing and server allocations.
+
+| Clients | Revisions | Warm median µs | Warm p95 µs | Allocations/refresh | Requested bytes/refresh | IPC queries | IPC bytes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | disabled | 29,113 | 33,822 | 66,948 | 32,516,595 | 832 | 77,544,298 |
+| 1 | enabled | 48 | 89 | 15 | 9,599 | 58 | 2,988,323 |
+| 4 | disabled | 26,871 | 29,209 | 66,951 | 32,516,787 | 3,328 | 310,177,192 |
+| 4 | enabled | 47 | 104 | 15 | 9,596 | 136 | 3,005,873 |
+
+Cold loading all four clients took 87,298 µs with negotiation disabled and
+36,469 µs enabled. These are generated-input adapter/IPC measurements, not claims
+about native frame rates, GPU rendering, or Chrome UI latency. Simultaneous cold
+cache misses can still duplicate reads.
+
+Default regression tests now cover eight concurrent clients reconnecting (256
+ordered requests), final buffered reply delivery, ping/startup responsiveness
+under blocked work, bounded admission and disconnect cancellation, a nonreading
+peer with write timeout and joined worker, and cache isolation/replacement/count
+and byte eviction. Tests use real loopback sockets and controlled workers.
+
+Paged captures are installed only after contiguous pages reach their declared
+total. Skipped/truncated pages, changed totals/status/generations and expired
+captures fail without changing the frontend tree. A subsequent read can recover;
+mutations are not retried. The WebSocket write buffer is capped at 2 MiB, in
+addition to session and worker queue limits. A stopped worker's final batch is
+flushed before closing the connection.
+
+Relevant checks:
+
+```sh
+cargo test -p rake-cli -p rake-client -p rake-protocol --offline
+cargo clippy -p rake-cli -p rake-client -p rake-protocol --all-targets --offline -- -D warnings
+cargo test -p rake --no-default-features --features devtools --lib inspection::tests:: --offline
+cargo check -p rake --no-default-features --offline
+cargo check -p rake-client -p rake-protocol --target wasm32-unknown-unknown --offline
+cargo build -p rake-cli -p rake-view --features rake/devtools --offline
+node scripts/test-elements-cdp.mjs
+node scripts/test-console-cdp.mjs
+node scripts/test-network-cdp.mjs
+node scripts/test-performance-cdp.mjs
+```
+
+All four native workflow scripts passed on 2026-10-31. They require a real macOS
+GUI and exercise the native app/CDP through WebSocket; they do not automate stock
+Chrome's interface. Run them sequentially because reload fixtures watch the same
+source workspace.
+
+The Console run caught a deadline interaction: command submission could succeed
+but continued observation would reach the enclosing operation deadline and show
+an exception. Evaluation now stops polling within that budget and returns the
+last observed pending state with its runtime-scoped observation token and retry
+key. A late observation timeout includes a warning; it never resubmits. The
+socket regression verifies a single submission for both lost acknowledgements
+and pending outcomes. `current_deadline()` exposes the enclosing synchronous
+scope so callers can budget polling as well as I/O.
+
+Console and Performance source-access checks were updated to request an actually
+uncaptured file URL. Their old numeric-URL replacements left current workspace
+URLs unchanged and incorrectly fetched the original allowed source.

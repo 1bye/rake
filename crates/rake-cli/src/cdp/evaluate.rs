@@ -141,6 +141,8 @@ pub(super) fn validate(instance: &Instance, expression: &str) -> Result<(String,
 }
 
 pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Error> {
+    let deadline =
+        rake_client::current_deadline().unwrap_or_else(|| Instant::now() + super::TIMEOUT);
     let (id, arguments) = validate(instance, expression)?;
     let key = uuid::Uuid::new_v4().to_string();
 
@@ -158,8 +160,7 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
         return Err(delivery_error("Unexpected command submission reply", &key));
     };
 
-    let deadline = Instant::now() + super::TIMEOUT;
-
+    let mut observed = None;
     loop {
         match crate::terminal::query(
             instance,
@@ -176,7 +177,10 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
                         return Ok(outcome(instance, Some(&key), &record));
                     }
                     OperationState::Queued | OperationState::Running
-                        if Instant::now() < deadline => {}
+                        if Instant::now() + Duration::from_millis(20) < deadline =>
+                    {
+                        observed = Some(record);
+                    }
                     _ => return Ok(outcome(instance, Some(&key), &record)),
                 }
             }
@@ -187,6 +191,15 @@ pub(super) fn execute(instance: &Instance, expression: &str) -> Result<Value, Er
                 ));
             }
             Err(e) => {
+                if Instant::now() >= deadline
+                    && let Some(record) = observed
+                {
+                    let mut value = outcome(instance, Some(&key), &record);
+                    value["observationWarning"] = json!(format!(
+                        "Observation deadline reached: {e}; use the observation token for a fresh state"
+                    ));
+                    return Ok(value);
+                }
                 return Err(delivery_error(
                     format!("Operation {operation_id} observation failed: {e}"),
                     &key,
@@ -289,83 +302,116 @@ mod tests {
     }
 
     #[test]
-    fn lost_submission_reply_names_key_and_never_resends() {
+    fn lost_submission_and_pending_observation_never_resend_commands() {
         use std::io::{BufRead, BufReader, Write};
         use std::os::unix::net::UnixListener;
-        let path =
-            std::path::PathBuf::from(format!("/tmp/rake-eval-{}.sock", uuid::Uuid::new_v4()));
+        for submitted in [false, true] {
+            let path =
+                std::path::PathBuf::from(format!("/tmp/rake-eval-{}.sock", uuid::Uuid::new_v4()));
 
-        let listener = UnixListener::bind(&path).unwrap();
+            let listener = UnixListener::bind(&path).unwrap();
 
-        listener.set_nonblocking(true).unwrap();
-        let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
-            rake::router::RouterConfig::default(),
-        );
+            listener.set_nonblocking(true).unwrap();
+            let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
+                rake::router::RouterConfig::default(),
+            );
 
-        let instance = Instance {
-            application_id: "test.eval".into(),
-            pid: std::process::id(),
-            info: router.client().info(),
-            endpoint: rake_client::local::Endpoint::Local { path: path.clone() },
-        };
+            let instance = Instance {
+                application_id: "test.eval".into(),
+                pid: std::process::id(),
+                info: router.client().info(),
+                endpoint: rake_client::local::Endpoint::Local { path: path.clone() },
+            };
 
-        let (done, finished) = std::sync::mpsc::channel();
+            let (done, finished) = std::sync::mpsc::channel();
 
-        let worker = std::thread::spawn(move || {
-            let mut keys = Vec::new();
+            let worker = std::thread::spawn(move || {
+                let mut keys = Vec::new();
 
-            loop {
-                let (mut socket, _) = match listener.accept() {
-                    Ok(value) => value,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        match finished.try_recv() {
-                            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-                            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                loop {
+                    let (mut socket, _) = match listener.accept() {
+                        Ok(value) => value,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            match finished.try_recv() {
+                                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                            }
+
+                            std::thread::sleep(Duration::from_millis(1));
+                            continue;
                         }
+                        Err(e) => panic!("{e}"),
+                    };
 
-                        std::thread::sleep(Duration::from_millis(1));
-                        continue;
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut line = String::new();
+
+                    BufReader::new(socket.try_clone().unwrap())
+                        .read_line(&mut line)
+                        .unwrap();
+                    let request: Request = serde_json::from_str(&line).unwrap();
+
+                    match request.message {
+                        Message::Query(Query::Commands {}) => {
+                            let reply = Ok::<_, rake_protocol::control::ControlError>(Reply::Data(
+                                json!([{"id":"test.echo"}]),
+                            ));
+
+                            writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                        }
+                        Message::Command(Command::Run { .. }) => {
+                            keys.push(request.key.unwrap());
+                            if submitted {
+                                let reply = Ok::<_, rake_protocol::control::ControlError>(
+                                    Reply::Submitted {
+                                        operation_id: rake_protocol::router::OperationId(1),
+                                    },
+                                );
+                                writeln!(socket, "{}", serde_json::to_string(&reply).unwrap())
+                                    .unwrap();
+                            }
+                        }
+                        Message::Query(Query::Operation { operation }) => {
+                            assert!(submitted);
+                            let reply = Ok::<_, rake_protocol::control::ControlError>(
+                                Reply::Operation(rake_protocol::control::OperationRecord {
+                                    operation_id: operation,
+                                    state: rake_protocol::router::OperationState::Running,
+                                    result: None,
+                                }),
+                            );
+                            writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                        }
+                        _ => panic!("unexpected fixture request"),
                     }
-                    Err(e) => panic!("{e}"),
-                };
-
-                socket.set_nonblocking(false).unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .unwrap();
-                let mut line = String::new();
-
-                BufReader::new(socket.try_clone().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
-                let request: Request = serde_json::from_str(&line).unwrap();
-
-                match request.message {
-                    Message::Query(Query::Commands {}) => {
-                        let reply = Ok::<_, rake_protocol::control::ControlError>(Reply::Data(
-                            json!([{"id":"test.echo"}]),
-                        ));
-
-                        writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
-                    }
-                    Message::Command(Command::Run { .. }) => {
-                        keys.push(request.key.unwrap());
-                    }
-                    _ => panic!("unexpected fixture request"),
                 }
+
+                keys
+            });
+
+            let result =
+                rake_client::with_deadline(Instant::now() + Duration::from_secs(1), || {
+                    execute(&instance, "test.echo({\"message\":\"one\"})")
+                });
+
+            done.send(()).unwrap();
+            let keys = worker.join().unwrap();
+
+            assert_eq!(keys.len(), 1);
+            if submitted {
+                let value = result.unwrap();
+                assert_eq!(value["status"], "running");
+                assert_eq!(value["requestKey"], keys[0]);
+                assert_eq!(value["observe"]["id"], "op-1");
+            } else {
+                let error = result.unwrap_err();
+                assert!(error.message.contains(&keys[0]));
+                assert!(error.message.contains("not resent"));
             }
-
-            keys
-        });
-
-        let error = execute(&instance, "test.echo({\"message\":\"one\"})").unwrap_err();
-
-        done.send(()).unwrap();
-        let keys = worker.join().unwrap();
-
-        assert_eq!(keys.len(), 1);
-        assert!(error.message.contains(&keys[0]));
-        assert!(error.message.contains("not resent"));
-        std::fs::remove_file(path).unwrap();
+            std::fs::remove_file(path).unwrap();
+        }
     }
 }

@@ -20,13 +20,17 @@ fn nested_deadlines_cannot_extend_or_leak_into_later_operations() {
         path: PathBuf::from("/unused-expired-deadline.sock"),
     });
     let expired = Instant::now() - Duration::from_secs(1);
+    assert!(rake_client::current_deadline().is_none());
     rake_client::with_deadline(expired, || {
+        assert_eq!(rake_client::current_deadline(), Some(expired));
         rake_client::with_deadline(Instant::now() + Duration::from_secs(10), || {
+            assert_eq!(rake_client::current_deadline(), Some(expired));
             assert!(
                 matches!(query(&instance, Query::Info {}, Duration::from_secs(2)), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut)
             );
         });
     });
+    assert!(rake_client::current_deadline().is_none());
     assert!(
         matches!(query(&instance, Query::Info {}, Duration::from_secs(2)), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
     );

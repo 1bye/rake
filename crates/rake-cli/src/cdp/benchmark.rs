@@ -36,7 +36,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator;
 
-fn capture(count: usize) -> Snapshot {
+pub(super) fn capture(count: usize) -> Snapshot {
     let template: Element = serde_json::from_value(serde_json::json!({
         "id":"root", "kind":"Div", "metadata_truncated":false
     }))
@@ -57,6 +57,15 @@ fn capture(count: usize) -> Snapshot {
             })
             .collect(),
     }
+}
+
+pub(super) fn measure<T>(operation: impl FnOnce() -> T) -> (T, u128, usize, usize) {
+    COUNT.set(Some((0, 0)));
+    let start = Instant::now();
+    let result = operation();
+    let micros = start.elapsed().as_micros();
+    let (allocations, bytes) = COUNT.replace(None).unwrap();
+    (result, micros, allocations, bytes)
 }
 
 #[test]

@@ -135,7 +135,7 @@ try {
     const callback=trace.traceEvents.find(e=>e.cat==='rake.callbacks'&&e.args.data.url.startsWith('http'));
     assert.ok(callback,'real callback source');
     const source=await fetch(callback.args.data.url);assert.equal(source.status,200);assert.ok((await source.text()).length>0);
-    const invalid=callback.args.data.url.replace(/\/frame\/\d+\/\d+\//,'/frame/999999999/99999/');assert.equal((await fetch(invalid)).status,404);
+    const invalid=new URL(callback.args.data.url);invalid.pathname+='.not-captured';assert.equal((await fetch(invalid)).status,404,'callback sources require an exact captured URL');
     const resource=await call('Network.loadNetworkResource',{url:callback.args.data.url,options:{disableCache:false,includeCredentials:false}});
     assert.equal(resource.resource.success,true);
     await call('IO.close',{handle:resource.resource.stream});

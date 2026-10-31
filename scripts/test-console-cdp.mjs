@@ -62,7 +62,8 @@ try{
     assert.equal(linked.status,200); assert.ok(linked.headers.get('content-type').startsWith('text/plain'));
     assert.equal(linked.headers.get('x-content-type-options'),'nosniff');
     assert.ok((await linked.text()).includes('Console fixture info'));
-    assert.equal((await fetch(info.url.replace(/\/source\/\d+\//,'/source/0/'))).status,404);
+    const uncapturedSource=new URL(info.url);uncapturedSource.pathname+='.not-captured';
+    assert.equal((await fetch(uncapturedSource)).status,404,'source access requires the exact captured file URL');
     const resource=(await call('Network.loadNetworkResource',{frameId:'rake',url:info.url,options:{disableCache:true,includeCredentials:false}})).resource;
     let source='';for(;;){const part=await call('IO.read',{handle:resource.stream});source+=part.data;if(part.eof)break;}await call('IO.close',{handle:resource.stream});
     assert.ok(source.includes('Console fixture info'));
