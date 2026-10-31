@@ -38,9 +38,11 @@ pub(super) fn describe(
     }
     json!({
         "version":1,"runtimeId":info.runtime_id,"platform":info.platform,"methods":methods,
+        "errorContractVersion":1,
+        "agentQuery":{"filters":["nodeId","stableId","id","role","name","text","textContains","textContent","textContentContains","bounds","enabled","visible"],"snapshotOptions":["limit","offset","expectedRevision","rootNodeId"],"textContent":"captured rendered text; a boundary owns its text or aggregates descendants; private input values are excluded"},
         "sourceRead":{"supported":sources && inspection && native,"transport":"snapshot source.url HTTP GET"},
         "nativeWindowsAvailable":native,"nativeError":native_error,
-        "limits":{"snapshotNodes":256,"waitHandles":32,"waitTimeoutMs":30000,"requestTimeoutMs":2000,"textBytes":16384,"imageBytes":768000,"messageBytes":1048576},
+        "limits":{"evidenceBytes":921600,"evidenceTreeNodes":64,"capturedTextBytes":16777216,"snapshotNodes":256,"waitHandles":32,"waitTimeoutMs":30000,"requestTimeoutMs":2000,"textBytes":16384,"imageBytes":768000,"messageBytes":1048576},
         "semantics":{"actions":"accepted by native event dispatch; use a condition wait to observe rendering","replay":"never retry uncertain mutations","references":"runtime and window scoped; guarded pointer admission rejects changed capture","visibility":"captured bounds and clipping; final GPU occlusion is unavailable","coverage":"rake::view and opted-in inspection hosts; opaque descendants may be omitted","screenshot":"whole native window, independently sampled from inspection; permission checked during capture","source":"workspace-confined HTTP source URLs from semantic snapshot metadata","evaluation":"documented Rake console helpers only; no arbitrary JavaScript execution"}
     })
 }

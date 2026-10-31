@@ -241,3 +241,51 @@ The native suite verifies disabled-target rejection, clipped rows, and a capture
 overlay whose pointer interception remains unknown. CPU/client tests cover hidden
 states, fractional edge coordinates and the absence of native mouse dispatch when
 a known blocker is present.
+
+## Subtrees, enclosing text and structured failures
+
+`Rake.getSnapshot`/`Rake.findElements` accept `rootNodeId` to include one retained
+node and its descendants before applying the query. The root must belong to the
+selected window. Pagination still requires `expectedRevision`; a changed revision
+requires restarting the read. The SDK resolves stable references with
+`app.subtree(reference, query?, options?)`; CLI `subtree` uses `query` to select
+the root and optional `filter` for descendants. Scoped waits and evidence accept
+the same `rootNodeId`. Removing a wait's root invalidates it.
+
+Every projected element now includes `textContent`, `textContentTruncated` and
+`textContentComplete`. `textContent` aggregates captured text children in tree
+order, so a paragraph can expose its text even when its direct `text` is null.
+A boundary's own rendered text takes precedence over its descendants to avoid
+counting the same text twice. The preview stops at 512 UTF-8 bytes; query filters
+`textContent` and `textContentContains` inspect the retained captured text rather
+than that preview. Exact matching requires complete captured metadata. Original
+`text`/`textContains` predicates retain their direct-boundary meaning.
+
+Aggregation uses one bounded shared text buffer and subtree ranges, with iterative
+traversal and no recursive stack or text copy per ancestor. Captured text has a
+16 MiB total bound. Omitted/truncated metadata keeps completeness false; a
+`queryComplete: false` result cannot satisfy an absence wait. These completeness
+flags refer to captured boundaries; opaque engine descendants and private editable
+values remain outside the reported coverage.
+
+```js
+const count = await app.find({id: 'agent-count', textContent: 'Count: 1'});
+const branch = await app.subtree(count);
+await app.waitFor({textContent: 'Count: 1'}, {rootNodeId: count.nodeId});
+```
+
+CDP errors add `data.category`, `recovery`, `outcome` and `automaticReplay: false`.
+The client exposes those fields on `AgentError`/`ProtocolError`; CLI failures emit
+one JSON error on stderr with a nonzero exit status. Categories include
+`element_not_found`, `ambiguous_element`, `node_stale`, `capture_changed`,
+`runtime_changed`, `window_changed`, `snapshot_changed`, `not_actionable`,
+`unsupported_operation`, `request_timed_out` and `disconnected`. Recoveries such
+as `narrow_query`, `resolve_again`, `restart_pagination`, `select_window` and
+`reconnect` are hints for an explicit next step, never automatic mutation retries.
+
+`outcome: rejected` describes a known failed admission/preflight. `read_failed`
+describes observation failure. `unknown` preserves uncertainty after transport
+failures or errors without an authoritative admission result. A wait timeout uses
+`observation_only`; it says nothing about whether the earlier action happened.
+A multi-event gesture can partially run before a later event fails. The capability
+catalog reports the supported query fields and error contract version.

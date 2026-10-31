@@ -176,7 +176,13 @@ impl Session {
                     return Err(Error::new(-32000, "Unexpected runtime capability reply"));
                 };
                 if info.runtime_id != self.instance.info.runtime_id {
-                    return Err(Error::new(-32010, "Runtime identity changed"));
+                    return Err(Error::agent(
+                        -32010,
+                        "runtime_changed",
+                        "reconnect",
+                        "rejected",
+                        "Runtime identity changed",
+                    ));
                 }
                 let native = super::native_input::windows(&self.instance);
                 Ok(super::capabilities::describe(
@@ -257,7 +263,7 @@ impl Session {
                     .native_input
                     .command(&self.instance, method, &request.params)?;
                 let reply = self.send_control(command).map_err(|error| {
-                    let code = if matches!(
+                    let stale = matches!(
                         error,
                         rake_client::Error::Control(
                             rake_protocol::control::ControlError::Inspection(
@@ -265,12 +271,24 @@ impl Session {
                                     | rake_protocol::inspection::InspectionError::NotRetained
                             )
                         )
-                    ) {
-                        -32010
+                    );
+                    if stale {
+                        Error::agent(
+                            -32010,
+                            "capture_changed",
+                            "resolve_again",
+                            "rejected",
+                            error.to_string(),
+                        )
                     } else {
-                        -32000
-                    };
-                    Error::new(code, error.to_string())
+                        Error::agent(
+                            -32000,
+                            "native_dispatch_failed",
+                            "check_application_state",
+                            "unknown",
+                            error.to_string(),
+                        )
+                    }
                 })?;
                 if !matches!(reply, Reply::Acknowledged) {
                     return Err(Error::new(-32000, "Unexpected native input reply"));

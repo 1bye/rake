@@ -57,3 +57,12 @@ test('known actionability blockers stop a click before native mouse dispatch',as
   await assert.rejects(client.click({runtimeId:'runtime',windowId:1,nodeId:2}),e=>e.code===-32011 && e.report.blockers[0].code==='disabled');
   assert.ok(socket.sent.every(request=>!request.method.startsWith('Input.')));client.close();
 });
+test('protocol and client errors retain categories, recovery and uncertain outcomes',async()=>{
+  const socket=new Socket(),client=new RakeAgent(socket,'http://127.0.0.1:1');
+  const pending=client.call('Input.insertText',{text:'once'});
+  socket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({id:socket.sent[0].id,error:{code:-32010,message:'stale capture',data:{category:'capture_changed',recovery:'resolve_again',outcome:'rejected',automaticReplay:false}}})}));
+  await assert.rejects(pending,e=>e.category==='capture_changed' && e.recovery==='resolve_again' && e.outcome==='rejected' && e.data.automaticReplay===false);
+  const timeout=client.call('Input.insertText',{text:'uncertain'},5);
+  await assert.rejects(timeout,e=>e.category==='request_timed_out' && e.outcome==='unknown' && e.data.automaticReplay===false);
+  assert.equal(socket.sent.length,2);
+});

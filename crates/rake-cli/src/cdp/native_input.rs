@@ -34,11 +34,22 @@ impl NativeInput {
             return available
                 .into_iter()
                 .find(|w| w.window == id)
-                .ok_or_else(|| Error::new(-32000, "Selected native window is unavailable"));
+                .ok_or_else(|| {
+                    Error::agent(
+                        -32015,
+                        "window_unavailable",
+                        "select_window",
+                        "rejected",
+                        "Selected native window is unavailable",
+                    )
+                });
         }
         if available.len() != 1 {
-            return Err(Error::new(
-                -32000,
+            return Err(Error::agent(
+                -32014,
+                "window_selection_required",
+                "select_window",
+                "rejected",
                 "Select a native window with Rake.selectWindow; automatic selection requires exactly one window",
             ));
         }
@@ -266,8 +277,11 @@ pub(super) fn runtime_guard(params: &Value, runtime: &str) -> Result<(), Error> 
             .as_str()
             .ok_or_else(|| Error::new(-32602, "rakeRuntimeId must be a string"))?;
         if expected != runtime {
-            return Err(Error::new(
+            return Err(Error::agent(
                 -32010,
+                "runtime_changed",
+                "reconnect",
+                "rejected",
                 "Runtime precondition failed; reconnect explicitly",
             ));
         }
@@ -281,7 +295,13 @@ fn window_guard(params: &Value, target: &NativeWindow) -> Result<(), Error> {
             .as_u64()
             .ok_or_else(|| Error::new(-32602, "rakeWindowId must be an integer"))?;
         if expected != target.window.0 {
-            return Err(Error::new(-32010, "Window precondition failed"));
+            return Err(Error::agent(
+                -32010,
+                "window_changed",
+                "select_window",
+                "rejected",
+                "Window precondition failed",
+            ));
         }
     }
     if let Some(expected) = params.get("rakeCapture") {
@@ -289,8 +309,11 @@ fn window_guard(params: &Value, target: &NativeWindow) -> Result<(), Error> {
             .as_str()
             .ok_or_else(|| Error::new(-32602, "rakeCapture must be a string"))?;
         if expected != target.generation {
-            return Err(Error::new(
+            return Err(Error::agent(
                 -32010,
+                "capture_changed",
+                "resolve_again",
+                "rejected",
                 "Capture precondition failed; resolve the element again",
             ));
         }

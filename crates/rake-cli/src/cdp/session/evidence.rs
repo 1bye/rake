@@ -18,6 +18,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 struct Options {
     query: Option<Value>,
     limit: Option<usize>,
+    root_node_id: Option<i32>,
     screenshot: Option<bool>,
     diagnostics_after: Option<u64>,
     #[serde(rename = "rakeRuntimeId")]
@@ -26,9 +27,15 @@ struct Options {
 
 impl Session {
     pub(super) fn evidence(&mut self, params: &Value) -> Result<Value, Error> {
+        semantic::root_node(params)?;
         let options: Options = serde_json::from_value(params.clone())
             .map_err(|e| Error::new(-32602, e.to_string()))?;
         let limit = options.limit.unwrap_or(32);
+        let mut tree_params = json!({"limit":limit});
+        if let Some(root) = options.root_node_id {
+            tree_params["rootNodeId"] = json!(root);
+        }
+        semantic::root_node(&tree_params)?;
         if !(1..=64).contains(&limit) {
             return Err(Error::new(-32602, "Evidence limit must be 1..64"));
         }
@@ -43,7 +50,7 @@ impl Session {
         let window = self.native_input.target(&self.instance)?.window;
         self.native_input.window = Some(window);
         let presentation = self.refresh_window(window)?;
-        let mut tree = semantic::project(&presentation, &self.dom, &json!({"limit":limit}))?;
+        let mut tree = semantic::project(&presentation, &self.dom, &tree_params)?;
         tree["runtimeId"] = json!(self.instance.info.runtime_id);
         let query = options.query.or_else(|| {
             self.dom
@@ -55,15 +62,14 @@ impl Session {
             let query = query.ok_or_else(|| {
                 Error::new(-32000, "Supply query or select an element in DevTools")
             })?;
-            let snapshot =
-                semantic::project(&presentation, &self.dom, &json!({"query":query,"limit":2}))?;
+            let mut selected_params = tree_params.clone();
+            selected_params["limit"] = json!(2);
+            selected_params["query"] = query;
+            let snapshot = semantic::project(&presentation, &self.dom, &selected_params)?;
             if snapshot["totalMatches"] != 1 {
-                return Err(Error::new(
-                    -32000,
-                    format!(
-                        "Evidence selection requires one element; found {}",
-                        snapshot["totalMatches"]
-                    ),
+                return Err(Error::selection(
+                    snapshot["totalMatches"].as_u64().unwrap_or(0),
+                    "Evidence selection",
                 ));
             }
             let mut element = snapshot["elements"][0].clone();
@@ -74,14 +80,11 @@ impl Session {
             }
             Ok(element)
         })();
-        let source = selected
-            .as_ref()
-            .map_err(|e| Error::new(e.code, e.message.clone()))
-            .and_then(|element| {
-                let source: SourceLocation = serde_json::from_value(element["source"].clone())
-                    .map_err(|_| Error::new(-32000, "Selected element has no Rust source"))?;
-                snippet(&source)
-            });
+        let source = selected.as_ref().map_err(Clone::clone).and_then(|element| {
+            let source: SourceLocation = serde_json::from_value(element["source"].clone())
+                .map_err(|_| Error::new(-32000, "Selected element has no Rust source"))?;
+            snippet(&source)
+        });
         let diagnostics = match crate::terminal::query(
             &self.instance,
             Query::Diagnostics {
@@ -140,7 +143,8 @@ fn section(result: Result<Value, Error>, budget: usize) -> Value {
 }
 
 fn partial(value: &Value) -> bool {
-    value["hasMore"] == true
+    value["queryComplete"] == false
+        || value["hasMore"] == true
         || value["truncated"] == true
         || [
             "omitted",

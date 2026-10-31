@@ -113,12 +113,14 @@ pub(super) struct Response {
     error: Option<Error>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct Error {
     #[serde(skip)]
     pub kind: ErrorKind,
     pub code: i32,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,9 +138,42 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 impl Error {
+    pub fn agent(
+        code: i32,
+        category: &str,
+        recovery: &str,
+        outcome: &str,
+        message: impl Into<String>,
+    ) -> Self {
+        let mut error = Self::new(code, message);
+        error.data = Some(
+            serde_json::json!({"category":category,"recovery":recovery,"outcome":outcome,"automaticReplay":false}),
+        );
+        error
+    }
+
+    pub fn selection(total: u64, context: &str) -> Self {
+        Self::agent(
+            if total == 0 { -32012 } else { -32013 },
+            if total == 0 {
+                "element_not_found"
+            } else {
+                "ambiguous_element"
+            },
+            if total == 0 {
+                "change_query"
+            } else {
+                "narrow_query"
+            },
+            "read_failed",
+            format!("{context} requires exactly one element; found {total}"),
+        )
+    }
+
     pub fn recording(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
+            data: None,
             code: -32000,
             message: message.into(),
         }
@@ -147,6 +182,9 @@ impl Error {
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Protocol,
+            data: Some(
+                serde_json::json!({"category":match code {-32602=>"invalid_arguments",-32601=>"unsupported_operation",-32010=>"precondition_failed",_=>"adapter_error"},"recovery":match code {-32602=>"fix_request",-32601=>"inspect_capabilities",-32010=>"resolve_again",_=>"inspect_evidence"},"outcome":"unknown","automaticReplay":false}),
+            ),
             code,
             message: message.into(),
         }

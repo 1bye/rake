@@ -11,6 +11,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+mod content;
+
 pub(super) struct Presentation {
     pub window: WindowId,
     pub frame: String,
@@ -146,6 +148,8 @@ pub(super) struct Selector {
     pub name: Option<String>,
     pub text_contains: Option<String>,
     pub text: Option<String>,
+    pub text_content: Option<String>,
+    pub text_content_contains: Option<String>,
     pub bounds: Option<Bounds>,
     pub enabled: Option<bool>,
     pub visible: Option<bool>,
@@ -204,6 +208,19 @@ pub(super) fn selector(params: &Value) -> Result<Selector, Error> {
     Ok(selector)
 }
 
+pub(super) fn root_node(params: &Value) -> Result<Option<i32>, Error> {
+    params
+        .get("rootNodeId")
+        .map(|value| {
+            value
+                .as_i64()
+                .filter(|n| *n > 0 && *n <= i64::from(i32::MAX))
+                .map(|n| n as i32)
+                .ok_or_else(|| Error::new(-32602, "rootNodeId must be a positive node ID"))
+        })
+        .transpose()
+}
+
 fn prefix(value: &str) -> &str {
     let mut end = value.len().min(512);
     while !value.is_char_boundary(end) {
@@ -238,14 +255,47 @@ pub(super) fn project(
         .is_some_and(|expected| *expected != revision)
         || (offset > 0 && params.get("expectedRevision").is_none())
     {
-        return Err(Error::new(
-            -32000,
+        return Err(Error::agent(
+            -32010,
+            "snapshot_changed",
+            "restart_pagination",
+            "read_failed",
             "Snapshot revision changed or is missing; restart pagination",
         ));
     }
+    let content = content::Content::new(&presentation.tree)?;
+    let root = root_node(params)?;
+    let scope = root
+        .map(|node| {
+            presentation
+                .tree
+                .elements
+                .iter()
+                .position(|element| dom.node_id(&element.id) == Some(node))
+                .map(|i| content.scope(i))
+                .ok_or_else(|| {
+                    Error::agent(
+                        -32010,
+                        "node_stale",
+                        "resolve_again",
+                        "read_failed",
+                        "Subtree root is not retained in the selected window",
+                    )
+                })
+        })
+        .transpose()?;
+    let contains = selector
+        .text_content_contains
+        .as_deref()
+        .map(|needle| content.contains(needle));
+    let query_complete = (selector.text_content.is_none()
+        && selector.text_content_contains.is_none())
+        || (0..presentation.tree.elements.len())
+            .filter(|i| scope.as_ref().is_none_or(|scope| scope[*i]))
+            .all(|i| content.complete(i));
     let mut matches = 0usize;
     let mut elements = Vec::new();
-    for element in &presentation.tree.elements {
+    for (index, element) in presentation.tree.elements.iter().enumerate() {
         let node = dom
             .node_id(&element.id)
             .ok_or_else(|| Error::new(-32000, "Semantic node is no longer retained"))?;
@@ -261,7 +311,13 @@ pub(super) fn project(
                     .content_mask
                     .is_none_or(|b| b.width > 0. && b.height > 0.)
         });
-        if selector.node_id.is_some_and(|v| v != node)
+        if scope.as_ref().is_some_and(|scope| !scope[index])
+            || selector
+                .text_content
+                .as_deref()
+                .is_some_and(|expected| content.text(index) != expected || !content.complete(index))
+            || contains.as_ref().is_some_and(|matches| !matches[index])
+            || selector.node_id.is_some_and(|v| v != node)
             || selector
                 .stable_id
                 .as_ref()
@@ -302,13 +358,14 @@ pub(super) fn project(
         elements.push(json!({"nodeId":node,"stableId":element.stable_id,"id":element.semantic_id,
             "parentId":element.parent.as_deref().and_then(|p|dom.node_id(p)),"type":element.display_name(),
             "role":role,"name":name.map(prefix),"nameTruncated":name.is_some_and(|n|n.len()>512),"text":element.text.as_deref().map(prefix),
+            "textContent":prefix(content.text(index)),"textContentTruncated":content.text(index).len()>512,"textContentComplete":content.complete(index),
             "textTruncated":element.text.as_ref().is_some_and(|t|t.len()>512),"bounds":element.layout,
             "visibleBounds":element.content_mask,"visible":visible,"enabled":enabled,
             "focused":ax.and_then(|a|a.focused),"states":ax.map(|a|&a.states),"source":element.source,
             "metadataTruncated":element.metadata_truncated,"styleEditable":element.style_editable,"textEditable":element.text_editable}));
     }
     Ok(
-        json!({"windowId":presentation.window,"frameSequence":presentation.frame,"revision":revision,
+        json!({"windowId":presentation.window,"frameSequence":presentation.frame,"revision":revision,"rootNodeId":root,"queryComplete":query_complete,
         "elements":elements,"totalMatches":matches,"offset":offset,"hasMore":matches>offset+limit,
         "omitted":presentation.tree.omitted,"coverage":presentation.tree.coverage,
         "visibilitySemantics":"sampled layout, clipping and accessibility; final occlusion is unavailable"}),

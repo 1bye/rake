@@ -24,12 +24,9 @@ impl Session {
             &json!({"query":params.get("query").cloned().unwrap_or_else(||json!({})),"limit":2}),
         )?;
         if projected["totalMatches"] != 1 {
-            return Err(Error::new(
-                -32000,
-                format!(
-                    "Actionability requires one element; found {}",
-                    projected["totalMatches"]
-                ),
+            return Err(Error::selection(
+                projected["totalMatches"].as_u64().unwrap_or(0),
+                "Actionability",
             ));
         }
         let element = &projected["elements"][0];
@@ -42,7 +39,15 @@ impl Session {
                     .node_id(&e.id)
                     .is_some_and(|id| element["nodeId"] == id)
             })
-            .ok_or_else(|| Error::new(-32010, "Element identity is no longer retained"))?;
+            .ok_or_else(|| {
+                Error::agent(
+                    -32010,
+                    "node_stale",
+                    "resolve_again",
+                    "read_failed",
+                    "Element identity is no longer retained",
+                )
+            })?;
         let mut result = diagnose(&presentation.tree, captured, &target);
         result["element"] = element.clone();
         result["runtimeId"] = json!(self.instance.info.runtime_id);
@@ -80,8 +85,11 @@ impl Session {
                         ))
                     ) =>
                 {
-                    return Err(Error::new(
+                    return Err(Error::agent(
                         -32010,
+                        "capture_changed",
+                        "resolve_again",
+                        "read_failed",
                         "Capture changed while checking actionability; resolve the element again",
                     ));
                 }

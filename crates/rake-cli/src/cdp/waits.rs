@@ -30,6 +30,7 @@ struct Request {
     #[serde(default = "default_timeout")]
     timeout_ms: u64,
     after_frame: Option<String>,
+    root_node_id: Option<i32>,
 }
 fn default_timeout() -> u64 {
     5000
@@ -75,6 +76,7 @@ impl Waits {
         window: WindowId,
         now: Instant,
     ) -> Result<String, Error> {
+        semantic::root_node(params)?;
         let request: Request = serde_json::from_value(params.clone())
             .map_err(|e| Error::new(-32602, e.to_string()))?;
         if !(1..=30000).contains(&request.timeout_ms) {
@@ -87,8 +89,12 @@ impl Waits {
                     .map_err(|_| Error::new(-32602, "afterFrame must be a decimal sequence string"))
             })
             .transpose()?;
-        let arguments =
+        let mut arguments =
             json!({"query":if request.query.is_null(){json!({})}else{request.query},"limit":1});
+        if let Some(root) = request.root_node_id {
+            arguments["rootNodeId"] = json!(root);
+        }
+        semantic::root_node(&arguments)?;
         semantic::selector(&arguments)?;
         for entry in &mut self.0 {
             entry.expire(now);
@@ -157,7 +163,8 @@ impl Waits {
                     let new_frame = entry
                         .after_frame
                         .is_none_or(|after| frame.is_some_and(|frame| frame > after));
-                    let complete = snapshot["omitted"].as_u64() == Some(0);
+                    let complete = snapshot["omitted"].as_u64() == Some(0)
+                        && snapshot["queryComplete"] != false;
                     let matched = if entry.absent {
                         total == Some(0) && complete
                     } else {
@@ -167,13 +174,25 @@ impl Waits {
                         entry.status = Status::Satisfied;
                     }
                     entry.error = if entry.absent && !complete {
-                        Some("Omitted nodes prevent confirming absence".into())
+                        Some(
+                            "Omitted nodes or incomplete captured text prevent confirming absence"
+                                .into(),
+                        )
                     } else {
                         None
                     };
                     entry.observation = Some(snapshot);
                 }
-                Err(error) => entry.error = Some(error.message.chars().take(1024).collect()),
+                Err(error) => {
+                    if error
+                        .data
+                        .as_ref()
+                        .is_some_and(|data| data["category"] == "node_stale")
+                    {
+                        entry.status = Status::Invalidated;
+                    }
+                    entry.error = Some(error.message.chars().take(1024).collect());
+                }
             }
         }
         Ok(entry.response(now))
@@ -213,6 +232,54 @@ impl Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn incomplete_text_does_not_prove_absence_and_a_removed_scope_invalidates_the_wait() {
+        let now = Instant::now();
+        let mut waits = Waits::default();
+        assert!(
+            waits
+                .start(
+                    &json!({"rootNodeId":null}),
+                    "runtime".into(),
+                    WindowId(1),
+                    now
+                )
+                .is_err()
+        );
+        let id = waits
+            .start(
+                &json!({"state":"absent","rootNodeId":2,"query":{"textContent":"secret"}}),
+                "runtime".into(),
+                WindowId(1),
+                now,
+            )
+            .unwrap();
+        assert_eq!(
+            waits
+                .arguments(&id, Some(WindowId(1)), now)
+                .unwrap()
+                .unwrap()["rootNodeId"],
+            2
+        );
+        assert_eq!(waits.observe(&id,Ok(json!({"totalMatches":0,"omitted":0,"queryComplete":false,"frameSequence":"1"})),now).unwrap()["status"],"pending");
+        assert_eq!(
+            waits
+                .observe(
+                    &id,
+                    Err(Error::agent(
+                        -32010,
+                        "node_stale",
+                        "resolve_again",
+                        "read_failed",
+                        "removed root"
+                    )),
+                    now
+                )
+                .unwrap()["status"],
+            "invalidated"
+        );
+    }
+
     #[test]
     fn condition_and_later_draw_are_required_and_late_results_cannot_succeed() {
         let now = Instant::now();
