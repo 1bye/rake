@@ -26,6 +26,84 @@ impl Event {
     }
 }
 
+/// Only the encoded payload is retained in production. Tests can inspect its fields.
+pub(super) struct EncodedEvent {
+    pub method: String,
+    pub text: String,
+    #[cfg(test)]
+    pub params: Value,
+}
+
+impl EncodedEvent {
+    pub fn new(event: Event) -> Option<Self> {
+        let text = encode_bounded(&event, 1024 * 1024).ok()??;
+        Some(Self {
+            method: event.method,
+            text,
+            #[cfg(test)]
+            params: event.params,
+        })
+    }
+}
+
+/// Abort serialization before allocating an oversized wire payload.
+fn encode_bounded(
+    value: &impl Serialize,
+    limit: usize,
+) -> Result<Option<String>, serde_json::Error> {
+    struct Limited {
+        bytes: Vec<u8>,
+        limit: usize,
+        exceeded: bool,
+    }
+    impl std::io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+                self.exceeded = true;
+                return Err(std::io::Error::other("CDP payload budget exceeded"));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut output = Limited {
+        bytes: Vec::new(),
+        limit,
+        exceeded: false,
+    };
+    let result = serde_json::to_writer(&mut output, value);
+    if output.exceeded {
+        return Ok(None);
+    }
+    result?;
+    Ok(Some(
+        String::from_utf8(output.bytes).expect("JSON serializer produces UTF-8"),
+    ))
+}
+
+/// Count cache metadata without constructing another serialized copy.
+pub(super) fn serialized_len(value: &impl Serialize) -> Result<usize, serde_json::Error> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_add(bytes.len())
+                .ok_or_else(|| std::io::Error::other("size overflow"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Counter(0);
+    serde_json::to_writer(&mut count, value)?;
+    Ok(count.0)
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct Response {
     pub id: Option<u64>,
@@ -52,9 +130,7 @@ impl Error {
 
 impl Response {
     pub fn encode(&self) -> Result<String, serde_json::Error> {
-        let text = serde_json::to_string(self)?;
-
-        if text.len() <= 1024 * 1024 {
+        if let Some(text) = encode_bounded(self, 1024 * 1024)? {
             return Ok(text);
         }
 
@@ -92,6 +168,26 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoding_budget_counts_escaped_utf8_bytes_and_keeps_valid_json() {
+        let value = serde_json::json!({"text":"世\n\"🌍"});
+        let expected = serde_json::to_string(&value).unwrap();
+        assert_eq!(
+            encode_bounded(&value, expected.len()).unwrap(),
+            Some(expected.clone())
+        );
+        assert!(
+            encode_bounded(&value, expected.len() - 1)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(serialized_len(&value).unwrap(), expected.len());
+        let event = EncodedEvent::new(Event::new("test", value)).unwrap();
+        let decoded: Value = serde_json::from_str(&event.text).unwrap();
+        assert_eq!(decoded["method"], "test");
+        assert_eq!(decoded["params"]["text"], "世\n\"🌍");
+    }
 
     #[test]
     fn oversized_replies_keep_the_command_retry_key() {

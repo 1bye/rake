@@ -82,12 +82,13 @@ pub(super) fn serve(
                         if output.completed {
                             pending = pending.saturating_sub(1);
                         }
-                        socket.send(output.message)?;
+                        socket.write(output.message)?;
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
                 }
             }
+            socket.flush()?;
             if busy != (pending > 0) {
                 busy = pending > 0;
                 socket

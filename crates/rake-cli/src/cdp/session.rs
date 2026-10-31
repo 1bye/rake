@@ -1,6 +1,6 @@
 //! One connection owns its cursors, enabled domains and bounded event queue.
 
-use super::wire::{Error, Event, Request, Response};
+use super::wire::{EncodedEvent, Error, Event, Request, Response};
 use super::{Result, TIMEOUT};
 use crate::terminal::query;
 use rake_client::local::Instance;
@@ -20,6 +20,15 @@ const QUEUE_LIMIT: usize = 256;
 // Browser proxies must preserve the future cursor exactly when reading the high-water mark.
 const FRAME_HIGH_WATER_CURSOR: u64 = (1 << 53) - 1;
 
+fn encoded_bytes(events: &[Option<EncodedEvent>]) -> usize {
+    events
+        .iter()
+        .try_fold(0usize, |sum, event| {
+            sum.checked_add(event.as_ref()?.text.len())
+        })
+        .unwrap_or(usize::MAX)
+}
+
 struct Session {
     captures: std::sync::Arc<super::captures::Captures>,
     instance: Instance,
@@ -29,7 +38,7 @@ struct Session {
     network_epoch: Option<f64>,
     network_bodies: super::network::Bodies,
     domains: BTreeSet<String>,
-    outbound: VecDeque<(Event, usize)>,
+    outbound: VecDeque<(EncodedEvent, usize)>,
     outbound_bytes: usize,
     dropped: u64,
     epoch_seconds: Option<f64>,
@@ -96,19 +105,20 @@ impl Session {
     }
 
     fn event(&mut self, event: Event) {
-        let previous_dropped = self.dropped;
-        let bytes = serde_json::to_vec(&event)
-            .map(|bytes| bytes.len())
-            .unwrap_or(usize::MAX);
+        self.encoded_event(EncodedEvent::new(event));
+    }
 
-        if self.outbound.len() == QUEUE_LIMIT
-            || bytes > 1024 * 1024
-            || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
-        {
-            self.dropped = self.dropped.saturating_add(1);
-        } else {
+    fn encoded_event(&mut self, event: Option<EncodedEvent>) {
+        let previous_dropped = self.dropped;
+        if let Some(event) = event.filter(|event| {
+            self.outbound.len() < QUEUE_LIMIT
+                && self.outbound_bytes.saturating_add(event.text.len()) <= 1024 * 1024
+        }) {
+            let bytes = event.text.len();
             self.outbound_bytes += bytes;
             self.outbound.push_back((event, bytes));
+        } else {
+            self.dropped = self.dropped.saturating_add(1);
         }
         if previous_dropped == 0 && self.dropped > 0 {
             self.sources.republish();
@@ -245,10 +255,11 @@ impl Session {
                     ));
                     offset = end;
                 }
-                let bytes: usize = events
-                    .iter()
-                    .map(|event| serde_json::to_vec(event).map_or(usize::MAX, |bytes| bytes.len()))
-                    .sum();
+                let events = events
+                    .into_iter()
+                    .map(EncodedEvent::new)
+                    .collect::<Vec<_>>();
+                let bytes = encoded_bytes(&events);
                 if self.outbound.len() + events.len() > QUEUE_LIMIT
                     || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
                 {
@@ -258,7 +269,7 @@ impl Session {
                     ));
                 }
                 for event in events {
-                    self.event(event);
+                    self.encoded_event(event);
                 }
                 Ok(json!({}))
             }
@@ -1635,7 +1646,7 @@ impl Session {
     fn flush(&mut self, socket: &mut super::transport::Worker) -> Result<()> {
         while let Some((event, bytes)) = self.outbound.pop_front() {
             self.outbound_bytes -= bytes;
-            socket.send(Message::text(serde_json::to_string(&event)?))?;
+            socket.send(Message::text(event.text))?;
         }
 
         Ok(())
@@ -1646,14 +1657,11 @@ impl Session {
             .into_iter()
             .map(|params| Event::new("DOM.setChildNodes", params))
             .collect::<Vec<_>>();
-        let bytes = events
-            .iter()
-            .try_fold(0usize, |sum, event| {
-                serde_json::to_vec(event)
-                    .ok()
-                    .and_then(|bytes| sum.checked_add(bytes.len()))
-            })
-            .unwrap_or(usize::MAX);
+        let events = events
+            .into_iter()
+            .map(EncodedEvent::new)
+            .collect::<Vec<_>>();
+        let bytes = encoded_bytes(&events);
         if self.outbound.len() + events.len() > QUEUE_LIMIT
             || self.outbound_bytes.saturating_add(bytes) > 1024 * 1024
         {
@@ -1670,7 +1678,7 @@ impl Session {
             ));
         }
         for event in events {
-            self.event(event);
+            self.encoded_event(event);
         }
         Ok(())
     }
@@ -1800,14 +1808,11 @@ impl Session {
 
     fn deliver_dom_updates(&mut self, mut reset: bool) -> std::result::Result<(), Error> {
         let updates = self.dom.take_updates();
-        let bytes = updates
-            .iter()
-            .try_fold(0usize, |sum, event| {
-                serde_json::to_vec(event)
-                    .ok()
-                    .and_then(|bytes| sum.checked_add(bytes.len()))
-            })
-            .unwrap_or(usize::MAX);
+        let updates = updates
+            .into_iter()
+            .map(EncodedEvent::new)
+            .collect::<Vec<_>>();
+        let bytes = encoded_bytes(&updates);
 
         // A partial mutation batch would leave Chrome permanently out of sync.
         if !updates.is_empty()
@@ -1830,7 +1835,7 @@ impl Session {
             self.event(Event::new("DOM.documentUpdated", json!({})));
         } else if self.domains.contains("DOM") {
             for event in updates {
-                self.event(event);
+                self.encoded_event(event);
             }
         }
 

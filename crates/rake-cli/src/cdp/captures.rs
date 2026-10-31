@@ -22,7 +22,7 @@ impl Captures {
     }
 
     pub fn retain(&self, runtime: uuid::Uuid, snapshot: Arc<Snapshot>) {
-        let Ok(bytes) = serde_json::to_vec(snapshot.as_ref()).map(|bytes| bytes.len()) else {
+        let Ok(bytes) = super::wire::serialized_len(snapshot.as_ref()) else {
             return;
         };
         const BUDGET: usize = rake_protocol::inspection::MAX_CAPTURE_BYTES;

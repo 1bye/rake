@@ -26,6 +26,13 @@ are never replayed by the transport. Disconnect cancels queued work. Explicit
 worker shutdown gets one 100 ms cleanup budget; inspection leases cover lost
 cleanup acknowledgements. Dropping session state performs no socket I/O.
 
+Projection nodes now own shared views into immutable captures. Only hydrated
+nodes copy their details when a new index arrives. Events are bounded while
+encoding and retained as wire text, so preflight and delivery reuse the same
+encoding. Responses stop encoding at 1 MiB while preserving mutation retry keys.
+Cache byte accounting uses a counting writer. The socket owner flushes at most
+32 queued messages together before returning to input.
+
 ## Baseline
 
 Run the generated-input projection benchmark explicitly:

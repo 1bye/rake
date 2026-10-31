@@ -6,10 +6,28 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+/// An owning view into an immutable capture. Only hydrated nodes own a detail copy.
+#[derive(Clone)]
+struct CapturedElement {
+    capture: Arc<Snapshot>,
+    index: usize,
+    details: Option<Arc<Element>>,
+}
+
+impl std::ops::Deref for CapturedElement {
+    type Target = Element;
+
+    fn deref(&self) -> &Element {
+        self.details
+            .as_deref()
+            .unwrap_or(&self.capture.elements[self.index])
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Dom {
     snapshot: Option<Arc<Snapshot>>,
-    nodes: BTreeMap<i32, Element>,
+    nodes: BTreeMap<i32, CapturedElement>,
     next: i32,
     control_ids: BTreeMap<String, i32>,
     child_ids: BTreeMap<i32, Vec<i32>>,
@@ -94,17 +112,28 @@ impl Dom {
                     .map(|(id, old)| (id, old.clone()))
             })
             .collect();
-        for (element, existing) in snapshot.elements.iter().zip(existing) {
+        for (index, existing) in existing.into_iter().enumerate() {
             let existing = existing.filter(|(id, _)| !used.contains(id));
-            let mut element = element.clone();
+            let mut element = CapturedElement {
+                capture: Arc::clone(&snapshot),
+                index,
+                details: None,
+            };
             let id = if let Some((id, old)) = existing {
                 // A paged index intentionally omits details. Retain the last observed
                 // style until InspectElement refreshes it; absence is not a CSS change.
-                if index_only {
-                    element.styles = old.styles.clone();
-                    element.resolved = old.resolved.clone();
-                    element.box_model = old.box_model.clone();
-                    element.style_overrides = old.style_overrides.clone();
+                if index_only
+                    && (old.styles.is_some()
+                        || old.resolved.is_some()
+                        || old.box_model.is_some()
+                        || !old.style_overrides.is_empty())
+                {
+                    let mut hydrated = (*element).clone();
+                    hydrated.styles = old.styles.clone();
+                    hydrated.resolved = old.resolved.clone();
+                    hydrated.box_model = old.box_model.clone();
+                    hydrated.style_overrides = old.style_overrides.clone();
+                    element.details = Some(Arc::new(hydrated));
                 }
                 if old.accessibility != element.accessibility {
                     self.accessibility_updates.insert(id);
@@ -713,6 +742,7 @@ impl Dom {
     fn element(&self, id: i32) -> Result<&Element, Error> {
         self.nodes
             .get(&id)
+            .map(|element| &**element)
             .ok_or_else(|| Error::new(-32000, "Node is stale or unavailable; refresh the document"))
     }
 
@@ -721,7 +751,7 @@ impl Dom {
     }
 
     fn ax_node(&self, id: i32) -> Value {
-        let element = self.nodes.get(&id);
+        let element = self.nodes.get(&id).map(|element| &**element);
         let parent = element.map(|element| {
             element
                 .parent
@@ -919,7 +949,7 @@ impl Dom {
         {
             self.style_updates.insert(id);
         }
-        self.nodes.insert(id, element);
+        self.nodes.get_mut(&id).expect("validated node").details = Some(Arc::new(element));
         Ok(())
     }
 
