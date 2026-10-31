@@ -228,6 +228,31 @@ impl<R: Route> RuntimeContext<R> {
         Ok(self.router()?.quit_status())
     }
 
+    /// Rechecks a changed browser deployment and submits guarded application reload.
+    /// The runtime performs reload only after retained-entry/application guards and
+    /// finite-work policy approve. Cancellation/denial keeps the running app intact.
+    /// Observe this outside a finite managed task, so quit does not wait on itself.
+    /// The returned operation may be dropped without cancelling the reload.
+    ///
+    /// # Errors
+    /// Rejects native hosts, unchanged/unreachable deployments and stopped runtimes.
+    pub async fn reload_web_update(
+        &self,
+        deployment: &crate::web::Deployment,
+        options: QuitOptions,
+    ) -> Result<Operation<QuitResult>, crate::web::Error> {
+        deployment.check().await?.ok_or_else(|| {
+            crate::web::Error::Invalid("no changed deployment is available".into())
+        })?;
+        #[cfg(target_family = "wasm")]
+        return self.router()?.request_browser_reload(options);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let _ = options;
+            Err(crate::web::Error::Unsupported("browser deployment reload"))
+        }
+    }
+
     #[cfg(feature = "updates")]
     /// Returns the installed update controller while the runtime is alive.
     pub fn updates(&self) -> Result<Option<Rc<rake_updates::UpdateController>>, OperationError> {

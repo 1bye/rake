@@ -18,6 +18,23 @@ use futures::{
 use std::rc::Rc;
 use tracing::Instrument;
 
+#[cfg(target_family = "wasm")]
+impl<R: Route> Router<R> {
+    pub(crate) fn request_browser_reload(
+        &self,
+        options: QuitOptions,
+    ) -> Result<Operation<QuitResult>, crate::web::Error> {
+        if self.quit_status().phase.blocks_navigation() {
+            return Err(crate::web::Error::Host(
+                "another quit or reload is already pending".into(),
+            ));
+        }
+        let operation = self.quit(options);
+        self.0.browser_reload.set(Some(operation.id()));
+        Ok(operation)
+    }
+}
+
 impl<R: Route> Core<R> {
     pub(super) fn quit_status(&self, work: &crate::tasks::WorkSnapshot) -> QuitStatus {
         let mut status = self.quit.borrow().clone();
@@ -231,6 +248,18 @@ impl<R: Route> Router<R> {
             core.quit.borrow_mut().phase = phase;
             core.finish(id, &result);
             let _ = sender.send(result);
+
+            #[cfg(target_family = "wasm")]
+            if core.browser_reload.get() == Some(id) {
+                core.browser_reload.set(None);
+                if phase == QuitPhase::Ready {
+                    // The runtime owns this handoff. Disposing a routed page must
+                    // not cancel the final reload along with its observing view.
+                    if let Err(error) = Router(core.clone()).reload_page() {
+                        tracing::error!(%error, "approved browser reload failed; reload manually");
+                    }
+                }
+            }
         }
         .boxed_local();
 

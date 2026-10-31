@@ -203,6 +203,8 @@ pub struct WebConfig {
     pub base_path: Option<String>,
     /// Existing path or hash routing selection.
     pub routing: Option<String>,
+    /// Generate content-addressed assets and a conservative offline service worker.
+    pub offline: bool,
 }
 
 /// macOS-specific packaging settings.

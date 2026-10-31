@@ -288,6 +288,8 @@ struct Core<R: Route> {
     tasks: WorkRuntime,
     quit: RefCell<crate::quit::QuitStatus>,
     quit_handle: RefCell<Option<Operation<crate::quit::QuitResult>>>,
+    #[cfg(target_family = "wasm")]
+    browser_reload: Cell<Option<OperationId>>,
     quit_guards: RefCell<Vec<QuitGuard>>,
     #[cfg(feature = "updates")]
     update_handoff: RefCell<Option<rake_updates::RestartHandoff>>,
@@ -783,6 +785,8 @@ impl<R: Route> Router<R> {
             driving: Cell::new(false),
             quit: RefCell::new(crate::quit::QuitStatus::default()),
             quit_handle: RefCell::new(None),
+            #[cfg(target_family = "wasm")]
+            browser_reload: Cell::new(None),
             quit_guards: RefCell::new(Vec::new()),
             #[cfg(feature = "updates")]
             update_handoff: RefCell::new(None),

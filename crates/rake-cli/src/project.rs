@@ -12,6 +12,14 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
         for (name, source) in [
             ("bundle.py", include_str!("../../../scripts/bundle.py")),
             (
+                "web_offline.py",
+                include_str!("../../../scripts/web_offline.py"),
+            ),
+            (
+                "web-service-worker.js",
+                include_str!("../../../scripts/web-service-worker.js"),
+            ),
+            (
                 "inspector.py",
                 include_str!("../../../scripts/inspector.py"),
             ),

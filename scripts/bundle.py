@@ -8,6 +8,7 @@ import re
 import shutil
 import stat
 import zipfile
+import web_offline
 
 
 def base_path(value):
@@ -55,10 +56,13 @@ class BundleConfig:
         self.assets = self.input(config.get("assets"), directory=True)
         self.icon = self.input(config.get("icon"))
         web = config.get("web", {})
-        if not isinstance(web, dict) or web.keys() - {"base_path", "routing"}:
+        if not isinstance(web, dict) or web.keys() - {"base_path", "routing", "offline"}:
             raise ValueError("unknown bundle.web configuration")
         self.web_base = base_path(web.get("base_path", "/"))
         self.routing = web.get("routing", "path")
+        self.offline = web.get("offline", False)
+        if not isinstance(self.offline, bool):
+            raise ValueError("bundle.web.offline must be a boolean")
         if self.routing not in {"path", "hash"}:
             raise ValueError("bundle.web.routing must be path or hash")
 
@@ -107,6 +111,7 @@ def web_deployment(project, site):
     metadata = {"protocol": 1, "application_id": config.identifier, "version": project.package["version"],
         "base_path": base, "routing": routing, "assets": base + "assets/", "wasm_mime": "application/wasm",
         "development_control": False, "cache": "revalidate; filenames are not content hashed"}
+    web_offline.prepare(site, metadata, config.offline)
     (site / "rake-deployment.json").write_text(json.dumps(metadata, indent=2) + "\n")
     return metadata
 
@@ -137,6 +142,8 @@ def distribution(project, output, processes, invoke):
     redirect = f"location = {base[:-1]} {{ return 308 {base}; }}\n" if base != "/" else ""
     (output / "nginx.conf.example").write_text(
         f"# Install site/ contents below /srv/www{base}; include the server's standard MIME types.\n{redirect}"
+        f"# Retain previous rake-builds/ directories while old tabs may still request their assets.\n"
+        f"location {base}rake-builds/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'public, max-age=31536000, immutable'; }}\n"
         f"location {base}pkg/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\n"
         f"location {base}assets/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\n"
         f"location {base} {{ root /srv/www; index index.html; {fallback} add_header Cache-Control 'no-cache'; }}\n")

@@ -23,6 +23,9 @@ rake = { workspace = true, features = ["experimental-view", "updates"] }
 name = "Rake Foundation"
 identifier = "com.example.rake.foundation"
 
+[package.metadata.rake.bundle.web]
+offline = true
+
 [build-dependencies]
 rake-build = { path = "../../crates/rake-build" }
 

@@ -1,5 +1,11 @@
 # Standalone loading and updates
 
+Production Web bundles also show deployment version checks and **Reload to update**.
+Reload reuses quit guards and finite-work policy. Offline packaging is enabled in
+Cargo metadata; unbundled `build-web.py` output keeps development behavior.
+See [browser applications](../../docs/web-applications.md) for deployment order,
+retaining old build assets, worker execution and offline lifecycle.
+
 The **Copy message** button uses `runtime.services().platform()`. It initiates the
 clipboard request inside the click handler, retains the observing task in the view,
 and displays permission failures. Browser availability is detected at runtime.

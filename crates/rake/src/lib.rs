@@ -65,6 +65,7 @@ pub mod router;
 pub mod runtime;
 pub mod services;
 pub mod tasks;
+pub mod web;
 
 #[cfg(all(feature = "gpui", feature = "updates"))]
 mod updates_binding;

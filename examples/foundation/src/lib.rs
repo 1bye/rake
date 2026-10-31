@@ -15,6 +15,8 @@ struct Foundation {
     status: String,
     runtime: RuntimeContext,
     action: Option<rake::gpui::Task<()>>,
+    deployment: Option<rake::web::Deployment>,
+    web_updates: Option<Loader<Option<rake::web::DeploymentVersion>, rake::web::Error>>,
 }
 
 #[rake::instrument(skip_all)]
@@ -55,6 +57,21 @@ impl Render for Foundation {
                 _ => "Updates",
             },
         };
+        let web_version = self
+            .web_updates
+            .as_ref()
+            .map(|updates| match updates.state(cx) {
+                LoadStatus::Ready(Some(version)) => {
+                    format!("Web version {} is available", version.version)
+                }
+                LoadStatus::Ready(None) => "Web deployment is current".into(),
+                LoadStatus::Failed(error) => error.to_string(),
+                _ => "Checking Web deployment…".into(),
+            });
+        let can_reload_web = self
+            .web_updates
+            .as_ref()
+            .is_some_and(|updates| matches!(updates.state(cx), LoadStatus::Ready(Some(_))));
 
         rake::view! {
             <main class="size-full p-6 gap-4 bg-[#18232b] text-[#f0f4e8]" tab-navigation>
@@ -112,6 +129,26 @@ impl Render for Foundation {
                     </button>
                 </div>
                 if let Some(error) = update_error { <p>{error}</p> }
+                if let Some(version) = web_version {
+                    <p>{version}</p>
+                    <button on:click={cx.listener(|this, _, _, cx| {
+                        if let Some(updates) = &mut this.web_updates { updates.retry(cx); }
+                    })}>"Check Web deployment"</button>
+                    <button disabled={!can_reload_web} on:click={cx.listener(|this, _, _, cx| {
+                        let Some(deployment) = this.deployment.clone() else { return; };
+                        let runtime = this.runtime.clone();
+                        this.action = Some(cx.spawn(async move |view, cx| {
+                            let result = runtime.reload_web_update(&deployment, QuitOptions::default()).await;
+                            let _ = view.update(cx, |this, cx| {
+                                this.status = match result {
+                                    Ok(_) => "Reload requested; waiting for work and save approval".into(),
+                                    Err(error) => error.to_string(),
+                                };
+                                cx.notify();
+                            });
+                        }));
+                    })}>"Reload to update"</button>
+                }
             </main>
         }
     }
@@ -122,12 +159,26 @@ pub fn application() -> App {
     App::new("com.example.rake.foundation")
         .http(HttpConfig::new().base_url("http://127.0.0.1:8080/"))
         .root_with(|runtime, _, cx| {
-            cx.new(|cx| Foundation {
-                message: runtime.load(cx, load_message),
-                updates: runtime.bind_updates(cx),
-                status: "Portable application foundation".into(),
-                runtime,
-                action: None,
+            cx.new(|cx| {
+                let (deployment, status) = match rake::web::Deployment::from_document() {
+                    Ok(deployment) => (deployment, "Portable application foundation".into()),
+                    Err(error) => (None, error.to_string()),
+                };
+                let web_updates = deployment.clone().map(|deployment| {
+                    runtime.load(cx, move |_| {
+                        let deployment = deployment.clone();
+                        async move { deployment.check().await }
+                    })
+                });
+                Foundation {
+                    message: runtime.load(cx, load_message),
+                    updates: runtime.bind_updates(cx),
+                    status,
+                    runtime,
+                    action: None,
+                    deployment,
+                    web_updates,
+                }
             })
             .into()
         })
