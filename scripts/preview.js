@@ -126,8 +126,6 @@ function positionComposer() {
 function openComposer(element, generation, note, location) {
   cancelPick(); selected = element; selectedGeneration = generation; editingID = note?.id; anchor = location;
   hoveredID = null; setMenu(false); $('composer').hidden = false; $('mode-hint').hidden = true;
-  $('draft-number').textContent = note?.number || '+';
-  $('copy-context').title = labelOf(element) + '\n' + sourceOf(element) + '\nCopy element context';
   const action = note ? 'Save note' : 'Add note';
   $('save').setAttribute('aria-label', action); $('save').title = action + ' (Enter)';
   $('comment').value = note?.comment || '';
@@ -447,7 +445,6 @@ function mode(value) {
 $('select').onclick = () => { const next = !selecting; if (!next) closeComposer(); mode(next); };
 $('reconnect').onclick = () => { void request('preview_restart').catch(failure => error(failure.message)); };
 $('cancel').onclick = () => { closeComposer(); $('select').focus(); };
-$('copy-context').onclick = () => { void copyContext(); };
 $('composer').onsubmit = event => {
   event.preventDefault(); if (!selected) return;
   try {

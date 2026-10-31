@@ -105,8 +105,7 @@ The picker follows [React Grab's copy workflow](https://github.com/aidenybai/rea
 hover an element and press `Cmd/Ctrl+C` to copy its source reference, including from
 Interact mode. In Annotate mode a cursor-following label shows the element, Rust
 site and shortcuts. Bare `C` copies the hovered target; Enter or a click opens the
-comment editor. Its leading context icon copies the element without saving a note;
-hovering the icon shows the element name and Rust source site.
+comment editor.
 Normal copying of selected text in the editor/page stays with the browser.
 
 A copied annotation looks like this (the exact tags, text and source sites come
