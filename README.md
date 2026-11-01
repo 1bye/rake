@@ -26,6 +26,9 @@ application commands, operation results and lifecycle guards.
   signing, publication and shared native update controllers.
 - **Platform services.** Shared files, clipboard, preferences and URL activation, with
   owned browser workers, offline bundles and guarded deployment updates.
+- **Optional native components.** AppKit buttons, segmented controls and custom
+  native views in GPUI layouts through the `native-components` feature. See
+  [rake-native](crates/rake-native/README.md) for the macOS adapter and its boundaries.
 
 ## Try it
 
@@ -46,6 +49,7 @@ Other examples:
 | `cargo run -p rake-view` | Experimental HTML-like `rake::view!` syntax |
 | `cargo run -p rake-desktop-example` | Pages, persistent layouts, loading/retry and native updates |
 | `cargo run -p rake-files` | File processing, clipboard/export, preferences and Web updates |
+| `cargo run -p rake --example native --features native-components` | Real AppKit controls and native Liquid Glass buttons (macOS) |
 
 For watched builds and Chrome DevTools, install the local CLI. Python 3.11+ is
 required:

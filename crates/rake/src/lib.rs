@@ -13,6 +13,10 @@ mod inspection_macros;
 pub use rake_resources as resources;
 pub use rake_resources::{Resources, resources};
 
+/// Optional native components; currently exposes the macOS AppKit adapter.
+#[cfg(feature = "native-components")]
+pub use rake_native as native;
+
 #[cfg(feature = "updates")]
 pub use rake_updates as updates;
 #[cfg(feature = "updates")]
