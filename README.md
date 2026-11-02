@@ -136,3 +136,8 @@ requests start in user events, while Rake actions own observation and quit track
 The Rust spacing checker is pinned in Cargo metadata. Run
 `python3 scripts/check-spacing.py` after formatting; it uses the project's separate
 development-only nightly without changing the stable application toolchain.
+
+## License
+
+Licensed under either the [MIT License](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.
