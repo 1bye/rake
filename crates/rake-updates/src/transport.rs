@@ -72,6 +72,11 @@ pub(crate) fn download(
     }
     let mut response = agent
         .get(url)
+        .config()
+        // Package size is bounded, but a progressing download has no total deadline.
+        .timeout_global(None)
+        .timeout_recv_response(Some(Duration::from_secs(15)))
+        .build()
         .call()
         .map_err(|error| Error::Provider(error.to_string()))?;
     let mut reader = response.body_mut().as_reader();
@@ -104,4 +109,120 @@ pub(crate) fn digest(path: &Path) -> Result<String, Error> {
     let mut hash = Sha256::new();
     std::io::copy(&mut fs::File::open(path)?, &mut hash)?;
     Ok(hex::encode(hash.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    #[test]
+    fn progressing_download_outlives_global_budget_and_can_cancel() {
+        for cancel in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let (resume, resumed) = mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = BufReader::new(&stream);
+                let mut line = String::new();
+
+                loop {
+                    line.clear();
+                    request.read_line(&mut line).unwrap();
+
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na")
+                    .unwrap();
+                resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+                let _ = stream.write_all(b"b");
+            });
+            let agent = ureq::Agent::new_with_config(
+                ureq::Agent::config_builder()
+                    .timeout_global(Some(Duration::from_millis(50)))
+                    .timeout_per_read(Some(Duration::from_secs(2)))
+                    .build(),
+            );
+            let cancelled = AtomicBool::new(false);
+            let mut bytes = Vec::new();
+            let result = download(&agent, &url, 2, &mut bytes, &cancelled, &mut |progress| {
+                if progress.received_bytes == 1 {
+                    std::thread::sleep(Duration::from_millis(100));
+                    cancelled.store(cancel, Ordering::Relaxed);
+                    resume.send(()).unwrap();
+                }
+            });
+
+            server.join().unwrap();
+
+            if cancel {
+                assert!(matches!(result, Err(Error::Cancelled)));
+                assert_eq!(bytes, b"a");
+            } else {
+                result.unwrap();
+                assert_eq!(bytes, b"ab");
+            }
+        }
+    }
+
+    #[test]
+    fn stalled_download_still_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (finish, finished) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = BufReader::new(&stream);
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                request.read_line(&mut line).unwrap();
+
+                if line == "\r\n" {
+                    break;
+                }
+            }
+
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
+                .unwrap();
+            finished.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_per_read(Some(Duration::from_secs(1)))
+                .build(),
+        );
+        let result = download(
+            &agent,
+            &url,
+            1,
+            &mut Vec::new(),
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+
+        finish.send(()).unwrap();
+        server.join().unwrap();
+
+        assert!(matches!(result, Err(Error::Io(_))));
+    }
+
+    #[test]
+    fn metadata_and_stall_timeouts_remain_bounded() {
+        let agent = agent();
+        let config = agent.config();
+
+        assert_eq!(config.timeouts().global, Some(Duration::from_secs(300)));
+        assert_eq!(config.timeouts().connect, Some(Duration::from_secs(15)));
+        assert_eq!(config.timeout_per_read(), Some(Duration::from_secs(15)));
+    }
 }
