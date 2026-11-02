@@ -4,6 +4,15 @@
 
 use super::*;
 
+fn read_work(worker: &Worker) -> std::result::Result<Work, mpsc::RecvTimeoutError> {
+    loop {
+        match worker.read() {
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            result => return result,
+        }
+    }
+}
+
 #[test]
 fn disconnect_during_receive_cancels_queued_mutations_and_idle_polling() {
     for queued in [true, false] {
@@ -64,7 +73,7 @@ fn busy_worker_preserves_ping_startup_ack_and_bounded_admission() {
             let (stream, _) = listener.accept().unwrap();
 
             serve(tungstenite::accept(stream).unwrap(), move |worker| {
-                let first = worker.read().unwrap();
+                let first = read_work(&worker).unwrap();
 
                 started.send(()).unwrap();
                 blocked.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -73,7 +82,13 @@ fn busy_worker_preserves_ping_startup_ack_and_bounded_admission() {
                     Ok(serde_json::json!({})),
                 ));
 
-                assert!(worker.read().is_err(), "disconnect cancels queued requests");
+                assert!(
+                    matches!(
+                        read_work(&worker),
+                        Err(mpsc::RecvTimeoutError::Disconnected)
+                    ),
+                    "disconnect cancels queued requests"
+                );
 
                 Ok(())
             })
@@ -183,7 +198,7 @@ fn chrome_startup_burst_reaches_runtime_enable_before_worker_can_drain() {
             blocked.recv_timeout(Duration::from_secs(5)).unwrap();
 
             for method in methods {
-                let request = worker.read().unwrap().request;
+                let request = read_work(&worker).unwrap().request;
 
                 assert_eq!(request.method, method);
                 worker.reply(Response::new(Some(request.id), Ok(serde_json::json!({}))))?;
@@ -249,7 +264,7 @@ fn concurrent_clients_reconnect_and_receive_the_final_buffered_reply_in_order() 
             connections.push(std::thread::spawn(move || {
                 serve(tungstenite::accept(stream).unwrap(), |worker| {
                     for sequence in 1..=REQUESTS {
-                        let work = worker.read()?;
+                        let work = read_work(&worker)?;
 
                         assert_eq!(work.request.id, sequence);
                         worker.reply(Response::new(
@@ -327,7 +342,7 @@ fn nonreading_peer_is_disconnected_and_backpressured_worker_is_joined() {
         .unwrap();
 
         let result = serve(socket, move |worker| {
-            worker.read()?;
+            read_work(&worker)?;
             let text = "x".repeat(256 * 1024);
 
             for _ in 0..1024 {
