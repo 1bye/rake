@@ -81,7 +81,7 @@ with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must
             return json.load(response)
 
     def test_authentication_host_origin_and_static_build_boundary(self):
-        for token, origin in [("bad", None), (self.config["token"], "http://foreign.invalid")]:
+        for token, origin in [("bad", None), ("é", None), (self.config["token"], "http://foreign.invalid")]:
             with self.assertRaises(urllib.error.HTTPError) as error:
                 self.post("connect", {"application_id": "test", "info": self.info}, token, origin)
             self.assertEqual(error.exception.code, 403)
@@ -119,6 +119,19 @@ with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must
             stdout, stderr = process.communicate(timeout=10)
             self.assertEqual(process.returncode, 0, stderr)
             self.assertEqual(json.loads(stdout), result["Ok"])
+
+
+class PreviewAuthentication(unittest.TestCase):
+    def test_non_ascii_preview_token_is_rejected(self):
+        from types import SimpleNamespace
+        from preview_socket import Socket
+        handler = SimpleNamespace(headers={
+            "Host": "127.0.0.1:9000", "Origin": "http://127.0.0.1:9000",
+            "Sec-WebSocket-Protocol": "rake-preview-v1, rake-token.é",
+        })
+        with self.assertRaises(BridgeError) as error:
+            Socket.upgrade(handler, "expected")
+        self.assertEqual(error.exception.status, 403)
 
 
 class BrokerBounds(unittest.TestCase):

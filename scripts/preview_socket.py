@@ -20,7 +20,7 @@ class Socket:
         protocols = [p.strip() for p in handler.headers.get('Sec-WebSocket-Protocol', '').split(',')]
         expected = 'http://' + handler.headers.get('Host', '')
         if (handler.headers.get('Origin') != expected or 'rake-preview-v1' not in protocols
-                or not any(secrets.compare_digest(p, 'rake-token.' + token) for p in protocols)):
+                or not any(secrets.compare_digest(p.encode(), ('rake-token.' + token).encode()) for p in protocols)):
             raise BridgeError(403, 'Preview socket authentication failed')
         key = handler.headers.get('Sec-WebSocket-Key', '')
         try:

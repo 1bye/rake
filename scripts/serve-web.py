@@ -155,7 +155,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         origin = self.headers.get("Origin")
         expected_origin = f"http://{self.headers.get('Host')}"
         token = self.headers.get("X-Rake-Token", "")
-        if not bridge or not self._valid_host() or (origin and origin != expected_origin) or not secrets.compare_digest(token, bridge.token):
+        if not bridge or not self._valid_host() or (origin and origin != expected_origin) or not secrets.compare_digest(token.encode(), bridge.token.encode()):
             self.send_error(403, "development bridge authentication failed")
             return
         try:
