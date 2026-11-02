@@ -534,8 +534,9 @@ class Supervisor:
 def doctor(args):
     checks = {}
     for name, command in {"rust": ["rustc", "--version"], "cargo": ["cargo", "--version"],
-                          "wasm_targets": ["rustup", "target", "list", "--installed"],
-                          "wasm_bindgen": ["wasm-bindgen", "--version"]}.items():
+                          "installed_targets": ["rustup", "target", "list", "--installed"],
+                          "wasm_bindgen": ["wasm-bindgen", "--version"],
+                          "node": ["node", "--version"]}.items():
         try:
             checks[name] = subprocess.check_output(command, text=True, stderr=subprocess.STDOUT).strip()
         except (OSError, subprocess.CalledProcessError) as error:
@@ -544,7 +545,7 @@ def doctor(args):
     print(json.dumps(checks, indent=None if args.json else 2))
     ready = not isinstance(checks["rust"], dict) and not isinstance(checks["cargo"], dict)
     if args.target == "web":
-        ready = ready and not isinstance(checks["wasm_bindgen"], dict) and "wasm32-unknown-unknown" in str(checks["wasm_targets"])
+        ready = ready and not isinstance(checks["wasm_bindgen"], dict) and "wasm32-unknown-unknown" in str(checks["installed_targets"])
     return 0 if ready else 1
 
 

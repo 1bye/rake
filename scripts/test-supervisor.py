@@ -5,6 +5,8 @@ Doubles: fixture application has no Rake runtime; model browser protocol for rel
 Requires: Rust/cargo/Python, Unix process groups; no display or GPU.
 """
 
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -15,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 import uuid
 
@@ -46,6 +49,28 @@ def alive(pid):
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_doctor_reports_installed_targets_and_optional_node(self):
+        for target, installed, expected in [
+            ("desktop", "aarch64-apple-darwin", 0),
+            ("web", "aarch64-apple-darwin", 1),
+            ("web", "aarch64-apple-darwin\nwasm32-unknown-unknown", 0),
+        ]:
+            for node in ["v24.0.0", None]:
+                def output(command, **kwargs):
+                    if command[0] == "node":
+                        if node is None:
+                            raise FileNotFoundError("node unavailable")
+                        return node
+                    return installed if command[0] == "rustup" else "tool version"
+
+                with patch.object(dev.subprocess, "check_output", side_effect=output), contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    status = dev.doctor(SimpleNamespace(target=target, json=True))
+                checks = json.loads(stdout.getvalue())
+                self.assertEqual(checks["installed_targets"], installed)
+                self.assertNotIn("wasm_targets", checks)
+                self.assertEqual(checks["node"], node if node else {"error": "node unavailable"})
+                self.assertEqual(status, expected)
+
     def test_only_dev_auto_enables_inspection_including_renamed_dependencies(self):
         project = object.__new__(dev.Project)
         project.package = {"features": {}, "dependencies": [{"name": "rake", "rename": "framework", "kind": None}]}

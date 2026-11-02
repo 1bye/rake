@@ -15,6 +15,10 @@ target/debug/rake bundle --target desktop --package rake-routing
 target/debug/rake bundle --target web --package rake-routing --base-path /notes/
 ```
 
+`doctor --json` reports all installed Rust targets as `installed_targets` and
+includes Node's version as `node`. Missing Node is informational and does not
+affect readiness; web readiness requires the WASM target and `wasm-bindgen`.
+
 Use `--manifest-path` outside the workspace root, `--bin` when there are multiple
 binaries, `--features` for Cargo features, and `--web-dir` for an HTML/assets tree
 (default: the package's `web` directory). Web needs a `cdylib`, the

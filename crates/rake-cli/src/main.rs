@@ -18,6 +18,16 @@ mod update_key;
 
 fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--version")
+    {
+        println!("rake {}", env!("CARGO_PKG_VERSION"));
+
+        return;
+    }
+
     let json = arguments.iter().any(|argument| argument == "--json");
 
     if arguments.first().is_some_and(|command| {
