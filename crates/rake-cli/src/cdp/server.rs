@@ -8,6 +8,19 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+fn recoverable_accept_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+    ) || matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+    )
+}
+
 fn allowed(host: Option<&str>, origin: Option<&str>, authority: &str) -> bool {
     host == Some(authority) && origin.is_none_or(|origin| origin == "devtools://devtools")
 }
@@ -335,7 +348,16 @@ pub(super) fn serve(options: Options) -> Result<()> {
 
     std::thread::scope(|scope| -> Result<()> {
         for stream in listener.incoming() {
-            let stream = stream?;
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(error) if recoverable_accept_error(&error) => {
+                    eprintln!("CDP accept: {error}; retrying");
+                    std::thread::sleep(Duration::from_millis(100));
+
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
 
             if active.load(Ordering::Relaxed) >= 32 {
                 continue;
@@ -365,6 +387,30 @@ pub(super) fn serve(options: Options) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_accept_errors_recover_but_bad_listeners_fail() {
+        for code in [
+            libc::EMFILE,
+            libc::ENFILE,
+            libc::ECONNABORTED,
+            libc::EINTR,
+            libc::ENOBUFS,
+            libc::ENOMEM,
+        ] {
+            assert!(
+                recoverable_accept_error(&std::io::Error::from_raw_os_error(code)),
+                "errno {code}"
+            );
+        }
+
+        for code in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
+            assert!(
+                !recoverable_accept_error(&std::io::Error::from_raw_os_error(code)),
+                "errno {code}"
+            );
+        }
+    }
 
     #[test]
     fn rejects_rebinding_and_web_origins() {

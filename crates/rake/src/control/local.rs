@@ -99,15 +99,10 @@ impl LocalServer {
             }
 
             let stream = if connections.is_empty() {
-                Some(self.listener.accept().await?.0)
+                Some(self.accept().await?)
             } else {
-                match select(
-                    Box::pin(self.listener.accept()),
-                    Box::pin(connections.next()),
-                )
-                .await
-                {
-                    Either::Left((accepted, _)) => Some(accepted?.0),
+                match select(Box::pin(self.accept()), Box::pin(connections.next())).await {
+                    Either::Left((accepted, _)) => Some(accepted?),
                     Either::Right(_) => None,
                 }
             };
@@ -117,6 +112,32 @@ impl LocalServer {
             }
         }
     }
+
+    async fn accept(&self) -> io::Result<Async<UnixStream>> {
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, _)) => return Ok(stream),
+                Err(error) if recoverable_accept_error(&error) => {
+                    tracing::warn!(%error, "local control accept failed; retrying");
+                    crate::http::sleep(Duration::from_millis(100)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+fn recoverable_accept_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+    ) || matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+    )
 }
 
 // Framed input is bounded before allocating or decoding it.
@@ -210,6 +231,30 @@ impl Drop for LocalServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_accept_errors_recover_but_bad_listeners_fail() {
+        for code in [
+            libc::EMFILE,
+            libc::ENFILE,
+            libc::ECONNABORTED,
+            libc::EINTR,
+            libc::ENOBUFS,
+            libc::ENOMEM,
+        ] {
+            assert!(
+                recoverable_accept_error(&std::io::Error::from_raw_os_error(code)),
+                "errno {code}"
+            );
+        }
+
+        for code in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
+            assert!(
+                !recoverable_accept_error(&std::io::Error::from_raw_os_error(code)),
+                "errno {code}"
+            );
+        }
+    }
 
     #[test]
     fn owned_reply_encoding_preserves_json_and_stops_at_the_transport_limit() {
