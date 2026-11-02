@@ -53,19 +53,27 @@ pub fn prepare_directory(path: &Path) -> io::Result<()> {
 ///
 /// # Errors
 /// Returns directory validation and filesystem read errors. Oversized or invalid
-/// advertisement contents are ignored; files with unsafe permissions are skipped.
+/// advertisement contents are ignored; files with unsafe permissions or entries
+/// that disappear during the scan are skipped.
 pub fn discover(path: &Path) -> io::Result<Vec<Instance>> {
     prepare_directory(path)?;
     let mut instances = Vec::new();
 
     for entry in fs::read_dir(path)? {
-        let path = entry?.path();
+        let Some(entry) = skip_missing(entry)? else {
+            continue;
+        };
+
+        let path = entry.path();
 
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
 
-        let metadata = fs::symlink_metadata(&path)?;
+        let Some(metadata) = skip_missing(fs::symlink_metadata(&path))? else {
+            continue;
+        };
+
         // SAFETY: geteuid has no pointer or threading preconditions.
         let uid = unsafe { libc::geteuid() };
 
@@ -73,10 +81,15 @@ pub fn discover(path: &Path) -> io::Result<Vec<Instance>> {
             continue;
         }
 
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&path)?;
+        let Some(file) = skip_missing(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&path),
+        )?
+        else {
+            continue;
+        };
 
         let mut bytes = Vec::new();
 
@@ -91,6 +104,14 @@ pub fn discover(path: &Path) -> io::Result<Vec<Instance>> {
     }
 
     Ok(instances)
+}
+
+fn skip_missing<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Blocking terminal-side exchange with one total deadline for connection, writes
@@ -154,4 +175,30 @@ pub fn exchange(
             )),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vanished_discovery_entries_are_skipped_but_other_errors_propagate() {
+        assert_eq!(skip_missing(Ok(42)).unwrap(), Some(42));
+        assert!(
+            skip_missing::<()>(Err(io::ErrorKind::NotFound.into()))
+                .unwrap()
+                .is_none()
+        );
+
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidData,
+            io::ErrorKind::Other,
+        ] {
+            assert_eq!(
+                skip_missing::<()>(Err(kind.into())).unwrap_err().kind(),
+                kind
+            );
+        }
+    }
 }
