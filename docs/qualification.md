@@ -1,5 +1,9 @@
 # Release qualification
 
+The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
+Windows and Linux remain unqualified; tooling and platform descriptions below
+do not establish real GUI, signing, notarization or installer qualification.
+
 Run `scripts/check-readiness.py` against the release revision and preserve its JSON
 report. Do not combine a passing compile check and a manual checklist into a claim
 that every desktop/browser journey passed. The focused cross-platform workflow is

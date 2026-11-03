@@ -1,5 +1,9 @@
 # Desktop distribution
 
+The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
+Windows and Linux remain unqualified; tooling and platform descriptions below
+do not establish real GUI, signing, notarization or installer qualification.
+
 The smallest distributable application is [the desktop example](../examples/distribution).
 It uses `rake::view!`, one SVG icon and `rake-build` in build.rs. Application code
 imports the Rake facade; installer engines remain CLI dependencies.

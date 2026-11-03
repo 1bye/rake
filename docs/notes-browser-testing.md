@@ -195,7 +195,6 @@ promising execution during browser suspension.
 Intermittent desktop capture/focus failures interrupted the harness. Affected
 disposable fixtures were recreated and the cases repeated before counting them.
 No additional application defect was reproduced and no application source changed
-during this rerun. Build identity/checksums, command results, per-browser observations,
-interruption process checks and cleanup evidence are retained outside the repository
-in the `rake-fieldnotes-browser-checklist` evidence bundle. All test servers and
+during this rerun. The table above records the historical observations and tested build identity;
+it does not claim a rerun on later release commits. All test servers and
 owned browser processes were stopped. The limitations listed above still apply.

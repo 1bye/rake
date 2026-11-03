@@ -1,5 +1,9 @@
 # Releasing native applications
 
+The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
+Windows and Linux remain unqualified. Historical distribution evidence and
+procedures here do not qualify signing, notarization or installers for this release.
+
 `rake bundle` creates local artifacts. `rake release --plan --json` reports public
 configuration without loading signing credentials or publishing. An explicit
 `rake release` builds with release trust and locked native components, then

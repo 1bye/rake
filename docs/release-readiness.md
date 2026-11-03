@@ -1,6 +1,6 @@
 # Alpha support contract
 
-Rake is an unpublished alpha candidate. Use a pinned Git revision and the committed
+Rake v0.1.0-alpha.1 is a source alpha. Use the pinned release tag and the committed
 lockfile; there is no crates.io release or promise of compatibility between alpha
 revisions. The Rust minimum is 1.95.0. GPUI CE is pinned in Cargo.toml and Cargo.lock.
 Existing public APIs are preserved where practical; breaking changes need migration
@@ -11,9 +11,9 @@ and use deprecation before removing that subset's public APIs.
 
 | Surface | Alpha scope | Boundary |
 | --- | --- | --- |
-| macOS | Native applications, distribution, local signing and updates | Requires Apple's development tools; notarization requires a configured profile |
-| Windows | Native applications, installers, signing, Velopack | MSVC/Windows SDK on the build machine; native development control IPC is not implemented |
-| Linux | GPUI X11/Wayland applications and supported distribution formats | Development libraries on the build machine; package-manager and sandbox behavior differ |
+| macOS | Native source applications | Requires Apple's development tools; signing, notarization and installers are not qualified for this release |
+| Windows | Unqualified; outside launch scope | Compilation and boundary tests do not establish GUI or installer support |
+| Linux | Unqualified; outside launch scope | Compilation and boundary tests do not establish GUI or installer support |
 | Browser | Single-host canvas applications on WebGPU-capable browsers | HTTPS or localhost, GPU availability, browser storage and permission policies |
 | Headless | Portable services, commands, tasks and routing state | Caller supplies the executor; no invented window or browser authority |
 
@@ -90,26 +90,24 @@ CPU benchmarks and compile checks do not establish these properties.
 This sequence implements release infrastructure and platform behavior. A release is
 qualified only by checks actually executed against its revision, not by this checklist.
 
-## Alpha preparation evidence: 2026-11-03
+## Alpha verification evidence
 
-The Fieldnotes Web loading failure was fixed on `codex/public-alpha-prep` at
+The launch scope is macOS and browser source applications. Release evidence must
+identify the exact commit and distinguish compilation, automated host tests and
+real GUI observations. See the release's accompanying evidence for final-commit
+readiness results; historical passes below are not final-commit verification.
+
+The Fieldnotes module-loading fix was verified at
 `af0cd47b55a4a8b2952dc7d5ae712bc34e130cc0`. All five local readiness groups,
-the temporary CLI install and Web development/control flow passed on that clean
-revision. Their reports remain in the external `rake-fieldnotes-web-fix` bundle.
+the temporary CLI install and Web development/control flow passed at that revision.
+The [complete browser checklist](notes-browser-testing.md#alpha-preparation-rerun-2026-11-03)
+records actual Chrome 156.0.8078.80 Guest, Safari 26.6.2 and Firefox 159.0 runs on
+macOS 26.6.2, including exact stored text, hidden autosave, stale writers,
+interrupted saves, write failure/retry and malformed-checkpoint recovery.
+Safari's initial hidden-writer discovery failure and successful retry are recorded.
 
-The [full Fieldnotes browser checklist](notes-browser-testing.md#alpha-preparation-rerun-2026-11-03)
-also passed against a clean build of that revision in Chrome 156.0.8078.80 Guest,
-Safari 26.6.2 and Firefox 159.0 on macOS 26.6.2. This includes editing, exact stored
-text after reload, hidden autosave, stale writers, interrupted saves, injected
-main-write failure/retry and malformed-checkpoint recovery. Safari's initial hidden
-writer discovery failure and successful retry are recorded with the results.
-The external `rake-fieldnotes-browser-checklist` bundle contains the build identity,
-commands, observations and cleanup evidence. Later documentation commits do not
-change the application tested by this manual run.
-
-Publishing remains **no-go** until the final release revision has passing hosted
-Windows/Linux checks, the owner resolves the native-branch, public `.agents/` and
-launch-platform decisions, and the tag/source/checksum/evidence publication steps
-are approved. Windows/Linux GUI qualification, signing, notarization and installers
-were not established by these browser runs. No push, tag, merge, workflow dispatch,
-release publication or GitHub settings change was performed.
+Real Windows and Linux GUI runs, signing, notarization and installers were not
+verified for this source alpha. Browser automation does not establish every IME,
+accessibility, mobile input or execution during browser suspension. Hosted
+compilation/boundary results establish only the checks actually run. Each release
+must retain its own final-commit evidence and the limits of any reused manual run.

@@ -1,5 +1,9 @@
 # Native distribution acceptance
 
+The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
+Windows and Linux remain unqualified. Historical distribution evidence and
+procedures here do not qualify signing, notarization or installers for this release.
+
 Portable tests validate contracts; the following tests exercise installed programs.
 The manual Distribution adoption workflow accepts one platform to limit runner
 cost. Commits use `[skip ci]` and the workflow is dispatched only at checkpoints.

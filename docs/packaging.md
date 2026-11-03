@@ -1,5 +1,9 @@
 # Packaging and distribution
 
+The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
+Windows and Linux remain unqualified; tooling and platform descriptions below
+do not establish real GUI, signing, notarization or installer qualification.
+
 This page describes the legacy macOS/Linux archive layout and the Web pipeline.
 For native installers, updates, metadata, components and release publishing, use
 [Desktop distribution](distribution.md). Schema 1 selects that workflow; legacy

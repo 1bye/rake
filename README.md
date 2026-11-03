@@ -2,11 +2,11 @@
 
 Rake is a framework for GPUI in the agentic era.
 
-Build native and browser apps in Rust, with tools that let developers and agents
+Build macOS and browser apps in Rust, with tools that let developers and agents
 inspect and control the running application. The GUI, CLI and devtools share
 application commands, operation results and lifecycle guards.
 
-**Status:** source alpha candidate; no alpha release tag yet. See the [support contract and release gates](docs/release-readiness.md) and [release qualification](docs/qualification.md).
+**Status:** v0.1.0-alpha.1 source alpha. APIs may change between alpha revisions. See the [support contract and release gates](docs/release-readiness.md) and [release qualification](docs/qualification.md).
 
 ## What Rake provides
 
@@ -83,12 +83,12 @@ build options and [Chrome DevTools](docs/devtools.md) for connecting the inspect
 ## Use Rake in your own app
 
 Create a binary crate with `cargo new hello-rake`, then add this dependency to
-its `Cargo.toml`. Pin a Git revision because alpha APIs can change; use Rust
+its `Cargo.toml`. Pin the alpha tag because APIs can change; use Rust
 1.95.0 and the native build prerequisites in the [support contract](docs/release-readiness.md).
 
 ```toml
 [dependencies]
-rake = { git = "https://github.com/1bye/rake", rev = "df23352adc6774adabab6123c7f28bdf5d00e0fa" }
+rake = { git = "https://github.com/1bye/rake", tag = "v0.1.0-alpha.1" }
 ```
 
 Replace `src/main.rs` with:
@@ -113,9 +113,8 @@ fn app() -> App {
 ```
 
 Run `cargo run` to open the native window, and commit the generated `Cargo.lock`.
-The pinned revision must be available on the public remote before using this
-snippet from a fresh machine. Browser packaging also needs a library entry point
-and configuration; see the [foundation example](examples/foundation/README.md).
+This dependency works only once `v0.1.0-alpha.1` is public on the remote. Browser
+packaging also needs a library entry point and configuration; see the [foundation example](examples/foundation/README.md).
 
 ## Work with agents
 
@@ -155,7 +154,8 @@ waits, screenshots and Rust source lookup.
 
 ## Status
 
-Local release checks target macOS and Chromium. Windows/Linux readiness and
+The source alpha launch scope is macOS and browser. Windows and Linux remain
+unqualified. Local release checks target macOS and Chromium. Windows/Linux readiness and
 installer workflows are available but require passing evidence for the release
 revision; real Windows/Linux GUI qualification is still required. Each release needs its own evidence; compilation, GUI
 and installer checks establish different boundaries. Native applications support
