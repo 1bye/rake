@@ -2,15 +2,23 @@
 //!
 //! AccessKit replaces the content view's children, hiding native subviews.
 //! Make that content view an accessible group and expose native host groups as
-//! its siblings. Each group's children remain dynamic; no GPUI nodes are copied.
+//! its siblings. Compose children on each window accessibility query so content
+//! and window chrome stay live; forward to AppKit when no hosts remain.
 
 use std::{
     cell::RefCell,
     collections::BTreeMap,
+    mem,
     rc::{Rc, Weak},
+    sync::Mutex,
 };
 
-use objc2::{rc::Retained, runtime::AnyObject};
+use objc2::{
+    ffi,
+    rc::Retained,
+    runtime::{AnyClass, AnyObject, MethodImplementation, Sel},
+    sel,
+};
 use objc2_app_kit::{NSAccessibility, NSAccessibilityGroupRole, NSView, NSWindow};
 use objc2_foundation::{NSArray, NSString};
 
@@ -18,12 +26,90 @@ thread_local! {
     static WINDOWS: RefCell<BTreeMap<usize, Weak<WindowTree>>> = const { RefCell::new(BTreeMap::new()) };
 }
 
+type ChildrenGetter = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut NSArray;
+
+// Runtime methods outlive registrations and thread-local window state.
+static GETTERS: Mutex<Vec<(&'static AnyClass, ChildrenGetter)>> = Mutex::new(Vec::new());
+
+fn intercept_children(window: &NSWindow) {
+    let mut getters = GETTERS.lock().expect("native window getters lock poisoned");
+    let mut class = Some(window.class());
+
+    while let Some(current) = class {
+        if getters.iter().any(|(class, _)| *class == current) {
+            return;
+        }
+
+        class = current.superclass();
+    }
+
+    let class = window.class();
+    let selector = sel!(accessibilityChildren);
+    let method = class
+        .instance_method(selector)
+        .expect("NSWindow accessibility getter");
+    // SAFETY: NSAccessibility's getter takes a receiver and selector and
+    // returns an autoreleased NSArray. Preserve its exact ABI for forwarding.
+    let original: ChildrenGetter = unsafe { mem::transmute(method.implementation()) };
+
+    getters.push((class, original));
+    // SAFETY: Install the same getter ABI on this window class only, without
+    // changing its superclass or layout (including AppKit's KVO subclass).
+    // Unregistered windows forward to the original implementation.
+    unsafe {
+        ffi::class_replaceMethod(
+            std::ptr::from_ref(class).cast_mut(),
+            selector,
+            (window_children as unsafe extern "C-unwind" fn(_, _) -> _).__imp(),
+            ffi::method_getTypeEncoding(method),
+        );
+    }
+}
+
+unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) -> *mut NSArray {
+    let original = {
+        let getters = GETTERS.lock().expect("native window getters lock poisoned");
+        let mut class = window.class();
+
+        loop {
+            if let Some((_, original)) = getters.iter().find(|(candidate, _)| *candidate == class) {
+                break *original;
+            }
+
+            class = class
+                .superclass()
+                .expect("getter belongs to an intercepted window class");
+        }
+    };
+    let key = std::ptr::from_ref(window) as usize;
+    let tree = WINDOWS
+        .try_with(|windows| windows.borrow().get(&key).and_then(Weak::upgrade))
+        .ok()
+        .flatten();
+    let Some(tree) = tree else {
+        // SAFETY: Forward unchanged using the saved getter's original ABI.
+        return unsafe { original(window, selector) };
+    };
+    // SAFETY: Call the saved getter with its original receiver, selector and
+    // ABI, then retain its nullable autoreleased result during composition.
+    let base = unsafe { Retained::retain(original(window, selector)) };
+    let mut children: Vec<Retained<AnyObject>> = base
+        .as_ref()
+        .map(|children| children.iter().collect())
+        .unwrap_or_default();
+
+    for (_, view) in tree.hosts.borrow().values() {
+        children.push(view.clone().into());
+    }
+
+    Retained::autorelease_return(NSArray::from_retained_slice(&children))
+}
+
 struct WindowTree {
     window: Retained<NSWindow>,
     content: Retained<NSView>,
     was_element: bool,
     role: Option<Retained<NSString>>,
-    base_children: Option<Retained<NSArray>>,
     hosts: RefCell<BTreeMap<usize, (usize, Retained<NSView>)>>,
 }
 
@@ -36,37 +122,15 @@ impl WindowTree {
         content.setAccessibilityElement(true);
         // SAFETY: This is AppKit's standard accessibility group role.
         content.setAccessibilityRole(Some(unsafe { NSAccessibilityGroupRole }));
-        let base_children = window.accessibilityChildren();
+        intercept_children(&window);
 
         Some(Self {
             window,
             content,
             was_element,
             role,
-            base_children,
             hosts: RefCell::new(BTreeMap::new()),
         })
-    }
-
-    fn update(&self) {
-        let base: Vec<_> = self
-            .base_children
-            .as_ref()
-            .map(|children| children.iter().collect())
-            .unwrap_or_default();
-
-        let hosts = self.hosts.borrow();
-        let mut children: Vec<&AnyObject> = base.iter().map(|child| &**child).collect();
-
-        for (_, view) in hosts.values() {
-            children.push(view);
-        }
-
-        let children = NSArray::from_slice(&children);
-
-        // SAFETY: All entries are existing AppKit accessibility elements or
-        // native NSView groups; their retained owners outlive this copied array.
-        unsafe { self.window.setAccessibilityChildren(Some(&children)) };
     }
 }
 
@@ -74,9 +138,6 @@ impl Drop for WindowTree {
     fn drop(&mut self) {
         self.content.setAccessibilityElement(self.was_element);
         self.content.setAccessibilityRole(self.role.as_deref());
-        // SAFETY: Clearing the explicit children restores AppKit's dynamic
-        // traversal once the final native host has detached.
-        unsafe { self.window.setAccessibilityChildren(None) };
     }
 }
 
@@ -122,7 +183,6 @@ impl Registration {
         let retained = unsafe { Retained::retain(std::ptr::from_ref(container).cast_mut()) }?;
 
         tree.hosts.borrow_mut().insert(id, (token, retained));
-        tree.update();
 
         Some(Self { tree, id, token })
     }
@@ -154,6 +214,5 @@ impl Drop for Registration {
         }
 
         drop(hosts);
-        self.tree.update();
     }
 }

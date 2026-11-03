@@ -11,10 +11,26 @@ mod suite {
 
     use rake_native::macos::{
         Button, ButtonStyle, NativeError, NativeView, SegmentedControl,
-        appkit::{NSAccessibility, NSAccessibilityButtonRole, NSView},
+        appkit::{
+            NSAccessibility, NSAccessibilityButtonRole, NSAccessibilityToolbarRole, NSView,
+            NSWindow,
+        },
         foundation::{NSPoint, NSString},
-        objc2::{MainThreadMarker, msg_send, rc::Retained},
+        objc2::{
+            MainThreadMarker, msg_send,
+            rc::Retained,
+            runtime::{AnyClass, AnyObject},
+        },
     };
+
+    fn has_toolbar(window: &NSWindow) -> bool {
+        window.accessibilityChildren().unwrap().iter().any(|child| {
+            child.downcast_ref::<NSView>().is_some_and(|view| {
+                // SAFETY: This is AppKit's static toolbar-role constant.
+                view.accessibilityRole().as_deref() == Some(unsafe { NSAccessibilityToolbarRole })
+            })
+        })
+    }
 
     struct Fixture {
         stage: u8,
@@ -219,6 +235,50 @@ mod suite {
                                 .unwrap();
                             return;
                         }
+
+                        let native_window = button.as_appkit().window().unwrap();
+
+                        assert!(!has_toolbar(&native_window));
+                        // SAFETY: NSToolbar and its standard print item are created
+                        // on the main thread; NSWindow retains the installed toolbar.
+                        unsafe {
+                            let toolbar: Retained<AnyObject> = msg_send![AnyClass::get(c"NSToolbar").unwrap(), new];
+                            let _: () = msg_send![&*toolbar, insertItemWithItemIdentifier: &*NSString::from_str("NSToolbarPrintItem"), atIndex: 0_isize];
+                            let _: () = msg_send![&*native_window, setToolbar: &*toolbar];
+                        }
+
+                        assert!(has_toolbar(&native_window), "a toolbar added after mounting is immediately discoverable");
+                        let children = native_window.accessibilityChildren().unwrap();
+                        let content = native_window.contentView().unwrap();
+
+                        for expected in [&*content, &*group] {
+                            assert!(
+                                children.iter().any(|child| child.downcast_ref::<NSView>()
+                                    .is_some_and(|view| std::ptr::eq(view, expected))),
+                                "GPUI and native groups stay discoverable with the toolbar"
+                            );
+                        }
+
+                        entity.update(cx, |this, cx| {
+                            this.stage = 5;
+                            cx.notify();
+                        }).unwrap();
+                    }
+                    5 => {
+                        let native_window = button.as_appkit().window().unwrap();
+
+                        assert!(has_toolbar(&native_window), "toolbar survives native placement updates");
+                        // SAFETY: Clear the live window's toolbar on the main thread.
+                        unsafe { let _: () = msg_send![&*native_window, setToolbar: None::<&AnyObject>]; }
+
+                        assert!(!has_toolbar(&native_window), "removed toolbar leaves the accessibility tree immediately");
+                        entity.update(cx, |this, cx| {
+                            this.stage = 6;
+                            cx.notify();
+                        }).unwrap();
+                    }
+                    6 => {
+                        assert!(!has_toolbar(&button.as_appkit().window().unwrap()));
 
                         window.remove_window();
                         cx.spawn(async move |cx| {
