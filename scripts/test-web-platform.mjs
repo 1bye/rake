@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
+import {createBrowserCdp} from './browser-test-cdp.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const temporary = await mkdtemp(join(tmpdir(), 'rake-web-host-'));
@@ -67,9 +68,8 @@ let stderr = '';
 const processChrome = spawn(chrome, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
 processChrome.stderr.on('data', data => { stderr = (stderr + data).slice(-8000); });
 let socket;
-const pending = new Map();
+let cdp;
 const events = [];
-let sequence = 0;
 async function eventually(check, timeout = 20_000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
@@ -81,12 +81,7 @@ async function eventually(check, timeout = 20_000) {
   throw new Error('Browser host check timed out');
 }
 function call(method, params = {}, sessionId) {
-  return new Promise((resolve, reject) => {
-    const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)); }, 25_000);
-    pending.set(id, {resolve, reject, timer});
-    socket.send(JSON.stringify({id, method, params, sessionId}));
-  });
+  return cdp.call(method, params, sessionId);
 }
 async function evaluate(session, expression, userGesture = false) {
   const reply = await call('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true, userGesture}, session);
@@ -107,13 +102,9 @@ try {
   const browser = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
   socket = new WebSocket(browser.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, {once: true}); socket.addEventListener('error', reject, {once: true}); });
-  socket.addEventListener('message', event => {
-    const reply = JSON.parse(event.data);
-    const request = pending.get(reply.id);
-    if (request) {
-      pending.delete(reply.id); clearTimeout(request.timer);
-      reply.error ? request.reject(new Error(JSON.stringify(reply.error))) : request.resolve(reply.result);
-    } else if (reply.method) { events.push(reply); if (events.length > 1000) events.shift(); }
+  cdp = createBrowserCdp(socket, processChrome, {
+    stderr: () => stderr,
+    onEvent: event => { events.push(event); if (events.length > 1000) events.shift(); },
   });
   const old = await page(origin + '/tools/');
   assert.equal(await evaluate(old, 'window.build'), 'old');
@@ -166,7 +157,7 @@ try {
   await eventually(() => evaluate(old, 'window.ready === true && window.build === "new"'));
   console.log(JSON.stringify({browser: browser.Browser, passed: ['actual file selection and Unicode read', 'clipboard with automation permission and content restoration', 'preferences', 'module workers and Rust drop cancellation', 'waiting update preserves open tabs', 'old/new immutable assets coexist', 'offline deep-link fallback', 'network-only version checks', 'Rust quit guard blocks reload and approved quit reloads']}));
 } finally {
-  for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error('browser check ended')); }
+  cdp?.close();
   socket?.close();
   processChrome.kill('SIGTERM');
   await Promise.race([new Promise(resolve => processChrome.once('exit', resolve)), delay(5000)]);
