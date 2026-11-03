@@ -42,6 +42,7 @@ GROUPS = {
         ["python3", "scripts/test-files.py"],
     ],
     "browser": [
+        ["node", "--test", "scripts/test-browser-cdp.mjs"],
         ["node", "scripts/test-web-loading.mjs"],
         ["node", "scripts/test-web-platform.mjs"],
     ],
