@@ -89,3 +89,27 @@ CPU benchmarks and compile checks do not establish these properties.
 
 This sequence implements release infrastructure and platform behavior. A release is
 qualified only by checks actually executed against its revision, not by this checklist.
+
+## Alpha preparation evidence: 2026-11-03
+
+The Fieldnotes Web loading failure was fixed on `codex/public-alpha-prep` at
+`af0cd47b55a4a8b2952dc7d5ae712bc34e130cc0`. All five local readiness groups,
+the temporary CLI install and Web development/control flow passed on that clean
+revision. Their reports remain in the external `rake-fieldnotes-web-fix` bundle.
+
+The [full Fieldnotes browser checklist](notes-browser-testing.md#alpha-preparation-rerun-2026-11-03)
+also passed against a clean build of that revision in Chrome 156.0.8078.80 Guest,
+Safari 26.6.2 and Firefox 159.0 on macOS 26.6.2. This includes editing, exact stored
+text after reload, hidden autosave, stale writers, interrupted saves, injected
+main-write failure/retry and malformed-checkpoint recovery. Safari's initial hidden
+writer discovery failure and successful retry are recorded with the results.
+The external `rake-fieldnotes-browser-checklist` bundle contains the build identity,
+commands, observations and cleanup evidence. Later documentation commits do not
+change the application tested by this manual run.
+
+Publishing remains **no-go** until the final release revision has passing hosted
+Windows/Linux checks, the owner resolves the native-branch, public `.agents/` and
+launch-platform decisions, and the tag/source/checksum/evidence publication steps
+are approved. Windows/Linux GUI qualification, signing, notarization and installers
+were not established by these browser runs. No push, tag, merge, workflow dispatch,
+release publication or GitHub settings change was performed.
