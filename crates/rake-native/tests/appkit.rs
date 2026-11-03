@@ -154,8 +154,13 @@ mod suite {
                         // target/action; a null sender is accepted by AppKit.
                         unsafe { button.as_appkit().performClick(None) };
                         button.enable();
-                        // SAFETY: The same live target/action is still installed.
-                        unsafe { button.as_appkit().performClick(None) };
+                        // performClick pumps AppKit events; dispatch outside GPUI's
+                        // borrowed App so the queued handler can update it safely.
+                        cx.spawn(async move |_| {
+                            // SAFETY: The same live target/action is still installed.
+                            unsafe { button.as_appkit().performClick(None) };
+                        })
+                        .detach();
                     }
                     1 => {
                         assert!(button.as_appkit().window().is_none());
