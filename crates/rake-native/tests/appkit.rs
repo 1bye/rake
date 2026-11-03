@@ -12,7 +12,7 @@ mod suite {
     use rake_native::macos::{
         Button, ButtonStyle, NativeError, NativeView, SegmentedControl,
         appkit::{NSAccessibility, NSAccessibilityButtonRole, NSView},
-        foundation::NSString,
+        foundation::{NSPoint, NSString},
         objc2::{MainThreadMarker, msg_send, rc::Retained},
     };
 
@@ -89,7 +89,7 @@ mod suite {
     }
 
     impl Render for Fixture {
-        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let stage = self.stage;
 
             if self.scheduled != Some(stage) {
@@ -99,6 +99,7 @@ mod suite {
                 let segments = self.segments.clone();
                 let raw = self.raw.clone();
                 let finished = self.finished.clone();
+                let entity = cx.weak_entity();
 
                 window.on_next_frame(move |window, cx| match stage {
                     0 => {
@@ -184,6 +185,41 @@ mod suite {
                             "the same control remounts"
                         );
                         assert_eq!(segments.selected(), Some(2));
+                        entity
+                            .update(cx, |this, cx| {
+                                this.stage = 3;
+                                cx.notify();
+                            })
+                            .unwrap();
+                    }
+                    3 | 4 => {
+                        // SAFETY: The fixture retains this mounted main-thread button.
+                        let group = unsafe { button.as_appkit().superview() }.unwrap();
+                        let frame = group.frame();
+                        let center = NSPoint::new(
+                            frame.origin.x + frame.size.width / 2.0,
+                            frame.origin.y + frame.size.height / 2.0,
+                        );
+
+                        assert_eq!(group.alphaValue(), if stage == 3 { 0.0 } else { 0.5 });
+                        assert_eq!(group.isAccessibilityHidden(), stage == 3);
+                        assert_eq!(
+                            group.hitTest(center).is_some(),
+                            stage == 4,
+                            "zero opacity prevents hit testing; positive opacity restores it"
+                        );
+                        assert_eq!(group.isHidden(), stage == 3);
+
+                        if stage == 3 {
+                            entity
+                                .update(cx, |this, cx| {
+                                    this.stage = 4;
+                                    cx.notify();
+                                })
+                                .unwrap();
+                            return;
+                        }
+
                         window.remove_window();
                         cx.spawn(async move |cx| {
                             assert!(
@@ -208,21 +244,31 @@ mod suite {
                 .gap_3()
                 .child(self.segments.element().w(gpui::px(280.)).h(gpui::px(32.)))
                 .when(stage != 1, |root| {
-                    root.child(self.button.element().w(gpui::px(120.)).h(gpui::px(32.)))
-                        .child(self.glass.element().w(gpui::px(120.)).h(gpui::px(32.)))
-                        .child(
-                            gpui::div()
-                                .w(gpui::px(80.))
-                                .h(gpui::px(32.))
-                                .overflow_hidden()
-                                .child(
-                                    self.custom
-                                        .element()
-                                        .w(gpui::px(80.))
-                                        .h(gpui::px(64.))
-                                        .flex_shrink_0(),
-                                ),
-                        )
+                    root.child(
+                        self.button
+                            .element()
+                            .w(gpui::px(120.))
+                            .h(gpui::px(32.))
+                            .opacity(match stage {
+                                3 => 0.0,
+                                4 => 0.5,
+                                _ => 1.0,
+                            }),
+                    )
+                    .child(self.glass.element().w(gpui::px(120.)).h(gpui::px(32.)))
+                    .child(
+                        gpui::div()
+                            .w(gpui::px(80.))
+                            .h(gpui::px(32.))
+                            .overflow_hidden()
+                            .child(
+                                self.custom
+                                    .element()
+                                    .w(gpui::px(80.))
+                                    .h(gpui::px(64.))
+                                    .flex_shrink_0(),
+                            ),
+                    )
                 })
         }
     }
