@@ -265,11 +265,12 @@ impl Attachment {
             .setFrame(host.convertRect_toView(full, Some(container)));
         container.setAlphaValue(style.opacity.unwrap_or(1.0).clamp(0.0, 1.0) as f64);
         let hidden = style.visibility != Visibility::Visible
+            || container.alphaValue() == 0.0
             || clip.size.width <= px(0.)
             || clip.size.height <= px(0.);
 
         container.setHidden(hidden);
-        container.setAccessibilityHidden(hidden || container.alphaValue() == 0.0);
+        container.setAccessibilityHidden(hidden);
     }
 
     fn detach(&mut self) {

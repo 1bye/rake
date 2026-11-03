@@ -1,4 +1,4 @@
-//! Covers: native actions, selection validation, clipping, remount and window teardown.
+//! Covers: native actions, symbols, opacity, clipping, live accessibility, window moves and closes.
 //! Real: AppKit controls, Objective-C action dispatch, GPUI and its macOS renderer.
 //! Doubles: none.
 //! Requires: macOS graphical session and a working GPU; `native-tests` feature.
@@ -8,13 +8,41 @@ mod suite {
     use std::{cell::Cell, rc::Rc, time::Duration};
 
     use gpui::{self, AppContext, Context, IntoElement, Render, Window, WindowOptions, prelude::*};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     use rake_native::macos::{
         Button, ButtonStyle, NativeError, NativeView, SegmentedControl,
-        appkit::{NSAccessibility, NSAccessibilityButtonRole, NSView},
-        foundation::NSString,
-        objc2::{MainThreadMarker, msg_send, rc::Retained},
+        appkit::{
+            NSAccessibility, NSAccessibilityButtonRole, NSAccessibilityToolbarRole, NSView,
+            NSWindow,
+        },
+        foundation::{NSPoint, NSString},
+        objc2::{
+            MainThreadMarker, msg_send,
+            rc::Retained,
+            runtime::{AnyClass, AnyObject},
+        },
     };
+
+    thread_local! {
+        static PROGRESS: Cell<(u8, &'static str)> = const { Cell::new((0, "starting")) };
+    }
+
+    fn has_toolbar(window: &NSWindow) -> bool {
+        window.accessibilityChildren().unwrap().iter().any(|child| {
+            child.downcast_ref::<NSView>().is_some_and(|view| {
+                // SAFETY: This is AppKit's static toolbar-role constant.
+                view.accessibilityRole().as_deref() == Some(unsafe { NSAccessibilityToolbarRole })
+            })
+        })
+    }
+
+    #[derive(Clone)]
+    struct AccessibilityState {
+        content: Retained<NSView>,
+        was_element: bool,
+        role: Option<Retained<NSString>>,
+    }
 
     struct Fixture {
         stage: u8,
@@ -24,6 +52,8 @@ mod suite {
         segments: SegmentedControl,
         custom: NativeView,
         raw: Retained<NSView>,
+        destination: Option<gpui::AnyWindowHandle>,
+        destination_accessibility: Option<AccessibilityState>,
         finished: Rc<Cell<bool>>,
     }
 
@@ -37,6 +67,18 @@ mod suite {
                 Button::symbol("rake.invalid.symbol", "Missing", ButtonStyle::Push),
                 Err(NativeError::SymbolUnavailable(_))
             ));
+            let symbol = Button::symbol("plus", "Add", ButtonStyle::Push).unwrap();
+            let image = symbol
+                .as_appkit()
+                .image()
+                .expect("valid SF Symbol image is set");
+
+            assert_eq!(image.accessibilityDescription().unwrap().to_string(), "Add");
+            assert_eq!(
+                symbol.as_appkit().accessibilityLabel().unwrap().to_string(),
+                "Add"
+            );
+            assert_eq!(symbol.as_appkit().toolTip().unwrap().to_string(), "Add");
             let button = Button::new("Click", ButtonStyle::Push).unwrap();
             let entity = cx.weak_entity();
 
@@ -83,14 +125,17 @@ mod suite {
                 segments,
                 custom,
                 raw,
+                destination: None,
+                destination_accessibility: None,
                 finished,
             }
         }
     }
 
     impl Render for Fixture {
-        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let stage = self.stage;
+            PROGRESS.set((stage, "render"));
 
             if self.scheduled != Some(stage) {
                 self.scheduled = Some(stage);
@@ -99,6 +144,9 @@ mod suite {
                 let segments = self.segments.clone();
                 let raw = self.raw.clone();
                 let finished = self.finished.clone();
+                let entity = cx.weak_entity();
+                let destination = self.destination;
+                let destination_accessibility = self.destination_accessibility.clone();
 
                 window.on_next_frame(move |window, cx| match stage {
                     0 => {
@@ -154,8 +202,13 @@ mod suite {
                         // target/action; a null sender is accepted by AppKit.
                         unsafe { button.as_appkit().performClick(None) };
                         button.enable();
-                        // SAFETY: The same live target/action is still installed.
-                        unsafe { button.as_appkit().performClick(None) };
+                        // performClick pumps AppKit events; dispatch outside GPUI's
+                        // borrowed App so the queued handler can update it safely.
+                        cx.spawn(async move |_| {
+                            // SAFETY: The same live target/action is still installed.
+                            unsafe { button.as_appkit().performClick(None) };
+                        })
+                        .detach();
                     }
                     1 => {
                         assert!(button.as_appkit().window().is_none());
@@ -179,6 +232,179 @@ mod suite {
                             "the same control remounts"
                         );
                         assert_eq!(segments.selected(), Some(2));
+                        entity
+                            .update(cx, |this, cx| {
+                                this.stage = 3;
+                                cx.notify();
+                            })
+                            .unwrap();
+                    }
+                    3 | 4 => {
+                        // SAFETY: The fixture retains this mounted main-thread button.
+                        let group = unsafe { button.as_appkit().superview() }.unwrap();
+                        let frame = group.frame();
+                        let center = NSPoint::new(
+                            frame.origin.x + frame.size.width / 2.0,
+                            frame.origin.y + frame.size.height / 2.0,
+                        );
+
+                        assert_eq!(group.alphaValue(), if stage == 3 { 0.0 } else { 0.5 });
+                        assert_eq!(group.isAccessibilityHidden(), stage == 3);
+                        assert_eq!(
+                            group.hitTest(center).is_some(),
+                            stage == 4,
+                            "zero opacity prevents hit testing; positive opacity restores it"
+                        );
+                        assert_eq!(group.isHidden(), stage == 3);
+
+                        if stage == 3 {
+                            entity
+                                .update(cx, |this, cx| {
+                                    this.stage = 4;
+                                    cx.notify();
+                                })
+                                .unwrap();
+                            return;
+                        }
+
+                        let native_window = button.as_appkit().window().unwrap();
+
+                        assert!(!has_toolbar(&native_window));
+                        // SAFETY: NSToolbar and its standard print item are created
+                        // on the main thread; NSWindow retains the installed toolbar.
+                        unsafe {
+                            let toolbar: Retained<AnyObject> = msg_send![AnyClass::get(c"NSToolbar").unwrap(), new];
+                            let _: () = msg_send![&*toolbar, insertItemWithItemIdentifier: &*NSString::from_str("NSToolbarPrintItem"), atIndex: 0_isize];
+                            let _: () = msg_send![&*native_window, setToolbar: &*toolbar];
+                        }
+
+                        assert!(has_toolbar(&native_window), "a toolbar added after mounting is immediately discoverable");
+                        let children = native_window.accessibilityChildren().unwrap();
+                        let content = native_window.contentView().unwrap();
+
+                        for expected in [&*content, &*group] {
+                            assert!(
+                                children.iter().any(|child| child.downcast_ref::<NSView>()
+                                    .is_some_and(|view| std::ptr::eq(view, expected))),
+                                "GPUI and native groups stay discoverable with the toolbar"
+                            );
+                        }
+
+                        entity.update(cx, |this, cx| {
+                            this.stage = 5;
+                            cx.notify();
+                        }).unwrap();
+                    }
+                    5 => {
+                        let native_window = button.as_appkit().window().unwrap();
+
+                        assert!(has_toolbar(&native_window), "toolbar survives native placement updates");
+                        // SAFETY: Clear the live window's toolbar on the main thread.
+                        unsafe { let _: () = msg_send![&*native_window, setToolbar: None::<&AnyObject>]; }
+
+                        assert!(!has_toolbar(&native_window), "removed toolbar leaves the accessibility tree immediately");
+                        entity.update(cx, |this, cx| {
+                            this.stage = 6;
+                            cx.notify();
+                        }).unwrap();
+                    }
+                    6 => {
+                        assert!(!has_toolbar(&button.as_appkit().window().unwrap()));
+                        let source_window = button.as_appkit().window().unwrap();
+                        // SAFETY: The fixture retains this mounted main-thread button.
+                        let group = unsafe { button.as_appkit().superview() }.unwrap();
+
+                        // Change the next layout without scheduling it yet, so the old
+                        // Attachment survives while the shared control mounts elsewhere.
+                        entity.update(cx, |this, _| this.stage = 7).unwrap();
+                        let moved = button.clone();
+                        let mut accessibility = None;
+                        let destination = cx.open_window(
+                            WindowOptions { focus: false, ..WindowOptions::default() },
+                            |window, cx| {
+                                let handle = HasWindowHandle::window_handle(window).unwrap();
+                                let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+                                    panic!("native test requires an AppKit window");
+                                };
+                                // SAFETY: GPUI supplies its live main-thread content view.
+                                let content = unsafe {
+                                    Retained::retain(handle.ns_view.as_ptr().cast::<NSView>())
+                                }.unwrap();
+
+                                accessibility = Some(AccessibilityState {
+                                    was_element: content.isAccessibilityElement(),
+                                    role: content.accessibilityRole(),
+                                    content,
+                                });
+                                cx.new(|_| Destination(moved))
+                            },
+                        ).unwrap();
+
+                        assert!(!std::ptr::eq(
+                            &*button.as_appkit().window().unwrap(), &*source_window
+                        ));
+                        assert!(
+                            !source_window.accessibilityChildren().unwrap().iter().any(|child| {
+                                child.downcast_ref::<NSView>()
+                                    .is_some_and(|view| std::ptr::eq(view, &*group))
+                            }),
+                            "a moved host leaves the source accessibility tree before its next redraw"
+                        );
+                        entity.update(cx, |this, cx| {
+                            this.destination = Some(destination.into());
+                            this.destination_accessibility = accessibility;
+                            cx.notify();
+                        }).unwrap();
+                    }
+                    7 => {
+                        PROGRESS.set((stage, "callback"));
+                        assert!(button.as_appkit().window().is_some(),
+                            "dropping the source Attachment preserves the destination mount");
+                        let native_window = button.as_appkit().window().unwrap();
+                        // SAFETY: The destination retains the same main-thread button.
+                        let group = unsafe { button.as_appkit().superview() }.unwrap();
+
+                        assert!(native_window.accessibilityChildren().unwrap().iter().any(|child| {
+                            child.downcast_ref::<NSView>()
+                                .is_some_and(|view| std::ptr::eq(view, &*group))
+                        }), "the destination keeps the moved host discoverable");
+                        assert!(group.accessibilityParent().is_some_and(|parent| {
+                            Retained::as_ptr(&parent) == Retained::as_ptr(&native_window).cast()
+                        }), "dropping the source Attachment preserves the new accessibility parent");
+                        assert!(raw.window().is_none());
+                        // Close from outside GPUI's borrowed update, as AppKit does
+                        // for a title-bar close button. The source window drives stage 8.
+                        cx.spawn(async move |cx| {
+                            PROGRESS.set((stage, "performClose"));
+                            native_window.performClose(None);
+                            PROGRESS.set((stage, "closed"));
+
+                            assert!(!native_window.isVisible(), "performClose closes the window");
+                            assert!(button.as_appkit().window().is_none(),
+                                "a user close detaches a retained control");
+                            assert!(group.accessibilityParent().is_none());
+                            let original = destination_accessibility.unwrap();
+
+                            assert_eq!(original.content.isAccessibilityElement(), original.was_element);
+                            assert_eq!(original.content.accessibilityRole(), original.role);
+                            assert!(!native_window.accessibilityChildren().unwrap().iter().any(|child| {
+                                child.downcast_ref::<NSView>()
+                                    .is_some_and(|view| std::ptr::eq(view, &*group))
+                            }), "a user close restores window accessibility traversal");
+                            cx.update(|cx| {
+                                assert!(!cx.windows().contains(&destination.unwrap()),
+                                    "AppKit close removes the GPUI window");
+                            });
+                            entity.update(cx, |this, cx| {
+                                this.stage = 8;
+                                cx.notify();
+                            }).unwrap();
+                        }).detach();
+                    }
+                    8 => {
+                        assert!(button.as_appkit().window().is_some(),
+                            "a retained control remounts after a user close");
+
                         window.remove_window();
                         cx.spawn(async move |cx| {
                             assert!(
@@ -202,23 +428,41 @@ mod suite {
                 .flex_col()
                 .gap_3()
                 .child(self.segments.element().w(gpui::px(280.)).h(gpui::px(32.)))
-                .when(stage != 1, |root| {
-                    root.child(self.button.element().w(gpui::px(120.)).h(gpui::px(32.)))
-                        .child(self.glass.element().w(gpui::px(120.)).h(gpui::px(32.)))
-                        .child(
-                            gpui::div()
-                                .w(gpui::px(80.))
-                                .h(gpui::px(32.))
-                                .overflow_hidden()
-                                .child(
-                                    self.custom
-                                        .element()
-                                        .w(gpui::px(80.))
-                                        .h(gpui::px(64.))
-                                        .flex_shrink_0(),
-                                ),
-                        )
+                .when(stage != 1 && stage != 7, |root| {
+                    root.child(
+                        self.button
+                            .element()
+                            .w(gpui::px(120.))
+                            .h(gpui::px(32.))
+                            .opacity(match stage {
+                                3 => 0.0,
+                                4 => 0.5,
+                                _ => 1.0,
+                            }),
+                    )
+                    .child(self.glass.element().w(gpui::px(120.)).h(gpui::px(32.)))
+                    .child(
+                        gpui::div()
+                            .w(gpui::px(80.))
+                            .h(gpui::px(32.))
+                            .overflow_hidden()
+                            .child(
+                                self.custom
+                                    .element()
+                                    .w(gpui::px(80.))
+                                    .h(gpui::px(64.))
+                                    .flex_shrink_0(),
+                            ),
+                    )
                 })
+        }
+    }
+
+    struct Destination(Button);
+
+    impl Render for Destination {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.element().w(gpui::px(120.)).h(gpui::px(32.))
         }
     }
 
@@ -244,7 +488,8 @@ mod suite {
                 cx.background_executor()
                     .timer(Duration::from_secs(15))
                     .await;
-                panic!("native integration test timed out before completing");
+                let (stage, phase) = PROGRESS.get();
+                panic!("native integration test timed out at stage {stage} ({phase})");
             })
             .detach();
             cx.activate(true);
