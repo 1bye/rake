@@ -52,11 +52,11 @@ The Cargo baseline finished before any timed Blaze build began.
 First error from foundation, verbatim:
 
 ```text
-error: could not build `librake_foundation.dylib`, `rake-foundation`: Failed to build the build scripts of /Users/yuriihulyk/Documents/GitHub/rake
+error: could not build `librake_foundation.dylib`, `rake-foundation`: Failed to build the build scripts of <repo>
   blaze could not compile the build script of `gpui_ce_media v0.2.2` for the load
   blaze did not build it (exit status: 1): Error: `build_script_build` reaches 1 function blaze could not compile, and a build with nothing of rustc's has nothing else to compile it, so it is not built:
     clang_sys::build::dynamic::search_libclang_directories: frontend: mir: IncompleteExpr
-(what blaze said is in /Users/yuriihulyk/.cache/ra-jit/workers/f950877dd5bc0e0f/log)
+(what blaze said is in <user-cache>/ra-jit/workers/f950877dd5bc0e0f/log)
 ```
 
 All five command logs and the foundation worker's diagnostic are preserved in

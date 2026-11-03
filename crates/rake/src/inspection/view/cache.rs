@@ -1,6 +1,8 @@
 //! Window-owned caches keyed by unambiguous presentation identities.
 
-use super::super::{ResolvedStyle, ViewMetadata, budget, snapshot::Payload};
+#[cfg(feature = "experimental-view")]
+use super::super::ViewMetadata;
+use super::super::{ResolvedStyle, budget, snapshot::Payload};
 use gpui::{Pixels, StyleRefinement, TextStyle};
 use serde_json::Value;
 use std::rc::Rc;

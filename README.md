@@ -6,7 +6,7 @@ Build native and browser apps in Rust, with tools that let developers and agents
 inspect and control the running application. The GUI, CLI and devtools share
 application commands, operation results and lifecycle guards.
 
-**Status:** unpublished alpha candidate. See the [support contract and release gates](docs/release-readiness.md) and [release qualification](docs/qualification.md).
+**Status:** source alpha candidate; no alpha release tag yet. See the [support contract and release gates](docs/release-readiness.md) and [release qualification](docs/qualification.md).
 
 ## What Rake provides
 
@@ -59,6 +59,16 @@ cargo install --path crates/rake-cli --locked
 rake dev --package rake-notes --cdp
 ```
 
+On macOS, Ruby also provides `/usr/bin/rake`. Check `which rake`: it should
+resolve to the CLI you just installed, normally `~/.cargo/bin/rake`. If it resolves
+to Ruby's command, put Cargo first and refresh your shell's command cache:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+rehash # zsh; use hash -r in bash
+which rake
+```
+
 To run in the browser:
 
 ```sh
@@ -70,11 +80,49 @@ matching Cargo.lock. The builder prints the install command when needed. Use a
 WebGPU-capable browser. See [development and reload](docs/development.md) for
 build options and [Chrome DevTools](docs/devtools.md) for connecting the inspector.
 
+## Use Rake in your own app
+
+Create a binary crate with `cargo new hello-rake`, then add this dependency to
+its `Cargo.toml`. Pin a Git revision because alpha APIs can change; use Rust
+1.95.0 and the native build prerequisites in the [support contract](docs/release-readiness.md).
+
+```toml
+[dependencies]
+rake = { git = "https://github.com/1bye/rake", rev = "df23352adc6774adabab6123c7f28bdf5d00e0fa" }
+```
+
+Replace `src/main.rs` with:
+
+```rust
+use rake::gpui::{Context, Window, div, prelude::*};
+use rake::prelude::*;
+
+struct Hello;
+
+impl Render for Hello {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child("Hello, Rake!")
+    }
+}
+
+#[rake::app]
+fn app() -> App {
+    App::new("com.example.hello-rake")
+        .root(|_, _, cx| cx.new(|_| Hello).into())
+}
+```
+
+Run `cargo run` to open the native window, and commit the generated `Cargo.lock`.
+The pinned revision must be available on the public remote before using this
+snippet from a fresh machine. Browser packaging also needs a library entry point
+and configuration; see the [foundation example](examples/foundation/README.md).
+
 ## Work with agents
 
 Agents can discover application commands and their schemas, invoke actions and
-read results through the CLI. In another terminal, set the session path printed
-by `rake dev`:
+read results through the CLI. In another terminal, set `RAKE_CONTROL_DIR` to the
+`control` subdirectory of the session printed by `rake dev`. For example, if it
+prints `Session: /tmp/rake-dev-EXAMPLE`, use:
 
 ```sh
 export RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control
@@ -82,6 +130,10 @@ rake instances --json
 rake ctl commands list --json
 rake ctl commands run notes.list --args null --json
 ```
+
+Use the actual session name from your run. The session directory itself is not
+the control directory. Without this variable, the CLI searches its default
+control directory and can return `[]` even while your development app is running.
 
 The same runtime exposes routes, tasks, pending decisions, logs and inspected UI
 elements. Development control is opt-in; `rake dev` supplies the connection setup
@@ -103,8 +155,9 @@ waits, screenshots and Rust source lookup.
 
 ## Status
 
-Runtime validation includes macOS/Chromium, with focused Windows/Linux readiness
-and installer workflows. Each release needs its own evidence; compilation, GUI
+Local release checks target macOS and Chromium. Windows/Linux readiness and
+installer workflows are available but require passing evidence for the release
+revision; real Windows/Linux GUI qualification is still required. Each release needs its own evidence; compilation, GUI
 and installer checks establish different boundaries. Native applications support
 multiple windows; browser applications use one host. Native control transport
 requires Unix. Built-in host visibility measures macOS occlusion, Windows window

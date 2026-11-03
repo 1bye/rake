@@ -469,6 +469,10 @@ Rake's public error types distinguish unsupported capabilities, denied or unavai
 
 # CLI surface and parity
 
+This section is a proposed interface, not CLI usage documentation. In particular,
+`rake new` is not implemented. For current commands, use `rake --help` and the
+[README](../README.md).
+
 Separate project supervision from live-app operations.
 
 | Service | Responsibilities |
