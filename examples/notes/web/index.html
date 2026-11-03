@@ -13,8 +13,10 @@
 </style>
 <div id="error" role="alert" hidden></div>
 <script type="module">
-  import init from './pkg/rake_notes.js';
-  try { await init(); }
+  try {
+    const {default: init} = await import('./pkg/rake_notes.js');
+    await init();
+  }
   catch (error) {
     const display = document.querySelector('#error');
     display.hidden = false;

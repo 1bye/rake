@@ -49,6 +49,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: node scripts/test-web-loading.mjs
       - run: node scripts/test-inspector.mjs
       - run: node scripts/test-inspector-ui.mjs
       - run: node scripts/test-notes-storage.mjs

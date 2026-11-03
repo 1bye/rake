@@ -14,6 +14,7 @@ manually dispatched once after a change set; signing/install workflows remain op
 | Native startup/layout smoke | Actual event loop, startup failures, persistent shell and host rollback | Every window manager or display configuration |
 | Platform file/preferences tests | Bounded reads, atomic replacement, failure preservation, FIFO rejection | OS picker UI |
 | JS adapter/worker/cache tests | Denial, quota, cancellation, timeout and cache policies | Actual browser lifecycle |
+| `test-web-loading.mjs` | Real Fieldnotes/GPUI Wasm build, generated JS module linking and visible startup-error handling | GPU canvas rendering or manual editing |
 | `test-web-platform.mjs` | Actual Chrome file selection/Unicode reads, clipboard with automation permission, workers, offline multi-build lifecycle, Rust worker-drop cancellation and guarded reload | GPUI canvas rendering, manual permission prompts or screen-reader usability |
 | Windows/Linux app-readiness matrix | Portable tests and native target compilation, platform JS boundary tests | Native installer/signing or real GUI qualification |
 

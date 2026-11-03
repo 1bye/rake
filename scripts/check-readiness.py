@@ -41,7 +41,10 @@ GROUPS = {
         ["cargo", "build", "-p", "rake-cli", "-p", "rake-files", "--features", "rake/devtools", "--locked"],
         ["python3", "scripts/test-files.py"],
     ],
-    "browser": [["node", "scripts/test-web-platform.mjs"]],
+    "browser": [
+        ["node", "scripts/test-web-loading.mjs"],
+        ["node", "scripts/test-web-platform.mjs"],
+    ],
 }
 
 
