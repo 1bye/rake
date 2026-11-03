@@ -40,6 +40,7 @@ mod suite {
         segments: SegmentedControl,
         custom: NativeView,
         raw: Retained<NSView>,
+        destination: Option<gpui::AnyWindowHandle>,
         finished: Rc<Cell<bool>>,
     }
 
@@ -99,6 +100,7 @@ mod suite {
                 segments,
                 custom,
                 raw,
+                destination: None,
                 finished,
             }
         }
@@ -116,6 +118,7 @@ mod suite {
                 let raw = self.raw.clone();
                 let finished = self.finished.clone();
                 let entity = cx.weak_entity();
+                let destination = self.destination;
 
                 window.on_next_frame(move |window, cx| match stage {
                     0 => {
@@ -279,6 +282,50 @@ mod suite {
                     }
                     6 => {
                         assert!(!has_toolbar(&button.as_appkit().window().unwrap()));
+                        let source_window = button.as_appkit().window().unwrap();
+                        // SAFETY: The fixture retains this mounted main-thread button.
+                        let group = unsafe { button.as_appkit().superview() }.unwrap();
+
+                        // Change the next layout without scheduling it yet, so the old
+                        // Attachment survives while the shared control mounts elsewhere.
+                        entity.update(cx, |this, _| this.stage = 7).unwrap();
+                        let moved = button.clone();
+                        let destination = cx.open_window(
+                            WindowOptions { focus: false, ..WindowOptions::default() },
+                            |_, cx| cx.new(|_| Destination(moved)),
+                        ).unwrap();
+
+                        assert!(!std::ptr::eq(
+                            &*button.as_appkit().window().unwrap(), &*source_window
+                        ));
+                        assert!(
+                            !source_window.accessibilityChildren().unwrap().iter().any(|child| {
+                                child.downcast_ref::<NSView>()
+                                    .is_some_and(|view| std::ptr::eq(view, &*group))
+                            }),
+                            "a moved host leaves the source accessibility tree before its next redraw"
+                        );
+                        entity.update(cx, |this, cx| {
+                            this.destination = Some(destination.into());
+                            cx.notify();
+                        }).unwrap();
+                    }
+                    7 => {
+                        assert!(button.as_appkit().window().is_some(),
+                            "dropping the source Attachment preserves the destination mount");
+                        let native_window = button.as_appkit().window().unwrap();
+                        // SAFETY: The destination retains the same main-thread button.
+                        let group = unsafe { button.as_appkit().superview() }.unwrap();
+
+                        assert!(native_window.accessibilityChildren().unwrap().iter().any(|child| {
+                            child.downcast_ref::<NSView>()
+                                .is_some_and(|view| std::ptr::eq(view, &*group))
+                        }), "the destination keeps the moved host discoverable");
+                        assert!(group.accessibilityParent().is_some_and(|parent| {
+                            Retained::as_ptr(&parent) == Retained::as_ptr(&native_window).cast()
+                        }), "dropping the source Attachment preserves the new accessibility parent");
+                        assert!(raw.window().is_none());
+                        destination.unwrap().update(cx, |_, window, _| window.remove_window()).unwrap();
 
                         window.remove_window();
                         cx.spawn(async move |cx| {
@@ -303,7 +350,7 @@ mod suite {
                 .flex_col()
                 .gap_3()
                 .child(self.segments.element().w(gpui::px(280.)).h(gpui::px(32.)))
-                .when(stage != 1, |root| {
+                .when(stage != 1 && stage != 7, |root| {
                     root.child(
                         self.button
                             .element()
@@ -330,6 +377,14 @@ mod suite {
                             ),
                     )
                 })
+        }
+    }
+
+    struct Destination(Button);
+
+    impl Render for Destination {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.element().w(gpui::px(120.)).h(gpui::px(32.))
         }
     }
 

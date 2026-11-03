@@ -99,7 +99,13 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
         .unwrap_or_default();
 
     for (_, view) in tree.hosts.borrow().values() {
-        children.push(view.clone().into());
+        // A shared view may move before the old window drops its Attachment.
+        if view
+            .window()
+            .is_some_and(|parent| std::ptr::eq(&*parent, window))
+        {
+            children.push(view.clone().into());
+        }
     }
 
     Retained::autorelease_return(NSArray::from_retained_slice(&children))
