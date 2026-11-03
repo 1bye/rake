@@ -54,6 +54,18 @@ mod suite {
                 Button::symbol("rake.invalid.symbol", "Missing", ButtonStyle::Push),
                 Err(NativeError::SymbolUnavailable(_))
             ));
+            let symbol = Button::symbol("plus", "Add", ButtonStyle::Push).unwrap();
+            let image = symbol
+                .as_appkit()
+                .image()
+                .expect("valid SF Symbol image is set");
+
+            assert_eq!(image.accessibilityDescription().unwrap().to_string(), "Add");
+            assert_eq!(
+                symbol.as_appkit().accessibilityLabel().unwrap().to_string(),
+                "Add"
+            );
+            assert_eq!(symbol.as_appkit().toolTip().unwrap().to_string(), "Add");
             let button = Button::new("Click", ButtonStyle::Push).unwrap();
             let entity = cx.weak_entity();
 
