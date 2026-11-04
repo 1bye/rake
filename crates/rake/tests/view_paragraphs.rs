@@ -1,9 +1,9 @@
 //! Covers: paragraph controls, inline text expressions, evaluation order, and migrations.
 //! Real: public view macro and GPUI style construction.
 //! Doubles: none.
-//! Requires: experimental-view; no display or GPU.
+//! Requires: gpui; no display or GPU.
 
-#![cfg(feature = "experimental-view")]
+#![cfg(feature = "gpui")]
 
 use std::cell::RefCell;
 

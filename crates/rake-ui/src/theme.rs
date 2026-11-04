@@ -1,4 +1,4 @@
-//! App-owned, ambient themes for experimental views.
+//! App-owned, ambient themes for views.
 //!
 //! Call [`install`] during application setup and whenever the theme changes.
 //! GPUI's UI and view construction run on the same thread, including on Wasm;

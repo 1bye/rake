@@ -86,18 +86,18 @@ pub use updates_binding::{UpdateHandle, UpdateHandleState};
 #[cfg(feature = "gpui")]
 mod application;
 
-#[cfg(feature = "experimental-view")]
+#[cfg(feature = "gpui")]
 use rake_ui::view;
 
-#[cfg(feature = "experimental-view")]
+#[cfg(feature = "gpui")]
 pub mod overlay;
 
-#[cfg(feature = "experimental-view")]
+#[cfg(feature = "gpui")]
 pub use rake_ui::theme;
 
 /// Initializes Base, optional Kit and theme observation before custom GPUI windows.
 /// Rake's application builder calls this automatically.
-#[cfg(feature = "experimental-view")]
+#[cfg(feature = "gpui")]
 pub use rake_ui::init as init_ui;
 
 /// Optional GPUI Kit components, assets and the matching GPUI API (native targets).
@@ -109,8 +109,8 @@ pub use application::{App, AppError, ClosePolicy};
 #[cfg(feature = "gpui")]
 pub use gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
-#[cfg(feature = "experimental-view")]
-/// Builds GPUI views from experimental HTML-like markup.
+#[cfg(feature = "gpui")]
+/// Builds GPUI views from HTML-like markup.
 /// With `devtools`, nodes expose bounded inspection and authored style sources.
 /// Without it, inspection wrappers and source descriptors are removed at expansion.
 ///
@@ -342,19 +342,19 @@ pub mod __private {
     #[cfg(feature = "gpui")]
     pub use crate::application::{AppFactoryOutput, run_app_factory};
 
-    #[cfg(all(feature = "experimental-view", feature = "devtools"))]
+    #[cfg(all(feature = "gpui", feature = "devtools"))]
     pub use crate::inspection::authored::{
         Definition as ViewDefinition, HandlerSite as ViewHandlerSite, StyleSite as ViewStyleSite,
         child as view_inspect_child, component as view_inspect_component,
         component_key as view_component_key, styled as view_inspect,
     };
 
-    #[cfg(feature = "experimental-view")]
+    #[cfg(feature = "gpui")]
     pub use crate::theme::apply::{
         ThemeBackground, ThemeBorder, ThemeFont, ThemeRadius, ThemeRunFont, ThemeRunText, ThemeText,
     };
 
-    #[cfg(feature = "experimental-view")]
+    #[cfg(feature = "gpui")]
     pub use crate::view::{
         Children as ViewChildren, ComponentChildren as ViewComponentChildren,
         ParagraphContent as ViewParagraphContent, RunStyle as ViewRunStyle, button as view_button,
@@ -364,7 +364,7 @@ pub mod __private {
     };
 
     /// Deprecated macro event aliases; referenced at the authored attribute span.
-    #[cfg(feature = "experimental-view")]
+    #[cfg(feature = "gpui")]
     pub mod view_legacy {
         #[deprecated(note = "use on:click")]
         pub const ONCLICK: () = ();
@@ -392,7 +392,7 @@ pub mod __private {
 
 /// Declares this crate's ambient view theme; invoke once at the crate root.
 /// Install the value with [`theme::install`] before building themed views.
-#[cfg(feature = "experimental-view")]
+#[cfg(feature = "gpui")]
 #[macro_export]
 macro_rules! theme {
     ($theme:path) => {

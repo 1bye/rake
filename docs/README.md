@@ -21,8 +21,8 @@ New here? Start with [Getting started](getting-started.md), then read
 
 | Guide | Covers |
 | --- | --- |
-| [View syntax](experimental-view.md) | `rake::view!` reference, styling and themes (experimental) |
-| [Overlays and scrolling](experimental-overlays.md) | Dialogs, popovers and scrolling (experimental) |
+| [View syntax](view.md) | `rake::view!` reference, styling and themes |
+| [Overlays and scrolling](overlays.md) | Dialogs, popovers and scrolling; evolving overlay API |
 | [GPUI Base and Kit](gpui-kit.md) | Base-backed controls, optional Kit, shared colors |
 | [Native controls](../crates/rake-native/README.md) | AppKit views in GPUI layouts |
 

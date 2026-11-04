@@ -12,9 +12,9 @@ mod route;
 #[cfg(feature = "view")]
 mod view;
 
-/// Builds a GPUI element tree from experimental HTML-like markup.
+/// Builds a GPUI element tree from HTML-like markup.
 ///
-/// Exposed as `rake::view!` with Rake's `experimental-view` feature. Supports
+/// Exposed as `rake::view!` with Rake's default `gpui` feature. Supports
 /// unquoted/quoted text, `{expression}` children, `if`/`else`, `for`, and guarded `match`
 /// children with braced arm bodies. Untaken branches are not evaluated.
 /// `class` accepts checked GPUI utilities; `class:utility={bool}` applies one
@@ -82,7 +82,7 @@ mod view;
 /// Rustfmt does not format view! bodies; put longer attribute lists on separate
 /// lines and extract long style/listener expressions into named bindings.
 /// A dedicated macro formatter remains a follow-up.
-/// See `docs/experimental-view.md` in the repository for the full contract.
+/// See `docs/view.md` in the repository for the full contract.
 ///
 #[proc_macro]
 #[cfg(feature = "view")]

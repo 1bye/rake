@@ -5,7 +5,7 @@ Legacy prototype, retained as historical implementation documentation. Stock
 part of the supported DevTools workflow.
 
 `examples/inspector` is an Elements-only Rake application. Its shared native and
-browser UI is authored with the experimental `rake::view!` macro. It has its own
+browser UI is authored with the `rake::view!` macro. It has its own
 runtime, typed connection service, routed entry and managed observation activity.
 It observes the target through the existing protocol-1 runtime control API.
 
@@ -44,7 +44,7 @@ button switches both panes and their inputs together. Its typed, app-owned
 `Palette` derives `rake::Theme` and is declared once with `rake::theme!`.
 Setup and switching use `rake::theme::install`; named classes and the shared
 focus preset read that ambient value. Static styling in `view.rs` uses the
-[class grammar](../experimental-view.md#class-grammar), reducing style closures
+[class grammar](../view.md#class-grammar), reducing style closures
 from 84 to 10. Computed layout, captured swatches and tree semantics keep GPUI
 builders. The explicit-palette property helper also retains its builders so its
 construction-only identity test needs no ambient application setup.
@@ -121,7 +121,7 @@ editing, an uninstrumented pixel picker, or the other DevTools panels.
 Its Pick control and tree hover use the runtime’s leased instrumented-boundary
 inspection controls, including clipping and automatic input restoration. Trees are bounded to the
 runtime capture limit of 256 boundaries. Filter editing is single-line and bounded
-to 1 KiB. The frontend inherits the experimental status of `view!`.
+to 1 KiB. The frontend uses Rake’s standard `view!` syntax; alpha APIs can change with migration notes.
 
 Selected current boundaries offer **Scroll into view**, **Focus element**, and
 **Open Rust source**. Navigation uses registered application handles; unavailable
@@ -148,7 +148,7 @@ real host; compilation alone does not establish them.
 
 An [Elements-only Inspector built with Rake](legacy-inspectors.md) remains in the repository
 for native and Web: `rake inspect --elements --target desktop|web`. It uses the
-experimental `view!` macro and the same runtime queries. Both this preview and the
+`view!` macro and the same runtime queries. Both this preview and the
 multi-panel HTML frontend below are unsupported historical prototypes.
 
 ### Historical HTML panels

@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 workspace = true
 
 [dependencies]
-framework = { package = "rake", path = "../../crates/rake", features = ["experimental-view"] }
+framework = { package = "rake", path = "../../crates/rake" }
 
 [features]
 devtools = ["framework/devtools"]

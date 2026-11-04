@@ -3,7 +3,7 @@
 Status: arbitrary backend selection remains deferred. Rake pins `gpui-pre` and
 `gpui-pre-platform` 0.3.11 in the workspace `Cargo.toml`; Rake, `rake-ui` and
 `rake-native` share those concrete types. This migration aligns the dependency
-with the GPUI Base/Kit ecosystem. Base-backed experimental views and optional
+with the GPUI Base/Kit ecosystem. Base-backed views and optional
 native Kit support use version 0.9.0; see [the integration contract](../gpui-kit.md).
 This does not promise arbitrary GPUI revisions.
 

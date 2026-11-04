@@ -1,6 +1,4 @@
 //! Window-owned caches keyed by unambiguous presentation identities.
-
-#[cfg(feature = "experimental-view")]
 use super::super::ViewMetadata;
 use super::super::{ResolvedStyle, budget, snapshot::Payload};
 use gpui::{Pixels, StyleRefinement, TextStyle};
@@ -12,7 +10,6 @@ pub(in crate::inspection) struct BoundaryCache {
     budget: Option<(super::super::Element, usize)>,
     authored: Option<(StyleRefinement, Rc<Payload<Value>>)>,
     pub(super) resolved: Option<(StyleInputs, Rc<Payload<ResolvedStyle>>)>,
-    #[cfg(feature = "experimental-view")]
     definition: Option<(&'static super::authored::Definition, ViewMetadata, bool)>,
 }
 
@@ -97,8 +94,6 @@ impl BoundaryCache {
             self.resolved = None;
         }
     }
-
-    #[cfg(feature = "experimental-view")]
     pub(super) fn view(
         &mut self,
         definition: &'static super::authored::Definition,

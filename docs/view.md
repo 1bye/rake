@@ -1,10 +1,16 @@
-# Experimental HTML-like GPUI views
+# HTML-like GPUI views
 
-Enable `rake = { ..., features = ["experimental-view"] }` to use `rake::view!`.
-The feature enables GPUI, including when default features are disabled. The macro
+`rake::view!` is Rake's standard UI syntax, available with the default `gpui`
+feature alongside themes, style presets and Base-backed controls. The macro
 generates ordinary GPUI builders and Rust control flow. State stays in your GPUI
 entities, handlers use GPUI events, and changes still need `cx.notify()`.
-This API is experimental and may change.
+Rake is an alpha: APIs can change with migration notes; see [support](support.md).
+
+`experimental-view` remains an empty, deprecated compatibility alias. Remove it
+from existing manifests. Apps using `default-features = false` must explicitly
+enable `gpui` for UI; the old alias no longer enables it. Headless builds remain
+GPUI-free. `kit` and `devtools` remain separate opt-ins, and `view-test-support`
+enables GPUI's test platform independently of the old alias.
 
 For app-wide theme setup, register `.theme(colors)` on `App`, before or after `.routes(...)` or `.root(...)`. It installs on the UI thread once, before the initial view mounts, and page constructors don't reinstall it. Multiple theme types coexist, and the last registration wins for repeated types.
 
@@ -665,7 +671,7 @@ There's no global component cache or extra state runtime.
 
 Retained scroll handles work through `scroll`, and GPUI virtual lists embed through `{expression}`.
 
-The experimental `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](experimental-overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
+The `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
 
 ## Diagnostics and editing
 
@@ -715,11 +721,11 @@ python3 scripts/build-web.py --example view
 python3 scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
-cargo test -p rake --features experimental-view --test view_ui --locked
-cargo test -p rake --features experimental-view --test view --test view_components --test view_paragraphs --locked
+cargo test -p rake --test view_ui --locked
+cargo test -p rake --test view --test view_components --test view_paragraphs --locked
 cargo test -p rake --features view-test-support --test view_state --locked
 cargo test -p rake-view --features view-test-support --lib --locked
-cargo test -p rake --features experimental-view --doc --locked
+cargo test -p rake --doc --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
@@ -744,7 +750,7 @@ The opt-in `view-test-support` feature enables GPUI's deterministic TestPlatform
 
 ## Themes
 
-With `experimental-view`, `rake::theme::install(cx, my_theme)` installs any
+With the default `gpui` feature, `rake::theme::install(cx, my_theme)` installs any
 app-owned `'static` value and refreshes windows. `current::<MyTheme>()` clones
 an `Rc`; `try_current::<MyTheme>()` returns `None` before installation. Different
 theme types coexist. Observe replacements through the public

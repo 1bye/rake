@@ -1,8 +1,8 @@
 //! Covers: production expansion, original element types, lazy names and absent hosts.
 //! Real: public facade/macro, GPUI element construction and runtime capabilities.
-//! Doubles: none. Requires: experimental-view without devtools; no GPU or display.
+//! Doubles: none. Requires: gpui without devtools; no GPU or display.
 
-#![cfg(all(feature = "experimental-view", not(feature = "devtools")))]
+#![cfg(all(feature = "gpui", not(feature = "devtools")))]
 
 use rake::gpui::{self, IntoElement};
 use rake::inspection::InspectElement as _;

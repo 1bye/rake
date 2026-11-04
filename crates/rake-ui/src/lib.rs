@@ -6,7 +6,7 @@ pub mod theme;
 pub mod view;
 
 /// Initializes Base, optional Kit and theme observation once per GPUI application.
-/// Call before constructing roots or experimental views outside Rake's application builder.
+/// Call before constructing roots or views outside Rake's application builder.
 /// Adopts an existing Kit initialization without resetting its theme or registry.
 pub fn init(cx: &mut gpui::App) {
     if !cx.has_global::<Initialized>() {
@@ -36,5 +36,5 @@ pub use gpui_kit as kit;
 
 #[cfg(all(feature = "kit", target_family = "wasm"))]
 compile_error!(
-    "Rake's kit feature is native-only: GPUI Kit 0.9.0 enables Web multithreading that requires nightly. Use experimental-view for stable single-threaded Web builds."
+    "Rake's kit feature is native-only: GPUI Kit 0.9.0 enables Web multithreading that requires nightly. Use default Rake views for stable single-threaded Web builds."
 );

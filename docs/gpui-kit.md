@@ -1,9 +1,9 @@
 # GPUI Base and optional Kit
 
 Rake pins `gpui-pre`/`gpui-pre-platform` 0.3.11 and Base/Kit 0.9.0, using Rust
-1.98.0. `experimental-view` enables Base-backed Rake controls. `kit` additionally
+1.98.0. The default `gpui` feature includes Base-backed Rake controls. `kit` additionally
 enables Kit and exposes its matching facade as `rake::kit`. Default Rake builds
-compile neither Base nor Kit; Base-only views do not compile Kit.
+compile Base but exclude Kit; headless `--no-default-features` builds exclude both.
 
 ```toml
 rake = { path = "../rake/crates/rake", features = ["kit"] }

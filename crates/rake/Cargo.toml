@@ -20,10 +20,11 @@ updates-appimage = ["updates", "rake-updates/appimage"]
 updates-velopack = ["updates", "rake-updates/velopack"]
 devtools = ["gpui?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
 devtools-memory = ["devtools", "dep:backtrace"]
-kit = ["experimental-view", "rake-ui/kit"]
-experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
-view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
-gpui = ["dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+kit = ["gpui", "rake-ui/kit"]
+# Deprecated compatibility alias; UI is provided by gpui (enabled by default).
+experimental-view = []
+view-test-support = ["gpui", "gpui/test-support", "rake-ui/test-support"]
+gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 rake-updates = { path = "../rake-updates", optional = true }

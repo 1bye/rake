@@ -13,7 +13,7 @@ workspace = true
 native-acceptance = []
 
 [dependencies]
-rake = { workspace = true, features = ["experimental-view"] }
+rake = { workspace = true }
 
 [build-dependencies]
 rake-build = { path = "../../crates/rake-build" }

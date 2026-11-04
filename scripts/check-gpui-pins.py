@@ -61,9 +61,11 @@ for package in packages:
             raise SystemExit(f"{package['name']} expects Base {dependency['req']}, workspace pins {base}")
 
 for name, arguments, forbidden in [
-    ("default Rake", [], {"gpui-base", "gpui-kit", "gpui-component", "gpui-kit-assets"}),
-    ("stable Web views", ["--features", "experimental-view", "--target", "wasm32-unknown-unknown"],
-     {"gpui-kit", "wasm_thread"}),
+    ("default Rake", [], {"gpui-kit", "gpui-component", "gpui-kit-assets", "wasm_thread"}),
+    ("headless Rake", ["--no-default-features"],
+     {package["name"] for package in packages if package["name"].startswith("gpui")}),
+    ("stable Web views", ["--target", "wasm32-unknown-unknown"],
+     {"gpui-kit", "gpui-component", "gpui-kit-assets", "wasm_thread"}),
 ]:
     tree = cargo("tree", "-p", "rake", "--locked", "--edges", "normal", "--prefix", "none",
                  "--format", "{p}", *arguments)
