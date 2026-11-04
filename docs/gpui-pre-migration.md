@@ -12,8 +12,8 @@ in 1.98. Rake's MSRV and active CI pins follow it.
 
 The platform dependency disables default features. Its Web `multithreaded`
 feature pulls `wasm_thread`, which needs nightly; the single-thread path builds
-and runs on stable. Browser background work now runs cooperatively on the main
-thread. CPU-heavy work can delay input/rendering; no equivalent CPU stress
+and runs on stable. Browser background work runs cooperatively on the main thread, matching
+Rake’s previous CE single-threaded constructor. CPU-heavy work can delay input/rendering; no equivalent CPU stress
 benchmark was run. Hidden-tab autosave still worked (2.35 seconds in the
 observed run). Native platform features are retained explicitly.
 
@@ -185,6 +185,8 @@ The Base Web view example was exercised with actual pointer/keyboard input:
 increment, open popover, open nested document dialog, select row 5,000 in its
 10,000-item virtual list, Tab/Shift-Tab, Escape one layer at a time, and theme
 switch with count retained. No browser warnings/errors were captured. The
+browser also reported `crossOriginIsolated === false` and `SharedArrayBuffer`
+unavailable, confirming no cross-origin isolation requirement for this path. The
 headless view and inspection suites also pass; a separate Base Root regression
 covers traversal and consumed Escape under the actual application root.
 
@@ -198,3 +200,139 @@ A real GPUI effect-queue test changes the Base global after installation and
 checks that Rake's observed copy changes once; an unchanged Base notification
 must produce no ambient replacement. The test also retains an unrelated app
 theme to check that the bridge does not overwrite arbitrary theme structs.
+
+## Phase 4
+
+The optional native `kit` feature reexports Kit through `rake::kit`, initializes
+its presentation plugin/assets and uses the same Base Root. Default Rake and
+ordinary workspace builds do not enable Kit. The pin check passed for GPUI
+0.3.11 and Base/Kit/Component/Assets 0.9.0 and verified default and stable Web
+dependency graphs.
+
+Kit's `Theme::update` and direct mode-change paths passed a real Base observer
+test. Semantic installation switches Kit's mode before applying colors and
+uses Kit's canonical write path; it explicitly preserves `selection` because
+Kit 0.9's semantic setter omits that role. The observer reads Kit's
+`semantic_tokens()` and skips unchanged values. Existing app themes are retained.
+
+Kit owns the window-wide dialog/sheet stack and notifications. Local Rake
+overlays suspend rendering and focus guards during global modals and resume
+afterwards. A headless regression opens Kit over a retained Rake dialog and
+checks that focus yields and returns. All 31 view-state cases passed with Kit.
+
+The window inspection decorator captures application and Kit layers through the
+end of GPUI deferred paint. Its regression first failed because a global dialog
+boundary was absent; it now checks that dialog content was painted, Rake content
+remains editable, and boundary identities survive rerender. Kit's private
+component descendants and internal resolved styles remain opaque; explicit
+boundaries expose geometry, authored wrapper styles, source/handler declarations,
+and caller-supplied focus handles. No full-tree parity is claimed.
+
+An isolated registry-only probe with `gpui-kit = { version = "=0.9.0",
+default-features = false }` failed on stable 1.98 in `wasm_thread` 0.3.3 with
+E0554 (`stdarch_wasm_atomic_wait`). Rake therefore gates Kit to native targets
+and emits a deliberate error on Wasm. Core/Base stable Web remains supported.
+The [Kit example](../examples/kit/README.md) is native-only; it uses routed tabs,
+Kit button/dialog/table boundaries and one Semantic palette. No upstream source
+was patched, forked or vendored, and GPUI Fast was not added.
+
+## Native Kit verification
+
+Ran the bundled, ad-hoc signed `Rake Kit.app` on macOS 26.6.2 arm64. Actual
+pointer input incremented the Kit button, opened its global dialog, and switched
+the shared Semantic theme from that dialog. The page, button, dialog and table
+changed together. Native accessibility exposed the table/row/cell roles.
+
+A separate fresh run opened the components route in a new tab through Rake's
+control API, incremented with the pointer, selected Home and then Components
+through the control API, and confirmed the presented count remained 1. This
+checks retained route state; the tab changes were API-driven, not pointer-driven.
+The live inspection tree included `kit.increment`, `kit.dialog.trigger`,
+`kit.table` and the global `kit.dialog.content` boundary. Kit boundaries were
+opaque/non-editable, with explicit button focus navigation; the Rake-authored
+button inside the Kit dialog remained style-editable and had deferred paint
+order. Test applications were quit through their own control endpoint.
+
+## Additional compatibility findings
+
+GPUI pre's macros rewrite generated paths to any Kit dependency declared in a
+manifest, even if that optional dependency is disabled. Rake UI uses explicit
+`IntoElement` implementations for its four overlay views and ordinary GPUI test
+contexts for its semantic tests, avoiding an upstream source patch or an
+always-enabled Kit dependency. The disabled-Kit native and stable Web gates
+exercise this configuration.
+
+A new button role assertion first failed with `Button` instead of the authored
+`MenuItem`; the Base wrapper now forwards the authored role. The existing hover
+and live-edit assertions remain. The outside-click overlay test now covers left,
+right and middle buttons with the same dismissal/background assertions. A small
+backdrop handler preserves Rake's all-button dismissal around Base's left-button
+handler. No existing assertion was weakened for either change.
+
+## Final migration gates and decisions
+
+The complete command table above was also exercised after Kit integration.
+Initial optional-Kit derive failures were fixed and all affected gates rerun.
+Final workspace tests used `--no-fail-fast`; AppKit ran against real macOS native
+controls under Base Root. Documentation passed with warnings denied. The pin
+check also rejected a deliberately mismatched Kit pin in a temporary scratch
+manifest; the real manifest was not changed for that negative check.
+
+| Additional command | Result |
+| --- | --- |
+| `python3 scripts/check-gpui-pins.py` | passed |
+| `cargo test -p rake-ui --test semantic --locked` | passed |
+| `cargo test -p rake-ui --features kit --test semantic --locked` | passed |
+| `cargo test -p rake --features kit,view-test-support,devtools --lib --test view_state --locked` | passed |
+| `cargo clippy -p rake --features kit,view-test-support,devtools --all-targets --locked -- -D warnings` | passed |
+| `cargo clippy -p rake-kit-example --features kit,devtools --all-targets --locked -- -D warnings` | passed |
+| `cargo doc -p rake --features kit --no-deps --locked` with `RUSTDOCFLAGS=-D warnings` | passed |
+| `cargo check -p rake --features kit --lib --target wasm32-unknown-unknown --locked` | expected rejection: Rake's native-only diagnostic; no upstream E0554 |
+| `python3 scripts/build-web.py --example view` | passed; final bundle also exercised in Chromium |
+| `target/debug/rake bundle --target desktop --package rake-kit-example --features kit,devtools --debug --json` | passed; bundled app run manually |
+
+One later parallel Kit run also hit the recorder integration test's final
+empty-page assertion. Its cursor covered only the first page of the stopped
+buffer. GPUI's process-wide event buffer and per-App window IDs allow concurrent
+test applications' draws to fill additional pages. The test now drains the
+stopped buffer before drawing again; its assertions that recording is off and
+that the later draw adds no frames are unchanged. Production frame collection
+is unchanged. Both affected non-Kit and Kit library/input suites passed afterwards.
+This is separate from the known CDP lost-submission flake.
+
+The final rebuilt browser bundle passed increment, nested popover/dialog,
+right-click backdrop dismissal of only the top dialog, Escape and theme switching
+with count retained. No warnings/errors were captured. The original notes
+storage/recovery coverage remains as described above. Inspection highlights
+are painted after Kit's deferred layers; the dialog regression also checks a
+highlight is laid out for the captured boundary.
+
+The owner's follow-up authorized investigating disabled multithreading. That
+resolved the stable core/Base Web decision and migration continued through all
+four phases. Kit Web remains gated as allowed by Phase 4; no nightly workaround
+was added. Follow-ups are upstream control of Kit's Web threading feature,
+Windows/Linux and Safari/Firefox runs, suitable fonts for broader glyph coverage,
+a CPU-bound browser latency benchmark, and renderer-crash recovery through an
+allowed browser harness. These are unverified, not promised behavior.
+
+## Implementation commits
+
+The final documentation commit follows these commits. No push, merge, tag or PR
+was made; `main` remained at `5fc0f9d` when the work was finalized.
+
+- `e27935c` build: pin GPUI pre and Rust 1.98
+- `73bfff0` fix(gpui): adapt views and inspection to pre
+- `6477ead` fix(http): bridge GPUI pre request transport
+- `448bfdf` fix(native): detach views when AppKit closes
+- `1bf6434` fix(web): restore bundled default fonts
+- `19d2729` style: satisfy Rust 1.98 and spacing lints
+- `42ab433` docs: record GPUI pre stable Web verification
+- `bc5221c` feat(view): build Rake controls on GPUI Base
+- `e26f357` fix(native): compose Base accessibility hit tests
+- `9b7eaa9` docs: record Base verification and Wasm costs
+- `799dcbf` feat(theme): synchronize flat semantic colors
+- `d7324ca` fix(view): retain authored button metadata
+- `a00ea96` feat(kit): add optional native Kit integration
+- `4624da4` fix(inspect): capture Kit presentation layers
+- `7698586` test(inspect): drain stopped frame pages
+- `0645471` ci: verify GPUI pins and optional Kit paths

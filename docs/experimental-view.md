@@ -980,3 +980,9 @@ separate Base settings.
 Installation updates the ambient Rake copy and Base's colors. Rake observes the
 actual Base global effect queue and replaces its copy only when values change,
 so an unchanged notification cannot create an update loop.
+
+With the optional native `kit` feature, installation uses Kit's `Theme::update`
+and its Base projection. Changes made by Kit itself refresh Rake's ambient copy
+through the Base-global observer. Base `surface` means Kit `popover`, and Base
+`destructive` means Kit `danger`. See [Base and Kit](gpui-kit.md) for the shared
+Root, native-only Kit gate, and inspection boundaries.
