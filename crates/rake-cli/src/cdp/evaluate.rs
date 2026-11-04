@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn lost_submission_and_pending_observation_never_resend_commands() {
         use std::io::{BufRead, BufReader, Write};
-        use std::os::unix::net::UnixListener;
+        use std::os::unix::net::{UnixListener, UnixStream};
 
         for submitted in [false, true] {
             let path =
@@ -338,6 +338,8 @@ mod tests {
             let listener = UnixListener::bind(&path).unwrap();
 
             listener.set_nonblocking(true).unwrap();
+            // A deadline can cancel connection setup before the first request byte.
+            drop(UnixStream::connect(&path).unwrap());
             let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
                 rake::router::RouterConfig::default(),
             );
@@ -369,15 +371,29 @@ mod tests {
                         Err(e) => panic!("{e}"),
                     };
 
-                    socket.set_nonblocking(false).unwrap();
-                    socket
-                        .set_read_timeout(Some(Duration::from_secs(2)))
-                        .unwrap();
+                    // Deadline cancellation can close a peer before accept, even
+                    // with a buffered request. Avoid macOS's SO_RCVTIMEO close race.
+                    socket.set_nonblocking(true).unwrap();
+                    let mut reader = BufReader::new(socket.try_clone().unwrap());
+                    let deadline = Instant::now() + Duration::from_secs(2);
                     let mut line = String::new();
 
-                    BufReader::new(socket.try_clone().unwrap())
-                        .read_line(&mut line)
-                        .unwrap();
+                    loop {
+                        match reader.read_line(&mut line) {
+                            Ok(_) => break,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(Instant::now() < deadline, "fixture request timed out");
+                                std::thread::sleep(Duration::from_millis(1));
+                            }
+                            Err(error) => panic!("{error}"),
+                        }
+                    }
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    socket.set_nonblocking(false).unwrap();
                     let request: Request = serde_json::from_str(&line).unwrap();
 
                     match request.message {
@@ -412,7 +428,20 @@ mod tests {
                                 }),
                             );
 
-                            writeln!(socket, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                            if let Err(error) =
+                                writeln!(socket, "{}", serde_json::to_string(&reply).unwrap())
+                            {
+                                // The read-only observation may expire after delivery too.
+                                assert!(
+                                    matches!(
+                                        error.kind(),
+                                        std::io::ErrorKind::BrokenPipe
+                                            | std::io::ErrorKind::ConnectionReset
+                                            | std::io::ErrorKind::NotConnected
+                                    ),
+                                    "unexpected observation reply error: {error}"
+                                );
+                            }
                         }
                         _ => panic!("unexpected fixture request"),
                     }

@@ -23,6 +23,7 @@ thiserror.workspace = true
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+futures.workspace = true
 gpui-base.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
 

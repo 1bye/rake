@@ -2,13 +2,16 @@
 //!
 //! AccessKit replaces the content view's children, hiding native subviews.
 //! Make that content view an accessible group and expose native host groups as
-//! its siblings. Compose children on each window accessibility query so content
-//! and window chrome stay live; forward to AppKit when no hosts remain.
+//! its siblings. Replace accessibilityChildren and accessibilityHitTest: on the
+//! stable window class and overriding KVO subclasses for the life of the process.
+//! Compose children on each query so content and window chrome stay live. When
+//! the final host detaches, restore the content view's accessibility state and
+//! forward window queries to their saved implementations.
 
 mod hit_test;
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     mem,
     rc::{Rc, Weak},
@@ -16,9 +19,9 @@ use std::{
 };
 
 use objc2::{
-    ffi,
+    ffi, msg_send,
     rc::Retained,
-    runtime::{AnyClass, AnyObject, MethodImplementation, Sel},
+    runtime::{AnyClass, AnyObject, Imp, Sel},
     sel,
 };
 
@@ -27,6 +30,37 @@ use objc2_foundation::{NSArray, NSString};
 
 thread_local! {
     static WINDOWS: RefCell<BTreeMap<usize, Weak<WindowTree>>> = const { RefCell::new(BTreeMap::new()) };
+    // No Drop state: original forwarding remains available during thread-local teardown.
+    static ORIGINAL_CALL: Cell<Option<(usize, Sel, &'static AnyClass)>> = const { Cell::new(None) };
+}
+
+// An original subclass method can send super to another intercepted class.
+// Resume below that original and compose native hosts only at the outer call.
+struct OriginalCall(Option<(usize, Sel, &'static AnyClass)>);
+
+impl OriginalCall {
+    fn superclass(window: &NSWindow, selector: Sel) -> Option<&'static AnyClass> {
+        let key = std::ptr::from_ref(window) as usize;
+
+        ORIGINAL_CALL
+            .get()
+            .filter(|(receiver, method, _)| *receiver == key && *method == selector)
+            .map(|(_, _, class)| {
+                class
+                    .superclass()
+                    .expect("window original has a superclass")
+            })
+    }
+
+    fn new(window: &NSWindow, selector: Sel, class: &'static AnyClass) -> Self {
+        Self(ORIGINAL_CALL.replace(Some((std::ptr::from_ref(window) as usize, selector, class))))
+    }
+}
+
+impl Drop for OriginalCall {
+    fn drop(&mut self) {
+        ORIGINAL_CALL.set(self.0);
+    }
 }
 
 type ChildrenGetter = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut NSArray;
@@ -34,52 +68,61 @@ type ChildrenGetter = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut NSArra
 // Runtime methods outlive registrations and thread-local window state.
 static GETTERS: Mutex<Vec<(&'static AnyClass, ChildrenGetter)>> = Mutex::new(Vec::new());
 
+fn window_class(window: &NSWindow) -> &'static AnyClass {
+    // SAFETY: NSObject's class message returns the stable class hidden by KVO.
+    unsafe { msg_send![window, class] }
+}
+
 fn intercept_children(window: &NSWindow) {
     let mut getters = GETTERS.lock().expect("native window getters lock poisoned");
-    let mut class = Some(window.class());
+    let selector = sel!(accessibilityChildren);
+    // SAFETY: Erase only the function pointer type for Objective-C registration;
+    // window_children has the getter's receiver, selector and NSArray return ABI.
+    let replacement: Imp = unsafe { mem::transmute(window_children as ChildrenGetter) };
 
-    while let Some(current) = class {
-        if getters.iter().any(|(class, _)| *class == current) {
-            return;
+    // Keep the stable class hooked after KVO removal, and cover any override on
+    // the current subclass without saving our inherited replacement as a fallback.
+    for class in [window_class(window), window.class()] {
+        if getters.iter().any(|(installed, _)| *installed == class) {
+            continue;
         }
 
-        class = current.superclass();
-    }
+        let method = class
+            .instance_method(selector)
+            .expect("NSWindow accessibility getter");
 
-    let class = window.class();
-    let selector = sel!(accessibilityChildren);
+        if std::ptr::fn_addr_eq(method.implementation(), replacement) {
+            continue;
+        }
 
-    let method = class
-        .instance_method(selector)
-        .expect("NSWindow accessibility getter");
+        // SAFETY: NSAccessibility's getter takes a receiver and selector and
+        // returns an autoreleased NSArray. Preserve its exact ABI for forwarding.
+        let original: ChildrenGetter = unsafe { mem::transmute(method.implementation()) };
 
-    // SAFETY: NSAccessibility's getter takes a receiver and selector and
-    // returns an autoreleased NSArray. Preserve its exact ABI for forwarding.
-    let original: ChildrenGetter = unsafe { mem::transmute(method.implementation()) };
+        getters.push((class, original));
 
-    getters.push((class, original));
-
-    // SAFETY: Install the same getter ABI on this window class only, without
-    // changing its superclass or layout (including AppKit's KVO subclass).
-    // Unregistered windows forward to the original implementation.
-    unsafe {
-        ffi::class_replaceMethod(
-            std::ptr::from_ref(class).cast_mut(),
-            selector,
-            (window_children as unsafe extern "C-unwind" fn(_, _) -> _).__imp(),
-            ffi::method_getTypeEncoding(method),
-        );
+        // SAFETY: Install the same getter ABI without changing class layout.
+        // Unregistered windows forward to the original implementation.
+        unsafe {
+            ffi::class_replaceMethod(
+                std::ptr::from_ref(class).cast_mut(),
+                selector,
+                replacement,
+                ffi::method_getTypeEncoding(method),
+            );
+        }
     }
 }
 
 unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) -> *mut NSArray {
-    let original = {
+    let superclass = OriginalCall::superclass(window, selector);
+    let (class, original) = {
         let getters = GETTERS.lock().expect("native window getters lock poisoned");
-        let mut class = window.class();
+        let mut class = superclass.unwrap_or_else(|| window.class());
 
         loop {
             if let Some((_, original)) = getters.iter().find(|(candidate, _)| *candidate == class) {
-                break *original;
+                break (class, *original);
             }
 
             class = class
@@ -87,6 +130,16 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
                 .expect("getter belongs to an intercepted window class");
         }
     };
+
+    let base = {
+        let _call = OriginalCall::new(window, selector, class);
+        // SAFETY: Forward with the original receiver, selector and getter ABI.
+        unsafe { original(window, selector) }
+    };
+
+    if superclass.is_some() {
+        return base;
+    }
 
     let key = std::ptr::from_ref(window) as usize;
 
@@ -96,26 +149,31 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
         .flatten();
 
     let Some(tree) = tree else {
-        // SAFETY: Forward unchanged using the saved getter's original ABI.
-        return unsafe { original(window, selector) };
+        return base;
     };
 
-    // SAFETY: Call the saved getter with its original receiver, selector and
-    // ABI, then retain its nullable autoreleased result during composition.
-    let base = unsafe { Retained::retain(original(window, selector)) };
+    // SAFETY: Retain the original getter's nullable autoreleased result.
+    let base = unsafe { Retained::retain(base) };
 
     let mut children: Vec<Retained<AnyObject>> = base
         .as_ref()
         .map(|children| children.iter().collect())
         .unwrap_or_default();
 
-    for (_, view) in tree.hosts.borrow().values() {
+    let hosts: Vec<_> = tree
+        .hosts
+        .borrow()
+        .values()
+        .map(|(_, view)| view.clone())
+        .collect();
+
+    for view in hosts {
         // A shared view may move before the old window drops its Attachment.
         if view
             .window()
             .is_some_and(|parent| std::ptr::eq(&*parent, window))
         {
-            children.push(view.clone().into());
+            children.push(view.into());
         }
     }
 
@@ -212,25 +270,29 @@ impl Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        let mut hosts = self.tree.hosts.borrow_mut();
+        let container = {
+            let mut hosts = self.tree.hosts.borrow_mut();
 
-        if hosts
-            .get(&self.id)
-            .is_some_and(|(token, _)| *token == self.token)
-        {
+            if hosts
+                .get(&self.id)
+                .is_none_or(|(token, _)| *token != self.token)
+            {
+                return;
+            }
+
             let (_, container) = hosts
                 .remove(&self.id)
                 .expect("registered native host exists");
 
-            if container.accessibilityParent().is_some_and(|parent| {
-                Retained::as_ptr(&parent) == Retained::as_ptr(&self.tree.window).cast()
-            }) {
-                // SAFETY: Clear only our parent: a newer attachment may already
-                // have moved this shared native view into another window.
-                unsafe { container.setAccessibilityParent(None) };
-            }
-        }
+            container
+        };
 
-        drop(hosts);
+        if container.accessibilityParent().is_some_and(|parent| {
+            Retained::as_ptr(&parent) == Retained::as_ptr(&self.tree.window).cast()
+        }) {
+            // SAFETY: Clear only our parent: a newer attachment may already
+            // have moved this shared native view into another window.
+            unsafe { container.setAccessibilityParent(None) };
+        }
     }
 }

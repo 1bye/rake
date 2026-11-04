@@ -48,8 +48,12 @@ Removing an element or closing its window detaches its native host.
 The bridge exposes the live GPUI content and native hosts as sibling accessibility
 groups in the window. This keeps native controls discoverable despite GPUI's
 AccessKit adapter replacing the content view's accessibility children. The adapter
-owns that window accessibility composition while native hosts are mounted and
-restores AppKit traversal when the final host detaches.
+replaces `accessibilityChildren` and `accessibilityHitTest:` at runtime on the
+window's stable class and any overriding current KVO subclass. These replacements
+last for the life of the process. Windows with no native hosts fall through to
+the original implementation; hit testing preserves Base's GPUI canvas forwarder.
+When the final host detaches, the adapter restores the content view's accessibility
+state and resumes forwarding window queries to the original implementation.
 
 ## Composition boundaries
 

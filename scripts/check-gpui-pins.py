@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check GPUI ecosystem pins, optionality, and the stable Web dependency graph."""
+"""Check Rust packaging, GPUI pins, optionality, and the stable Web graph."""
 
 import json
 from pathlib import Path
@@ -9,6 +9,14 @@ import tomllib
 root = Path(__file__).resolve().parents[1]
 manifest = tomllib.loads((root / "Cargo.toml").read_text())
 workspace = manifest["workspace"]["dependencies"]
+
+rust = tomllib.loads((root / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+tools = json.loads((root / "crates/rake-dist/src/flatpak-rust-tools.json").read_text())
+for target, components in tools.items():
+    for name, component in components.items():
+        expected = f"{name}-{rust}-{target}.tar.xz"
+        if component["url"].rsplit("/", 1)[-1] != expected:
+            raise SystemExit(f"Flatpak {target}/{name} must match Rust {rust}: {component['url']}")
 
 
 def exact(name):
@@ -63,4 +71,4 @@ for name, arguments, forbidden in [
     if unwanted := names & forbidden:
         raise SystemExit(f"{name} unexpectedly compiles {sorted(unwanted)}")
 
-print(f"GPUI {engine}, Base/Kit {base}; default and stable Web graphs verified")
+print(f"Rust {rust} Flatpak pins, GPUI {engine}, Base/Kit {base}; default and stable Web graphs verified")
