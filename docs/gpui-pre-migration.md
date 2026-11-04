@@ -336,3 +336,134 @@ was made; `main` remained at `5fc0f9d` when the work was finalized.
 - `4624da4` fix(inspect): capture Kit presentation layers
 - `7698586` test(inspect): drain stopped frame pages
 - `0645471` ci: verify GPUI pins and optional Kit paths
+
+## Migration review and fixes — 2026-11-04
+
+Reviewed the implementation from `5fc0f9d` through the migration, treating Rake
+as a Rust 2024 library on MSRV 1.98 with one GPUI application/UI thread and
+multiple retained tabs/windows. Emphasis was overlay ordering, focus ownership,
+canonical theme writes, and the deferred inspection lifecycle. Local published
+GPUI/Base/Kit sources supplied the upstream contracts. Rules below refer to the
+project's [Rust workflow](../.agents/workflow/rust/AGENTS.md),
+[architecture guide](../.agents/workflow/rust/architecture.md), and
+[testing guide](../.agents/workflow/rust/testing.md). No cleanup branch was merged.
+
+### Must fix — completed
+
+1. **[P2] Disabled buttons retained their old tab stop.**
+   Location: `crates/rake-ui/src/view/button.rs`, `Button::request_layout`.
+   Base skips its focus configuration for an unfocused disabled button. A button
+   previously rendered as enabled therefore remained reachable by Tab after being
+   disabled elsewhere. Rake now updates its retained handle's tab index/stop before
+   passing it to Base. The new transition test failed before the fix; the browser
+   also verified that Shift-Tab skips newly disabled Increment and Reset controls.
+   Rule: preserve observable public behavior and test transitions (project Rust
+   workflow/testing guide); make state/resource ownership explicit (Google Rust
+   Style Guide ownership guidance).
+   Fix: `.tab_index(self.tabindex).tab_stop(!self.disabled && self.tabindex >= 0)`.
+
+2. **[P2] Local overlay mutations stole Kit modal focus.**
+   Location: `crates/rake-ui/src/overlay/state.rs`, `OverlayState::open/close` and
+   `OverlayHostState::audit`; popup registration in `overlay/elements.rs`.
+   Rendering/audit suspension alone did not cover programmatic opens and closes:
+   `close` restored a local opener while Kit was active, and `open` focused an
+   unmounted local surface. The failing regression now passes for closing and
+   reopening during Kit presentation, including subsequent frame audits and
+   restoration after Kit closes. Restoration uses a weak pending target and a
+   mounted fallback if that target disappears. Hidden popovers release Base's
+   deferred interaction context and reacquire it on resume, tested independently.
+   Rule: one concrete owner for state/resources, no redundant competing ownership
+   (project architecture guide; Google Rust Style Guide ownership guidance).
+   Fix: defer local focus work while `kit_modal_open`; use Base's controlled
+   `PopoverState::set_open` for registration, leaving focus to Rake's controller.
+
+3. **[P2] Window highlights used the previous frame's geometry.**
+   Location: `crates/rake/src/inspection/view/window.rs`, `EndCapture::prepaint`.
+   The window wrapper built its highlight before deferred content was fully
+   captured and identified. A moving target at x=90 still highlighted x=10.
+   Identity assignment and highlight preparation now happen at the final deferred
+   prepaint sentinel using the current capture; publication and highlight paint
+   remain after deferred paint. The regression failed before the fix and also
+   checks that removing the target leaves no ghost highlight. The test changes
+   geometry without a separate entity notification, preventing an extra draw from
+   concealing a stale first frame.
+   Rule: derived snapshots need a defined refresh boundary (project architecture
+   guide, ownership/derived-state section).
+   Fix: identify the final prepaint capture, then call `overlay` with that snapshot.
+
+4. **[P2] Rake initialization reset an existing Kit host's theme.**
+   Location: `crates/rake-ui/src/lib.rs`, `init`.
+   Kit initialization resets its theme/registry. Calling it again when adding
+   Rake controls to an initialized Kit application changed dark appearance and
+   custom colors. Rake now adopts an existing Kit theme global and only performs
+   Kit initialization when absent. Its own marker still installs one Rake theme
+   observer. The regression failed before the fix and now checks appearance,
+   primary color and radius, including after GPUI's queued effects run.
+   Rule: preserve caller-owned state during library initialization (project Rust
+   workflow, API/ownership guidance).
+   Fix: guard `gpui_kit::init` with `!cx.has_global::<KitTheme>()`.
+
+### Complexity removed and design retained
+
+The floating renderer is now only an anchored popover path. Removed its unused
+optional dialog title/footer, the redundant forwarding function, and the
+unreachable centered-dialog positioning branch. Passing the required anchor
+explicitly removes optional-state branches. Rake's focus controller no longer
+starts Base's second focus/restoration lifecycle for its popup entity.
+
+The button's narrow rendered-element adapter remains justified: Base hides its
+rendered type, and forwarding native Element hooks preserves accessibility and
+Rake's inspectable boundary without adding a second GPUI node. The real
+Base-global observer and equality guard remain unchanged; Base/Kit theme tests
+still verify actual notifications, independent app themes and no notification loop.
+Exact ecosystem pins, one shared Root and stable Web gating also remain intact.
+
+No existing assertion was weakened, removed or ignored for these fixes. The
+existing ignored `publish_benchmark` is a manual benchmark, not a skipped
+correctness regression. The new tests are included by existing CI commands.
+
+### Review verification
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all --check` | passed |
+| `cargo check --workspace --all-targets --locked` | passed |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed |
+| `cargo clippy -p rake --features kit,view-test-support,devtools --all-targets --locked -- -D warnings` | passed |
+| `cargo test -p rake --features view-test-support,devtools --lib --test view_state --test element_inspection --locked` | passed |
+| `cargo test -p rake --features kit,view-test-support,devtools --lib --test view_state --locked` | passed |
+| `cargo test -p rake-ui --test semantic --locked` | passed |
+| `cargo test -p rake-ui --features kit --test semantic --locked` | passed |
+| `cargo check -p rake-view -p renamed-facade --lib --features rake/devtools --target wasm32-unknown-unknown --locked` | passed |
+| `cargo doc -p rake --features kit --no-deps --locked` | passed |
+| `python3 scripts/check-gpui-pins.py` | passed |
+| `python3 scripts/check-spacing.py` | passed |
+| `python3 scripts/build-web.py --example view` | passed |
+
+Kit library suite: 120 passed, one existing manual benchmark ignored; Kit input
+suite: 34 passed. Without Kit: 118 library, 31 input and two inspection integration
+tests passed. Both semantic paths passed. Rustdoc ran with warnings denied.
+
+The rebuilt stable Web example also ran in Chromium with actual pointer/keyboard
+input: increment; anchored popup; nested dialog; virtual-list jump to 5,000;
+Tab/Shift-Tab; Escape closes one layer and visibly restores each opener. A lock
+shortcut disabled Increment/Reset while they were unfocused, and two backward
+Tab steps skipped them to the retained history row. No console warnings/errors
+were captured. The disposable server/tab were closed afterward.
+
+Not rerun in this review: the whole workspace test suite, AppKit hardware suite,
+notes storage matrix, Windows/Linux, Safari/Firefox, renderer-crash recovery or
+performance benchmarks. Earlier migration results retain their stated scope.
+Kit modal/theme/inspection fixes were exercised through GPUI's real global,
+layout, input and focus machinery with TestPlatform; no new live Kit GUI run is
+claimed. Broader glyph coverage remains the documented font limitation.
+
+Verdict: all four correctness findings fixed and verified in the selected scope.
+No remaining actionable findings from this review. Nothing merged or pushed.
+
+Review fix commits (the documentation commit follows):
+
+- `c28bc43` — clear disabled button tab stops.
+- `14f44ea` — preserve Kit modal focus ownership and remove dead popup branches.
+- `38f87e4` — adopt existing Kit initialization.
+- `dcaea12` — highlight current deferred geometry.

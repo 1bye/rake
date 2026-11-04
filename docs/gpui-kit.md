@@ -27,8 +27,15 @@ global dialog or sheet is active they suspend rendering, missing-anchor audits
 and focus guards, retaining their state. Kit can then take focus and return it
 to the local opener when closed. This is covered by a real GPUI input/focus
 regression test. Local Rake surfaces resume when Kit's modal is no longer active.
+Programmatic local opens/closes also preserve Kit's focus. Closing a suspended
+surface defers opener restoration until Kit closes; a removed opener uses the
+mounted host fallback. Suspended popovers release Base's deferred popup context
+so inputs inside the Kit dialog can use their own context menus.
+
 For custom GPUI window construction, call `rake::init_ui` before creating the
 Base Root and provide `rake::kit::assets::Assets` to GPUI’s application; the Rake `App` builder handles this itself.
+If the host already initialized Kit, Rake adopts that initialization and preserves
+its theme, registry and bindings.
 
 ## One semantic color write path
 
