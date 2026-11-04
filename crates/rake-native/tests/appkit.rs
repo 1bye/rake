@@ -501,11 +501,53 @@ mod suite {
         gpui_platform::application().run(move |cx| {
             gpui_base::init(cx);
             cx.set_quit_mode(gpui::QuitMode::Explicit);
+            let frames_finished = completed.clone();
             cx.open_window(WindowOptions::default(), |window, cx| {
                 let view = cx.new(|cx| Fixture::new(cx, completed));
                 cx.new(|cx| gpui_base::Root::new(view, window, cx))
             })
             .unwrap();
+            cx.spawn(async move |cx| {
+                while !frames_finished.get() {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+                    let views = cx.update(|cx| {
+                        cx.windows()
+                            .into_iter()
+                            .map(|handle| {
+                                handle
+                                    .update(cx, |_, window, _| {
+                                        let handle =
+                                            HasWindowHandle::window_handle(window).unwrap();
+                                        let RawWindowHandle::AppKit(handle) = handle.as_raw()
+                                        else {
+                                            panic!("native test requires an AppKit window");
+                                        };
+                                        // SAFETY: Retain GPUI's live main-thread content view
+                                        // until its layer callback has finished.
+                                        unsafe {
+                                            Retained::retain(
+                                                handle.ns_view.as_ptr().cast::<NSView>(),
+                                            )
+                                        }
+                                        .unwrap()
+                                    })
+                                    .unwrap()
+                            })
+                            .collect::<Vec<_>>()
+                    });
+
+                    // GPUI pauses its display link when AppKit reports occlusion. Request
+                    // real frames through the layer delegate, outside the borrowed GPUI App.
+                    for view in views {
+                        view.layer()
+                            .expect("GPUI content has a backing layer")
+                            .display();
+                    }
+                }
+            })
+            .detach();
             cx.spawn(async move |cx| {
                 cx.background_executor()
                     .timer(Duration::from_secs(15))
