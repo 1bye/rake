@@ -19,8 +19,9 @@ jobs:
       - run: cargo clippy -p rake --features native-components --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
       - run: cargo test -p rake-native --doc --locked
+      - run: cargo test -p rake-native --features native-tests --test appkit --locked
       - run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --no-fail-fast
       - run: cargo test -p rake --features view-test-support --lib --test view_state --locked
       - run: cargo test -p rake --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
       - run: cargo clippy -p rake --all-targets --features view-test-support,devtools --locked -- -D warnings
