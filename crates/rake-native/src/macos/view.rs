@@ -1,7 +1,7 @@
 //! Mount native views above GPUI and release their attachment with element state.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -16,7 +16,7 @@ use objc2_app_kit::{NSAccessibility, NSControl, NSView};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use super::{NativeError, accessibility::Registration, action::ActionTarget};
+use super::{NativeError, accessibility::Registration, action::ActionTarget, close::CloseObserver};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -213,7 +213,8 @@ fn host_view(window: &Window) -> Option<Retained<NSView>> {
 struct Attachment {
     inner: Rc<ViewInner>,
     token: usize,
-    accessibility: Option<Registration>,
+    accessibility: Rc<RefCell<Option<Registration>>>,
+    closed: Option<CloseObserver>,
 }
 
 impl Attachment {
@@ -221,7 +222,8 @@ impl Attachment {
         Self {
             inner,
             token: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            accessibility: None,
+            accessibility: Rc::default(),
+            closed: None,
         }
     }
 
@@ -233,6 +235,7 @@ impl Attachment {
         style: &Style,
     ) {
         self.inner.owner.set(self.token);
+
         let container = &self.inner.container;
         // SAFETY: All hierarchy access uses retained main-thread AppKit views.
         let parent = unsafe { container.superview() };
@@ -245,14 +248,42 @@ impl Attachment {
             host.addSubview(container);
         }
 
-        if let Some(window) = host.window()
-            && !self
-                .accessibility
+        if let Some(window) = host.window() {
+            // Frame element state can outlive a platform close notification.
+            if self
+                .closed
                 .as_ref()
-                .is_some_and(|tree| tree.is_in(&window))
-        {
-            self.accessibility = None;
-            self.accessibility = Registration::new(window, container, self.inner.id, self.token);
+                .is_none_or(|observer| !observer.is_in(&window))
+            {
+                let inner = Rc::downgrade(&self.inner);
+                let accessibility = Rc::downgrade(&self.accessibility);
+                let token = self.token;
+
+                self.closed = Some(CloseObserver::new(window.clone(), move || {
+                    if let Some(inner) = inner.upgrade()
+                        && inner.owner.get() == token
+                    {
+                        if let Some(accessibility) = accessibility.upgrade() {
+                            accessibility.borrow_mut().take();
+                        }
+
+                        inner.container.removeFromSuperview();
+                        inner.owner.set(0);
+                    }
+                }));
+            }
+
+            let registered = self
+                .accessibility
+                .borrow()
+                .as_ref()
+                .is_some_and(|tree| tree.is_in(&window));
+
+            if !registered {
+                self.accessibility.borrow_mut().take();
+                *self.accessibility.borrow_mut() =
+                    Registration::new(window, container, self.inner.id, self.token);
+            }
         }
 
         let frame = native_frame(host, clip);
@@ -274,7 +305,8 @@ impl Attachment {
     }
 
     fn detach(&mut self) {
-        self.accessibility = None;
+        self.accessibility.borrow_mut().take();
+        self.closed = None;
 
         if self.inner.owner.get() == self.token {
             self.inner.container.removeFromSuperview();

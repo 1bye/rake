@@ -391,10 +391,6 @@ mod suite {
                                 child.downcast_ref::<NSView>()
                                     .is_some_and(|view| std::ptr::eq(view, &*group))
                             }), "a user close restores window accessibility traversal");
-                            cx.update(|cx| {
-                                assert!(!cx.windows().contains(&destination.unwrap()),
-                                    "AppKit close removes the GPUI window");
-                            });
                             entity.update(cx, |this, cx| {
                                 this.stage = 8;
                                 cx.notify();
@@ -402,6 +398,10 @@ mod suite {
                         }).detach();
                     }
                     8 => {
+                        // gpui-pre removes platform-closed windows in a foreground
+                        // task. Observe registry cleanup on this next source frame.
+                        assert!(!cx.windows().contains(&destination.unwrap()),
+                            "AppKit close removes the GPUI window");
                         assert!(button.as_appkit().window().is_some(),
                             "a retained control remounts after a user close");
 

@@ -14,6 +14,7 @@
 mod accessibility;
 mod action;
 mod button;
+mod close;
 mod segmented;
 mod view;
 
