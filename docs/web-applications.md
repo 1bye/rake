@@ -6,11 +6,9 @@ storage permissions, font assets and WebGPU support remain explicit host boundar
 
 ## CPU work
 
-`rake::web::run_worker(module, &json, timeout)` starts one same-origin module worker.
-It receives one JSON string and replies with one JSON string; both are capped at
-1 MiB. The returned future owns the worker: completion, error, timeout and dropping
-it terminate the worker. Move it into a managed task/loader to inherit cancellation.
-No Rust closure or GPUI entity crosses this boundary. For example, a worker can use:
+`rake::web::run_worker(module, &json, timeout)` starts one same-origin module worker. It receives one JSON string and replies with one, both capped at 1 MiB.
+
+The returned future owns the worker, so completion, error, timeout and dropping it all terminate the worker. Move it into a managed task or loader to inherit cancellation. No Rust closure or GPUI entity crosses this boundary. For example, a worker can use:
 
 ```js
 self.onmessage = event => {
@@ -26,11 +24,12 @@ executor. Browser suspension can still delay timers and task completion.
 
 ## Offline deployment and updates
 
-Production `rake bundle --target web` emits a content identity and a small
-`rake-version.json` endpoint. `Deployment::from_document()` captures the running
-build; `deployment.check().await` checks the same-origin server endpoint without
-caching/redirects, with a deadline and body limit. It returns a changed build, even
-when its human-readable version matches. Foreign application/root identities fail.
+Production `rake bundle --target web` emits a content identity and a small `rake-version.json` endpoint.
+
+- `Deployment::from_document()` captures the running build.
+- `deployment.check().await` checks the same-origin endpoint without caching or redirects, with a deadline and body limit. It returns a changed build even when the human-readable version matches.
+- Foreign application or root identities fail.
+
 Unbundled development pages and native hosts have no deployment metadata.
 
 Enable offline assets in Cargo metadata:
@@ -47,37 +46,30 @@ sections in this manifest. Native sections are consumed by the native Rust pipel
 browser payloads use the explicit Web directory and common `assets` tree. Declaring
 a native resource/helper does not make it executable or accessible in a browser.
 
-Offline bundles place payloads below `rake-builds/<content-id>/`. The generated page
-base points at that immutable payload while route URLs keep the configured app root.
-The service worker precaches a complete immutable build; installation failure
-deletes the partial cache. Navigation uses network-first with the active build's
-cached shell as fallback. Only immutable build resources and the shell are cached;
-API requests, version checks, credentials and arbitrary downloads are not cached.
+Offline bundles place payloads below `rake-builds/<content-id>/`. The generated page base points at that immutable payload, while route URLs keep the configured app root.
 
-Deploy **new immutable build directories first**, then atomically replace the root
-index, version metadata and worker script. Keep previous build directories while
-old tabs might request them. The generated nginx example sets immutable asset
-headers. Host the version/worker/index endpoints with revalidation/no-store policy.
-Use HTTPS (localhost is allowed for development). Offline readiness is exposed on
-the document as `data-rake-offline=ready`; registration/cache failures do not prevent
-online startup and remain visible in the console.
-Ready means installation/caching completed. The first, uncontrolled page gains a
-service-worker controller on its next navigation; its existing requests are not
-retroactively controlled.
+The service worker precaches a complete immutable build, and a failed installation deletes the partial cache. Navigation is network-first, falling back to the active build's cached shell. Only immutable build resources and the shell are cached, not API requests, version checks, credentials or arbitrary downloads.
+
+To deploy:
+
+1. Upload **new immutable build directories first**.
+2. Atomically replace the root index, version metadata and worker script.
+3. Keep previous build directories while old tabs might request them.
+
+Host the version, worker and index endpoints with a revalidation or no-store policy; the generated nginx example sets immutable asset headers. Use HTTPS (localhost is fine for development).
+
+Offline readiness appears on the document as `data-rake-offline=ready`, meaning installation and caching completed. Registration or cache failures don't prevent online startup and remain visible in the console. The first, uncontrolled page gets a service-worker controller on its next navigation, and its existing requests aren't retroactively controlled.
 
 There is no automatic `skipWaiting`, `clients.claim` or forced reload of other tabs.
 An old tab keeps its build resources; another tab may load the new network deployment.
 An installed worker activates through the browser's normal lifecycle. Offline mode
 is a cache, not a guarantee that browser storage will never be evicted.
 
-Call `runtime.reload_web_update(&deployment, QuitOptions::default()).await` from
-view-owned observing work after the user chooses to reload. It rechecks the server
-and submits the existing guarded quit operation. Save/discard/cancel, application
-guards and finite work settle before the runtime reloads the page. The runtime owns
-the final handoff, so disposing a routed page cannot cancel reload after approval.
-Do not await this inside a finite task that quit itself must wait for. A browser
-navigation failure after approval requires manual reload; forced tab close/crash
-cannot await asynchronous guards. Persist drafts before approving.
+Call `runtime.reload_web_update(&deployment, QuitOptions::default()).await` from view-owned observing work after the user chooses to reload. It rechecks the server and submits the existing guarded quit, so save, discard, cancel, application guards and finite work settle first. The runtime owns the final handoff, so disposing a routed page can't cancel reload after approval.
+
+- Don't await this inside a finite task that quit must wait for.
+- A browser navigation failure after approval requires a manual reload.
+- A forced tab close or crash can't await asynchronous guards, so persist drafts before approving.
 
 The [foundation example](../examples/foundation/README.md) shows version checking and
 guarded reload alongside native update binding. Browser deployments use origin/TLS

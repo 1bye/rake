@@ -32,16 +32,12 @@ examples/desktop/
 cargo run -p rake-desktop-example
 ```
 
-Home and Updates navigate in the current tab. Back/Forward reuse retained views;
-the local edit count survives. Make an unsaved change on Home, open Updates, then
-Quit: the routed host offers Discard/Cancel before disposing that dirty history.
-“Mark clean” demonstrates clearing dirty state; it does not persist a document.
-Update restart uses the same guard path. The host still presents guard decisions
-when `workspace_chrome(false)` hides its default tab/quit controls.
-Navigation loading, Cancel, and Retry also remain available outside the shell.
-The starter limits each tab to 64 retained entries; reaching the limit blocks
-the next push instead of discarding unsaved state. Low-level routers default to
-unlimited history.
+Home and Updates navigate in the current tab. Back and Forward reuse retained views, so the local edit count survives. To see the guard, make an unsaved change on Home, open Updates, then Quit: the routed host offers Discard and Cancel before disposing that dirty history.
+
+- “Mark clean” demonstrates clearing dirty state, and doesn't persist a document.
+- Update restart uses the same guard path.
+- The host still presents guard decisions when `workspace_chrome(false)` hides its default controls. Navigation loading, Cancel and Retry also stay available outside the shell.
+- The starter limits each tab to 64 retained entries, and reaching the limit blocks the next push instead of discarding unsaved state. Low-level routers default to unlimited history.
 
 `#[rake::app]` runs installer startup and passes build-script distribution policy
 to `App`. The app registers `AppInfo` once. An owned `PageContext` is passed to
@@ -63,32 +59,19 @@ App::new("dev.rake.starter")
     .initial(Destination::Home)
 ```
 
-`Home` implements `LoadedPage<Destination>` and `Updates` implements
-`Page<Destination>`, with ordinary `Render` implementations in their own files.
-The macro checks every destination and calls the selected page's constructor;
-there is no application-owned dispatcher. Mount returns an `Entity<Self>` and
-runs only for a new or reconstructed history entry. Theme installation runs once
-at app startup before any page mounts. `Shell` is one persistent `Render` entity
-per window. Its `LayoutContext` supplies the shared services, navigation and route
-outlet. Pages render their bodies; they do not construct the shell. The shell's
-navigation-click count survives page changes independently of retained page edits.
-`try_layout` reports initialization failures without panicking.
+`Home` implements `LoadedPage<Destination>` and `Updates` implements `Page<Destination>`, with ordinary `Render` implementations in their own files. The macro checks every destination and calls the selected page's constructor, so there's no application-owned dispatcher. Mount returns an `Entity<Self>` and runs only for a new or reconstructed history entry. Theme installation runs once at startup, before any page mounts.
 
-Home's route loader reads the bundled welcome text on a background worker and
-passes an owned `String` into mount. A failed load leaves the old page intact and
-shows the host's Retry control. It completes before a new physical window opens.
-Back/Forward reuse the retained view and data; selecting Home again creates a
-fresh entry and loads again. Loaders may prepare files, services or domain models;
-they are not limited to HTTP. Blocking work must explicitly use a worker.
+`Shell` is one persistent `Render` entity per window. Its `LayoutContext` supplies shared services, navigation and the route outlet, and pages render only their bodies. The shell's navigation-click count survives page changes, independently of page edits. `try_layout` reports initialization failures without panicking.
 
-Updates calls `page.bind_updates(cx)` during entity construction and retains an
-`UpdateHandle`. Rake observes revisions, redraws the view, pauses observation
-while hidden, and refreshes the snapshot when shown again. Rake owns the provider driver and
-blocking work; views do not create worker threads or register events. Check, available version,
-download progress, cancellation, failures and guarded restart use that controller.
-No update check starts automatically. An unbundled `cargo run` has no installed
-controller and shows that updates are unavailable. This is a desktop example;
-[the view](../view) and [routing](../routing) examples also cover WebAssembly.
+Home's route loader reads the bundled welcome text on a background worker and passes an owned `String` into mount. A failed load leaves the old page intact and shows the host's Retry control, and loading completes before a new physical window opens.
+
+Back and Forward reuse the retained view and data, while selecting Home again creates a fresh entry and loads again. Loaders may prepare files, services or domain models, and blocking work must explicitly use a worker.
+
+Updates calls `page.bind_updates(cx)` during entity construction and keeps an `UpdateHandle`. Rake observes revisions, redraws the view, pauses observation while hidden and refreshes when shown again. Rake owns the provider driver and blocking work, so views don't create worker threads or register events.
+
+Check, available version, download progress, cancellation, failures and guarded restart all use that controller. No check starts automatically. An unbundled `cargo run` has no installed controller and shows updates as unavailable.
+
+This is a desktop example; [the view](../view) and [routing](../routing) examples also cover WebAssembly.
 
 Optional development inspection:
 
@@ -98,12 +81,9 @@ RAKE_DEV_CONTROL=1 cargo run -p rake-desktop-example --features devtools
 
 ## Resources and packaging
 
-`welcome.txt` is read through `rake::resources!()` in an installed app. Only an
-unbundled development run uses the embedded development copy. Corrupt or missing
-installed resources report a mount error. One SVG produces native icon formats.
-The macOS plist is merged with generated identity; the Windows manifest preserves
-GPUI's DPI, compatibility, long-path and heap settings. Linux desktop metadata is
-generated from the common identity/category.
+`welcome.txt` is read through `rake::resources!()` in an installed app, and only an unbundled development run uses the embedded copy. Corrupt or missing installed resources report a mount error.
+
+One SVG produces native icon formats. The macOS plist merges with generated identity, the Windows manifest keeps GPUI's DPI, compatibility, long-path and heap settings, and Linux desktop metadata is generated from the common identity and category.
 
 ```sh
 cargo run -p rake-cli -- doctor --distribution --package rake-desktop-example --json
@@ -155,13 +135,11 @@ To configure your own app:
    thumbprint in the indicated fields. These reference enrolled local stores;
    update keys, code-signing identities and notarization profiles are distinct.
 
-Bundle builds automatically select the Rake provider feature for their format.
-On macOS they also prepare the pinned Sparkle framework. Hand-written Cargo SDK
-development builds need `--features rake/updates-sparkle` and
-`RAKE_SPARKLE_FRAMEWORK=/path/to/Sparkle.framework`; use `rake bundle` for the
-installed app workflow. Sparkle availability checks are silent; Download opens
-its native review UI. AppImage/Velopack stage through the shared controller.
-DEB/RPM/Arch report package-manager ownership instead of replacing themselves.
+Bundle builds select the Rake provider feature for their format, and on macOS also prepare the pinned Sparkle framework. Hand-written Cargo SDK development builds need `--features rake/updates-sparkle` and `RAKE_SPARKLE_FRAMEWORK=/path/to/Sparkle.framework`, so use `rake bundle` for the installed app workflow.
+
+- Sparkle availability checks are silent, and Download opens its native review UI.
+- AppImage and Velopack stage through the shared controller.
+- DEB, RPM and Arch report package-manager ownership instead of replacing themselves.
 
 ## Publish
 
@@ -187,12 +165,9 @@ cargo run -p rake-cli -- release --package rake-desktop-example \
   --from /path/to/mac-output --from /path/to/windows-output --from /path/to/linux-output --json
 ```
 
-The configured directory publisher writes `examples/desktop/release-site` for
-your static HTTPS server. Hosting that directory remains your deployment step.
-For one platform, reduce `release.required` before building; plain `release` can
-build and publish the current host when that is the entire required matrix.
-For version N+1, bump the Cargo package version, rebuild, and promote to the same
-channel; preserve authenticated history in the publication directory.
+The configured directory publisher writes `examples/desktop/release-site` for your static HTTPS server, and hosting it is your deployment step.
+
+For one platform, reduce `release.required` before building. Plain `release` can build and publish the current host when that's the whole required matrix. For version N+1, bump the Cargo package version, rebuild, and promote to the same channel, keeping authenticated history in the publication directory.
 
 For direct GitHub Releases, replace the publisher table with:
 

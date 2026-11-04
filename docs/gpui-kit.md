@@ -22,15 +22,12 @@ and additional routed windows use this same root. There is one Base focus-trap
 manager. Kit owns window-wide dialogs, sheets and notifications; no Kit root is
 nested inside Rake's root.
 
-Existing `rake::overlay` surfaces remain local, controlled overlays. While a Kit
-global dialog or sheet is active they suspend rendering, missing-anchor audits
-and focus guards, retaining their state. Kit can then take focus and return it
-to the local opener when closed. This is covered by a real GPUI input/focus
-regression test. Local Rake surfaces resume when Kit's modal is no longer active.
-Programmatic local opens/closes also preserve Kit's focus. Closing a suspended
-surface defers opener restoration until Kit closes; a removed opener uses the
-mounted host fallback. Suspended popovers release Base's deferred popup context
-so inputs inside the Kit dialog can use their own context menus.
+Existing `rake::overlay` surfaces remain local, controlled overlays. While a Kit global dialog or sheet is active, they suspend rendering, missing-anchor audits and focus guards, and retain their state. Kit can then take focus and return it to the local opener when closed.
+
+- Local Rake surfaces resume when Kit's modal is no longer active.
+- Programmatic local opens and closes preserve Kit's focus.
+- Closing a suspended surface defers opener restoration until Kit closes. A removed opener uses the mounted host fallback.
+- Suspended popovers release Base's deferred popup context, so inputs inside the Kit dialog can use their own context menus.
 
 For custom GPUI window construction, call `rake::init_ui` before creating the
 Base Root and provide `rake::kit::assets::Assets` to GPUI’s application; the Rake `App` builder handles this itself.
@@ -48,20 +45,22 @@ palette.primary = rake::gpui::rgb(0x3c8060).into();
 rake::theme::install(cx, palette);
 ```
 
-With Kit off, installation updates Rake's ambient copy and Base's colors. With
-Kit on, it switches Kit's mode first, then applies the palette through
-`Kit Theme::update`. Kit updates Base. A Base-global observer refreshes Rake's
-copy from Kit's `semantic_tokens()` when Kit itself changes its theme. Equal
-values skip replacement, preventing notification loops. Tests exercise actual
-GPUI global effects for both paths, including a direct Kit mode change.
+- **Kit off:** installation updates Rake's ambient copy and Base's colors.
+- **Kit on:** it switches Kit's mode first, then applies the palette through Kit's `Theme::update`, and Kit updates Base.
+- **Kit changes its own theme:** a Base-global observer refreshes Rake's copy from Kit's `semantic_tokens()`.
 
-Base `surface`/`surface_foreground` map to Kit `popover`/`popover_foreground`;
-Base `destructive`/`destructive_foreground` map to Kit `danger`/`danger_foreground`.
-The bridge also writes `selection`, omitted by Kit 0.9's `apply_semantic_tokens`.
-Semantic covers Base's 18 color roles and appearance. Kit's other component
-colors follow its mode/theme; typography, spacing and elevation are separate
-scales. When Kit is enabled, direct writes to Base are not a supported theme
-write path because Kit rebuilds that global.
+Equal values skip replacement, which prevents notification loops.
+
+Name mapping:
+
+| Base | Kit |
+| --- | --- |
+| `surface`, `surface_foreground` | `popover`, `popover_foreground` |
+| `destructive`, `destructive_foreground` | `danger`, `danger_foreground` |
+
+The bridge also writes `selection`, which Kit 0.9's `apply_semantic_tokens` omits. `Semantic` covers Base's 18 color roles and appearance. Kit's other component colors follow its mode and theme, and typography, spacing and elevation are separate scales.
+
+With Kit enabled, don't write directly to Base, because Kit rebuilds that global.
 
 ## Inspection boundaries
 
@@ -71,28 +70,17 @@ geometry, construction sites and authored wrapper styles. Use explicit
 both the control's `.track_focus` and the inspection boundary's `.focus_handle`
 when agents need focus navigation.
 
-GPUI does not enumerate arbitrary component descendants. Rake cannot see or
-edit Kit's private children, internal resolved styles, implicit focus handles,
-or unregistered control values. These boundaries do not provide `view!` parity.
-Rake-authored nodes inside Kit dialog content retain normal inspection and style
-editing. With `kit,devtools`, a Root presentation decorator captures the full
-window through the end of deferred painting, so global dialog boundaries appear
-alongside routed page boundaries. A regression checks deferred paint, editability
-and stable identity on rerender.
+GPUI doesn't enumerate arbitrary component descendants, so Rake can't see or edit Kit's private children, internal resolved styles, implicit focus handles or unregistered control values. These boundaries don't match `view!`.
+
+Rake-authored nodes inside Kit dialog content keep normal inspection and style editing. With `kit,devtools`, a Root presentation decorator captures the full window through the end of deferred painting, so global dialog boundaries appear alongside routed page boundaries.
 
 ## Targets and pin checks
 
-Core Rake and Base views build and run on stable single-threaded Web. Kit 0.9.0
-is explicitly native-only in Rake: its published platform/Web dependencies enable
-multithreading even when Kit defaults are disabled. An isolated upstream check
-fails in `wasm_thread` with stable-channel `E0554`. Cargo features are additive;
-a downstream `default-features = false` cannot turn that dependency feature off.
-Enabling Rake's `kit` on Wasm produces a clear compile error. No nightly, fork or
-vendored implementation is used. The browser-compatible example is `rake-view`.
+Core Rake and Base views build and run on stable, single-threaded Web. **Kit 0.9.0 is native-only in Rake**, because its web dependencies enable multithreading even with Kit's defaults disabled, and that needs nightly (`wasm_thread` fails with `E0554` on stable). Cargo features are additive, so a downstream `default-features = false` can't turn it off.
+
+Enabling Rake's `kit` on Wasm gives a clear compile error. The browser-compatible example is `rake-view`.
 
 macOS was run. Windows and Linux remain unverified.
 `python3 scripts/check-gpui-pins.py` checks workspace and resolved ecosystem pins,
 upstream engine requirements, default optionality and the stable Web graph. CI
 also tests Kit's theme observer, modal coexistence and example compilation/lints.
-See [the migration verification](gpui-pre-migration.md) for commands, browser
-coverage and clean Wasm measurements.

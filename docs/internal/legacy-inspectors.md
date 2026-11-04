@@ -1,7 +1,7 @@
 # Rake Inspector application
 
 Legacy prototype, retained as historical implementation documentation. Stock
-[Chrome DevTools](devtools.md) is the supported frontend; this application is not
+[Chrome DevTools](../devtools.md) is the supported frontend; this application is not
 part of the supported DevTools workflow.
 
 `examples/inspector` is an Elements-only Rake application. Its shared native and
@@ -44,7 +44,7 @@ button switches both panes and their inputs together. Its typed, app-owned
 `Palette` derives `rake::Theme` and is declared once with `rake::theme!`.
 Setup and switching use `rake::theme::install`; named classes and the shared
 focus preset read that ambient value. Static styling in `view.rs` uses the
-[class grammar](experimental-view.md#class-grammar), reducing style closures
+[class grammar](../experimental-view.md#class-grammar), reducing style closures
 from 84 to 10. Computed layout, captured swatches and tree semantics keep GPUI
 builders. The explicit-palette property helper also retains its builders so its
 construction-only identity test needs no ambient application setup.
@@ -114,7 +114,7 @@ and displayed connection errors.
 ## Scope and verification
 
 This first application implements Elements only. It shares the existing
-[inspection coverage](element-inspection.md): explicit Rake boundaries, authored
+[inspection coverage](../element-inspection.md): explicit Rake boundaries, authored
 base styles, measured bounds before clipping, source locations and semantic IDs.
 It does not enumerate opaque GPUI descendants or provide computed CSS, style
 editing, an uninstrumented pixel picker, or the other DevTools panels.
@@ -127,7 +127,7 @@ Selected current boundaries offer **Scroll into view**, **Focus element**, and
 **Open Rust source**. Navigation uses registered application handles; unavailable
 actions and replaced captures are disabled. Source opens through the authenticated
 host using the system default editor and the workspace restriction described in
-[Elements navigation](element-inspection.md#elements-navigation).
+[Elements navigation](../element-inspection.md#elements-navigation).
 
 ```sh
 cargo test -p rake-inspector --no-default-features --locked
@@ -143,3 +143,33 @@ closing-tag annotations, page movement and minimal reveal offsets.
 The Python suite covers the real broker's asset isolation, authentication and
 native/Web forwarding. GPU/native interaction and browser rendering require a
 real host; compilation alone does not establish them.
+
+## Legacy inspector prototypes
+
+An [Elements-only Inspector built with Rake](legacy-inspectors.md) remains in the repository
+for native and Web: `rake inspect --elements --target desktop|web`. It uses the
+experimental `view!` macro and the same runtime queries. Both this preview and the
+multi-panel HTML frontend below are unsupported historical prototypes.
+
+### Historical HTML panels
+
+| Panel | Inspection and actions |
+| --- | --- |
+| Workspace | Windows with independent selections, visibility and guarded close; tab policies, destinations, full retained histories/cursors, entry revisions and dirtiness; select, Back, Forward, close and change policy; guarded quit with wait/cancel job policies, remaining counts and Cancel quit. |
+| Routes | Forms generated from registered typed destination descriptors; open/reveal with an explicit host and reveal scope, or navigate/replace in an exact tab, with independent work policy and activation options. Native targets advertise NewWindow. |
+| Tasks | Lifetime owner separately from causal origin; task kind, eligibility, state, RunId and generation; cancel and follow related diagnostics. Explicit application progress is unavailable unless logged. |
+| Operations | Queued/running/awaiting-decision/terminal states, retained results and errors; inspect or cancel through the shared dispatcher. Commit does not imply finished data loading. |
+| Decisions | Pending guard messages and advertised choices. Responses use the same revision checks as GUI/CLI responses; obsolete choices cannot approve changed state. |
+| Console | Structured tracing severity/fields/context, bounded build and native stdout/stderr, registered typed commands with argument/result schemas and JSON input. |
+| Requests | Method, redacted URL, status, elapsed time, bytes consumed and observed lifecycle events; distinguish headers, completion, cancellation/failure and abandonment. |
+| Traces | Collector-local span identities and parent links, inherited fields, elapsed wall-time timeline and related tasks/requests/logs. Missing ancestry or closes remain explicit. |
+| Elements | Presented inspection boundaries, real layout, authored and live resolved styles, source sites, semantic IDs and exact capture lookup; stale selections remain frozen. See [coverage](../element-inspection.md). |
+| Reload | Supervisor build/reload/error status and the runtime lifecycle boundary, generation and restoration origin. |
+
+Search, context filters, paging and JSON diagnostic export operate on retained
+observations. Related links only use actual recorded context. Process text has
+its own supervisor elapsed clock and no inferred runtime/tab ownership. Structured
+tracing can appear again in process stderr; these remain distinct sources.
+Legacy `log` forwarding requires the embedding host's tracing bridge. Arbitrary
+browser console output and arbitrary Rust evaluation are not provided. The routing
+example registers `demo.echo` and `demo.fetch` for explicit command/log/HTTP checks.

@@ -1,8 +1,7 @@
 # Release qualification
 
-The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
-Windows and Linux remain unqualified; tooling and platform descriptions below
-do not establish real GUI, signing, notarization or installer qualification.
+> Windows and Linux, signing, notarization and installers aren't qualified in this alpha.
+> See [what's supported](../support.md).
 
 Run `scripts/check-readiness.py` against the release revision and preserve its JSON
 report. Do not combine a passing compile check and a manual checklist into a claim
@@ -66,3 +65,29 @@ run. These checks require the actual devices/assistive tools and remain release 
 
 The experimental markup surface is not advertised as screen-reader-qualified until
 those runs pass. New convenience APIs do not eliminate these host-specific checks.
+
+## Release gates and evidence
+
+Run `python3 scripts/check-readiness.py --list` to see the bounded check groups.
+The `browser` group uses a real isolated Chrome instance and a Rust Wasm fixture;
+`web` includes compilation and deterministic adapter/cache tests. See
+[qualification](qualification.md) for their exact boundaries and prerequisites.
+Each invocation writes an evidence report with the revision, dirty-worktree state,
+commands, durations and exit codes. A failed prerequisite fails the invocation;
+compilation is never recorded as a browser or native GUI test.
+
+Before tagging an alpha candidate:
+
+1. Run portable, native, Web and UI groups locally on the release revision.
+2. Run the focused Windows/Linux `app-readiness` matrix once for the final revision.
+   The broader signing/installer workflows are needed when those paths change.
+3. Perform real GUI checks from [browser testing](notes-browser-testing.md) and the
+   native startup/layout smoke scripts; attach results with their OS/browser versions.
+4. Review API/docs changes, migration notes, known limitations and package contents.
+5. Tag the verified clean revision as `v0.1.0-alpha.N`; publish source/checksums and
+   the evidence. Tagging does not turn unexecuted manual gates into passes.
+
+Beta additionally requires maintained real-GUI coverage for the supported platforms,
+keyboard/IME/clipboard and accessibility checks, display-scale/window lifecycle
+coverage, recovery/upgrade journeys and sustained workload measurements. Synthetic
+CPU benchmarks and compile checks do not establish these properties.

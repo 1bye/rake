@@ -1,11 +1,8 @@
 # rake-native
 
 Optional native components in GPUI layouts. The first adapter is macOS AppKit.
-Enable `rake`'s `native-components` feature and import `rake::native::macos`, or
-depend on `rake-native` directly with the matching pinned GPUI-CE version.
-The feature is off by default. Other targets compile the crate without Apple
-dependencies and expose no macOS API; callers select their own portable controls
-with `#[cfg(target_os = "macos")]`.
+
+Enable `rake`'s `native-components` feature, which is off by default, and import `rake::native::macos`. You can also depend on `rake-native` directly, using the same pinned `gpui-pre` version as Rake. Other targets compile the crate without Apple dependencies and expose no macOS API, so choose your portable controls with `#[cfg(target_os = "macos")]`.
 
 ```toml
 [dependencies]
@@ -31,13 +28,9 @@ save.on_click(cx, move |cx| {
 div().child(self.save.element().w(px(120.)).h(px(32.)))
 ```
 
-`Button::symbol` accepts an SF Symbol name and an accessible description.
-`SegmentedControl` supplies native single selection, validates indices and
-schedules `on_change` callbacks on GPUI's foreground executor. `as_appkit()`
-allows additional native customization; leave attachment, target/action and
-segment count to the adapter. Capture weak entities in callbacks so an entity
-does not retain itself through its own control. Replacing a handler affects
-future actions; actions already queued retain their original handler.
+`Button::symbol` takes an SF Symbol name and an accessible description. `SegmentedControl` supplies native single selection, validates indices and schedules `on_change` callbacks on GPUI's foreground executor.
+
+`as_appkit()` allows additional native customization, but leave attachment, target/action and segment count to the adapter. Capture weak entities in callbacks, so an entity doesn't retain itself through its own control. Replacing a handler affects future actions, and already queued actions keep their original handler.
 
 `NativeView::from_appkit` accepts an owned `objc2::rc::Retained<NSView>` for
 custom native components. Matching bindings are re-exported as `macos::objc2`,
@@ -45,15 +38,13 @@ custom native components. Matching bindings are re-exported as `macos::objc2`,
 AppKit main thread. Clones share one view, which must occupy only one layout slot.
 Removing an element or closing its window detaches its native host.
 
-The bridge exposes the live GPUI content and native hosts as sibling accessibility
-groups in the window. This keeps native controls discoverable despite GPUI's
-AccessKit adapter replacing the content view's accessibility children. The adapter
-replaces `accessibilityChildren` and `accessibilityHitTest:` at runtime on the
-window's stable class and any overriding current KVO subclass. These replacements
-last for the life of the process. Windows with no native hosts fall through to
-the original implementation; hit testing preserves Base's GPUI canvas forwarder.
-When the final host detaches, the adapter restores the content view's accessibility
-state and resumes forwarding window queries to the original implementation.
+The bridge exposes the live GPUI content and native hosts as sibling accessibility groups in the window, which keeps native controls discoverable even though GPUI's AccessKit adapter replaces the content view's accessibility children.
+
+To do this, the adapter replaces `accessibilityChildren` and `accessibilityHitTest:` at runtime on the window's stable class and any overriding current KVO subclass. These replacements last for the life of the process.
+
+- Windows with no native hosts fall through to the original implementation.
+- Hit testing keeps Base's GPUI canvas forwarder.
+- When the final host detaches, the adapter restores the content view's accessibility state and forwards window queries to the original implementation again.
 
 ## Composition boundaries
 

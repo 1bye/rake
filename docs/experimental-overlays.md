@@ -73,13 +73,15 @@ let documents = overlays.dialog(cx);
 # }
 ```
 
-Store those handles as fields. Cloning shares interaction state. The host holds
-weak references to open handles and the owning entity; it does not retain content
-entities. Application code owns those entities even while an overlay is closed.
-One handle must be mounted at most once, and all controls/anchors must belong to
-the same host. A host binds to its first window; using it in another window
-panics. Passing dialog state to a Popover, popover state to a Dialog, or an anchor
-from another host also panics.
+Store those handles as fields. Cloning shares interaction state. The host holds weak references to open handles and the owning entity, and doesn't retain content entities, so your code owns those even while an overlay is closed.
+
+These panic:
+
+- Using a host in a window other than its first.
+- Passing dialog state to a Popover, or popover state to a Dialog.
+- Using an anchor from another host.
+
+One handle must be mounted at most once, and all controls and anchors must belong to the same host.
 
 Mount `OverlayHost` at the window root. Its `body` contains normal application
 content **and background key contexts/action handlers**. Overlay controls are
@@ -121,35 +123,25 @@ rake::view! {
 # }
 ```
 
-`open(window, cx)` remembers the opener and returns false if already open or the
-owner has been released. Initial focus enters the first enabled tab stop after
-mount; an empty overlay focuses its container. `close(window, cx)` closes that
-layer and everything opened above it. It restores a still-mounted opener when
-focus belonged to the removed layers; otherwise it preserves the current focus.
-If the opener disappeared, focus returns to a remaining overlay or the host's
-mounted fallback.
+`open(window, cx)` remembers the opener, and returns false if already open or the owner has been released. Initial focus enters the first enabled tab stop after mount, and an empty overlay focuses its container.
 
-Only the top layer handles Escape or outside pointer dismissal. A child can
-consume Escape. Outside clicks dismiss without activating the covered content.
-Popovers close when focus leaves; dialogs contain Tab/Shift+Tab and repair
-programmatic focus escapes. A popover opened above a dialog inherits that modal
-focus boundary. Disabled macro buttons are skipped. Sentinels also catch controls
-that consume Tab and invoke GPUI's window-wide navigation themselves.
+`close(window, cx)` closes that layer and everything above it. It restores a still-mounted opener when focus belonged to the removed layers, and otherwise keeps the current focus. If the opener disappeared, focus returns to a remaining overlay or the host's mounted fallback.
 
-Anchors update during prepaint, including scroll and resize. Popovers are placed
-below the visible trigger bounds and clamped to the window with a 16-point margin.
-Scrolling an anchor fully out of view, removing the anchor, or removing an open
-surface closes that layer and its descendants on the next frame. Keep the host
-and anchor prepaint hooks outside explicitly cached subtrees unless you invalidate
-those caches on every geometry change.
+- Only the top layer handles Escape or outside pointer dismissal, and a child can consume Escape.
+- Outside clicks dismiss without activating the covered content.
+- Popovers close when focus leaves.
+- Dialogs contain Tab and Shift+Tab and repair programmatic focus escapes.
+- A popover opened above a dialog inherits its modal focus boundary.
+- Disabled macro buttons are skipped.
+- Sentinels also catch controls that consume Tab and call GPUI's window-wide navigation themselves.
 
-Dialogs use an accessible Dialog role, their visible title as their accessible
-name, and modal metadata. The host's background accessibility group is hidden
-while a dialog is open. Popovers are groups of controls: menu roles, arrow-key
-selection, submenus and screen-reader announcement policies are not implemented.
-Surfaces currently have fixed dark styling, widths of 320/520 points, viewport
-limits and overflow scrolling; customizable skins and placement strategies can
-follow actual usage.
+Anchors update during prepaint, including on scroll and resize. Popovers sit below the visible trigger and clamp to the window with a 16-point margin.
+
+Scrolling an anchor fully out of view, removing it, or removing an open surface closes that layer and its descendants on the next frame. Keep the host and anchor prepaint hooks outside explicitly cached subtrees, unless you invalidate those caches on every geometry change.
+
+Dialogs use an accessible Dialog role, with their visible title as the accessible name, plus modal metadata. The host's background accessibility group is hidden while a dialog is open.
+
+Popovers are groups of controls. Menu roles, arrow-key selection, submenus and screen-reader announcement policies aren't implemented. Surfaces have fixed dark styling, widths of 320 or 520 points, viewport limits and overflow scrolling.
 
 ## Tooltips and the example
 
@@ -158,12 +150,15 @@ Use a GPUI tooltip builder through `style`, returning a retained help entity:
 in labels/descriptions as well; hover help is supplementary. No new tooltip
 runtime is introduced.
 
-Run `cargo run -p rake-view`. **More actions** opens a popover; **Browse 10,000
-documents** opens a nested dialog with a virtual list. **Jump to 5,000** selects
-and reveals that record. Click a row, then use Up/Down, Home or End. Closing and
-reopening preserves selection and scroll because the Documents entity and its
-scroll handle remain owned by the counter. Escape closes the dialog before the
-popover and restores each opener. The actions trigger has retained GPUI hover help.
+Run `cargo run -p rake-view`.
+
+- **More actions** opens a popover, and its trigger has GPUI hover help.
+- **Browse 10,000 documents** opens a nested dialog with a virtual list.
+- **Jump to 5,000** selects and reveals that record.
+- Click a row, then use Up, Down, Home or End.
+- Escape closes the dialog before the popover and restores each opener.
+
+Closing and reopening keeps selection and scroll, because the Documents entity and its scroll handle stay owned by the counter.
 
 Frame tests exercise stack ordering, real keyboard/pointer dispatch, focus
 restoration/containment, disabled controls, consumed events, layout/scroll anchor

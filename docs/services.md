@@ -28,13 +28,11 @@ Services need `'static`, with no `Send`/`Sync` requirement. A service owns its
 mutability, cancellation and external resources. Do not retain UI borrows across
 an asynchronous call.
 
-`App::services()` combines the registry with Rake's HTTP transport and diagnostics.
-`Services::http()` and `Services::diagnostics()` retain their existing behavior.
-Headless hosts use `Router::with_services(config, registry)`; its runtime client
-passes that registry to every `CommandContext`. Register handlers on
-`router.client().commands()` as usual. Composition is not serialized into reload
-checkpoints: the application recreates services, then restores compatible owned
-data using entry reload hooks.
+`App::services()` combines the registry with Rake's HTTP transport and diagnostics. `Services::http()` and `Services::diagnostics()` keep their existing behavior.
+
+Headless hosts use `Router::with_services(config, registry)`, whose runtime client passes the registry to every `CommandContext`. Register handlers on `router.client().commands()` as usual.
+
+Composition isn't serialized into reload checkpoints. The application recreates services, then restores compatible owned data using entry reload hooks.
 
 The [Fieldnotes reference app](notes.md) composes a notebook service, gives its
 autosave loop to a managed Live activity, and flushes it from a disposal guard.
