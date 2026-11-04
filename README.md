@@ -25,31 +25,33 @@ AI agents inspect and control the running app.
 
 ## Quick start
 
-Rake needs Rust 1.98.0. Create an app:
+Rake needs Rust 1.98.0, native development tools and Python 3.11+. Install the CLI
+and create a desktop/browser app:
 
 ```sh
-cargo new hello-rake
+cargo install --git https://github.com/1bye/rake --locked rake-cli
+rake new hello-rake
 cd hello-rake
+rake dev
 ```
 
-In `Cargo.toml`, add:
+The generated app has two pages, a persistent layout, a theme and an agent-callable
+command. For the browser, use `rake dev --target web` with a WebGPU-capable browser
+and the matching `wasm-bindgen-cli` (the builder prints the install command).
+The first dev run creates `Cargo.lock`; commit it. `rake new` pins Rake to the
+exact revision the CLI was built from.
 
-```toml
-[dependencies]
-rake = { git = "https://github.com/1bye/rake", branch = "main" }
-```
-
-Replace `src/main.rs` with:
+UI uses `view!`. A complete Hello window looks like this:
 
 ```rust
-use rake::gpui::{Context, Window, div, prelude::*};
+use rake::gpui::{Context, Window, prelude::*};
 use rake::prelude::*;
 
 struct Hello;
 
 impl Render for Hello {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child("Hello, Rake!")
+        rake::view! { <main class="size-full p-6"><h1>"Hello, Rake!"</h1></main> }
     }
 }
 
@@ -60,10 +62,13 @@ fn app() -> App {
 }
 ```
 
-Then run it with `cargo run`, and commit the generated `Cargo.lock` so your Rake revision
-stays fixed.
+To add Rake to an existing crate, copy the pinned dependency and parser patch from
+a generated `Cargo.toml`, then use the Hello entry above. `view!`, themes and style
+presets are included by default; Kit and DevTools remain optional.
 
-[Getting started](docs/getting-started.md) covers the CLI, browser builds and agents.
+[Getting started](docs/getting-started.md) covers browser prerequisites, local
+Rake development and agents. On macOS, check that `which rake` selects Cargo's CLI
+rather than the system Ruby tool.
 
 ## Try the examples
 
