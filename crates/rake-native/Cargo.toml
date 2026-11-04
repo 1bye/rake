@@ -15,15 +15,15 @@ workspace = true
 native-tests = []
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false }
+gpui = { workspace = true }
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSGeometry", "NSArray", "NSEnumerator"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSGeometry", "NSArray", "NSEnumerator", "NSNotification"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSView", "NSResponder", "NSControl", "NSButton", "NSButtonCell", "NSCell", "NSImage", "NSSegmentedControl", "NSSegmentedCell", "NSGlassEffectView", "NSLayoutConstraint", "NSAccessibilityConstants", "NSAccessibilityProtocols", "NSAccessibility", "NSWindow", "objc2-quartz-core", "objc2-core-foundation"] }
 thiserror.workspace = true
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", features = ["font-kit"] }
+gpui_platform = { workspace = true, features = ["font-kit"] }
 
 [[test]]
 name = "appkit"

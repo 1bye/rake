@@ -18,7 +18,7 @@ updates = ["native-lifecycle"]
 updates-sparkle = ["updates", "rake-updates/sparkle"]
 updates-appimage = ["updates", "rake-updates/appimage"]
 updates-velopack = ["updates", "rake-updates/velopack"]
-devtools = ["rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
+devtools = ["gpui?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
 devtools-memory = ["devtools", "dep:backtrace"]
 experimental-view = ["gpui", "dep:rake-ui", "rake-macros/view"]
 view-test-support = ["experimental-view", "gpui/test-support", "rake-ui/test-support"]
@@ -43,8 +43,8 @@ url = "2.5"
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 event-listener = "5.4"
 web-time.workspace = true
-gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false, optional = true }
-gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", features = ["font-kit", "wayland", "x11"], optional = true }
+gpui = { workspace = true, optional = true }
+gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rake-client.workspace = true
