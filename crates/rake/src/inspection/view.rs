@@ -1328,7 +1328,7 @@ fn overlay(
 }
 
 fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
-    use gpui::{DispatchPhase, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent};
+    use gpui::{DispatchPhase, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollEvent};
     let moving = store.clone();
 
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
@@ -1375,7 +1375,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
     });
     let scrolling = store.clone();
 
-    window.on_mouse_event(move |_: &ScrollWheelEvent, phase, _, cx| {
+    window.on_mouse_event(move |_: &ScrollEvent, phase, _, cx| {
         if phase == DispatchPhase::Capture
             && scrolling.0.borrow().mode_active(web_time::Instant::now())
         {

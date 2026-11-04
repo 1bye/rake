@@ -259,7 +259,10 @@ impl Recording {
         let Some(collector) = &mut self.collector else {
             return;
         };
-        for timing in collector.collect_unseen() {
+        for event in collector.collect_unseen() {
+            let gpui::FrameEvent::Draw(timing) = event else {
+                continue;
+            };
             let Some(window) = self
                 .windows
                 .iter()
@@ -382,7 +385,7 @@ impl FrameTraceGuard {
     fn acquire() -> Self {
         let mut users = TRACE_USERS.lock().expect("frame recorder lock poisoned");
         if users.0 == 0 {
-            users.1 = gpui::set_frame_trace_enabled(true);
+            users.1 = gpui::set_trace_enabled(true);
         }
         users.0 += 1;
         Self
@@ -394,7 +397,7 @@ impl Drop for FrameTraceGuard {
         let mut users = TRACE_USERS.lock().expect("frame recorder lock poisoned");
         users.0 -= 1;
         if users.0 == 0 && users.1 {
-            gpui::set_frame_trace_enabled(false);
+            gpui::set_trace_enabled(false);
         }
     }
 }

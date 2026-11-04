@@ -402,8 +402,14 @@ pub fn application() -> App {
     App::new("com.example.rake.view")
         .control(rake::control::ControlConfig::FromEnvironment)
         .root(|_, window, cx| {
+            let increment = if cx.platform_info().os == gpui::OperatingSystem::Mac {
+                "cmd-i"
+            } else {
+                "ctrl-i"
+            };
+
             cx.bind_keys([
-                KeyBinding::new("secondary-i", Increment, Some("Counter")),
+                KeyBinding::new(increment, Increment, Some("Counter")),
                 KeyBinding::new("escape", Reset, Some("Counter")),
                 KeyBinding::new("h", ToggleHistory, Some("Counter")),
                 KeyBinding::new("r", ReverseHistory, Some("Counter")),

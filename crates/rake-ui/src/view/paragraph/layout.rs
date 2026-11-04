@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
-    App, AvailableSpace, Bounds, LayoutId, Pixels, SharedString, Size, TextAlign, TextLayout,
-    TextOverflow, TextRun, Window, WrappedLine,
+    App, AvailableSpace, Bounds, LayoutId, Pixels, SharedString, Size, TextAlign, TextOverflow,
+    TextRun, WhiteSpace, Window, WrappedLine,
 };
 
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -40,7 +40,14 @@ pub(super) fn request_layout(
             _ => None,
         });
 
-        let wrap = TextLayout::evaluate_wrap_width(&style.white_space, known, available);
+        let wrap = if style.white_space == WhiteSpace::Normal {
+            known.width.or(match available.width {
+                AvailableSpace::Definite(width) => Some(width),
+                _ => None,
+            })
+        } else {
+            None
+        };
 
         let affix = match &style.text_overflow {
             Some(TextOverflow::Truncate(affix)) => Some(affix.as_ref()),

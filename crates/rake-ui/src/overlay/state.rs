@@ -348,7 +348,7 @@ impl OverlayState {
             } else if self.host.mounted(window) {
                 window.focus(&self.host.focus_handle(), cx);
             } else {
-                window.blur();
+                window.blur(cx);
             }
         }
 

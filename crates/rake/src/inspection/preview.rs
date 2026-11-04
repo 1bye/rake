@@ -151,7 +151,7 @@ impl Store {
                 .update(&mut target.app, |_, window, cx| {
                     use gpui::{
                         MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput,
-                        ScrollDelta, ScrollWheelEvent,
+                        ScrollDelta, ScrollEvent,
                     };
                     let position = gpui::point(gpui::px(point.x as f32), gpui::px(point.y as f32));
 
@@ -278,7 +278,7 @@ impl Store {
                             };
 
                             window.dispatch_event(
-                                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                PlatformInput::Scroll(ScrollEvent {
                                     position,
                                     delta: ScrollDelta::Pixels(gpui::point(
                                         gpui::px(-(*dx as f32) / 64.),
@@ -292,7 +292,7 @@ impl Store {
                         }
                         wire::Input::Scroll { dx, dy } => {
                             window.dispatch_event(
-                                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                PlatformInput::Scroll(ScrollEvent {
                                     position,
                                     delta: ScrollDelta::Pixels(gpui::point(
                                         gpui::px(-*dx as f32),

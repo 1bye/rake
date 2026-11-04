@@ -336,7 +336,7 @@ impl Element for Floating {
                 window.prevent_default();
                 cx.stop_propagation();
             })
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
+            .on_scroll(|_, _, cx| cx.stop_propagation());
 
         let positioned = if let Some(position) = position {
             gpui::anchored()

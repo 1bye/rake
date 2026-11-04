@@ -160,7 +160,7 @@ fn setup() -> (gpui::TestAppContext, gpui::WindowHandle<Host>) {
 
 fn keys(cx: &mut gpui::TestAppContext, handle: gpui::WindowHandle<Host>, key: &str) {
     cx.update_window(handle.into(), |_, window, cx| {
-        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        let keystroke = gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
 
         window.dispatch_event(
             gpui::KeyDownEvent {

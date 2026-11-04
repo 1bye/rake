@@ -160,7 +160,7 @@ fn deep_components_read_replaced_themes_and_rebuild_hover_refinements() {
                 super::draw(&mut cx, window);
                 let expected = if coordinate == 10. { hover } else { surface };
 
-                assert_eq!(color.get(), gpui::rgb_to_hsla(gpui::rgb(expected)));
+                assert_eq!(color.get(), gpui::Hsla::from(gpui::rgb(expected)));
             }
 
             assert_eq!(
