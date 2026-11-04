@@ -810,7 +810,7 @@ struct BaseButtonStyles(Store);
 impl Render for BaseButtonStyles {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         crate::view! {
-            <button id="base-button" style={|s| s.w(px(100.)).h(px(40.))
+            <button id="base-button" role={gpui::accesskit::Role::MenuItem} style={|s| s.w(px(100.)).h(px(40.))
                 .bg(gpui::rgb(0x112233)).hover(|s| s.bg(gpui::rgb(0x445566)))}>
                 "Inspectable Base button"
             </button>
@@ -838,6 +838,10 @@ fn base_button_retains_resolved_hover_styles_and_live_edits() {
     let button = named(&snapshot, "base-button");
     assert!(button.kind.contains("rake_ui::view::button::Button"));
     assert!(button.style_editable);
+    assert_eq!(
+        button.accessibility.as_ref().unwrap().role.as_deref(),
+        Some("MenuItem")
+    );
     assert_eq!(button.layout.unwrap().width, 100.);
     let color = |snapshot: &Snapshot| {
         super::super::super::styles::color(

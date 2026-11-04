@@ -57,6 +57,7 @@ pub fn button(
 
 /// Begins a macro-authored button before attributes and children are applied.
 #[doc(hidden)]
+#[track_caller]
 pub fn button_base(id: impl Into<ElementId>) -> Button {
     let inner = gpui::div().id(id);
 
@@ -334,6 +335,7 @@ impl Element for Button {
         self.live = Some(inner.interactivity().compute_style(id, None, window, cx));
         let mut base = gpui_base::Button::new(Element::id(&inner).expect("macro button ID"))
             .disabled(self.disabled)
+            .role(inner.a11y_role().unwrap_or(accesskit::Role::Button))
             .track_focus(&focus)
             .tab_index(self.tabindex)
             .tab_stop(self.tabindex >= 0);
