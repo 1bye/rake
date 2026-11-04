@@ -471,11 +471,15 @@ fn toolbar(focus: &FocusHandle, saving: bool) -> impl IntoElement {
 `on:Save` and qualified paths such as `on:crate::actions::Save` expand to typed
 GPUI `on_action::<Save>` listeners. Action types must implement `gpui::Action`;
 handlers use the normal GPUI signature and accept `cx.listener(Self::save)`.
-Register `cx.bind_keys([gpui::KeyBinding::new("secondary-s", Save, Some("Editor"))])`
-once during application setup. `key-context` supplies GPUI's keymap context on
-the focused dispatch path; it does not register shortcuts. `secondary` means
-Command on macOS targets and Control on other targets. `aria-keyshortcuts` is
-accessibility metadata only; supply the actual platform shortcut yourself.
+Register shortcuts once during application setup. `KeyBinding::new` accepts
+static bindings with explicit modifiers: use `"cmd-s"` when
+`cx.platform_info().os == gpui::OperatingSystem::Mac` and `"ctrl-s"` otherwise.
+For dynamic strings or the `secondary-` alias, use GPUI's `KeyBinding::load` with
+the app context; `Keystroke::parse_with_os` is the corresponding input parser.
+This uses the host OS on Web as well as native targets. `key-context` supplies
+GPUI's keymap context on the focused dispatch path; it does not register
+shortcuts. `aria-keyshortcuts` is accessibility metadata only; supply the actual
+platform shortcut yourself.
 
 `tab-navigation={true}` installs a bubbling handler for unmodified Tab and
 Shift+Tab. It calls GPUI's window-wide `focus_next`/`focus_prev`, then prevents the
@@ -961,3 +965,24 @@ pane/row dimensions, dynamic captured swatches, tree semantics, an underline,
 a resize cursor/focus handle, or the explicit-palette property helper. The
 helper remains independent of ambient setup for its construction-only identity
 test. `style={control}` applies the shared focus preset to toolbar buttons.
+
+### Shared semantic colors
+
+`rake::theme::Semantic` is a flat palette with Base's 18 color names and an
+`appearance` field. Declare `rake::theme!(rake::theme::Semantic)` at the crate
+root to use `bg-background`, `text-foreground`, `bg-primary`,
+`text-primary-foreground`, `bg-surface`, and the other semantic roles.
+Install `Semantic::light()` or `Semantic::dark()` through the same
+`rake::theme::install(cx, palette)` API. Application-defined themes remain
+independent and work unchanged; typography, spacing and shadow scales remain
+separate Base settings.
+
+Installation updates the ambient Rake copy and Base's colors. Rake observes the
+actual Base global effect queue and replaces its copy only when values change,
+so an unchanged notification cannot create an update loop.
+
+With the optional native `kit` feature, installation uses Kit's `Theme::update`
+and its Base projection. Changes made by Kit itself refresh Rake's ambient copy
+through the Base-global observer. Base `surface` means Kit `popover`, and Base
+`destructive` means Kit `danger`. See [Base and Kit](gpui-kit.md) for the shared
+Root, native-only Kit gate, and inspection boundaries.

@@ -435,3 +435,64 @@ fn body_capture_tracks_consumption_eof_and_limits() {
         server.join().unwrap();
     }
 }
+
+#[test]
+fn redirect_limits_preserve_manual_responses_and_follow_the_allowed_hop() {
+    for limit in [0, 1] {
+        let (destination, destination_server) = if limit == 1 {
+            let (url, server) =
+                server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+
+            (url, Some(server))
+        } else {
+            ("http://127.0.0.1:1/unfollowed".into(), None)
+        };
+
+        let (url, redirect_server) = server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {destination}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ));
+
+        let original = HttpClient::new(HttpConfig::new()).expect("client");
+
+        let client = original
+            .with_redirect_limit(limit)
+            .expect("redirect client");
+
+        let response = block_on(client.get(&url).send()).expect("redirect response");
+
+        assert_eq!(
+            response.status(),
+            if limit == 0 { 302 } else { 200 },
+            "limit {limit}"
+        );
+        assert!(!client.shares_transport_with(&original));
+        redirect_server.join().expect("redirect server");
+
+        if let Some(server) = destination_server {
+            server.join().expect("destination server");
+        }
+    }
+}
+
+#[test]
+fn redirect_limit_rejects_an_extra_hop() {
+    let (middle, middle_server) = server(
+        "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/never-followed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    );
+
+    let (url, first_server) = server(format!(
+        "HTTP/1.1 302 Found\r\nLocation: {middle}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    ));
+
+    let client = HttpClient::new(HttpConfig::new())
+        .expect("client")
+        .with_redirect_limit(1)
+        .expect("redirect client");
+
+    assert!(matches!(
+        block_on(client.get(&url).send()),
+        Err(Error::Transport(_))
+    ));
+    first_server.join().expect("first redirect");
+    middle_server.join().expect("second redirect");
+}

@@ -95,6 +95,15 @@ pub mod overlay;
 #[cfg(feature = "experimental-view")]
 pub use rake_ui::theme;
 
+/// Initializes Base, optional Kit and theme observation before custom GPUI windows.
+/// Rake's application builder calls this automatically.
+#[cfg(feature = "experimental-view")]
+pub use rake_ui::init as init_ui;
+
+/// Optional GPUI Kit components, assets and the matching GPUI API (native targets).
+#[cfg(all(feature = "kit", not(target_family = "wasm")))]
+pub use rake_ui::kit;
+
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError, ClosePolicy};
 #[cfg(feature = "gpui")]
@@ -349,8 +358,9 @@ pub mod __private {
     pub use crate::view::{
         Children as ViewChildren, ComponentChildren as ViewComponentChildren,
         ParagraphContent as ViewParagraphContent, RunStyle as ViewRunStyle, button as view_button,
-        entity as view_entity, focus as view_focus, image as view_image, svg as view_svg,
-        tab_index as view_tab_index, tab_navigation as view_tab_navigation,
+        button_base as view_button_base, entity as view_entity, focus as view_focus,
+        image as view_image, svg as view_svg, tab_index as view_tab_index,
+        tab_navigation as view_tab_navigation,
     };
 
     /// Deprecated macro event aliases; referenced at the authored attribute span.

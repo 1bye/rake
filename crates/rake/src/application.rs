@@ -3,7 +3,9 @@
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
-use gpui::{AnyView, AppContext, Context, IntoElement, Render, Window, WindowOptions};
+use gpui::{AnyView, AppContext, Render, Window, WindowOptions};
+#[cfg(not(feature = "experimental-view"))]
+use gpui::{Context, IntoElement};
 
 use crate::diagnostics::{DiagnosticsConfig, DiagnosticsError};
 use crate::http::{HttpClient, HttpConfig};
@@ -49,6 +51,8 @@ pub use factory::{AppFactoryOutput, run_app_factory};
 mod startup;
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 mod update_services;
+#[cfg(target_family = "wasm")]
+mod web_fonts;
 
 #[cfg(feature = "experimental-view")]
 type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
@@ -729,6 +733,9 @@ impl<R: Route> App<R> {
         #[cfg(not(target_family = "wasm"))]
         let application = gpui_platform::application();
 
+        #[cfg(all(feature = "kit", not(target_family = "wasm")))]
+        let application = application.with_assets(rake_ui::kit::assets::Assets);
+
         // Native GPUI image/network hooks use the same observed transport.
         #[cfg(not(target_family = "wasm"))]
         let application = application.with_http_client(Arc::new(GpuiHttp {
@@ -752,8 +759,20 @@ impl<R: Route> App<R> {
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
 
+            #[cfg(target_family = "wasm")]
+            if let Err(error) = web_fonts::install(cx) {
+                errors.record(AppError::Window(format!(
+                    "Web font initialization failed: {error}"
+                )));
+
+                return;
+            }
+
             #[cfg(feature = "experimental-view")]
-            install_themes(self.themes, cx);
+            {
+                rake_ui::init(cx);
+                install_themes(self.themes, cx);
+            }
 
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
@@ -802,7 +821,15 @@ impl<R: Route> App<R> {
                     }
                 };
 
-                cx.new(|_| RootView(view))
+                #[cfg(feature = "experimental-view")]
+                {
+                    cx.new(|cx| rake_ui::Root::new(view, window, cx))
+                }
+
+                #[cfg(not(feature = "experimental-view"))]
+                {
+                    cx.new(|_| RootView(view))
+                }
             });
 
             if let Err(error) = opened {
@@ -907,34 +934,71 @@ struct GpuiHttp {
 
 #[cfg(not(target_family = "wasm"))]
 impl gpui::http_client::HttpClient for GpuiHttp {
-    fn get(
+    fn user_agent(&self) -> Option<&gpui::http_client::http::HeaderValue> {
+        None
+    }
+
+    fn proxy(&self) -> Option<&gpui::http_client::Url> {
+        None
+    }
+
+    fn send(
         &self,
-        url: &str,
-        follow_redirects: bool,
-    ) -> futures::future::BoxFuture<'static, anyhow::Result<gpui::http_client::HttpResponse>> {
-        let client = if follow_redirects {
-            &self.follow
-        } else {
-            &self.manual
+        request: gpui::http_client::Request<gpui::http_client::AsyncBody>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        anyhow::Result<gpui::http_client::Response<gpui::http_client::AsyncBody>>,
+    > {
+        use futures::AsyncReadExt as _;
+        use gpui::http_client::{AsyncBody, RedirectPolicy, RequestTimeout, Response};
+
+        let client = match request.extensions().get::<RedirectPolicy>() {
+            Some(RedirectPolicy::FollowAll) => Ok(self.follow.clone()),
+            Some(RedirectPolicy::FollowLimit(limit)) => {
+                self.follow.with_redirect_limit(*limit as usize)
+            }
+            Some(RedirectPolicy::NoFollow) | None => Ok(self.manual.clone()),
         };
 
-        let request = client.get(url);
-
         Box::pin(async move {
+            let client = client?;
+            let (parts, mut body) = request.into_parts();
+            let mut bytes = Vec::new();
+
+            body.read_to_end(&mut bytes).await?;
+            let mut request = client
+                .request(parts.method.as_str(), &parts.uri.to_string())
+                .body(bytes);
+
+            for (name, value) in &parts.headers {
+                request = request.header(name.as_str(), value.to_str()?);
+            }
+
+            if let Some(timeout) = parts.extensions.get::<RequestTimeout>() {
+                request = request.timeout(timeout.0);
+            }
+
             let response = request.send().await?;
-            let status = response.status();
+            let mut builder = Response::builder().status(response.status());
+
+            for (name, value) in response.headers() {
+                builder = builder.header(name, value);
+            }
+
             let body = response.bytes().await?;
 
-            Ok(gpui::http_client::HttpResponse {
-                status: status.try_into()?,
-                body,
-            })
+            Ok(builder.body(AsyncBody::from(body))?)
         })
     }
 }
 
+#[cfg(all(test, not(target_family = "wasm")))]
+mod http_tests;
+
+#[cfg(not(feature = "experimental-view"))]
 struct RootView(AnyView);
 
+#[cfg(not(feature = "experimental-view"))]
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.0.clone()

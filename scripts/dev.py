@@ -239,6 +239,7 @@ class Project:
             copy_tree(self.web_dir, output)
         if self.bundle.assets:
             copy_tree(self.bundle.assets, output / "assets")
+        shutil.copyfile(Path(__file__).with_name("rake-web-font-licenses.txt"), output / "rake-web-font-licenses.txt")
         if (output / "pkg").exists():
             raise ValueError("web/pkg is reserved for generated Wasm bindings")
         run_output(processes, [self.bindgen, "--target", "web", "--out-dir", str(output / "pkg"), str(source)])

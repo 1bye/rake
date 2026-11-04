@@ -82,8 +82,14 @@ fn setup() -> (gpui::TestAppContext, gpui::WindowHandle<KeyboardHost>) {
     let mut cx = gpui::TestAppContext::single();
 
     cx.update(|cx| {
+        let save = if cx.platform_info().os == gpui::OperatingSystem::Mac {
+            "cmd-s"
+        } else {
+            "ctrl-s"
+        };
+
         cx.bind_keys([
-            gpui::KeyBinding::new("secondary-s", Save, Some("Editor")),
+            gpui::KeyBinding::new(save, Save, Some("Editor")),
             gpui::KeyBinding::new("escape", Cancel, Some("Editor")),
             gpui::KeyBinding::new("l", Local, Some("Editor")),
         ])
@@ -108,7 +114,7 @@ fn setup() -> (gpui::TestAppContext, gpui::WindowHandle<KeyboardHost>) {
             cancelled: 0,
             local: 0,
             parent_clicks: 0,
-            focused_color: Rc::new(Cell::new(gpui::rgb_to_hsla(gpui::rgb(0x111111)))),
+            focused_color: Rc::new(Cell::new(gpui::Hsla::from(gpui::rgb(0x111111)))),
         }
     });
 
@@ -119,7 +125,8 @@ fn setup() -> (gpui::TestAppContext, gpui::WindowHandle<KeyboardHost>) {
 
 fn keys(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle<KeyboardHost>, keys: &str) {
     cx.update_window(window.into(), |_, window, cx| {
-        let keystroke = gpui::Keystroke::parse(keys).expect("keystroke");
+        let keystroke =
+            gpui::Keystroke::parse_with_os(keys, cx.platform_info().os).expect("keystroke");
 
         window.dispatch_event(
             gpui::KeyDownEvent {
@@ -333,7 +340,7 @@ fn focus_visible_styles_follow_keyboard_navigation_without_mouse_focus_styling()
         .read_with(&cx, |host, _| {
             assert_eq!(
                 host.focused_color.get(),
-                gpui::rgb_to_hsla(gpui::rgb(0x111111))
+                gpui::Hsla::from(gpui::rgb(0x111111))
             )
         })
         .unwrap();
@@ -343,7 +350,7 @@ fn focus_visible_styles_follow_keyboard_navigation_without_mouse_focus_styling()
         .read_with(&cx, |host, _| {
             assert_eq!(
                 host.focused_color.get(),
-                gpui::rgb_to_hsla(gpui::rgb(0xff0000))
+                gpui::Hsla::from(gpui::rgb(0xff0000))
             )
         })
         .unwrap();
@@ -403,5 +410,27 @@ fn disabling_between_key_down_and_up_cancels_activation() {
     draw(&mut cx, window);
     window
         .read_with(&cx, |host, _| assert_eq!(host.saved, 0))
+        .unwrap();
+}
+
+#[test]
+fn disabling_an_unfocused_button_removes_its_previous_tab_stop() {
+    let (mut cx, window) = setup();
+
+    window
+        .update(&mut cx, |host, _, cx| {
+            host.disabled = true;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut cx, window);
+    keys(&mut cx, window, "tab");
+    window
+        .update(&mut cx, |host, window, _| {
+            assert!(
+                host.middle.is_focused(window),
+                "Tab must skip a button disabled while unfocused"
+            );
+        })
         .unwrap();
 }

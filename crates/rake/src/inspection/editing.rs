@@ -155,7 +155,7 @@ pub(super) fn refinement(
                     number
                 }
             };
-            Ok(gpui::rgb_to_hsla(gpui::rgba(number)))
+            Ok(gpui::Hsla::from(gpui::rgba(number)))
         };
         let mut next = StyleRefinement::default();
         match property {

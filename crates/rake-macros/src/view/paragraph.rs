@@ -265,7 +265,7 @@ fn inline_classes(value: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> 
                     }
                 };
 
-                quote!(#rake::gpui::HighlightStyle::color(#rake::gpui::rgb_to_hsla(#color)))
+                quote!(#rake::gpui::HighlightStyle::color(#rake::gpui::Hsla::from(#color)))
             }
             _ if class.starts_with("font-[") && class.ends_with(']') => {
                 let font = class[6..class.len() - 1].replace('_', " ");

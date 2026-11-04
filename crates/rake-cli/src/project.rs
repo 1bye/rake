@@ -40,6 +40,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
                 include_str!("../../../scripts/inspector-model.js"),
             ),
             ("dev.py", include_str!("../../../scripts/dev.py")),
+            (
+                "rake-web-font-licenses.txt",
+                include_str!("../../../scripts/rake-web-font-licenses.txt"),
+            ),
             ("preview.py", include_str!("../../../scripts/preview.py")),
             (
                 "preview_socket.py",

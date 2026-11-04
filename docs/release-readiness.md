@@ -2,7 +2,7 @@
 
 Rake v0.1.0-alpha.1 is a source alpha. Use the pinned release tag and the committed
 lockfile; there is no crates.io release or promise of compatibility between alpha
-revisions. The Rust minimum is 1.95.0. GPUI CE is pinned in Cargo.toml and Cargo.lock.
+revisions. The Rust minimum is 1.98.0. `gpui-pre` 0.3.11 is pinned in Cargo.toml and Cargo.lock.
 Existing public APIs are preserved where practical; breaking changes need migration
 notes and updated consumers in the same change. A beta will identify a stable subset
 and use deprecation before removing that subset's public APIs.

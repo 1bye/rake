@@ -160,7 +160,7 @@ fn setup() -> (gpui::TestAppContext, gpui::WindowHandle<Host>) {
 
 fn keys(cx: &mut gpui::TestAppContext, handle: gpui::WindowHandle<Host>, key: &str) {
     cx.update_window(handle.into(), |_, window, cx| {
-        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        let keystroke = gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
 
         window.dispatch_event(
             gpui::KeyDownEvent {
@@ -379,56 +379,62 @@ fn removing_an_anchor_closes_its_popup_and_uses_a_mounted_focus_fallback() {
 
 #[test]
 fn outside_click_dismisses_without_activating_background() {
-    let (mut cx, handle) = setup();
+    for button in [
+        gpui::MouseButton::Left,
+        gpui::MouseButton::Right,
+        gpui::MouseButton::Middle,
+    ] {
+        let (mut cx, handle) = setup();
 
-    open_popup(&mut cx, handle);
-    open_dialog(&mut cx, handle);
-    cx.update_window(handle.into(), |_, window, cx| {
-        let position = gpui::point(gpui::px(5.), gpui::px(5.));
+        open_popup(&mut cx, handle);
+        open_dialog(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            let position = gpui::point(gpui::px(5.), gpui::px(5.));
 
-        window.dispatch_event(
-            gpui::MouseMoveEvent {
-                position,
-                pressed_button: None,
-                modifiers: Default::default(),
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.dispatch_event(
-            gpui::MouseDownEvent {
-                position,
-                button: gpui::MouseButton::Left,
-                modifiers: Default::default(),
-                click_count: 1,
-                first_mouse: false,
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.dispatch_event(
-            gpui::MouseUpEvent {
-                position,
-                button: gpui::MouseButton::Left,
-                modifiers: Default::default(),
-                click_count: 1,
-            }
-            .to_platform_input(),
-            cx,
-        );
-    })
-    .unwrap();
-    draw(&mut cx, handle);
-    handle
-        .read_with(&cx, |host, _| {
-            assert!(!host.dialog.is_open());
-            assert!(
-                host.popup.is_open(),
-                "one click must dismiss only one layer"
+            window.dispatch_event(
+                gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
             );
-            assert_eq!(host.clicks, 0);
+            window.dispatch_event(
+                gpui::MouseDownEvent {
+                    position,
+                    button,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                gpui::MouseUpEvent {
+                    position,
+                    button,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
         })
         .unwrap();
+        draw(&mut cx, handle);
+        handle
+            .read_with(&cx, |host, _| {
+                assert!(!host.dialog.is_open());
+                assert!(
+                    host.popup.is_open(),
+                    "one click must dismiss only one layer"
+                );
+                assert_eq!(host.clicks, 0);
+            })
+            .unwrap();
+    }
 }
 
 #[test]
@@ -562,4 +568,219 @@ fn tab_can_leave_a_nonmodal_popover_in_both_directions() {
             assert!(host.trigger.is_focused(window));
         })
         .unwrap();
+}
+
+#[test]
+fn base_root_shares_modal_traversal_and_respects_consumed_escape() {
+    let (mut cx, window) = setup();
+
+    open_popup(&mut cx, window);
+    open_dialog(&mut cx, window);
+    let host = window.root(&mut cx).unwrap();
+
+    cx.update_window(window.into(), |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            rake_ui::Root::new(host.clone(), window, cx)
+        });
+    })
+    .unwrap();
+    draw(&mut cx, window);
+    cx.update_window(window.into(), |_, window, cx| {
+        host.update(cx, |host, cx| {
+            host.consume_escape = true;
+            window.focus(&host.dialog_last, cx);
+            cx.notify();
+        });
+    })
+    .unwrap();
+    draw(&mut cx, window);
+    keys(&mut cx, window, "tab");
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(host.read(cx).dialog_first.is_focused(window));
+    })
+    .unwrap();
+    keys(&mut cx, window, "escape");
+    cx.update(|cx| {
+        assert!(
+            host.read(cx).dialog.is_open(),
+            "a child can consume Escape under Base Root"
+        )
+    });
+    host.update(&mut cx, |host, cx| {
+        host.consume_escape = false;
+        cx.notify();
+    });
+    draw(&mut cx, window);
+    keys(&mut cx, window, "escape");
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(!host.read(cx).dialog.is_open());
+        assert!(host.read(cx).popup.is_open());
+        assert!(host.read(cx).popup_first.is_focused(window));
+    })
+    .unwrap();
+}
+
+#[cfg(feature = "kit")]
+#[test]
+fn kit_owns_the_window_modal_stack_and_restores_a_suspended_rake_dialog() {
+    use rake::kit::component::WindowExt as _;
+
+    let (mut cx, handle) = setup();
+
+    open_dialog(&mut cx, handle);
+    let host = handle.root(&mut cx).unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            rake_ui::Root::new(host.clone(), window, cx)
+        });
+    })
+    .unwrap();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.open_dialog(cx, |dialog, _, _| {
+            dialog.title("Kit modal").child("One window modal stack")
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(window.has_active_dialog(cx));
+        assert!(
+            host.read(cx).dialog.is_open(),
+            "suspension retains the local dialog state"
+        );
+        assert!(
+            !host
+                .read(cx)
+                .dialog
+                .focus_handle()
+                .contains_focused(window, cx),
+            "local focus guards must yield to Kit"
+        );
+        window.close_dialog(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        assert!(
+            host.read(cx).dialog_first.is_focused(window),
+            "Kit restores the local opener"
+        );
+    })
+    .unwrap();
+}
+
+#[cfg(feature = "kit")]
+#[test]
+fn local_overlay_changes_preserve_an_active_kit_dialogs_focus() {
+    use rake::kit::component::WindowExt as _;
+
+    for reopen in [false, true] {
+        let (mut cx, handle) = setup();
+        open_dialog(&mut cx, handle);
+        let host = handle.root(&mut cx).unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.replace_root(cx, |window, cx| {
+                rake_ui::Root::new(host.clone(), window, cx)
+            });
+        })
+        .unwrap();
+        draw(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.open_dialog(cx, |dialog, _, _| dialog.title("Kit owns focus"));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(&mut cx, handle);
+        let focused = cx
+            .update_window(handle.into(), |_, window, cx| {
+                let focused = window.focused(cx).expect("Kit dialog focused");
+                let dialog = host.read(cx).dialog.clone();
+                dialog.close(window, cx);
+                assert!(
+                    focused.is_focused(window),
+                    "closing a suspended local dialog must preserve Kit focus"
+                );
+                if reopen {
+                    dialog.open(window, cx);
+                    assert!(
+                        focused.is_focused(window),
+                        "opening a suspended local dialog must preserve Kit focus"
+                    );
+                }
+                focused
+            })
+            .unwrap();
+        draw(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert!(
+                focused.is_focused(window),
+                "local frame audits must also preserve Kit focus"
+            );
+            window.close_dialog(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            let host = host.read(cx);
+            if reopen {
+                assert!(
+                    host.dialog_first.is_focused(window),
+                    "resume queued local focus after Kit closes"
+                );
+            } else {
+                assert!(
+                    host.body.is_focused(window),
+                    "restore a mounted opener after Kit closes"
+                );
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[cfg(feature = "kit")]
+#[test]
+fn suspended_popovers_release_bases_deferred_interaction_context() {
+    use rake::kit::{base::GlobalState, component::WindowExt as _};
+
+    let (mut cx, handle) = setup();
+    open_popup(&mut cx, handle);
+    let host = handle.root(&mut cx).unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            rake_ui::Root::new(host.clone(), window, cx)
+        });
+        assert!(GlobalState::is_in_deferred_context(cx));
+        window.open_dialog(cx, |dialog, _, _| dialog.title("Kit modal"));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(
+            host.read(cx).popup.is_open(),
+            "retain the suspended local state"
+        );
+        assert!(
+            !GlobalState::is_in_deferred_context(cx),
+            "a hidden popup must not suppress Kit input context menus"
+        );
+        window.close_dialog(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, _, cx| {
+        assert!(
+            GlobalState::is_in_deferred_context(cx),
+            "restore the popup interaction context on resume"
+        );
+    })
+    .unwrap();
 }

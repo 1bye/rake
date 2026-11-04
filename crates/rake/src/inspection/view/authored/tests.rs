@@ -804,3 +804,91 @@ fn expression_children_display_text_or_their_element_type_without_changing_ident
         identities
     );
 }
+
+struct BaseButtonStyles(Store);
+
+impl Render for BaseButtonStyles {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        crate::view! {
+            <button id="base-button" role={gpui::accesskit::Role::MenuItem} style={|s| s.w(px(100.)).h(px(40.))
+                .bg(gpui::rgb(0x112233)).hover(|s| s.bg(gpui::rgb(0x445566)))}>
+                "Inspectable Base button"
+            </button>
+        }
+        .root(self.0.clone(), 0, WindowId(1))
+    }
+}
+
+#[test]
+fn base_button_retains_resolved_hover_styles_and_live_edits() {
+    use crate::inspection::{StyleDeclaration, StyleEdit};
+
+    let mut app = gpui::TestAppContext::single();
+    let store = Store::default();
+    store.attach();
+    let (_, cx) = app.add_window_view(|_, _| BaseButtonStyles(store.clone()));
+    let draw = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+    };
+    draw(cx);
+    let snapshot = store.snapshot();
+    let button = named(&snapshot, "base-button");
+    assert!(button.kind.contains("rake_ui::view::button::Button"));
+    assert!(button.style_editable);
+    assert_eq!(
+        button.accessibility.as_ref().unwrap().role.as_deref(),
+        Some("MenuItem")
+    );
+    assert_eq!(button.layout.unwrap().width, 100.);
+    let color = |snapshot: &Snapshot| {
+        super::super::super::styles::color(
+            &named(snapshot, "base-button")
+                .resolved
+                .as_ref()
+                .expect("Base button resolved style")
+                .properties["background"],
+        )
+        .unwrap()
+        .css()
+    };
+    assert_eq!(color(&snapshot), "#112233");
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: gpui::point(px(10.), px(10.)),
+        pressed_button: None,
+        modifiers: Default::default(),
+    });
+    draw(cx);
+    let hovered = store.snapshot();
+    assert!(
+        named(&hovered, "base-button")
+            .resolved
+            .as_ref()
+            .unwrap()
+            .hovered
+    );
+    assert_eq!(color(&hovered), "#445566");
+    store
+        .edit_style(
+            &button.id,
+            &snapshot.capture,
+            &StyleEdit::Set {
+                declaration: StyleDeclaration {
+                    property: "width".into(),
+                    value: "160px".into(),
+                    enabled: true,
+                },
+            },
+        )
+        .unwrap();
+    draw(cx);
+    assert_eq!(
+        named(&store.snapshot(), "base-button")
+            .layout
+            .unwrap()
+            .width,
+        160.
+    );
+}

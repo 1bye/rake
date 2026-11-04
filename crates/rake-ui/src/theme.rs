@@ -14,6 +14,12 @@ use gpui::{App, FontWeight, Global, Pixels};
 
 #[doc(hidden)]
 pub mod apply;
+mod semantic;
+
+pub(crate) use semantic::observe;
+
+pub use gpui_base::ThemeAppearance as Appearance;
+pub use semantic::Semantic;
 
 thread_local! {
     static THEMES: RefCell<HashMap<TypeId, Rc<dyn Any>>> = RefCell::default();
@@ -36,6 +42,14 @@ impl<T: 'static> Global for ThemeGlobal<T> {}
 /// Replaces this type's theme, notifies global observers and refreshes windows.
 /// Existing element styles keep their values until the view is rebuilt.
 pub fn install<T: 'static>(cx: &mut App, theme: T) {
+    if let Some(semantic) = (&theme as &dyn Any).downcast_ref::<Semantic>() {
+        semantic::install(cx, semantic);
+    } else {
+        replace(cx, theme);
+    }
+}
+
+fn replace<T: 'static>(cx: &mut App, theme: T) {
     let theme = Rc::new(theme);
 
     THEMES.with_borrow_mut(|themes| {

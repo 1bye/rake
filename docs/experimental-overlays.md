@@ -47,6 +47,15 @@ owner to jump. For variable-height content, embed GPUI's `list` with a retained
 `ListState`; update that state with the model's insertions/deletions. The macro
 adds no reconciliation for those APIs.
 
+The surfaces use Base's dialog host, focus-trap registration, popover lifecycle
+and positioner. Rake retains its controlled stack and frame reconciliation for
+separately mounted anchors and consumed keyboard events. Rake's `App` builder
+initializes Base and wraps windows in its Root.
+
+With `kit`, Kit owns window-wide modals and notifications. Local Rake overlays
+suspend while a Kit dialog or sheet is active, then resume with their state
+retained. See [Base and Kit](gpui-kit.md) for focus ownership and target limits.
+
 ## Overlay ownership and composition
 
 Create one host in the window's owning entity, outside `render`, then create

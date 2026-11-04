@@ -1,8 +1,20 @@
 # GPUI variations: future integration handoff
 
-Status: deferred. Rake currently supports the pinned GPUI Community Edition
-revision in `crates/rake/Cargo.toml` and `crates/rake-ui/Cargo.toml`. This document
-describes a future direction, not an implemented compatibility guarantee.
+Status: arbitrary backend selection remains deferred. Rake pins `gpui-pre` and
+`gpui-pre-platform` 0.3.11 in the workspace `Cargo.toml`; Rake, `rake-ui` and
+`rake-native` share those concrete types. This migration aligns the dependency
+with the GPUI Base/Kit ecosystem. Base-backed experimental views and optional
+native Kit support use version 0.9.0; see [the integration contract](../gpui-kit.md).
+This does not promise arbitrary GPUI revisions.
+
+The browser platform's default `multithreaded` feature is disabled so the
+`wasm32-unknown-unknown` build can use stable Rust. GPUI dispatches background
+work on the browser's main thread. Rake already selected CE's single-threaded
+Web constructor, so this preserves its scheduling model. CPU-heavy work can
+delay input/rendering; GPUI dedicated-thread sessions are unavailable on Web
+in this configuration. Native thread dispatch is unaffected. Rake restores the
+same IBM Plex Sans and Lilex default fonts CE previously bundled, loading them
+before opening the browser window.
 
 ## Goal
 

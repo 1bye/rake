@@ -58,6 +58,10 @@ pub(super) fn expand(
         attribute.name.strip_prefix("on:").expect("event namespace")
     };
 
+    if name == "scroll-wheel" {
+        return Ok(quote!(.on_scroll(#value)));
+    }
+
     if name == "mouse-down-out" {
         return Ok(quote!(.on_mouse_down_out(#value)));
     }

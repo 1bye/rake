@@ -1,7 +1,6 @@
 //! Typed application of app-owned theme fields, used by generated code.
 
 use gpui::{Fill, Hsla, Pixels, Rems, SharedString, Styled};
-use palette::IntoColor;
 
 use super::TextToken;
 
@@ -19,7 +18,7 @@ pub trait ThemeText<Kind> {
     fn apply<S: Styled>(self, style: S) -> S;
 }
 
-impl<T: IntoColor<Hsla>> ThemeText<Color> for T {
+impl<T: Into<Hsla>> ThemeText<Color> for T {
     fn apply<S: Styled>(self, style: S) -> S {
         style.text_color(self)
     }
@@ -59,7 +58,7 @@ pub trait ThemeBorder {
     fn apply<S: Styled>(self, style: S) -> S;
 }
 
-impl<T: IntoColor<Hsla>> ThemeBorder for T {
+impl<T: Into<Hsla>> ThemeBorder for T {
     fn apply<S: Styled>(self, style: S) -> S {
         style.border_color(self)
     }
@@ -108,9 +107,9 @@ pub trait ThemeRunText {
     fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle;
 }
 
-impl<T: IntoColor<Hsla>> ThemeRunText for T {
+impl<T: Into<Hsla>> ThemeRunText for T {
     fn apply(self, style: crate::view::RunStyle) -> crate::view::RunStyle {
-        style.highlight(gpui::HighlightStyle::color(self.into_color()))
+        style.highlight(gpui::HighlightStyle::color(self.into()))
     }
 }
 

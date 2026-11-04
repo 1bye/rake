@@ -70,7 +70,7 @@ fn pointer_events(cx: &mut gpui::TestAppContext, handle: gpui::WindowHandle<Host
         }
 
         window.dispatch_event(
-            gpui::ScrollWheelEvent {
+            gpui::ScrollEvent {
                 position: inside,
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-20.))),
                 ..Default::default()

@@ -43,6 +43,19 @@ pub(super) fn mount(
     let context = runtime.context();
     let content = content(context, window, cx)?;
 
+    #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+    {
+        let observed = runtime.router.clone();
+
+        crate::inspection::window::prepare(
+            window,
+            cx,
+            runtime.router.client().inspection(),
+            crate::router::WindowId(1),
+            move || observed.snapshot().revision,
+        );
+    }
+
     Ok(cx
         .new(|cx| ManagedRoot::new(content, runtime, config, cx))
         .into())

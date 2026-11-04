@@ -436,7 +436,7 @@ fn socket_deadline_covers_the_entire_reply_even_when_bytes_keep_arriving() {
         // Each byte arrives within the read timeout, but the full frame exceeds it.
         let reply = serde_json::to_vec(&Ok::<_, ControlError>(Reply::Acknowledged)).unwrap();
 
-        for byte in reply.into_iter().chain([b'\n']) {
+        for byte in reply.into_iter().chain(*b"\n") {
             if stream.write_all(&[byte]).is_err() {
                 break;
             }

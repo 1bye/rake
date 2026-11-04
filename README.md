@@ -26,13 +26,15 @@ application commands, operation results and lifecycle guards.
   signing, publication and shared native update controllers.
 - **Platform services.** Shared files, clipboard, preferences and URL activation, with
   owned browser workers, offline bundles and guarded deployment updates.
+- **Optional GPUI Kit.** Base-backed experimental views, shared semantic colors and
+  Kit components through the native `kit` feature. See [Base and Kit](docs/gpui-kit.md).
 - **Optional native components.** AppKit buttons, segmented controls and custom
   native views in GPUI layouts through the `native-components` feature. See
   [rake-native](crates/rake-native/README.md) for the macOS adapter and its boundaries.
 
 ## Try it
 
-The repository pins Rust 1.95.0 and GPUI CE. From the workspace root, run
+The repository pins Rust 1.98.0 and `gpui-pre` 0.3.11. From the workspace root, run
 [Fieldnotes](docs/notes.md), the reference notes app with search, autosave and
 crash recovery:
 
@@ -47,6 +49,7 @@ Other examples:
 | `cargo run -p rake-foundation` | Application setup, HTTP and diagnostics |
 | `cargo run -p rake-routing` | Tabs, histories, guards and managed work |
 | `cargo run -p rake-view` | Experimental HTML-like `rake::view!` syntax |
+| `cargo run -p rake-kit-example --features kit,devtools` | Optional Kit controls, shared colors and routed tabs (native) |
 | `cargo run -p rake-desktop-example` | Pages, persistent layouts, loading/retry and native updates |
 | `cargo run -p rake-files` | File processing, clipboard/export, preferences and Web updates |
 | `cargo run -p rake --example native --features native-components` | Real AppKit controls and native Liquid Glass buttons (macOS) |
@@ -84,7 +87,7 @@ build options and [Chrome DevTools](docs/devtools.md) for connecting the inspect
 
 Create a binary crate with `cargo new hello-rake`, then add this dependency to
 its `Cargo.toml`. Pin the alpha tag because APIs can change; use Rust
-1.95.0 and the native build prerequisites in the [support contract](docs/release-readiness.md).
+1.98.0 and the native build prerequisites in the [support contract](docs/release-readiness.md).
 
 ```toml
 [dependencies]

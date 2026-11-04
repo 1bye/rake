@@ -559,6 +559,19 @@ fn mount_layout<R: Route>(
     window: &mut Window,
     cx: &mut gpui::App,
 ) -> Result<Option<AnyView>, MountError> {
+    #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+    {
+        let observed = router.clone();
+
+        crate::inspection::window::prepare(
+            window,
+            cx,
+            router.client().inspection(),
+            window_id,
+            move || observed.snapshot().revision,
+        );
+    }
+
     layout
         .map(|factory| factory(LayoutContext::new(router, services, window_id), window, cx))
         .transpose()
@@ -1277,35 +1290,9 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
 
             let result = app.update(|cx| {
                 cx.open_window(options, move |window, cx| {
-                    if let Err(error) = router.attach_window(id, window, cx) {
-                        *callback_error.borrow_mut() = Some(MountError(error.to_string()));
-                        window.remove_window();
-
-                        return cx.new(|_| Workspace {
-                            chrome,
-                            navigation_feedback,
-                            restart: R::from_uri("/").ok(),
-                            router: router.clone(),
-                            layout: None,
-                            _driver: None,
-                            window: id,
-                        });
-                    }
-
-                    let layout = match mount_layout(
-                        layout.as_ref(),
-                        router.clone(),
-                        services.clone(),
-                        id,
-                        window,
-                        cx,
-                    ) {
-                        Ok(layout) => layout,
-                        Err(error) => {
-                            *callback_error.borrow_mut() = Some(error);
-                            // `ProvisionalWindow` owns the final rollback; close
-                            // the just-created host immediately as well so a
-                            // failed layout never becomes visible.
+                    let view = (|window: &mut Window, cx: &mut gpui::App| {
+                        if let Err(error) = router.attach_window(id, window, cx) {
+                            *callback_error.borrow_mut() = Some(MountError(error.to_string()));
                             window.remove_window();
 
                             return cx.new(|_| Workspace {
@@ -1318,21 +1305,59 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                                 window: id,
                             });
                         }
-                    };
 
-                    let view = cx.new(|_| Workspace {
-                        chrome,
-                        navigation_feedback,
-                        restart: R::from_uri("/").ok(),
-                        router: router.clone(),
-                        layout,
-                        _driver: None,
-                        window: id,
-                    });
+                        let layout = match mount_layout(
+                            layout.as_ref(),
+                            router.clone(),
+                            services.clone(),
+                            id,
+                            window,
+                            cx,
+                        ) {
+                            Ok(layout) => layout,
+                            Err(error) => {
+                                *callback_error.borrow_mut() = Some(error);
+                                // `ProvisionalWindow` owns the final rollback; close
+                                // the just-created host immediately as well so a
+                                // failed layout never becomes visible.
+                                window.remove_window();
 
-                    views.borrow_mut().insert(id, view.downgrade());
+                                return cx.new(|_| Workspace {
+                                    chrome,
+                                    navigation_feedback,
+                                    restart: R::from_uri("/").ok(),
+                                    router: router.clone(),
+                                    layout: None,
+                                    _driver: None,
+                                    window: id,
+                                });
+                            }
+                        };
 
-                    view
+                        let view = cx.new(|_| Workspace {
+                            chrome,
+                            navigation_feedback,
+                            restart: R::from_uri("/").ok(),
+                            router: router.clone(),
+                            layout,
+                            _driver: None,
+                            window: id,
+                        });
+
+                        views.borrow_mut().insert(id, view.downgrade());
+
+                        view
+                    })(window, cx);
+
+                    #[cfg(feature = "experimental-view")]
+                    {
+                        cx.new(|cx| rake_ui::Root::new(view, window, cx))
+                    }
+
+                    #[cfg(not(feature = "experimental-view"))]
+                    {
+                        view
+                    }
                 })
                 .map(|_| ())
                 .map_err(|error| MountError(error.to_string()))

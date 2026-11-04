@@ -193,8 +193,24 @@ impl HttpClient {
     /// Returns [`Error::Configuration`] if the native transport cannot be constructed.
     #[cfg(not(target_family = "wasm"))]
     pub fn without_redirects(&self) -> Result<Self> {
+        self.with_redirect_limit(0)
+    }
+
+    /// Builds an equivalent native client with a maximum number of redirects.
+    /// A limit of zero returns redirect responses without following them.
+    ///
+    /// # Errors
+    /// Returns [`Error::Configuration`] if the native transport cannot be constructed.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn with_redirect_limit(&self, limit: usize) -> Result<Self> {
+        let policy = if limit == 0 {
+            reqwest::redirect::Policy::none()
+        } else {
+            reqwest::redirect::Policy::limited(limit)
+        };
+
         let transport = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(policy)
             .build()
             .map_err(|error| Error::Configuration(error.without_url().to_string()))?;
 

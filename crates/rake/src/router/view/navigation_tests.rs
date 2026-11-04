@@ -91,8 +91,9 @@ fn focus_first_control(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle
 }
 
 fn key_press(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle<BoundaryHost>, key: &str) {
-    let keystroke = gpui::Keystroke::parse(key).unwrap();
     cx.update_window(window.into(), |_, window, cx| {
+        let keystroke = gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+
         window.dispatch_event(
             gpui::KeyDownEvent {
                 keystroke: keystroke.clone(),

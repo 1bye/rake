@@ -70,9 +70,9 @@ fn hover_classes_merge_once_and_conditional_colors_follow_rerenders() {
         };
 
         move_to(&mut cx, 500.);
-        assert_eq!(color.get(), gpui::rgb_to_hsla(gpui::rgb(0x111111)));
+        assert_eq!(color.get(), gpui::Hsla::from(gpui::rgb(0x111111)));
         move_to(&mut cx, 10.);
-        assert_eq!(color.get(), gpui::rgb_to_hsla(gpui::rgb(0x00ff00)));
+        assert_eq!(color.get(), gpui::Hsla::from(gpui::rgb(0x00ff00)));
 
         window
             .update(&mut cx, |host, _, cx| {
@@ -82,6 +82,6 @@ fn hover_classes_merge_once_and_conditional_colors_follow_rerenders() {
             .unwrap();
         draw(&mut cx, window);
 
-        assert_eq!(color.get(), gpui::rgb_to_hsla(gpui::rgb(0xff0000)));
+        assert_eq!(color.get(), gpui::Hsla::from(gpui::rgb(0xff0000)));
     }
 }

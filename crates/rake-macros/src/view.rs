@@ -827,8 +827,10 @@ impl Element {
                 .role(#rake::gpui::accesskit::Role::List)),
             Tag::ListItem => quote!(#rake::gpui::div().id(#id).flex().flex_col()
                 .role(#rake::gpui::accesskit::Role::ListItem)),
-            Tag::Button => quote!(#rake::gpui::div().id(#id).flex().items_center().justify_center()
-                .role(#rake::gpui::accesskit::Role::Button).cursor_pointer()),
+            Tag::Button => {
+                quote!(#rake::__private::view_button_base(#id).flex().items_center().justify_center()
+                .role(#rake::gpui::accesskit::Role::Button).cursor_pointer())
+            }
             Tag::Svg => {
                 let path = self.required_attribute("path")?;
 

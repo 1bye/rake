@@ -6,10 +6,11 @@ use gpui::{
     accesskit, point, prelude::*, px, rgb, size,
 };
 
+use gpui_base::FocusTrapElement as _;
+
 use super::state::{AnchorState, Kind, OverlayHostState, OverlayState};
 
 /// Window-root host for overlay controls, with background actions isolated in `body`.
-#[derive(IntoElement)]
 pub struct OverlayHost {
     /// State created once in the window's owning entity.
     pub state: OverlayHostState,
@@ -17,6 +18,16 @@ pub struct OverlayHost {
     pub body: AnyElement,
     /// Popovers and dialogs, normally authored as nested component tags.
     pub children: Vec<AnyElement>,
+}
+
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for OverlayHost {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
 }
 
 impl RenderOnce for OverlayHost {
@@ -58,12 +69,21 @@ impl RenderOnce for OverlayHost {
 }
 
 /// Tracks the current visible window bounds of its trigger content.
-#[derive(IntoElement)]
 pub struct OverlayAnchor {
     /// A handle created through the same host as the corresponding popover.
     pub state: AnchorState,
     /// Trigger content, commonly a button with an accessible expanded state.
     pub children: Vec<AnyElement>,
+}
+
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for OverlayAnchor {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
 }
 
 impl RenderOnce for OverlayAnchor {
@@ -83,7 +103,6 @@ impl RenderOnce for OverlayAnchor {
 
 /// An anchored, nonmodal group of controls with Escape and outside-click dismissal.
 /// Use a state created by [`OverlayHostState::popover`].
-#[derive(IntoElement)]
 pub struct Popover {
     /// Retained interaction state.
     pub state: OverlayState,
@@ -93,8 +112,18 @@ pub struct Popover {
     pub children: Vec<AnyElement>,
 }
 
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for Popover {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
+}
+
 impl RenderOnce for Popover {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         assert_eq!(
             self.state.kind(),
             Kind::Popover,
@@ -104,15 +133,32 @@ impl RenderOnce for Popover {
             std::rc::Rc::ptr_eq(&self.state.host.0, &self.anchor.host.0),
             "popover and anchor must share a host"
         );
-        self.state.inner.borrow_mut().anchor = Some(self.anchor);
+        self.state.inner.borrow_mut().anchor = Some(self.anchor.clone());
 
-        floating(self.state, None, None, self.children)
+        let suspended = super::state::kit_modal_open(window, cx);
+
+        self.state
+            .sync_popover(self.state.is_open() && !suspended, cx);
+
+        if suspended || !self.state.is_open() {
+            return gpui::Empty.into_any_element();
+        }
+
+        let priority = self.state.priority();
+
+        gpui::deferred(Floating {
+            state: self.state,
+            anchor: self.anchor,
+            children: Some(self.children),
+            painted: None,
+        })
+        .with_priority(priority)
+        .into_any_element()
     }
 }
 
 /// A modal dialog with initial focus, contained Tab navigation and focus restoration.
 /// Use a state created by [`OverlayHostState::dialog`].
-#[derive(IntoElement)]
 pub struct Dialog {
     /// Retained interaction state.
     pub state: OverlayState,
@@ -124,45 +170,78 @@ pub struct Dialog {
     pub children: Vec<AnyElement>,
 }
 
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for Dialog {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
+}
+
 impl RenderOnce for Dialog {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        crate::init(cx);
         assert_eq!(
             self.state.kind(),
             Kind::Dialog,
             "Dialog requires dialog state"
         );
 
-        floating(self.state, Some(self.title), self.footer, self.children)
+        if !self.state.is_open() || super::state::kit_modal_open(window, cx) {
+            return gpui::Empty.into_any_element();
+        }
+
+        let state = self.state;
+
+        let popup = surface(
+            state.clone(),
+            Some(self.title),
+            self.footer,
+            self.children,
+            window,
+        );
+
+        let close = state.clone();
+        let backdrop_close = state.clone();
+
+        gpui_base::Dialog::new(cx)
+            .open(true)
+            // Rake's surface dispatch respects a child's consumed Escape.
+            .close_on_escape(false)
+            .focus_handle(state.focus_handle())
+            .layer(state.priority(), state.is_topmost())
+            .request_close(move |_, window, cx| {
+                close.close(window, cx);
+            })
+            .backdrop(
+                gpui::div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::rgba(0x00000066))
+                    .on_any_mouse_down(move |event, window, cx| {
+                        // Base handles left presses; Rake also dismisses on other buttons.
+                        window.prevent_default();
+
+                        if event.button != gpui::MouseButton::Left {
+                            if backdrop_close.is_topmost() {
+                                backdrop_close.close(window, cx);
+                            }
+
+                            cx.stop_propagation();
+                        }
+                    })
+                    .on_scroll(|_, _, cx| cx.stop_propagation()),
+            )
+            .popup(popup)
+            .into_any_element()
     }
-}
-
-fn floating(
-    state: OverlayState,
-    title: Option<SharedString>,
-    footer: Option<AnyElement>,
-    children: Vec<AnyElement>,
-) -> AnyElement {
-    if !state.is_open() {
-        return gpui::Empty.into_any_element();
-    }
-
-    let priority = state.priority();
-
-    gpui::deferred(Floating {
-        state,
-        title,
-        footer,
-        children: Some(children),
-        painted: None,
-    })
-    .with_priority(priority)
-    .into_any_element()
 }
 
 struct Floating {
     state: OverlayState,
-    title: Option<SharedString>,
-    footer: Option<AnyElement>,
+    anchor: AnchorState,
     children: Option<Vec<AnyElement>>,
     painted: Option<AnyElement>,
 }
@@ -220,106 +299,34 @@ impl Element for Floating {
             return;
         }
 
-        let anchor = self.state.inner.borrow().anchor.clone();
+        let data = self.anchor.inner.borrow();
 
-        let position = if let Some(anchor) = anchor {
-            let data = anchor.inner.borrow();
+        if data.frame != self.state.host.0.borrow().frame {
+            return;
+        }
 
-            if data.frame != self.state.host.0.borrow().frame {
-                return;
-            }
-
-            let Some(bounds) = data.bounds else {
-                return;
-            };
-
-            Some(bounds.bottom_left())
-        } else {
-            None
+        let Some(bounds) = data.bounds else {
+            return;
         };
+
+        let position = bounds.bottom_left();
+
+        drop(data);
 
         let viewport = window.viewport_size();
         let modal = self.state.modal_context();
 
-        let (id, root, first, last) = {
-            let data = self.state.inner.borrow();
+        let surface = surface(
+            self.state.clone(),
+            None,
+            None,
+            self.children
+                .take()
+                .expect("floating content prepaints once"),
+            window,
+        );
 
-            (
-                data.id,
-                data.root.clone(),
-                data.first.clone(),
-                data.last.clone(),
-            )
-        };
-
-        let key_state = self.state.clone();
-
-        let mut surface = gpui::div()
-            .id(("rake::overlay:surface", id))
-            .track_focus(&root)
-            .key_context("RakeOverlay")
-            .role(if self.title.is_some() {
-                accesskit::Role::Dialog
-            } else {
-                accesskit::Role::Group
-            })
-            .w(px(if self.title.is_some() { 520. } else { 320. }))
-            .max_w((viewport.width - px(32.)).max(px(1.)))
-            .max_h((viewport.height - px(32.)).max(px(1.)))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .rounded_lg()
-            .shadow_lg()
-            .bg(rgb(0x22323d))
-            .text_color(rgb(0xf0f4e8))
-            .overflow_y_scroll()
-            .occlude()
-            .on_key_down(move |event, window, cx| {
-                if !key_state.is_topmost() || window.default_prevented() {
-                    return;
-                }
-
-                let mut modifiers = event.keystroke.modifiers;
-
-                modifiers.shift = false;
-
-                if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-                    key_state.close(window, cx);
-                } else if event.keystroke.key == "tab" && !modifiers.modified() {
-                    key_state.navigate(event.keystroke.modifiers.shift, window, cx);
-                } else {
-                    return;
-                }
-
-                window.prevent_default();
-                cx.stop_propagation();
-            })
-            .child(gpui::div().id("start").size_0().track_focus(&first));
-
-        if let Some(title) = self.title.take() {
-            surface = surface.aria_label(title.clone()).child(
-                gpui::div()
-                    .text_lg()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(title),
-            );
-        }
-
-        surface = surface
-            .children(
-                self.children
-                    .take()
-                    .expect("floating content prepaints once"),
-            )
-            .children(self.footer.take())
-            .child(gpui::div().id("end").size_0().track_focus(&last));
-        let surface = Frame {
-            inner: surface,
-            hook: Hook::Surface(self.state.clone(), modal),
-        };
-
+        let id = self.state.inner.borrow().id;
         let backdrop_state = self.state.clone();
 
         let backdrop = gpui::div()
@@ -336,25 +343,21 @@ impl Element for Floating {
                 window.prevent_default();
                 cx.stop_propagation();
             })
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
+            .on_scroll(|_, _, cx| cx.stop_propagation());
 
-        let positioned = if let Some(position) = position {
-            gpui::anchored()
-                .position(position)
-                .anchor(gpui::Anchor::TopLeft)
-                .snap_to_window_with_margin(gpui::Edges::all(px(16.)))
-                .child(surface)
+        let surface = if modal {
+            let focus = self.state.focus_handle();
+
+            surface
+                .focus_trap(("rake::overlay:trap", self.state.inner.borrow().id), &focus)
                 .into_any_element()
         } else {
-            gpui::div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(surface)
-                .into_any_element()
+            surface.into_any_element()
         };
+
+        let positioned = gpui_base::Positioner::corner(gpui::Anchor::TopLeft, position)
+            .margin(px(16.))
+            .child(surface);
 
         let mut screen = gpui::div()
             .absolute()
@@ -394,6 +397,93 @@ impl Element for Floating {
     }
 }
 
+fn surface(
+    state: OverlayState,
+    mut title: Option<SharedString>,
+    footer: Option<AnyElement>,
+    children: Vec<AnyElement>,
+    window: &Window,
+) -> Frame {
+    let viewport = window.viewport_size();
+    let modal = state.modal_context();
+
+    let (id, root, first, last) = {
+        let data = state.inner.borrow();
+
+        (
+            data.id,
+            data.root.clone(),
+            data.first.clone(),
+            data.last.clone(),
+        )
+    };
+
+    let key_state = state.clone();
+
+    let mut surface = gpui::div()
+        .id(("rake::overlay:surface", id))
+        .track_focus(&root)
+        .key_context("RakeOverlay")
+        .role(if title.is_some() {
+            accesskit::Role::Dialog
+        } else {
+            accesskit::Role::Group
+        })
+        .w(px(if title.is_some() { 520. } else { 320. }))
+        .max_w((viewport.width - px(32.)).max(px(1.)))
+        .max_h((viewport.height - px(32.)).max(px(1.)))
+        .flex()
+        .flex_col()
+        .gap_3()
+        .p_4()
+        .rounded_lg()
+        .shadow_lg()
+        .bg(rgb(0x22323d))
+        .text_color(rgb(0xf0f4e8))
+        .overflow_y_scroll()
+        .occlude()
+        .on_key_down(move |event, window, cx| {
+            if !key_state.is_topmost() || window.default_prevented() {
+                return;
+            }
+
+            let mut modifiers = event.keystroke.modifiers;
+
+            modifiers.shift = false;
+
+            if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
+                key_state.close(window, cx);
+            } else if event.keystroke.key == "tab" && !modifiers.modified() {
+                key_state.navigate(event.keystroke.modifiers.shift, window, cx);
+            } else {
+                return;
+            }
+
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .child(gpui::div().id("start").size_0().track_focus(&first));
+
+    if let Some(title) = title.take() {
+        surface = surface.aria_label(title.clone()).child(
+            gpui::div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(title),
+        );
+    }
+
+    surface = surface
+        .children(children)
+        .children(footer)
+        .child(gpui::div().id("end").size_0().track_focus(&last));
+
+    Frame {
+        inner: surface,
+        hook: Hook::Surface(state.clone(), modal),
+    }
+}
+
 enum Hook {
     Host(OverlayHostState),
     Anchor(AnchorState),
@@ -404,6 +494,24 @@ enum Hook {
 struct Frame {
     inner: Stateful<Div>,
     hook: Hook,
+}
+
+impl InteractiveElement for Frame {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.inner.interactivity()
+    }
+}
+
+impl Styled for Frame {
+    fn style(&mut self) -> &mut gpui::StyleRefinement {
+        self.inner.style()
+    }
+}
+
+impl ParentElement for Frame {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.inner.extend(elements);
+    }
 }
 
 impl IntoElement for Frame {

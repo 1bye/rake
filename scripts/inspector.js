@@ -599,7 +599,12 @@ async function inspectElement(id) {
   render(true);
 }
 function styleValue(value, key) {
-  const color = value?.Color?.tag === 'Solid' ? value.Color.solid : null;
+  const color = value?.Color?.tag === 'Solid' && (!value.Color.color_space || value.Color.color_space === 'Srgb') ? value.Color.solid : null;
+  const hex = typeof value === 'string' ? value : color;
+  if (typeof hex === 'string' && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(hex)) {
+    const swatch = el('span', null, 'color-swatch'); swatch.style.backgroundColor = hex;
+    return append(el('span', null, 'value'), swatch, document.createTextNode(hex + ';'));
+  }
   if (color && ['h', 's', 'l', 'a'].every(component => Number.isFinite(color[component]) && color[component] >= 0 && color[component] <= 1)) {
     const css = `hsl(${(color.h * 360).toFixed(1)} ${(color.s * 100).toFixed(1)}% ${(color.l * 100).toFixed(1)}% / ${color.a})`;
     const swatch = el('span', null, 'color-swatch'); swatch.style.backgroundColor = css;

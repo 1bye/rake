@@ -12,9 +12,17 @@ workspace = true
 
 [dependencies]
 tracing.workspace = true
-palette = "0.7.7"
 unicode-segmentation = "1.13.3"
-gpui = { package = "gpui_ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "99109e3a77ddadbcb46cba8567e779a651600608", default-features = false }
+gpui = { workspace = true }
+gpui-base.workspace = true
 
 [features]
+kit = ["dep:gpui-kit"]
 test-support = ["gpui/test-support"]
+
+[dev-dependencies]
+# The observer regression exercises GPUI's actual global effect queue.
+gpui = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+gpui-kit = { workspace = true, optional = true }

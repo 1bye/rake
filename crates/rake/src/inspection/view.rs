@@ -22,6 +22,11 @@ pub(crate) mod authored;
 mod geometry;
 mod provenance;
 mod text;
+#[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+mod window;
+
+#[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+pub(super) use window::capture as capture_window;
 
 /// Adds a named inspection boundary to a styled GPUI element. Call after styling.
 pub trait InspectElement: IntoElement + Styled {
@@ -71,6 +76,8 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         handlers_truncated: false,
         cache: None,
         overrides: Vec::new(),
+        #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+        window_finish: None,
     }
 }
 
@@ -96,6 +103,8 @@ pub struct Inspected<E: gpui::Element> {
     handlers_truncated: bool,
     cache: Option<Rc<RefCell<BoundaryCache>>>,
     overrides: Vec<super::StyleDeclaration>,
+    #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+    window_finish: Option<Rc<RefCell<window::Completion>>>,
 }
 
 impl<E: gpui::Element + Styled> Styled for Inspected<E> {
@@ -129,6 +138,34 @@ impl<E: gpui::Element + gpui::StyledImage> gpui::StyledImage for Inspected<E> {
 }
 
 impl<E: gpui::Element> Inspected<E> {
+    fn restore_layout(&self, host: Option<LayoutContext>, previous: Option<bool>, cx: &mut App) {
+        #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+        if let Some(completion) = &self.window_finish {
+            let mut completion = completion.borrow_mut();
+
+            completion.host = host;
+            completion.layout = previous;
+
+            return;
+        }
+
+        cx.global_mut::<LayoutHost>().0 = host;
+
+        if let Some(previous) = previous {
+            cx.global_mut::<CapturingLayout>().0 = previous;
+        }
+    }
+
+    fn captures_window(&self) -> bool {
+        #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+        {
+            self.window_finish.is_some()
+        }
+
+        #[cfg(not(all(feature = "kit", feature = "devtools", not(target_family = "wasm"))))]
+        false
+    }
+
     fn boundary_key(
         &self,
         id: Option<&GlobalElementId>,
@@ -400,6 +437,19 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        // A window-wide Root plugin also captures presentation overlays. A
+        // nested route/root using the same store contributes to that capture.
+        if let Some((store, _, host)) = &self.root
+            && cx
+                .try_global::<LayoutHost>()
+                .and_then(|host| host.0.as_ref())
+                .is_some_and(|context| {
+                    context.window == *host && Rc::ptr_eq(&context.store.0, &store.0)
+                })
+        {
+            self.root = None;
+        }
+
         if let Some(original) = self.original_text.take() {
             text::restore(&mut self.inner, *original);
         }
@@ -526,7 +576,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         {
             self.focus = button.inspection_focus().cloned();
         }
-        cx.global_mut::<LayoutHost>().0 = previous_host;
+
+        self.restore_layout(previous_host, previous, cx);
+
         if capturing
             && self.original_style.is_none()
             && let Some(read) = self.style_reader
@@ -540,9 +592,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     .map(|interactive| interactive.compute_style(id, None, window, cx))
             })
             .flatten();
-        if let Some(previous) = previous {
-            cx.global_mut::<CapturingLayout>().0 = previous;
-        }
+        #[cfg(feature = "experimental-view")]
+        let style = style.or_else(|| {
+            (&self.inner as &dyn std::any::Any)
+                .downcast_ref::<rake_ui::view::Button>()?
+                .inspection_style()
+                .cloned()
+        });
+
         (layout, (state, style))
     }
 
@@ -575,6 +632,15 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                 navigation: Vec::new(),
             })
         });
+
+        #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+        let previous = if let Some(completion) = &self.window_finish {
+            completion.borrow_mut().capture = previous;
+
+            None
+        } else {
+            previous
+        };
 
         let mut retained_index = None;
         let mut a11y_truncated = false;
@@ -815,7 +881,10 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(timer) = timer {
             timer.finish();
         }
-        if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
+
+        if !self.captures_window()
+            && let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut()
+        {
             capture.parents.pop();
             capture.owners.pop();
             if self.scroll.is_some() {
@@ -845,15 +914,19 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             }
         }
 
-        let overlay = self.root.as_ref().and_then(|(store, _, host)| {
-            overlay(
-                store,
-                *host,
-                frame.as_ref().map(|frame| &frame.capture.snapshot),
-                window,
-                cx,
-            )
-        });
+        let overlay = if self.captures_window() {
+            None
+        } else {
+            self.root.as_ref().and_then(|(store, _, host)| {
+                overlay(
+                    store,
+                    *host,
+                    frame.as_ref().map(|frame| &frame.capture.snapshot),
+                    window,
+                    cx,
+                )
+            })
+        };
 
         (
             result,
@@ -952,101 +1025,20 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(previous) = previous {
             let completed = std::mem::replace(&mut cx.global_mut::<ActiveCapture>().0, previous);
 
-            if let (Some((store, _, host)), Some(mut completed)) = (&self.root, completed) {
-                accessibility::names(&mut completed.snapshot);
-                accessibility::order(&mut completed.snapshot);
-                let mut remaining =
-                    (super::MAX_CAPTURE_BYTES - 4096).saturating_sub(completed.bytes);
-
-                for (element, details) in completed
-                    .snapshot
-                    .elements
-                    .iter_mut()
-                    .zip(&mut completed.details)
-                {
-                    if let Some(resolved) = &details.resolved {
-                        let data_bytes = resolved.bytes + 256;
-                        let bytes = data_bytes + 16;
-
-                        if bytes > remaining || data_bytes > super::MAX_RESOLVED_STYLE_BYTES {
-                            details.resolved = None;
-                            element.metadata_truncated = true;
-                        } else {
-                            remaining -= bytes;
-                        }
-                    }
-                }
-
-                let navigation = completed.navigation;
-
-                let caches = completed
-                    .snapshot
-                    .elements
-                    .iter()
-                    .zip(completed.caches)
-                    .zip(&completed.details)
-                    .filter_map(|((element, cache), details)| {
-                        if details.resolved.is_none() {
-                            cache.borrow_mut().resolved = None;
-                        }
-
-                        Some((element.stable_id.clone()?, cache))
-                    })
-                    .collect();
-
-                store.publish_captured(
+            if let (Some((store, _, host)), Some(completed)) = (&self.root, completed) {
+                publish_capture(
+                    store,
                     *host,
-                    super::snapshot::Captured {
-                        frame_sequence: completed.snapshot.capture.clone(),
-                        index_revision: completed.snapshot.capture.clone(),
-                        tree: completed.snapshot,
-                        details: completed.details,
-                    },
+                    completed,
+                    identities.unwrap_or_default(),
+                    window,
+                    cx,
                 );
-                #[cfg(target_os = "macos")]
-                store.bind_preview(*host, window, cx);
-                let mut state = store.0.borrow_mut();
-
-                let host = state
-                    .windows
-                    .get_mut(host)
-                    .expect("published inspection host");
-
-                host.identities = identities.unwrap_or_default();
-                host.caches = caches;
-                // Publishing can preserve presentation IDs on a style-only redraw.
-                host.navigation = host
-                    .snapshot
-                    .elements
-                    .iter()
-                    .zip(navigation)
-                    .map(|(element, target)| (element.id.clone(), target))
-                    .collect();
             }
         }
 
-        if let Some(overlay) = &mut prepaint.1 {
-            let mask = self
-                .root
-                .as_ref()
-                .and_then(|(store, _, host)| {
-                    store
-                        .0
-                        .borrow()
-                        .windows
-                        .get(host)?
-                        .highlight
-                        .as_ref()?
-                        .0
-                        .content_mask
-                })
-                .map(|mask| gpui::ContentMask {
-                    bounds: Bounds {
-                        origin: gpui::point(gpui::px(mask.x), gpui::px(mask.y)),
-                        size: gpui::size(gpui::px(mask.width), gpui::px(mask.height)),
-                    },
-                });
-            window.with_content_mask(mask, |window| overlay.paint(window, cx));
+        if let (Some(overlay), Some((store, _, host))) = (&mut prepaint.1, &self.root) {
+            paint_overlay(store, *host, overlay, window, cx);
         }
     }
 
@@ -1067,17 +1059,93 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
     }
 }
 
+fn publish_capture(
+    store: &Store,
+    host: WindowId,
+    mut completed: Capture,
+    identities: BoundaryIndex,
+    _window: &mut Window,
+    _cx: &mut App,
+) {
+    accessibility::names(&mut completed.snapshot);
+    accessibility::order(&mut completed.snapshot);
+    let mut remaining = (super::MAX_CAPTURE_BYTES - 4096).saturating_sub(completed.bytes);
+
+    for (element, details) in completed
+        .snapshot
+        .elements
+        .iter_mut()
+        .zip(&mut completed.details)
+    {
+        if let Some(resolved) = &details.resolved {
+            let data_bytes = resolved.bytes + 256;
+            let bytes = data_bytes + 16;
+
+            if bytes > remaining || data_bytes > super::MAX_RESOLVED_STYLE_BYTES {
+                details.resolved = None;
+                element.metadata_truncated = true;
+            } else {
+                remaining -= bytes;
+            }
+        }
+    }
+
+    let navigation = completed.navigation;
+
+    let caches = completed
+        .snapshot
+        .elements
+        .iter()
+        .zip(completed.caches)
+        .zip(&completed.details)
+        .filter_map(|((element, cache), details)| {
+            if details.resolved.is_none() {
+                cache.borrow_mut().resolved = None;
+            }
+
+            Some((element.stable_id.clone()?, cache))
+        })
+        .collect();
+
+    store.publish_captured(
+        host,
+        super::snapshot::Captured {
+            frame_sequence: completed.snapshot.capture.clone(),
+            index_revision: completed.snapshot.capture.clone(),
+            tree: completed.snapshot,
+            details: completed.details,
+        },
+    );
+    #[cfg(target_os = "macos")]
+    store.bind_preview(host, _window, _cx);
+    let mut state = store.0.borrow_mut();
+
+    let host = state
+        .windows
+        .get_mut(&host)
+        .expect("published inspection host");
+
+    host.identities = identities;
+    host.caches = caches;
+    // Publishing can preserve presentation IDs on a style-only redraw.
+    host.navigation = host
+        .snapshot
+        .elements
+        .iter()
+        .zip(navigation)
+        .map(|(element, target)| (element.id.clone(), target))
+        .collect();
+}
+
 fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interactivity> {
     use gpui::InteractiveElement;
     use std::any::Any;
     let inner = inner as &mut dyn Any;
     #[cfg(feature = "experimental-view")]
     if inner.is::<rake_ui::view::Button>() {
-        return Some(
-            inner
-                .downcast_mut::<rake_ui::view::Button>()?
-                .interactivity(),
-        );
+        return inner
+            .downcast_mut::<rake_ui::view::Button>()?
+            .inspection_interactivity();
     }
     if inner.is::<gpui::Div>() {
         Some(inner.downcast_mut::<gpui::Div>()?.interactivity())
@@ -1100,9 +1168,14 @@ fn resolved_style<E: gpui::Element>(
 ) -> Option<(Rc<super::snapshot::Payload<super::ResolvedStyle>>, bool)> {
     use gpui::Refineable;
     use std::any::Any;
-    let hitbox = (prepaint as &dyn Any)
-        .downcast_ref::<Option<gpui::Hitbox>>()?
-        .as_ref();
+    let hitbox = (prepaint as &dyn Any).downcast_ref::<Option<gpui::Hitbox>>();
+    #[cfg(feature = "experimental-view")]
+    let hitbox = hitbox.or_else(|| {
+        (prepaint as &dyn Any)
+            .downcast_ref::<Box<dyn Any>>()?
+            .downcast_ref::<Option<gpui::Hitbox>>()
+    });
+    let hitbox = hitbox?.as_ref();
 
     let authored = (inner as &mut dyn Any)
         .downcast_mut::<gpui::Div>()
@@ -1121,8 +1194,16 @@ fn resolved_style<E: gpui::Element>(
     let authored = authored?;
     let mut base = gpui::Style::default();
     base.refine(&authored);
-    let interactive = interactivity(inner)?;
-    let style = interactive.compute_style(id, hitbox, window, cx);
+    let style =
+        interactivity(inner).map(|interactive| interactive.compute_style(id, hitbox, window, cx));
+    #[cfg(feature = "experimental-view")]
+    let style = style.or_else(|| {
+        (inner as &dyn Any)
+            .downcast_ref::<rake_ui::view::Button>()?
+            .inspection_style()
+            .cloned()
+    });
+    let style = style?;
     let mut text = window.text_style();
 
     text.refine(&style.text);
@@ -1254,6 +1335,29 @@ fn limited(value: &str, limit: usize, truncated: &mut bool) -> String {
     value[..end].into()
 }
 
+fn paint_overlay(
+    store: &Store,
+    host: WindowId,
+    overlay: &mut gpui::AnyElement,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mask = store
+        .0
+        .borrow()
+        .windows
+        .get(&host)
+        .and_then(|state| state.highlight.as_ref()?.0.content_mask)
+        .map(|mask| gpui::ContentMask {
+            bounds: Bounds {
+                origin: gpui::point(gpui::px(mask.x), gpui::px(mask.y)),
+                size: gpui::size(gpui::px(mask.width), gpui::px(mask.height)),
+            },
+        });
+
+    window.with_content_mask(mask, |window| overlay.paint(window, cx));
+}
+
 fn overlay(
     store: &Store,
     host: WindowId,
@@ -1328,7 +1432,7 @@ fn overlay(
 }
 
 fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
-    use gpui::{DispatchPhase, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent};
+    use gpui::{DispatchPhase, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollEvent};
     let moving = store.clone();
 
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
@@ -1375,7 +1479,7 @@ fn listeners(store: &Store, host: WindowId, window: &mut Window, cx: &mut App) {
     });
     let scrolling = store.clone();
 
-    window.on_mouse_event(move |_: &ScrollWheelEvent, phase, _, cx| {
+    window.on_mouse_event(move |_: &ScrollEvent, phase, _, cx| {
         if phase == DispatchPhase::Capture
             && scrolling.0.borrow().mode_active(web_time::Instant::now())
         {
@@ -1629,7 +1733,15 @@ mod tests {
                 .any(|node| node.phase == super::super::FramePhase::Paint && node.source.line > 0)
         );
         store.record_frames(false, 0).unwrap();
-        let cursor = store.frames(0, &collector).cursor;
+        let mut stopped = store.frames(0, &collector);
+
+        // The stopped buffer can span pages when concurrent test apps emit draws.
+        while stopped.more {
+            stopped = store.frames(stopped.cursor, &collector);
+        }
+
+        let cursor = stopped.cursor;
+
         draw(cx);
         assert!(!store.frames(cursor, &collector).recording);
         assert!(store.frames(cursor, &collector).frames.is_empty());
