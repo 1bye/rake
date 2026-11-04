@@ -11,6 +11,7 @@ pub fn init(cx: &mut gpui::App) {
     if !cx.has_global::<Initialized>() {
         gpui_base::init(cx);
         cx.set_global(Initialized);
+        theme::observe(cx);
     }
 }
 

@@ -965,3 +965,18 @@ pane/row dimensions, dynamic captured swatches, tree semantics, an underline,
 a resize cursor/focus handle, or the explicit-palette property helper. The
 helper remains independent of ambient setup for its construction-only identity
 test. `style={control}` applies the shared focus preset to toolbar buttons.
+
+### Shared semantic colors
+
+`rake::theme::Semantic` is a flat palette with Base's 18 color names and an
+`appearance` field. Declare `rake::theme!(rake::theme::Semantic)` at the crate
+root to use `bg-background`, `text-foreground`, `bg-primary`,
+`text-primary-foreground`, `bg-surface`, and the other semantic roles.
+Install `Semantic::light()` or `Semantic::dark()` through the same
+`rake::theme::install(cx, palette)` API. Application-defined themes remain
+independent and work unchanged; typography, spacing and shadow scales remain
+separate Base settings.
+
+Installation updates the ambient Rake copy and Base's colors. Rake observes the
+actual Base global effect queue and replaces its copy only when values change,
+so an unchanged notification cannot create an update loop.

@@ -187,3 +187,14 @@ increment, open popover, open nested document dialog, select row 5,000 in its
 switch with count retained. No browser warnings/errors were captured. The
 headless view and inspection suites also pass; a separate Base Root regression
 covers traversal and consumed Escape under the actual application root.
+
+## Phase 3
+
+`rake::theme::Semantic` exposes Base's 18 semantic color roles as flat fields,
+plus Base's appearance. Arbitrary existing theme structs still use the same
+independent ambient/global storage. Non-color Base scales remain independent.
+With Kit off, `install` projects the colors into Base and updates Rake's copy.
+A real GPUI effect-queue test changes the Base global after installation and
+checks that Rake's observed copy changes once; an unchanged Base notification
+must produce no ambient replacement. The test also retains an unrelated app
+theme to check that the bridge does not overwrite arbitrary theme structs.

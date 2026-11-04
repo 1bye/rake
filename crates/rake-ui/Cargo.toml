@@ -18,3 +18,7 @@ gpui-base.workspace = true
 
 [features]
 test-support = ["gpui/test-support"]
+
+[dev-dependencies]
+# The observer regression exercises GPUI's actual global effect queue.
+gpui = { workspace = true, features = ["test-support"] }
