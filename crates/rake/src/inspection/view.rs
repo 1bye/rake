@@ -1738,7 +1738,15 @@ mod tests {
                 .any(|node| node.phase == super::super::FramePhase::Paint && node.source.line > 0)
         );
         store.record_frames(false, 0).unwrap();
-        let cursor = store.frames(0, &collector).cursor;
+        let mut stopped = store.frames(0, &collector);
+
+        // The stopped buffer can span pages when concurrent test apps emit draws.
+        while stopped.more {
+            stopped = store.frames(stopped.cursor, &collector);
+        }
+
+        let cursor = stopped.cursor;
+
         draw(cx);
         assert!(!store.frames(cursor, &collector).recording);
         assert!(store.frames(cursor, &collector).frames.is_empty());
