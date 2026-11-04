@@ -33,21 +33,18 @@ then finish the action and let the runtime own the handoff.
 | `open_url` | Delegates to the OS | Opens HTTP(S)/mailto from a user event; popup denial is visible |
 | URL activation inbox | GPUI host callbacks and explicit `receive_open_url` | Explicit activation; ordinary app URLs stay with the router |
 
-`capabilities()` is a runtime snapshot. Availability, permission and the need for a
-user gesture are independent. An available operation can still fail. Browser
-`clipboard_permission(write)` returns `Unknown` when a permission query is absent;
-clipboard access may still work. `browser::text_from_paste_event` accepts plain text
-without a separate clipboard prompt. Do not suppress the paste shortcut before the
-browser can deliver its paste event.
+`capabilities()` is a runtime snapshot. Availability, permission and the need for a user gesture are independent, and an available operation can still fail.
 
-Preferences are small settings, not transactional documents or a notebook database.
-Namespace/key names accept 1–128 ASCII letters, digits, dots, underscores and hyphens,
-excluding `.` and `..`. Use your reverse-domain app ID as the namespace. Native roots
-are Application Support, APPDATA or XDG_CONFIG_HOME (falling back to ~/.config).
-`Preferences::at` selects an explicit native root. Native writes sync the temporary
-file before replacement; directory power-loss durability is not promised. Read/modify/
-write and multi-key changes are not transactions. Notes retains its stronger
-document-specific locking, revision and recovery implementation.
+Browser `clipboard_permission(write)` returns `Unknown` when a permission query is absent, and clipboard access may still work. `browser::text_from_paste_event` accepts plain text with no clipboard prompt, so don't suppress the paste shortcut before the browser can deliver its event.
+
+Preferences are small settings, not transactional documents or a database.
+
+- Namespace and key names accept 1–128 ASCII letters, digits, dots, underscores and hyphens, excluding `.` and `..`. Use your reverse-domain app ID as the namespace.
+- Native roots are Application Support, APPDATA or XDG_CONFIG_HOME (falling back to `~/.config`). `Preferences::at` selects an explicit native root.
+- Native writes sync the temporary file before replacement, but directory power-loss durability isn't promised.
+- Read/modify/write and multi-key changes aren't transactions.
+
+Notes keeps its stronger document-specific locking, revision and recovery implementation.
 
 URL activation has one bounded, shared inbox (32 pending items); keep one managed
 consumer. Receiving an activation does not validate application-specific arguments

@@ -13,35 +13,28 @@ Storage is a production API independent of inspection. Values implement
 is required. A backend owns one namespace and implements async get, set, remove,
 and cursor-paged keys. It owns persistence, encryption and access control.
 
-Keys contain 1–256 UTF-8 bytes and no NUL. JSON values are at most 256 KiB.
-Pages contain 1–256 keys, sorted by Rust string order with an exclusive cursor.
-Concurrent writes can change later pages; pagination is not a snapshot.
-There is no implicit default value, overwrite on decode failure, or automatic
-migration. A failed read preserves existing data.
+Limits and rules:
 
-`MemoryBackend::new()` creates a volatile namespace. Backend clones share data;
-separately constructed backends are isolated. `FileBackend::open(directory).await`
-creates a native namespace, running file access on the blocking worker pool.
-Independent handles coordinate through an advisory file lock; each mutation
-replaces one map through a synced temporary file and atomic rename. Existing
-corrupt data fails explicitly. Keys never become filesystem paths.
+- Keys are 1–256 UTF-8 bytes with no NUL. JSON values are at most 256 KiB.
+- Pages contain 1–256 keys, sorted by Rust string order, with an exclusive cursor. Concurrent writes can change later pages, so pagination isn't a snapshot.
+- There's no implicit default, overwrite on decode failure or automatic migration. A failed read preserves existing data.
 
-The file backend is for small stores: 4096 keys, 4 MiB total raw values, 16 MiB
-encoded file. It rewrites its JSON byte-array map on every change. Use an external
-database backend for large stores. Unix directories/files must be private; final
-symlinks are rejected. Its directory and ancestors must be application-controlled.
-It does **not** encrypt values. Platform Keychain/encrypted database adapters can
-implement `Backend`; this release does not supply a cryptographic implementation.
-Directory metadata is not fsynced, so atomic replacement is not a power-loss
-durability guarantee. Cancelling a future may leave an already-started file
-operation running; do not assume cancellation rolls back a write.
+**`MemoryBackend::new()`** creates a volatile namespace. Clones share data, and separately constructed backends are isolated.
 
-Caching is opt-in: `store.with_cache(CacheConfig::new(128, 1024 * 1024)?)`.
-Cloned store handles share a bounded LRU of encoded bytes (including missing
-keys); decoded values still do not require `Clone`. Budgets count key and value
-payload bytes, excluding allocator/map/recency bookkeeping. Oversized entries bypass the cache and
-key listings are always fresh. Writes/removals invalidate across clones, including
-failure paths; an older async read cannot repopulate after a newer write.
+**`FileBackend::open(directory).await`** creates a native namespace, with file access on the blocking worker pool. Independent handles coordinate through an advisory file lock, and each mutation replaces one map through a synced temporary file and atomic rename. Existing corrupt data fails explicitly. Keys never become filesystem paths.
+
+The file backend is for small stores: 4096 keys, 4 MiB of raw values and a 16 MiB encoded file. It rewrites its JSON map on every change, so use an external database backend for large stores.
+
+- **Permissions:** Unix directories and files must be private, and final symlinks are rejected. The directory and its ancestors must be application-controlled.
+- **No encryption:** it does **not** encrypt values. Keychain or encrypted database adapters can implement `Backend`, but this release includes none.
+- **Durability:** directory metadata isn't fsynced, so atomic replacement isn't a power-loss guarantee.
+- **Cancellation:** cancelling a future may leave a started file operation running, so don't assume it rolls back a write.
+
+Caching is opt-in: `store.with_cache(CacheConfig::new(128, 1024 * 1024)?)`. Cloned handles share a bounded LRU of encoded bytes, including missing keys, and decoded values still don't require `Clone`.
+
+- Budgets count key and value payload bytes, excluding bookkeeping.
+- Oversized entries bypass the cache, and key listings are always fresh.
+- Writes and removals invalidate across clones, including on failure. An older async read can't repopulate after a newer write.
 
 Independent writers require `store.invalidate()` after their write completes;
 there is no file watcher or cross-process cache coherence. Cancelling a mutation
@@ -55,49 +48,36 @@ Use `Area::Session` for data intended to last only for the session; this is
 presentation metadata, not a change to backend persistence. Registration snapshots
 share backend/cache handles. Unregistered stores are never inspected.
 
-`App::devtools_storage(registry)?` installs the registry as an application service
-for routed and standalone roots. Headless hosts can install the same registry in
-`Router::with_services`; local consumers use `RuntimeClient::request_async` for
-storage messages. Native and browser development transports await backend I/O.
-Ordinary synchronous runtime requests remain supported.
-Use the normal [DevTools connection setup](devtools.md#connection); registration
-itself does not open a development listener.
+`App::devtools_storage(registry)?` installs the registry as an application service for routed and standalone roots. Headless hosts can install it in `Router::with_services`, and local consumers use `RuntimeClient::request_async` for storage messages.
 
-Chrome's Application → Local/Session storage → `rake://runtime` projects entries
-as `registered-name/key` with JSON text values. `DOMStorage` get/set/remove and
-change events are supported; `Storage.getStorageKey` and the older
-`Storage.getStorageKeyForFrame` identify the runtime
-frame. Reads/edits use the typed facade and its cache. Invalid JSON/types, unknown
-names and read-only writes fail without replacing data. These edits are persistent
-application writes, not temporary Element overrides. App views still own their
-normal refresh/notification behavior; DevTools does not force GPUI rerenders.
+Native and browser development transports await backend I/O, and ordinary synchronous runtime requests remain supported. Use the normal [DevTools connection setup](devtools.md#connection), because registration doesn't open a development listener.
 
-Catalog polling reads change revisions only. Cloned store writes and explicit
-invalidation trigger bounded value refreshes of watched areas. Independent writers
-still require explicit invalidation. Failed/oversized refreshes stop tracking until
-manual table refresh. Chrome's area projection is limited to 256 rows / 384 KiB;
-native cursor pages are separately available through `Query::Storage`. There is
-no silent truncation. Existing transport/event queue bounds also apply.
+Chrome's Application → Local/Session storage → `rake://runtime` shows entries as `registered-name/key` with JSON text values. `DOMStorage` get, set, remove and change events are supported, and `Storage.getStorageKey` and the older `Storage.getStorageKeyForFrame` identify the runtime frame.
 
-Persistent edits require retry keys. The registry retains at most 256 edit keys /
-2 MiB of request payload, including failed edits. Matching retries return their
-saved result; changed payloads conflict. An interrupted/pending edit is not repeated
-because filesystem work may already have committed. Reconnect does not reset this
-ledger; a new process/registry does. Routed hosts also reserve these keys in their
-ordinary application mutation ledger, enforcing its capacity and rejecting key
-reuse across storage and other commands. Bulk clear is deliberately unsupported, since
-registered areas can combine read-only stores and unrelated typed backends.
+Reads and edits use the typed facade and its cache. Invalid JSON or types, unknown names and read-only writes fail without replacing data. These edits are persistent application writes, not temporary Element overrides. App views keep their normal refresh behavior, and DevTools doesn't force GPUI rerenders.
+
+Catalog polling reads change revisions only. Cloned store writes and explicit invalidation trigger bounded value refreshes of watched areas, and independent writers still need explicit invalidation. Failed or oversized refreshes stop tracking until a manual table refresh.
+
+Chrome's area view is limited to 256 rows or 384 KiB, and native cursor pages are available through `Query::Storage`. Nothing is silently truncated. Existing transport and event queue bounds also apply.
+
+Persistent edits require retry keys.
+
+- The registry retains at most 256 edit keys or 2 MiB of request payload, including failed edits.
+- Matching retries return their saved result, and changed payloads conflict.
+- An interrupted or pending edit isn't repeated, because filesystem work may already have committed.
+- Reconnecting doesn't reset this ledger, but a new process or registry does.
+- Routed hosts also reserve these keys in their application mutation ledger, enforcing its capacity and rejecting key reuse across storage and other commands.
+
+Bulk clear is deliberately unsupported, because registered areas can combine read-only stores and unrelated typed backends.
 
 Without `devtools`, the inspection registry, registration method, store revision
 field and revision updates are absent at compile time. There is no DevTools-only
 polling, value serialization or inspection snapshot state in production storage.
 Normal persistence, optional caching and their normal costs remain.
 
-Registering encrypted storage would expose **decrypted** data. Keep credentials
-in separate unregistered stores, or provide an application-owned redacted view.
-Caching an encrypted backend would also retain decrypted JSON bytes in application
-memory; encryption at rest does not change that. Leave caching disabled for such stores.
-This API does not automatically enumerate files, databases or platform secrets.
+> Registering encrypted storage would expose **decrypted** data. Keep credentials in separate unregistered stores, or provide an application-owned redacted view.
+
+Caching an encrypted backend would also keep decrypted JSON bytes in memory, so leave caching disabled for such stores. This API doesn't automatically enumerate files, databases or platform secrets.
 
 ## Usage
 
@@ -146,38 +126,22 @@ node scripts/test-storage-cdp.mjs
 node scripts/test-storage-cdp.mjs --serve
 ```
 
-`--serve` prints a Chrome DevTools URL and accepts `light`, `dark`, `read`, and
-`quit` on stdin. Open Application → Local storage → `rake://runtime`; edit
-`preferences/editor` using JSON such as `{"theme":"dark","tab_width":8}`.
-Session storage exposes the read-only `session/example` key. Chrome has no
-per-row read-only affordance here: rejected edits restore the actual backend
-value through a storage event and report the reason in Console. No browser
-security guard is bypassed. Console accepts `test.storage({"theme":"light"})`
-or `test.storage({})` to change/read the same typed store.
-The window's refresh task is explicit demo code, not storage instrumentation.
-Build with `--no-default-features --features devtools` for a headless-only example.
+`--serve` prints a Chrome DevTools URL and accepts `light`, `dark`, `read` and `quit` on stdin.
+
+1. Open Application → Local storage → `rake://runtime`.
+2. Edit `preferences/editor` using JSON such as `{"theme":"dark","tab_width":8}`.
+3. Session storage exposes the read-only `session/example` key.
+
+Chrome has no per-row read-only indicator here. Rejected edits restore the real backend value through a storage event and report the reason in Console. Console also accepts `test.storage({"theme":"light"})` or `test.storage({})` to change or read the same store.
+
+The window's refresh task is demo code, not storage instrumentation. Build with `--no-default-features --features devtools` for a headless-only example.
 
 ## Verification
 
-The public consumer suites exercise typed round trips without `Clone`, Unicode
-keys, malformed/oversized data, real file reopen/concurrent writers/corrupt-file
-preservation/capacity/private paths, LRU eviction and absence caching, shared and
-external invalidation, delayed reads and cancelled writes. DevTools tests cover
-typed/read-only errors, bounded pages, shutdown/stale identities, retry keys shared
-with ordinary commands, pending/cancelled edits and shared registries across runtimes.
-The standalone host has a separate async storage/teardown test.
+See [test coverage](internal/test-coverage.md) for what's automated.
 
-The real native/CDP script verifies disk persistence across process restart, typed
-validation, application-to-Chrome change events, writable/read-only permissions,
-discovery compatibility and recovery of rejected optimistic edits. It never drives
-Chrome itself. Stock Chrome 156.0.8078.74's Application panel was additionally
-checked on macOS on 2026-10-30:
-local/session origin discovery, typed JSON display/preview, a successful preference
-edit read back by the application, an application write updating the visible table,
-and invalid/read-only edits restoring the actual stored row.
+Stock Chrome 156's Application panel was checked on macOS: origin discovery, typed JSON display, a successful edit read back by the app, an app write updating the table, and invalid or read-only edits restoring the stored row.
 
-Native execution is tested on macOS. The supported GPUI/WASM configuration compiles;
-WASM runtime/browser storage execution and Linux/Windows runtime behavior have not
-been verified. Memory storage and the facade are portable; `FileBackend` is native
-only. There is no built-in browser Web Storage, SQLite, Keychain or encryption
-backend in this implementation. The byte backend trait is the extension point.
+Native execution is tested on macOS. WASM compiles, but browser runtime storage and Linux and Windows behavior haven't been verified. Memory storage and the facade are portable, and `FileBackend` is native only.
+
+There's no built-in browser Web Storage, SQLite, Keychain or encryption backend. The byte backend trait is the extension point.

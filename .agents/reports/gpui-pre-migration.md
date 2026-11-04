@@ -232,7 +232,7 @@ An isolated registry-only probe with `gpui-kit = { version = "=0.9.0",
 default-features = false }` failed on stable 1.98 in `wasm_thread` 0.3.3 with
 E0554 (`stdarch_wasm_atomic_wait`). Rake therefore gates Kit to native targets
 and emits a deliberate error on Wasm. Core/Base stable Web remains supported.
-The [Kit example](../examples/kit/README.md) is native-only; it uses routed tabs,
+The [Kit example](../../examples/kit/README.md) is native-only; it uses routed tabs,
 Kit button/dialog/table boundaries and one Semantic palette. No upstream source
 was patched, forked or vendored, and GPUI Fast was not added.
 
@@ -344,9 +344,9 @@ as a Rust 2024 library on MSRV 1.98 with one GPUI application/UI thread and
 multiple retained tabs/windows. Emphasis was overlay ordering, focus ownership,
 canonical theme writes, and the deferred inspection lifecycle. Local published
 GPUI/Base/Kit sources supplied the upstream contracts. Rules below refer to the
-project's [Rust workflow](../.agents/workflow/rust/AGENTS.md),
-[architecture guide](../.agents/workflow/rust/architecture.md), and
-[testing guide](../.agents/workflow/rust/testing.md). No cleanup branch was merged.
+project's [Rust workflow](../../.agents/workflow/rust/AGENTS.md),
+[architecture guide](../../.agents/workflow/rust/architecture.md), and
+[testing guide](../../.agents/workflow/rust/testing.md). No cleanup branch was merged.
 
 ### Must fix — completed
 

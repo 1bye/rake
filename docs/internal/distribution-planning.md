@@ -1,13 +1,12 @@
 # Distribution planning
 
-The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
-Windows and Linux remain unqualified. Historical distribution evidence and
-procedures here do not qualify signing, notarization or installers for this release.
+> Windows and Linux, signing, notarization and installers aren't qualified in this alpha.
+> See [what's supported](../support.md).
 
 The Rust planner validates distribution configuration without invoking native
 packagers, building an app, signing, downloading or publishing. A valid plan does
 not establish native platform availability; see the acceptance matrix in
-[Desktop distribution](distribution.md).
+[Desktop distribution](../distribution.md).
 
 ```sh
 cargo run -p rake-cli -- bundle --plan --package rake-foundation --json

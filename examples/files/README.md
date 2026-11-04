@@ -27,12 +27,9 @@ The implementation exercises:
 - Native updates when a packaged policy is supplied, plus Web version checking,
   guarded reload and opt-in production offline assets.
 
-Native exports become clean only after a successful synced write. Browsers cannot
-acknowledge filesystem save: **DownloadRequested** keeps an unsaved transformation
-dirty until the user explicitly confirms the download or discards it. Copying text
-does not imply a save. Source files change only through an explicit export choice.
-Selected content is in memory; forced termination can lose an unexported transformation.
-The source remains available to import again. Notes demonstrates durable draft recovery.
+Native exports become clean only after a successful synced write. Browsers can't acknowledge a filesystem save, so **DownloadRequested** keeps an unsaved transformation dirty until the user confirms the download or discards it. Copying text doesn't imply a save.
+
+Source files change only through an explicit export choice. Selected content is in memory, so forced termination can lose an unexported transformation, though the source can be imported again. Notes demonstrates durable draft recovery.
 
 Build the browser app with matching wasm-bindgen-cli on PATH:
 

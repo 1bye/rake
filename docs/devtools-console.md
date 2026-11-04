@@ -49,18 +49,7 @@ invented JavaScript stack frames.
 On 2026-10-30, Google Chrome **156.0.8078.74** and the native `rake-routing`
 `console-test` fixture were exercised using Chrome’s bundled DevTools UI:
 
-- Reviewed commands entered through the Console prompt; helper namespace
-  suggestions and expandable help/results appeared.
-- Information, warning and error rows displayed their correct severity; Unicode
-  command results and structured/causal fields were exposed for expansion.
-- Clicking a log’s source link opened the real Rust file as read-only text.
-- A failed result displayed `status: failed`; slow commands displayed
-  `status: running` with a request key and observation token.
-- Search found nine matches; Clear reported zero messages.
-- Keep log retained previous failed/running results across a checkpointed restart
-  and displayed the successor’s startup plus the restored-from notice.
-- After clearing, the deliberate crash left the panic message, Rust backtrace,
-  exit code 73 and disconnect notice visible in Chrome.
+See [test coverage](internal/test-coverage.md) for what's been checked in stock Chrome.
 
 Chrome’s paste protection remained enabled. Console command entry used reviewed
 keyboard input. Rust source reads, nested object/group expiry, old operation
@@ -76,15 +65,11 @@ node scripts/test-console-cdp.mjs
 node scripts/test-console-cdp.mjs --serve
 ```
 
-The default command starts an isolated supervisor, checks real native/CDP
-behavior and stops its own processes. It also verifies source links across replacement
-when `--instance` originally selected the old runtime UUID. It creates one uniquely
-named asset to trigger checkpointed replacement and removes that owned asset and
-its isolated session/build directory during cleanup.
-`--serve` prints a stock Chrome URL for repeating the UI pass; stop it with Ctrl-C.
-This requires macOS GUI access and Node 22+ and fails explicitly when unavailable.
-The fixture’s `test.console({"mode":"log|fail|slow|crash"})` commands exist only
-with the example’s opt-in `console-test` feature; `crash` terminates that fixture.
+The default command starts an isolated supervisor, checks real native and CDP behavior, and stops its own processes. It also checks source links across replacement when `--instance` selected the old runtime UUID. It creates one uniquely named asset to trigger checkpointed replacement, then removes that asset and its isolated session and build directory.
+
+`--serve` prints a stock Chrome URL for repeating the UI pass; stop it with Ctrl-C. This needs macOS GUI access and Node 22+, and fails explicitly when they're unavailable.
+
+The fixture's `test.console({"mode":"log|fail|slow|crash"})` commands exist only with the example's opt-in `console-test` feature, and `crash` terminates the fixture.
 
 Source retention is bounded to 128 URLs and eight concurrent source streams per
 connection. Older runtimes and manually recorded events may have no source data.

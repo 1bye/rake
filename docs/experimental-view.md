@@ -6,12 +6,9 @@ generates ordinary GPUI builders and Rust control flow. State stays in your GPUI
 entities, handlers use GPUI events, and changes still need `cx.notify()`.
 This API is experimental and may change.
 
-For app-wide theme setup, register `.theme(colors)` on `App` before or after
-`.routes(...)`/`.root(...)`. Installation is deferred to the UI thread and runs
-once before the initial view mounts; page constructors do not reinstall it.
-Multiple theme types coexist, with the last registration winning for repeated
-types. Use `rake::theme::install(cx, colors)` for later user-selected changes.
-See the [desktop example](../examples/desktop/src/main.rs).
+For app-wide theme setup, register `.theme(colors)` on `App`, before or after `.routes(...)` or `.root(...)`. It installs on the UI thread once, before the initial view mounts, and page constructors don't reinstall it. Multiple theme types coexist, and the last registration wins for repeated types.
+
+Use `rake::theme::install(cx, colors)` for later user-selected changes. See the [desktop example](../examples/desktop/src/main.rs).
 
 ```rust
 use rake::gpui::{Context, IntoElement, Render, Window, rgb};
@@ -40,15 +37,17 @@ impl Render for Counter {
 
 ## Elements and values
 
-Each invocation returns one concrete GPUI element or component and requires exactly one root
-tag. Closing tags must match; empty elements can use `<div/>`. Text can be unquoted
-(`Hello world`), a Rust string literal (`"Hello"`), or a Rust expression
-(`{format!("Hello, {name}")}`).
-Literal text is not interpolated automatically. Rust comments work within markup.
-Outside paragraphs and headings, expressions may contain statements and must produce
-an `IntoElement` value. They can embed existing GPUI builders, `Entity` handles, or `RenderOnce` components;
-clone retained handles explicitly when needed. There is no string-based HTML
-parser, Dioxus runtime, virtual DOM, or JavaScript execution.
+Each invocation returns one concrete GPUI element or component and needs exactly one root tag. Closing tags must match, and empty elements can use `<div/>`. Rust comments work within markup.
+
+Text can be:
+
+- Unquoted: `Hello world`
+- A Rust string literal: `"Hello"`
+- A Rust expression: `{format!("Hello, {name}")}`
+
+Literal text isn't interpolated automatically. Outside paragraphs and headings, expressions may contain statements and must produce an `IntoElement`. They can embed existing GPUI builders, `Entity` handles or `RenderOnce` components; clone retained handles explicitly when needed.
+
+There's no string-based HTML parser, Dioxus runtime, virtual DOM or JavaScript execution.
 
 Outside paragraphs and headings, literal strings and expressions whose GPUI element
 is `SharedString` or a static string become identified, accessible `gpui::Text` nodes. Other embedded elements
@@ -76,29 +75,28 @@ stylesheet. Paragraphs compose inline text as described below. A standalone
 `span` remains a layout container; buttons keep ordinary element children.
 Headings use the same composed inline text as paragraphs.
 
-SVGs accept `path`, `class`, conditional classes, `style`, `aria-label` and
-`aria-description`. For example, `<svg path="icons/search.svg" class="size-4"
-aria-label="Search" style={|s| s.text_color(rgb(0xffffff))}/>` uses GPUI's asset
-source and current text color. SVGs have no macro ID and are exempt from loop-ID
-requirements. Wrap them in an identified element for retained identity, focus or
-events. SVGs and rules reject children; style a rule's color explicitly, for
-example with `style={|s| s.bg(rgb(0x61717c))}`.
+SVGs accept `path`, `class`, conditional classes, `style`, `aria-label` and `aria-description`. For example, `<svg path="icons/search.svg" class="size-4" aria-label="Search" style={|s| s.text_color(rgb(0xffffff))}/>` uses GPUI's asset source and current text color.
+
+SVGs have no macro ID and are exempt from loop-ID requirements, so wrap them in an identified element for retained identity, focus or events. SVGs and rules reject children. Style a rule's color explicitly, for example with `style={|s| s.bg(rgb(0x61717c))}`.
 
 ## Attributes, styling and events
 
-Attribute values are quoted strings or `{Rust expressions}`. Bare `disabled`,
-`wrap`, `ellipsis`, `tab-navigation` and `aria-expanded` mean `={true}`. Component
-props can also be bare booleans. Other attributes require a value. A braced bare
-identifier in attribute position is shorthand: `<div {id}/>` means `id={id}`.
-It preserves the property's normal type and ownership rules; in particular,
-`{focus}` does not automatically borrow a handle. The supported built-in
-attributes are `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`,
-`focus`, `scroll`, `key-context`, `tab-navigation`, typed `on:Action` handlers,
-`disabled` on buttons, `tooltip`, `src`/`alt` on images, and `path` on SVGs.
-Containers and buttons also accept
-typed `role`, `aria-keyshortcuts`, and `aria-expanded`. `alt` maps to the image's accessible
-label; `aria-label` can override it when supplied after `alt`.
-An empty image label (`alt=""`) marks it as decorative and omits its accessibility role.
+Attribute values are quoted strings or `{Rust expressions}`.
+
+- **Booleans:** bare `disabled`, `wrap`, `ellipsis`, `tab-navigation` and `aria-expanded` mean `={true}`. Component props can also be bare booleans. Other attributes require a value.
+- **Shorthand:** `<div {id}/>` means `id={id}`. It keeps the property's normal type and ownership rules, so `{focus}` doesn't automatically borrow a handle.
+
+Supported built-in attributes:
+
+| Applies to | Attributes |
+| --- | --- |
+| Most elements | `id`, `class`, `style`, `aria-label`, `aria-description`, `tabindex`, `focus`, `scroll`, `key-context`, `tab-navigation`, `tooltip`, typed `on:Action` handlers |
+| Containers and buttons | typed `role`, `aria-keyshortcuts`, `aria-expanded` |
+| Buttons | `disabled` |
+| Images | `src`, `alt` |
+| SVGs | `path` |
+
+`alt` maps to the image's accessible label, and `aria-label` can override it when supplied after `alt`. An empty `alt=""` marks the image as decorative and omits its accessibility role.
 
 ### Class grammar
 
@@ -167,33 +165,32 @@ named-value and reusable-function APIs.
 
 <!-- view-utilities:end -->
 
-For spacing and sizing, `N` accepts any nonnegative whole or half step, with one
-step equal to 0.25rem. `border-N` and `border-t/b/l/r-N` instead use nonnegative
-pixel widths, including decimals (`border-1.5`). `text-N` and `rounded-N` are
-unsupported: use a built-in name, a theme field, or an explicit bracketed length.
-`grid-cols-N` uses 1–12. Existing scale values keep their GPUI convenience methods.
-Numbers use plain decimal digits, optionally followed by a decimal point and
-more digits (`4`, `1.5`, `0.35`). Signs, exponents, `.5` and `4.` are rejected;
-negative margins/insets use the utility’s leading `-`.
-Length values in brackets require `px`, `rem` or `%`; text sizes, border widths
-and radii accept only px/rem. Width, height and basis accept fractions with
-denominators 2, 3, 4, 5, 6 and 12. Only margins and insets accept negatives.
-Colors accept `#rgb`, `#rrggbb` and `#rrggbbaa`, inside brackets. Opacity uses
-0–100 in steps of 5, or `[0..1]`. Font-family underscores become spaces.
-Utilities map to the pinned GPUI builder methods. `truncate` and `whitespace-nowrap`
-are raw GPUI text styling; composed paragraphs/headings also provide explicit
-`wrap`, `ellipsis` and `max-lines` controls.
+**Numbers.** Use plain decimal digits, optionally with a decimal point and more digits (`4`, `1.5`, `0.35`). Signs, exponents, `.5` and `4.` are rejected. Negative margins and insets use the utility's leading `-`.
 
-Interaction variants use `hover:`, `active:`, `focus:`, `focus-visible:` and
-`in-focus:`. Named groups use `group/card`, `group-hover/card:` and
-`group-active/card:`. Each interaction kind is merged into one GPUI style call,
-including contributions from conditional class attributes. A named group must
-use the same name across all literal class branches, even when the leaves are
-mutually exclusive. Variants apply after authored attributes. `disabled:` is button-only and applies base styles at its
-written position. Variants cannot stack, and reject group and overflow-scroll
-utilities because those configure interactivity. GPUI supports only one named
-group per group-hover/group-active kind on an element. SVG interaction classes
-require a surrounding container.
+| Utility | Accepts |
+| --- | --- |
+| Spacing and sizing `N` | Any nonnegative whole or half step, where one step is 0.25rem |
+| `border-N`, `border-t/b/l/r-N` | Nonnegative pixel widths, including decimals (`border-1.5`) |
+| `text-N`, `rounded-N` | Unsupported. Use a built-in name, theme field or bracketed length |
+| `grid-cols-N` | 1–12 |
+| Bracketed lengths | `px`, `rem` or `%`. Text sizes, border widths and radii accept only `px` and `rem` |
+| Width, height, basis | Also fractions with denominators 2, 3, 4, 5, 6 and 12 |
+| Negatives | Margins and insets only |
+| Colors | `#rgb`, `#rrggbb` and `#rrggbbaa`, inside brackets |
+| Opacity | 0–100 in steps of 5, or `[0..1]` |
+| Font family | Underscores become spaces |
+
+Existing scale values keep their GPUI convenience methods, and utilities map to the pinned GPUI builder methods. `truncate` and `whitespace-nowrap` are raw GPUI text styling. Composed paragraphs and headings also provide explicit `wrap`, `ellipsis` and `max-lines` controls.
+
+Interaction variants use `hover:`, `active:`, `focus:`, `focus-visible:` and `in-focus:`. Named groups use `group/card`, `group-hover/card:` and `group-active/card:`.
+
+- Each interaction kind merges into one GPUI style call, including from conditional class attributes.
+- A named group must use the same name across all literal class branches, even if the leaves are mutually exclusive.
+- Variants apply after authored attributes.
+- `disabled:` is button-only and applies base styles at its written position.
+- Variants can't stack, and they reject group and overflow-scroll utilities, because those configure interactivity.
+- GPUI supports one named group per group-hover or group-active kind on an element.
+- SVG interaction classes need a surrounding container.
 
 A token scan rejects a style closure calling `.hover(..)` when the element also
 has `hover:` classes, and similarly for the other interaction kinds. This is a
@@ -209,18 +206,11 @@ let _ = rake::view! {
 };
 ```
 
-Conditions, scrutinees and guards evaluate once in authored attribute order;
-untaken nested conditions are skipped. Class conditions support let chains such
-as `if ready && let Some(_) = item && enabled { "p-1" } else { "p-2" }`.
-Checks run once, left to right, and stop on the first failure; each pattern
-inspects a borrowed scrutinee. Missing `else` means no classes.
-Use `Some(_)`, `_`, uppercase unit variants/constants such as `None`, or
-qualified paths such as `Mode::Dark`. Lowercase bindings and `ref`, `mut` or
-`@` binding patterns are rejected. Bare uppercase names follow Rust naming
-conventions; they should name actual variants/constants. Match exhaustiveness is checked by
-rustc. Variables, function calls and `format!` cannot produce class strings.
-Inline text accepts the same literal-branch selection with its restricted run
-utilities; interaction variants remain unsupported inside runs.
+Conditions, scrutinees and guards evaluate once in authored attribute order, and untaken nested conditions are skipped. Class conditions support let chains such as `if ready && let Some(_) = item && enabled { "p-1" } else { "p-2" }`. Checks run left to right and stop on the first failure, and each pattern inspects a borrowed scrutinee. A missing `else` means no classes.
+
+**Patterns.** Use `Some(_)`, `_`, uppercase unit variants or constants such as `None`, or qualified paths such as `Mode::Dark`. Lowercase bindings and `ref`, `mut` or `@` patterns are rejected. rustc checks match exhaustiveness.
+
+Variables, function calls and `format!` can't produce class strings. Inline text accepts the same literal-branch selection with its restricted run utilities, but interaction variants aren't supported inside runs.
 
 Errors quote each bad class and its ordinal position. Stable Rust spans
 underline the whole literal, so the message identifies the individual token:
@@ -244,16 +234,16 @@ Unknown/dynamic names are errors.
 Inline text tags reject conditional classes; select a `HighlightStyle` through
 `style={...}` there instead.
 
-`style={|s| ...}` receives the GPUI builder through `FluentBuilder::map` and can
-use its typed styling API, including colors, dimensions, hover and focus styles.
-It should return the same builder type and preserve the element's identity.
-Other dynamic styles belong here; CSS strings and external stylesheets are unsupported.
-Classes and style closures apply in attribute order, so later settings win.
-IDs and an image's source are configured first. A button's `disabled` predicate is
-evaluated once before its builder. Focus/tab-index configuration and the optional
-Tab handler apply after authored styles and handlers, irrespective of attribute
-order. Other attribute expressions run once, before children, in written order;
-macro-authored button event handlers are only constructed when enabled.
+`style={|s| ...}` receives the GPUI builder through `FluentBuilder::map` and can use its typed styling API, including colors, dimensions, hover and focus. It should return the same builder type and preserve the element's identity. Other dynamic styles belong here; CSS strings and external stylesheets are unsupported.
+
+Order of application:
+
+1. IDs and an image's source are configured first.
+2. A button's `disabled` predicate is evaluated once, before its builder.
+3. Classes and style closures apply in attribute order, so later settings win.
+4. Focus and tab-index configuration and the optional Tab handler apply after authored styles and handlers, regardless of attribute order.
+
+Other attribute expressions run once, before children, in written order. Macro-authored button event handlers are only constructed when enabled.
 
 | Attribute | Callback event / value |
 | --- | --- |
@@ -340,15 +330,18 @@ follow-up outside this plan.
 
 ## Paragraph and heading composition, wrapping and truncation
 
-`p` and `h1`–`h6` collect text into one UTF-8 buffer with styled runs, rendered by GPUI's
-text shaping system. End truncation measures the actual styled runs and font
-fallbacks, and cuts only at grapheme boundaries. The inline tags are `span`, `strong` (bold), `em` (italic),
-and `br` (newline). They do not create layout boxes or independent element IDs.
-Nested formatting inherits and combines. Unquoted text preserves punctuation and
-collapses whitespace between words to one space. Same-line spaces next to that
-text are retained; leading/trailing multiline indentation is ignored. Gaps solely
-between tags or braced expressions add no text: write `{" "}` when a separator is
-needed. Quoted strings retain exact whitespace. HTML entities are not decoded.
+`p` and `h1`–`h6` collect text into one UTF-8 buffer with styled runs, rendered by GPUI's text shaping. End truncation measures the actual runs and font fallbacks, and cuts only at grapheme boundaries.
+
+The inline tags are `span`, `strong` (bold), `em` (italic) and `br` (newline). They don't create layout boxes or independent element IDs, and nested formatting combines.
+
+Whitespace rules:
+
+- Unquoted text keeps punctuation and collapses whitespace between words to one space.
+- Same-line spaces next to that text are kept. Leading and trailing multiline indentation is ignored.
+- Gaps solely between tags or braced expressions add no text, so write `{" "}` when you need a separator.
+- Quoted strings keep exact whitespace.
+
+HTML entities aren't decoded.
 
 Unquoted text must tokenize as Rust: use quoted strings for emoji, apostrophes,
 arbitrary symbols, unmatched delimiters, or literal `<` and `{` characters.
@@ -377,23 +370,15 @@ let _paragraph = rake::view! {
 };
 ```
 
-Paragraph and heading expressions must implement `AsRef<str>`, including `String`, `&str`,
-`SharedString`, and borrowed string values. Use `format!` for numbers or other
-`Display` values. Arbitrary `IntoElement` values, components, widgets, images,
-and block tags are not paragraph content. `if`/`if let`, `for` and `match` work inside
-paragraphs, evaluating only selected text once in written order. Inline loops
-need no IDs because their output is text, not independently retained elements.
-An empty `<p/>` is supported.
+Paragraph and heading expressions must implement `AsRef<str>`, including `String`, `&str`, `SharedString` and borrowed strings. Use `format!` for numbers and other `Display` values. Arbitrary `IntoElement` values, components, widgets, images and block tags aren't paragraph content.
 
-Inline `class` also accepts `text-[#rrggbb]` and `font-[Family_Name]`. Other supported inline utilities are `font-normal`, `font-medium`, `font-semibold`,
-`font-bold`, `italic`, `not-italic`, and `underline`. Inline `style` takes a typed
-`gpui::HighlightStyle` value, **not** the builder closure used on layout tags.
-It supports GPUI run properties such as color, weight, italics, underline,
-strikethrough, and background. `font-family` accepts a GPUI font-family string.
-Attributes apply after the tag's default style in written order. Font size,
-line height, alignment, dimensions, padding and other layout belong on `p`.
-Inline IDs, events and accessibility overrides are rejected; `br` accepts no
-attributes or children.
+`if`, `if let`, `for` and `match` work inside paragraphs, evaluating only selected text once in written order. Inline loops need no IDs, because their output is text rather than retained elements. An empty `<p/>` is supported.
+
+Inline `class` accepts `text-[#rrggbb]`, `font-[Family_Name]`, `font-normal`, `font-medium`, `font-semibold`, `font-bold`, `italic`, `not-italic` and `underline`.
+
+Inline `style` takes a typed `gpui::HighlightStyle` value, **not** the builder closure used on layout tags. It supports run properties such as color, weight, italics, underline, strikethrough and background. `font-family` accepts a GPUI font-family string. Attributes apply after the tag's default style, in written order.
+
+Font size, line height, alignment, dimensions, padding and other layout belong on `p`. Inline IDs, events and accessibility overrides are rejected, and `br` accepts no attributes or children.
 
 | Paragraph attribute | Behavior |
 | --- | --- |
@@ -419,32 +404,26 @@ let _text = rake::view! {
 };
 ```
 
-A constrained width is necessary for wrapping and truncation. For multiline
-ellipsis, specify `max-lines`; ellipsis without a line limit truncates to the
-available width. A line cap without ellipsis clips without adding an ellipsis.
-Ellipsis without `max-lines` targets one visible line, including when the source
-contains explicit breaks. `ellipsis={false}` does not add truncation styling. These controls use the normal
-attribute/style order, so later raw GPUI styling can override earlier settings.
-This phase supports end truncation; start/middle truncation and text transforms
-through raw style builders are not implemented. The paragraph keeps one accessible
-text node containing the full composed text,
-even when the visual preview is truncated. Selection and interactive links are
-not implemented by this phase.
+Wrapping and truncation need a constrained width.
 
-**Heading migration:** headings now accept string-like expressions and inline
-`span`, `strong`, `em` and `br`, including conditional/loop text. Use `format!` for
-numbers. Layout elements, components and embedded widgets belong in a `div` with
-`role={gpui::accesskit::Role::Heading}` (set its level with
-`style={|s| s.aria_level(2)}`). Explicit `aria-label` overrides the complete composed
-heading name. For example, `<h2>"Count: "<strong>{count.to_string()}</strong></h2>`
-forms one continuous text flow.
+| Controls | Result |
+| --- | --- |
+| `ellipsis` with `max-lines` | Multiline ellipsis |
+| `ellipsis` only | One visible line, including when the source has explicit breaks |
+| `max-lines` only | Clips without an ellipsis |
+| `ellipsis={false}` | No truncation styling |
 
-**Migration:** `p` previously accepted arbitrary layout children and embedded
-GPUI elements. Move those into a `div` or `section`, or embed an existing custom
-text component there. Use inline `span` styles only for text refinements inside
-`p`; standalone spans keep their existing layout API. Paragraph IDs still scope
-under their parent and follow the normal loop identity rules when a loop emits
-multiple paragraphs.
+These controls use the normal attribute order, so later raw GPUI styling can override them. Only end truncation is supported, and text transforms through raw style builders aren't implemented. Selection and interactive links aren't implemented either.
+
+The paragraph keeps one accessible text node with the full text, even when the visual preview is truncated.
+
+**Heading migration:** headings now accept string-like expressions and inline `span`, `strong`, `em` and `br`, including conditional and loop text. Use `format!` for numbers. For example, `<h2>"Count: "<strong>{count.to_string()}</strong></h2>` forms one continuous text flow.
+
+Layout elements, components and embedded widgets belong in a `div` with `role={gpui::accesskit::Role::Heading}`; set its level with `style={|s| s.aria_level(2)}`. An explicit `aria-label` overrides the whole composed heading name.
+
+**Migration:** `p` previously accepted arbitrary layout children and embedded GPUI elements. Move those into a `div` or `section`, or embed an existing custom text component there.
+
+Use inline `span` styles only for text inside `p`; standalone spans keep their layout API. Paragraph IDs still scope under their parent and follow normal loop identity rules.
 
 ## Keyboard, focus and accessibility
 
@@ -468,63 +447,47 @@ fn toolbar(focus: &FocusHandle, saving: bool) -> impl IntoElement {
 }
 ```
 
-`on:Save` and qualified paths such as `on:crate::actions::Save` expand to typed
-GPUI `on_action::<Save>` listeners. Action types must implement `gpui::Action`;
-handlers use the normal GPUI signature and accept `cx.listener(Self::save)`.
-Register shortcuts once during application setup. `KeyBinding::new` accepts
-static bindings with explicit modifiers: use `"cmd-s"` when
-`cx.platform_info().os == gpui::OperatingSystem::Mac` and `"ctrl-s"` otherwise.
-For dynamic strings or the `secondary-` alias, use GPUI's `KeyBinding::load` with
-the app context; `Keystroke::parse_with_os` is the corresponding input parser.
-This uses the host OS on Web as well as native targets. `key-context` supplies
-GPUI's keymap context on the focused dispatch path; it does not register
-shortcuts. `aria-keyshortcuts` is accessibility metadata only; supply the actual
-platform shortcut yourself.
+`on:Save` and qualified paths such as `on:crate::actions::Save` expand to typed GPUI `on_action::<Save>` listeners. Action types must implement `gpui::Action`, and handlers use the normal GPUI signature and accept `cx.listener(Self::save)`.
 
-`tab-navigation={true}` installs a bubbling handler for unmodified Tab and
-Shift+Tab. It calls GPUI's window-wide `focus_next`/`focus_prev`, then prevents the
-default and stops propagation. A descendant or earlier authored handler can
-consume the event with `cx.stop_propagation()` or `window.prevent_default()`.
-Nested navigation handlers therefore advance only once. This is opt-in and does
-not establish a focus trap or constrain navigation to the container's subtree.
-Set initial window focus once so the handler is on the keyboard dispatch path.
+Register shortcuts once during application setup:
 
-Buttons get a retained focus handle and `tabindex={0}` by default, including when
-`focus` supplies a stored handle. Use `tabindex={-1}` to skip sequential navigation
-while allowing explicit focus; nonnegative indices use GPUI's ordering. On other
-elements, `tabindex` establishes a tab stop and can configure an explicitly supplied
-handle. `focus={&self.focus}` tracks a stored `FocusHandle`;
-`scroll={&self.scroll}` tracks a stored `ScrollHandle`. Construct handles once in
-the owning view, not in `render`. Configure overflow styling for scrolling.
-Both attributes require shared borrows of stored variables, fields or indexed
-entries; temporary constructors and method-call results are compile errors.
-Focus attributes take precedence over raw focus configuration in `style`.
+- `KeyBinding::new` takes static bindings with explicit modifiers. Use `"cmd-s"` when `cx.platform_info().os == gpui::OperatingSystem::Mac` and `"ctrl-s"` otherwise.
+- For dynamic strings or the `secondary-` alias, use `KeyBinding::load` with the app context. `Keystroke::parse_with_os` is the matching input parser. Both use the host OS, on Web too.
 
-`disabled={condition}` is supported on `button` only. Disabled buttons skip Tab,
-do not take mouse focus, suppress macro-authored event/action handlers, block
-mouse and unmodified Enter/Space activation, and expose AccessKit's disabled flag
-without activation/focus actions. A button disabled while focused keeps its focus
-anchor so Tab and enclosing actions continue to work. It is not automatically
-blurred. Application action handlers must still check whether their operation is
-available: an enclosing handler can be invoked by a shortcut or other application
-code. Disabled appearance remains explicit, for example an opacity style.
+`key-context` supplies GPUI's keymap context on the focused dispatch path, and doesn't register shortcuts. `aria-keyshortcuts` is accessibility metadata only, so supply the actual platform shortcut yourself.
 
-Use `aria-label` for dynamic/icon controls, `aria-description` for extra context,
-`aria-expanded={open}` on disclosure buttons, and typed
-`role={gpui::accesskit::Role::Group}` for containers with custom semantics.
-Literal-only buttons get labels automatically; headings use their full composed text. GPUI's
-`focus_visible(|s| ...)` supplies keyboard-visible styling. Button contents should
-be noninteractive; embed existing GPUI widgets for more complex controls.
-Arbitrary Rust builder code inside `style` is an escape hatch and remains the
-caller's responsibility, including any event listeners it installs directly.
+`tab-navigation={true}` installs a bubbling handler for unmodified Tab and Shift+Tab. It calls GPUI's window-wide `focus_next` or `focus_prev`, then prevents the default and stops propagation.
+
+- A descendant or earlier handler can consume the event with `cx.stop_propagation()` or `window.prevent_default()`, so nested handlers advance only once.
+- It's opt-in, and isn't a focus trap or limited to the container's subtree.
+- Set initial window focus once, so the handler is on the keyboard dispatch path.
+
+**Tab order.** Buttons get a retained focus handle and `tabindex={0}` by default, including when `focus` supplies a stored handle. Use `tabindex={-1}` to skip sequential navigation while allowing explicit focus. Nonnegative indices use GPUI's ordering. On other elements, `tabindex` establishes a tab stop and can configure a supplied handle.
+
+**Handles.** `focus={&self.focus}` tracks a stored `FocusHandle`, and `scroll={&self.scroll}` tracks a stored `ScrollHandle`. Construct them once in the owning view, not in `render`, and configure overflow styling for scrolling. Both need shared borrows of stored variables, fields or indexed entries; temporaries and method-call results are compile errors. Focus attributes take precedence over raw focus configuration in `style`.
+
+`disabled={condition}` works on `button` only. Disabled buttons:
+
+- Skip Tab and don't take mouse focus.
+- Suppress macro-authored event and action handlers.
+- Block mouse and unmodified Enter or Space activation.
+- Expose AccessKit's disabled flag without activation or focus actions.
+
+A button disabled while focused keeps its focus anchor, so Tab and enclosing actions continue to work. It isn't automatically blurred. Action handlers must still check whether their operation is available, because a shortcut or other code can invoke an enclosing handler. Disabled appearance stays explicit, for example an opacity style.
+
+- Use `aria-label` for dynamic or icon controls, and `aria-description` for extra context.
+- Use `aria-expanded={open}` on disclosure buttons.
+- Use typed `role={gpui::accesskit::Role::Group}` for containers with custom semantics.
+- Literal-only buttons get labels automatically, and headings use their full composed text.
+- GPUI's `focus_visible(|s| ...)` supplies keyboard-visible styling.
+
+Button contents should be noninteractive, so embed GPUI widgets for more complex controls. Builder code inside `style` is an escape hatch and remains your responsibility, including any event listeners it installs.
 
 ## Conditions, loops and identity
 
-Write `if`/`else if`/`else`, `for`, and `match` directly among children. Each branch or loop
-body may contain zero or more siblings. `if let` and destructured loop patterns
-work. Match arms accept patterns, optional guards and braced node lists; trailing
-commas are optional. Rust checks exhaustiveness. Conditions and iterators are Rust expressions; wrap struct literals in
-parentheses as with ordinary Rust control flow.
+Write `if`/`else if`/`else`, `for` and `match` directly among children. Each branch or loop body may contain zero or more siblings. `if let` and destructured loop patterns work.
+
+Match arms accept patterns, optional guards and braced node lists, and trailing commas are optional. Conditions and iterators are Rust expressions, so wrap struct literals in parentheses as in ordinary Rust.
 
 ```rust
 # use rake::gpui::IntoElement;
@@ -561,36 +524,27 @@ rake::view! {
 # }
 ```
 
-Untaken branches/arms and empty-loop bodies do not evaluate their children. Built-in
-layout tags add each child directly to their GPUI parent without an intermediate
-tree or child vector. Paragraphs build their one text buffer and styled-run list. Paired component tags collect their authored children in the
-component's `Vec<AnyElement>`. Large lists should use an embedded GPUI virtual
-list instead of eagerly generating every item.
+Untaken branches and empty-loop bodies don't evaluate their children. Built-in layout tags add each child directly to their GPUI parent, with no intermediate tree. Paragraphs build one text buffer and run list. Paired component tags collect their children in the component's `Vec<AnyElement>`.
 
-Each built-in layout tag and image gets a GPUI ID (SVGs are exempt), either explicit
-or derived from its source site and position in the macro. GPUI scopes IDs under their nearest identified ancestor.
-Outside composed paragraph/heading text, elements emitted directly by a loop
-**must** have explicit IDs, including elements in conditional branches and match arms immediately inside that loop. Prefer stable data keys,
-such as `id={("row", row.id)}`, over positions when rows can reorder. Nested
-children under an explicitly identified row can use generated IDs. Direct text/expression
-children inside loops need an element wrapper with an explicit stable ID.
-Embedded non-string expressions own
-their own identity, including elements they return from nested macro invocations.
-Reusable helper views rendered as siblings must also accept distinct root IDs.
+For large lists, embed a GPUI virtual list instead of eagerly generating every item.
 
-Debug builds check the actual GPUI IDs of direct children added to each
-macro-authored parent, including children from loops, taken conditions and
-embedded GPUI roots. A duplicate panics before layout with the ID and both source
-sites. IDs can repeat under different identified parents, and untaken branches
-are not checked. Detection is local to direct child roots; opaque GPUI descendants
-and parents constructed outside the macro are not enumerated. A `RenderOnce`
-component is also opaque until GPUI renders it: its root ID cannot be checked by
-the surrounding parent's construction-time registry. Its authored child vector
-is checked before being handed to the component. Components must forward unique
-IDs to their own roots; duplicate IDs across deferred component roots remain the
-caller's responsibility. Release builds
-omit the duplicate-ID map and checks. Stable key values remain the caller's
-responsibility.
+Each built-in layout tag and image gets a GPUI ID (SVGs are exempt), either explicit or derived from its source site and position. GPUI scopes IDs under their nearest identified ancestor.
+
+**Elements emitted directly by a loop must have explicit IDs**, outside composed paragraph and heading text. This includes elements in conditional branches and match arms immediately inside that loop.
+
+- Prefer stable data keys, such as `id={("row", row.id)}`, over positions when rows can reorder.
+- Nested children under an identified row can use generated IDs.
+- Direct text or expression children in loops need a wrapper with a stable ID.
+- Embedded non-string expressions own their identity, including elements from nested macro invocations.
+- Reusable helper views rendered as siblings must accept distinct root IDs.
+
+Debug builds check the actual GPUI IDs of direct children added to each macro-authored parent, including from loops, taken conditions and embedded GPUI roots. A duplicate panics before layout with the ID and both source sites. IDs can repeat under different identified parents, and untaken branches aren't checked. Release builds omit these checks.
+
+Limits of the check:
+
+- It's local to direct child roots. Opaque GPUI descendants and parents built outside the macro aren't enumerated.
+- A `RenderOnce` component is opaque until rendered, so its root ID can't be checked at construction. Its authored child vector is checked first. Components must forward unique IDs to their roots.
+- Stable key values remain your responsibility.
 
 ## Typed components, children and slots
 
@@ -635,65 +589,43 @@ let _card = rake::view! {
 };
 ```
 
-A component property may contain one markup root, such as
-`header={<h2>Profile</h2>}`. The macro expands that root and converts it to
-`gpui::AnyElement`, so the property must accept `AnyElement`. This works with
-built-in tags, custom components and retained `<view>` roots, including nested
-markup properties. It adds no wrapper and evaluates the slot once in property
-order. Ordinary Rust expressions keep their existing types; optional slots still
-use `None` or `Some(rake::view! { ... }.into_any_element())`. Markup-valued
-properties are component-only.
+A component property may contain one markup root, such as `header={<h2>Profile</h2>}`. The macro expands it and converts it to `gpui::AnyElement`, so the property must accept `AnyElement`.
 
-Properties map directly to Rust fields. Values have their declared types, with
-ordinary Rust moves, borrows, and visibility checks. Rust rejects missing, unknown,
-or incorrectly typed properties. Expression properties have no automatic `.into()`, cloning,
-optional-property default, builder-method lookup, or property spreading. A quoted
-value is an `&'static str`; use `label={"Title".into()}` for `SharedString`.
-GPUI's `RenderOnce` requires `'static` components: own values or explicitly clone
-retained handles instead of storing references to render-time locals.
-Generic component types can be inferred from their fields; explicit generic
-arguments in tag paths are not supported.
+This works with built-in tags, custom components, retained `<view>` roots and nested markup properties. It adds no wrapper and evaluates the slot once in property order. Ordinary Rust expressions keep their types, and optional slots still use `None` or `Some(rake::view! { ... }.into_any_element())`. Markup-valued properties are component-only.
 
-Self-closing tags initialize their listed properties, optionally followed by component defaults. Paired tags always
-supply `children: Vec<AnyElement>`, including an empty vector for `<Stack></Stack>`.
-This is a convention for arbitrary nested GPUI elements, not a `ParentElement`
-requirement on the component struct. `if`, `for`, `match`, string-to-accessible-text
-conversion, and retained `<view>` mounts work within those children. Alternatively,
-pass `children={existing_children}` on a self-closing tag. Combining that property
-with a paired tag is rejected. Authored properties evaluate once in written order,
-followed by the selected children in render order. Component rendering happens
-later through GPUI's usual `RenderOnce` lifecycle.
+Properties map directly to Rust fields, with ordinary moves, borrows and visibility checks. Rust rejects missing, unknown or incorrectly typed properties.
 
-Named slots are ordinary typed properties, such as the required `header` and
-optional `footer` above. Supply `None` for an absent optional slot, or provide it through a final `{..expr}`.
-An optional final `{..expr}` uses ordinary Rust struct-update syntax:
-`<Card {id} {..Default::default()}/>` or `<Card {id} {..base}>...</Card>`.
-The component must provide the fields through that expression; no defaults are
-implicitly created. Explicit fields override the base, and paired children
-supply the children field. Defaults must be last and are component-only.
-Authored fields evaluate first, then paired children, then the defaults expression,
-following Rust's struct construction order. Normal move/borrow rules still apply.
-The component chooses where to render each slot and its children. Dedicated
-`<slot>` syntax is not implemented. Callback properties work the same way:
-`on_save={cx.listener(Self::save)}` must match the component field's Rust type.
-Component properties must be Rust field names, using `r#` for keywords as needed.
-Namespaced `on:Action` and hyphenated built-in attributes such as `aria-label` do
-not apply to component tags. Even `class`, `style`, `disabled`, `focus`, and `id`
-are ordinary fields on a component, and the component decides how to use them.
+- There's no automatic `.into()`, cloning, optional-property default, builder-method lookup or property spreading.
+- A quoted value is an `&'static str`. Use `label={"Title".into()}` for `SharedString`.
+- GPUI's `RenderOnce` requires `'static` components, so own values or explicitly clone retained handles rather than storing references to render-time locals.
+- Generic component types can be inferred from fields. Explicit generic arguments in tag paths aren't supported.
 
-Forward a component's `id: ElementId` property to an identified GPUI root, as
-`Card` does above. Component tags do not insert layout wrappers, generate IDs, or
-create retained state. Direct component roots inside loops require an explicit
-`id` property, using stable data keys. Keep repeated instances' root IDs unique,
-including instances created outside loops. Changing or discarding those roots
-has the same state/focus consequences as ordinary GPUI rendering.
+Self-closing tags initialize their listed properties, optionally followed by component defaults. Paired tags always supply `children: Vec<AnyElement>`, including an empty vector for `<Stack></Stack>`. That's a convention, not a `ParentElement` requirement on the struct.
 
-Component structs are reconstructed when their parent renders. Keep persistent
-data and stateful widgets in caller-owned entities and mount them with
-`<view entity={&self.editor}/>` inside component content. The macro constructs the
-component value; it never calls `cx.new` or retains it in a component cache.
-User-authored property expressions and `RenderOnce` implementations remain normal
-Rust code and can allocate if they explicitly choose to.
+`if`, `for`, `match`, string-to-accessible-text conversion and `<view>` mounts work within those children. You can instead pass `children={existing_children}` on a self-closing tag, but not on a paired tag.
+
+Authored properties evaluate once in written order, followed by the selected children in render order. Component rendering happens later through GPUI's usual `RenderOnce` lifecycle.
+
+**Slots.** Named slots are ordinary typed properties, such as the required `header` and optional `footer` above. Supply `None` for an absent optional slot, or provide it through a final `{..expr}`. The component chooses where to render each slot and its children. Dedicated `<slot>` syntax isn't implemented.
+
+**Defaults.** A final `{..expr}` uses Rust struct-update syntax: `<Card {id} {..Default::default()}/>` or `<Card {id} {..base}>...</Card>`.
+
+- The component must provide the fields through that expression; no defaults are created implicitly.
+- Explicit fields override the base, and paired children supply the children field.
+- It must come last and is component-only.
+- Authored fields evaluate first, then paired children, then the defaults expression. Normal move and borrow rules apply.
+
+**Callbacks** work the same way: `on_save={cx.listener(Self::save)}` must match the field's Rust type.
+
+**Names.** Component properties must be Rust field names, with `r#` for keywords. Namespaced `on:Action` and hyphenated attributes such as `aria-label` don't apply to component tags. Even `class`, `style`, `disabled`, `focus` and `id` are ordinary fields, and the component decides how to use them.
+
+Forward a component's `id: ElementId` property to an identified GPUI root, as `Card` does above. Component tags don't insert layout wrappers, generate IDs or create retained state.
+
+Direct component roots in loops need an explicit `id` with stable data keys. Keep repeated instances' root IDs unique, including outside loops. Changing or discarding those roots has the same state and focus consequences as ordinary GPUI rendering.
+
+Component structs are reconstructed when their parent renders. Keep persistent data and stateful widgets in caller-owned entities, and mount them with `<view entity={&self.editor}/>` inside component content.
+
+The macro constructs the component value, and never calls `cx.new` or retains it in a cache. Your property expressions and `RenderOnce` implementations remain normal Rust and can allocate if you choose.
 
 ## Retained component ownership
 
@@ -713,89 +645,61 @@ rake::view! {
 # }
 ```
 
-`view` clones the borrowed entity handle, preserving its `EntityId`. It never
-calls an initializer or creates an entity. A direct `view` in a loop uses that
-entity's own stable GPUI ID and needs no separate `id`. Reordering the same
-entities under the same parent retains their identity. Mounting the same entity
-twice under one parent is a duplicate-ID error in debug builds.
+`view` clones the borrowed entity handle, keeping its `EntityId`. It never calls an initializer or creates an entity.
 
-The `entity` value must borrow a stored place, such as `&self.editor`,
-`&row.editor`, or `&self.editors[index]`. Expressions like `&cx.new(...)` and
-`self.editor.clone()` are rejected with an ownership diagnostic. Put styles and
-additional identity scopes on a surrounding element; `view` itself accepts only
-`entity`. Existing `{expression}` embedding remains available, and the caller is
-responsible for any allocations or entity construction in arbitrary Rust code.
+A direct `view` in a loop uses that entity's own stable GPUI ID and needs no separate `id`. Reordering the same entities under one parent keeps their identity. Mounting the same entity twice under one parent is a duplicate-ID error in debug builds.
 
-Owned entity data, including editor contents and selection, stays with that
-entity. Stored focus/scroll handles keep their identity; keyed mounted elements
-reuse GPUI's existing element state. Changing an ID or an identified ancestor,
-moving a component to another parent, or unmounting it can reset implicit element
-state. Unmounting can blur focus; the macro does not focus hidden components or
-restore focus automatically. An entity kept by its owner retains its data even
-while absent from the rendered tree; dropping/replacing the owner's handle ends
-that lifetime normally. There is no global component cache or additional state
-runtime.
+The `entity` value must borrow a stored place, such as `&self.editor`, `&row.editor` or `&self.editors[index]`. `&cx.new(...)` and `self.editor.clone()` are rejected with an ownership diagnostic.
+
+`view` accepts only `entity`, so put styles and identity scopes on a surrounding element. `{expression}` embedding remains available, and you're responsible for any allocations or entity construction in it.
+
+Owned entity data, including editor contents and selection, stays with that entity. Stored focus and scroll handles keep their identity, and keyed mounted elements reuse GPUI's element state.
+
+- Changing an ID or identified ancestor, moving a component to another parent, or unmounting it can reset implicit element state.
+- Unmounting can blur focus. The macro doesn't focus hidden components or restore focus automatically.
+- An entity kept by its owner retains its data while absent from the tree. Dropping or replacing the owner's handle ends its lifetime normally.
+
+There's no global component cache or extra state runtime.
 
 ## Scrolling, virtual lists and overlays
 
-Retained scroll handles work through `scroll`; GPUI virtual lists embed through
-`{expression}`. The experimental `rake::overlay` module adds `OverlayHost`,
-`OverlayAnchor`, `Popover` and `Dialog` as ordinary typed components, with retained
-state, live anchor geometry, stacked dismissal and modal focus containment. See
-[scrolling and overlays](experimental-overlays.md) for ownership, snippets and limits.
-The example opens a retained 10,000-document virtual list from a nested dialog.
+Retained scroll handles work through `scroll`, and GPUI virtual lists embed through `{expression}`.
+
+The experimental `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](experimental-overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
 
 ## Diagnostics and editing
 
-Independent local errors are reported together, including invalid attributes,
-utilities and missing required properties. An invalid attribute value recovers at
-the next attribute name or tag boundary. Malformed closing tags remain fatal.
-On failure, valid parts of the invocation retain their GPUI builder context in
-unreachable generated code, preserving expression and listener type checking for
-editor tooling. Invalid component properties and invalid loop roots are omitted
-from that recovery output to avoid unrelated inference/name errors. This recovery
-code never runs, and erroneous markup never builds successfully.
+Independent local errors are reported together, including invalid attributes, utilities and missing required properties. An invalid attribute value recovers at the next attribute name or tag boundary, while malformed closing tags remain fatal.
+
+On failure, valid parts keep their GPUI builder context in unreachable generated code, so editor tooling still type-checks expressions and listeners. Invalid component properties and loop roots are omitted to avoid unrelated errors. This code never runs, and erroneous markup never builds.
 
 ## Current limits
 
-Unknown tags, attributes, duplicate attributes, invalid utilities and malformed
-markup are compile errors. This version does not implement input controls,
-links/forms, automatic shortcut labels, selectable text or interactive inline
-links, `aria-labelledby` and the complete ARIA vocabulary, general-purpose focus
-traps outside the overlay controls, CSS selectors/cascade, HTML entity decoding,
-fragments, explicit generic arguments in component tags, dedicated slot
-syntax, automatic signal tracking, or markup hot reload. Inline text accepts a
-checked text-run styles and theme colors/fonts, and rejects conditional class
-attributes, events and IDs. Literal class branches are supported. SVG leaves
-use the documented restricted attribute set; wrap them for interaction and
-identity. Existing GPUI components remain available through `{expression}`.
-Raster images follow the application's asset/HTTP configuration, and SVG paths
-use its GPUI asset source.
+Unknown tags, attributes, duplicate attributes, invalid utilities and malformed markup are compile errors.
 
-Every rendered macro-authored element, component/entity mount and ordinary text or
-expression child automatically creates a development inspection boundary. No
-`.inspect(...)` calls are needed inside a view. An existing `.inspect("name")` on
-a built-in root renames that boundary without adding another one. GPUI IDs,
-layout and accessibility continue to delegate to the original element. Generated
-site IDs and explicit loop keys provide consecutive-frame presentation identities;
-removal expires them. Repeated unkeyed sites remain ambiguous.
+Not implemented in this version:
 
-Components retain their typed properties through a transparent construction wrapper.
-Use `.into_inner()` when ownership of the original component or concrete GPUI root
-is required; this removes that boundary only, leaving instrumented descendants.
-Component `id` properties using `ElementId`, strings, common integer keys, common
-GPUI named-integer tuples or UUIDs supply inspection keys without changing GPUI IDs.
-Other property types stay unconstrained but do not supply a key; repeated component
-sites then have the usual ambiguity limitation.
+- Input controls, links and forms.
+- Automatic shortcut labels, selectable text and interactive inline links.
+- `aria-labelledby` and the complete ARIA vocabulary.
+- General focus traps outside the overlay controls.
+- CSS selectors or cascade, and HTML entity decoding.
+- Fragments, explicit generic arguments in component tags and dedicated slot syntax.
+- Automatic signal tracking and markup hot reload.
 
-The Source pane lists authored tags and style-related attributes with file, line,
-column and bounded Rust expression spellings. It records declarations, not selected
-conditional branches or methods hidden inside arbitrary style closures. Inline
-paragraph tags are text runs: their style source metadata belongs to the paragraph,
-with no invented per-run layout boxes. Their composed text appears as a captured
-text child, including inline styling runs, line breaks and dynamic values. Ordinary
-text children in buttons, headings, labels and other containers are captured too.
-Text is bounded to 16 KiB per boundary; editable control values remain excluded.
+Inline text accepts checked text-run styles and theme colors and fonts, and rejects conditional class attributes, events and IDs. Literal class branches are supported. SVG leaves use their restricted attribute set, so wrap them for interaction and identity. Existing GPUI components remain available through `{expression}`. Raster images follow your asset and HTTP configuration, and SVG paths use the GPUI asset source.
+
+Every rendered macro-authored element, component or entity mount, and ordinary text or expression child automatically creates a development inspection boundary, so no `.inspect(...)` calls are needed. An existing `.inspect("name")` on a built-in root renames that boundary without adding another.
+
+GPUI IDs, layout and accessibility still delegate to the original element. Generated site IDs and explicit loop keys provide identities across frames, and removal expires them. Repeated unkeyed sites remain ambiguous.
+
+Components keep their typed properties through a transparent construction wrapper. Use `.into_inner()` when you need the original component or concrete GPUI root. That removes only that boundary, leaving instrumented descendants.
+
+Component `id` properties using `ElementId`, strings, common integer keys, common GPUI named-integer tuples or UUIDs supply inspection keys without changing GPUI IDs. Other types don't supply a key, so repeated sites have the usual ambiguity.
+
+The Source pane lists authored tags and style-related attributes with file, line, column and bounded Rust expression spellings. It records declarations, not selected conditional branches or methods hidden in style closures.
+
+Inline paragraph tags are text runs, so their style metadata belongs to the paragraph, with no invented per-run boxes. Their composed text appears as a captured text child, including styling runs, line breaks and dynamic values. Ordinary text children in buttons, headings, labels and other containers are captured too. Text is bounded to 16 KiB per boundary, and editable control values stay excluded.
 
 Capture remains opt-in through the routed or standalone `App::root` development host, and count/byte limits
 still apply. Without an inspection host, wrappers do not sample or serialize styles.
@@ -820,66 +724,23 @@ cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --loc
 cargo check -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
 
-The example uses reusable `components::Card` and `components::Badge` components.
-Card accepts typed header/footer slots and collects the counter controls and
-retained history into its body. Badge derives its label and appearance from
-ordinary typed properties. Paragraphs demonstrate nested bold/italic runs,
-colored dynamic text, Unicode, a two-line preview, and a single-line ellipsis.
-The example routes clicks and shortcuts through typed actions. Command+I on
-macOS targets (Control+I elsewhere) increments, Escape resets, H toggles history,
-R reverses rows, L locks/unlocks editing, and T switches the ambient theme. Reset and Reverse are disabled when
-unavailable; locking disables Increment and Reset. Tab/Shift+Tab skip disabled
-controls and expose visible focus styling. History rows are retained entities
-with their own focus and click counts; B or Enter/Space activates a focused row.
-The list uses a stored scroll handle. Resetting or hiding history explicitly
-returns focus to the counter root before rows disappear. Native and Web use the
-same render method.
+The example uses reusable `components::Card` and `components::Badge`. Card accepts typed header and footer slots and collects the counter controls and retained history into its body. Badge derives its label and appearance from typed properties. Paragraphs show nested bold and italic runs, colored dynamic text, Unicode, a two-line preview and a single-line ellipsis. Native and Web use the same render method.
 
-Before heading composition, canonical events and the newer elements were added,
-the example was smoke-tested on macOS: Enter and Command+I activation,
-locked mouse/keyboard activation, Tab skipping disabled controls, native disabled
-accessibility state, and row activation after a typed reorder. The component
-follow-up also verified header/body/footer layout, dynamic Badge properties, and
-retained row activation/focus after reordering inside Card. Those earlier macOS
-checks also covered paragraph composition for nested bold/italic runs, dynamic
-colored text, Unicode, single- and two-line ellipses, and complete untruncated
-accessibility values.
-The later events, tooltips, SVGs, semantic containers, rules, composed headings,
-`match`, shorthand, defaults, unquoted text and markup-valued properties have compile, unit, UI and TestPlatform
-frame coverage only, without native or browser interaction checks. Web compilation
-is checked; browser input and screen-reader interaction have not been verified.
+| Key | Action |
+| --- | --- |
+| Command+I on macOS, Control+I elsewhere | Increment |
+| Escape | Reset |
+| H | Toggle history |
+| R | Reverse rows |
+| L | Lock or unlock editing |
+| T | Switch the ambient theme |
+| B, or Enter/Space on a focused row | Activate a row |
 
-Expansion snapshots preserve builder order and generated identities. Compiler UI
-fixtures cover individual and combined errors, attribute recovery, legacy event
-warnings and expression/listener type checking beside macro errors. Utility
-coverage tests compare the documented list with the checked table and compile all
-supported methods against GPUI. Runtime construction tests cover match arms,
-booleans, shorthand, component defaults, semantic roles and SVG labels. A direct
-rust-analyzer completion probe verified typed listener fields beside an invalid
-utility; it did not modify the source files.
+Reset and Reverse are disabled when unavailable, and locking disables Increment and Reset. Tab and Shift+Tab skip disabled controls and show focus styling. History rows are retained entities with their own focus and click counts, and the list uses a stored scroll handle. Resetting or hiding history returns focus to the counter root before rows disappear.
 
-The opt-in `view-test-support` feature enables GPUI's own deterministic TestPlatform.
-Its frame tests exercise keyed element state, implicit button focus, retained
-entity data/selection, explicit focus and scroll offsets across parent rerenders,
-reordering and insertion. Component frame tests check forwarded root IDs, implicit
-focus and keyed state across reorder/insertion, and retained child ownership.
-Paragraph and heading frame tests cover shared inline flow, width changes, explicit
-breaks, line limits, composed heading names and GPUI truncation. The TestPlatform
-has no active accessibility adapter; heading node properties are inspected during
-render alongside real layout measurements. Keyboard frame tests cover typed actions, Tab/Shift+Tab,
-negative indices, consumed events, disabled mouse/keyboard activation, and
-keyboard-visible styling. Pointer tests exercise right/middle buttons, hover and
-wheel dispatch, including disabled suppression. The platform's window/text/GPU backend is a test double;
-these checks do not establish native editor or browser input behavior.
+Browser input and screen-reader interaction haven't been verified. Several newer elements have automated coverage only, without native or browser interaction checks. See [test coverage](internal/test-coverage.md).
 
-The example's opt-in `view-test-support` tests render the actual counter,
-components, retained history, popover, document dialog and help view. Reviewed
-text fixtures assert the exact distinct strings sent to GPUI text layout, with
-no whitespace normalization in the assertions. Scenarios cover initial and
-incremented counts, light/dark themes, locked/hidden history, open overlays and a selected virtual
-document. The recorder keeps full composed text before truncation and omits
-ellipsis measurement candidates; it does not assert pixel output, text order,
-duplicate occurrences or native/browser rendering. CI runs these tests explicitly.
+The opt-in `view-test-support` feature enables GPUI's deterministic TestPlatform for your own frame tests. Its window, text and GPU backend is a test double, so it doesn't establish native editor or browser input behavior.
 
 ## Themes
 
@@ -890,11 +751,9 @@ theme types coexist. Observe replacements through the public
 `ThemeGlobal<MyTheme>` GPUI global; change themes only through `install`.
 Direct global writes leave the ambient value stale.
 
-Themes are local to the UI thread: setup, switching and view construction must
-run there, on native and Wasm. Existing built elements retain old values until
-rebuilt. A missing theme panic names the type and tells you to call `install`.
-`TextToken { size, line_height, weight }` describes paragraph typography using
-pixels and an optional GPUI font weight. Use it with a named `text-` class on the paragraph.
+Themes are local to the UI thread, so setup, switching and view construction must run there, on native and Wasm. Existing built elements keep old values until rebuilt. A missing-theme panic names the type and tells you to call `install`.
+
+`TextToken { size, line_height, weight }` describes paragraph typography using pixels and an optional GPUI font weight. Use it with a named `text-` class on the paragraph.
 
 ### Declaration and field types
 
@@ -919,13 +778,17 @@ underscores (`bg-surface-raised` reads `surface_raised`). Derive `Theme` checks
 reserved built-in names and requires `Clone`; fields must be named. `hover` is
 a valid field name. There is no built-in palette or `dark:` variant.
 
-`text-` accepts GPUI colors or `TextToken`; `bg-` accepts GPUI fills; `border-`
-accepts colors; `font-` accepts `SharedString`/`&'static str`; `rounded-` accepts
-pixels/rems. Inline `text-` accepts colors only: a `TextToken` gives a
-`ThemeRunText` trait error because font size belongs on p. Inline `font-` is
-also supported. Wrong field names and value types produce Rust field/trait
-errors; field identifiers carry the class literal’s span. A missing declaration reports “cannot find type `__RakeTheme`
-in the crate root”; add `rake::theme!(YourTheme)` at that root.
+| Prefix | Accepts |
+| --- | --- |
+| `text-` | GPUI colors or `TextToken` |
+| `bg-` | GPUI fills |
+| `border-` | Colors |
+| `font-` | `SharedString` or `&'static str` |
+| `rounded-` | Pixels or rems |
+
+Inline `text-` accepts colors only: a `TextToken` gives a `ThemeRunText` trait error, because font size belongs on `p`. Inline `font-` is also supported.
+
+Wrong field names and value types produce Rust field or trait errors, with spans on the class literal. A missing declaration reports “cannot find type `__RakeTheme` in the crate root”, so add `rake::theme!(YourTheme)` at that root.
 
 Each invocation clones one ambient `Rc` before building its elements, including
 variant refinements. Nested `view!` expressions bind their own handle. Deep
@@ -945,37 +808,23 @@ fn toolbar() -> impl rake::gpui::IntoElement {
 }
 ```
 
-Use `style={control}` or compose `style={|s| control(s).w(gpui::px(10.))}`.
-Presets support literal utilities, themes and merged variants. Their generated
-function accepts `Styled`; hover/focus/group utilities add `InteractiveElement`, and
-active/scrolling utilities require `StatefulInteractiveElement` as GPUI
-requires. A plain preset also works on `StyleRefinement`. Marker functions have
-no body, parameters, generics or qualifiers; visibility and doc attributes
-are preserved. Conditional attributes, branches and button-only `disabled:`
-need an element context and are rejected.
+Use `style={control}` or compose `style={|s| control(s).w(gpui::px(10.))}`. Presets support literal utilities, themes and merged variants.
+
+The generated function accepts `Styled`. Hover, focus and group utilities add `InteractiveElement`, and active and scrolling utilities require `StatefulInteractiveElement`. A plain preset also works on `StyleRefinement`.
+
+Marker functions have no body, parameters, generics or qualifiers, and visibility and doc attributes are preserved. Conditional attributes, branches and button-only `disabled:` need an element context and are rejected.
 
 A preset's `hover:` conflicts with `hover:` classes on the same element, as do
 other interaction kinds. The token scanner cannot inspect a named function;
 GPUI's debug assertion is the backstop. Keep each kind in one place.
 
-The inspector also declares an app-owned `Palette` theme and uses the same
-grammar, literal branches and focus preset. Its `view.rs` migration reduced
-`style={|...| ...}` closures from 84 to 10. Remaining closures handle computed
-pane/row dimensions, dynamic captured swatches, tree semantics, an underline,
-a resize cursor/focus handle, or the explicit-palette property helper. The
-helper remains independent of ambient setup for its construction-only identity
-test. `style={control}` applies the shared focus preset to toolbar buttons.
+The inspector also declares an app-owned `Palette` theme using the same grammar, literal branches and focus preset, and `style={control}` applies the shared preset to its toolbar buttons.
 
 ### Shared semantic colors
 
-`rake::theme::Semantic` is a flat palette with Base's 18 color names and an
-`appearance` field. Declare `rake::theme!(rake::theme::Semantic)` at the crate
-root to use `bg-background`, `text-foreground`, `bg-primary`,
-`text-primary-foreground`, `bg-surface`, and the other semantic roles.
-Install `Semantic::light()` or `Semantic::dark()` through the same
-`rake::theme::install(cx, palette)` API. Application-defined themes remain
-independent and work unchanged; typography, spacing and shadow scales remain
-separate Base settings.
+`rake::theme::Semantic` is a flat palette with Base's 18 color names and an `appearance` field. Declare `rake::theme!(rake::theme::Semantic)` at the crate root to use `bg-background`, `text-foreground`, `bg-primary`, `text-primary-foreground`, `bg-surface` and the other semantic roles. Install `Semantic::light()` or `Semantic::dark()` through `rake::theme::install(cx, palette)`.
+
+Application-defined themes stay independent and work unchanged. Typography, spacing and shadow scales remain separate Base settings.
 
 Installation updates the ambient Rake copy and Base's colors. Rake observes the
 actual Base global effect queue and replaces its copy only when values change,

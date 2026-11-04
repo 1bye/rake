@@ -1,8 +1,7 @@
 # Packaging and distribution
 
-The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
-Windows and Linux remain unqualified; tooling and platform descriptions below
-do not establish real GUI, signing, notarization or installer qualification.
+> Windows and Linux, signing, notarization and installers aren't qualified in this alpha.
+> See [what's supported](support.md).
 
 This page describes the legacy macOS/Linux archive layout and the Web pipeline.
 For native installers, updates, metadata, components and release publishing, use
@@ -19,13 +18,11 @@ target/debug/rake bundle --target web --package rake-routing --base-path /notes/
 target/debug/rake bundle --target web --package rake-routing --routing hash
 ```
 
-Bundles default to the **release** profile. Use `--debug` explicitly for local
-packaging checks. Existing `--manifest-path`, `--package`, `--bin`, `--features`,
-`--web-dir` and `--output` options work as for builds. Defaults write
-`dist/PACKAGE/desktop-bundle` or `dist/PACKAGE/web-bundle`. Build outputs remain
-separate at `dist/PACKAGE/desktop|web`. Web and the development supervisor require
-Python 3.11+; native bundle assembly runs in Rust. Web also requires the wasm32 target and a
-`wasm-bindgen` CLI exactly matching Cargo.lock.
+Bundles default to the **release** profile, and `--debug` is for local packaging checks. `--manifest-path`, `--package`, `--bin`, `--features`, `--web-dir` and `--output` work as for builds.
+
+Defaults write `dist/PACKAGE/desktop-bundle` or `dist/PACKAGE/web-bundle`, separate from build outputs at `dist/PACKAGE/desktop|web`.
+
+Web and the development supervisor need Python 3.11+, while native bundle assembly runs in Rust. Web also needs the wasm32 target and a `wasm-bindgen` CLI exactly matching `Cargo.lock`.
 
 Each output contains the unpacked artifact, archive, `bundle.json` with versions,
 target, profile, signing/deployment status and file hashes, plus `SHA256SUMS` for
@@ -56,20 +53,15 @@ base_path = "/notes/"
 routing = "path"
 ```
 
-The display name defaults to the Cargo package name. The identifier defaults to
-`dev.rake.PACKAGE`, with underscores replaced by hyphens. Set it to the application
-ID passed to `App::new` for consistent OS/runtime identity. Cargo's full version
-is retained in the manifest/archive; the numeric part supplies the macOS short
-version. Build numbers use one to three numeric components. The minimum OS value
-declares compatibility; it does not change Rust/linker deployment targets or prove
-that dependencies support that OS.
+- **Display name:** defaults to the Cargo package name.
+- **Identifier:** defaults to `dev.rake.PACKAGE`, with underscores replaced by hyphens. Set it to the application ID passed to `App::new` for a consistent OS and runtime identity.
+- **Version:** Cargo's full version stays in the manifest and archive, and the numeric part supplies the macOS short version.
+- **Build numbers:** one to three numeric components.
+- **Minimum OS:** declares compatibility. It doesn't change Rust or linker deployment targets, or prove that dependencies support that OS.
 
-Asset/icon paths are explicit, package-relative inputs. Files outside the package,
-symlinks, special files and output-name collisions fail. The asset tree is copied
-without following links; static resource permissions are normalized. Only declared
-asset trees and the Web host tree are copied, not the project or dev-session data.
-This stage packages resources; applications choose how to decode or register them
-with GPUI. Runtime paths are:
+Asset and icon paths are explicit, package-relative inputs. Files outside the package, symlinks, special files and output-name collisions fail. The asset tree is copied without following links, and static resource permissions are normalized.
+
+Only declared asset trees and the Web host tree are copied, not the project or dev-session data. This stage packages resources; your app chooses how to decode or register them with GPUI. Runtime paths are:
 
 | Target | Asset directory |
 | --- | --- |
@@ -85,13 +77,9 @@ unrelated working directory.
 
 ## Native artifacts
 
-On macOS the artifact is a versioned `.app` with an executable, Info.plist,
-resources and optional icon. PNG icons are converted to ICNS during bundling.
-Plain non-system dylib dependencies are resolved from loader/executable paths and
-LC_RPATH entries, copied recursively into `Contents/Frameworks`, rewritten and
-signed before the outer app. Filename collisions and unresolved libraries fail.
-Use explicit framework/runtime recipes in schema 1 for external framework bundles
-and plugins. System frameworks and `/usr/lib` dependencies remain system-provided.
+On macOS the artifact is a versioned `.app` with an executable, Info.plist, resources and optional icon. PNG icons are converted to ICNS.
+
+Plain non-system dylib dependencies are resolved from loader and executable paths and `LC_RPATH` entries, copied recursively into `Contents/Frameworks`, rewritten and signed before the outer app. Filename collisions and unresolved libraries fail. Use explicit framework and runtime recipes in schema 1 for external framework bundles and plugins. System frameworks and `/usr/lib` dependencies stay system-provided.
 
 The default is an **ad-hoc signature**, verified with `codesign --verify --deep
 --strict`. This supplies local bundle integrity, not Developer ID/notarization or
@@ -103,54 +91,40 @@ target/debug/rake bundle --target desktop --package notes \
   --entitlements entitlements.plist
 ```
 
-Identity signing uses a secure timestamp and Hardened Runtime for the main app;
-entitlements are optional. Signing failure prevents publication. The ZIP is made
-with `ditto --keepParent` after signature verification, following Apple's
-[distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/)
-and [packaging guidance](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution).
-Ordinary development bundles report `notarized: false`. Explicit trusted releases
-use an enrolled Developer ID identity and `--notary-profile`, then verify
-notarization and stapled tickets. See [release settings](distribution-release.md).
-App Store submission remains a separate publishing adapter.
+Identity signing uses a secure timestamp and Hardened Runtime for the main app, and entitlements are optional. Signing failure prevents publication. The ZIP is made with `ditto --keepParent` after signature verification, following Apple's [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/) and [packaging guidance](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution).
 
-Linux produces a directory archive with `bin/` and `share/` resources. It relies
-on compatible system libraries and is not an AppImage, distro package or installer.
-The archive layout is validated on macOS and Linux. Schema 1 additionally produces
-Linux native packages, AppImage and Flatpak. Windows distribution commands run
-independently of Unix development-control IPC and support NSIS/MSI/MSIX/Velopack.
-macOS archives report actual Mach-O architecture; explicit universal builds and
-matching native components use the schema-1 configuration.
+Ordinary development bundles report `notarized: false`. Explicit trusted releases use an enrolled Developer ID identity and `--notary-profile`, then verify notarization and stapled tickets. See [release settings](distribution-release.md). App Store submission is a separate publishing adapter.
+
+Linux produces a directory archive with `bin/` and `share/` resources. It relies on compatible system libraries and isn't an AppImage, distro package or installer. The layout is validated on macOS and Linux.
+
+Schema 1 also produces Linux native packages, AppImage and Flatpak. Windows distribution commands run independently of Unix development-control IPC and support NSIS, MSI, MSIX and Velopack. macOS archives report the actual Mach-O architecture, and universal builds with matching native components use the schema 1 configuration.
 
 ## Web deployment
 
-The `site/` directory and ZIP contain the Wasm module, exact matching JS bindings,
-host/loader and declared assets. The ZIP has site contents at its root. The host
-contains `rake-web-config` metadata: the runner applies it before initial route
-decoding and uses it for subsequent History API writes. Both path and hash routing
-preserve the prefix, including Back/Forward and clearing the last tab. CLI flags
-override bundle Web metadata. Development builds retain their normal root host;
-`rake bundle` applies deployment settings.
+The `site/` directory and ZIP contain the Wasm module, matching JS bindings, host and loader, and declared assets. The ZIP has the site contents at its root.
+
+The host contains `rake-web-config` metadata, which the runner applies before initial route decoding and uses for later History API writes. Path and hash routing both keep the prefix, including on Back, Forward and clearing the last tab. CLI flags override bundle Web metadata. Development builds keep their normal root host; `rake bundle` applies deployment settings.
 
 `WebConfig` owns its prefix and is cloneable. Applications can also configure it
 directly with `WebConfig::new().base_path("/notes/")?`; `uri_for` and
 `destination_from_url` share the browser adapter's typed deployment codec.
 
-Base paths begin/end with `/`, use ASCII letters/digits, `-`, `_`, `.`, `~`, and
-nonempty segments, and reject dot segments or encoded/query/fragment syntax.
-Rake adds `<base>`, rebases `/pkg/` and `/assets/` references in custom HTML/JS/CSS,
-and leaves generated bindings' module-relative Wasm resolution intact. Custom
-root-relative application/API URLs remain author-owned. Remove a custom `<base>`
-element before bundling. `pkg/`, `rake-web-config` and `rake-deployment.json` are
-reserved. Inputs containing development bootstrap/bridge metadata are rejected.
+**Base paths** begin and end with `/`, use ASCII letters, digits, `-`, `_`, `.` and `~` in nonempty segments, and reject dot segments and encoded, query or fragment syntax.
 
-Upload **site contents** below the configured URL prefix. `rake-deployment.json`
-records routing/base/assets/MIME/cache requirements, and `nginx.conf.example`
-supplies path/hash host rules. Path mode needs app-shell fallback for destination
-URLs; missing Wasm/asset files must return 404. Hash mode needs no destination-path
-rewrite. Serve `.wasm` as `application/wasm` and JS with its JavaScript MIME type.
-Serve index/loader/bindings/Wasm with revalidation: these filenames are not content
-hashed, so immutable caching would mix releases. Deploy the complete directory as
-one version to avoid mixing old bindings and new Wasm.
+Rake adds `<base>`, rebases `/pkg/` and `/assets/` references in custom HTML, JS and CSS, and leaves the generated bindings' module-relative Wasm resolution intact. Custom root-relative application and API URLs stay yours to manage.
+
+- Remove any custom `<base>` element before bundling.
+- `pkg/`, `rake-web-config` and `rake-deployment.json` are reserved.
+- Inputs containing development bootstrap or bridge metadata are rejected.
+
+Upload **site contents** below the configured URL prefix, deploying the complete directory as one version so old bindings and new Wasm never mix. `rake-deployment.json` records routing, base, asset, MIME and cache requirements, and `nginx.conf.example` supplies path and hash host rules.
+
+| Requirement | Rule |
+| --- | --- |
+| Path mode | App-shell fallback for destination URLs, and 404 for missing Wasm or asset files |
+| Hash mode | No destination-path rewrite needed |
+| MIME types | `.wasm` as `application/wasm`, JS with its JavaScript type |
+| Caching | Revalidate index, loader, bindings and Wasm. Their filenames aren't content hashed, so immutable caching would mix releases |
 
 No broker, dev bootstrap, inspector assets, token, reload checkpoint or connection
 metadata is added to production output. A normal static server is sufficient.

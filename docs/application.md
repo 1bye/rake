@@ -20,33 +20,34 @@ let app = App::new("example.utility")
     });
 ```
 
-A `RuntimeContext` contains weak runtime handles. Keeping it in a view does not
-keep a closed runtime alive. `services()` returns shared application handles;
-`tasks()` starts application-owned work; `client()` dispatches registered commands;
-`quit()` runs the same shutdown policy used by normal window close and update
-restart. A routed page obtains these capabilities from `page.runtime()` and keeps
-entry-specific navigation, activities, and guards on `PageContext`.
+A `RuntimeContext` holds weak runtime handles, so keeping one in a view doesn't keep a closed runtime alive. It gives you:
+
+- `services()`: shared application handles.
+- `tasks()`: application-owned work.
+- `client()`: dispatches registered commands.
+- `quit()`: the same shutdown policy used by normal window close and update restart.
+
+A routed page gets these from `page.runtime()`. Entry-specific navigation, activities and guards stay on `PageContext`.
 
 Inside a user event, `runtime.action(cx, initiated_future)` binds one finite action
 with automatic redraw/cancellation; `page.action` provides the entry-owned version.
 Start gesture-sensitive browser operations before handing their future to Rake.
 Actions do not automatically retry. See [platform services](platform-services.md).
 
-Inside an entity constructor, `runtime.load(cx, factory)` binds an arbitrary
-async value to that view; `runtime.bind_updates(cx)` observes the shared updates
-controller. Both arrange redraws and cancellation internally. Routed pages can
-use `page.load` for additional retained data and `page.bind_updates` for
-visibility-scoped update observation. For initial route preparation, register a
-`LoadedPage` with `loaded(PageType)` instead. See the [foundation example](../examples/foundation/src/lib.rs)
-and [desktop example](../examples/desktop/src/main.rs).
+Inside an entity constructor:
 
-Closing a standalone window requests guarded application quit by default on every
-native platform. Choose `.close_policy(rake::ClosePolicy::KeepRunning)` explicitly
-for a tray/background application. An OS force quit, crash, or process kill cannot
-be guarded. Route-only settings (`initial`, `entry_guard`, `web`, and
-`workspace_chrome`) require `routes`; standalone startup rejects them instead of
-silently ignoring them. `runtime_config` configures operation/work bounds for both
-shapes; `router` remains a compatible spelling.
+- `runtime.load(cx, factory)` binds an async value to that view.
+- `runtime.bind_updates(cx)` observes the shared updates controller.
+
+Both handle redraws and cancellation for you. Routed pages can use `page.load` for additional retained data and `page.bind_updates` for visibility-scoped update observation. For initial route preparation, register a `LoadedPage` with `loaded(PageType)` instead.
+
+See the [foundation example](../examples/foundation/src/lib.rs) and [desktop example](../examples/desktop/src/main.rs).
+
+Closing a standalone window requests guarded application quit by default on every native platform. For a tray or background app, choose `.close_policy(rake::ClosePolicy::KeepRunning)`. An OS force quit, crash or process kill can't be guarded.
+
+Some settings only apply to routed apps: `initial`, `entry_guard`, `web` and `workspace_chrome`. Standalone startup rejects them rather than silently ignoring them.
+
+`runtime_config` configures operation and work bounds for both shapes. `router` remains a compatible spelling.
 
 ## Background and headless work
 
@@ -96,13 +97,13 @@ an executor or silently create a window.
 
 ## Shutdown checks
 
-`.quit_guard(|context| async { ... })` registers an application-wide asynchronous
-check. Return `Ok(())` after saving or explicit approval, or `Err(GuardReason(...))`
-to keep the app running. Checks run after existing finite work has settled and
-before application resources stop. Cancellation drops the pending check; it cannot
-undo an external save already performed. A guard that waits for user input must
-recheck its own mutable model before approving. Per-document revision checks and
-discard choices continue to belong to `page.entry()`.
+`.quit_guard(|context| async { ... })` registers an application-wide asynchronous check. Return `Ok(())` after saving or explicit approval, or `Err(GuardReason(...))` to keep the app running.
+
+- Checks run after existing finite work has settled and before application resources stop.
+- Cancellation drops the pending check, but can't undo an external save already performed.
+- A guard that waits for user input must recheck its own mutable model before approving.
+
+Per-document revision checks and discard choices belong to `page.entry()`.
 
 See [routing](routing.md), [managed work](managed-work.md),
 [guarded quit](guarded-quit.md), and [distribution](distribution.md).
@@ -113,12 +114,11 @@ See [routing](routing.md), [managed work](managed-work.md),
 `Display`. A factory can use `?` for opening settings, registering services, or
 other initialization. Existing infallible factories continue to work.
 
-Use `try_root` or `try_root_with` when constructing the initial view can fail;
-the callback returns `Result<AnyView, MountError>`. Native root/workspace and
-initial-window failures return `AppError::Mount` or `AppError::Window` after the
-host shuts down, so the generated entry point exits unsuccessfully. Invalid
-explicit initial destinations fail validation before the UI starts. Initial page
-mount failures remain navigation failures and use the routing recovery UI.
+Use `try_root` or `try_root_with` when constructing the initial view can fail. The callback returns `Result<AnyView, MountError>`.
+
+- Native root, workspace and initial-window failures return `AppError::Mount` or `AppError::Window` after the host shuts down, so the generated entry point exits unsuccessfully.
+- Invalid explicit initial destinations fail validation before the UI starts.
+- Initial page mount failures remain navigation failures and use the routing recovery UI.
 
 Browser graphics startup is asynchronous. When a document is available, failed
 factory/root/window startup displays an alert with a reload button, including when
@@ -138,15 +138,13 @@ carry the standard HTTP and diagnostic handles for command handlers. A bare
 `ServiceRegistry::new()` remains a custom-only composition and reports a missing
 standard service explicitly.
 
-Routed apps can install `.layout(...)` or `.try_layout(...)` after registering
-routes. The layout is one retained entity per window; pages own only their route
-bodies and entry-scoped work. Use `layout.outlet()` in a sidebar/dashboard shell,
-and `layout.runtime()` for application operations. `layout.router()` is a weak
-upgrade and returns `Result<Router<_>, OperationError>`; an owner that is already
-stopping can therefore fail to upgrade, while `layout.outlet()` simply renders
-no retained page after the runtime has gone away. Same-type `replace_routes`
-keeps the layout and guards. Registering an entry guard or layout before the
-route type transition returns an explicit builder-order error at startup.
+Routed apps can install `.layout(...)` or `.try_layout(...)` after registering routes. There's one retained layout entity per window, and pages own only their route bodies and entry-scoped work.
+
+- `layout.outlet()` places route content in a sidebar or dashboard shell. It renders no retained page once the runtime has gone away.
+- `layout.runtime()` gives application operations.
+- `layout.router()` is a weak upgrade returning `Result<Router<_>, OperationError>`, so it can fail while the owner is stopping.
+
+Same-type `replace_routes` keeps the layout and guards. Registering an entry guard or layout before the route type transition returns an explicit builder-order error at startup.
 
 `python3 scripts/test-app-layout.py` runs the native layout fixture. It verifies
 persistent shell state, shared service/transport identity, history navigation, and

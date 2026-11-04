@@ -11,7 +11,7 @@ is limited to captured GPUI boundaries and the engine facts exposed by GPUI.
 
 Inspection is compiled only with the opt-in `rake/devtools` feature; `rake dev`
 enables it automatically. Production build configuration is documented in
-[devtools.md](devtools.md#connection).
+[devtools.md](../devtools.md#connection).
 
 ## Elements coverage checklist
 
@@ -72,7 +72,7 @@ The Node harness requires Node 22+ and a macOS GUI session, and fails explicitly
 when real prerequisites are unavailable. It launches isolated applications and
 cleans up only its own processes/endpoints. It verifies native GPUI and CDP behavior;
 it does not automate Chrome. Repeat Chrome's UI pass separately using the launch
-instructions in [devtools.md](devtools.md).
+instructions in [devtools.md](../devtools.md).
 
 ## Remaining Elements boundaries
 
@@ -88,13 +88,13 @@ persistent flex/grid overlays, browser animation/font diagnostics, general
 JavaScript evaluation and Rust source rewriting remain unsupported. Chrome's
 Sources/debugger is not a Rust debugger. The Console helper UI checks noted above remain verification work, rather than
 a claim of full parity.
-See [element inspection](element-inspection.md) for the engine coverage contract.
+See [element inspection](../element-inspection.md) for the engine coverage contract.
 
 
 ## Console coverage
 
 The five Console steps and their 2026-10-30 stock Chrome verification are recorded
-in [the Console checklist](devtools-console.md). This includes reviewed command
+in [the Console checklist](../devtools-console.md). This includes reviewed command
 entry, completion/help, source links, structured data, failed/pending results,
 search, Clear, Keep log across checkpointed replacement, and retained panic output.
 That pass used Chrome 156.0.8078.74; the earlier Console UI limitations above describe
@@ -104,25 +104,25 @@ the historical Elements-only pass.
 ## Network coverage
 
 The five Network steps, capture limits and verification evidence are recorded in
-[the Network checklist](devtools-network.md).
+[the Network checklist](../devtools-network.md).
 
 ## Performance coverage
 
 The five Performance steps, native regression fixture, stock Chrome verification
 and remaining engine boundaries are recorded in
-[the Performance checklist](devtools-performance.md).
+[the Performance checklist](../devtools-performance.md).
 
 ## Sources coverage
 
 The five Sources steps, source access limits, native regression fixture and stock
-Chrome verification are recorded in [the Sources checklist](devtools-sources.md).
+Chrome verification are recorded in [the Sources checklist](../devtools-sources.md).
 This provides read-only Rust browsing and navigation; Rust debugging still
 requires a native debugger.
 
 ## Memory coverage
 
 The five Memory steps, native allocator setup, bounds, production feature gate
-and stock Chrome verification are recorded in [the Memory checklist](devtools-memory.md).
+and stock Chrome verification are recorded in [the Memory checklist](../devtools-memory.md).
 Sampling and live-block comparisons are supported; full Rust ownership and GPU
 memory graphs remain unavailable.
 
@@ -130,7 +130,7 @@ memory graphs remain unavailable.
 
 Typed memory/file stores, optional shared caching and explicitly registered
 read-only/writable Chrome storage projections are described in
-[typed storage](storage.md). Inspection is compiled only with `rake/devtools`.
+[typed storage](../storage.md). Inspection is compiled only with `rake/devtools`.
 Browser-only Application features (service workers, manifests, cookies,
 IndexedDB, cache storage and browser storage quotas) are not emulated for native
 stores. Platform encryption/Keychain backends remain separate integrations.

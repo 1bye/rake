@@ -238,7 +238,7 @@ fn doctor(args: &[String]) -> Result<()> {
 
         let tools=tools.into_iter().map(|name|serde_json::json!({"name":name,"on_path":tool_available(name)})).collect::<Vec<_>>();
 
-        serde_json::json!({"format":item.format(),"update_owner":item.update_owner(),"native_host_required":platform,"host_matches":platform==std::env::consts::OS,"tools":tools,"native_validation":"see docs/distribution-native-tests.md; tool presence does not prove installation support"})
+        serde_json::json!({"format":item.format(),"update_owner":item.update_owner(),"native_host_required":platform,"host_matches":platform==std::env::consts::OS,"tools":tools,"native_validation":"see docs/internal/distribution-native-tests.md; tool presence does not prove installation support"})
     }).collect::<Vec<_>>();
 
     println!(

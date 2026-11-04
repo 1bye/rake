@@ -3,7 +3,7 @@
 Run this once in an empty temporary directory, then use rake bundle for versions
 1.0.0/mac-app and 1.0.1/zip. The native-tests override only permits loopback HTTP;
 production policy remains HTTPS. Test keys never enter the application bundle.
-See docs/distribution-native-tests.md for the native interaction assertions.
+See docs/internal/distribution-native-tests.md for the native interaction assertions.
 """
 import argparse,base64,json,pathlib,plistlib,subprocess,os
 parser=argparse.ArgumentParser(description=__doc__)

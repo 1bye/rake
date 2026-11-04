@@ -1,8 +1,7 @@
 # Releasing native applications
 
-The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
-Windows and Linux remain unqualified. Historical distribution evidence and
-procedures here do not qualify signing, notarization or installers for this release.
+> Windows and Linux, signing, notarization and installers aren't qualified in this alpha.
+> See [what's supported](support.md).
 
 `rake bundle` creates local artifacts. `rake release --plan --json` reports public
 configuration without loading signing credentials or publishing. An explicit
@@ -22,21 +21,13 @@ x86_64-pc-windows-msvc = ["msix", "velopack"]
 x86_64-unknown-linux-gnu = ["deb", "rpm", "appimage"]
 ```
 
-Serve that directory through a static HTTPS server. Immutable content is stored
-under `objects/`; each native feed tree lives under `<channel>/<target>/`.
-For MSIX, the server must support HTTP byte ranges and correct GET/HEAD
-`Content-Length`, with `.msix` served as `application/msix` and `.appinstaller`
-as `application/appinstaller`. These are native
-[App Installer hosting requirements](https://learn.microsoft.com/en-us/windows/msix/app-installer/installing-windows10-apps-web).
-Serve stable feed paths with revalidation and immutable objects with long-lived
-caching. Ordinary static servers can supply these behaviors; Python's basic HTTP
-server needs additional byte-range handling for App Installer.
-Directory export owns its root and refuses an existing unrelated directory. On
-Unix, an atomic symlink replacement switches the whole channel tree while keeping
-previous generations and objects. Windows export uses the owned directory
-replacement transaction. Use a Unix static host for atomic reader visibility.
-No retention deletes happen automatically; keep prior versions needed for update
-ownership verification and compatible data recovery.
+Serve that directory through a static HTTPS server. Immutable content lives under `objects/`, and each native feed tree under `<channel>/<target>/`. Serve stable feed paths with revalidation, and immutable objects with long-lived caching.
+
+For MSIX, the server must support HTTP byte ranges and correct GET and HEAD `Content-Length`, serving `.msix` as `application/msix` and `.appinstaller` as `application/appinstaller`. These are native [App Installer hosting requirements](https://learn.microsoft.com/en-us/windows/msix/app-installer/installing-windows10-apps-web). Python's basic HTTP server needs extra byte-range handling for this.
+
+- Directory export owns its root and refuses an existing unrelated directory.
+- On Unix, an atomic symlink replacement switches the whole channel tree while keeping earlier generations and objects. Windows uses the owned directory replacement transaction. Use a Unix static host for atomic reader visibility.
+- Nothing is deleted automatically. Keep prior versions needed for update ownership verification and compatible data recovery.
 
 The release verifies every input hash, requires all configured targets at the
 selected version, and refuses older/replayed directory promotions. Failed builds,
@@ -73,15 +64,13 @@ account = "velopack"
 # Or on any platform, use kind = "environment", variable = "MY_APP_VELOPACK_SEED".
 ```
 
-Keys are 32-byte Ed25519 seeds (raw files or hex/base64 encoding; environment values
-are hex/base64). Generated private files are base64; public files are hex for native update clients.
-Private files use mode 0600 on Unix and owner-only ACLs
-on Windows. Unix signing refuses group/world-accessible key files. Rake refuses to
-overwrite existing private or public keys. `rake update-key public` accepts the
-same storage flags and a new `--public-key` output to recover/export the public
-key. Keep private seeds backed up in your signing store, outside bundled inputs;
-only commit public keys. Failed enrollment can leave a private key stored if the
-public output fails; export that key rather than generating a replacement.
+Keys are 32-byte Ed25519 seeds, as raw files or hex or base64 encoding; environment values are hex or base64. Generated private files are base64, and public files are hex for native update clients.
+
+- Private files use mode 0600 on Unix and owner-only ACLs on Windows. Unix signing refuses group- or world-accessible key files.
+- Rake refuses to overwrite existing private or public keys.
+- `rake update-key public` accepts the same storage flags and a new `--public-key` output, to recover or export the public key.
+- Back up private seeds in your signing store, outside bundled inputs, and commit only public keys.
+- Failed enrollment can leave a private key stored if the public output fails. Export that key rather than generating a replacement.
 
 Sparkle uses the pinned SDK's `generate_appcast` with its existing Keychain account:
 
@@ -93,44 +82,32 @@ feed_validity_seconds = 604800
 
 ```
 
-External signing stores/HSMs can still use `release.signers.appimage` or
-`release.signers.velopack` argv as an escape hatch. Configuring both a built-in
-key and an external command for one provider is rejected. Built-in signatures
-are verified against the app's configured public key before any promotion.
-A command signer receives the exact bounded feed bytes on stdin and returns exactly 64 raw
-Ed25519 signature bytes on stdout. It may use an existing local key profile; logs
-belong on stderr. Rake verifies its signature against the configured public key
-before uploading. Sparkle's native signed appcast is also verified against its
-public key; the SDK obtains native build counters and enclosure metadata from the
-actual archives. Velopack keeps its native release JSON plus a context/expiry-bound
-signature sidecar. MSIX App Installer identity comes from the built artifact record.
+External signing stores and HSMs can use `release.signers.appimage` or `release.signers.velopack` argv as an escape hatch. Configuring both a built-in key and an external command for one provider is rejected.
 
-Publish N once, then supply N+1 outputs on the next release. Directory, GitHub and
-HTTPS publishers merge the previous authenticated AppImage history under the
-promotion lease/precondition, including history whose old feed has expired. Old
-build directories are not required. Tampered history and version forks prevent
-promotion. Retain the immutable published objects/releases.
-The AppImage adapter authenticates the installed N image against this history;
-removing that record prevents an old installation from authorizing replacement.
+A command signer receives the exact bounded feed bytes on stdin and returns exactly 64 raw Ed25519 signature bytes on stdout. It may use an existing local key profile, and logs belong on stderr.
+
+All signatures are verified against the configured public key before any upload or promotion:
+
+- Sparkle's native signed appcast is verified against its public key. The SDK gets native build counters and enclosure metadata from the actual archives.
+- Velopack keeps its native release JSON plus a context- and expiry-bound signature sidecar.
+- MSIX App Installer identity comes from the built artifact record.
+
+Publish N once, then supply N+1 outputs on the next release. Directory, GitHub and HTTPS publishers merge the previous authenticated AppImage history under the promotion lease or precondition, including history whose old feed has expired. Old build directories aren't required, and tampered history and version forks prevent promotion.
+
+Keep the immutable published objects and releases. The AppImage adapter authenticates the installed N image against this history, so removing that record stops an old installation from authorizing replacement.
 
 ## GitHub and HTTPS
 
-For GitHub Releases, configure `kind = "github"`, `repository = "owner/repo"`, and
-`tag = "v1.2.3"`. The tag must already exist. Rake uploads to a draft, downloads and
-hashes every asset, then publishes it as latest. Drafts remain available when an
-upload fails. Use the serialized release workflow for all publishers of a repo.
-Update roots use `https://github.com/owner/repo/releases/latest/download`; Rake
-maps native feed paths into GitHub's flat asset namespace. Keep channel series in
-separate repositories when using this latest-release endpoint. Linux repository
-trees require a directory or HTTPS publisher.
+For GitHub Releases, configure `kind = "github"`, `repository = "owner/repo"` and `tag = "v1.2.3"`. The tag must already exist. Rake uploads to a draft, downloads and hashes every asset, then publishes it as latest. Drafts remain available when an upload fails.
 
-The HTTPS publisher targets an explicitly enrolled object/promotion service. It
-requires a public static URL, an HTTPS API root and `token_env`, naming a scoped
-credential environment variable. It uploads immutable objects with If-None-Match,
-reads them back, then conditionally submits the entire channel state using the
-previous ETag. The service must implement atomic channel-tree promotion described
-in `Publisher::Https`; an ordinary HTTP file server is served from directory
-export instead. Signing profiles and tokens never enter artifact manifests.
+- Use the serialized release workflow for all publishers of a repo.
+- Update roots use `https://github.com/owner/repo/releases/latest/download`, and Rake maps native feed paths into GitHub's flat asset namespace.
+- Keep channel series in separate repositories when using this latest-release endpoint.
+- Linux repository trees need a directory or HTTPS publisher.
+
+The HTTPS publisher targets an explicitly enrolled object and promotion service. It needs a public static URL, an HTTPS API root and `token_env`, naming a scoped credential environment variable.
+
+It uploads immutable objects with `If-None-Match`, reads them back, then conditionally submits the whole channel state using the previous ETag. The service must implement the atomic channel-tree promotion described in `Publisher::Https`; for an ordinary HTTP file server, use directory export instead. Signing profiles and tokens never enter artifact manifests.
 
 ## Linux repositories
 
@@ -142,12 +119,9 @@ gpg_key = "0123456789ABCDEF0123456789ABCDEF01234567"
 x86_64-unknown-linux-gnu = ["deb", "rpm", "arch", "flatpak"]
 ```
 
-The platform owner uses dpkg-scanpackages/apt-ftparchive/GPG, rpmsign/createrepo_c,
-repo-add/GPG and flatpak/ostree. It exports public enrollment keys, signs native
-metadata, and builds repositories in isolated staging before promotion. Install
-those native tools on the Linux publication worker and enroll its signing profile
-once. The Flatpak repository exports `.flatpakrepo` and `.flatpakref` files.
-Application signing and repository trust enrollment are distinct setup steps.
+The platform owner uses dpkg-scanpackages, apt-ftparchive and GPG; rpmsign and createrepo_c; repo-add and GPG; and flatpak and ostree. It exports public enrollment keys, signs native metadata and builds repositories in isolated staging before promotion.
+
+Install those tools on the Linux publication worker and enroll its signing profile once. The Flatpak repository exports `.flatpakrepo` and `.flatpakref` files. Application signing and repository trust enrollment are separate setup steps.
 
 For a combined native runner matrix, prepare repositories on the Linux worker:
 
@@ -158,13 +132,9 @@ rake release --from mac-output --from windows-output --from linux-output \
   --repositories release-repositories --json
 ```
 
-Preparation never publishes and only prepares repositories for supplied targets.
-Final promotion still checks every required target/format, exact source package
-hashes, export identity/version/channel/destination and every repository file hash.
-The final publisher can run on macOS for Sparkle tooling while consuming the
-already signed Linux repositories. Native workers and artifact transport are
-trusted as they are for `distribution.json`; hashes detect altered payloads,
-and native signatures establish installed repository trust.
+Preparation never publishes, and only prepares repositories for supplied targets. Final promotion still checks every required target and format, exact source package hashes, export identity, version, channel and destination, and every repository file hash.
+
+The final publisher can run on macOS for Sparkle tooling while consuming the already signed Linux repositories. Native workers and artifact transport are trusted as they are for `distribution.json`. Hashes detect altered payloads, and native signatures establish installed repository trust.
 
 `.github/workflows/distribution-release.yml` provides explicit manual native
 builds, Linux repository handoff and serialized promotion. Signing jobs require
@@ -172,12 +142,12 @@ enrolled self-hosted native runners; ordinary verification remains independent o
 Publishing defaults to false. This workflow has not been dispatched as a real
 release during implementation.
 
-Provider verification keys are immutable within an update channel. Publication
-records fingerprints of the actual decoded keys, accepts equivalent public-key
-encodings, and refuses silent replacement for Sparkle, Velopack and AppImage.
-To rotate a trust root, publish a new channel and enroll it through a normally
-signed installer. Keep the previous channel available for its installed users;
-installing that new build is the explicit trust transition. Automatic in-place
-key rotation is not claimed. GitHub latest-feed channels use separate repositories,
-as described above. Renewing a native code-signing certificate does not require
-replacing the provider's update-verification key.
+Provider verification keys are immutable within an update channel. Publication records fingerprints of the decoded keys, accepts equivalent encodings, and refuses silent replacement for Sparkle, Velopack and AppImage.
+
+To rotate a trust root:
+
+1. Publish a new channel.
+2. Enroll it through a normally signed installer. Installing that build is the explicit trust transition.
+3. Keep the previous channel available for its installed users.
+
+Automatic in-place rotation isn't offered. GitHub latest-feed channels use separate repositories, as above. Renewing a native code-signing certificate doesn't require replacing the provider's update-verification key.

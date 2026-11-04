@@ -1,8 +1,7 @@
 # Native distribution acceptance
 
-The v0.1.0-alpha.1 launch scope is macOS and browser source applications.
-Windows and Linux remain unqualified. Historical distribution evidence and
-procedures here do not qualify signing, notarization or installers for this release.
+> Windows and Linux, signing, notarization and installers aren't qualified in this alpha.
+> See [what's supported](../support.md).
 
 Portable tests validate contracts; the following tests exercise installed programs.
 The manual Distribution adoption workflow accepts one platform to limit runner
