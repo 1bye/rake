@@ -1,11 +1,11 @@
 # Rake
 
-Rake is an application framework for [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
-Build macOS and browser apps from one Rust codebase, with tools that let you and your
+Rake is a framework that provides an out-of-the-box experience with
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) in the agentic era.
+Build desktop and browser apps from one Rust codebase, with tools that let you and your
 AI agents inspect and control the running app.
 
-> **Alpha.** APIs can change between revisions. macOS and browsers are the supported
-> targets. See [what's supported](docs/support.md).
+> **Alpha.** APIs can change between revisions. See [what's supported](docs/support.md).
 
 ## What you get
 
