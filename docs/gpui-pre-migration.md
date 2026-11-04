@@ -45,7 +45,11 @@ Built notes with stable 1.98.0 and wasm-bindgen 0.2.129, served from loopback.
 Used real canvas/pointer/keyboard/clipboard input for title/body editing,
 paragraphs, selection, Undo/Redo, Unicode (café, CJK, emoji and a ZWJ sequence),
 and an exact 80-line paste with visible caret scrolling. The stored 80-line
-body matched the clipboard exactly. Actual rendered default fonts were checked.
+body matched the clipboard exactly. Actual rendered default fonts were checked. The view example still displays
+missing-glyph boxes for its CJK preview and command-symbol hint with these
+Latin fonts; Unicode storage equality does not establish glyph coverage.
+Applications needing those glyphs must load suitable fonts. No CE comparison
+of that glyph coverage was performed.
 
 Registered notes control actions and browser storage inspection also verified:
 
@@ -142,3 +146,44 @@ dev debug information; they are not production transfer sizes.
 | Stage | Clean Cargo build | Bindgen | Raw Wasm | Processed Wasm | JS |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Before Base | 77.80 s | 4.29 s | 552,094,257 | 109,064,684 | 190,792 |
+| After Base | 99.57 s | 4.67 s | 631,499,827 | 110,892,873 | 190,792 |
+
+Base added 21.77 s (28.0%) to this one clean build and 1,828,189 bytes
+(1.68%) to processed dev Wasm. Raw debug Wasm grew 79,405,570 bytes
+(14.38%). This is a single-run comparison, not a statistical benchmark.
+
+## Phase 2
+
+Base 0.9.0 builds on stable Web. It is reachable through `rake-ui`, which Rake
+only compiles with `experimental-view`. Base Root wraps initial and additional
+routed windows. Rake keeps its downcastable Button wrapper, forwards native
+Element hooks directly to Base's rendered button, and retains authored and
+layout-time resolved styles for inspection and temporary editing. A small
+button-only state erasure preserves that direct Element boundary; no backend
+abstraction was introduced. Inferred button style callbacks now receive Rake's
+Button wrapper, including ParentElement, rather than a Stateful<Div>.
+
+Base Dialog hosts modal surfaces, Base focus traps register modal scopes,
+Base PopoverState supplies the lifecycle/deferred-context registration, and
+Base Positioner places separately mounted Rake anchors. Rake retains controlled
+stack ordering, sentinel traversal, opener-removal checks and frame reconciliation
+to preserve its public overlay API and consumed-key behavior. Its dialog host
+turns off Base's action key context so a child's consumed Escape takes priority.
+Kit presentation uses this same Base Root rather than nesting another root.
+
+The real AppKit test now mounts both windows under Base Root and tests window
+accessibility hit testing. It failed before the fix (AccessKitNode over a native
+button). Rake now intercepts the actual KVO window class, routes hits inside
+registered native hosts through AppKit's native representation, and otherwise
+forwards to Base's original method. The passing test compares against AppKit's
+own button hit result (an NSButtonCell for this style). Existing native action,
+clipping, accessibility, remount and teardown assertions remain in place.
+This independently touches the same runtime-class issue as the cleanup branch;
+that branch was not merged.
+
+The Base Web view example was exercised with actual pointer/keyboard input:
+increment, open popover, open nested document dialog, select row 5,000 in its
+10,000-item virtual list, Tab/Shift-Tab, Escape one layer at a time, and theme
+switch with count retained. No browser warnings/errors were captured. The
+headless view and inspection suites also pass; a separate Base Root regression
+covers traversal and consumed Escape under the actual application root.
