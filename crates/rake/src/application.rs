@@ -49,6 +49,8 @@ pub use factory::{AppFactoryOutput, run_app_factory};
 mod startup;
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 mod update_services;
+#[cfg(target_family = "wasm")]
+mod web_fonts;
 
 #[cfg(feature = "experimental-view")]
 type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
@@ -751,6 +753,15 @@ impl<R: Route> App<R> {
 
         let launch = move |cx: &mut gpui::App| {
             crate::info!(application = %self.id, "Application starting");
+
+            #[cfg(target_family = "wasm")]
+            if let Err(error) = web_fonts::install(cx) {
+                errors.record(AppError::Window(format!(
+                    "Web font initialization failed: {error}"
+                )));
+
+                return;
+            }
 
             #[cfg(feature = "experimental-view")]
             install_themes(self.themes, cx);
