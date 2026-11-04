@@ -39,6 +39,7 @@ pub(super) struct HostData {
     pub root: FocusHandle,
     pub fallback: FocusHandle,
     stack: Vec<Weak<RefCell<OverlayData>>>,
+    resume_focus: Option<WeakFocusHandle>,
 }
 
 /// Retained ordering and focus state for one window's overlay host.
@@ -56,6 +57,7 @@ impl OverlayHostState {
             root: cx.focus_handle(),
             fallback: cx.focus_handle(),
             stack: Vec::new(),
+            resume_focus: None,
         })))
     }
 
@@ -192,6 +194,25 @@ impl OverlayHostState {
             return;
         }
 
+        let resume = self.0.borrow_mut().resume_focus.take();
+
+        if let Some(target) = resume {
+            let root = self.0.borrow().root.clone();
+
+            if self.mounted(window)
+                && window
+                    .focused(cx)
+                    .is_none_or(|focus| !root.contains(&focus, window))
+            {
+                let target = target
+                    .upgrade()
+                    .filter(|focus| root.contains(focus, window))
+                    .unwrap_or_else(|| self.focus_handle());
+
+                window.focus(&target, cx);
+            }
+        }
+
         let frame = self.0.borrow().frame;
 
         for entry in self.entries() {
@@ -281,6 +302,7 @@ impl OverlayState {
     pub fn open(&self, window: &mut Window, cx: &mut App) -> bool {
         crate::init(cx);
         self.host.bind(window);
+        let suspended = kit_modal_open(window, cx);
 
         if self.is_open() || !self.host.0.borrow().owner.is_upgradable() {
             return false;
@@ -310,17 +332,16 @@ impl OverlayState {
                 .clone()
                 .unwrap_or_else(|| cx.new(|cx| gpui_base::PopoverState::new(false, cx)));
 
-            let focus = self.focus_handle();
-
-            popover.update(cx, |popover, cx| {
-                popover.track_focus(Some(focus));
-                popover.sync_open(true, window, cx);
-            });
             self.inner.borrow_mut().popover = Some(popover);
+            self.sync_popover(!suspended, cx);
         }
 
         self.install_focus_guards(window, cx);
-        window.focus(&self.focus_handle(), cx);
+
+        if !suspended {
+            window.focus(&self.focus_handle(), cx);
+        }
+
         self.host.notify(window, cx);
 
         true
@@ -333,6 +354,7 @@ impl OverlayState {
     /// Panics if used in a different window from its host.
     pub fn close(&self, window: &mut Window, cx: &mut App) -> bool {
         self.host.bind(window);
+        let suspended = kit_modal_open(window, cx);
 
         let entries = self.host.entries();
 
@@ -378,7 +400,7 @@ impl OverlayState {
             drop(state);
 
             if let Some(popover) = popover {
-                popover.update(cx, |popover, cx| popover.sync_open(false, window, cx));
+                popover.update(cx, |popover, cx| popover.set_open(false, cx));
             }
         }
 
@@ -390,7 +412,13 @@ impl OverlayState {
                         .any(|entry| entry.focus_handle().contains(focus, window))
             });
 
-            if let Some(target) = target {
+            if suspended {
+                let target = target
+                    .unwrap_or_else(|| self.host.focus_handle())
+                    .downgrade();
+
+                self.host.0.borrow_mut().resume_focus = Some(target);
+            } else if let Some(target) = target {
                 window.focus(&target, cx);
             } else if let Some(top) = self.host.entries().last() {
                 top.focus_first(window, cx);
@@ -427,6 +455,19 @@ impl OverlayState {
     /// The most recently rendered surface bounds, useful for positioning diagnostics.
     pub fn bounds(&self) -> Option<Bounds<Pixels>> {
         self.inner.borrow().bounds
+    }
+
+    // Rake owns focus; Base owns only the popup's deferred interaction context.
+    pub(super) fn sync_popover(&self, active: bool, cx: &mut App) {
+        let popover = self.inner.borrow().popover.clone();
+
+        if let Some(popover) = popover {
+            popover.update(cx, |popover, cx| {
+                if popover.is_open() != active {
+                    popover.set_open(active, cx);
+                }
+            });
+        }
     }
 
     pub(super) fn kind(&self) -> Kind {
@@ -508,7 +549,7 @@ impl OverlayState {
 
             subscriptions.push(
                 window.on_focus_in(&sentinel.clone(), cx, move |window, cx| {
-                    if !sentinel.is_focused(window) {
+                    if kit_modal_open(window, cx) || !sentinel.is_focused(window) {
                         return;
                     }
 

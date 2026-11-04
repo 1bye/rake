@@ -133,13 +133,27 @@ impl RenderOnce for Popover {
             std::rc::Rc::ptr_eq(&self.state.host.0, &self.anchor.host.0),
             "popover and anchor must share a host"
         );
-        self.state.inner.borrow_mut().anchor = Some(self.anchor);
+        self.state.inner.borrow_mut().anchor = Some(self.anchor.clone());
 
-        if super::state::kit_modal_open(window, cx) {
+        let suspended = super::state::kit_modal_open(window, cx);
+
+        self.state
+            .sync_popover(self.state.is_open() && !suspended, cx);
+
+        if suspended || !self.state.is_open() {
             return gpui::Empty.into_any_element();
         }
 
-        floating(self.state, None, None, self.children)
+        let priority = self.state.priority();
+
+        gpui::deferred(Floating {
+            state: self.state,
+            anchor: self.anchor,
+            children: Some(self.children),
+            painted: None,
+        })
+        .with_priority(priority)
+        .into_any_element()
     }
 }
 
@@ -225,33 +239,9 @@ impl RenderOnce for Dialog {
     }
 }
 
-fn floating(
-    state: OverlayState,
-    title: Option<SharedString>,
-    footer: Option<AnyElement>,
-    children: Vec<AnyElement>,
-) -> AnyElement {
-    if !state.is_open() {
-        return gpui::Empty.into_any_element();
-    }
-
-    let priority = state.priority();
-
-    gpui::deferred(Floating {
-        state,
-        title,
-        footer,
-        children: Some(children),
-        painted: None,
-    })
-    .with_priority(priority)
-    .into_any_element()
-}
-
 struct Floating {
     state: OverlayState,
-    title: Option<SharedString>,
-    footer: Option<AnyElement>,
+    anchor: AnchorState,
     children: Option<Vec<AnyElement>>,
     painted: Option<AnyElement>,
 }
@@ -309,31 +299,27 @@ impl Element for Floating {
             return;
         }
 
-        let anchor = self.state.inner.borrow().anchor.clone();
+        let data = self.anchor.inner.borrow();
 
-        let position = if let Some(anchor) = anchor {
-            let data = anchor.inner.borrow();
+        if data.frame != self.state.host.0.borrow().frame {
+            return;
+        }
 
-            if data.frame != self.state.host.0.borrow().frame {
-                return;
-            }
-
-            let Some(bounds) = data.bounds else {
-                return;
-            };
-
-            Some(bounds.bottom_left())
-        } else {
-            None
+        let Some(bounds) = data.bounds else {
+            return;
         };
+
+        let position = bounds.bottom_left();
+
+        drop(data);
 
         let viewport = window.viewport_size();
         let modal = self.state.modal_context();
 
         let surface = surface(
             self.state.clone(),
-            self.title.take(),
-            self.footer.take(),
+            None,
+            None,
             self.children
                 .take()
                 .expect("floating content prepaints once"),
@@ -369,21 +355,9 @@ impl Element for Floating {
             surface.into_any_element()
         };
 
-        let positioned = if let Some(position) = position {
-            gpui_base::Positioner::corner(gpui::Anchor::TopLeft, position)
-                .margin(px(16.))
-                .child(surface)
-                .into_any_element()
-        } else {
-            gpui::div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(surface)
-                .into_any_element()
-        };
+        let positioned = gpui_base::Positioner::corner(gpui::Anchor::TopLeft, position)
+            .margin(px(16.))
+            .child(surface);
 
         let mut screen = gpui::div()
             .absolute()

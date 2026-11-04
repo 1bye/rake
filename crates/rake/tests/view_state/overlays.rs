@@ -673,3 +673,114 @@ fn kit_owns_the_window_modal_stack_and_restores_a_suspended_rake_dialog() {
     })
     .unwrap();
 }
+
+#[cfg(feature = "kit")]
+#[test]
+fn local_overlay_changes_preserve_an_active_kit_dialogs_focus() {
+    use rake::kit::component::WindowExt as _;
+
+    for reopen in [false, true] {
+        let (mut cx, handle) = setup();
+        open_dialog(&mut cx, handle);
+        let host = handle.root(&mut cx).unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.replace_root(cx, |window, cx| {
+                rake_ui::Root::new(host.clone(), window, cx)
+            });
+        })
+        .unwrap();
+        draw(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.open_dialog(cx, |dialog, _, _| dialog.title("Kit owns focus"));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(&mut cx, handle);
+        let focused = cx
+            .update_window(handle.into(), |_, window, cx| {
+                let focused = window.focused(cx).expect("Kit dialog focused");
+                let dialog = host.read(cx).dialog.clone();
+                dialog.close(window, cx);
+                assert!(
+                    focused.is_focused(window),
+                    "closing a suspended local dialog must preserve Kit focus"
+                );
+                if reopen {
+                    dialog.open(window, cx);
+                    assert!(
+                        focused.is_focused(window),
+                        "opening a suspended local dialog must preserve Kit focus"
+                    );
+                }
+                focused
+            })
+            .unwrap();
+        draw(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert!(
+                focused.is_focused(window),
+                "local frame audits must also preserve Kit focus"
+            );
+            window.close_dialog(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(&mut cx, handle);
+        cx.update_window(handle.into(), |_, window, cx| {
+            let host = host.read(cx);
+            if reopen {
+                assert!(
+                    host.dialog_first.is_focused(window),
+                    "resume queued local focus after Kit closes"
+                );
+            } else {
+                assert!(
+                    host.body.is_focused(window),
+                    "restore a mounted opener after Kit closes"
+                );
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[cfg(feature = "kit")]
+#[test]
+fn suspended_popovers_release_bases_deferred_interaction_context() {
+    use rake::kit::{base::GlobalState, component::WindowExt as _};
+
+    let (mut cx, handle) = setup();
+    open_popup(&mut cx, handle);
+    let host = handle.root(&mut cx).unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            rake_ui::Root::new(host.clone(), window, cx)
+        });
+        assert!(GlobalState::is_in_deferred_context(cx));
+        window.open_dialog(cx, |dialog, _, _| dialog.title("Kit modal"));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(
+            host.read(cx).popup.is_open(),
+            "retain the suspended local state"
+        );
+        assert!(
+            !GlobalState::is_in_deferred_context(cx),
+            "a hidden popup must not suppress Kit input context menus"
+        );
+        window.close_dialog(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(&mut cx, handle);
+    cx.update_window(handle.into(), |_, _, cx| {
+        assert!(
+            GlobalState::is_in_deferred_context(cx),
+            "restore the popup interaction context on resume"
+        );
+    })
+    .unwrap();
+}
