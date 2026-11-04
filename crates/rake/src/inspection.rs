@@ -13,6 +13,8 @@ mod editing;
 mod native_preview;
 mod recording;
 mod snapshot;
+#[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+pub(crate) mod window;
 
 use snapshot::Captured;
 

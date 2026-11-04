@@ -559,6 +559,19 @@ fn mount_layout<R: Route>(
     window: &mut Window,
     cx: &mut gpui::App,
 ) -> Result<Option<AnyView>, MountError> {
+    #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
+    {
+        let observed = router.clone();
+
+        crate::inspection::window::prepare(
+            window,
+            cx,
+            router.client().inspection(),
+            window_id,
+            move || observed.snapshot().revision,
+        );
+    }
+
     layout
         .map(|factory| factory(LayoutContext::new(router, services, window_id), window, cx))
         .transpose()
