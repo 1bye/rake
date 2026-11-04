@@ -85,7 +85,7 @@ mod tests {
 
     use super::*;
     use crate::inspection::InspectElement as _;
-    use gpui::{AppContext as _, ParentElement as _, Styled as _};
+    use gpui::{AppContext as _, InteractiveElement as _, ParentElement as _, Styled as _};
     use rake_ui::kit::component::WindowExt as _;
 
     struct Content(Store);
@@ -177,6 +177,75 @@ mod tests {
                 .unwrap()
                 .stable_id,
             stable
+        );
+    }
+    struct MovingContent {
+        store: Store,
+        left: Rc<std::cell::Cell<f32>>,
+    }
+
+    impl Render for MovingContent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div()
+                .size_full()
+                .children((self.left.get() >= 0.).then(|| {
+                    gpui::div()
+                        .id("moving")
+                        .absolute()
+                        .left(gpui::px(self.left.get()))
+                        .size(gpui::px(40.))
+                        .inspect("moving-boundary")
+                }))
+                .inspect("moving-page")
+                .root(self.store.clone(), 0, WindowId(1))
+        }
+    }
+
+    #[gpui::test]
+    fn window_highlight_tracks_current_frame_geometry(cx: &mut gpui::TestAppContext) {
+        let store = Store::default();
+        store.attach();
+        cx.update(rake_ui::init);
+        let left = Rc::new(std::cell::Cell::new(10.));
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            prepare(window, cx, store.clone(), WindowId(1), || 0);
+            let content = cx.new(|_| MovingContent {
+                store: store.clone(),
+                left: left.clone(),
+            });
+            Root::new(content, window, cx)
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+        };
+        draw(cx);
+        let snapshot = store.snapshot();
+        let target = snapshot
+            .elements
+            .iter()
+            .find(|e| e.semantic_id.as_deref() == Some("moving-boundary"))
+            .unwrap();
+        store
+            .highlight(Some(&target.id), &snapshot.capture)
+            .unwrap();
+        left.set(90.);
+        draw(cx);
+        let highlight = cx
+            .debug_bounds("rake.inspection.highlight")
+            .expect("highlight painted");
+        assert_eq!(
+            highlight.origin.x,
+            gpui::px(90.),
+            "highlight must follow this frame's layout"
+        );
+        left.set(-1.);
+        draw(cx);
+        assert!(
+            cx.debug_bounds("rake.inspection.highlight").is_none(),
+            "removed targets must not leave ghost highlights"
         );
     }
 }

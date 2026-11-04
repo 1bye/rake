@@ -3,8 +3,8 @@
 use std::{cell::RefCell, panic::Location, rc::Rc};
 
 use super::{
-    ActiveCapture, Capture, CapturingLayout, LayoutContext, LayoutHost, Status, Store, inspect,
-    paint_overlay, publish_capture,
+    ActiveCapture, BoundaryIndex, Capture, CapturingLayout, LayoutContext, LayoutHost, Status,
+    Store, inspect, overlay, paint_overlay, publish_capture,
 };
 
 use crate::router::WindowId;
@@ -21,7 +21,6 @@ pub(super) struct Completion {
     pub(super) capture: Option<Option<Capture>>,
     pub(super) host: Option<LayoutContext>,
     pub(super) layout: Option<bool>,
-    pub(super) overlay: Option<gpui::AnyElement>,
 }
 
 pub(in crate::inspection) fn capture(
@@ -76,7 +75,7 @@ impl IntoElement for EndCapture {
 
 impl gpui::Element for EndCapture {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    type PrepaintState = (Option<gpui::AnyElement>, BoundaryIndex);
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -112,9 +111,24 @@ impl gpui::Element for EndCapture {
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut (),
-        _: &mut Window,
-        _: &mut App,
-    ) {
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        let mut completed = cx.global_mut::<ActiveCapture>().0.take();
+        let identities = completed
+            .as_mut()
+            .map(|capture| capture.identify(&self.store, self.host))
+            .unwrap_or_default();
+        let highlight = overlay(
+            &self.store,
+            self.host,
+            completed.as_ref().map(|capture| &capture.snapshot),
+            window,
+            cx,
+        );
+        cx.global_mut::<ActiveCapture>().0 = completed;
+
+        (highlight, identities)
     }
 
     fn paint(
@@ -123,7 +137,7 @@ impl gpui::Element for EndCapture {
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut (),
-        _: &mut (),
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -146,8 +160,6 @@ impl gpui::Element for EndCapture {
         cx.global_mut::<LayoutHost>().0 = host;
 
         if let Some(mut completed) = completed {
-            let identities = completed.identify(&self.store, self.host);
-
             for element in &mut completed.snapshot.elements {
                 element.style_editable &= element.stable_id.is_some();
                 element.text_editable &= element.stable_id.is_some();
@@ -157,11 +169,18 @@ impl gpui::Element for EndCapture {
                 }
             }
 
-            publish_capture(&self.store, self.host, completed, identities, window, cx);
+            publish_capture(
+                &self.store,
+                self.host,
+                completed,
+                std::mem::take(&mut prepaint.1),
+                window,
+                cx,
+            );
         }
 
-        if let Some(mut overlay) = self.completion.borrow_mut().overlay.take() {
-            paint_overlay(&self.store, self.host, &mut overlay, window, cx);
+        if let Some(overlay) = &mut prepaint.0 {
+            paint_overlay(&self.store, self.host, overlay, window, cx);
         }
     }
 }

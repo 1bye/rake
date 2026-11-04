@@ -914,23 +914,18 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
             }
         }
 
-        let overlay = self.root.as_ref().and_then(|(store, _, host)| {
-            overlay(
-                store,
-                *host,
-                frame.as_ref().map(|frame| &frame.capture.snapshot),
-                window,
-                cx,
-            )
-        });
-
-        #[cfg(all(feature = "kit", feature = "devtools", not(target_family = "wasm")))]
-        let overlay = if let Some(completion) = &self.window_finish {
-            completion.borrow_mut().overlay = overlay;
-
+        let overlay = if self.captures_window() {
             None
         } else {
-            overlay
+            self.root.as_ref().and_then(|(store, _, host)| {
+                overlay(
+                    store,
+                    *host,
+                    frame.as_ref().map(|frame| &frame.capture.snapshot),
+                    window,
+                    cx,
+                )
+            })
         };
 
         (
