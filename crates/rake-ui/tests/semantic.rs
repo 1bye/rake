@@ -116,3 +116,38 @@ fn kit_updates_trigger_the_base_observer_and_keep_semantic_colors_in_sync() {
     });
     drop(observer);
 }
+
+#[cfg(feature = "kit")]
+#[test]
+fn initializing_rake_preserves_a_hosts_existing_kit_theme() {
+    use rake_ui::kit::component::{Theme, ThemeMode};
+    let cx = &mut gpui::TestAppContext::single();
+    let primary = gpui::Hsla::from(gpui::rgb(0x123456));
+
+    cx.update(|cx| {
+        rake_ui::kit::init(cx);
+        Theme::change(ThemeMode::Dark, None, cx);
+        Theme::update(cx, |theme| {
+            theme.primary = primary;
+            theme.radius = gpui::px(17.);
+        });
+        rake_ui::init(cx);
+        assert!(
+            Theme::global(cx).mode.is_dark(),
+            "Rake must preserve the host's Kit appearance"
+        );
+        assert_eq!(
+            Theme::global(cx).primary,
+            primary,
+            "Rake must preserve the host's Kit colors"
+        );
+        assert_eq!(theme::current::<Semantic>().primary, primary);
+        assert_eq!(Theme::global(cx).radius, gpui::px(17.));
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(Theme::global(cx).mode.is_dark());
+        assert_eq!(Theme::global(cx).primary, primary);
+        assert_eq!(theme::current::<Semantic>().primary, primary);
+    });
+}

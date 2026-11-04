@@ -7,10 +7,15 @@ pub mod view;
 
 /// Initializes Base, optional Kit and theme observation once per GPUI application.
 /// Call before constructing roots or experimental views outside Rake's application builder.
+/// Adopts an existing Kit initialization without resetting its theme or registry.
 pub fn init(cx: &mut gpui::App) {
     if !cx.has_global::<Initialized>() {
         #[cfg(all(feature = "kit", not(target_family = "wasm")))]
-        gpui_kit::init(cx);
+        if !cx.has_global::<gpui_kit::component::Theme>() {
+            // A Kit host already owns its theme, registry and input bindings.
+            gpui_kit::init(cx);
+        }
+
         #[cfg(not(all(feature = "kit", not(target_family = "wasm"))))]
         gpui_base::init(cx);
         cx.set_global(Initialized);
