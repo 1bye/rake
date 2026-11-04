@@ -113,13 +113,20 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
         .map(|children| children.iter().collect())
         .unwrap_or_default();
 
-    for (_, view) in tree.hosts.borrow().values() {
+    let hosts: Vec<_> = tree
+        .hosts
+        .borrow()
+        .values()
+        .map(|(_, view)| view.clone())
+        .collect();
+
+    for view in hosts {
         // A shared view may move before the old window drops its Attachment.
         if view
             .window()
             .is_some_and(|parent| std::ptr::eq(&*parent, window))
         {
-            children.push(view.clone().into());
+            children.push(view.into());
         }
     }
 
@@ -216,25 +223,29 @@ impl Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        let mut hosts = self.tree.hosts.borrow_mut();
+        let container = {
+            let mut hosts = self.tree.hosts.borrow_mut();
 
-        if hosts
-            .get(&self.id)
-            .is_some_and(|(token, _)| *token == self.token)
-        {
+            if hosts
+                .get(&self.id)
+                .is_none_or(|(token, _)| *token != self.token)
+            {
+                return;
+            }
+
             let (_, container) = hosts
                 .remove(&self.id)
                 .expect("registered native host exists");
 
-            if container.accessibilityParent().is_some_and(|parent| {
-                Retained::as_ptr(&parent) == Retained::as_ptr(&self.tree.window).cast()
-            }) {
-                // SAFETY: Clear only our parent: a newer attachment may already
-                // have moved this shared native view into another window.
-                unsafe { container.setAccessibilityParent(None) };
-            }
-        }
+            container
+        };
 
-        drop(hosts);
+        if container.accessibilityParent().is_some_and(|parent| {
+            Retained::as_ptr(&parent) == Retained::as_ptr(&self.tree.window).cast()
+        }) {
+            // SAFETY: Clear only our parent: a newer attachment may already
+            // have moved this shared native view into another window.
+            unsafe { container.setAccessibilityParent(None) };
+        }
     }
 }

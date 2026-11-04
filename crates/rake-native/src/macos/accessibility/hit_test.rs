@@ -92,8 +92,6 @@ unsafe extern "C-unwind" fn hit_test(
             parent.convertPoint_fromView(in_window, None)
         });
 
-        let hosts = tree.hosts.borrow();
-
         // AppKit resolves stacking, clipping and the actual native descendant.
         // Native hosts can sit beneath GPUI's inner canvas, not directly under
         // NSWindow.contentView, so identify them along the hit view's ancestry.
@@ -101,10 +99,13 @@ unsafe extern "C-unwind" fn hit_test(
             let mut ancestor = Some(hit.clone());
 
             while let Some(view) = ancestor {
-                if hosts
+                let is_host = tree
+                    .hosts
+                    .borrow()
                     .values()
-                    .any(|(_, host)| std::ptr::eq(&**host, &*view))
-                {
+                    .any(|(_, host)| std::ptr::eq(&**host, &*view));
+
+                if is_host {
                     // SAFETY: The live hit view belongs to one of our retained
                     // native hosts. AppKit owns its accessibility representation.
                     return unsafe { msg_send![&*hit, accessibilityHitTest: point] };
