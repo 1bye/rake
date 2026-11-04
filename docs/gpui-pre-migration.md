@@ -467,3 +467,41 @@ Review fix commits (the documentation commit follows):
 - `14f44ea` — preserve Kit modal focus ownership and remove dead popup branches.
 - `38f87e4` — adopt existing Kit initialization.
 - `dcaea12` — highlight current deferred geometry.
+
+## Full-suite verification and merge readiness — 2026-11-04
+
+Tested review-fix commit `ed0a67e8e03671f61f22022266711f708f30d16d` in
+`/private/tmp/rake-gpui-pre-kit-base`, branch `codex/gpui-pre-kit-base`, on
+macOS arm64 with the pinned Rust 1.98.0 toolchain. The worktree was clean before
+verification; `main` remained at `5fc0f9d`. This follow-up closes the workspace
+and AppKit coverage gap noted in the review above.
+
+| Command | Result | Elapsed |
+| --- | --- | ---: |
+| `cargo test --workspace --locked --no-fail-fast` | passed | 257.04 s |
+| `cargo test -p rake-native --features native-tests --test appkit --locked` | passed | 4.69 s |
+
+The full workspace run included unit, integration, consumer/compile fixtures
+and doctests: 668 passed, zero failed, two existing manual performance benchmarks
+ignored (`cdp_projection_baseline` and `cdp_refresh_load_benchmark`). The known
+lost-submission CDP test passed on its first run. No retries or source fixes were
+needed. This is the normal workspace feature selection; optional Kit behavior
+is covered by the separate passing feature suites recorded in the review.
+
+The AppKit executable opened real native windows under Base Root and completed
+its actions, symbols, opacity, clipping, accessibility/hit-testing, remount,
+window-move, close and teardown checks. Its parent process verified the child's
+completion marker as well as its successful exit status. It was not skipped or
+substituted with TestPlatform.
+
+**Merge recommendation: ready for the agreed migration scope.** The reviewed
+code has no known blocking findings, the requested full suites now pass, and
+the earlier targeted Kit, lint, documentation and stable-browser verification
+remains applicable to the same source. The subsequent change only records these
+results. Nothing has been merged or pushed.
+
+Scope limits remain: Kit 0.9.0 is intentionally native-only; core/Base Web uses
+the verified stable single-threaded path. Windows/Linux, Safari/Firefox,
+renderer-crash recovery and the previously noted broader glyph coverage are
+not newly verified by these suites. This is a merge assessment, not a claim of
+release validation on every platform.
