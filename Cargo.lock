@@ -6987,6 +6987,7 @@ dependencies = [
 name = "rake-native"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gpui-base",
  "gpui-pre",
  "gpui-pre-platform",

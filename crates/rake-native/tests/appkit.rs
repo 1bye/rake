@@ -526,6 +526,16 @@ mod suite {
                         // Close from outside GPUI's borrowed update, as AppKit does
                         // for a title-bar close button. The source window drives stage 8.
                         cx.spawn(async move |cx| {
+                            let destination = destination.unwrap();
+                            let (closed, close_event) = futures::channel::oneshot::channel();
+                            let mut closed = Some(closed);
+                            let subscription = cx.update(|cx| cx.on_window_closed(move |_, id| {
+                                if id == destination.window_id() {
+                                    closed.take().expect("one close event")
+                                        .send(()).expect("close receiver is alive");
+                                }
+                            }));
+
                             PROGRESS.set((stage, "performClose"));
                             native_window.performClose(None);
                             PROGRESS.set((stage, "closed"));
@@ -542,6 +552,9 @@ mod suite {
                                 child.downcast_ref::<NSView>()
                                     .is_some_and(|view| std::ptr::eq(view, &*group))
                             }), "a user close restores window accessibility traversal");
+                            close_event.await.expect("GPUI reports the platform close");
+                            drop(subscription);
+
                             entity.update(cx, |this, cx| {
                                 this.stage = 8;
                                 cx.notify();
@@ -549,8 +562,8 @@ mod suite {
                         }).detach();
                     }
                     8 => {
-                        // gpui-pre removes platform-closed windows in a foreground
-                        // task. Observe registry cleanup on this next source frame.
+                        // The close notification confirms GPUI's foreground cleanup
+                        // before the source frame checks registry state and remounting.
                         assert!(!cx.windows().contains(&destination.unwrap()),
                             "AppKit close removes the GPUI window");
                         assert!(button.as_appkit().window().is_some(),
