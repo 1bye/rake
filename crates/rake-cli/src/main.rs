@@ -14,6 +14,7 @@ mod terminal;
 mod distribution;
 mod native_commands;
 mod release;
+mod scaffold;
 mod update_key;
 
 fn main() {
@@ -33,10 +34,12 @@ fn main() {
     if arguments.first().is_some_and(|command| {
         matches!(
             command.as_str(),
-            "release" | "__release-worker" | "update-key"
+            "release" | "__release-worker" | "update-key" | "new"
         )
     }) {
-        let result = if arguments[0] == "update-key" {
+        let result = if arguments[0] == "new" {
+            scaffold::run(&arguments[1..])
+        } else if arguments[0] == "update-key" {
             update_key::run(&arguments[1..])
         } else if arguments[0] == "release" {
             release::run(&arguments[1..])

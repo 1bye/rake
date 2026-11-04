@@ -85,6 +85,28 @@ class SupervisorTests(unittest.TestCase):
         project.package = {"features": {}, "dependencies": []}
         self.assertEqual(project.build_features(), "theme")
 
+    def test_new_project_resolves_first_lock_but_existing_project_stays_locked(self):
+        with tempfile.TemporaryDirectory(prefix="rake-first-lock-") as temporary:
+            root = Path(temporary).resolve()
+            manifest = root / "Cargo.toml"
+            package = {"id": "fixture", "name": "fixture", "version": "0.1.0",
+                       "manifest_path": str(manifest), "metadata": {}, "source": None,
+                       "targets": [{"name": "fixture", "kind": ["bin"], "crate_types": ["bin"]}]}
+            metadata = {"workspace_root": str(root), "workspace_members": ["fixture"], "packages": [package]}
+            args = SimpleNamespace(manifest_path=manifest, package=None, target="desktop", bin=None, web_dir=None)
+            commands = []
+
+            class Processes:
+                def output(self, command):
+                    commands.append(command)
+                    return json.dumps(metadata)
+
+            dev.Project(args, Processes())
+            self.assertNotIn("--locked", commands[-1])
+            (root / "Cargo.lock").write_text("existing lock")
+            dev.Project(args, Processes())
+            self.assertIn("--locked", commands[-1])
+
     def test_real_cli_watches_keeps_old_app_on_compile_failure_restarts_and_survives_crash(self):
         with tempfile.TemporaryDirectory(prefix="rake-supervisor-test-") as temporary:
             root = Path(temporary)

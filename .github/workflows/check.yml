@@ -37,6 +37,7 @@ jobs:
       - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
       - run: cargo test -p rake-ui --features test-support --lib --locked
       - run: cargo clippy -p rake --no-default-features --locked -- -D warnings
+      - run: cargo test -p rake-cli --features scaffold-tests --test new_build --locked
       - run: cargo build -p rake-cli --locked
       - name: Install matching Wasm bindings tool
         run: |

@@ -129,8 +129,12 @@ def run_output(processes, command, *, cwd=None, env=None, artifact=None):
 
 class Project:
     def __init__(self, args, processes):
+        # New apps resolve their first lockfile here; existing projects stay locked.
+        workspace = json.loads(processes.output(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps", "--manifest-path", str(args.manifest_path)]))
+        locked = ["--locked"] if (Path(workspace["workspace_root"]) / "Cargo.lock").is_file() else []
         metadata = json.loads(processes.output(
-            ["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", str(args.manifest_path)]))
+            ["cargo", "metadata", "--format-version", "1", *locked, "--manifest-path", str(args.manifest_path)]))
         packages = [item for item in metadata["packages"] if item["id"] in metadata["workspace_members"]]
         if args.package:
             packages = [item for item in packages if item["name"] == args.package]
