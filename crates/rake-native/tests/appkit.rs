@@ -16,13 +16,92 @@ mod suite {
             NSAccessibility, NSAccessibilityButtonRole, NSAccessibilityToolbarRole, NSView,
             NSWindow,
         },
-        foundation::{NSPoint, NSString},
+        foundation::{NSObject, NSObjectProtocol, NSPoint, NSString},
         objc2::{
-            MainThreadMarker, msg_send,
+            MainThreadMarker, MainThreadOnly, define_class, msg_send,
             rc::Retained,
             runtime::{AnyClass, AnyObject},
+            sel,
         },
     };
+
+    define_class!(
+        // SAFETY: NSObject has no subclassing obligations; the observer has no state.
+        #[unsafe(super = NSObject)]
+        #[thread_kind = MainThreadOnly]
+        #[name = "RakeNativeTestWindowObserver"]
+        struct WindowObserver;
+
+        // SAFETY: NSObjectProtocol introduces no additional invariants.
+        unsafe impl NSObjectProtocol for WindowObserver {}
+
+        impl WindowObserver {
+            // SAFETY: Matches Foundation's KVO callback ABI; notifications are ignored.
+            #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+            fn observe(
+                &self,
+                _key: Option<&NSString>,
+                _object: Option<&AnyObject>,
+                _change: Option<&AnyObject>,
+                _context: *mut std::ffi::c_void,
+            ) {}
+        }
+    );
+
+    struct WindowObservation {
+        window: Retained<NSWindow>,
+        observer: Retained<WindowObserver>,
+        real_class: &'static AnyClass,
+    }
+
+    impl WindowObservation {
+        fn new(window: &Window) -> Self {
+            let handle = HasWindowHandle::window_handle(window).unwrap();
+            let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+                panic!("native test requires an AppKit window");
+            };
+            // SAFETY: GPUI supplies its live main-thread content view.
+            let content = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
+            let window = content.window().unwrap();
+            // SAFETY: NSObject's class message returns the class hidden by KVO.
+            let real_class: &'static AnyClass = unsafe { msg_send![&*window, class] };
+            // SAFETY: Initialize a main-thread NSObject subclass with no ivars.
+            let observer: Retained<WindowObserver> = unsafe {
+                msg_send![
+                    WindowObserver::alloc(MainThreadMarker::new().unwrap()),
+                    init
+                ]
+            };
+            // SAFETY: Both objects are retained until the matching removal in Drop.
+            // Options zero avoids an initial notification; the callback accepts title changes.
+            unsafe {
+                let _: () = msg_send![&*window, addObserver: &*observer,
+                    forKeyPath: &*NSString::from_str("title"), options: 0_usize,
+                    context: std::ptr::null_mut::<std::ffi::c_void>()];
+            }
+            assert_ne!(
+                window.class(),
+                real_class,
+                "KVO changes the runtime class before mounting"
+            );
+
+            Self {
+                window,
+                observer,
+                real_class,
+            }
+        }
+    }
+
+    impl Drop for WindowObservation {
+        fn drop(&mut self) {
+            // SAFETY: Remove exactly the observation installed by new, on the main thread.
+            unsafe {
+                let _: () = msg_send![&*self.window, removeObserver: &*self.observer,
+                    forKeyPath: &*NSString::from_str("title")];
+            }
+        }
+    }
 
     thread_local! {
         static PROGRESS: Cell<(u8, &'static str)> = const { Cell::new((0, "starting")) };
@@ -37,6 +116,50 @@ mod suite {
         })
     }
 
+    fn assert_native_hit(native_window: &NSWindow, button: &Button) {
+        // Base installs NSWindow accessibilityHitTest: while Rake
+        // composes accessibilityChildren. Both must reach AppKit controls.
+        let button_view: &NSView = button.as_appkit();
+        let center = NSPoint::new(60.0, 16.0);
+        let point_in_window = button_view.convertPoint_toView(center, None);
+        let point_on_screen = native_window.convertPointToScreen(point_in_window);
+        // SAFETY: NSAccessibility hit testing takes a screen NSPoint
+        // and returns an autoreleased accessibility object.
+        let hit: Option<Retained<AnyObject>> =
+            unsafe { msg_send![native_window, accessibilityHitTest: point_on_screen] };
+        // SAFETY: Ask the same live AppKit control for its own
+        // representation (NSButtonCell for this button style).
+        let expected: Option<Retained<AnyObject>> =
+            unsafe { msg_send![button.as_appkit(), accessibilityHitTest: point_on_screen] };
+        assert!(
+            hit.as_ref()
+                .zip(expected.as_ref())
+                .is_some_and(|(hit, expected)| Retained::as_ptr(hit) == Retained::as_ptr(expected)),
+            "Base Root hit testing reaches AppKit's button representation: {hit:?}, expected {expected:?}"
+        );
+    }
+
+    fn assert_canvas_hit(window: &NSWindow) {
+        let content = window.contentView().unwrap();
+        let bounds = content.bounds();
+        let point = NSPoint::new(bounds.size.width - 8.0, bounds.size.height - 8.0);
+        let point = window.convertPointToScreen(content.convertPoint_toView(point, None));
+        // SAFETY: Both live objects support accessibility hit testing in screen coordinates.
+        let (hit, expected): (Option<Retained<AnyObject>>, Option<Retained<AnyObject>>) = unsafe {
+            (
+                msg_send![window, accessibilityHitTest: point],
+                msg_send![&*content, accessibilityHitTest: point],
+            )
+        };
+
+        assert!(
+            hit.as_ref()
+                .zip(expected.as_ref())
+                .is_some_and(|(hit, expected)| Retained::as_ptr(hit) == Retained::as_ptr(expected)),
+            "window hit testing preserves Base's GPUI canvas forwarder: {hit:?}, expected {expected:?}"
+        );
+    }
+
     #[derive(Clone)]
     struct AccessibilityState {
         content: Retained<NSView>,
@@ -45,6 +168,7 @@ mod suite {
     }
 
     struct Fixture {
+        observation: Option<WindowObservation>,
         stage: u8,
         scheduled: Option<u8>,
         button: Button,
@@ -58,7 +182,11 @@ mod suite {
     }
 
     impl Fixture {
-        fn new(cx: &mut Context<Self>, finished: Rc<Cell<bool>>) -> Self {
+        fn new(
+            cx: &mut Context<Self>,
+            finished: Rc<Cell<bool>>,
+            observation: WindowObservation,
+        ) -> Self {
             assert!(matches!(
                 SegmentedControl::new(&[]),
                 Err(NativeError::EmptySegments)
@@ -118,6 +246,7 @@ mod suite {
             let custom = NativeView::from_appkit(raw.clone()).unwrap();
 
             Self {
+                observation: Some(observation),
                 stage: 0,
                 scheduled: None,
                 button,
@@ -139,6 +268,7 @@ mod suite {
 
             if self.scheduled != Some(stage) {
                 self.scheduled = Some(stage);
+                let observation = self.observation.take();
                 let button = self.button.clone();
                 let glass = self.glass.clone();
                 let segments = self.segments.clone();
@@ -154,6 +284,24 @@ mod suite {
                         let native_window = button.as_appkit().window().unwrap();
                         // SAFETY: The live button is retained and mounted by the fixture.
                         let native_group = unsafe { button.as_appkit().superview() }.unwrap();
+
+                        assert!(native_window.accessibilityChildren().unwrap().iter().any(|child| {
+                            child.downcast_ref::<NSView>()
+                                .is_some_and(|view| std::ptr::eq(view, &*native_group))
+                        }), "native group is discoverable while KVO is active");
+                        let observation = observation.expect("KVO is active during the first mount");
+
+                        // AppKit can retain its own observers after ours is removed.
+                        // Verify the real class has the hook even if the KVO class stays active.
+                        for selector in [sel!(accessibilityChildren), sel!(accessibilityHitTest:)] {
+                            assert!(std::ptr::fn_addr_eq(
+                                observation.real_class.instance_method(selector).expect("stable class has accessibility hook").implementation(),
+                                native_window.class().instance_method(selector).unwrap().implementation(),
+                            ), "the stable window class must own {selector} composition");
+                        }
+                        assert_native_hit(&native_window, &button);
+                        assert_canvas_hit(&native_window);
+                        drop(observation);
 
                         assert!(native_group.isAccessibilityElement());
                         let window_children = native_window.accessibilityChildren().unwrap();
@@ -190,25 +338,8 @@ mod suite {
                             }),
                             "AppKit exposes the native button through its group: {group_children:?}"
                         );
-                        // Base installs NSWindow accessibilityHitTest: while Rake
-                        // composes accessibilityChildren. Both must reach AppKit controls.
-                        let button_view: &NSView = button.as_appkit();
-                        let center = NSPoint::new(60.0, 16.0);
-                        let point_in_window = button_view.convertPoint_toView(center, None);
-                        let point_on_screen = native_window.convertPointToScreen(point_in_window);
-                        // SAFETY: NSAccessibility hit testing takes a screen NSPoint
-                        // and returns an autoreleased accessibility object.
-                        let hit: Option<Retained<AnyObject>> = unsafe {
-                            msg_send![&*native_window, accessibilityHitTest: point_on_screen]
-                        };
-                        // SAFETY: Ask the same live AppKit control for its own
-                        // representation (NSButtonCell for this button style).
-                        let expected: Option<Retained<AnyObject>> = unsafe {
-                            msg_send![button.as_appkit(), accessibilityHitTest: point_on_screen]
-                        };
-                        assert!(hit.as_ref().zip(expected.as_ref()).is_some_and(|(hit, expected)|
-                            Retained::as_ptr(hit) == Retained::as_ptr(expected)
-                        ), "Base Root hit testing reaches AppKit's button representation: {hit:?}, expected {expected:?}");
+                        assert_native_hit(&native_window, &button);
+                        assert_canvas_hit(&native_window);
                         assert!(glass.as_appkit().window().is_some());
                         assert_eq!(button.as_appkit().frame().size.width, 120.0);
                         assert_eq!(raw.frame().size.height, 64.0);
@@ -503,7 +634,8 @@ mod suite {
             cx.set_quit_mode(gpui::QuitMode::Explicit);
             let frames_finished = completed.clone();
             cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|cx| Fixture::new(cx, completed));
+                let observation = WindowObservation::new(window);
+                let view = cx.new(|cx| Fixture::new(cx, completed, observation));
                 cx.new(|cx| gpui_base::Root::new(view, window, cx))
             })
             .unwrap();

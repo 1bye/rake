@@ -1,4 +1,8 @@
 //! Route window hit testing through native hosts before the GPUI canvas.
+//!
+//! Hooks persist on the stable class and any overriding KVO subclass for the
+//! process lifetime. Hits outside native hosts forward to the saved method,
+//! including Base's canvas forwarder, or to the content view when none existed.
 
 use std::{ffi::CString, mem, sync::Mutex};
 
@@ -18,53 +22,46 @@ type HitTester = unsafe extern "C-unwind" fn(&NSWindow, Sel, NSPoint) -> *mut An
 
 static ORIGINALS: Mutex<Vec<(&'static AnyClass, Option<HitTester>)>> = Mutex::new(Vec::new());
 
-fn window_class(window: &NSWindow) -> &'static AnyClass {
-    // SAFETY: The retained window is live. Objective-C runtime classes have
-    // process lifetime. NSObject::class hides KVO subclasses, where Base
-    // installs its forwarder, so method interception needs object_getClass.
-    unsafe { ffi::object_getClass(std::ptr::from_ref(window).cast()).as_ref() }
-        .expect("live NSWindow runtime class")
-}
-
 pub(super) fn intercept(window: &NSWindow) {
     let mut originals = ORIGINALS.lock().expect("native hit testers lock poisoned");
-    let mut ancestor = Some(window_class(window));
-
-    while let Some(class) = ancestor {
-        if originals.iter().any(|(installed, _)| *installed == class) {
-            return;
-        }
-
-        ancestor = class.superclass();
-    }
-
-    let class = window_class(window);
     let selector = sel!(accessibilityHitTest:);
-
-    // SAFETY: The selector takes a screen NSPoint and returns an autoreleased
-    // accessibility object. Save the exact ABI, including Base's forwarder.
-    let original = class
-        .instance_method(selector)
-        .map(|method| unsafe { mem::transmute::<_, HitTester>(method.implementation()) });
-
     let encoding = CString::new(format!("@@:{}", NSPoint::ENCODING))
         .expect("Objective-C point encoding has no NUL");
-
-    originals.push((class, original));
-
     // SAFETY: Erase only the function pointer type; hit_test preserves the
     // receiver, selector, NSPoint argument and accessibility-object return ABI.
     let replacement: Imp = unsafe { mem::transmute(hit_test as HitTester) };
 
-    // SAFETY: Replace only this runtime window class's method with the same ABI.
-    // Registrations are main-thread owned; other windows retain their fallback.
-    unsafe {
-        ffi::class_replaceMethod(
-            std::ptr::from_ref(class).cast_mut(),
-            selector,
-            replacement,
-            encoding.as_ptr(),
-        );
+    // As with children, hook the stable class for KVO removal. Base uses
+    // class_addMethod on the runtime subclass, so also replace that override
+    // while preserving its canvas forwarder for points outside native hosts.
+    for class in [super::window_class(window), window.class()] {
+        if originals.iter().any(|(installed, _)| *installed == class) {
+            continue;
+        }
+
+        let method = class.instance_method(selector);
+
+        if method.is_some_and(|method| std::ptr::fn_addr_eq(method.implementation(), replacement)) {
+            continue;
+        }
+
+        // SAFETY: Save the selector's exact screen-NSPoint/object-return ABI,
+        // including Base's forwarder when present on this class.
+        let original =
+            method.map(|method| unsafe { mem::transmute::<_, HitTester>(method.implementation()) });
+
+        originals.push((class, original));
+
+        // SAFETY: Replace only the method, with the same ABI and class layout.
+        // Registrations are main-thread owned; other windows retain their fallback.
+        unsafe {
+            ffi::class_replaceMethod(
+                std::ptr::from_ref(class).cast_mut(),
+                selector,
+                replacement,
+                encoding.as_ptr(),
+            );
+        }
     }
 }
 
@@ -119,7 +116,7 @@ unsafe extern "C-unwind" fn hit_test(
 
     let original = {
         let originals = ORIGINALS.lock().expect("native hit testers lock poisoned");
-        let mut class = window_class(window);
+        let mut class = window.class();
 
         loop {
             if let Some((_, original)) = originals.iter().find(|(candidate, _)| *candidate == class)

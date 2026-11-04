@@ -2,8 +2,11 @@
 //!
 //! AccessKit replaces the content view's children, hiding native subviews.
 //! Make that content view an accessible group and expose native host groups as
-//! its siblings. Compose children on each window accessibility query so content
-//! and window chrome stay live; forward to AppKit when no hosts remain.
+//! its siblings. Replace accessibilityChildren and accessibilityHitTest: on the
+//! stable window class and overriding KVO subclasses for the life of the process.
+//! Compose children on each query so content and window chrome stay live. When
+//! the final host detaches, restore the content view's accessibility state and
+//! forward window queries to their saved implementations.
 
 mod hit_test;
 
@@ -16,7 +19,7 @@ use std::{
 };
 
 use objc2::{
-    ffi,
+    ffi, msg_send,
     rc::Retained,
     runtime::{AnyClass, AnyObject, Imp, Sel},
     sel,
@@ -34,45 +37,49 @@ type ChildrenGetter = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut NSArra
 // Runtime methods outlive registrations and thread-local window state.
 static GETTERS: Mutex<Vec<(&'static AnyClass, ChildrenGetter)>> = Mutex::new(Vec::new());
 
+fn window_class(window: &NSWindow) -> &'static AnyClass {
+    // SAFETY: NSObject's class message returns the stable class hidden by KVO.
+    unsafe { msg_send![window, class] }
+}
+
 fn intercept_children(window: &NSWindow) {
     let mut getters = GETTERS.lock().expect("native window getters lock poisoned");
-    let mut class = Some(window.class());
-
-    while let Some(current) = class {
-        if getters.iter().any(|(class, _)| *class == current) {
-            return;
-        }
-
-        class = current.superclass();
-    }
-
-    let class = window.class();
     let selector = sel!(accessibilityChildren);
-
-    let method = class
-        .instance_method(selector)
-        .expect("NSWindow accessibility getter");
-
-    // SAFETY: NSAccessibility's getter takes a receiver and selector and
-    // returns an autoreleased NSArray. Preserve its exact ABI for forwarding.
-    let original: ChildrenGetter = unsafe { mem::transmute(method.implementation()) };
-
-    getters.push((class, original));
-
     // SAFETY: Erase only the function pointer type for Objective-C registration;
     // window_children has the getter's receiver, selector and NSArray return ABI.
     let replacement: Imp = unsafe { mem::transmute(window_children as ChildrenGetter) };
 
-    // SAFETY: Install the same getter ABI on this window class only, without
-    // changing its superclass or layout (including AppKit's KVO subclass).
-    // Unregistered windows forward to the original implementation.
-    unsafe {
-        ffi::class_replaceMethod(
-            std::ptr::from_ref(class).cast_mut(),
-            selector,
-            replacement,
-            ffi::method_getTypeEncoding(method),
-        );
+    // Keep the stable class hooked after KVO removal, and cover any override on
+    // the current subclass without saving our inherited replacement as a fallback.
+    for class in [window_class(window), window.class()] {
+        if getters.iter().any(|(installed, _)| *installed == class) {
+            continue;
+        }
+
+        let method = class
+            .instance_method(selector)
+            .expect("NSWindow accessibility getter");
+
+        if std::ptr::fn_addr_eq(method.implementation(), replacement) {
+            continue;
+        }
+
+        // SAFETY: NSAccessibility's getter takes a receiver and selector and
+        // returns an autoreleased NSArray. Preserve its exact ABI for forwarding.
+        let original: ChildrenGetter = unsafe { mem::transmute(method.implementation()) };
+
+        getters.push((class, original));
+
+        // SAFETY: Install the same getter ABI without changing class layout.
+        // Unregistered windows forward to the original implementation.
+        unsafe {
+            ffi::class_replaceMethod(
+                std::ptr::from_ref(class).cast_mut(),
+                selector,
+                replacement,
+                ffi::method_getTypeEncoding(method),
+            );
+        }
     }
 }
 
