@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 use gpui::{
-    AnyWeakEntity, App, Bounds, Context, FocusHandle, Pixels, Subscription, WeakFocusHandle,
-    Window, WindowId,
+    AnyWeakEntity, App, AppContext, Bounds, Context, FocusHandle, Pixels, Subscription,
+    WeakFocusHandle, Window, WindowId,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +112,7 @@ impl OverlayHostState {
                 needs_focus: false,
                 anchor: None,
                 subscriptions: Vec::new(),
+                popover: None,
             })),
         }
     }
@@ -240,6 +241,7 @@ pub(super) struct OverlayData {
     needs_focus: bool,
     pub anchor: Option<AnchorState>,
     subscriptions: Vec<Subscription>,
+    popover: Option<gpui::Entity<gpui_base::PopoverState>>,
 }
 
 /// A retained popover or dialog handle belonging to one [`OverlayHostState`].
@@ -256,6 +258,7 @@ impl OverlayState {
     /// # Panics
     /// Panics if used in a different window from its host.
     pub fn open(&self, window: &mut Window, cx: &mut App) -> bool {
+        crate::init(cx);
         self.host.bind(window);
 
         if self.is_open() || !self.host.0.borrow().owner.is_upgradable() {
@@ -277,6 +280,24 @@ impl OverlayState {
             .borrow_mut()
             .stack
             .push(Rc::downgrade(&self.inner));
+
+        if self.kind() == Kind::Popover {
+            let popover = self
+                .inner
+                .borrow()
+                .popover
+                .clone()
+                .unwrap_or_else(|| cx.new(|cx| gpui_base::PopoverState::new(false, cx)));
+
+            let focus = self.focus_handle();
+
+            popover.update(cx, |popover, cx| {
+                popover.track_focus(Some(focus));
+                popover.sync_open(true, window, cx);
+            });
+            self.inner.borrow_mut().popover = Some(popover);
+        }
+
         self.install_focus_guards(window, cx);
         window.focus(&self.focus_handle(), cx);
         self.host.notify(window, cx);
@@ -331,6 +352,13 @@ impl OverlayState {
             state.bounds = None;
             state.subscriptions.clear();
             state.return_focus = None;
+            let popover = state.popover.clone();
+
+            drop(state);
+
+            if let Some(popover) = popover {
+                popover.update(cx, |popover, cx| popover.sync_open(false, window, cx));
+            }
         }
 
         if restore {

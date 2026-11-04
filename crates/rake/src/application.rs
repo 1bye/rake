@@ -3,7 +3,9 @@
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
-use gpui::{AnyView, AppContext, Context, IntoElement, Render, Window, WindowOptions};
+use gpui::{AnyView, AppContext, Render, Window, WindowOptions};
+#[cfg(not(feature = "experimental-view"))]
+use gpui::{Context, IntoElement};
 
 use crate::diagnostics::{DiagnosticsConfig, DiagnosticsError};
 use crate::http::{HttpClient, HttpConfig};
@@ -764,7 +766,10 @@ impl<R: Route> App<R> {
             }
 
             #[cfg(feature = "experimental-view")]
-            install_themes(self.themes, cx);
+            {
+                rake_ui::init(cx);
+                install_themes(self.themes, cx);
+            }
 
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
@@ -813,7 +818,15 @@ impl<R: Route> App<R> {
                     }
                 };
 
-                cx.new(|_| RootView(view))
+                #[cfg(feature = "experimental-view")]
+                {
+                    cx.new(|cx| rake_ui::Root::new(view, window, cx))
+                }
+
+                #[cfg(not(feature = "experimental-view"))]
+                {
+                    cx.new(|_| RootView(view))
+                }
             });
 
             if let Err(error) = opened {
@@ -979,8 +992,10 @@ impl gpui::http_client::HttpClient for GpuiHttp {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod http_tests;
 
+#[cfg(not(feature = "experimental-view"))]
 struct RootView(AnyView);
 
+#[cfg(not(feature = "experimental-view"))]
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.0.clone()

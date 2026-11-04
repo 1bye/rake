@@ -563,3 +563,52 @@ fn tab_can_leave_a_nonmodal_popover_in_both_directions() {
         })
         .unwrap();
 }
+
+#[test]
+fn base_root_shares_modal_traversal_and_respects_consumed_escape() {
+    let (mut cx, window) = setup();
+
+    open_popup(&mut cx, window);
+    open_dialog(&mut cx, window);
+    let host = window.root(&mut cx).unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            rake_ui::Root::new(host.clone(), window, cx)
+        });
+    })
+    .unwrap();
+    draw(&mut cx, window);
+    cx.update_window(window.into(), |_, window, cx| {
+        host.update(cx, |host, cx| {
+            host.consume_escape = true;
+            window.focus(&host.dialog_last, cx);
+            cx.notify();
+        });
+    })
+    .unwrap();
+    draw(&mut cx, window);
+    keys(&mut cx, window, "tab");
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(host.read(cx).dialog_first.is_focused(window));
+    })
+    .unwrap();
+    keys(&mut cx, window, "escape");
+    cx.update(|cx| {
+        assert!(
+            host.read(cx).dialog.is_open(),
+            "a child can consume Escape under Base Root"
+        )
+    });
+    host.update(&mut cx, |host, cx| {
+        host.consume_escape = false;
+        cx.notify();
+    });
+    draw(&mut cx, window);
+    keys(&mut cx, window, "escape");
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(!host.read(cx).dialog.is_open());
+        assert!(host.read(cx).popup.is_open());
+        assert!(host.read(cx).popup_first.is_focused(window));
+    })
+    .unwrap();
+}

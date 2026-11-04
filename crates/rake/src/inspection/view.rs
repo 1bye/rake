@@ -540,6 +540,13 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     .map(|interactive| interactive.compute_style(id, None, window, cx))
             })
             .flatten();
+        #[cfg(feature = "experimental-view")]
+        let style = style.or_else(|| {
+            (&self.inner as &dyn std::any::Any)
+                .downcast_ref::<rake_ui::view::Button>()?
+                .inspection_style()
+                .cloned()
+        });
         if let Some(previous) = previous {
             cx.global_mut::<CapturingLayout>().0 = previous;
         }
@@ -1073,11 +1080,9 @@ fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interacti
     let inner = inner as &mut dyn Any;
     #[cfg(feature = "experimental-view")]
     if inner.is::<rake_ui::view::Button>() {
-        return Some(
-            inner
-                .downcast_mut::<rake_ui::view::Button>()?
-                .interactivity(),
-        );
+        return inner
+            .downcast_mut::<rake_ui::view::Button>()?
+            .inspection_interactivity();
     }
     if inner.is::<gpui::Div>() {
         Some(inner.downcast_mut::<gpui::Div>()?.interactivity())
@@ -1100,9 +1105,14 @@ fn resolved_style<E: gpui::Element>(
 ) -> Option<(Rc<super::snapshot::Payload<super::ResolvedStyle>>, bool)> {
     use gpui::Refineable;
     use std::any::Any;
-    let hitbox = (prepaint as &dyn Any)
-        .downcast_ref::<Option<gpui::Hitbox>>()?
-        .as_ref();
+    let hitbox = (prepaint as &dyn Any).downcast_ref::<Option<gpui::Hitbox>>();
+    #[cfg(feature = "experimental-view")]
+    let hitbox = hitbox.or_else(|| {
+        (prepaint as &dyn Any)
+            .downcast_ref::<Box<dyn Any>>()?
+            .downcast_ref::<Option<gpui::Hitbox>>()
+    });
+    let hitbox = hitbox?.as_ref();
 
     let authored = (inner as &mut dyn Any)
         .downcast_mut::<gpui::Div>()
@@ -1121,8 +1131,16 @@ fn resolved_style<E: gpui::Element>(
     let authored = authored?;
     let mut base = gpui::Style::default();
     base.refine(&authored);
-    let interactive = interactivity(inner)?;
-    let style = interactive.compute_style(id, hitbox, window, cx);
+    let style =
+        interactivity(inner).map(|interactive| interactive.compute_style(id, hitbox, window, cx));
+    #[cfg(feature = "experimental-view")]
+    let style = style.or_else(|| {
+        (inner as &dyn Any)
+            .downcast_ref::<rake_ui::view::Button>()?
+            .inspection_style()
+            .cloned()
+    });
+    let style = style?;
     let mut text = window.text_style();
 
     text.refine(&style.text);
