@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rake-native", "crates/rake-dist-linux", "crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/desktop", "examples/distribution", "examples/foundation", "examples/files", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "examples/preview", "examples/agent", "tests/renamed-facade", "tests/web-platform"]
+members = ["crates/rake-native", "crates/rake-dist-linux", "crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/kit", "examples/desktop", "examples/distribution", "examples/foundation", "examples/files", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "examples/preview", "examples/agent", "tests/renamed-facade", "tests/web-platform"]
 exclude = ["vendor/pest_stack_guard"]
 resolver = "3"
 
@@ -15,6 +15,7 @@ publish = false
 gpui = { package = "gpui-pre", version = "=0.3.11", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", default-features = false }
 gpui-base = "=0.9.0"
+gpui-kit = "=0.9.0"
 rake = { path = "crates/rake" }
 rake-diagnostics = { path = "crates/rake-diagnostics" }
 rake-http = { path = "crates/rake-http" }

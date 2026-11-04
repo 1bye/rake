@@ -15,6 +15,7 @@ use gpui::{App, FontWeight, Global, Pixels};
 #[doc(hidden)]
 pub mod apply;
 mod semantic;
+
 pub(crate) use semantic::observe;
 
 pub use gpui_base::ThemeAppearance as Appearance;

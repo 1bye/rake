@@ -67,13 +67,16 @@ impl Semantic {
     /// Base's default dark semantic palette.
     pub fn dark() -> Self {
         let mut base = Theme::default();
+
         base.appearance = Appearance::Dark;
         base.tokens.colors = ColorTokens::dark();
+
         Self::from_base(&base)
     }
 
     fn from_base(base: &Theme) -> Self {
         let colors = base.tokens.colors;
+
         Self {
             appearance: base.appearance,
             background: colors.background,
@@ -99,6 +102,7 @@ impl Semantic {
 
     fn colors(&self) -> ColorTokens {
         let mut colors = ColorTokens::default();
+
         colors.background = self.background;
         colors.foreground = self.foreground;
         colors.surface = self.surface;
@@ -117,6 +121,7 @@ impl Semantic {
         colors.input = self.input;
         colors.ring = self.ring;
         colors.selection = self.selection;
+
         colors
     }
 }
@@ -127,7 +132,24 @@ pub(crate) fn observe(cx: &mut App) {
 }
 
 fn synchronize(cx: &mut App) {
+    #[cfg(not(all(feature = "kit", not(target_family = "wasm"))))]
     let semantic = Semantic::from_base(&Theme::global(cx));
+
+    #[cfg(all(feature = "kit", not(target_family = "wasm")))]
+    let semantic = {
+        let kit = gpui_kit::component::Theme::global(cx);
+        let mut base = Theme::default();
+
+        base.appearance = if kit.mode.is_dark() {
+            Appearance::Dark
+        } else {
+            Appearance::Light
+        };
+        base.tokens = kit.semantic_tokens();
+
+        Semantic::from_base(&base)
+    };
+
     if cx
         .try_global::<ThemeGlobal<Semantic>>()
         .is_none_or(|current| *current.0 != semantic)
@@ -138,8 +160,34 @@ fn synchronize(cx: &mut App) {
 
 pub(super) fn install(cx: &mut App, semantic: &Semantic) {
     crate::init(cx);
-    let base = Theme::global_mut(cx);
-    base.appearance = semantic.appearance;
-    base.tokens.colors = semantic.colors();
+    #[cfg(not(all(feature = "kit", not(target_family = "wasm"))))]
+    {
+        let base = Theme::global_mut(cx);
+
+        base.appearance = semantic.appearance;
+        base.tokens.colors = semantic.colors();
+    }
+    #[cfg(all(feature = "kit", not(target_family = "wasm")))]
+    {
+        use gpui_kit::component::{Theme as KitTheme, ThemeMode};
+        let mode = match semantic.appearance {
+            Appearance::Light => ThemeMode::Light,
+            Appearance::Dark => ThemeMode::Dark,
+        };
+
+        if KitTheme::global(cx).mode != mode {
+            // Kit loads mode defaults over edits made in the same update.
+            KitTheme::change(mode, None, cx);
+        }
+
+        let mut tokens = KitTheme::global(cx).semantic_tokens();
+
+        tokens.colors = semantic.colors();
+        KitTheme::update(cx, |theme| {
+            theme.apply_semantic_tokens(&tokens);
+            // Kit 0.9's apply_semantic_tokens omits this Base color role.
+            theme.selection = semantic.selection;
+        });
+    }
     synchronize(cx);
 }

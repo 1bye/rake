@@ -733,6 +733,9 @@ impl<R: Route> App<R> {
         #[cfg(not(target_family = "wasm"))]
         let application = gpui_platform::application();
 
+        #[cfg(all(feature = "kit", not(target_family = "wasm")))]
+        let application = application.with_assets(rake_ui::kit::assets::Assets);
+
         // Native GPUI image/network hooks use the same observed transport.
         #[cfg(not(target_family = "wasm"))]
         let application = application.with_http_client(Arc::new(GpuiHttp {

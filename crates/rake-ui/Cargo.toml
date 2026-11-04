@@ -17,8 +17,12 @@ gpui = { workspace = true }
 gpui-base.workspace = true
 
 [features]
+kit = ["dep:gpui-kit"]
 test-support = ["gpui/test-support"]
 
 [dev-dependencies]
 # The observer regression exercises GPUI's actual global effect queue.
 gpui = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+gpui-kit = { workspace = true, optional = true }

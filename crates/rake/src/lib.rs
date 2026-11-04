@@ -95,6 +95,15 @@ pub mod overlay;
 #[cfg(feature = "experimental-view")]
 pub use rake_ui::theme;
 
+/// Initializes Base, optional Kit and theme observation before custom GPUI windows.
+/// Rake's application builder calls this automatically.
+#[cfg(feature = "experimental-view")]
+pub use rake_ui::init as init_ui;
+
+/// Optional GPUI Kit components, assets and the matching GPUI API (native targets).
+#[cfg(all(feature = "kit", not(target_family = "wasm")))]
+pub use rake_ui::kit;
+
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError, ClosePolicy};
 #[cfg(feature = "gpui")]

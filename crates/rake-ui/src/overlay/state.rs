@@ -8,6 +8,23 @@ use gpui::{
     WeakFocusHandle, Window, WindowId,
 };
 
+// Kit owns window-wide modal presentation and notifications. Local Rake
+// surfaces suspend while that stack is active, sharing Base's focus manager
+// without competing for focus or painting above the window-wide modal.
+pub(super) fn kit_modal_open(window: &mut Window, cx: &mut App) -> bool {
+    #[cfg(all(feature = "kit", not(target_family = "wasm")))]
+    {
+        use gpui_kit::component::WindowExt as _;
+
+        if window.root::<gpui_base::Root>().flatten().is_some() {
+            return window.has_active_dialog(cx) || window.has_active_sheet(cx);
+        }
+    }
+    let _ = (window, cx);
+
+    false
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     Popover,
@@ -171,6 +188,10 @@ impl OverlayHostState {
     }
 
     pub(super) fn audit(&self, window: &mut Window, cx: &mut App) {
+        if kit_modal_open(window, cx) {
+            return;
+        }
+
         let frame = self.0.borrow().frame;
 
         for entry in self.entries() {
@@ -523,6 +544,10 @@ impl OverlayState {
         let weak = self.downgrade();
 
         subscriptions.push(window.on_focus_out(&root, cx, move |_, window, cx| {
+            if kit_modal_open(window, cx) {
+                return;
+            }
+
             if let Some(state) = weak.upgrade().filter(Self::is_topmost) {
                 if !state.host.mounted(window) {
                     state.close(window, cx);

@@ -11,7 +11,6 @@ use gpui_base::FocusTrapElement as _;
 use super::state::{AnchorState, Kind, OverlayHostState, OverlayState};
 
 /// Window-root host for overlay controls, with background actions isolated in `body`.
-#[derive(IntoElement)]
 pub struct OverlayHost {
     /// State created once in the window's owning entity.
     pub state: OverlayHostState,
@@ -19,6 +18,16 @@ pub struct OverlayHost {
     pub body: AnyElement,
     /// Popovers and dialogs, normally authored as nested component tags.
     pub children: Vec<AnyElement>,
+}
+
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for OverlayHost {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
 }
 
 impl RenderOnce for OverlayHost {
@@ -60,12 +69,21 @@ impl RenderOnce for OverlayHost {
 }
 
 /// Tracks the current visible window bounds of its trigger content.
-#[derive(IntoElement)]
 pub struct OverlayAnchor {
     /// A handle created through the same host as the corresponding popover.
     pub state: AnchorState,
     /// Trigger content, commonly a button with an accessible expanded state.
     pub children: Vec<AnyElement>,
+}
+
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for OverlayAnchor {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
 }
 
 impl RenderOnce for OverlayAnchor {
@@ -85,7 +103,6 @@ impl RenderOnce for OverlayAnchor {
 
 /// An anchored, nonmodal group of controls with Escape and outside-click dismissal.
 /// Use a state created by [`OverlayHostState::popover`].
-#[derive(IntoElement)]
 pub struct Popover {
     /// Retained interaction state.
     pub state: OverlayState,
@@ -95,8 +112,18 @@ pub struct Popover {
     pub children: Vec<AnyElement>,
 }
 
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for Popover {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
+}
+
 impl RenderOnce for Popover {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         assert_eq!(
             self.state.kind(),
             Kind::Popover,
@@ -108,13 +135,16 @@ impl RenderOnce for Popover {
         );
         self.state.inner.borrow_mut().anchor = Some(self.anchor);
 
+        if super::state::kit_modal_open(window, cx) {
+            return gpui::Empty.into_any_element();
+        }
+
         floating(self.state, None, None, self.children)
     }
 }
 
 /// A modal dialog with initial focus, contained Tab navigation and focus restoration.
 /// Use a state created by [`OverlayHostState::dialog`].
-#[derive(IntoElement)]
 pub struct Dialog {
     /// Retained interaction state.
     pub state: OverlayState,
@@ -126,6 +156,16 @@ pub struct Dialog {
     pub children: Vec<AnyElement>,
 }
 
+// GPUI pre's derive rewrites paths to an optional Kit dependency even when disabled.
+impl IntoElement for Dialog {
+    type Element = gpui::ViewElement<Self>;
+
+    #[track_caller]
+    fn into_element(self) -> Self::Element {
+        gpui::ViewElement::new(self)
+    }
+}
+
 impl RenderOnce for Dialog {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         crate::init(cx);
@@ -135,7 +175,7 @@ impl RenderOnce for Dialog {
             "Dialog requires dialog state"
         );
 
-        if !self.state.is_open() {
+        if !self.state.is_open() || super::state::kit_modal_open(window, cx) {
             return gpui::Empty.into_any_element();
         }
 
@@ -150,6 +190,7 @@ impl RenderOnce for Dialog {
         );
 
         let close = state.clone();
+        let backdrop_close = state.clone();
 
         gpui_base::Dialog::new(cx)
             .open(true)
@@ -165,6 +206,18 @@ impl RenderOnce for Dialog {
                     .absolute()
                     .inset_0()
                     .bg(gpui::rgba(0x00000066))
+                    .on_any_mouse_down(move |event, window, cx| {
+                        // Base handles left presses; Rake also dismisses on other buttons.
+                        window.prevent_default();
+
+                        if event.button != gpui::MouseButton::Left {
+                            if backdrop_close.is_topmost() {
+                                backdrop_close.close(window, cx);
+                            }
+
+                            cx.stop_propagation();
+                        }
+                    })
                     .on_scroll(|_, _, cx| cx.stop_propagation()),
             )
             .popup(popup)
