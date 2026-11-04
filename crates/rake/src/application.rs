@@ -907,31 +907,66 @@ struct GpuiHttp {
 
 #[cfg(not(target_family = "wasm"))]
 impl gpui::http_client::HttpClient for GpuiHttp {
-    fn get(
+    fn user_agent(&self) -> Option<&gpui::http_client::http::HeaderValue> {
+        None
+    }
+
+    fn proxy(&self) -> Option<&gpui::http_client::Url> {
+        None
+    }
+
+    fn send(
         &self,
-        url: &str,
-        follow_redirects: bool,
-    ) -> futures::future::BoxFuture<'static, anyhow::Result<gpui::http_client::HttpResponse>> {
-        let client = if follow_redirects {
-            &self.follow
-        } else {
-            &self.manual
+        request: gpui::http_client::Request<gpui::http_client::AsyncBody>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        anyhow::Result<gpui::http_client::Response<gpui::http_client::AsyncBody>>,
+    > {
+        use futures::AsyncReadExt as _;
+        use gpui::http_client::{AsyncBody, RedirectPolicy, RequestTimeout, Response};
+
+        let client = match request.extensions().get::<RedirectPolicy>() {
+            Some(RedirectPolicy::FollowAll) => Ok(self.follow.clone()),
+            Some(RedirectPolicy::FollowLimit(limit)) => {
+                self.follow.with_redirect_limit(*limit as usize)
+            }
+            Some(RedirectPolicy::NoFollow) | None => Ok(self.manual.clone()),
         };
 
-        let request = client.get(url);
-
         Box::pin(async move {
+            let client = client?;
+            let (parts, mut body) = request.into_parts();
+            let mut bytes = Vec::new();
+
+            body.read_to_end(&mut bytes).await?;
+            let mut request = client
+                .request(parts.method.as_str(), &parts.uri.to_string())
+                .body(bytes);
+
+            for (name, value) in &parts.headers {
+                request = request.header(name.as_str(), value.to_str()?);
+            }
+
+            if let Some(timeout) = parts.extensions.get::<RequestTimeout>() {
+                request = request.timeout(timeout.0);
+            }
+
             let response = request.send().await?;
-            let status = response.status();
+            let mut builder = Response::builder().status(response.status());
+
+            for (name, value) in response.headers() {
+                builder = builder.header(name, value);
+            }
+
             let body = response.bytes().await?;
 
-            Ok(gpui::http_client::HttpResponse {
-                status: status.try_into()?,
-                body,
-            })
+            Ok(builder.body(AsyncBody::from(body))?)
         })
     }
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod http_tests;
 
 struct RootView(AnyView);
 
