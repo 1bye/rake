@@ -5,6 +5,8 @@
 //! its siblings. Compose children on each window accessibility query so content
 //! and window chrome stay live; forward to AppKit when no hosts remain.
 
+mod hit_test;
+
 use std::{
     cell::RefCell,
     collections::BTreeMap,
@@ -138,6 +140,7 @@ impl WindowTree {
         // SAFETY: This is AppKit's standard accessibility group role.
         content.setAccessibilityRole(Some(unsafe { NSAccessibilityGroupRole }));
         intercept_children(&window);
+        hit_test::intercept(&window);
 
         Some(Self {
             window,

@@ -1,5 +1,5 @@
 //! Covers: native actions, symbols, opacity, clipping, live accessibility, window moves and closes.
-//! Real: AppKit controls, Objective-C action dispatch, GPUI and its macOS renderer.
+//! Real: AppKit controls, Base Root, Objective-C dispatch, GPUI and its macOS renderer.
 //! Doubles: none.
 //! Requires: macOS graphical session and a working GPU; `native-tests` feature.
 
@@ -190,6 +190,25 @@ mod suite {
                             }),
                             "AppKit exposes the native button through its group: {group_children:?}"
                         );
+                        // Base installs NSWindow accessibilityHitTest: while Rake
+                        // composes accessibilityChildren. Both must reach AppKit controls.
+                        let button_view: &NSView = button.as_appkit();
+                        let center = NSPoint::new(60.0, 16.0);
+                        let point_in_window = button_view.convertPoint_toView(center, None);
+                        let point_on_screen = native_window.convertPointToScreen(point_in_window);
+                        // SAFETY: NSAccessibility hit testing takes a screen NSPoint
+                        // and returns an autoreleased accessibility object.
+                        let hit: Option<Retained<AnyObject>> = unsafe {
+                            msg_send![&*native_window, accessibilityHitTest: point_on_screen]
+                        };
+                        // SAFETY: Ask the same live AppKit control for its own
+                        // representation (NSButtonCell for this button style).
+                        let expected: Option<Retained<AnyObject>> = unsafe {
+                            msg_send![button.as_appkit(), accessibilityHitTest: point_on_screen]
+                        };
+                        assert!(hit.as_ref().zip(expected.as_ref()).is_some_and(|(hit, expected)|
+                            Retained::as_ptr(hit) == Retained::as_ptr(expected)
+                        ), "Base Root hit testing reaches AppKit's button representation: {hit:?}, expected {expected:?}");
                         assert!(glass.as_appkit().window().is_some());
                         assert_eq!(button.as_appkit().frame().size.width, 120.0);
                         assert_eq!(raw.frame().size.height, 64.0);
@@ -336,7 +355,8 @@ mod suite {
                                     role: content.accessibilityRole(),
                                     content,
                                 });
-                                cx.new(|_| Destination(moved))
+                                let view = cx.new(|_| Destination(moved));
+                                cx.new(|cx| gpui_base::Root::new(view, window, cx))
                             },
                         ).unwrap();
 
@@ -479,9 +499,11 @@ mod suite {
         let completed = finished.clone();
 
         gpui_platform::application().run(move |cx| {
+            gpui_base::init(cx);
             cx.set_quit_mode(gpui::QuitMode::Explicit);
-            cx.open_window(WindowOptions::default(), |_, cx| {
-                cx.new(|cx| Fixture::new(cx, completed))
+            cx.open_window(WindowOptions::default(), |window, cx| {
+                let view = cx.new(|cx| Fixture::new(cx, completed));
+                cx.new(|cx| gpui_base::Root::new(view, window, cx))
             })
             .unwrap();
             cx.spawn(async move |cx| {
