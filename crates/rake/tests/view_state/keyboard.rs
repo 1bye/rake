@@ -412,3 +412,25 @@ fn disabling_between_key_down_and_up_cancels_activation() {
         .read_with(&cx, |host, _| assert_eq!(host.saved, 0))
         .unwrap();
 }
+
+#[test]
+fn disabling_an_unfocused_button_removes_its_previous_tab_stop() {
+    let (mut cx, window) = setup();
+
+    window
+        .update(&mut cx, |host, _, cx| {
+            host.disabled = true;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut cx, window);
+    keys(&mut cx, window, "tab");
+    window
+        .update(&mut cx, |host, window, _| {
+            assert!(
+                host.middle.is_focused(window),
+                "Tab must skip a button disabled while unfocused"
+            );
+        })
+        .unwrap();
+}

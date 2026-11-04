@@ -324,7 +324,9 @@ impl Element for Button {
             |state: Option<ButtonFocus>, _| {
                 let focus = explicit
                     .or_else(|| state.map(|state| state.0))
-                    .unwrap_or_else(|| cx.focus_handle());
+                    .unwrap_or_else(|| cx.focus_handle())
+                    .tab_index(self.tabindex)
+                    .tab_stop(!self.disabled && self.tabindex >= 0);
 
                 (focus.clone(), ButtonFocus(focus))
             },
