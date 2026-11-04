@@ -11,7 +11,7 @@
 mod hit_test;
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     mem,
     rc::{Rc, Weak},
@@ -30,6 +30,37 @@ use objc2_foundation::{NSArray, NSString};
 
 thread_local! {
     static WINDOWS: RefCell<BTreeMap<usize, Weak<WindowTree>>> = const { RefCell::new(BTreeMap::new()) };
+    // No Drop state: original forwarding remains available during thread-local teardown.
+    static ORIGINAL_CALL: Cell<Option<(usize, Sel, &'static AnyClass)>> = const { Cell::new(None) };
+}
+
+// An original subclass method can send super to another intercepted class.
+// Resume below that original and compose native hosts only at the outer call.
+struct OriginalCall(Option<(usize, Sel, &'static AnyClass)>);
+
+impl OriginalCall {
+    fn superclass(window: &NSWindow, selector: Sel) -> Option<&'static AnyClass> {
+        let key = std::ptr::from_ref(window) as usize;
+
+        ORIGINAL_CALL
+            .get()
+            .filter(|(receiver, method, _)| *receiver == key && *method == selector)
+            .map(|(_, _, class)| {
+                class
+                    .superclass()
+                    .expect("window original has a superclass")
+            })
+    }
+
+    fn new(window: &NSWindow, selector: Sel, class: &'static AnyClass) -> Self {
+        Self(ORIGINAL_CALL.replace(Some((std::ptr::from_ref(window) as usize, selector, class))))
+    }
+}
+
+impl Drop for OriginalCall {
+    fn drop(&mut self) {
+        ORIGINAL_CALL.set(self.0);
+    }
 }
 
 type ChildrenGetter = unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut NSArray;
@@ -84,13 +115,14 @@ fn intercept_children(window: &NSWindow) {
 }
 
 unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) -> *mut NSArray {
-    let original = {
+    let superclass = OriginalCall::superclass(window, selector);
+    let (class, original) = {
         let getters = GETTERS.lock().expect("native window getters lock poisoned");
-        let mut class = window.class();
+        let mut class = superclass.unwrap_or_else(|| window.class());
 
         loop {
             if let Some((_, original)) = getters.iter().find(|(candidate, _)| *candidate == class) {
-                break *original;
+                break (class, *original);
             }
 
             class = class
@@ -98,6 +130,16 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
                 .expect("getter belongs to an intercepted window class");
         }
     };
+
+    let base = {
+        let _call = OriginalCall::new(window, selector, class);
+        // SAFETY: Forward with the original receiver, selector and getter ABI.
+        unsafe { original(window, selector) }
+    };
+
+    if superclass.is_some() {
+        return base;
+    }
 
     let key = std::ptr::from_ref(window) as usize;
 
@@ -107,13 +149,11 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
         .flatten();
 
     let Some(tree) = tree else {
-        // SAFETY: Forward unchanged using the saved getter's original ABI.
-        return unsafe { original(window, selector) };
+        return base;
     };
 
-    // SAFETY: Call the saved getter with its original receiver, selector and
-    // ABI, then retain its nullable autoreleased result during composition.
-    let base = unsafe { Retained::retain(original(window, selector)) };
+    // SAFETY: Retain the original getter's nullable autoreleased result.
+    let base = unsafe { Retained::retain(base) };
 
     let mut children: Vec<Retained<AnyObject>> = base
         .as_ref()

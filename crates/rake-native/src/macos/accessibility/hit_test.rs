@@ -16,7 +16,7 @@ use objc2::{
 use objc2_app_kit::NSWindow;
 use objc2_foundation::NSPoint;
 
-use super::WINDOWS;
+use super::{OriginalCall, WINDOWS};
 
 type HitTester = unsafe extern "C-unwind" fn(&NSWindow, Sel, NSPoint) -> *mut AnyObject;
 
@@ -70,6 +70,7 @@ unsafe extern "C-unwind" fn hit_test(
     selector: Sel,
     point: NSPoint,
 ) -> *mut AnyObject {
+    let superclass = OriginalCall::superclass(window, selector);
     let tree = WINDOWS
         .try_with(|windows| {
             windows
@@ -80,7 +81,7 @@ unsafe extern "C-unwind" fn hit_test(
         .ok()
         .flatten();
 
-    if let Some(tree) = tree {
+    if let Some(tree) = tree.filter(|_| superclass.is_none()) {
         let in_window = window.convertPointFromScreen(point);
         // SAFETY: The tree retains this live main-thread content view.
         let parent = unsafe { tree.content.superview() };
@@ -114,14 +115,14 @@ unsafe extern "C-unwind" fn hit_test(
         }
     }
 
-    let original = {
+    let (class, original) = {
         let originals = ORIGINALS.lock().expect("native hit testers lock poisoned");
-        let mut class = window.class();
+        let mut class = superclass.unwrap_or_else(|| window.class());
 
         loop {
             if let Some((_, original)) = originals.iter().find(|(candidate, _)| *candidate == class)
             {
-                break *original;
+                break (class, *original);
             }
 
             class = class.superclass().expect("intercepted window hit tester");
@@ -129,6 +130,7 @@ unsafe extern "C-unwind" fn hit_test(
     };
 
     if let Some(original) = original {
+        let _call = OriginalCall::new(window, selector, class);
         // SAFETY: Preserve the saved window method's receiver, selector and ABI.
         unsafe { original(window, selector, point) }
     } else if let Some(content) = window.contentView() {

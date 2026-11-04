@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "macos")]
 mod suite {
-    use std::{cell::Cell, rc::Rc, time::Duration};
+    use std::{cell::Cell, mem, rc::Rc, time::Duration};
 
     use gpui::{self, AppContext, Context, IntoElement, Render, Window, WindowOptions, prelude::*};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -16,11 +16,11 @@ mod suite {
             NSAccessibility, NSAccessibilityButtonRole, NSAccessibilityToolbarRole, NSView,
             NSWindow,
         },
-        foundation::{NSObject, NSObjectProtocol, NSPoint, NSString},
+        foundation::{NSArray, NSObject, NSObjectProtocol, NSPoint, NSString},
         objc2::{
-            MainThreadMarker, MainThreadOnly, define_class, msg_send,
+            MainThreadMarker, MainThreadOnly, define_class, ffi, msg_send,
             rc::Retained,
-            runtime::{AnyClass, AnyObject},
+            runtime::{AnyClass, AnyObject, Imp, Sel},
             sel,
         },
     };
@@ -105,6 +105,96 @@ mod suite {
 
     thread_local! {
         static PROGRESS: Cell<(u8, &'static str)> = const { Cell::new((0, "starting")) };
+        static CHILDREN_FORWARDING: Cell<bool> = const { Cell::new(false) };
+        static HIT_FORWARDING: Cell<bool> = const { Cell::new(false) };
+        static HIT_REENTERED: Cell<bool> = const { Cell::new(false) };
+        static BASE_HIT: Cell<Option<unsafe extern "C-unwind" fn(&NSWindow, Sel, NSPoint) -> *mut AnyObject>> = const { Cell::new(None) };
+    }
+
+    unsafe extern "C-unwind" fn children_via_super(window: &NSWindow, _: Sel) -> *mut NSArray {
+        // Bound a broken hook's recursion so the assertion reports duplicate hosts.
+        if CHILDREN_FORWARDING.replace(true) {
+            return std::ptr::null_mut();
+        }
+
+        // SAFETY: Start super dispatch above this live window's KVO subclass.
+        let result = unsafe {
+            msg_send![
+                super(window, window.class().superclass().unwrap()),
+                accessibilityChildren
+            ]
+        };
+        CHILDREN_FORWARDING.set(false);
+
+        result
+    }
+
+    unsafe extern "C-unwind" fn hit_via_super(
+        window: &NSWindow,
+        selector: Sel,
+        point: NSPoint,
+    ) -> *mut AnyObject {
+        // Bound the same recursion for a canvas hit that reaches the fallback.
+        if HIT_FORWARDING.replace(true) {
+            HIT_REENTERED.set(true);
+            return std::ptr::null_mut();
+        }
+
+        // SAFETY: The superclass hook has the same screen-point/object-return ABI.
+        let _: *mut AnyObject = unsafe {
+            msg_send![super(window, window.class().superclass().unwrap()), accessibilityHitTest: point]
+        };
+        // SAFETY: Preserve Base's saved forwarder after exercising super dispatch.
+        let result = unsafe { BASE_HIT.get().unwrap()(window, selector, point) };
+        HIT_FORWARDING.set(false);
+
+        result
+    }
+
+    fn install_super_forwarders(observation: &WindowObservation) {
+        let class = observation.window.class();
+
+        for (selector, replacement) in [
+            (
+                sel!(accessibilityChildren),
+                // SAFETY: Erase only the getter's receiver/selector/NSArray ABI.
+                unsafe {
+                    mem::transmute::<unsafe extern "C-unwind" fn(&NSWindow, Sel) -> *mut NSArray, Imp>(
+                        children_via_super,
+                    )
+                },
+            ),
+            (
+                sel!(accessibilityHitTest:),
+                // SAFETY: Erase only the receiver/selector/NSPoint/object ABI.
+                unsafe {
+                    mem::transmute::<
+                        unsafe extern "C-unwind" fn(&NSWindow, Sel, NSPoint) -> *mut AnyObject,
+                        Imp,
+                    >(hit_via_super)
+                },
+            ),
+        ] {
+            let method = class.instance_method(selector).unwrap();
+            if selector == sel!(accessibilityHitTest:) {
+                // SAFETY: Base's installed forwarder uses the selector's exact ABI.
+                BASE_HIT.set(Some(unsafe {
+                    mem::transmute::<
+                        Imp,
+                        unsafe extern "C-unwind" fn(&NSWindow, Sel, NSPoint) -> *mut AnyObject,
+                    >(method.implementation())
+                }));
+            }
+            // SAFETY: Test-only KVO overrides have the selectors' original ABIs.
+            unsafe {
+                ffi::class_replaceMethod(
+                    std::ptr::from_ref(class).cast_mut(),
+                    selector,
+                    replacement,
+                    ffi::method_getTypeEncoding(method),
+                );
+            }
+        }
     }
 
     fn has_toolbar(window: &NSWindow) -> bool {
@@ -301,6 +391,7 @@ mod suite {
                         }
                         assert_native_hit(&native_window, &button);
                         assert_canvas_hit(&native_window);
+                        assert!(!HIT_REENTERED.get(), "super dispatch must not reenter the subclass original");
                         drop(observation);
 
                         assert!(native_group.isAccessibilityElement());
@@ -324,6 +415,14 @@ mod suite {
                                     .is_some_and(|view| std::ptr::eq(view, &*native_group))
                             }),
                             "native group remains discoverable alongside the live GPUI group"
+                        );
+                        assert_eq!(
+                            window_children.iter().filter(|child| {
+                                child.downcast_ref::<NSView>()
+                                    .is_some_and(|view| std::ptr::eq(view, &*native_group))
+                            }).count(),
+                            1,
+                            "super forwarding must compose each native host exactly once"
                         );
                         let group_children = native_group.accessibilityChildren().unwrap();
 
@@ -630,7 +729,7 @@ mod suite {
         }
     }
 
-    pub(super) fn run() {
+    pub(super) fn run(super_forwarding: bool) {
         assert!(
             std::thread::spawn(|| matches!(
                 Button::new("Off thread", ButtonStyle::Push),
@@ -649,7 +748,13 @@ mod suite {
             cx.open_window(WindowOptions::default(), |window, cx| {
                 let observation = WindowObservation::new(window);
                 let view = cx.new(|cx| Fixture::new(cx, completed, observation));
-                cx.new(|cx| gpui_base::Root::new(view, window, cx))
+                let root = cx.new(|cx| gpui_base::Root::new(view.clone(), window, cx));
+
+                if super_forwarding {
+                    install_super_forwarders(view.read(cx).observation.as_ref().unwrap());
+                }
+
+                root
             })
             .unwrap();
             cx.spawn(async move |cx| {
@@ -714,21 +819,27 @@ fn main() {
         // AppKit may terminate the process instead of returning from its event
         // loop. A parent checks completion independently of the child's exit code.
         if std::env::args().any(|arg| arg == "--appkit-child") {
-            suite::run();
+            suite::run(std::env::args().any(|arg| arg == "--super-forwarding"));
         } else {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .arg("--appkit-child")
-                .output()
-                .unwrap();
+            for super_forwarding in [false, true] {
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command.arg("--appkit-child");
 
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+                if super_forwarding {
+                    command.arg("--super-forwarding");
+                }
 
-            assert!(
-                output.status.success() && stdout.contains("RAKE_NATIVE_TEST_COMPLETE"),
-                "native test did not complete: {}\n{stdout}\n{stderr}",
-                output.status
-            );
+                let output = command.output().unwrap();
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                assert!(
+                    output.status.success() && stdout.contains("RAKE_NATIVE_TEST_COMPLETE"),
+                    "native test did not complete (super forwarding: {super_forwarding}): {}\n{stdout}\n{stderr}",
+                    output.status
+                );
+            }
             println!("AppKit actions, clipping, remount and window teardown passed");
         }
     }
