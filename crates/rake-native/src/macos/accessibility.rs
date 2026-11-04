@@ -19,6 +19,7 @@ use objc2::{
     runtime::{AnyClass, AnyObject, MethodImplementation, Sel},
     sel,
 };
+
 use objc2_app_kit::{NSAccessibility, NSAccessibilityGroupRole, NSView, NSWindow};
 use objc2_foundation::{NSArray, NSString};
 
@@ -45,14 +46,17 @@ fn intercept_children(window: &NSWindow) {
 
     let class = window.class();
     let selector = sel!(accessibilityChildren);
+
     let method = class
         .instance_method(selector)
         .expect("NSWindow accessibility getter");
+
     // SAFETY: NSAccessibility's getter takes a receiver and selector and
     // returns an autoreleased NSArray. Preserve its exact ABI for forwarding.
     let original: ChildrenGetter = unsafe { mem::transmute(method.implementation()) };
 
     getters.push((class, original));
+
     // SAFETY: Install the same getter ABI on this window class only, without
     // changing its superclass or layout (including AppKit's KVO subclass).
     // Unregistered windows forward to the original implementation.
@@ -81,18 +85,23 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
                 .expect("getter belongs to an intercepted window class");
         }
     };
+
     let key = std::ptr::from_ref(window) as usize;
+
     let tree = WINDOWS
         .try_with(|windows| windows.borrow().get(&key).and_then(Weak::upgrade))
         .ok()
         .flatten();
+
     let Some(tree) = tree else {
         // SAFETY: Forward unchanged using the saved getter's original ABI.
         return unsafe { original(window, selector) };
     };
+
     // SAFETY: Call the saved getter with its original receiver, selector and
     // ABI, then retain its nullable autoreleased result during composition.
     let base = unsafe { Retained::retain(original(window, selector)) };
+
     let mut children: Vec<Retained<AnyObject>> = base
         .as_ref()
         .map(|children| children.iter().collect())
