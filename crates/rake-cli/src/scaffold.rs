@@ -15,7 +15,7 @@ Without either option, the dependency uses the exact revision this CLI was built
 const FILES: &[(&str, &str)] = &[
     (
         "Cargo.toml",
-        include_str!("../templates/default/Cargo.toml"),
+        include_str!("../templates/default/Cargo.toml.template"),
     ),
     (
         "rust-toolchain.toml",
