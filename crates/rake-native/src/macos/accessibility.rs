@@ -18,7 +18,7 @@ use std::{
 use objc2::{
     ffi,
     rc::Retained,
-    runtime::{AnyClass, AnyObject, MethodImplementation, Sel},
+    runtime::{AnyClass, AnyObject, Imp, Sel},
     sel,
 };
 
@@ -59,6 +59,10 @@ fn intercept_children(window: &NSWindow) {
 
     getters.push((class, original));
 
+    // SAFETY: Erase only the function pointer type for Objective-C registration;
+    // window_children has the getter's receiver, selector and NSArray return ABI.
+    let replacement: Imp = unsafe { mem::transmute(window_children as ChildrenGetter) };
+
     // SAFETY: Install the same getter ABI on this window class only, without
     // changing its superclass or layout (including AppKit's KVO subclass).
     // Unregistered windows forward to the original implementation.
@@ -66,7 +70,7 @@ fn intercept_children(window: &NSWindow) {
         ffi::class_replaceMethod(
             std::ptr::from_ref(class).cast_mut(),
             selector,
-            (window_children as unsafe extern "C-unwind" fn(_, _) -> _).__imp(),
+            replacement,
             ffi::method_getTypeEncoding(method),
         );
     }

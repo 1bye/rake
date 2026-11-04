@@ -5,7 +5,7 @@ use std::{ffi::CString, mem, sync::Mutex};
 use objc2::{
     encode::Encode,
     ffi, msg_send,
-    runtime::{AnyClass, AnyObject, MethodImplementation, Sel},
+    runtime::{AnyClass, AnyObject, Imp, Sel},
     sel,
 };
 
@@ -52,13 +52,17 @@ pub(super) fn intercept(window: &NSWindow) {
 
     originals.push((class, original));
 
+    // SAFETY: Erase only the function pointer type; hit_test preserves the
+    // receiver, selector, NSPoint argument and accessibility-object return ABI.
+    let replacement: Imp = unsafe { mem::transmute(hit_test as HitTester) };
+
     // SAFETY: Replace only this runtime window class's method with the same ABI.
     // Registrations are main-thread owned; other windows retain their fallback.
     unsafe {
         ffi::class_replaceMethod(
             std::ptr::from_ref(class).cast_mut(),
             selector,
-            (hit_test as unsafe extern "C-unwind" fn(_, _, _) -> _).__imp(),
+            replacement,
             encoding.as_ptr(),
         );
     }
