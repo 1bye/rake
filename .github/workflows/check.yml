@@ -12,6 +12,7 @@ jobs:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - run: python3 scripts/check-gpui-pins.py
       - run: cargo fmt --all --check
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -23,6 +24,9 @@ jobs:
       - run: cargo test -p rake --features view-test-support --lib --test view_state --locked
       - run: cargo test -p rake --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
       - run: cargo clippy -p rake --all-targets --features view-test-support,devtools --locked -- -D warnings
+      - run: cargo test -p rake-ui --features kit --test semantic --locked
+      - run: cargo test -p rake --features kit,view-test-support,devtools --lib --test view_state --locked
+      - run: cargo clippy -p rake-kit-example --features kit,devtools --all-targets --locked -- -D warnings
       - run: cargo check -p renamed-facade --features devtools --locked
       - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo check -p rake --no-default-features --locked
