@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real native packager adoption probes, isolated from the Rake runtime.
 
-Requires Rust 1.95, registry access and native installer tools. Unsigned fixtures
+Requires Rust 1.98, registry access and native installer tools. Unsigned fixtures
 exercise packaging; they do not establish signing, installation or updater gates.
 """
 import argparse

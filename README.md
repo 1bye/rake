@@ -32,7 +32,7 @@ application commands, operation results and lifecycle guards.
 
 ## Try it
 
-The repository pins Rust 1.95.0 and GPUI CE. From the workspace root, run
+The repository pins Rust 1.98.0 and `gpui-pre` 0.3.11. From the workspace root, run
 [Fieldnotes](docs/notes.md), the reference notes app with search, autosave and
 crash recovery:
 
@@ -84,7 +84,7 @@ build options and [Chrome DevTools](docs/devtools.md) for connecting the inspect
 
 Create a binary crate with `cargo new hello-rake`, then add this dependency to
 its `Cargo.toml`. Pin the alpha tag because APIs can change; use Rust
-1.95.0 and the native build prerequisites in the [support contract](docs/release-readiness.md).
+1.98.0 and the native build prerequisites in the [support contract](docs/release-readiness.md).
 
 ```toml
 [dependencies]

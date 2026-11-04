@@ -471,11 +471,15 @@ fn toolbar(focus: &FocusHandle, saving: bool) -> impl IntoElement {
 `on:Save` and qualified paths such as `on:crate::actions::Save` expand to typed
 GPUI `on_action::<Save>` listeners. Action types must implement `gpui::Action`;
 handlers use the normal GPUI signature and accept `cx.listener(Self::save)`.
-Register `cx.bind_keys([gpui::KeyBinding::new("secondary-s", Save, Some("Editor"))])`
-once during application setup. `key-context` supplies GPUI's keymap context on
-the focused dispatch path; it does not register shortcuts. `secondary` means
-Command on macOS targets and Control on other targets. `aria-keyshortcuts` is
-accessibility metadata only; supply the actual platform shortcut yourself.
+Register shortcuts once during application setup. `KeyBinding::new` accepts
+static bindings with explicit modifiers: use `"cmd-s"` when
+`cx.platform_info().os == gpui::OperatingSystem::Mac` and `"ctrl-s"` otherwise.
+For dynamic strings or the `secondary-` alias, use GPUI's `KeyBinding::load` with
+the app context; `Keystroke::parse_with_os` is the corresponding input parser.
+This uses the host OS on Web as well as native targets. `key-context` supplies
+GPUI's keymap context on the focused dispatch path; it does not register
+shortcuts. `aria-keyshortcuts` is accessibility metadata only; supply the actual
+platform shortcut yourself.
 
 `tab-navigation={true}` installs a bubbling handler for unmodified Tab and
 Shift+Tab. It calls GPUI's window-wide `focus_next`/`focus_prev`, then prevents the
