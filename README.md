@@ -41,7 +41,7 @@ and the matching `wasm-bindgen-cli` (the builder prints the install command).
 The first dev run creates `Cargo.lock`; commit it. `rake new` pins Rake to the
 exact revision the CLI was built from.
 
-UI uses `view!`. A complete Hello window looks like this:
+UI uses `view!` (it's comptime). A complete Hello window looks like this:
 
 ```rust
 use rake::gpui::{Context, Window, prelude::*};
