@@ -231,6 +231,7 @@ impl Render for Toolkit {
                         })}>"Copy text"</button>
                 </div>
                 <button id="trim-lines" disabled={busy || !self.settings_applied}
+                    aria-label={format!("Trim trailing spaces: {}", if self.trim_lines { "on" } else { "off" })}
                     on:click={cx.listener(|this, _, _, cx| {
                         if this.busy(cx) || !this.settings_applied { return; }
                         this.trim_lines = !this.trim_lines;
