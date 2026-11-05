@@ -143,8 +143,8 @@ fn malformed_higher_revision_checkpoint_does_not_block_repair_from_valid_main() 
     let saved = std::fs::read(directory.0.join("library.json")).unwrap();
     let mut damaged: rake::serde_json::Value = rake::serde_json::from_slice(&saved).unwrap();
 
-    damaged["revision"] = rake::serde_json::json!(1000);
-    damaged["library"]["notes"][0]["id"] = rake::serde_json::json!(0);
+    damaged["value"]["revision"] = rake::serde_json::json!(1000);
+    damaged["value"]["library"]["notes"][0]["id"] = rake::serde_json::json!(0);
     private_write(
         &directory.0.join("recovery.json"),
         rake::serde_json::to_vec(&damaged).unwrap(),
@@ -219,8 +219,8 @@ fn legacy_data_migrates_and_keeps_its_original_saved_copy() {
             .unwrap();
 
     assert_eq!(old["format"], 0);
-    assert_eq!(new["format"], 1);
-    assert_eq!(new["library"]["selected"], 42);
+    assert_eq!(new["$rake_schema"], 1);
+    assert_eq!(new["value"]["library"]["selected"], 42);
 }
 
 #[test]
@@ -475,4 +475,73 @@ fn typed_commands_resolve_the_application_notebook_and_return_real_document_vers
 
 fn registry_value(router: &rake::router::Router<rake::router::NoRoute>) -> std::rc::Rc<Notebook> {
     router.client().services().get().unwrap()
+}
+
+#[test]
+fn pre_schema_fixture_upgrades_and_reopens_with_selection_and_note_versions() {
+    let directory = Directory::new();
+    let notebook = directory.notebook();
+
+    block_on(notebook.load()).unwrap();
+    drop(notebook);
+    let fixture = include_bytes!("fixtures/library-v0.json");
+
+    private_write(&directory.0.join("library.json"), fixture);
+    let notebook = directory.notebook();
+
+    block_on(notebook.load()).unwrap();
+    let library = notebook.library().unwrap();
+
+    assert_eq!(library.selected, Some(42));
+    assert_eq!(library.next_id, 43);
+    assert_eq!(library.notes[0].body, "Still here 👋");
+    assert_eq!(library.notes[0].version, 3);
+    assert!(library.notes[0].pinned);
+    assert!(notebook.notice().unwrap().contains("upgraded"));
+    assert_eq!(
+        std::fs::read(directory.0.join("library.json")).unwrap(),
+        fixture
+    );
+    block_on(notebook.flush()).unwrap();
+    assert_eq!(
+        std::fs::read(directory.0.join("previous.json")).unwrap(),
+        fixture
+    );
+    let saved: rake::serde_json::Value =
+        rake::serde_json::from_slice(&std::fs::read(directory.0.join("library.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(saved["$rake_schema"], 1);
+    assert_eq!(saved["value"]["library"]["selected"], 42);
+    drop(notebook);
+    let reopened = directory.notebook();
+
+    block_on(reopened.load()).unwrap();
+    assert_eq!(reopened.library().unwrap(), library);
+    assert!(!reopened.is_dirty());
+    assert!(reopened.notice().is_none());
+}
+
+#[test]
+fn newer_schema_snapshot_is_rejected_and_preserved() {
+    let directory = Directory::new();
+    let notebook = directory.notebook();
+
+    block_on(notebook.load()).unwrap();
+    drop(notebook);
+    let raw = br#"{ "$rake_schema": 99, "value": null }"#;
+
+    private_write(&directory.0.join("library.json"), raw);
+    let notebook = directory.notebook();
+
+    assert_eq!(
+        block_on(notebook.load()).unwrap_err(),
+        StorageError::Unsupported(99)
+    );
+    assert!(notebook.library().is_none());
+    assert!(block_on(notebook.save(false)).is_err());
+    assert_eq!(
+        std::fs::read(directory.0.join("library.json")).unwrap(),
+        raw
+    );
 }

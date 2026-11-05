@@ -1,6 +1,7 @@
 //! Atomic native files and serialized browser transactions with recovery checkpoints.
 
 use crate::Library;
+use rake::storage::Schema;
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -43,7 +44,6 @@ pub struct LoadReport {
 #[derive(Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Envelope {
-    pub format: u64,
     pub revision: u64,
     pub writer: String,
     pub library: Library,
@@ -52,8 +52,9 @@ pub(crate) struct Envelope {
 impl Envelope {
     fn encode(&self) -> Result<String, StorageError> {
         self.library.validate()?;
-        let bytes = rake::serde_json::to_string(self)
-            .map_err(|error| StorageError::Invalid(error.to_string()))?;
+        let bytes = schema()?.encode(self).map_err(schema_error)?;
+        let bytes =
+            String::from_utf8(bytes).map_err(|error| StorageError::Invalid(error.to_string()))?;
 
         if bytes.len() > MAX_BYTES {
             return Err(StorageError::Invalid(
@@ -66,16 +67,29 @@ impl Envelope {
     }
 }
 
-fn decode(raw: &str) -> Result<(Envelope, bool), StorageError> {
-    if raw.len() > MAX_BYTES {
-        return Err(StorageError::Invalid(
-            "Stored library exceeds 8 MiB.".into(),
-        ));
+// The schema wraps the complete revisioned snapshot; recovery and compare-and-write
+// remain repository transactions rather than Store single-key operations.
+fn schema() -> Result<Schema, StorageError> {
+    Schema::new(1)
+        .with_migration(0, |value| {
+            let envelope = legacy_envelope(value)
+                .map_err(|error| rake::storage::StorageError::Backend(Box::new(error)))?;
+
+            Ok(rake::serde_json::to_value(envelope)?)
+        })
+        .map_err(schema_error)
+}
+
+fn schema_error(error: rake::storage::StorageError) -> StorageError {
+    match error {
+        rake::storage::StorageError::NewerVersion { stored, .. } => {
+            StorageError::Unsupported(stored)
+        }
+        error => StorageError::Invalid(error.to_string()),
     }
+}
 
-    let value: rake::serde_json::Value = rake::serde_json::from_str(raw)
-        .map_err(|error| StorageError::Invalid(format!("Cannot read library: {error}")))?;
-
+fn legacy_envelope(value: rake::serde_json::Value) -> Result<Envelope, StorageError> {
     let format = value
         .get("format")
         .and_then(|v| v.as_u64())
@@ -85,9 +99,7 @@ fn decode(raw: &str) -> Result<(Envelope, bool), StorageError> {
         return Err(StorageError::Unsupported(format));
     }
 
-    let migrated = format == 0;
-
-    let envelope = if migrated {
+    let envelope = if format == 0 {
         #[rake::data]
         struct Legacy {
             format: u64,
@@ -117,7 +129,6 @@ fn decode(raw: &str) -> Result<(Envelope, bool), StorageError> {
             .ok_or_else(|| StorageError::Invalid("Document IDs exhausted.".into()))?;
 
         Envelope {
-            format: 1,
             revision: legacy.revision,
             writer: "legacy".into(),
             library: Library {
@@ -139,9 +150,40 @@ fn decode(raw: &str) -> Result<(Envelope, bool), StorageError> {
             },
         }
     } else {
+        let mut value = value;
+
+        value
+            .as_object_mut()
+            .ok_or_else(|| StorageError::Invalid("Invalid library.".into()))?
+            .remove("format");
         rake::serde_json::from_value(value)
             .map_err(|error| StorageError::Invalid(error.to_string()))?
     };
+
+    Ok(envelope)
+}
+
+fn decode(raw: &str) -> Result<(Envelope, bool), StorageError> {
+    if raw.len() > MAX_BYTES {
+        return Err(StorageError::Invalid(
+            "Stored library exceeds 8 MiB.".into(),
+        ));
+    }
+
+    // Preserve the existing explicit downgrade error for pre-envelope snapshots.
+    let value: rake::serde_json::Value = rake::serde_json::from_str(raw)
+        .map_err(|error| StorageError::Invalid(format!("Cannot read library: {error}")))?;
+
+    if value.get("$rake_schema").is_none()
+        && let Some(format) = value.get("format").and_then(|v| v.as_u64())
+        && format > 1
+    {
+        return Err(StorageError::Unsupported(format));
+    }
+
+    let (envelope, migrated) = schema()?
+        .decode::<Envelope>(raw.as_bytes())
+        .map_err(schema_error)?;
 
     envelope.library.validate()?;
 
@@ -359,7 +401,6 @@ impl Repository {
         checkpoint_only: bool,
     ) -> Result<(), StorageError> {
         let envelope = Envelope {
-            format: 1,
             revision,
             writer: self.writer.clone(),
             library,

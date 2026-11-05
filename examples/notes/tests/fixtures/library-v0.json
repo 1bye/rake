@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "revision": 7,
+  "writer": "pre-schema-app",
+  "library": {
+    "next_id": 43,
+    "selected": 42,
+    "notes": [{
+      "id": 42,
+      "title": "Old note",
+      "body": "Still here 👋",
+      "pinned": true,
+      "archived": false,
+      "modified_ms": 1234,
+      "version": 3
+    }]
+  }
+}
