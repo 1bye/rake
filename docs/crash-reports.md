@@ -152,7 +152,8 @@ an interrupted writer). Records actively locked by delivery are skipped. A curre
 changes can affect chronological ordering. Each record has:
 
 - `schema_version: 1`, stable `id`, Unix `timestamp_ms`, app version and OS name;
-- `message`, always `Rust panic (payload omitted for privacy)`;
+- `message`, `Rust panic (payload omitted for privacy)` by default; opt-in string
+  payloads are capped at 1 KiB of UTF-8 and may be shortened further by the JSON budget;
 - `location`, a Rust source basename with line/column;
 - a standard-library backtrace, captured even without `RUST_BACKTRACE`, with source
   path lines removed and formatting capped at 32 KiB;
@@ -163,14 +164,22 @@ changes can affect chronological ordering. Each record has:
 The app version is developer metadata (at most 128 UTF-8 bytes); supply a version,
 not user data. Diagnostic fields, targets, span names, HTTP data, window titles,
 editable text, user paths and environment values are excluded. Arbitrary panic
-messages may contain those values, so they are always omitted. The previous panic
-hook still receives the original payload and prints its usual output; these privacy
-rules cover persisted records, not the host's stderr policy. There is no raw-payload
-opt-in in this API. Source basenames and symbol names are developer/build metadata;
-use compiler path remapping if other development tools retain full source paths.
+messages may contain those values, so they are omitted by default. To explicitly
+accept that privacy risk, configure `CrashConfig::include_panic_message(true)`.
+Only `&'static str` and `String` panic payloads are read; other types keep the marker
+and are never formatted. The string is capped at 1 KiB at a UTF-8 boundary and marks
+`truncated` when shortened. Opting in can persist user content or secrets embedded
+in panic strings: the app must own consent, disclosure and retention policy. This
+option does not enable diagnostic content capture or any uploading.
+
+The previous panic hook still receives the original payload and prints its usual
+output; these privacy rules cover persisted records, not the host's stderr policy.
+Source locations and symbol names are developer/build metadata; use compiler path
+remapping if other development tools retain full source paths.
 
 If JSON escaping or metadata exceeds the encoded byte budget, oldest diagnostics
-are removed first, then the backtrace is shortened at UTF-8 boundaries, followed
+are removed first, then opted-in messages, then the backtrace are shortened at UTF-8
+boundaries, followed
 by location and version if JSON escaping still exceeds the budget. Version/location
 metadata also has the independent UTF-8 caps above. Collector capture uses `try_lock` and
 never waits on a lock that the panicking thread might already hold. No sink, tracing

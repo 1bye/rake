@@ -15,6 +15,7 @@ use crate::storage::file::{check_directory, check_file, private_options};
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static NEXT_RECORD: AtomicU64 = AtomicU64::new(0);
 const PRIVATE_MESSAGE: &str = "Rust panic (payload omitted for privacy)";
+const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
 const MAX_BACKTRACE_BYTES: usize = 32 * 1024;
 
 impl CrashConfig {
@@ -64,6 +65,7 @@ impl CrashConfig {
             version: prefix(&self.version, 128).into(),
             version_truncated: self.version.len() > 128,
             limits: self.limits,
+            include_panic_message: self.include_panic_message,
         };
 
         reporter.prune()?;
@@ -78,6 +80,7 @@ pub struct CrashReporter {
     version: String,
     version_truncated: bool,
     limits: CrashLimits,
+    include_panic_message: bool,
 }
 
 impl CrashReporter {
@@ -119,10 +122,14 @@ impl CrashReporter {
                     location.column()
                 )
             });
-            let record = reporter.record(
+            let mut record = reporter.record(
                 location,
                 collector.try_crash_tail(reporter.limits.diagnostics),
             );
+            let (message, truncated) =
+                panic_message(info.payload(), reporter.include_panic_message);
+            record.message = message;
+            record.truncated |= truncated;
             let _ = reporter.write(record);
             previous(info);
         }));
@@ -274,6 +281,10 @@ impl CrashReporter {
                 && !tail.is_empty()
             {
                 tail.remove(0);
+            } else if record.message != PRIVATE_MESSAGE && !record.message.is_empty() {
+                record
+                    .message
+                    .truncate(record.message.floor_char_boundary(record.message.len() / 2));
             } else if !record.backtrace.is_empty() {
                 record.backtrace.truncate(
                     record
@@ -432,6 +443,25 @@ impl fmt::Write for TraceText {
         self.truncated |= part.len() < text.len();
 
         Ok(())
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send), include: bool) -> (String, bool) {
+    let message = include
+        .then(|| {
+            payload
+                .downcast_ref::<&'static str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        })
+        .flatten();
+
+    match message {
+        Some(message) => (
+            prefix(message, MAX_PANIC_MESSAGE_BYTES).into(),
+            message.len() > MAX_PANIC_MESSAGE_BYTES,
+        ),
+        None => (PRIVATE_MESSAGE.into(), false),
     }
 }
 

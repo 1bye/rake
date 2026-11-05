@@ -253,3 +253,22 @@ fn malformed_record_id_is_not_passed_to_sink() {
         0
     );
 }
+
+#[test]
+fn opted_in_message_is_trimmed_before_backtrace_for_encoded_budget() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        record_bytes: 1024,
+        ..CrashLimits::default()
+    });
+    let mut record = reporter.record(None, None);
+    record.message = "🦀".repeat(256);
+    record.backtrace = "B".repeat(250);
+    reporter.write(record).expect("write bounded payload");
+    let bytes = fs::read(reporter.records().expect("records").remove(0)).expect("record bytes");
+    let record: CrashRecord = serde_json::from_slice(&bytes).expect("valid bounded JSON");
+
+    assert!(bytes.len() <= 1024);
+    assert!(record.message.len() < 1024);
+    assert_eq!(record.backtrace, "B".repeat(250));
+    assert!(record.truncated);
+}

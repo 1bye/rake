@@ -5,7 +5,7 @@
 //! Web delivery is the follow-up from issue #16; the Web App builder is a no-op.
 //!
 //! The hook records locally; delivery policy belongs to the application. Arbitrary
-//! panic payloads and diagnostic content are omitted for privacy. Successful delivery
+//! panic payloads are omitted by default; diagnostic content is always omitted. Successful delivery
 //! deletes a record; failed or interrupted delivery can be retried by stable ID.
 //!
 //! ```no_run
@@ -70,6 +70,7 @@ pub struct CrashConfig {
     )]
     version: String,
     limits: CrashLimits,
+    include_panic_message: bool,
 }
 
 impl CrashConfig {
@@ -79,7 +80,21 @@ impl CrashConfig {
             directory: None,
             version: version.into(),
             limits: CrashLimits::default(),
+            include_panic_message: false,
         }
+    }
+
+    /// Opts into bounded string panic payloads; disabled by default for privacy.
+    ///
+    /// Native records only `&'static str` and `String` payloads, capped at 1 KiB of
+    /// UTF-8. Other payload types keep the privacy marker and are never formatted.
+    /// Panic strings can contain user content or secrets: enable this only when the
+    /// application accepts that risk and applies its own consent/retention policy.
+    /// Web ignores this option until issue #16 Web delivery is implemented.
+    pub fn include_panic_message(mut self, include: bool) -> Self {
+        self.include_panic_message = include;
+
+        self
     }
 
     /// Overrides the crash directory; it must be application-owned and trusted.
@@ -97,7 +112,7 @@ impl CrashConfig {
     }
 }
 
-/// One versioned, owned native crash record containing no application content.
+/// One versioned panic record; string payloads require explicit privacy opt-in.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct CrashRecord {
@@ -107,7 +122,7 @@ pub struct CrashRecord {
     pub id: String,
     /// Time since Unix epoch in milliseconds, or zero if unavailable.
     pub timestamp_ms: u64,
-    /// Privacy marker; arbitrary panic payloads are never retained.
+    /// Privacy marker by default; opted-in string payloads are capped at 1 KiB UTF-8.
     pub message: String,
     /// Rust source basename and line/column, without source directory paths.
     pub location: Option<String>,

@@ -48,6 +48,7 @@ fn crash_child() {
     let operation = std::env::var("RAKE_CRASH_TEST_OPERATION").expect("parent operation");
     let reporter = CrashConfig::new("test-1.2.3")
         .directory(&directory)
+        .include_panic_message(operation.starts_with("message-"))
         .limits(CrashLimits {
             records: 128,
             ..CrashLimits::default()
@@ -106,6 +107,18 @@ fn crash_child() {
     if operation == "broken" {
         fs::remove_dir_all(&directory).expect("remove directory");
         fs::write(&directory, "not a directory").expect("replace directory");
+    }
+    if operation == "message-static" {
+        panic!("static test panic");
+    }
+    if operation == "message-string" {
+        std::panic::panic_any(String::from("owned test panic"));
+    }
+    if operation == "message-huge" {
+        std::panic::panic_any("🦀".repeat(100_000));
+    }
+    if operation == "message-unknown" {
+        std::panic::panic_any(42_u32);
     }
     if operation == "huge" {
         panic!("{}", "SECRET_USER_CONTENT🦀".repeat(100_000));
@@ -168,6 +181,7 @@ fn panic_is_delivered_on_second_run_and_absent_on_third() {
     assert!(!String::from_utf8_lossy(&bytes).contains("user title"));
     let record: CrashRecord = serde_json::from_slice(&bytes).expect("valid record");
     assert_eq!(record.app_version, "test-1.2.3");
+    assert_eq!(record.message, "Rust panic (payload omitted for privacy)");
     assert!(
         record
             .location
@@ -254,4 +268,37 @@ fn hook_io_failure_preserves_original_panic_without_recursive_abort() {
         "normal Rust panic exit, not abort signal"
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("SECRET_USER_CONTENT"));
+}
+
+#[test]
+fn opted_in_panic_messages_are_string_only_and_utf8_bounded() {
+    for (operation, expected, truncated) in [
+        ("message-static", "static test panic".to_owned(), false),
+        ("message-string", "owned test panic".to_owned(), false),
+        ("message-huge", "🦀".repeat(256), true),
+        (
+            "message-unknown",
+            "Rust panic (payload omitted for privacy)".to_owned(),
+            false,
+        ),
+    ] {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let directory = temporary.path().join("crashes");
+        let output = crash(&directory, operation);
+        assert_eq!(
+            output.status.code(),
+            Some(101),
+            "{operation}: normal panic exit"
+        );
+        let paths = records(&directory);
+        assert_eq!(paths.len(), 1, "{operation}: one record");
+        let bytes = fs::read(&paths[0]).expect("record bytes");
+        let record: CrashRecord = serde_json::from_slice(&bytes).expect("valid record");
+
+        assert_eq!(record.message, expected, "{operation}: captured payload");
+        assert!(record.message.len() <= 1024);
+        if truncated {
+            assert!(record.truncated);
+        }
+    }
 }
