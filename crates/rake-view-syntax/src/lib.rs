@@ -4,14 +4,8 @@
 //! Its parse tree and lowering helpers have no stability guarantees outside
 //! matching versions of those consumers. Publish it before `rake-macros`.
 //!
-//! Source tools must enable `source-locations` to preserve unquoted text spacing
-//! outside a procedural macro. Macro hosts use stable `proc_macro` span APIs.
-//!
 //! Parsing does not require GPUI or build the caller's project. Lowering is kept
 //! with the tree so procedural macros and source tools share the same grammar.
-
-#[cfg(not(any(feature = "source-locations", test)))]
-extern crate proc_macro;
 
 mod view;
 

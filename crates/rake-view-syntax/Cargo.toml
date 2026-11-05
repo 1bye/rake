@@ -11,15 +11,7 @@ description = "Internal view syntax for matching Rake versions; no external stab
 [lints]
 workspace = true
 
-[features]
-# Standalone source tools need fallback-token coordinates; macro hosts use std spans.
-source-locations = ["proc-macro2/span-locations"]
-
 [dependencies]
-proc-macro2 = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full"] }
-
-[dev-dependencies]
-proc-macro2 = { version = "1", features = ["span-locations"] }
-tempfile = "3"

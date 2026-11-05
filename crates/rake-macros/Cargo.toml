@@ -18,7 +18,7 @@ workspace = true
 view = ["dep:rake-view-syntax"]
 
 [dependencies]
-proc-macro2 = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full"] }
 proc-macro-crate = "3.5"

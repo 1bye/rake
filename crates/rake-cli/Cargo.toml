@@ -17,7 +17,7 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-rake-view-syntax = { version = "=0.1.0-alpha.3", path = "../rake-view-syntax", features = ["source-locations"] }
+rake-view-syntax = { version = "=0.1.0-alpha.3", path = "../rake-view-syntax" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit"] }
 toml = "0.9"
