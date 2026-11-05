@@ -161,10 +161,19 @@ impl<R: Route> RuntimeContext<R> {
     #[cfg(feature = "tray")]
     pub fn trays(&self) -> Result<crate::tray::Collection, crate::tray::Error> {
         self.client().map_err(|_| crate::tray::Error::Stopped)?;
-        self.services
-            .get::<crate::tray::Collection>()
-            .map(|c| c.as_ref().clone())
-            .map_err(|_| crate::tray::Error::HostUnavailable)
+        #[cfg(target_family = "wasm")]
+        {
+            Err(crate::tray::Error::Unsupported(
+                crate::tray::Feature::MultipleItems,
+            ))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.services
+                .get::<crate::tray::Collection>()
+                .map(|c| c.as_ref().clone())
+                .map_err(|_| crate::tray::Error::HostUnavailable)
+        }
     }
 
     /// Binds an initiated user-action future to this view, with automatic redraw,

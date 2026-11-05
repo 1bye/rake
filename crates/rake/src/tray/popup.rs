@@ -1,10 +1,14 @@
 //! Separate GPUI windows for rich tray content, with explicit placement fallback.
 use super::{Error, Feature, Owner};
+use gpui::{AnyView, Window};
+#[cfg(not(target_family = "wasm"))]
 use gpui::{
-    AnyView, AppContext, Bounds, Context, FocusHandle, Window, WindowBounds, WindowOptions, point,
-    prelude::*, px, size,
+    AppContext, Bounds, Context, FocusHandle, WindowBounds, WindowOptions, point, prelude::*, px,
+    size,
 };
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+#[cfg(not(target_family = "wasm"))]
+use std::cell::RefCell;
+use std::{collections::BTreeMap, rc::Rc};
 
 /// Placement policy when native icon geometry is unavailable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +47,10 @@ pub struct Popup {
     height: f32,
     fallback: PopupFallback,
     retention: PopupRetention,
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(dead_code, reason = "browser rejects native popup mounting")
+    )]
     mount: Mount,
 }
 impl std::fmt::Debug for Popup {
@@ -95,15 +103,23 @@ impl Popup {
     }
 }
 struct Attachment {
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(dead_code, reason = "browser rejects native popup mounting")
+    )]
     popup: Popup,
     content: Option<AnyView>,
     window: Option<gpui::AnyWindowHandle>,
     generation: Option<u64>,
-    opening: bool,
 }
 #[derive(Default)]
 pub(super) struct Popups {
     items: BTreeMap<String, Attachment>,
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(dead_code, reason = "browser rejects native popup mounting")
+    )]
+    opening: bool,
 }
 impl Popups {
     pub(super) fn new(specs: Vec<(String, Popup)>) -> Result<Self, Error> {
@@ -118,7 +134,6 @@ impl Popups {
                         content: None,
                         window: None,
                         generation: None,
-                        opening: false,
                     },
                 )
                 .is_some()
@@ -126,7 +141,10 @@ impl Popups {
                 return Err(Error::Duplicate(id));
             }
         }
-        Ok(Self { items })
+        Ok(Self {
+            items,
+            opening: false,
+        })
     }
 }
 
@@ -149,7 +167,7 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
             .items
             .get(id)
             .ok_or_else(|| Error::InvalidInput("tray has no popup attachment".into()))?;
-        if attached.opening {
+        if owner.popups.opening {
             return Err(Error::InvalidInput("popup is already opening".into()));
         }
         let current = attached
@@ -203,12 +221,7 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
         let failed = failure.clone();
         let retained = Rc::new(RefCell::new(None));
         let saved = retained.clone();
-        cx.global_mut::<Owner>()
-            .popups
-            .items
-            .get_mut(id)
-            .expect("validated attachment")
-            .opening = true;
+        cx.global_mut::<Owner>().popups.opening = true;
         let popup_handle = handle.clone();
         let result = cx.open_window(options, move |window, cx| {
             let content = match content.map(Ok).unwrap_or_else(|| (popup.mount)(window, cx)) {
@@ -239,12 +252,7 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
             });
             cx.new(|cx| rake_ui::Root::new(view, window, cx))
         });
-        cx.global_mut::<Owner>()
-            .popups
-            .items
-            .get_mut(id)
-            .expect("validated attachment")
-            .opening = false;
+        cx.global_mut::<Owner>().popups.opening = false;
         let opened =
             result.map_err(|e| Error::InvalidInput(format!("popup window could not open: {e}")))?;
         if let Some(error) = failure.borrow_mut().take() {
@@ -323,6 +331,7 @@ pub(super) fn removed(id: &str, generation: u64, cx: &mut gpui::App) {
         }
     }
 }
+#[cfg(not(target_family = "wasm"))]
 fn position(anchor: &rake_tray::PopupAnchor, width: f32, height: f32) -> Bounds<gpui::Pixels> {
     let icon = &anchor.icon;
     let work = &anchor.work_area;
@@ -355,12 +364,14 @@ fn position(anchor: &rake_tray::PopupAnchor, width: f32, height: f32) -> Bounds<
         size(px(width as f32), px(height as f32)),
     )
 }
+#[cfg(not(target_family = "wasm"))]
 struct PopupRoot {
     content: AnyView,
     focus: FocusHandle,
     _blur: gpui::Subscription,
     handle: super::Handle,
 }
+#[cfg(not(target_family = "wasm"))]
 impl Drop for PopupRoot {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
@@ -369,6 +380,7 @@ impl Drop for PopupRoot {
         let _ = &self.handle;
     }
 }
+#[cfg(not(target_family = "wasm"))]
 impl Render for PopupRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         gpui::div()
@@ -383,7 +395,7 @@ impl Render for PopupRoot {
             .child(self.content.clone())
     }
 }
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
     #[test]

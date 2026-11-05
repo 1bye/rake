@@ -1,0 +1,17 @@
+[package]
+name = "rake-tray-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+futures.workspace = true
+rake = { workspace = true, features = ["tray"] }
+
+[features]
+gpui-fast = ["rake/gpui-fast"]

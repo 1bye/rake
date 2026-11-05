@@ -319,3 +319,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Licensed under either the [MIT License](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+
+[Tray icons](docs/tray.md): multiple application-owned native items, typed commands,
+platform appearance extensions and rich popups. Run `cargo run -p rake-tray-example`.

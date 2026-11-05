@@ -16,4 +16,5 @@ workspace = true
 framework = { package = "rake", path = "../../crates/rake" }
 
 [features]
+tray = ["framework/tray"]
 devtools = ["framework/devtools"]

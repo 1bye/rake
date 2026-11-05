@@ -156,3 +156,58 @@ expanded sessions are not claimed: the required public host integration and nati
 keyboard/accessibility gates are not established in this environment. These are
 explicit unsupported surfaces, with GPUI popup/SNI/composed-image alternatives;
 the final API inventory records the individual families without stub success.
+
+## P8 — ownership hardening, consumers and verification
+
+Completed host-owned bounded operation driving: dropping a receipt no longer
+cancels admitted create/update/remove work. Receipts and the driver poll the same
+shared operation; errors retain native causes and emit diagnostic events. Shutdown
+closes admission, cancels native tracking and joins admitted work/cleanup. Startup
+failure explicitly rolls back the host. Menu delivery checks the latest requested
+revision. Registration snapshots consult current native evidence. User removal
+with RequestQuit restores presentation after declined/cancelled managed quit.
+
+Added the runnable two-item workbench, transient items, progress/animation,
+check/radio/submenus, capability diagnostics, popup and repeatable window controls.
+Added a renamed-facade tray consumer, CI feature checks, public local typed command
+execution, guide, explicit native API disposition for every inventory row, and
+opt-in probe runner.
+
+Source audit found KSNI swallowed property/menu export errors. Vendored 0.3.7
+(Unlicense) with update_checked and closed-bus-stream observation; original update
+signature remains compatible. Rake uses the checked operation. Whole session-bus
+replacement requires item recreation; watcher replacement on a live bus recovers.
+No GTK/Tokio backend default or desktop fallback loop was introduced.
+
+Verification on this machine:
+
+- Core registry/consumer/operation tests: 12 passed. Final Rake tray + TestPlatform
+  suite: 68 passed, including the removal-quit restoration regression.
+- Full workspace tests ran. Two existing distribution targets failed under Xcode
+  Python 3.9/default OpenSSL (missing hashlib.file_digest and ED25519 support).
+  Re-running those exact targets with installed Python 3.14/OpenSSL 3 passed all
+  5 CLI tests and 25 distribution unit tests. Other workspace targets passed.
+- Workspace all-target Clippy passed; focused tray/native-fixture/example/renamed
+  consumer Clippy passed; final facade tray/view-test-support Clippy passed.
+- gpui-pre and gpui-fast configurations checked; native no-default-features checked;
+  browser tray + renamed-facade checked; strict WASM facade Clippy passed.
+- Foreign Windows MSVC and Linux GNU backend Clippy passed. These do not establish
+  native desktop support or linking on those systems.
+- Strict rustdoc for rake/rake-tray passed; formatting and GPUI pins verified.
+- Actual AppKit probe passed: two independent items, text-only transient, menu
+  target/action, native display/work area, revisions, dropped receipt completion,
+  hide/show, remove/recreate, weak shutdown and 64 transient menu/item cycles.
+- Actual macOS GPUI probe passed: real frames, focus without remounting, close/reopen,
+  popup cycles, transient removal, declined quit preserving both items and accepted
+  application shutdown. This is a smoke journey, not full accessibility qualification.
+- Isolated real D-Bus probe passed using the Linux adapter on this Unix host:
+  absent-host Wait/Require policy, two exports, ARGB, DBusMenu selection, checked
+  update/export signal, watcher loss/recovery and shutdown. Watcher/consumer are
+  fixtures; no Linux panel presentation claim is made.
+
+Remaining qualification is explicitly documented: Windows desktop/Explorer restart,
+Linux Plasma X11/Wayland/Ayatana/legacy panels, screen-reader and full display/DPI/
+resource-performance matrix, and macOS 27 SDK/session integration. Unsupported
+advanced/native/legacy families have named dispositions in docs/tray-native-api.md.
+The PR remains draft for these native coverage limits; no private API or fake
+successful setter is used to mask an unavailable feature.

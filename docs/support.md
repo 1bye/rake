@@ -29,3 +29,8 @@ platforms, keyboard, IME, clipboard and accessibility checks, display-scale and 
 coverage, recovery and upgrade journeys, and sustained workload measurements.
 
 [Getting started](getting-started.md) covers installation.
+
+
+Tray backends expose AppKit, Windows Shell and Linux SNI contracts, with the native
+qualification limits above. AppKit smoke and isolated D-Bus protocol probes are
+separate from Windows/Linux desktop qualification. See [tray evidence and limits](tray.md).

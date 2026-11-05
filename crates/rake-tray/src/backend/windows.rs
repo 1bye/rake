@@ -34,6 +34,7 @@ struct WindowState {
     data: Cell<NOTIFYICONDATAW>,
     taskbar_created: u32,
     removed: Cell<bool>,
+    online: Cell<bool>,
     revision: Cell<u64>,
     image: RefCell<Option<crate::Image>>,
     balloon_icon: Cell<HICON>,
@@ -82,12 +83,14 @@ unsafe extern "system" fn window_proc(
             let mut data = state.data.get();
             // SAFETY: Correctly initialized structure and retained HICON belong to this HWND.
             unsafe {
+                state.online.set(false);
                 if Shell_NotifyIconW(NIM_ADD, &data) != 0 {
                     data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-                    Shell_NotifyIconW(NIM_SETVERSION, &data);
+                    let online = Shell_NotifyIconW(NIM_SETVERSION, &data) != 0;
+                    state.online.set(online);
                     state
                         .sink
-                        .send(EventKind::HostChanged(true), None, Input::default());
+                        .send(EventKind::HostChanged(online), None, Input::default());
                 } else {
                     state
                         .sink
@@ -227,11 +230,15 @@ impl Item {
         };
         // SAFETY: String is terminated and remains alive for this synchronous call.
         let taskbar_created = unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) };
+        if taskbar_created == 0 {
+            return Err(failure("register shell recovery message"));
+        }
         let mut state = Box::new(WindowState {
             sink,
             data: Cell::new(data),
             taskbar_created,
             removed: Cell::new(false),
+            online: Cell::new(false),
             revision: Cell::new(0),
             image: RefCell::new(None),
             balloon_icon: Cell::new(null_mut()),
@@ -280,6 +287,7 @@ impl Item {
             return Err(failure("negotiate tray version"));
         }
 
+        item.state.online.set(true);
         Ok(item)
     }
 
@@ -304,7 +312,12 @@ impl Item {
         data.hIcon = icon.unwrap_or(null_mut());
         data.szTip.fill(0);
 
-        for (slot, ch) in data.szTip.iter_mut().zip(spec.tooltip.encode_utf16()) {
+        let tooltip = if spec.tooltip.is_empty() {
+            spec.id.as_str()
+        } else {
+            spec.tooltip.as_str()
+        };
+        for (slot, ch) in data.szTip.iter_mut().take(127).zip(tooltip.encode_utf16()) {
             *slot = ch;
         }
 
@@ -344,8 +357,10 @@ impl Item {
             let data = item.state.data.get();
             // SAFETY: Correct live identity and owned resources remain valid during the call.
             if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } == 0 {
+                item.state.online.set(false);
                 return Err(failure("update tray icon"));
             }
+            item.state.online.set(true);
             item.state.revision.set(revision);
             Ok(())
         })
@@ -377,7 +392,11 @@ impl Item {
     }
 
     pub(crate) fn registration(&self) -> Registration {
-        Registration::Registered
+        if self.state.online.get() {
+            Registration::Registered
+        } else {
+            Registration::WaitingForHost
+        }
     }
     pub(crate) fn anchor(&self) -> Result<Option<Anchor>, Error> {
         let data = self.state.data.get();

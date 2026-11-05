@@ -125,6 +125,11 @@ fn probe() -> Result<(), Box<dyn std::error::Error>> {
     if block_on(collection.next_event())?.menu_revision != Some(1) {
         return Err("native menu projection revision was not updated".into());
     }
+    drop(second.set_tooltip("Dropped receipt still applies"));
+    block_on(owner.flush())?;
+    if second.state()?.applied_revision != 1 {
+        return Err("dropped native update was cancelled".into());
+    }
     block_on(first.hide())?;
     block_on(first.show())?;
     block_on(first.remove())?;
@@ -132,6 +137,26 @@ fn probe() -> Result<(), Box<dyn std::error::Error>> {
     block_on(first.remove())?;
     replacement.state()?;
     second.state()?;
+    for _ in 0..64 {
+        objc2::rc::autoreleasepool(|_| -> Result<(), Box<dyn std::error::Error>> {
+            let item = block_on(
+                collection.create(
+                    Tray::new("cycle")
+                        .icon(Image::new(ImageRepresentation::rgba(
+                            18,
+                            18,
+                            vec![180; 18 * 18 * 4],
+                        )?))
+                        .menu(Menu::new().item(MenuItem::new("action", "Cycle"))),
+                ),
+            )?;
+            block_on(item.remove())?;
+            Ok(())
+        })?;
+    }
+    if collection.items()?.len() != 2 {
+        return Err("transient stress left orphan registrations".into());
+    }
     block_on(owner.shutdown())?;
 
     if !matches!(replacement.state(), Err(Error::Stopped)) {

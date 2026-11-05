@@ -4,7 +4,7 @@ use crate::{
 };
 use objc2::runtime::NSObject;
 use objc2::{
-    AnyThread, DeclaredClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
+    AnyThread, ClassType, DeclaredClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
     rc::Retained, sel,
 };
 use objc2_app_kit::{
@@ -233,7 +233,11 @@ impl Item {
         button.setEnabled(!appearance.disabled);
         button.setAccessibilityLabel(Some(&NSString::from_str(
             if appearance.accessibility_label.is_empty() {
-                &spec.tooltip
+                if spec.tooltip.is_empty() {
+                    &spec.id
+                } else {
+                    &spec.tooltip
+                }
             } else {
                 &appearance.accessibility_label
             },
@@ -431,6 +435,9 @@ pub(super) fn native_image(
 ) -> Result<Retained<NSImage>, Error> {
     let named = source.native_name().and_then(|name| {
         NSImage::imageNamed(&NSString::from_str(name)).or_else(|| {
+            // SAFETY: Query the class before invoking a symbol introduced after older deployment targets.
+            let available: bool = unsafe { msg_send![NSImage::class(), respondsToSelector: sel!(imageWithSystemSymbolName:accessibilityDescription:)] };
+            if !available { return None; }
             NSImage::imageWithSystemSymbolName_accessibilityDescription(
                 &NSString::from_str(name),
                 Some(&NSString::from_str(description)),

@@ -80,7 +80,13 @@ impl<const MENU: bool> ksni::Tray for Model<MENU> {
             .as_ref()
             .map(|linux| linux.title.clone())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.spec.tooltip.clone())
+            .unwrap_or_else(|| {
+                if self.spec.tooltip.is_empty() {
+                    self.spec.id.clone()
+                } else {
+                    self.spec.tooltip.clone()
+                }
+            })
     }
     fn category(&self) -> ksni::Category {
         match self
@@ -381,7 +387,7 @@ fn update<const MENU: bool>(
     Box::pin(async move {
         let icons = icons(spec.menu.as_ref())?;
         handle
-            .update(move |model| {
+            .update_checked(move |model| {
                 if model.revision <= revision {
                     model.spec = spec;
                     model.revision = revision;
@@ -389,6 +395,7 @@ fn update<const MENU: bool>(
                 }
             })
             .await
+            .map_err(|error| crate::native("export SNI update", error))?
             .ok_or(Error::Stopped)
     })
 }
@@ -420,7 +427,11 @@ impl Item {
         Err(Error::Unsupported(crate::Feature::ShowMenu))
     }
     pub(crate) fn registration(&self) -> Registration {
-        if self.online.load(Ordering::Acquire) {
+        let closed = match &self.driver {
+            Driver::Menu(handle) => handle.is_closed(),
+            Driver::Events(handle) => handle.is_closed(),
+        };
+        if !closed && self.online.load(Ordering::Acquire) {
             Registration::Registered
         } else {
             Registration::WaitingForHost
@@ -448,4 +459,166 @@ impl Drop for Item {
     fn drop(&mut self) {
         drop(self.shutdown());
     }
+}
+
+#[cfg(all(feature = "sni-tests", unix))]
+pub(super) async fn probe() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Mutex;
+    use zbus::{
+        Connection, Proxy,
+        zvariant::{OwnedValue, Value},
+    };
+    struct Watcher(Arc<Mutex<Vec<String>>>);
+    #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
+    impl Watcher {
+        fn register_status_notifier_item(&self, service: &str) {
+            self.0
+                .lock()
+                .expect("watcher mutex poisoned")
+                .push(service.into());
+        }
+        #[zbus(property)]
+        fn is_status_notifier_host_registered(&self) -> bool {
+            true
+        }
+    }
+    let waiting_sink = crate::host::probe_sink("waiting");
+    let pixel = crate::Image::new(crate::ImageRepresentation::rgba(1, 1, vec![255; 4])?);
+    let waiting = Item::create(
+        "dev.rake",
+        &Tray::new("waiting").icon(pixel.clone()),
+        waiting_sink.clone(),
+    )
+    .await?;
+    if waiting.registration() != Registration::WaitingForHost {
+        return Err("missing watcher was reported registered".into());
+    }
+    if crate::host::probe_next(&waiting_sink).await?.kind != EventKind::HostChanged(false) {
+        return Err("missing watcher was not observable".into());
+    }
+    waiting.shutdown().await?;
+    if Item::create(
+        "dev.rake",
+        &Tray::new("required")
+            .icon(pixel)
+            .host_policy(HostPolicy::Require),
+        crate::host::probe_sink("required"),
+    )
+    .await
+    .is_ok()
+    {
+        return Err("required registration succeeded without a watcher".into());
+    }
+    let registrations = Arc::new(Mutex::new(Vec::new()));
+    let watcher = zbus::connection::Builder::session()?
+        .name("org.kde.StatusNotifierWatcher")?
+        .serve_at("/StatusNotifierWatcher", Watcher(registrations.clone()))?
+        .build()
+        .await?;
+    let connection = Connection::session().await?;
+    let sink = crate::host::probe_sink("sni-probe");
+    let image = crate::Image::new(crate::ImageRepresentation::rgba(
+        1,
+        1,
+        vec![10, 20, 30, 128],
+    )?);
+    let spec = Tray::new("probe")
+        .icon(image.clone())
+        .menu(Menu::new().item(crate::MenuItem::new("open", "Open & _ inspect")))
+        .host_policy(HostPolicy::Require);
+    let first = Item::create("dev.rake", &spec, sink.clone()).await?;
+    let second = Item::create(
+        "dev.rake",
+        &Tray::new("other").icon(image),
+        crate::host::probe_sink("sni-second"),
+    )
+    .await?;
+    let names = registrations
+        .lock()
+        .expect("watcher mutex poisoned")
+        .clone();
+    if names.len() != 2 || names[0] == names[1] {
+        return Err("SNI registrations are not independent".into());
+    }
+    let proxy = Proxy::new(
+        &connection,
+        names[0].as_str(),
+        "/StatusNotifierItem",
+        "org.kde.StatusNotifierItem",
+    )
+    .await?;
+    let id: String = proxy.get_property("Id").await?;
+    if id != "dev.rake.probe" {
+        return Err("SNI identity mismatch".into());
+    }
+    let pixmap: Vec<(i32, i32, Vec<u8>)> = proxy.get_property("IconPixmap").await?;
+    if pixmap[0].2 != [128, 10, 20, 30] {
+        return Err("SNI RGBA/ARGB conversion mismatch".into());
+    }
+    let path: zbus::zvariant::OwnedObjectPath = proxy.get_property("Menu").await?;
+    let menu = Proxy::new(
+        &connection,
+        names[0].as_str(),
+        path.as_str(),
+        "com.canonical.dbusmenu",
+    )
+    .await?;
+    type Layout = (
+        u32,
+        (
+            i32,
+            std::collections::HashMap<String, OwnedValue>,
+            Vec<OwnedValue>,
+        ),
+    );
+    let layout: Layout = menu
+        .call("GetLayout", &(0i32, -1i32, Vec::<String>::new()))
+        .await?;
+    let child: zbus::zvariant::Structure = layout.1.2[0].try_clone()?.try_into()?;
+    let native_id: i32 = child.fields()[0].downcast_ref()?;
+    let _: () = menu
+        .call("Event", &(native_id, "clicked", Value::from(0i32), 0u32))
+        .await?;
+    let selected = crate::host::probe_next(&sink).await?;
+    if selected.kind != EventKind::MenuSelected("open".into()) {
+        return Err("DBusMenu selection was not delivered".into());
+    }
+    let updated = spec.tooltip("Updated <plain> & tooltip");
+    use futures::StreamExt as _;
+    let mut title_changed = proxy.receive_signal("NewTitle").await?;
+    first.apply(1, &updated).await?;
+    title_changed
+        .next()
+        .await
+        .ok_or("SNI NewTitle signal stream ended")?;
+    // SNI uses its own NewTitle signal rather than PropertiesChanged; ordinary
+    // zbus property caching does not invalidate itself for that protocol signal.
+    let fresh = Proxy::new(
+        &connection,
+        names[0].as_str(),
+        "/StatusNotifierItem",
+        "org.kde.StatusNotifierItem",
+    )
+    .await?;
+    let title: String = fresh.get_property("Title").await?;
+    if title != "Updated <plain> & tooltip" {
+        return Err("SNI update was not exported".into());
+    }
+    watcher
+        .release_name("org.kde.StatusNotifierWatcher")
+        .await?;
+    if crate::host::probe_next(&sink).await?.kind != EventKind::HostChanged(false) {
+        return Err("watcher loss was not observed".into());
+    }
+    watcher
+        .request_name("org.kde.StatusNotifierWatcher")
+        .await?;
+    if crate::host::probe_next(&sink).await?.kind != EventKind::HostChanged(true) {
+        return Err("watcher recovery was not observed".into());
+    }
+    first.shutdown().await?;
+    second.shutdown().await?;
+    watcher.close().await?;
+    connection.close().await?;
+    Ok(())
 }

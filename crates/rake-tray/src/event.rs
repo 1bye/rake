@@ -152,6 +152,8 @@ pub enum EventKind {
     TooltipDismissed,
     /// Native callback ingress overflowed; commands were not silently ignored.
     Overflow,
+    /// Admitted native work failed; the receipt retains the structured native cause.
+    OperationFailed(String),
 }
 
 /// One event from a specific registration, never merely a reused string name.

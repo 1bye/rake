@@ -57,6 +57,7 @@ struct Registry {
     alive: bool,
     entries: BTreeMap<String, Entry>,
     ingress: Arc<Ingress>,
+    operations: Rc<crate::operations::Operations>,
 }
 
 pub(crate) struct Ingress {
@@ -72,10 +73,6 @@ impl Ingress {
         }
     }
 
-    #[cfg_attr(
-        target_family = "wasm",
-        expect(dead_code, reason = "browser hosts cannot produce native callbacks")
-    )]
     pub(crate) fn send(&self, mut event: Event) {
         let mut queue = self.queue.lock().expect("tray ingress mutex poisoned");
 
@@ -124,10 +121,6 @@ impl Ingress {
 
 /// Native callback destination containing no UI context or application closure.
 #[derive(Clone)]
-#[cfg_attr(
-    target_family = "wasm",
-    expect(dead_code, reason = "browser hosts cannot produce native callbacks")
-)]
 pub(crate) struct Sink {
     pub(crate) id: String,
     pub(crate) generation: u64,
@@ -147,10 +140,6 @@ impl Sink {
         }
     }
 
-    #[cfg_attr(
-        target_family = "wasm",
-        expect(dead_code, reason = "browser hosts cannot produce native callbacks")
-    )]
     pub(crate) fn send(&self, kind: EventKind, anchor: Option<crate::Anchor>, input: crate::Input) {
         self.ingress.send(Event {
             id: self.id.clone(),
@@ -191,6 +180,7 @@ impl Host {
                 alive: true,
                 entries: BTreeMap::new(),
                 ingress: Arc::new(Ingress::new()),
+                operations: Rc::default(),
             })),
         })
     }
@@ -202,12 +192,36 @@ impl Host {
         }
     }
 
+    /// Drives admitted native operations independently from receipt observation.
+    /// Rake installs this on its foreground executor. Custom hosts must poll this
+    /// future until shutdown; it owns no runtime/registry reference and never polls
+    /// periodically. Receipts can also drive their shared operation directly.
+    pub fn drive(&self) -> Request<()> {
+        let operations = self.registry.borrow().operations.clone();
+        Box::pin(async move {
+            operations.drive().await;
+            Ok(())
+        })
+    }
+
+    /// Finishes currently admitted native work without stopping future admission.
+    /// # Errors
+    /// Individual failures are reported by their receipts and OperationFailed events.
+    pub fn flush(&self) -> Request<()> {
+        let operations = self.registry.borrow().operations.clone();
+        Box::pin(async move {
+            operations.flush().await;
+            Ok(())
+        })
+    }
+
     /// Stops admission immediately and returns an awaitable native cleanup request.
     pub fn shutdown(&self) -> Request<()> {
         let items = {
             let mut registry = self.registry.borrow_mut();
             registry.alive = false;
             registry.ingress.close();
+            registry.operations.close();
 
             std::mem::take(&mut registry.entries)
                 .into_values()
@@ -215,11 +229,19 @@ impl Host {
                 .collect::<Vec<_>>()
         };
 
+        // Start cleanup now, so native menu cancellation can unblock pending updates.
+        let cleanup = items
+            .into_iter()
+            .map(|item| item.shutdown())
+            .collect::<Vec<_>>();
+        let operations = self.registry.borrow().operations.clone();
         Box::pin(async move {
-            for item in items {
-                item.shutdown().await?;
+            let drain = operations.drive();
+            let cleanup = futures::future::join_all(cleanup);
+            let (_, results) = futures::future::join(drain, cleanup).await;
+            for result in results {
+                result?;
             }
-
             Ok(())
         })
     }
@@ -253,6 +275,36 @@ impl Collection {
         }
 
         Ok(registry)
+    }
+
+    fn submit<T: Clone + 'static>(
+        &self,
+        id: &str,
+        generation: u64,
+        future: Request<T>,
+    ) -> Request<T> {
+        let registry = match self.registry() {
+            Ok(registry) => registry,
+            Err(error) => return crate::ready(Err(error)),
+        };
+        let registry = registry.borrow();
+        let sink = Sink {
+            id: id.into(),
+            generation,
+            ingress: registry.ingress.clone(),
+            menu_revision: None,
+        };
+        registry.operations.submit(Box::pin(async move {
+            let result = future.await;
+            if let Err(error) = &result {
+                sink.send(
+                    EventKind::OperationFailed(error.to_string()),
+                    None,
+                    crate::Input::default(),
+                );
+            }
+            result
+        }))
     }
 
     /// Queries backend operation support without creating a native item.
@@ -296,13 +348,14 @@ impl Collection {
     }
 
     /// Reserves identity immediately and creates a native item when driven.
-    /// Dropping a pending creation rolls back its reservation and native resources.
+    /// Dropping the receipt does not cancel admitted work. The host driver owns it.
     pub fn create(&self, spec: Tray) -> Request<Handle> {
         let pending = (|| {
             spec.validate()?;
             backend::validate(&spec)?;
             let registry = self.registry()?;
             let mut state = registry.borrow_mut();
+            state.operations.capacity()?;
 
             if state.entries.contains_key(&spec.id) {
                 return Err(Error::Duplicate(spec.id.clone()));
@@ -354,22 +407,24 @@ impl Collection {
             committed: false,
         };
 
-        Box::pin(async move {
+        let collection = self.clone();
+        let id = handle.id.clone();
+        let generation = handle.generation;
+        let work = Box::pin(async move {
             let mut guard = guard;
-            let native = native.await?;
-            let registry = handle.collection.registry()?;
-            let mut registry = registry.borrow_mut();
-            let entry = registry
-                .entries
-                .get_mut(&handle.id)
-                .filter(|entry| entry.state.generation == handle.generation)
-                .ok_or(Error::Removed)?;
-            entry.state.registration = native.registration();
-            entry.native = Some(Rc::new(native));
+            let native = Rc::new(native.await?);
+            if let Err(error) = handle.with(|entry| {
+                entry.state.registration = native.registration();
+                entry.native = Some(native.clone());
+                Ok(())
+            }) {
+                native.shutdown().await?;
+                return Err(error);
+            }
             guard.committed = true;
-
             Ok(handle)
-        })
+        });
+        collection.submit(&id, generation, work)
     }
 
     /// Waits for one validated event. Keep one application-owned consumer.
@@ -382,7 +437,10 @@ impl Collection {
             let event = ingress.next().await?;
             let registry = self.registry()?;
             let mut registry = registry.borrow_mut();
-            if matches!(event.kind, EventKind::Removed) {
+            if matches!(
+                event.kind,
+                EventKind::Removed | EventKind::OperationFailed(_)
+            ) {
                 if registry
                     .entries
                     .get(&event.id)
@@ -402,7 +460,7 @@ impl Collection {
 
             if event
                 .menu_revision
-                .is_some_and(|revision| revision != entry.state.applied_revision)
+                .is_some_and(|revision| revision != entry.state.requested_revision)
             {
                 continue;
             }
@@ -472,7 +530,12 @@ impl Handle {
     /// # Errors
     /// Reports removed registrations or stopped hosts.
     pub fn state(&self) -> Result<State, Error> {
-        self.with(|entry| Ok(entry.state.clone()))
+        self.with(|entry| {
+            if let Some(native) = &entry.native {
+                entry.state.registration = native.registration();
+            }
+            Ok(entry.state.clone())
+        })
     }
 
     /// Returns an owned snapshot of the latest admitted specification.
@@ -516,6 +579,13 @@ impl Handle {
 
     /// Replaces the complete specification without changing identity.
     pub fn update(&self, spec: Tray) -> Request<Applied> {
+        let admission = self
+            .collection
+            .registry()
+            .and_then(|registry| registry.borrow().operations.capacity());
+        if let Err(error) = admission {
+            return crate::ready(Err(error));
+        }
         let prepared = self.with(|entry| {
             if spec.id != self.id {
                 return Err(Error::InvalidInput("updates cannot rename an item".into()));
@@ -564,7 +634,7 @@ impl Handle {
             }
         }
 
-        Box::pin(async move {
+        let work = Box::pin(async move {
             apply.await?;
             handle.with(|entry| {
                 entry.state.applied_revision = entry.state.applied_revision.max(revision);
@@ -574,7 +644,8 @@ impl Handle {
                     superseded: entry.state.requested_revision > revision,
                 })
             })
-        })
+        });
+        self.collection.submit(&self.id, self.generation, work)
     }
 
     fn change(&self, f: impl FnOnce(&mut Tray)) -> Request<Applied> {
@@ -693,10 +764,26 @@ impl Handle {
         };
 
         match native {
-            Some(native) => native.shutdown(),
+            Some(native) => self
+                .collection
+                .submit(&self.id, self.generation, native.shutdown()),
             None => crate::ready(Ok(())),
         }
     }
+}
+
+#[cfg(all(feature = "sni-tests", unix))]
+pub(crate) fn probe_sink(id: &str) -> Sink {
+    Sink {
+        id: id.into(),
+        generation: 1,
+        ingress: Arc::new(Ingress::new()),
+        menu_revision: None,
+    }
+}
+#[cfg(all(feature = "sni-tests", unix))]
+pub(crate) async fn probe_next(sink: &Sink) -> Result<Event, Error> {
+    sink.ingress.next().await
 }
 
 #[cfg(test)]
@@ -715,6 +802,7 @@ mod tests {
                 alive: true,
                 entries: BTreeMap::new(),
                 ingress: Arc::new(Ingress::new()),
+                operations: Rc::default(),
             })),
         }
     }
@@ -832,6 +920,7 @@ mod tests {
             entry.spec =
                 Tray::new("main").menu(Menu::new().item(crate::MenuItem::new("open", "Open")));
             entry.state.applied_revision = 1;
+            entry.state.requested_revision = 1;
         }
         sink.menu(0).send(
             EventKind::MenuSelected("open".into()),

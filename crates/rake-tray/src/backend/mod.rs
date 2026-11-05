@@ -16,7 +16,14 @@ mod windows;
 mod windows_menu;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::Item;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(feature = "sni-tests", unix)))]
+#[cfg_attr(
+    not(target_os = "linux"),
+    expect(
+        dead_code,
+        reason = "protocol fixture exercises Linux adapter without selecting it for macOS"
+    )
+)]
 mod linux;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::Item;
@@ -239,7 +246,11 @@ fn validate_menu(menu: &crate::Menu) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(
+    target_os = "windows",
+    target_os = "linux",
+    all(feature = "sni-tests", unix)
+))]
 fn mnemonic(label: &str, key: Option<char>, marker: char) -> String {
     let mut result = String::new();
     let mut marked = false;
@@ -254,4 +265,9 @@ fn mnemonic(label: &str, key: Option<char>, marker: char) -> String {
         }
     }
     result
+}
+
+#[cfg(all(feature = "sni-tests", unix))]
+pub(crate) async fn sni_probe() -> Result<(), Box<dyn std::error::Error>> {
+    linux::probe().await
 }

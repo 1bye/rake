@@ -53,8 +53,8 @@ Some settings only apply to routed apps: `initial`, `entry_guard`, `web` and `wo
 
 `App::background(|runtime, cx| { ... })` starts the native GPUI event loop and
 managed runtime without opening an initial window. The GPUI app context can own a
-tray or other platform integration. Browser hosts reject this mode. Retain any
-platform handles in an application-owned global so they live until shutdown.
+tray or other platform integration. Browser hosts reject this mode. With the `tray` feature, `App::tray` owns native registrations for the application;
+see [tray icons](tray.md). Other custom platform integrations retain their own handles.
 
 For example, background setup can retain a GPUI-owned task and request the same
 guarded quit used by a windowed app:
@@ -94,6 +94,18 @@ explicit `Services` composition and `RouterConfig`, register commands/quit guard
 and drive its `run()` future on the host's executor. It reuses the application
 scheduler. GUI capabilities remain unavailable. A headless runtime does not invent
 an executor or silently create a window.
+
+## Repeatable main windows and tray icons
+
+`main_window(options_factory, mount)` recreates a standalone window using the same
+retained runtime/services. Pair with `ClosePolicy::KeepRunning`; use
+`rake::show_main_window(cx)` from a tray event. Combining it with `background`
+starts without an initial window. Failed mounts remain retryable. One-shot `root`
+and routed workspace contracts remain separate.
+
+The optional `tray` feature adds application-owned native menus, multiple icons,
+typed command bindings and rich popups. See [tray icons](tray.md) and the
+[workbench](../examples/tray/src/main.rs).
 
 ## Shutdown checks
 

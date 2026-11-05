@@ -14,6 +14,7 @@ mod image;
 pub mod linux;
 pub mod macos;
 mod menu;
+mod operations;
 mod placement;
 mod spec;
 pub mod windows;
@@ -46,12 +47,12 @@ pub(crate) fn native(
     Error::Native {
         operation,
         message: error.to_string(),
-        source: Some(Box::new(error)),
+        source: Some(std::sync::Arc::new(error)),
     }
 }
 
 /// An observable tray failure; native causes remain available through `source()`.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// The request is invalid before touching native resources.
@@ -72,8 +73,8 @@ pub enum Error {
     /// This backend cannot implement the requested feature.
     #[error("tray feature is unsupported: {0:?}")]
     Unsupported(Feature),
-    /// Bounded native event ingress is saturated.
-    #[error("tray event queue is full")]
+    /// Bounded native operation admission is saturated.
+    #[error("tray operation queue is full")]
     QueueFull,
     /// A native operation failed; a diagnostic and optional original cause survive.
     #[error("tray {operation} failed: {message}")]
@@ -84,7 +85,7 @@ pub enum Error {
         message: String,
         /// Original error when supplied by the native API.
         #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        source: Option<std::sync::Arc<dyn std::error::Error + Send + Sync>>,
     },
 }
 
@@ -111,4 +112,14 @@ pub(crate) fn identifier(value: &str) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// Explicit opt-in fixtures; these are not application integration APIs.
+#[cfg(all(feature = "sni-tests", unix))]
+#[doc(hidden)]
+pub mod native_test {
+    /// Exercises the real Linux adapter against an isolated session bus.
+    pub async fn sni() -> Result<(), Box<dyn std::error::Error>> {
+        crate::backend::sni_probe().await
+    }
 }
