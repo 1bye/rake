@@ -77,6 +77,20 @@ pub struct Record {
     pub fields: BTreeMap<String, Value>,
 }
 
+/// Structural diagnostic metadata safe to retain in a crash record.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CrashDiagnostic {
+    /// Collector-local sequence number.
+    pub sequence: u64,
+    /// Microseconds since collector creation.
+    pub elapsed_us: u64,
+    /// Known tracing level, or `unknown` for custom values.
+    pub level: String,
+    /// Known record kind, or `unknown` for custom values.
+    pub kind: String,
+}
+
 /// An owned view of the bounded collector, including observable data loss.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -149,6 +163,47 @@ impl Collector {
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot_after(0, None)
+    }
+
+    /// Copies a privacy-safe tail without waiting for the collector lock.
+    ///
+    /// Returns `None` on contention or poisoning, including a panic while a producer
+    /// owns the buffer. Only sequence, timing and normalized level/kind are copied;
+    /// fields, targets, span names, source paths and request data are never copied.
+    /// At most 128 entries are returned, oldest first.
+    #[must_use]
+    pub fn try_crash_tail(&self, limit: usize) -> Option<Vec<CrashDiagnostic>> {
+        let buffer = self.0.buffer.try_lock().ok()?;
+        let count = limit.min(128).min(buffer.records.len());
+
+        Some(
+            buffer
+                .records
+                .iter()
+                .skip(buffer.records.len() - count)
+                .map(|record| CrashDiagnostic {
+                    sequence: record.sequence,
+                    elapsed_us: record.elapsed_us,
+                    level: match record.level.as_str() {
+                        "TRACE" => "TRACE",
+                        "DEBUG" => "DEBUG",
+                        "INFO" => "INFO",
+                        "WARN" => "WARN",
+                        "ERROR" => "ERROR",
+                        _ => "unknown",
+                    }
+                    .into(),
+                    kind: match record.kind.as_str() {
+                        "event" => "event",
+                        "span_open" => "span_open",
+                        "span_close" => "span_close",
+                        "request" => "request",
+                        _ => "unknown",
+                    }
+                    .into(),
+                })
+                .collect(),
+        )
     }
 
     /// Current collector clock, for development records spanning several observations.

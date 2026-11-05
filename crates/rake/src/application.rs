@@ -83,6 +83,8 @@ pub struct App<R: Route = NoRoute> {
     new_window_options: Option<Rc<dyn Fn(crate::router::WindowId) -> WindowOptions>>,
     configuration_error: Option<&'static str>,
     diagnostics: DiagnosticsConfig,
+    #[cfg(not(target_family = "wasm"))]
+    crash_reports: Option<(crate::crash::CrashConfig, Box<dyn crate::crash::CrashSink>)>,
     root: Option<Root>,
     background: Option<Background>,
     close_policy: ClosePolicy,
@@ -118,6 +120,8 @@ impl App<NoRoute> {
             new_window_options: None,
             configuration_error: None,
             diagnostics: DiagnosticsConfig::new(),
+            #[cfg(not(target_family = "wasm"))]
+            crash_reports: None,
             root: None,
             background: None,
             close_policy: ClosePolicy::default(),
@@ -177,6 +181,8 @@ impl App<NoRoute> {
             new_window_options: self.new_window_options,
             configuration_error,
             diagnostics: self.diagnostics,
+            #[cfg(not(target_family = "wasm"))]
+            crash_reports: self.crash_reports,
             root: self.root,
             background: self.background,
             close_policy: self.close_policy,
@@ -437,6 +443,24 @@ impl<R: Route> App<R> {
     pub fn diagnostics(mut self, config: DiagnosticsConfig) -> Self {
         self.diagnostics = config;
         self.http_client = RefCell::new(None);
+
+        self
+    }
+
+    /// Enables native panic recording and delivers waiting records before GPUI starts.
+    ///
+    /// Disabled by default. The configuration uses this app's ID and diagnostic
+    /// collector. A failed sink retains its record and startup continues. Directory
+    /// or hook installation errors fail startup with [`AppError::Crash`]. The sink
+    /// runs synchronously, so UI consent must be deferred through a durable inbox.
+    #[cfg(not(target_family = "wasm"))]
+    #[must_use]
+    pub fn crash_reports(
+        mut self,
+        config: crate::crash::CrashConfig,
+        sink: impl crate::crash::CrashSink,
+    ) -> Self {
+        self.crash_reports = Some((config, Box::new(sink)));
 
         self
     }
@@ -717,6 +741,18 @@ impl<R: Route> App<R> {
 
         self.diagnostics.install()?;
 
+        #[cfg(not(target_family = "wasm"))]
+        if let Some((config, sink)) = self.crash_reports.take() {
+            let reporter = config.open(&self.id).map_err(AppError::Crash)?;
+            reporter
+                .install(self.diagnostics.shared_collector())
+                .map_err(AppError::Crash)?;
+
+            if reporter.deliver(sink.as_ref()).is_err() {
+                crate::warn!("crash delivery failed; waiting record retained");
+            }
+        }
+
         #[cfg(target_family = "wasm")]
         console_error_panic_hook::set_once();
         #[cfg(target_family = "wasm")]
@@ -902,6 +938,10 @@ pub enum AppError {
     /// HTTP configuration could not construct standard services.
     #[error(transparent)]
     Http(#[from] crate::http::Error),
+    /// Native crash directory or process-wide hook setup failed.
+    #[cfg(not(target_family = "wasm"))]
+    #[error("native crash setup failed: {0}")]
+    Crash(#[source] std::io::Error),
     /// The host's diagnostics setup conflicts with automatic installation.
     #[error(transparent)]
     Diagnostics(#[from] DiagnosticsError),

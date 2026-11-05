@@ -1,0 +1,255 @@
+//! Covers: encoded byte budgets, retention order, interrupted claims and file policy.
+//! Real: filesystem, JSON and native advisory locks.
+//! Doubles: synthetic backtraces and application sinks.
+//! Requires: private temporary directory on a native filesystem.
+
+use super::*;
+
+fn reporter(limits: CrashLimits) -> (tempfile::TempDir, CrashReporter) {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let reporter = CrashConfig::new("1.2.3")
+        .directory(directory.path().join("crashes"))
+        .limits(limits)
+        .open("test.crash")
+        .expect("open crash directory");
+    (directory, reporter)
+}
+
+#[test]
+fn huge_backtrace_and_json_escaping_fit_encoded_budget() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        record_bytes: 1024,
+        ..CrashLimits::default()
+    });
+    let mut record = reporter.record(None, None);
+    record.backtrace = "\"\\\n🦀".repeat(100_000);
+    record.app_version = "\n".repeat(128);
+    record.location = Some("\n".repeat(256));
+    reporter.write(record).expect("write bounded record");
+    let path = reporter.records().expect("records").remove(0);
+    let bytes = fs::read(path).expect("record bytes");
+    assert!(bytes.len() <= 1024);
+    let record: CrashRecord = serde_json::from_slice(&bytes).expect("valid bounded JSON");
+    assert!(record.truncated);
+    assert_eq!(record.message, PRIVATE_MESSAGE);
+}
+
+#[test]
+fn trace_formatting_is_bounded_and_utf8_safe() {
+    let mut trace = TraceText {
+        text: String::new(),
+        truncated: false,
+    };
+    for _ in 0..100_000 {
+        let _ = writeln!(trace, "🦀\"");
+    }
+    assert!(trace.text.len() <= MAX_BACKTRACE_BYTES);
+    assert!(trace.truncated);
+}
+
+#[test]
+fn count_limit_drops_oldest() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        records: 2,
+        ..CrashLimits::default()
+    });
+    for id in ["001", "002", "003", "004"] {
+        let mut record = reporter.record(None, None);
+        record.id = id.into();
+        reporter.write(record).expect("write record");
+    }
+    let paths = reporter.records().expect("records");
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths[0].file_stem().expect("stem"), "003");
+    assert_eq!(paths[1].file_stem().expect("stem"), "004");
+}
+
+#[test]
+fn failing_and_unwinding_sinks_retain_record_and_interrupted_claims_retry() {
+    let (_directory, reporter) = reporter(CrashLimits::default());
+    reporter
+        .write(reporter.record(None, None))
+        .expect("write record");
+    assert!(
+        reporter
+            .deliver(&|_: &CrashRecord| Err(io::Error::other("retry")))
+            .is_err()
+    );
+    assert_eq!(reporter.records().expect("records").len(), 1);
+    let unwind = std::panic::catch_unwind(|| {
+        let _ = reporter.deliver(&|_: &CrashRecord| -> io::Result<()> { panic!("sink failed") });
+    });
+    assert!(unwind.is_err());
+    let pending = reporter.records().expect("records").remove(0);
+    fs::rename(&pending, pending.with_extension("claimed")).expect("simulate interrupted claim");
+    assert_eq!(
+        reporter.deliver(&|_: &CrashRecord| Ok(())).expect("retry"),
+        1
+    );
+    assert_eq!(
+        reporter.deliver(&|_: &CrashRecord| Ok(())).expect("empty"),
+        0
+    );
+}
+
+#[test]
+fn corrupt_truncated_oversized_and_unknown_versions_are_skipped() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        record_bytes: 1024,
+        ..CrashLimits::default()
+    });
+    for (name, bytes) in [
+        ("bad", b"not JSON".to_vec()),
+        ("partial", b"{\"schema_version\":".to_vec()),
+        ("large", vec![b' '; 2048]),
+    ] {
+        let mut file = private_options()
+            .write(true)
+            .create_new(true)
+            .open(reporter.directory.join(format!("{name}.json")))
+            .expect("private file");
+        file.write_all(&bytes).expect("write invalid data");
+    }
+    let mut record = reporter.record(None, None);
+    record.schema_version = 99;
+    reporter.write(record).expect("unknown schema");
+    assert_eq!(
+        reporter
+            .deliver(&|_: &CrashRecord| panic!("corrupt record reached sink"))
+            .expect("skip"),
+        0
+    );
+    assert!(reporter.records().expect("records").is_empty());
+}
+
+#[test]
+fn invalid_config_is_rejected() {
+    for id in ["", "..", "../escape", "/tmp", "a b"] {
+        assert!(CrashConfig::new("1").open(id).is_err());
+    }
+    for limits in [
+        CrashLimits {
+            records: 0,
+            ..CrashLimits::default()
+        },
+        CrashLimits {
+            record_bytes: 1023,
+            ..CrashLimits::default()
+        },
+    ] {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        assert!(
+            CrashConfig::new("1")
+                .directory(directory.path())
+                .limits(limits)
+                .open("test")
+                .is_err()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn permissions_and_symlinks_follow_storage_rules() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let (directory, reporter) = reporter(CrashLimits::default());
+    reporter
+        .write(reporter.record(None, None))
+        .expect("write record");
+    let path = reporter.records().expect("records").remove(0);
+    assert_eq!(
+        fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
+        0o600
+    );
+    let alias = directory.path().join("alias");
+    symlink(&reporter.directory, &alias).expect("directory symlink");
+    assert!(CrashConfig::new("1").directory(alias).open("test").is_err());
+    fs::remove_file(&path).expect("remove record");
+    let outside = directory.path().join("outside");
+    fs::write(&outside, b"private sentinel").expect("outside file");
+    symlink(&outside, &path).expect("record symlink");
+    assert!(reporter.deliver(&|_: &CrashRecord| Ok(())).is_err());
+    assert_eq!(fs::read(&outside).expect("sentinel"), b"private sentinel");
+    fs::set_permissions(&reporter.directory, fs::Permissions::from_mode(0o755))
+        .expect("public directory");
+    assert!(
+        CrashConfig::new("1")
+            .directory(&reporter.directory)
+            .open("test")
+            .is_err()
+    );
+}
+
+#[test]
+fn concurrent_writers_leave_bounded_valid_files() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        records: 4,
+        ..CrashLimits::default()
+    });
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+    let workers: Vec<_> = (0..16)
+        .map(|_| {
+            let reporter = reporter.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let record = reporter.record(None, None);
+                barrier.wait();
+                reporter.write(record).expect("concurrent write");
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().expect("writer exit");
+    }
+    reporter
+        .prune()
+        .expect("trim after concurrent writes settle");
+    let paths = reporter.records().expect("records");
+    assert_eq!(paths.len(), 4);
+    assert!(!paths.is_empty());
+    assert!(paths.len() <= 4, "{} retained records", paths.len());
+    for path in paths {
+        let record: CrashRecord =
+            serde_json::from_slice(&fs::read(path).expect("record bytes")).expect("valid record");
+        assert_eq!(record.schema_version, 1);
+    }
+}
+
+#[test]
+fn version_and_location_are_utf8_bounded_and_marked_truncated() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let reporter = CrashConfig::new("🦀".repeat(100))
+        .directory(directory.path().join("crashes"))
+        .open("test.crash")
+        .expect("open reporter");
+
+    let record = reporter.record(Some("🦀".repeat(100)), None);
+
+    assert_eq!(record.app_version.len(), 128);
+    assert_eq!(record.location.expect("location").len(), 256);
+    assert!(record.truncated);
+}
+
+#[test]
+fn malformed_record_id_is_not_passed_to_sink() {
+    let (_directory, reporter) = reporter(CrashLimits::default());
+    let mut record = reporter.record(None, None);
+    reporter.write(record.clone()).expect("write record");
+    let path = reporter.records().expect("records").remove(0);
+    record.id = "../outside".into();
+    let bytes = serde_json::to_vec(&record).expect("record JSON");
+    private_options()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .expect("open file")
+        .write_all(&bytes)
+        .expect("malformed ID");
+
+    assert_eq!(
+        reporter
+            .deliver(&|_: &CrashRecord| panic!("unsafe ID reached sink"))
+            .expect("skip malformed ID"),
+        0
+    );
+}

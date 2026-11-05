@@ -215,7 +215,7 @@ fn check_values(values: &Values) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn private_options() -> OpenOptions {
+pub(crate) fn private_options() -> OpenOptions {
     let mut options = OpenOptions::new();
 
     #[cfg(unix)]
@@ -229,7 +229,7 @@ fn private_options() -> OpenOptions {
     options
 }
 
-fn check_file(file: &File) -> io::Result<()> {
+pub(crate) fn check_file(file: &File) -> io::Result<()> {
     let metadata = file.metadata()?;
 
     if !metadata.is_file() {
@@ -254,7 +254,7 @@ fn check_file(file: &File) -> io::Result<()> {
     Ok(())
 }
 
-fn check_directory(directory: &Path) -> io::Result<()> {
+pub(crate) fn check_directory(directory: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(directory)?;
 
     if !metadata.is_dir() || metadata.file_type().is_symlink() {

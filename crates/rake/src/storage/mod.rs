@@ -41,7 +41,7 @@ mod memory;
 pub use memory::MemoryBackend;
 
 #[cfg(not(target_family = "wasm"))]
-mod file;
+pub(crate) mod file;
 
 #[cfg(not(target_family = "wasm"))]
 pub use file::FileBackend;
