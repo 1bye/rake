@@ -4,10 +4,10 @@ use std::{cell::RefCell, rc::Rc};
 use super::AppError;
 
 #[derive(Clone, Default)]
-pub(super) struct StartupErrors(Rc<RefCell<Option<AppError>>>);
+pub(crate) struct StartupErrors(Rc<RefCell<Option<AppError>>>);
 
 impl StartupErrors {
-    pub(super) fn record(&self, error: AppError) {
+    pub(crate) fn record(&self, error: AppError) {
         let mut failure = self.0.borrow_mut();
 
         if failure.is_none() {

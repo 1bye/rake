@@ -80,6 +80,8 @@ pub mod storage;
 ))]
 pub mod surface;
 pub mod tasks;
+#[cfg(feature = "tray")]
+pub mod tray;
 pub mod web;
 
 #[cfg(all(feature = "gpui", feature = "updates"))]

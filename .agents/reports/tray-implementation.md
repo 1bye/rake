@@ -41,3 +41,20 @@ Native registration ownership follows in P2 so no fake backend success is expose
 
 Validation: cargo test -p rake-tray (3 external-consumer tests) and
 cargo clippy -p rake-tray --all-targets -- -D warnings passed.
+
+## P2: native ownership and registration
+
+Implemented application-owned native resources with weak collection/registration
+handles, generation-checked events, bounded ingress with explicit overflow,
+revision-aware asynchronous updates and deterministic shutdown. AppKit and Win32
+use private direct adapters; Windows owns a hidden top-level callback HWND per
+item, stable per-item GUID and TaskbarCreated restoration. Linux uses KSNI's
+async-io service, host observations and owned shutdown requests. The Rake facade
+adds App::tray and RuntimeContext::trays without requiring user-owned globals.
+
+Validation: 7 core/consumer tests, Rake tray-feature check and all-target Clippy
+passed. The native AppKit run-loop probe passed with two actual status items,
+geometry, updates, hide/show, remove/recreate and weak-owner shutdown. Backend
+checks passed for Windows MSVC and Linux GNU. WASM is an explicitly unsupported
+native backend; its portable contracts compile. These are compilation results,
+not Windows/Linux GUI qualification.

@@ -155,6 +155,18 @@ pub struct RuntimeContext<R: Route = NoRoute> {
 }
 
 impl<R: Route> RuntimeContext<R> {
+    /// Returns weak access to the native application tray host.
+    /// # Errors
+    /// Reports an unavailable GUI host or stopped runtime.
+    #[cfg(feature = "tray")]
+    pub fn trays(&self) -> Result<crate::tray::Collection, crate::tray::Error> {
+        self.client().map_err(|_| crate::tray::Error::Stopped)?;
+        self.services
+            .get::<crate::tray::Collection>()
+            .map(|c| c.as_ref().clone())
+            .map_err(|_| crate::tray::Error::HostUnavailable)
+    }
+
     /// Binds an initiated user-action future to this view, with automatic redraw,
     /// cancellation and finite-work quit tracking. Start gesture-sensitive browser
     /// requests before calling this method. For reusable preparation, use `load`.

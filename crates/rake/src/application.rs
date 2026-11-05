@@ -46,7 +46,7 @@ mod managed;
 #[doc(hidden)]
 pub use factory::{AppFactoryOutput, run_app_factory};
 
-mod startup;
+pub(crate) mod startup;
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 mod update_services;
 #[cfg(target_family = "wasm")]
@@ -98,6 +98,8 @@ pub struct App<R: Route = NoRoute> {
     control: crate::control::ControlConfig,
     commands: crate::control::Commands,
     themes: Vec<ThemeInstaller>,
+    #[cfg(feature = "tray")]
+    trays: Vec<crate::tray::Tray>,
     #[cfg(feature = "updates")]
     distribution: Option<(&'static str, &'static str)>,
 }
@@ -133,6 +135,8 @@ impl App<NoRoute> {
             control: crate::control::ControlConfig::default(),
             commands: crate::control::Commands::new(),
             themes: Vec::new(),
+            #[cfg(feature = "tray")]
+            trays: Vec::new(),
             #[cfg(feature = "updates")]
             distribution: None,
         }
@@ -192,6 +196,8 @@ impl App<NoRoute> {
             control: self.control,
             commands: self.commands,
             themes: self.themes,
+            #[cfg(feature = "tray")]
+            trays: self.trays,
             #[cfg(feature = "updates")]
             distribution: self.distribution,
         }
@@ -199,6 +205,14 @@ impl App<NoRoute> {
 }
 
 impl<R: Route> App<R> {
+    /// Declares an independent application-owned tray item. IDs must be unique.
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn tray(mut self, tray: crate::tray::Tray) -> Self {
+        self.trays.push(tray);
+        self
+    }
+
     /// Captures the consuming application's build-script update policy and resource layout.
     /// `#[rake::app]` supplies this automatically; manual entry points can call it too.
     #[must_use]
@@ -763,6 +777,17 @@ impl<R: Route> App<R> {
             rake_ui::init(cx);
             install_themes(self.themes, cx);
 
+            #[cfg(feature = "tray")]
+            let services =
+                match crate::tray::install(&self.id, services, self.trays, errors.clone(), cx) {
+                    Ok(services) => services,
+                    Err(error) => {
+                        errors.record(AppError::Tray(error));
+                        crate::tray::stop(cx);
+                        return;
+                    }
+                };
+
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
                 #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
@@ -851,6 +876,10 @@ impl<R: Route> App<R> {
 /// Application configuration and synchronous host initialization failures.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// Required native tray integration failed.
+    #[cfg(feature = "tray")]
+    #[error(transparent)]
+    Tray(#[from] crate::tray::Error),
     /// A typed service could not be registered or resolved during application setup.
     #[error(transparent)]
     Service(#[from] ServiceError),

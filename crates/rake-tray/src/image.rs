@@ -132,4 +132,30 @@ impl Image {
     pub fn native_name(&self) -> Option<&str> {
         self.name.as_deref()
     }
+
+    /// Encodes the largest raster representation as PNG.
+    /// # Errors
+    /// Reports a missing raster fallback or encoding failure.
+    pub fn to_png(&self) -> Result<Vec<u8>, Error> {
+        let rep = self
+            .representations
+            .iter()
+            .max_by_key(|r| r.width * r.height)
+            .ok_or(Error::Unsupported(crate::Feature::NamedImage))?;
+        let mut data = Vec::new();
+
+        {
+            let mut encoder = png::Encoder::new(&mut data, rep.width, rep.height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder
+                .write_header()
+                .map_err(|e| crate::native("encode image", e))?;
+            writer
+                .write_image_data(&rep.rgba)
+                .map_err(|e| crate::native("encode image", e))?;
+        }
+
+        Ok(data)
+    }
 }

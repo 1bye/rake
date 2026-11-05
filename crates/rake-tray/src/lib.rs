@@ -3,17 +3,38 @@
 //! A host owns native resources; control handles do not extend that host's life.
 //! Registration and presentation are distinct: a shell may hide registered items.
 
+mod backend;
 mod capability;
 mod event;
+mod host;
 mod image;
 mod menu;
 mod spec;
 
 pub use capability::{Backend, Capabilities, Feature, Support};
 pub use event::{Anchor, Button, CoordinateSpace, Event, EventKind, Input, Point, Rect};
+pub use host::{Applied, Collection, Handle, Host, Registration, State};
 pub use image::{Image, ImageRepresentation, Rendering};
 pub use menu::{CheckState, ItemKind, Menu, MenuItem};
 pub use spec::{HostPolicy, Interaction, Tray};
+
+/// An initiated local native operation; dropping observation cannot undo committed work.
+pub type Request<T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, Error>>>>;
+
+pub(crate) fn ready<T: 'static>(value: Result<T, Error>) -> Request<T> {
+    Box::pin(std::future::ready(value))
+}
+
+pub(crate) fn native(
+    operation: &'static str,
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> Error {
+    Error::Native {
+        operation,
+        message: error.to_string(),
+        source: Some(Box::new(error)),
+    }
+}
 
 /// An observable tray failure; native causes remain available through `source()`.
 #[derive(Debug, thiserror::Error)]
