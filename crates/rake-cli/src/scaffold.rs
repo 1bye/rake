@@ -105,6 +105,7 @@ fn validate_name(name: &str) -> Result<()> {
     ];
     let valid_start = name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic);
     let windows_name = name.to_ascii_uppercase();
+
     let windows_reserved = ["CON", "PRN", "AUX", "NUL"].contains(&windows_name.as_str())
         || (1..=9).any(|number| {
             windows_name == format!("COM{number}") || windows_name == format!("LPT{number}")
@@ -128,7 +129,7 @@ fn resolve_revision<'revision>(
     explicit: Option<&'revision str>,
     built: Option<&'revision str>,
 ) -> Result<&'revision str> {
-    let revision = explicit.or(built).ok_or(
+    let revision = explicit.or(built.filter(|revision| !revision.is_empty())).ok_or(
         "this CLI has no build revision; pass --rake-rev REV with a full commit hash, or --rake-path PATH",
     )?;
 
@@ -201,6 +202,7 @@ fn install(directory: &Path, files: &[(&str, String)], git: Option<&Path>) -> Re
 
     for (name, content) in files {
         let path = directory.join(name);
+
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -289,15 +291,20 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
 
         (source.clone(), source)
     };
+
     let crate_name = name.replace('-', "_");
+
     let application_id = format!(
         "com.example.{}",
         name.replace('_', "-").to_ascii_lowercase()
     );
+
     let parent = std::env::current_dir()?;
     let directory = parent.join(name);
+
     let placeholders =
         regex::Regex::new(r"\{\{(name|crate_name|application_id|dependency|stack_guard)\}\}")?;
+
     let files: Vec<_> = FILES
         .iter()
         .map(|(path, content)| {
@@ -316,10 +323,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
             (*path, content.into_owned())
         })
         .collect();
+
     let staging = if git {
         let staging = tempfile::Builder::new()
             .prefix(".rake-new-")
             .tempdir_in(&parent)?;
+
         let output = Command::new("git")
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
@@ -341,6 +350,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
     } else {
         None
     };
+
     let staged_git = staging.as_ref().map(|staging| staging.path().join(".git"));
 
     install(&directory, &files, staged_git.as_deref())?;
@@ -414,6 +424,12 @@ mod tests {
                 .to_string()
                 .contains("--rake-rev REV")
         );
+        assert!(
+            resolve_revision(None, Some(""))
+                .unwrap_err()
+                .to_string()
+                .contains("--rake-rev REV")
+        );
         assert_eq!(resolve_revision(Some(revision), None).unwrap(), revision);
         assert_eq!(resolve_revision(None, Some(revision)).unwrap(), revision);
         assert!(resolve_revision(Some("main"), Some(revision)).is_err());
@@ -422,10 +438,12 @@ mod tests {
     #[test]
     fn failed_install_removes_only_created_files_and_directories() {
         let parent = tempfile::tempdir().unwrap();
+
         let files = [
             ("src/lib.rs", "first".into()),
             ("src/lib.rs", "conflict".into()),
         ];
+
         let new = parent.path().join("new");
 
         assert!(install(&new, &files, None).is_err());
