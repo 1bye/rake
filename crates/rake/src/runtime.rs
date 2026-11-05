@@ -250,6 +250,16 @@ impl<R: Route> RuntimeContext<R> {
         Ok(self.router()?.client())
     }
 
+    /// Reveals the application's registered repeatable standalone main window.
+    /// # Errors
+    /// Rejects a stopped runtime, missing factory, browser host or failed mount.
+    #[cfg(feature = "gpui")]
+    pub fn show_main_window(&self, cx: &mut gpui::App) -> Result<(), crate::AppError> {
+        self.client()
+            .map_err(|error| crate::AppError::Window(error.to_string()))?;
+        crate::show_main_window(cx)
+    }
+
     /// Requests guarded application quit. Dropped/closed contexts return a
     /// completed operation carrying `RuntimeShutdown`.
     pub fn quit(&self, options: QuitOptions) -> Operation<QuitResult> {

@@ -20,6 +20,10 @@ use crate::runtime::Runtime;
 use crate::services::Services;
 
 use super::ClosePolicy;
+#[cfg(not(target_family = "wasm"))]
+mod window;
+#[cfg(not(target_family = "wasm"))]
+pub(super) use window::{install_main_window, show_main_window};
 
 /// Configuration shared by windowed managed roots and background hosts.
 #[derive(Clone)]
@@ -150,6 +154,7 @@ fn configure(runtime: &Runtime, config: &ManagedConfig) {
 }
 
 struct ManagedRoot {
+    _observer: Option<gpui::Task<()>>,
     content: AnyView,
     router: crate::router::Router<crate::router::NoRoute>,
     close_policy: ClosePolicy,
@@ -180,6 +185,7 @@ impl ManagedRoot {
         });
 
         Self {
+            _observer: None,
             content,
             router,
             close_policy,

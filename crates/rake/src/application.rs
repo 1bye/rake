@@ -28,6 +28,15 @@ type WindowRoot = Box<
     dyn FnOnce(Services, &mut Window, &mut gpui::App) -> Result<AnyView, crate::router::MountError>,
 >;
 
+type MainWindow = Rc<
+    dyn Fn(
+        crate::runtime::RuntimeContext,
+        &mut Window,
+        &mut gpui::App,
+    ) -> Result<AnyView, crate::router::MountError>,
+>;
+type WindowOptionsFactory = Rc<dyn Fn() -> WindowOptions>;
+
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
 
 /// What closing a standalone application's window requests.
@@ -85,6 +94,7 @@ pub struct App<R: Route = NoRoute> {
     diagnostics: DiagnosticsConfig,
     root: Option<Root>,
     background: Option<Background>,
+    main_window: Option<(WindowOptionsFactory, MainWindow)>,
     close_policy: ClosePolicy,
     close_policy_set: bool,
     route_options: bool,
@@ -124,6 +134,7 @@ impl App<NoRoute> {
             diagnostics: DiagnosticsConfig::new(),
             root: None,
             background: None,
+            main_window: None,
             close_policy: ClosePolicy::default(),
             close_policy_set: false,
             route_options: false,
@@ -187,6 +198,7 @@ impl App<NoRoute> {
             diagnostics: self.diagnostics,
             root: self.root,
             background: self.background,
+            main_window: self.main_window,
             close_policy: self.close_policy,
             close_policy_set: self.close_policy_set,
             route_options: self.route_options,
@@ -549,6 +561,27 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Registers a repeatable standalone main window using one retained runtime.
+    ///
+    /// Without `background`, opens immediately. With `background`, opens on the
+    /// first [`show_main_window`] call. Closing follows `close_policy`; select
+    /// `KeepRunning` for tray applications. The options factory runs per creation.
+    /// Browser hosts and combinations with `root` or `routes` are rejected.
+    #[must_use]
+    pub fn main_window(
+        mut self,
+        options: impl Fn() -> WindowOptions + 'static,
+        mount: impl Fn(
+            crate::runtime::RuntimeContext,
+            &mut Window,
+            &mut gpui::App,
+        ) -> Result<AnyView, crate::router::MountError>
+        + 'static,
+    ) -> Self {
+        self.main_window = Some((Rc::new(options), Rc::new(mount)));
+        self
+    }
+
     /// Starts the native application runtime without opening an initial window.
     /// Use the GPUI app context to install a tray or other platform-owned UI.
     /// Browser hosts reject this mode explicitly.
@@ -650,6 +683,10 @@ impl<R: Route> App<R> {
             return Err(AppError::ConflictingRoots);
         }
 
+        if self.main_window.is_some() && (self.root.is_some() || self.routes.is_some()) {
+            return Err(AppError::ConflictingRoots);
+        }
+
         if self.routes.is_some() && self.close_policy_set {
             return Err(AppError::InvalidConfiguration(
                 "close_policy applies to standalone windows; routed windows own tab disposal",
@@ -661,7 +698,7 @@ impl<R: Route> App<R> {
         }
 
         #[cfg(target_family = "wasm")]
-        if self.background.is_some() {
+        if self.background.is_some() || self.main_window.is_some() {
             return Err(AppError::BackgroundUnsupported);
         }
 
@@ -684,7 +721,8 @@ impl<R: Route> App<R> {
             quit_guards: self.quit_guards.clone(),
         };
 
-        let background_config = self.background.as_ref().map(|_| managed.clone());
+        let background_config =
+            (self.background.is_some() || self.main_window.is_some()).then(|| managed.clone());
 
         let root: Option<WindowRoot> = if let Some(routes) = self.routes.take() {
             #[cfg(not(target_family = "wasm"))]
@@ -755,7 +793,7 @@ impl<R: Route> App<R> {
             Some(Box::new(move |services, window, cx| {
                 managed::mount(mount, services, managed, window, cx)
             }))
-        } else if self.background.is_some() {
+        } else if self.background.is_some() || self.main_window.is_some() {
             None
         } else {
             return Err(AppError::MissingRoot);
@@ -846,6 +884,13 @@ impl<R: Route> App<R> {
                 });
 
                 cx.set_global(UpdatesDriver { _task: task });
+            }
+
+            #[cfg(not(target_family = "wasm"))]
+            if let Some((options, mount)) = self.main_window {
+                let config = background_config.expect("main window configuration validated");
+                managed::install_main_window(options, mount, self.background, services, config, cx);
+                return;
             }
 
             let Some(root) = root else {
@@ -1208,5 +1253,25 @@ mod configuration_tests {
             .routes(pages());
 
         assert!(!custom.navigation_feedback);
+    }
+}
+
+/// Shows/focuses the registered main window, recreating it after close.
+///
+/// Uses the existing runtime and services. A failed mount leaves the factory
+/// available for retry. Routed apps can reveal an existing window through their
+/// navigator's window host instead.
+/// # Errors
+/// Returns an error without a registered factory, after runtime shutdown, or
+/// when native window creation/mounting fails. Browser hosts are unsupported.
+pub fn show_main_window(cx: &mut gpui::App) -> Result<(), AppError> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        managed::show_main_window(cx)
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = cx;
+        Err(AppError::BackgroundUnsupported)
     }
 }

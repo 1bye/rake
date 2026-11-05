@@ -73,3 +73,16 @@ release); facade all-target Clippy with tray; WASM core Clippy. Actual AppKit
 NSMenu target/action probe passed, including revision change. Windows/Linux native
 execution remains unavailable. Accelerators, Windows menu bitmaps, and extended
 menu presentation continue in P5; lifecycle callbacks are capability-dependent.
+
+## P4 — repeatable standalone main window
+
+Added App::main_window(options_factory, mount), optionally combined with background
+startup. It retains one scheduler/runtime, shares the original services, focuses an
+existing window, and recreates after KeepRunning close. Failed mounts remove the
+failed window and remain retryable. Existing root/routed close contracts remain;
+routed navigation's reveal/select already activates its WindowHost.
+
+Validation: GPUI TestPlatform regression exercises failed first mount, focus without
+remount, close/reopen with identical runtime identity, and shutdown rejection. This
+is scheduler/host-adapter coverage, not native focus qualification. Browser factory
+configuration is explicitly rejected.
