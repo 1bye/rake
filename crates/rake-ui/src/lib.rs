@@ -1,5 +1,12 @@
 //! GPUI view construction, ambient themes and owned overlay state.
 
+/// GPUI Base text inputs and their retained editing state.
+pub mod input {
+    pub use gpui_base::input::{
+        Input, InputAccessibility, InputEvent, InputState, Textarea, TextareaState,
+    };
+}
+
 pub mod overlay;
 pub mod theme;
 #[doc(hidden)]

@@ -87,6 +87,24 @@ impl Palette {
             }
         }
     }
+
+    pub(crate) fn install(light: bool, cx: &mut App) {
+        let palette = Self::new(light);
+
+        let mut semantic = if light {
+            rake::theme::Semantic::light()
+        } else {
+            rake::theme::Semantic::dark()
+        };
+
+        semantic.foreground = palette.ink.into();
+        semantic.muted_foreground = palette.muted.into();
+        semantic.surface = palette.field.into();
+        semantic.accent = palette.focus.into();
+
+        rake::theme::install(cx, palette);
+        rake::theme::install(cx, semantic);
+    }
 }
 
 #[rake::style("focus-visible:bg-selection focus-visible:text-ink")]

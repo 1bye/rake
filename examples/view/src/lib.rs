@@ -10,6 +10,7 @@ use rake::overlay::{
 
 mod components;
 mod documents;
+mod inputs;
 
 #[derive(Clone, rake::Theme)]
 struct Colors {
@@ -54,6 +55,22 @@ impl Colors {
             ink: rgb(0x18232b),
             hover: rgb(0xc7d8ca),
         }
+    }
+
+    fn install(dark: bool, cx: &mut gpui::App) {
+        let (colors, mut semantic) = if dark {
+            (Self::dark(), rake::theme::Semantic::dark())
+        } else {
+            (Self::light(), rake::theme::Semantic::light())
+        };
+
+        semantic.foreground = colors.ink.into();
+        semantic.muted_foreground = colors.ink.into();
+        semantic.surface = colors.panel.into();
+        semantic.accent = colors.accent.into();
+
+        rake::theme::install(cx, colors);
+        rake::theme::install(cx, semantic);
     }
 }
 
@@ -122,13 +139,15 @@ struct Counter {
     actions_anchor: AnchorState,
     actions_popup: OverlayState,
     documents_dialog: OverlayState,
+    show_inputs: bool,
+    inputs: Entity<inputs::Inputs>,
     documents: Entity<documents::Documents>,
     actions_hint: Entity<components::ActionsHint>,
 }
 
 impl Counter {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        rake::theme::install(cx, Colors::dark());
+        Colors::install(true, cx);
         let focus = cx.focus_handle();
 
         window.focus(&focus, cx);
@@ -139,6 +158,8 @@ impl Counter {
             actions_anchor: overlays.anchor(),
             actions_popup: overlays.popover(cx),
             documents_dialog: overlays.dialog(cx),
+            show_inputs: false,
+            inputs: cx.new(|cx| inputs::Inputs::new(window, cx)),
             documents: cx.new(|cx| documents::Documents::new(cx)),
             actions_hint: cx.new(|_| components::ActionsHint),
             overlays,
@@ -207,14 +228,7 @@ impl Counter {
 
     fn toggle_theme(&mut self, _: &ToggleTheme, _: &mut Window, cx: &mut Context<Self>) {
         self.dark = !self.dark;
-        rake::theme::install(
-            cx,
-            if self.dark {
-                Colors::dark()
-            } else {
-                Colors::light()
-            },
-        );
+        Colors::install(self.dark, cx);
         cx.notify();
     }
 
@@ -226,6 +240,26 @@ impl Counter {
 
 impl Counter {
     fn content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.show_inputs {
+            return rake::view! {
+                <div class="size-full flex flex-col items-center justify-center p-6 bg-surface text-ink"
+                    tab-navigation={true}>
+                    <div class="w-full max-w-[600px] flex flex-col gap-3">
+                        <h1>"Base text inputs"</h1>
+                        <view entity={&self.inputs}/>
+                        <button id="close-inputs" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                            on:click={cx.listener(|this, _, window, cx| {
+                                this.show_inputs = false;
+                                window.focus(&this.focus, cx);
+                                cx.notify();
+                            })}>
+                            Back to counter
+                        </button>
+                    </div>
+                </div>
+            }.into_any_element();
+        }
+
         let reset_disabled = self.locked || self.count == 0;
 
         let increment_shortcut = if cfg!(target_os = "macos") {
@@ -321,6 +355,10 @@ impl Counter {
                         on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleTheme), cx)}>
                         Switch theme
                     </button>
+                    <button id="try-inputs" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                        on:click={cx.listener(|this, _, _, cx| { this.show_inputs = true; cx.notify(); })}>
+                        Try text inputs
+                    </button>
                     <p class="text-xs">"⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock"</p>
 
                     if self.show_history {
@@ -354,7 +392,7 @@ impl Counter {
                     {div().text_xs().child("Existing GPUI elements embed with {expression}.")}
                 </components::Card>
             </div>
-        }
+        }.into_any_element()
     }
 }
 
