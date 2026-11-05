@@ -214,7 +214,11 @@ record file stays locked through the callback so retention cannot remove it. A b
 consumer returns zero. Success deletes the claimed file; an error or sink unwind
 restores the pending filename. An interrupted claim is recovered under the delivery
 lock on a later launch. A failed sink stops that delivery pass. Invalid/truncated JSON,
-oversized records and unknown schema versions are discarded without invoking the sink.
+oversized records and invalid older schema versions are discarded without invoking
+the sink. Valid JSON with `schema_version > 1` is preserved byte-for-byte, restored
+to `.json` and not counted or sent to the sink, even if its layout is unfamiliar.
+This protects records across app downgrades. Newer-schema records remain subject
+to ordinary oldest-first retention.
 
 Under normal completion, successive launches deliver a record once, and concurrent
 processes cannot both deliver it. **Exactly-once external side effects cannot be

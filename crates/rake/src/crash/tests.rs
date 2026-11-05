@@ -93,7 +93,7 @@ fn failing_and_unwinding_sinks_retain_record_and_interrupted_claims_retry() {
 }
 
 #[test]
-fn corrupt_truncated_oversized_and_unknown_versions_are_skipped() {
+fn corrupt_truncated_oversized_and_invalid_old_versions_are_skipped() {
     let (_directory, reporter) = reporter(CrashLimits {
         record_bytes: 1024,
         ..CrashLimits::default()
@@ -111,8 +111,8 @@ fn corrupt_truncated_oversized_and_unknown_versions_are_skipped() {
         file.write_all(&bytes).expect("write invalid data");
     }
     let mut record = reporter.record(None, None);
-    record.schema_version = 99;
-    reporter.write(record).expect("unknown schema");
+    record.schema_version = 0;
+    reporter.write(record).expect("invalid old schema");
     assert_eq!(
         reporter
             .deliver(&|_: &CrashRecord| panic!("corrupt record reached sink"))
@@ -271,4 +271,77 @@ fn opted_in_message_is_trimmed_before_backtrace_for_encoded_budget() {
     assert!(record.message.len() < 1024);
     assert_eq!(record.backtrace, "B".repeat(250));
     assert!(record.truncated);
+}
+
+#[test]
+fn newer_schemas_survive_delivery_and_interrupted_claims_with_unknown_layouts() {
+    for extension in ["json", "claimed"] {
+        let (_directory, reporter) = reporter(CrashLimits::default());
+        let future = reporter.directory.join(format!("000-future.{extension}"));
+        let bytes = br#"{"schema_version":2,"future_layout":{"value":"preserve this"}}"#;
+        private_options()
+            .write(true)
+            .create_new(true)
+            .open(&future)
+            .expect("future file")
+            .write_all(bytes)
+            .expect("future JSON");
+        reporter
+            .write(reporter.record(None, None))
+            .expect("current-schema record");
+
+        assert_eq!(
+            reporter
+                .deliver(&|record: &CrashRecord| {
+                    assert_eq!(record.schema_version, 1);
+                    Ok(())
+                })
+                .expect("deliver supported records"),
+            1
+        );
+        let pending = future.with_extension("json");
+        assert_eq!(fs::read(&pending).expect("preserved bytes"), bytes);
+        assert_eq!(
+            reporter
+                .deliver(&|_: &CrashRecord| panic!("future schema reached sink"))
+                .expect("skip future schema again"),
+            0
+        );
+        assert_eq!(reporter.records().expect("records"), vec![pending]);
+    }
+}
+
+#[test]
+fn newer_schema_records_are_still_subject_to_oldest_first_retention() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        records: 1,
+        ..CrashLimits::default()
+    });
+    let mut future = reporter.record(None, None);
+    future.id = "001".into();
+    future.schema_version = 99;
+    reporter.write(future).expect("write future record");
+    assert_eq!(
+        reporter
+            .deliver(&|_: &CrashRecord| panic!("future schema reached sink"))
+            .expect("preserve future"),
+        0
+    );
+    assert_eq!(reporter.records().expect("future remains").len(), 1);
+    let mut current = reporter.record(None, None);
+    current.id = "002".into();
+    reporter
+        .write(current)
+        .expect("newer capture prunes oldest");
+
+    assert_eq!(
+        reporter
+            .deliver(&|record: &CrashRecord| {
+                assert_eq!(record.id, "002");
+                Ok(())
+            })
+            .expect("deliver newest"),
+        1
+    );
+    assert!(reporter.records().expect("records").is_empty());
 }

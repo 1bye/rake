@@ -141,8 +141,9 @@ impl CrashReporter {
     ///
     /// An advisory process lock and atomic claim rename prevent concurrent delivery.
     /// Interrupted claims are retried on the next call. Success removes the record;
-    /// failure (including sink unwinding) restores it. Corrupt, oversized and unknown
-    /// schema files are removed without calling the sink. No filesystem locks block.
+    /// failure (including sink unwinding) restores it. Newer JSON schema versions are
+    /// retained without calling the sink, including layouts this version cannot read.
+    /// Corrupt, oversized and invalid older files are removed. No filesystem locks block.
     /// A process death after a sink side effect but before deletion can cause a retry;
     /// exactly-once external effects require an idempotent sink keyed by record ID.
     ///
@@ -200,6 +201,13 @@ impl CrashReporter {
             (&file)
                 .take((self.limits.record_bytes + 1) as u64)
                 .read_to_end(&mut bytes)?;
+            if bytes.len() <= self.limits.record_bytes
+                && serde_json::from_slice::<RecordVersion>(&bytes)
+                    .is_ok_and(|record| record.schema_version > 1)
+            {
+                continue;
+            }
+
             let record = if bytes.len() <= self.limits.record_bytes {
                 serde_json::from_slice::<CrashRecord>(&bytes)
                     .ok()
@@ -410,6 +418,11 @@ impl CrashReporter {
             }
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+struct RecordVersion {
+    schema_version: u64,
 }
 
 struct Claim {
