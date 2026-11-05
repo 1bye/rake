@@ -122,6 +122,7 @@ fn facade() -> syn::Result<Tokens> {
                 "rake_app" | "rak" => "rake",
                 _ => &name,
             };
+
             let name = format_ident!("{name}");
 
             Ok(quote!(::#name))

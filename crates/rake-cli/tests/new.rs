@@ -37,6 +37,7 @@ fn embeds_templates_and_revision_without_invoking_tools() {
     assert_eq!(result["name"], "my-app");
     assert_eq!(result["application_id"], "com.example.my-app");
     let revision = env!("RAKE_BUILD_REV");
+
     let pin = if revision.is_empty() {
         format!("version = \"={}\"", env!("CARGO_PKG_VERSION"))
     } else {
