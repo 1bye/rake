@@ -42,10 +42,20 @@ JSON and `--explain` output all use that catalogue.
 The button rule matches the lowering contract: **all** children must be literal
 text to receive an automatic label. Dynamic content mixed with literal text,
 control flow, nested tags and icon-only/empty buttons need `aria-label`.
+Use the visible text as the label (label-in-name); add context only after it.
+For example, `<button aria-label={title.clone()}>{title.clone()}</button>`
+preserves the visible words for speech-control users. For icon-only buttons,
+use an action label, such as `<button aria-label="Search">{icon}</button>`.
+A state caption such as `Backdrop: native blur` should keep that same caption in
+its accessible name, rather than describe the opposite state.
 Uppercase component tags own their accessibility contract and are not treated as
 built-in buttons or images. Markup-valued component properties are still checked.
 The check requires the attribute's presence; it cannot prove that a dynamic label
 is meaningful or nonempty at runtime.
+
+`view-image-alt` reports the same mistake that `view!` already rejects with
+`img requires alt text`, without needing a build. It adds no separate image
+requirement; `alt=""` remains valid for decorative images.
 
 The loop rule follows the first binding in `(index, item)` from `.enumerate()`
 inside markup `for` nodes;
