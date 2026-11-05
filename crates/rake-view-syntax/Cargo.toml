@@ -6,12 +6,20 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = ["crates-io"]
-description = "Shared syntax and lowering for Rake views"
+description = "Internal view syntax for matching Rake versions; no external stability guarantees"
 
 [lints]
 workspace = true
 
+[features]
+# Standalone source tools need fallback-token coordinates; macro hosts use std spans.
+source-locations = ["proc-macro2/span-locations"]
+
 [dependencies]
-proc-macro2 = { version = "1", features = ["span-locations"] }
+proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+tempfile = "3"

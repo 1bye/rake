@@ -65,8 +65,38 @@ pub(super) fn push_node(
     Ok(())
 }
 
+// Keep source-tool coordinates out of the proc-macro dependency graph. The
+// compiler's stable span API provides the same coordinates in a macro host.
+#[cfg(any(feature = "source-locations", test))]
+fn bounds(span: Span) -> ((usize, usize), (usize, usize)) {
+    let start = span.start();
+    let end = span.end();
+
+    ((start.line, start.column), (end.line, end.column))
+}
+
+#[cfg(not(any(feature = "source-locations", test)))]
+fn bounds(span: Span) -> ((usize, usize), (usize, usize)) {
+    if proc_macro::is_available() {
+        let start = span.unwrap();
+        let end = start.end();
+
+        (
+            (start.line(), start.column().saturating_sub(1)),
+            (end.line(), end.column().saturating_sub(1)),
+        )
+    } else {
+        // Synthesized tokens have no distinct source positions. Standalone
+        // source parsing requires the documented source-locations feature.
+        ((0, 0), (0, 0))
+    }
+}
+
 fn same_line_gap(left: Span, right: Span) -> bool {
-    left.end().line == right.start().line && left.end().column < right.start().column
+    let (_, left) = bounds(left);
+    let (right, _) = bounds(right);
+
+    left.0 == right.0 && left.1 < right.1
 }
 
 fn append_token(text: &mut String, previous: Span, token: &TokenTree) {
@@ -96,12 +126,14 @@ fn append_token(text: &mut String, previous: Span, token: &TokenTree) {
 
     // Synthesized tokens may share one span. Separate adjacent words in that
     // case; source-written punctuation still follows its actual source gaps.
-    let synthesized_words = previous.start() == span.start()
-        && previous.end() == span.end()
+    let (previous_start, previous_end) = bounds(previous);
+    let (start, end) = bounds(span);
+    let synthesized_words = previous_start == start
+        && previous_end == end
         && text.chars().last().is_some_and(char::is_alphanumeric)
         && source.chars().next().is_some_and(char::is_alphanumeric);
 
-    if !text.is_empty() && (previous.end() < span.start() || synthesized_words) {
+    if !text.is_empty() && (previous_end < start || synthesized_words) {
         text.push(' ');
     }
 
