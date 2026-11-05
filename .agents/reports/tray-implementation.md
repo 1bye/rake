@@ -31,3 +31,13 @@ be runtime/compile-time gated; no unsupported API is reported successful.
 
 Phase-specific implementation, command results and limitations are appended as
 work proceeds. This report does not claim P0's foreign native gates passed.
+
+## P1: portable contracts
+
+Added the GPUI-independent rake-tray crate with validated image ownership,
+stable-keyed bounded menus, semantic input/geometry contracts, feature-specific
+capabilities and typed failures. Menu dispatch rechecks hidden/disabled ancestors.
+Native registration ownership follows in P2 so no fake backend success is exposed.
+
+Validation: cargo test -p rake-tray (3 external-consumer tests) and
+cargo clippy -p rake-tray --all-targets -- -D warnings passed.

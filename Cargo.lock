@@ -7463,6 +7463,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-tray"
+version = "0.1.0"
+dependencies = [
+ "event-listener",
+ "futures",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "rake-ui"
 version = "0.1.0"
 dependencies = [
