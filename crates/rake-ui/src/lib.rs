@@ -1,5 +1,10 @@
 //! GPUI view construction, ambient themes and owned overlay state.
 
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_fast as gpui;
+#[cfg(not(feature = "gpui-fast"))]
+extern crate gpui_pre as gpui;
+
 /// GPUI Base text inputs and their retained editing state.
 pub mod input {
     pub use gpui_base::input::{
