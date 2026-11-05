@@ -61,9 +61,7 @@ fn preferences_schema() -> Result<Schema, StorageError> {
     Schema::new(2)
         .with_migration(0, |mut value| {
             let object = value.as_object_mut().ok_or_else(|| {
-                StorageError::Backend(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData, "expected preferences object",
-                )))
+                StorageError::invalid_data("expected preferences object")
             })?;
             if let Some(theme) = object.remove("colour") {
                 object.insert("theme".into(), theme);
@@ -71,7 +69,12 @@ fn preferences_schema() -> Result<Schema, StorageError> {
             Ok(value)
         })?
         .with_migration(1, |mut value| {
-            value["tab_width"] = serde_json::json!(4);
+            let object = value.as_object_mut().ok_or_else(|| {
+                StorageError::invalid_data("expected preferences object")
+            })?;
+
+            object.insert("tab_width".into(), serde_json::json!(4));
+
             Ok(value)
         })
 }
@@ -95,6 +98,9 @@ and data newer than the configured version with inspectable `StorageError`
 variants. Supply every step needed for the oldest version you support. Keep steps
 deterministic and free of I/O or external side effects: retries can run them again.
 Validate the old JSON shape and return an error rather than panicking on bad input.
+Use `StorageError::invalid_data(message)` for application validation failures.
+The resulting `StorageError::Migration { from, source }` retains that `InvalidData`
+error as its source; `Backend` remains reserved for backend failures.
 
 A read runs all steps, decodes the final `T`, serializes its current envelope and
 checks its size **before** writing. Failed steps, type conversion, serialization,

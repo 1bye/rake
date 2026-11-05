@@ -58,6 +58,27 @@ impl Schema {
     ///
     /// Missing steps are reported on read, allowing applications to support only
     /// selected older versions. Closures may capture application configuration.
+    /// Return [`StorageError::invalid_data`] for application validation failures;
+    /// decoding retains that error as the source of [`StorageError::Migration`].
+    ///
+    /// # Examples
+    /// ```
+    /// use rake::storage::{Schema, StorageError};
+    /// # fn main() -> Result<(), StorageError> {
+    /// let schema = Schema::new(2).with_migration(1, |mut value| {
+    ///     let object = value.as_object_mut().ok_or_else(|| {
+    ///         StorageError::invalid_data("expected preferences object")
+    ///     })?;
+    ///     object.insert("tab_width".into(), serde_json::json!(4));
+    ///     Ok(value)
+    /// })?;
+    /// let invalid = br#"{"$rake_schema":1,"value":[]}"#;
+    /// assert!(matches!(
+    ///     schema.decode::<serde_json::Value>(invalid),
+    ///     Err(StorageError::Migration { from: 1, .. })
+    /// ));
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     /// Returns [`StorageError::InvalidMigration`] for duplicates or `from >= current`.
