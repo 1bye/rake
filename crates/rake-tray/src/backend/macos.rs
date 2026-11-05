@@ -50,6 +50,8 @@ pub(crate) struct Item {
     removed: std::cell::Cell<bool>,
     revision: std::cell::Cell<u64>,
     image: RefCell<Option<Retained<NSImage>>>,
+    menu: RefCell<Option<Rc<super::macos_menu::NativeMenu>>>,
+    sink: Sink,
 }
 
 impl Item {
@@ -72,7 +74,7 @@ impl Item {
             "{application}.{}",
             spec.id
         ))));
-        let allocated = ActionTarget::alloc(mtm).set_ivars(sink);
+        let allocated = ActionTarget::alloc(mtm).set_ivars(sink.clone());
         // SAFETY: ActionTarget is an NSObject subclass with initialized ivars.
         let target: Retained<ActionTarget> = unsafe { msg_send![super(allocated), init] };
         let result = Self {
@@ -82,6 +84,8 @@ impl Item {
             removed: std::cell::Cell::new(false),
             revision: std::cell::Cell::new(0),
             image: RefCell::new(None),
+            menu: RefCell::new(None),
+            sink,
         };
         let button = result
             .item
@@ -95,38 +99,32 @@ impl Item {
         button.sendActionOn(
             NSEventMask::LeftMouseUp | NSEventMask::RightMouseUp | NSEventMask::OtherMouseUp,
         );
-        result.apply_now(spec)?;
+        result.apply_now(0, spec)?;
 
         Ok(result)
     }
 
-    fn apply_now(&self, spec: &Tray) -> Result<(), Error> {
+    fn apply_now(&self, revision: u64, spec: &Tray) -> Result<(), Error> {
         let button = self.item.button(self.mtm).ok_or(Error::HostUnavailable)?;
-        let image = if let Some(source) = &spec.image {
-            let named = source.native_name().and_then(|name| {
-                NSImage::imageNamed(&NSString::from_str(name)).or_else(|| {
-                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                        &NSString::from_str(name),
-                        Some(&NSString::from_str(&spec.tooltip)),
-                    )
-                })
-            });
-            let image = if let Some(named) = named {
-                named
-            } else {
-                NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&source.to_png()?))
-                    .ok_or(Error::HostUnavailable)?
-            };
-            // Copy before changing native shared image metadata.
-            use objc2_foundation::NSCopying;
-            let image = image.copy();
-            image.setSize(NSSize::new(18.0, 18.0));
-            image.setTemplate(source.rendering == Rendering::Template);
-
-            Some(image)
+        let image = spec
+            .image
+            .as_ref()
+            .map(|source| native_image(source, &spec.tooltip))
+            .transpose()?;
+        let menu = spec
+            .menu
+            .as_ref()
+            .map(|menu| {
+                super::macos_menu::NativeMenu::new(menu, self.sink.menu(revision), self.mtm)
+                    .map(Rc::new)
+            })
+            .transpose()?;
+        if spec.interaction == crate::Interaction::NativeMenu {
+            self.item.setMenu(menu.as_ref().map(|m| &*m.menu));
         } else {
-            None
-        };
+            self.item.setMenu(None);
+        }
+        *self.menu.borrow_mut() = menu;
         button.setImage(image.as_deref());
         button.setToolTip(Some(&NSString::from_str(&spec.tooltip)));
         *self.image.borrow_mut() = image;
@@ -142,13 +140,54 @@ impl Item {
             if item.removed.get() {
                 return Err(Error::Removed);
             }
+            loop {
+                let menu = item.menu.borrow().clone();
+                let Some(menu) = menu else { break };
+                let changed = menu.changed.listen();
+                if !menu.tracking.get() {
+                    break;
+                }
+                changed.await;
+                if item.removed.get() {
+                    return Err(Error::Removed);
+                }
+            }
             if item.revision.get() <= revision {
-                item.apply_now(&spec)?;
+                item.apply_now(revision, &spec)?;
                 item.revision.set(revision);
             }
             Ok(())
         })
     }
+    #[cfg(feature = "native-tests")]
+    pub(crate) fn probe_menu_selection(&self, index: usize) -> Result<(), Error> {
+        let menu = self
+            .menu
+            .borrow()
+            .clone()
+            .ok_or(Error::InvalidInput("item has no native menu".into()))?;
+        if index >= menu.menu.numberOfItems() as usize {
+            return Err(Error::InvalidInput("menu probe index is invalid".into()));
+        }
+        menu.menu.performActionForItemAtIndex(index as isize);
+        Ok(())
+    }
+
+    pub(crate) fn show_menu(&self) -> Result<(), Error> {
+        let menu = self
+            .menu
+            .borrow()
+            .clone()
+            .ok_or(Error::InvalidInput("item has no menu".into()))?;
+        let button = self.item.button(self.mtm).ok_or(Error::Removed)?;
+        menu.menu.popUpMenuPositioningItem_atLocation_inView(
+            None,
+            objc2_foundation::NSPoint::new(0.0, button.bounds().size.height),
+            Some(&button),
+        );
+        Ok(())
+    }
+
     pub(crate) fn registration(&self) -> Registration {
         Registration::Registered
     }
@@ -182,6 +221,10 @@ impl Item {
 
     fn remove(&self) {
         if !self.removed.replace(true) {
+            if let Some(menu) = self.menu.borrow().as_ref() {
+                menu.menu.cancelTracking();
+            }
+            self.item.setMenu(None);
             if let Some(button) = self.item.button(self.mtm) {
                 // SAFETY: Clear the weak target before releasing its retained owner.
                 unsafe {
@@ -199,4 +242,29 @@ impl Drop for Item {
     fn drop(&mut self) {
         self.remove();
     }
+}
+
+pub(super) fn native_image(
+    source: &crate::Image,
+    description: &str,
+) -> Result<Retained<NSImage>, Error> {
+    let named = source.native_name().and_then(|name| {
+        NSImage::imageNamed(&NSString::from_str(name)).or_else(|| {
+            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                &NSString::from_str(name),
+                Some(&NSString::from_str(description)),
+            )
+        })
+    });
+    let image = if let Some(named) = named {
+        named
+    } else {
+        NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&source.to_png()?))
+            .ok_or(Error::HostUnavailable)?
+    };
+    use objc2_foundation::NSCopying;
+    let image = image.copy();
+    image.setSize(NSSize::new(18.0, 18.0));
+    image.setTemplate(source.rendering == Rendering::Template);
+    Ok(image)
 }

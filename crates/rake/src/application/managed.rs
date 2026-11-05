@@ -124,6 +124,9 @@ fn prepare_background(services: &Services, config: &ManagedConfig, cx: &mut gpui
 }
 
 fn configure(runtime: &Runtime, config: &ManagedConfig) {
+    #[cfg(feature = "tray")]
+    crate::tray::bind(runtime.router.navigator(), &runtime.services);
+
     runtime
         .router
         .client()

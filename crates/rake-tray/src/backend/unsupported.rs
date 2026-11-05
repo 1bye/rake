@@ -12,6 +12,9 @@ impl Item {
     pub(crate) fn apply(&self, _: u64, _: &Tray) -> Request<()> {
         crate::ready(Err(Error::Unsupported(Feature::MultipleItems)))
     }
+    pub(crate) fn show_menu(&self) -> Result<(), Error> {
+        Err(Error::Unsupported(Feature::ShowMenu))
+    }
     pub(crate) fn anchor(&self) -> Result<Option<Anchor>, Error> {
         Err(Error::Unsupported(Feature::Rectangle))
     }

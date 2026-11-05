@@ -132,9 +132,21 @@ pub(crate) struct Sink {
     pub(crate) id: String,
     pub(crate) generation: u64,
     ingress: Arc<Ingress>,
+    menu_revision: Option<u64>,
 }
 
 impl Sink {
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(dead_code, reason = "browser hosts cannot produce native menus")
+    )]
+    pub(crate) fn menu(&self, revision: u64) -> Self {
+        Self {
+            menu_revision: Some(revision),
+            ..self.clone()
+        }
+    }
+
     #[cfg_attr(
         target_family = "wasm",
         expect(dead_code, reason = "browser hosts cannot produce native callbacks")
@@ -143,6 +155,7 @@ impl Sink {
         self.ingress.send(Event {
             id: self.id.clone(),
             generation: self.generation,
+            menu_revision: self.menu_revision,
             kind,
             anchor,
             input,
@@ -304,6 +317,7 @@ impl Collection {
                 id: spec.id.clone(),
                 generation,
                 ingress: state.ingress.clone(),
+                menu_revision: None,
             };
             let handle = Handle {
                 collection: self.clone(),
@@ -376,6 +390,13 @@ impl Collection {
                 continue;
             };
 
+            if event
+                .menu_revision
+                .is_some_and(|revision| revision != entry.state.applied_revision)
+            {
+                continue;
+            }
+
             if let EventKind::MenuSelected(id) = &event.kind
                 && !entry
                     .spec
@@ -444,6 +465,30 @@ impl Handle {
         self.with(|entry| Ok(entry.state.clone()))
     }
 
+    /// Returns an owned snapshot of the latest admitted specification.
+    /// # Errors
+    /// Reports a removed registration or stopped host.
+    pub fn specification(&self) -> Result<Tray, Error> {
+        self.with(|entry| Ok(entry.spec.clone()))
+    }
+
+    /// Exercises AppKit target/action without synthesizing pointer input; native-test fixture only.
+    /// # Errors
+    /// Reports an absent native menu, invalid index or stopped/removed owner.
+    #[cfg(all(feature = "native-tests", target_os = "macos"))]
+    pub fn probe_menu_selection(&self, index: usize) -> Result<(), Error> {
+        let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+        native.probe_menu_selection(index)
+    }
+
+    /// Explicitly opens the attached native menu when the backend permits it.
+    /// # Errors
+    /// Reports unsupported programmatic display, stopped/removed items or native failure.
+    pub fn show_menu(&self) -> Result<(), Error> {
+        let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+        native.show_menu()
+    }
+
     /// Replaces the complete specification without changing identity.
     pub fn update(&self, spec: Tray) -> Request<Applied> {
         let prepared = self.with(|entry| {
@@ -453,6 +498,7 @@ impl Handle {
 
             spec.validate()?;
             backend::validate(&spec)?;
+            if spec.interaction != entry.spec.interaction { return Err(Error::InvalidInput("primary interaction is fixed for a registration; recreate the item to change it".into())); }
             let native = entry.native.clone().ok_or(Error::HostUnavailable)?;
             let revision = entry
                 .state
@@ -603,6 +649,7 @@ mod tests {
             id: "main".into(),
             generation,
             ingress: registry.ingress.clone(),
+            menu_revision: None,
         }
     }
 
@@ -677,5 +724,34 @@ mod tests {
             futures::executor::block_on(collection.next_event()),
             Err(Error::Stopped)
         ));
+    }
+
+    #[test]
+    fn old_menu_projection_cannot_dispatch_a_rebound_item() {
+        let host = host();
+        let sink = reserve(&host, 1);
+        {
+            let mut registry = host.registry.borrow_mut();
+            let entry = registry
+                .entries
+                .get_mut("main")
+                .expect("registration exists");
+            entry.spec =
+                Tray::new("main").menu(Menu::new().item(crate::MenuItem::new("open", "Open")));
+            entry.state.applied_revision = 1;
+        }
+        sink.menu(0).send(
+            EventKind::MenuSelected("open".into()),
+            None,
+            crate::Input::default(),
+        );
+        sink.menu(1).send(
+            EventKind::MenuSelected("open".into()),
+            None,
+            crate::Input::default(),
+        );
+        let event = futures::executor::block_on(host.collection().next_event())
+            .expect("current projection selection");
+        assert_eq!(event.menu_revision, Some(1));
     }
 }

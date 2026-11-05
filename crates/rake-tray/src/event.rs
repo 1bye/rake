@@ -108,6 +108,8 @@ pub struct Event {
     pub id: String,
     /// Unique registration generation, scoped to one host.
     pub generation: u64,
+    /// Native menu projection revision, when the event belongs to a menu.
+    pub menu_revision: Option<u64>,
     /// Native event meaning.
     pub kind: EventKind,
     /// Optional native geometry evidence.

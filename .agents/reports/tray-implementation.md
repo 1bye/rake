@@ -58,3 +58,18 @@ geometry, updates, hide/show, remove/recreate and weak-owner shutdown. Backend
 checks passed for Windows MSVC and Linux GNU. WASM is an explicitly unsupported
 native backend; its portable contracts compile. These are compilation results,
 not Windows/Linux GUI qualification.
+
+## P3 — native menus and foreground dispatch
+
+Implemented AppKit NSMenu/target/delegate ownership, Win32 HMENU tracking with focus
+return, and SNI DBusMenu projection. Menus include nesting, check/radio/disabled/
+hidden items, native icons on AppKit/SNI, and guarded Quit. Tracking defers AppKit
+rebuilds. Scoped menu revisions reject stale callbacks after an update. Foreground
+handlers run after native callbacks return and without registry borrows. Typed
+commands use the existing scheduler without consuming transport retry keys.
+
+Validation: core 8 tests; facade command regression (300 activations, runtime
+release); facade all-target Clippy with tray; WASM core Clippy. Actual AppKit
+NSMenu target/action probe passed, including revision change. Windows/Linux native
+execution remains unavailable. Accelerators, Windows menu bitmaps, and extended
+menu presentation continue in P5; lifecycle callbacks are capability-dependent.

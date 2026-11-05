@@ -84,6 +84,15 @@ impl Tray {
         &self.id
     }
 
+    /// Returns the described native menu.
+    pub fn menu_description(&self) -> Option<&Menu> {
+        self.menu.as_ref()
+    }
+    /// Returns the selected primary interaction policy.
+    pub fn primary_interaction(&self) -> Interaction {
+        self.interaction
+    }
+
     /// Validates identity, text and menu before native resource allocation.
     /// # Errors
     /// Rejects invalid names, NUL/excessive tooltip text and malformed menus.

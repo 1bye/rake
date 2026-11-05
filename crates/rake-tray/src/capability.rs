@@ -42,6 +42,8 @@ pub enum Feature {
     Menu,
     /// Check, mixed and radio menu items.
     MenuChecks,
+    /// Native indeterminate check rendering.
+    MenuMixed,
     /// Menu item images.
     MenuImages,
     /// Native menu accelerator execution.

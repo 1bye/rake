@@ -3,7 +3,7 @@ use crate::{
     host::Sink,
 };
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ffi::c_void,
     mem::size_of,
     ptr::{null, null_mut},
@@ -90,11 +90,18 @@ unsafe extern "system" fn window_proc(
                     }),
                     space: CoordinateSpace::PhysicalScreen,
                 };
+                // Version-4 coordinates are documented for select/keyboard select;
+                // WM_CONTEXTMENU does not promise a meaningful packed position.
+                let anchor = (code != WM_CONTEXTMENU).then_some(anchor);
                 state.sink.send(
                     kind,
-                    Some(anchor),
+                    anchor,
                     Input {
-                        keyboard: Some(code == NIN_KEYSELECT),
+                        keyboard: match code {
+                            NIN_KEYSELECT => Some(true),
+                            NIN_SELECT => Some(false),
+                            _ => None,
+                        },
                         ..Input::default()
                     },
                 );
@@ -116,6 +123,7 @@ fn failure(operation: &'static str) -> Error {
 }
 
 pub(crate) struct Item {
+    menu: RefCell<Option<Rc<super::windows_menu::NativeMenu>>>,
     hwnd: HWND,
     state: Box<WindowState>,
 }
@@ -186,11 +194,15 @@ impl Item {
             return Err(failure("create tray callback window"));
         }
 
-        let item = Self { hwnd, state };
+        let item = Self {
+            hwnd,
+            state,
+            menu: RefCell::new(None),
+        };
         let mut data = item.state.data.get();
         data.hWnd = hwnd;
         item.state.data.set(data);
-        item.prepare(spec)?;
+        item.prepare(0, spec)?;
         let mut data = item.state.data.get();
         // SAFETY: Native structure and icon are initialized and owned by item.
         if unsafe { Shell_NotifyIconW(NIM_ADD, &data) } == 0 {
@@ -206,8 +218,17 @@ impl Item {
         Ok(item)
     }
 
-    fn prepare(&self, spec: &Tray) -> Result<(), Error> {
+    fn prepare(&self, revision: u64, spec: &Tray) -> Result<(), Error> {
         let icon = spec.image.as_ref().map(make_icon).transpose()?;
+        let menu = spec
+            .menu
+            .as_ref()
+            .map(|menu| {
+                super::windows_menu::NativeMenu::new(menu, self.state.sink.menu(revision))
+                    .map(Rc::new)
+            })
+            .transpose()?;
+        *self.menu.borrow_mut() = menu;
         let mut data = self.state.data.get();
         let old = data.hIcon;
         data.hIcon = icon.unwrap_or(null_mut());
@@ -240,7 +261,7 @@ impl Item {
             if item.state.revision.get() > revision {
                 return Ok(());
             }
-            item.prepare(&spec)?;
+            item.prepare(revision, &spec)?;
             let data = item.state.data.get();
             // SAFETY: Correct live identity and owned resources remain valid during the call.
             if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } == 0 {
@@ -250,6 +271,32 @@ impl Item {
             Ok(())
         })
     }
+    pub(crate) fn show_menu(&self) -> Result<(), Error> {
+        let menu = self
+            .menu
+            .borrow()
+            .clone()
+            .ok_or(Error::InvalidInput("item has no menu".into()))?;
+        let anchor = self.anchor()?.and_then(|a| a.rect);
+        let mut position = POINT::default();
+        if let Some(rect) = anchor {
+            position.x = rect.origin.x as i32;
+            position.y = (rect.origin.y + rect.height) as i32;
+        } else {
+            // SAFETY: Valid writable output point.
+            unsafe {
+                GetCursorPos(&mut position);
+            }
+        }
+        menu.show(self.hwnd, position.x, position.y)?;
+        let data = self.state.data.get();
+        // SAFETY: Restore notification-area keyboard focus using our live identity.
+        unsafe {
+            Shell_NotifyIconW(NIM_SETFOCUS, &data);
+        }
+        Ok(())
+    }
+
     pub(crate) fn registration(&self) -> Registration {
         Registration::Registered
     }

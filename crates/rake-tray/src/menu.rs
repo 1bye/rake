@@ -19,6 +19,8 @@ pub enum CheckState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ItemKind {
+    /// Guarded application quit, interpreted by the Rake host.
+    Quit,
     /// Ordinary command item.
     Action,
     /// Independent check item.
@@ -78,6 +80,11 @@ impl MenuItem {
             enabled: false,
             ..Self::new(id, "")
         }
+    }
+
+    /// Describes a guarded application quit item.
+    pub fn quit(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(id, label).kind(ItemKind::Quit)
     }
 
     /// Selects the semantic kind.
@@ -162,6 +169,19 @@ impl Menu {
         Ok(())
     }
 
+    /// Finds an item by its stable key, including nested menus.
+    pub fn find(&self, id: &str) -> Option<&MenuItem> {
+        self.items.iter().find_map(|item| {
+            if item.id == id {
+                return Some(item);
+            }
+            if let ItemKind::Submenu(menu) = &item.kind {
+                return menu.find(id);
+            }
+            None
+        })
+    }
+
     /// Resolves an actionable, currently enabled/visible item across nested menus.
     pub fn actionable(&self, id: &str) -> bool {
         self.items.iter().any(|item| {
@@ -169,7 +189,10 @@ impl Menu {
                 && item.enabled
                 && match &item.kind {
                     ItemKind::Submenu(menu) => menu.actionable(id),
-                    ItemKind::Action | ItemKind::Check(_) | ItemKind::Radio { .. } => item.id == id,
+                    ItemKind::Action
+                    | ItemKind::Quit
+                    | ItemKind::Check(_)
+                    | ItemKind::Radio { .. } => item.id == id,
                     _ => false,
                 }
         })

@@ -7,9 +7,13 @@ use crate::{
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+mod macos_menu;
+#[cfg(target_os = "macos")]
 pub(crate) use macos::Item;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "windows")]
+mod windows_menu;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::Item;
 #[cfg(target_os = "linux")]
@@ -46,6 +50,8 @@ pub(crate) fn capabilities() -> Capabilities {
             Feature::Image,
             Feature::Tooltip,
             Feature::PersistentIdentity,
+            Feature::Menu,
+            Feature::MenuChecks,
         ] {
             features.insert(feature, Support::Supported);
         }
@@ -56,17 +62,22 @@ pub(crate) fn capabilities() -> Capabilities {
             Feature::NamedImage,
             Feature::Rectangle,
             Feature::PositionHint,
+            Feature::ShowMenu,
+            Feature::MenuMixed,
+            Feature::MenuImages,
         ] {
             features.insert(feature, Support::Supported);
         }
     }
     if backend == Backend::Windows {
+        features.insert(Feature::ShowMenu, Support::Supported);
         features.insert(
             Feature::Rectangle,
             Support::Conditional("icon can be hidden or in overflow"),
         );
     }
     if backend == Backend::StatusNotifier {
+        features.insert(Feature::MenuImages, Support::Supported);
         features.insert(Feature::NamedImage, Support::Supported);
         features.insert(
             Feature::PositionHint,
@@ -86,6 +97,9 @@ pub(crate) fn validate(spec: &Tray) -> Result<(), Error> {
     }
     if spec.image.is_none() {
         return Err(Error::InvalidInput("tray item requires an image".into()));
+    }
+    if let Some(menu) = &spec.menu {
+        validate_menu(menu)?;
     }
     if let Some(image) = &spec.image {
         validate_image(image)?;
@@ -111,5 +125,28 @@ fn validate_image(image: &Image) -> Result<(), Error> {
         return Err(Error::Unsupported(Feature::NamedImage));
     }
 
+    Ok(())
+}
+
+fn validate_menu(menu: &crate::Menu) -> Result<(), Error> {
+    for item in &menu.items {
+        if item.accelerator.is_some() {
+            return Err(Error::Unsupported(Feature::MenuAccelerators));
+        }
+        if matches!(item.kind, crate::ItemKind::Check(crate::CheckState::Mixed))
+            && !cfg!(target_os = "macos")
+        {
+            return Err(Error::Unsupported(Feature::MenuMixed));
+        }
+        if let Some(image) = &item.image {
+            validate_image(image)?;
+            if cfg!(target_os = "windows") {
+                return Err(Error::Unsupported(Feature::MenuImages));
+            }
+        }
+        if let crate::ItemKind::Submenu(menu) = &item.kind {
+            validate_menu(menu)?;
+        }
+    }
     Ok(())
 }

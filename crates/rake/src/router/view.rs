@@ -678,6 +678,8 @@ impl<R: Route> Workspace<R> {
         }
 
         router.client().set_commands(commands);
+        #[cfg(feature = "tray")]
+        crate::tray::bind(router.navigator(), &layout_services);
 
         #[cfg(feature = "devtools")]
         if control.inspection_enabled() {

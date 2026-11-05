@@ -100,6 +100,8 @@ pub struct App<R: Route = NoRoute> {
     themes: Vec<ThemeInstaller>,
     #[cfg(feature = "tray")]
     trays: Vec<crate::tray::Tray>,
+    #[cfg(feature = "tray")]
+    tray_handlers: Vec<crate::tray::Handler>,
     #[cfg(feature = "updates")]
     distribution: Option<(&'static str, &'static str)>,
 }
@@ -137,6 +139,8 @@ impl App<NoRoute> {
             themes: Vec::new(),
             #[cfg(feature = "tray")]
             trays: Vec::new(),
+            #[cfg(feature = "tray")]
+            tray_handlers: Vec::new(),
             #[cfg(feature = "updates")]
             distribution: None,
         }
@@ -198,6 +202,8 @@ impl App<NoRoute> {
             themes: self.themes,
             #[cfg(feature = "tray")]
             trays: self.trays,
+            #[cfg(feature = "tray")]
+            tray_handlers: self.tray_handlers,
             #[cfg(feature = "updates")]
             distribution: self.distribution,
         }
@@ -211,6 +217,32 @@ impl<R: Route> App<R> {
     pub fn tray(mut self, tray: crate::tray::Tray) -> Self {
         self.trays.push(tray);
         self
+    }
+
+    /// Observes validated tray events on GPUI's foreground driver.
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn on_tray_event(
+        mut self,
+        handler: impl FnMut(&crate::tray::Event, &mut gpui::App) + 'static,
+    ) -> Self {
+        self.tray_handlers.push(Box::new(handler));
+        self
+    }
+
+    /// Binds a tray menu selection to a typed application command.
+    /// # Errors
+    /// Reports command argument serialization failure.
+    #[cfg(feature = "tray")]
+    pub fn tray_command<C: crate::control::ApplicationCommand>(
+        mut self,
+        tray: &str,
+        item: &str,
+        command: C,
+    ) -> Result<Self, crate::control::CommandError> {
+        self.tray_handlers
+            .push(crate::tray::command_handler(tray, item, command)?);
+        Ok(self)
     }
 
     /// Captures the consuming application's build-script update policy and resource layout.
@@ -778,15 +810,21 @@ impl<R: Route> App<R> {
             install_themes(self.themes, cx);
 
             #[cfg(feature = "tray")]
-            let services =
-                match crate::tray::install(&self.id, services, self.trays, errors.clone(), cx) {
-                    Ok(services) => services,
-                    Err(error) => {
-                        errors.record(AppError::Tray(error));
-                        crate::tray::stop(cx);
-                        return;
-                    }
-                };
+            let services = match crate::tray::install(
+                &self.id,
+                services,
+                self.trays,
+                self.tray_handlers,
+                errors.clone(),
+                cx,
+            ) {
+                Ok(services) => services,
+                Err(error) => {
+                    errors.record(AppError::Tray(error));
+                    crate::tray::stop(cx);
+                    return;
+                }
+            };
 
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {

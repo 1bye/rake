@@ -350,6 +350,18 @@ impl<R: Route> RuntimeClient<R> {
         })
     }
 
+    #[cfg(feature = "tray")]
+    pub(crate) fn dispatch_tray_command(
+        &self,
+        id: String,
+        arguments: serde_json::Value,
+    ) -> Result<Reply, ControlError> {
+        if self.router.is_shutdown() {
+            return Err(ControlError::RuntimeShutdown);
+        }
+        self.command(&Command::Run { id, arguments })
+    }
+
     fn command(&self, command: &Command) -> Result<Reply, ControlError> {
         let navigator = self.router.navigator();
 
