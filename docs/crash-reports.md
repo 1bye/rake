@@ -1,7 +1,14 @@
 # Native crash reports
 
 Native panic records are **opt-in**. Rake writes locally and never uploads a report.
-The `rake::crash` API works with `--no-default-features`, without GPUI or a display.
+The configuration, limits, record and sink types in `rake::crash` are available on
+native and Web, including with `--no-default-features`. Native filesystem operations
+(`CrashConfig::open`, `CrashReporter`, `install`, `deliver`) remain native-only and
+need no GPUI or display. `App::crash_reports` is a no-op on Web: it stores neither
+configuration nor sink and performs no hook installation, file I/O or delivery.
+Shared native/Web App builders can call it without target-specific `cfg` guards.
+Web sink delivery is the follow-up from issue #16; the existing Web console hook
+is unchanged.
 With GPUI, configure the application before calling `run`:
 
 ```rust,no_run

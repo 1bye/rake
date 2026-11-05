@@ -449,20 +449,31 @@ impl<R: Route> App<R> {
 
     /// Enables native panic recording and delivers waiting records before GPUI starts.
     ///
-    /// Disabled by default. The configuration uses this app's ID and diagnostic
-    /// collector. A failed sink retains its record and startup continues. Directory
-    /// or hook installation errors fail startup with [`AppError::Crash`]. The sink
-    /// runs synchronously, so UI consent must be deferred through a durable inbox.
-    #[cfg(not(target_family = "wasm"))]
+    /// Disabled by default. Native uses this app's ID and diagnostic collector. A
+    /// failed sink retains its record and startup continues; directory or hook setup
+    /// errors fail startup. The sink runs synchronously, so UI consent needs a durable
+    /// inbox. On Web this method stores nothing and does nothing; Web delivery is the
+    /// follow-up from issue #16. The existing Web console hook is unchanged.
     #[must_use]
     pub fn crash_reports(
-        mut self,
+        self,
         config: crate::crash::CrashConfig,
         sink: impl crate::crash::CrashSink,
     ) -> Self {
-        self.crash_reports = Some((config, Box::new(sink)));
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let mut app = self;
+            app.crash_reports = Some((config, Box::new(sink)));
 
-        self
+            app
+        }
+
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = (config, sink);
+
+            self
+        }
     }
 
     /// Registers the initial GPUI view factory, invoked once on the UI event loop.

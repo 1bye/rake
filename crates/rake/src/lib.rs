@@ -54,7 +54,6 @@ macro_rules! early_startup {
 
 pub mod control;
 
-#[cfg(not(target_family = "wasm"))]
 pub mod crash;
 
 #[cfg(all(feature = "devtools-memory", unix))]
