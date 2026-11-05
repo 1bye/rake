@@ -17,6 +17,8 @@ import urllib.request
 import urllib.parse
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from dev_bridge import BridgeError, DevBridge
 
 
@@ -38,7 +40,7 @@ with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must
     runpy.run_path(sys.argv[0], run_name='__main__')
 """
         self.server_log = (self.directory / "server.log").open("w+")
-        self.process = subprocess.Popen([sys.executable, "-c", bootstrap, str(Path(__file__).with_name("serve-web.py")), "--directory", str(self.directory), "--port", "0", "--control"], env=env, stdout=subprocess.PIPE, stderr=self.server_log, text=True)
+        self.process = subprocess.Popen([sys.executable, "-c", bootstrap, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--directory", str(self.directory), "--port", "0", "--control"], env=env, stdout=subprocess.PIPE, stderr=self.server_log, text=True)
         self.addCleanup(self.stop_server)
         with selectors.DefaultSelector() as selector:
             selector.register(self.process.stdout, selectors.EVENT_READ)

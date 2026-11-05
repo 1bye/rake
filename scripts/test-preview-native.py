@@ -13,6 +13,8 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from dev_bridge import DevBridge
 from inspector import Inspector
 

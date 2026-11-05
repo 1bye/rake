@@ -22,7 +22,7 @@ gui = ["rake/gpui"]
 workspace = true
 
 [dependencies]
-rake = { path = "../../crates/rake", default-features = false }
+rake = { package = "rake-app", path = "../../crates/rake", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 futures.workspace = true

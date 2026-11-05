@@ -6,7 +6,7 @@ component tags. There is no additional `view!` grammar or component cache.
 
 The overlay API is still evolving: customizable styling and menu roles are not
 complete. This qualification applies to overlays; `view!` is Rake's standard UI
-syntax, subject to the project's [alpha API policy](support.md).
+syntax, subject to the project's [alpha API policy](https://github.com/1bye/rake/blob/main/docs/support.md).
 
 ## Scrolling and large lists
 
@@ -58,7 +58,7 @@ initializes Base and wraps windows in its Root.
 
 With `kit`, Kit owns window-wide modals and notifications. Local Rake overlays
 suspend while a Kit dialog or sheet is active, then resume with their state
-retained. See [Base and Kit](gpui-kit.md) for focus ownership and target limits.
+retained. See [Base and Kit](https://github.com/1bye/rake/blob/main/docs/gpui-kit.md) for focus ownership and target limits.
 
 ## Overlay ownership and composition
 

@@ -86,11 +86,11 @@ RAKE_DEV_CONTROL=1 cargo run -p rake-desktop-example --features devtools
 One SVG produces native icon formats. The macOS plist merges with generated identity, the Windows manifest keeps GPUI's DPI, compatibility, long-path and heap settings, and Linux desktop metadata is generated from the common identity and category.
 
 ```sh
-cargo run -p rake-cli -- doctor --distribution --package rake-desktop-example --json
-cargo run -p rake-cli -- bundle --package rake-desktop-example --plan --json
-cargo run -p rake-cli -- bundle --package rake-desktop-example --debug --output examples/desktop/dist --json
+cargo run -p rake-app-cli -- doctor --distribution --package rake-desktop-example --json
+cargo run -p rake-app-cli -- bundle --package rake-desktop-example --plan --json
+cargo run -p rake-app-cli -- bundle --package rake-desktop-example --debug --output examples/desktop/dist --json
 # A quick macOS app bundle without building a DMG:
-cargo run -p rake-cli -- bundle --package rake-desktop-example --debug --format app --output examples/desktop/dist-app --json
+cargo run -p rake-app-cli -- bundle --package rake-desktop-example --debug --format app --output examples/desktop/dist-app --json
 ```
 
 Run native package builds on their own OS. Defaults here are ZIP/DMG on macOS,
@@ -112,8 +112,8 @@ To configure your own app:
    create protected private files and public files suitable for committing:
 
    ```sh
-   cargo run -p rake-cli -- update-key generate --private-key /secure/starter-appimage.key --public-key examples/desktop/packaging/appimage.pub
-   cargo run -p rake-cli -- update-key generate --private-key /secure/starter-velopack.key --public-key examples/desktop/packaging/velopack.pub
+   cargo run -p rake-app-cli -- update-key generate --private-key /secure/starter-appimage.key --public-key examples/desktop/packaging/appimage.pub
+   cargo run -p rake-app-cli -- update-key generate --private-key /secure/starter-velopack.key --public-key examples/desktop/packaging/velopack.pub
    ```
 
    `/secure` stands for an existing private directory you own. The example's
@@ -135,7 +135,7 @@ To configure your own app:
    thumbprint in the indicated fields. These reference enrolled local stores;
    update keys, code-signing identities and notarization profiles are distinct.
 
-Bundle builds select the Rake provider feature for their format, and on macOS also prepare the pinned Sparkle framework. Hand-written Cargo SDK development builds need `--features rake/updates-sparkle` and `RAKE_SPARKLE_FRAMEWORK=/path/to/Sparkle.framework`, so use `rake bundle` for the installed app workflow.
+Bundle builds select the Rake provider feature for their format, and on macOS also prepare the pinned Sparkle framework. Hand-written Cargo SDK development builds need `--features rake-app/updates-sparkle` and `RAKE_SPARKLE_FRAMEWORK=/path/to/Sparkle.framework`, so use `rake bundle` for the installed app workflow.
 
 - Sparkle availability checks are silent, and Download opens its native review UI.
 - AppImage and Velopack stage through the shared controller.
@@ -146,7 +146,7 @@ Bundle builds select the Rake provider feature for their format, and on macOS al
 Inspect the configuration without loading credentials or publishing:
 
 ```sh
-cargo run -p rake-cli -- release --package rake-desktop-example --plan --json
+cargo run -p rake-app-cli -- release --package rake-desktop-example --plan --json
 ```
 
 After configuring your own destinations, keys and local signing stores, build
@@ -154,14 +154,14 @@ trusted artifacts on each OS. `--trusted` verifies native signing/notarization:
 
 ```sh
 # Run on each corresponding native worker, using a fresh output directory:
-cargo run -p rake-cli -- bundle --package rake-desktop-example --trusted --output /path/to/native-output --json
+cargo run -p rake-app-cli -- bundle --package rake-desktop-example --trusted --output /path/to/native-output --json
 ```
 
 Transfer the artifact directories to the publishing machine. One promotion checks
 the whole required matrix and exports native feeds plus immutable objects:
 
 ```sh
-cargo run -p rake-cli -- release --package rake-desktop-example \
+cargo run -p rake-app-cli -- release --package rake-desktop-example \
   --from /path/to/mac-output --from /path/to/windows-output --from /path/to/linux-output --json
 ```
 

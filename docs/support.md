@@ -1,7 +1,6 @@
 # What Rake supports
 
-Rake is a source alpha. Pin a revision and commit your lockfile; there is no crates.io release
-or promise of compatibility between alpha revisions. The Rust minimum is 1.98.0. `gpui-pre` 0.3.11 is pinned in Cargo.toml and Cargo.lock.
+Rake is an alpha. Pin the version and commit your lockfile. APIs can change between alpha releases. The Rust minimum is 1.98.0. `gpui-pre` 0.3.11 is pinned in Cargo.toml and Cargo.lock.
 Existing public APIs are preserved where practical, and breaking changes come with migration
 notes.
 

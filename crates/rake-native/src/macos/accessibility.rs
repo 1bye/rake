@@ -116,6 +116,7 @@ fn intercept_children(window: &NSWindow) {
 
 unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) -> *mut NSArray {
     let superclass = OriginalCall::superclass(window, selector);
+
     let (class, original) = {
         let getters = GETTERS.lock().expect("native window getters lock poisoned");
         let mut class = superclass.unwrap_or_else(|| window.class());
@@ -133,6 +134,7 @@ unsafe extern "C-unwind" fn window_children(window: &NSWindow, selector: Sel) ->
 
     let base = {
         let _call = OriginalCall::new(window, selector, class);
+
         // SAFETY: Forward with the original receiver, selector and getter ABI.
         unsafe { original(window, selector) }
     };

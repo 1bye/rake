@@ -4,6 +4,11 @@
 
 #![cfg(all(feature = "test-support", not(target_family = "wasm")))]
 
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_fast as gpui;
+#[cfg(not(feature = "gpui-fast"))]
+extern crate gpui_pre as gpui;
+
 use gpui::{Context, Entity, Hsla, IntoElement, Render, TestAppContext, Window, prelude::*, rgb};
 
 use gpui_base::{

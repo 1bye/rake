@@ -21,9 +21,11 @@ from unittest.mock import patch
 from types import SimpleNamespace
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from dev_bridge import DevBridge
 
-spec = importlib.util.spec_from_file_location("rake_dev", Path(__file__).with_name("dev.py"))
+spec = importlib.util.spec_from_file_location("rake_dev", (Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/dev.py"))
 dev = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dev)
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,7 +75,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_only_dev_auto_enables_inspection_including_renamed_dependencies(self):
         project = object.__new__(dev.Project)
-        project.package = {"features": {}, "dependencies": [{"name": "rake", "rename": "framework", "kind": None}]}
+        project.package = {"features": {}, "dependencies": [{"name": "rake-app", "rename": "framework", "kind": None}]}
         for command in ["build", "bundle", "dev"]:
             project.args = SimpleNamespace(command=command, features=None)
             self.assertEqual(project.build_features(), "framework/devtools" if command == "dev" else "")
@@ -291,7 +293,7 @@ class SupervisorTests(unittest.TestCase):
             state = root / "status.json"
             state.write_text(json.dumps({"published": 1, "directory": str(builds / "1"), "phase": "watching"}))
             env = {**os.environ, "RAKE_CONTROL_DIR": str(root / "control")}
-            process = subprocess.Popen([sys.executable, str(ROOT / "scripts/serve-web.py"), "--port", "0", "--control",
+            process = subprocess.Popen([sys.executable, str(ROOT / "crates/rake-cli/scripts/serve-web.py"), "--port", "0", "--control",
                 "--directory", str(builds / "1"), "--build-root", str(builds), "--development-state", str(state)],
                 env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             try:
@@ -327,7 +329,7 @@ class SupervisorTests(unittest.TestCase):
         import shutil
         if not shutil.which("node"):
             self.skipTest("Node is optional for checking JavaScript syntax")
-        module = ast.parse((ROOT / "scripts/serve-web.py").read_text())
+        module = ast.parse((ROOT / "crates/rake-cli/scripts/serve-web.py").read_text())
         script = next(ast.literal_eval(item.value) for item in module.body if isinstance(item, ast.Assign)
                       and any(isinstance(target, ast.Name) and target.id == "BOOTSTRAP_JS" for target in item.targets))
         subprocess.run(["node", "--check"], input=script, check=True, capture_output=True)

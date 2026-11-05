@@ -1,10 +1,11 @@
 [package]
 name = "rake-native"
-version.workspace = true
+version = "0.1.0-alpha.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
 description = "Optional AppKit components hosted in Rake's GPUI layouts"
 
 [lints]

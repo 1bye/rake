@@ -35,14 +35,14 @@ Build the browser app with matching wasm-bindgen-cli on PATH:
 
 ```sh
 python3 scripts/build-web.py --example files
-python3 scripts/serve-web.py --example files --port 8082
+python3 crates/rake-cli/scripts/serve-web.py --example files --port 8082
 ```
 
 Produce a deployment with immutable/offline assets:
 
 ```sh
-cargo run -p rake-cli --locked -- bundle --target web --package rake-files --debug --output dist/files-release
-python3 scripts/serve-web.py --directory dist/files-release/site --port 8082
+cargo run -p rake-app-cli --locked -- bundle --target web --package rake-files --debug --output dist/files-release
+python3 crates/rake-cli/scripts/serve-web.py --directory dist/files-release/site --port 8082
 ```
 
 Follow [Web deployment order and retention](../../docs/web-applications.md).

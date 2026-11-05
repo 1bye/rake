@@ -5,7 +5,7 @@ use std::os::unix::process::CommandExt;
 pub(super) fn run(mut args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     args.remove(0);
     let script = concat!(
-        include_str!("../../../scripts/rake-agent.mjs"),
+        include_str!("../scripts/rake-agent.mjs"),
         "\nawait cliMain(process.argv.slice(1));"
     );
 

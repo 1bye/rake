@@ -79,7 +79,7 @@ coverage includes empty profiles, new/stale stream handles, UTF-8 chunking, the
 trace byte ceiling, duplicate pages, unread gaps, clock changes and failed Stop.
 
 ```sh
-cargo build -p rake-cli --offline
+cargo build -p rake-app-cli --offline
 node scripts/test-performance-cdp.mjs
 node scripts/test-performance-cdp.mjs --serve
 ```

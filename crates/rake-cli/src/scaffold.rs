@@ -10,7 +10,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const HELP: &str = "rake new NAME [--rake-path PATH | --rake-rev REV] [--git] [--json]
 Creates a routed desktop/browser app in NAME, an absent or empty directory.
 PATH is the local crates/rake directory. REV must be a full Git commit hash.
-Without either option, the dependency uses the exact revision this CLI was built from.";
+Without either option, use the matching crates.io release or the CLI checkout revision.";
 
 const FILES: &[(&str, &str)] = &[
     (
@@ -125,19 +125,12 @@ fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_revision<'revision>(
-    explicit: Option<&'revision str>,
-    built: Option<&'revision str>,
-) -> Result<&'revision str> {
-    let revision = explicit.or(built.filter(|revision| !revision.is_empty())).ok_or(
-        "this CLI has no build revision; pass --rake-rev REV with a full commit hash, or --rake-path PATH",
-    )?;
-
+fn validate_revision(revision: &str) -> Result<()> {
     if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("--rake-rev must be a full 40-character Git commit hash".into());
     }
 
-    Ok(revision)
+    Ok(())
 }
 
 fn value(arguments: &mut std::slice::Iter<'_, String>, option: &str) -> Result<String> {
@@ -266,30 +259,31 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
         return Err("--rake-path and --rake-rev cannot be combined".into());
     }
 
-    let (dependency, stack_guard) = if let Some(path) = rake_path {
+    let dependency = if let Some(path) = rake_path {
         let path = Path::new(&path).canonicalize()?;
 
         if !path.join("Cargo.toml").is_file() {
             return Err("--rake-path must contain Rake's Cargo.toml (usually crates/rake)".into());
         }
 
-        let stack_guard = path
-            .join("../../vendor/pest_stack_guard")
-            .canonicalize()
-            .map_err(|error| {
-                format!("--rake-path needs the Rake checkout's vendor/pest_stack_guard: {error}")
-            })?;
+        format!(
+            "{{ package = \"rake-app\", path = {} }}",
+            serde_json::to_string(&path)?
+        )
+    } else if let Some(revision) = revision
+        .as_deref()
+        .or(option_env!("RAKE_BUILD_REV").filter(|revision| !revision.is_empty()))
+    {
+        validate_revision(revision)?;
 
-        (
-            format!("{{ path = {} }}", serde_json::to_string(&path)?),
-            format!("{{ path = {} }}", serde_json::to_string(&stack_guard)?),
+        format!(
+            "{{ package = \"rake-app\", git = \"https://github.com/1bye/rake\", rev = \"{revision}\" }}"
         )
     } else {
-        let revision = resolve_revision(revision.as_deref(), option_env!("RAKE_BUILD_REV"))?;
-
-        let source = format!("{{ git = \"https://github.com/1bye/rake\", rev = \"{revision}\" }}");
-
-        (source.clone(), source)
+        format!(
+            "{{ package = \"rake-app\", version = \"={}\" }}",
+            env!("CARGO_PKG_VERSION")
+        )
     };
 
     let crate_name = name.replace('-', "_");
@@ -302,8 +296,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
     let parent = std::env::current_dir()?;
     let directory = parent.join(name);
 
-    let placeholders =
-        regex::Regex::new(r"\{\{(name|crate_name|application_id|dependency|stack_guard)\}\}")?;
+    let placeholders = regex::Regex::new(r"\{\{(name|crate_name|application_id|dependency)\}\}")?;
 
     let files: Vec<_> = FILES
         .iter()
@@ -314,7 +307,6 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
                     "crate_name" => &crate_name,
                     "application_id" => &application_id,
                     "dependency" => &dependency,
-                    "stack_guard" => &stack_guard,
                     _ => unreachable!("only declared template placeholders match"),
                 }
                 .to_owned()
@@ -415,24 +407,10 @@ mod tests {
     }
 
     #[test]
-    fn missing_build_revision_requires_an_explicit_pin() {
-        let revision = "0123456789abcdef0123456789abcdef01234567";
-
-        assert!(
-            resolve_revision(None, None)
-                .unwrap_err()
-                .to_string()
-                .contains("--rake-rev REV")
-        );
-        assert!(
-            resolve_revision(None, Some(""))
-                .unwrap_err()
-                .to_string()
-                .contains("--rake-rev REV")
-        );
-        assert_eq!(resolve_revision(Some(revision), None).unwrap(), revision);
-        assert_eq!(resolve_revision(None, Some(revision)).unwrap(), revision);
-        assert!(resolve_revision(Some("main"), Some(revision)).is_err());
+    fn git_revision_requires_a_full_hash() {
+        assert!(validate_revision("0123456789abcdef0123456789abcdef01234567").is_ok());
+        assert!(validate_revision("main").is_err());
+        assert!(validate_revision("").is_err());
     }
 
     #[test]

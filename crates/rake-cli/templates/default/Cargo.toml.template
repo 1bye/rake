@@ -14,7 +14,3 @@ rake = {{dependency}}
 [package.metadata.rake.bundle]
 name = "{{name}}"
 identifier = "{{application_id}}"
-
-# GPUI Base's parser needs Rake's psm compatibility patch when cross-compiling.
-[patch.crates-io]
-pest_stack_guard = {{stack_guard}}

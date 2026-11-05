@@ -14,15 +14,15 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 GROUPS = {
     "portable": [
-        ["cargo", "test", "-p", "rake", "--no-default-features", "--locked"],
-        ["cargo", "clippy", "-p", "rake", "--no-default-features", "--all-targets", "--locked", "--", "-D", "warnings"],
+        ["cargo", "test", "-p", "rake-app", "--no-default-features", "--locked"],
+        ["cargo", "clippy", "-p", "rake-app", "--no-default-features", "--all-targets", "--locked", "--", "-D", "warnings"],
     ],
     "native": [
         ["cargo", "fmt", "--all", "--check"],
-        ["cargo", "clippy", "-p", "rake", "-p", "rake-foundation", "-p", "rake-desktop-example", "-p", "rake-files", "--all-targets", "--features", "rake/view-test-support,rake/devtools", "--locked", "--", "-D", "warnings"],
-        ["cargo", "test", "-p", "rake", "--features", "view-test-support,devtools,updates", "--lib", "--test", "view_state", "--test", "services", "--test", "platform", "--test", "web_deployment", "--test", "actions", "--locked"],
+        ["cargo", "clippy", "-p", "rake-app", "-p", "rake-foundation", "-p", "rake-desktop-example", "-p", "rake-files", "--all-targets", "--features", "rake-app/view-test-support,rake-app/devtools", "--locked", "--", "-D", "warnings"],
+        ["cargo", "test", "-p", "rake-app", "--features", "view-test-support,devtools,updates", "--lib", "--test", "view_state", "--test", "services", "--test", "platform", "--test", "web_deployment", "--test", "actions", "--locked"],
         ["cargo", "test", "-p", "rake-files", "--lib", "--locked"],
-        ["cargo", "test", "-p", "rake", "--doc", "--locked"],
+        ["cargo", "test", "-p", "rake-app", "--doc", "--locked"],
     ],
     "web": [
         ["cargo", "clippy", "-p", "rake-foundation", "-p", "rake-routing", "-p", "rake-notes", "-p", "rake-files", "-p", "renamed-facade", "--lib", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
@@ -33,12 +33,12 @@ GROUPS = {
         ["node", "scripts/test-file-processing.mjs"],
         ["python3", "scripts/test-web-deployment.py"],
         ["cargo", "clippy", "-p", "rake-web-host-fixture", "--lib", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
-        ["cargo", "clippy", "-p", "rake", "--no-default-features", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
+        ["cargo", "clippy", "-p", "rake-app", "--no-default-features", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
     ],
     "ui": [
         ["python3", "scripts/test-app-startup.py"],
         ["python3", "scripts/test-app-layout.py"],
-        ["cargo", "build", "-p", "rake-cli", "-p", "rake-files", "--features", "rake/devtools", "--locked"],
+        ["cargo", "build", "-p", "rake-app-cli", "-p", "rake-files", "--features", "rake/devtools", "--locked"],
         ["python3", "scripts/test-files.py"],
     ],
     "browser": [

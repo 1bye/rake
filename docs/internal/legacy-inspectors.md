@@ -12,7 +12,7 @@ It observes the target through the existing protocol-1 runtime control API.
 From the Rake workspace, build the CLI and attach to a development session:
 
 ```sh
-cargo build -p rake-cli
+cargo build -p rake-app-cli
 # A native application bundle, with a private loopback broker owned by this command:
 target/debug/rake inspect --elements --target desktop --session /tmp/rake-dev-EXAMPLE
 # The same view compiled to Wasm, hosted on a dedicated inspector origin:

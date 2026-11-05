@@ -36,9 +36,9 @@ if actual != f"wasm-bindgen {version}":
 
 output = project / "dist" / (args.example + ("-hash" if args.hash else ""))
 shutil.copytree(project / "examples" / args.example / "web", output, dirs_exist_ok=True)
-shutil.copyfile(project / "scripts/rake-web-font-licenses.txt", output / "rake-web-font-licenses.txt")
+shutil.copyfile(project / "crates/rake-cli/scripts/rake-web-font-licenses.txt", output / "rake-web-font-licenses.txt")
 subprocess.run([
     binary, "--target", "web", "--out-dir", str(output / "pkg"),
     str(project / "target" / "wasm32-unknown-unknown" / "debug" / f"{package.replace('-', '_')}.wasm"),
 ], check=True)
-print(f"Built {output}; serve with python3 scripts/serve-web.py --example {output.name}")
+print(f"Built {output}; serve with python3 crates/rake-cli/scripts/serve-web.py --example {output.name}")

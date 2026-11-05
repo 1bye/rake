@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from bundle import BundleConfig, base_path, copy_tree
 
 ROOT = Path(__file__).resolve().parents[1]

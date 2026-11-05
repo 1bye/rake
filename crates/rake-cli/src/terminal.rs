@@ -44,7 +44,7 @@ rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
 Quit reports submission; inspect decisions and quit status while the host is still running.
 Mutations: [--no-wait] [--request-key KEY]. Retry the same payload and key after an uncertain response.
 Raw messages use the shared {\"type\":\"query\"|\"command\",\"value\":{\"type\":...}} schema.
-Development: RAKE_DEV_CONTROL=1 <native-app>; Web: scripts/serve-web.py --control.
+Development: RAKE_DEV_CONTROL=1 <native-app>; Web: crates/rake-cli/rake dev --target web.
 Build/watch: rake dev|build --target desktop|web --package PACKAGE.
 Package: rake bundle --target desktop|web --package PACKAGE [--debug] [--json].
 Web deployment: --base-path /notes/ --routing path|hash.

@@ -38,5 +38,5 @@ unbundled run shows unavailable update controls. The [desktop example](../deskto
 contains the complete packaging/update configuration.
 
 For the browser build, use `python3 scripts/build-web.py --example foundation`
-and `python3 scripts/serve-web.py --example foundation`. Native update installation
+and `python3 crates/rake-cli/scripts/serve-web.py --example foundation`. Native update installation
 is unavailable in the browser.

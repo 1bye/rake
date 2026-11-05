@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Covers: physical native windows, scoped CLI navigation, close and checkpointed restart.
 Real: macOS GPUI hosts/views, local control transport, router/work driver and CLI.
-Doubles: none. Requires: macOS GUI, cargo build -p rake-routing -p rake-cli.
+Doubles: none. Requires: macOS GUI, cargo build -p rake-routing -p rake-app-cli.
 """
 import json
 import os

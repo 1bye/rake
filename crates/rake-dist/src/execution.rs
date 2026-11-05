@@ -439,8 +439,10 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 selected
                     .dependencies
                     .iter()
-                    .find(|dependency| dependency.name == "rake")
-                    .map(|dependency| dependency.rename.as_deref().unwrap_or("rake")),
+                    .find(|dependency| {
+                        matches!(dependency.name.as_str(), "rake-app" | "rak" | "rake")
+                    })
+                    .map(|dependency| dependency.rename.as_deref().unwrap_or(&dependency.name)),
                 &build_context,
             )
         };

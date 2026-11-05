@@ -60,7 +60,7 @@ execution.
 ## Repeatable checks
 
 ```sh
-cargo build -p rake-cli -p rake-routing --features rake-routing/console-test --offline
+cargo build -p rake-app-cli -p rake-routing --features rake-routing/console-test --offline
 node scripts/test-console-cdp.mjs
 node scripts/test-console-cdp.mjs --serve
 ```
