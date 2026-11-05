@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/rake-native", "crates/rake-dist-linux", "crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/kit", "examples/desktop", "examples/distribution", "examples/foundation", "examples/files", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "examples/preview", "examples/agent", "tests/renamed-facade", "tests/web-platform"]
-exclude = ["vendor/pest_stack_guard"]
+exclude = ["vendor/gpui-base", "vendor/gpui-pre-web", "vendor/pest_stack_guard"]
 resolver = "3"
 
 [workspace.package]
@@ -43,6 +43,8 @@ undocumented_unsafe_blocks = "warn"
 [workspace.metadata.dylint]
 libraries = [{ git = "https://github.com/1bye/workflow", rev = "f62c7d7dcdf3ffd9b77de95a523544a0c688bb9b", pattern = "rust/spacing" }]
 
-# Keep pest's native guards while allowing psm's macOS-to-Wasm archive fix.
 [patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
+gpui-pre-web = { path = "vendor/gpui-pre-web" }
+# Keep pest's native guards while allowing psm's macOS-to-Wasm archive fix.
 pest_stack_guard = { path = "vendor/pest_stack_guard" }
