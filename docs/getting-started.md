@@ -9,33 +9,49 @@ This takes you from nothing to a running app, then adds the CLI, the browser and
 - For the CLI, Python 3.11 or newer.
 - For the browser, a WebGPU-capable browser.
 
-## Your first app
+## Create your first app
 
-The [README quick start](../README.md#quick-start) creates a window in one file. To explore
-further, clone this repository and run an example:
+Install the CLI from source, then scaffold an app:
 
 ```sh
-cargo run -p rake-foundation --locked
+cargo install --git https://github.com/1bye/rake --locked rake-cli
+rake new my-app
+cd my-app
+rake dev
 ```
 
-These make good starting points:
+`rake new` embeds one small template: two typed pages written with `view!`, a
+persistent layout, a semantic theme and a registered `app.greet` command. It
+writes files offline, without running Cargo, and refuses existing non-empty
+directories. Names must be portable Cargo package names (ASCII letters, digits,
+hyphens and underscores, starting with a letter, at most 64 characters, excluding
+reserved names). Paths and traversal are rejected. An existing empty directory
+is accepted. Git is initialized only with `--git`; no commit is made.
 
-- [Foundation](../examples/foundation/README.md): a standalone window with loading and retry.
-- [Desktop](../examples/desktop/README.md): pages, layouts and native updates.
-- [Text Toolkit](../examples/files/README.md): files, clipboard and preferences with no routes.
-- [Fieldnotes](notes.md): a complete app.
+The generated `rust-toolchain.toml` selects Rust 1.98.0 and the Wasm target. The
+first `rake dev` or `rake build` resolves dependencies and creates `Cargo.lock`;
+commit it. Subsequent builds use `--locked`.
 
-## Install the CLI
+Rake has no crates.io release. The generated Rake dependency and required parser
+patch use the exact Git revision captured when the CLI was built. A CLI built
+outside a Rake checkout asks for `--rake-rev REV` rather than guessing. `REV` must
+be a full commit hash available from Rake's repository. A local, unpushed revision
+will need to be pushed before other machines can fetch it.
 
-The CLI gives you watched builds, reloads and Chrome DevTools:
+When developing Rake itself, use a checkout path instead:
 
 ```sh
 cargo install --path crates/rake-cli --locked
-rake dev --package rake-notes --cdp
+rake new my-app --rake-path /absolute/path/to/rake/crates/rake --git
 ```
 
-On macOS, Ruby also provides `/usr/bin/rake`. Check that `which rake` shows the CLI you just
-installed, normally `~/.cargo/bin/rake`. If it shows Ruby's, put Cargo first:
+The path is stored absolutely, so moving the generated app doesn't silently
+change its dependency. Its README explains where to change the application ID.
+For an existing crate, copy the pinned dependency and parser patch from a
+generated manifest and follow the [README Hello example](../README.md#quick-start).
+
+On macOS, Ruby also provides `/usr/bin/rake`. Check that `which rake` shows the CLI
+you just installed, normally `~/.cargo/bin/rake`. If it shows Ruby's, put Cargo first:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -48,15 +64,23 @@ See [development and reload](development.md) for build options, and
 
 ## Run in the browser
 
+From the generated app:
+
 ```sh
-rake dev --target web --package rake-notes --cdp
+rake dev --target web
 ```
 
-This needs the `wasm32-unknown-unknown` target and a `wasm-bindgen-cli` matching `Cargo.lock`.
-The builder prints the install command if yours is missing. Your own app also needs a library
-entry point and configuration, which the [Foundation example](../examples/foundation/README.md)
-shows. Rake's browser apps draw to a GPUI canvas rather than HTML, and GPUI Kit is native only.
+Use a WebGPU-capable browser. The `wasm32-unknown-unknown` target is installed by
+the generated toolchain file. Install a `wasm-bindgen-cli` matching the resolved
+version in `Cargo.lock`; the builder prints the exact command if yours is
+missing. The template includes the shared library entry point and `web/index.html`.
+Rake draws to a GPUI canvas rather than HTML. Kit remains native-only.
 See [browser apps](web-applications.md).
+
+To explore a larger app from this repository, run `rake dev --package rake-notes`
+or `rake dev --target web --package rake-notes`. The [Foundation](../examples/foundation/README.md),
+[Desktop](../examples/desktop/README.md) and [Fieldnotes](notes.md) examples show
+loading, guards, shared services and platform features.
 
 ## Connect an agent
 
@@ -68,7 +92,7 @@ subdirectory, using your own session name:
 export RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control
 rake instances --json
 rake ctl commands list --json
-rake ctl commands run notes.list --args null --json
+rake ctl commands run app.greet --args '{"name":"Rake"}' --json
 ```
 
 Without this variable, the CLI searches its default directory and can return `[]` even while
@@ -81,5 +105,5 @@ For more, see [runtime control](runtime-control.md) and the
 
 - [Application shapes](application.md) explains how an app fits together.
 - [Routing](routing.md) adds pages, tabs and guards.
-- [View syntax](experimental-view.md) is a shorter way to write GPUI layouts.
+- [View syntax](view.md) is a shorter way to write GPUI layouts.
 - [The documentation index](README.md) lists every guide.

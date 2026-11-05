@@ -356,7 +356,7 @@ fn collects_independent_errors_and_recovers_attribute_boundaries() {
 fn documented_utilities_match_the_checked_table() {
     use super::classes::{FIXED, PREFIXES, SCALES};
 
-    let docs = include_str!("../../../../docs/experimental-view.md");
+    let docs = include_str!("../../../../docs/view.md");
 
     let list = docs
         .split("<!-- view-utilities:start -->")

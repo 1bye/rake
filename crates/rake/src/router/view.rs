@@ -1349,15 +1349,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                         view
                     })(window, cx);
 
-                    #[cfg(feature = "experimental-view")]
-                    {
-                        cx.new(|cx| rake_ui::Root::new(view, window, cx))
-                    }
-
-                    #[cfg(not(feature = "experimental-view"))]
-                    {
-                        view
-                    }
+                    cx.new(|cx| rake_ui::Root::new(view, window, cx))
                 })
                 .map(|_| ())
                 .map_err(|error| MountError(error.to_string()))

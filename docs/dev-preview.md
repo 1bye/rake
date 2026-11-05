@@ -135,7 +135,7 @@ node scripts/test-preview-ui.mjs
 python3 scripts/test-dev-bridge.py
 cargo test -p rake-cli --bin rake --offline
 cargo test -p rake --no-default-features --features devtools --lib native_preview --offline
-cargo test -p rake --features experimental-view --test inspection_compiled_out --offline
+cargo test -p rake --test inspection_compiled_out --offline
 ```
 
 Python tests cover routing, bounded input, stale references, source metadata and

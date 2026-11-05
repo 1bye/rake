@@ -1,7 +1,7 @@
 //! Covers: Unicode run ranges, nested style inheritance, coalescing, and accessible values.
 //! Real: paragraph composition and GPUI styled-text construction.
 //! Doubles: none; frame checks below use GPUI TestPlatform when enabled.
-//! Requires: experimental-view; frame checks also require native view-test-support.
+//! Requires: gpui; frame checks also require native view-test-support.
 
 use super::*;
 

@@ -21,7 +21,7 @@ devtools = ["rake/devtools"]
 view-test-support = ["rake/view-test-support"]
 
 [dependencies]
-rake = { workspace = true, features = ["experimental-view"] }
+rake = { workspace = true }
 
 [package.metadata.rake.bundle]
 name = "Rake View"

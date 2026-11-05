@@ -8,7 +8,7 @@ Python 3.11+ and the selected Rust/platform toolchain must be on PATH.
 target/debug/rake doctor
 target/debug/rake dev --target desktop --package rake-routing
 target/debug/rake dev --target web --package rake-routing --port 8081
-target/debug/rake inspect --session /tmp/rake-dev-EXAMPLE
+target/debug/rake cdp --session /tmp/rake-dev-EXAMPLE --no-open
 target/debug/rake build --target desktop --package rake-routing --release
 target/debug/rake build --target web --package rake-routing --release
 target/debug/rake bundle --target desktop --package rake-routing
@@ -46,9 +46,12 @@ RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake instances --jso
 RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake ctl reload status --json
 ```
 
-Native dev opens the [graphical inspector](devtools.md) on a separate loopback origin, and Web dev opens the app with a DevTools link. Both print a private launch URL, and the inspector stays available when an app crashes or restarts. `--no-open` keeps the servers running without opening a browser.
+Desktop dev launches the native app. Web dev prints a private launch URL and opens
+it in the default browser unless you pass `--no-open`. Build and reload status
+is available in the terminal and through `rake dev status --session PATH`.
 
-`rake inspect` connects to already-running opt-in runtimes using `RAKE_CONTROL_DIR` or `--session`, and starts no app or watcher. Use `--instance UUID` to pick an initial runtime when several are advertised.
+Use `rake dev --cdp` to start the [Chrome DevTools adapter](devtools.md) with the
+app. Use `rake cdp --session PATH` to attach an adapter to an existing session.
 
 `--json` emits supervisor events as JSON lines, and compiler and app diagnostics go to stderr. `status.json` stays readable when the app is stopped or crashed.
 

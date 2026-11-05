@@ -1,0 +1,20 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rake = {{dependency}}
+
+[package.metadata.rake.bundle]
+name = "{{name}}"
+identifier = "{{application_id}}"
+
+# GPUI Base's parser needs Rake's psm compatibility patch when cross-compiling.
+[patch.crates-io]
+pest_stack_guard = {{stack_guard}}

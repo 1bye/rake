@@ -1,0 +1,199 @@
+//! Covers: offline scaffolding, CLI validation, JSON, existing directories and opt-in Git.
+//! Real: CLI subprocess, embedded templates and filesystem. Doubles: none.
+//! Requires: Git for the explicit --git case; no Cargo invocation or network.
+
+use std::fs;
+use std::process::{Command, Output};
+
+fn new(directory: &std::path::Path, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(directory)
+        .arg("new")
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn embeds_templates_and_revision_without_invoking_tools() {
+    let directory = tempfile::tempdir().unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(directory.path())
+        .env("PATH", "")
+        .args(["new", "my-app", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let project = directory.path().join("my-app");
+    let manifest = fs::read_to_string(project.join("Cargo.toml")).unwrap();
+
+    assert_eq!(result["name"], "my-app");
+    assert_eq!(result["application_id"], "com.example.my-app");
+    assert!(manifest.contains(&format!("rev = \"{}\"", env!("RAKE_BUILD_REV"))));
+    assert!(!project.join("Cargo.lock").exists());
+    assert!(!project.join(".git").exists());
+
+    for file in [
+        "Cargo.toml",
+        "rust-toolchain.toml",
+        "src/lib.rs",
+        "src/main.rs",
+        "web/index.html",
+        ".gitignore",
+        "README.md",
+    ] {
+        let source = fs::read_to_string(project.join(file)).unwrap();
+
+        assert!(!source.contains("{{"), "unexpanded template: {file}");
+    }
+
+    assert!(
+        fs::read_to_string(project.join("src/main.rs"))
+            .unwrap()
+            .contains("my_app::main()")
+    );
+}
+
+#[test]
+fn accepts_empty_directories_and_preserves_nonempty_ones() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("app");
+
+    fs::create_dir(&project).unwrap();
+    assert!(new(directory.path(), &["app"]).status.success());
+    let manifest = fs::read(project.join("Cargo.toml")).unwrap();
+    let refused = new(directory.path(), &["app", "--json"]);
+
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&refused.stderr).unwrap();
+
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("refusing")
+    );
+    assert_eq!(fs::read(project.join("Cargo.toml")).unwrap(), manifest);
+}
+
+#[test]
+fn rejects_bad_names_options_paths_and_revisions_without_creating_files() {
+    let directory = tempfile::tempdir().unwrap();
+
+    for arguments in [
+        vec!["../escape"],
+        vec!["app", "--force"],
+        vec!["app", "--rake-rev", "main"],
+        vec!["app", "--rake-path", "/does-not-exist"],
+        vec!["app", "--rake-path", ".", "--rake-rev", "main"],
+        vec!["app", "--rake-rev"],
+    ] {
+        let output = new(directory.path(), &arguments);
+
+        assert!(!output.status.success(), "accepted {arguments:?}");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn supports_local_paths_explicit_revisions_and_git_without_a_commit() {
+    let directory = tempfile::tempdir().unwrap();
+
+    let rake = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../rake")
+        .canonicalize()
+        .unwrap();
+
+    let output = new(
+        directory.path(),
+        &[
+            "local",
+            "--rake-path",
+            rake.to_str().unwrap(),
+            "--git",
+            "--json",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(directory.path().join("local/.git/HEAD").is_file());
+    let status = Command::new("git")
+        .current_dir(directory.path().join("local"))
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .unwrap();
+
+    assert!(!status.status.success(), "scaffolding must not commit");
+    let revision = "0123456789abcdef0123456789abcdef01234567";
+    let explicit = new(directory.path(), &["pinned", "--rake-rev", revision]);
+
+    assert!(explicit.status.success());
+    assert!(
+        fs::read_to_string(directory.path().join("pinned/Cargo.toml"))
+            .unwrap()
+            .contains(revision)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_symlink_destinations() {
+    let directory = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    std::os::unix::fs::symlink(elsewhere.path(), directory.path().join("linked")).unwrap();
+    assert!(!new(directory.path(), &["linked"]).status.success());
+    assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn failed_git_init_leaves_no_project() {
+    let directory = tempfile::tempdir().unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(directory.path())
+        .env("PATH", "")
+        .args(["new", "app", "--git", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    assert!(serde_json::from_slice::<serde_json::Value>(&output.stderr).is_ok());
+}
+
+#[test]
+fn local_dependency_paths_preserve_quotes_and_template_like_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let checkout = directory.path().join("Rake \"{{stack_guard}}\"");
+    let rake = checkout.join("crates/rake");
+
+    fs::create_dir_all(&rake).unwrap();
+    fs::create_dir_all(checkout.join("vendor/pest_stack_guard")).unwrap();
+    fs::write(rake.join("Cargo.toml"), "[package]\nname = \"rake\"\n").unwrap();
+    let output = new(
+        directory.path(),
+        &["app", "--rake-path", rake.to_str().unwrap()],
+    );
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest = fs::read_to_string(directory.path().join("app/Cargo.toml")).unwrap();
+
+    assert!(manifest.contains(&serde_json::to_string(&rake.canonicalize().unwrap()).unwrap()));
+}

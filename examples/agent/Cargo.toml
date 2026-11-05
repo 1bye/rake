@@ -13,4 +13,4 @@ workspace = true
 devtools = ["rake/devtools"]
 
 [dependencies]
-rake = { workspace = true, features = ["experimental-view"] }
+rake = { workspace = true }

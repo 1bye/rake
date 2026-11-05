@@ -12,10 +12,10 @@ target/debug/rake dev --target desktop --package rake-view --cdp --no-open
 target/debug/rake cdp --session /tmp/rake-dev-EXAMPLE --no-open --json
 ```
 
-The first command builds and runs the example with a CDP adapter; the second
-attaches an adapter to an existing session. Copy its printed `devtoolsFrontendUrl`
-into stock Chrome. The dev supervisor still starts the legacy inspector service;
-use the CDP URL for supported workflows. Python 3.11+ is required by the supervisor.
+The first command builds and runs the example and prints a CDP discovery URL.
+Open its `/json/list` endpoint and paste the target’s `devtoolsFrontendUrl` into
+Chrome. To attach to a session started without `--cdp`, use the second command
+and paste the URL it prints. Python 3.11+ is required by the supervisor.
 
 ## Connection
 
@@ -78,8 +78,6 @@ With `--session`, supervisor process text appears as `[stdout]` or `[stderr]`, u
 `rake cdp --session PATH --export-trace trace.json` exports retained spans as Chrome trace-event JSON for Perfetto or Performance's Load profile. Synchronous nesting uses complete events, overlapping spans use async begin and end IDs, and incomplete captures use flagged instant events. The export is bounded to 4 MiB and includes loss counts. Times are elapsed wall time on a logical thread lane, not CPU samples.
 
 Live `Tracing.start` and `end` record GPUI frames and source-attributed callback wall timings. ReportEvents and ReturnAsStream (uncompressed JSON, IO.read and close) are both supported, with a 4 MiB budget and explicit loss reporting. This doesn't record browser rendering, V8 CPU profiles or GPU execution. See frame recording below.
-
-`rake dev --target desktop --package rake-routing --cdp` starts the adapter under the supervisor and prints its discovery URL beside the HTML inspector URL. The HTML inspector offers **Open in Chrome DevTools** for its selected target, though Chrome may require pasting that link into its address bar. A later `rake inspect --session PATH` can reuse the running adapter.
 
 Elements shows captured boundaries, including automatic `rake::view!` nodes, as a synthetic document with semantic IDs, authored styles and measured width and height. Omitted boundaries appear as a comment. Source locations stay in Rake's inspection details rather than `data-source` attributes.
 
@@ -155,7 +153,7 @@ Console evaluation accepts only a registered typed command with JSON arguments, 
 - `rake.` and `demo.` namespaces provide read-only completion data.
 - Results include an `observe` token. Pass that literal JSON to `rake.operation(...)` to observe without resubmitting. Tokens include the runtime UUID and expire on replacement.
 
-Elements Find (`Cmd/Ctrl+F`) searches captured names, IDs and text, including collapsed branches, and `#id` matches an exact semantic ID. Its context menu can focus registered elements and scroll registered containers. Both Rake frontends expose the same actions plus **Open Rust source**. See [navigation and handle registration](element-inspection.md#elements-navigation).
+Elements Find (`Cmd/Ctrl+F`) searches captured names, IDs and text, including collapsed branches, and `#id` matches an exact semantic ID. Its context menu can focus registered elements and scroll registered containers. Use `rake.openSource($0)` in Console to open the selected element’s Rust source. See [navigation and handle registration](element-inspection.md#elements-navigation).
 
 **Opening source from Console**
 
@@ -188,19 +186,12 @@ Bulk clear is rejected and Chrome's optimistic table is restored. Browser cookie
 
 All runtime reads and actions use protocol-1 `Request` and `Reply` envelopes through `RuntimeClient`, with the same queries, commands and event cursors as the terminal. The host only proxies private native IPC or the authenticated Web broker, and doesn't mutate router state or approve decisions.
 
-Browser snapshots come from Events, never from reconstructing logs. Revision gaps replace state with a fresh snapshot and increment the visible resynchronization count.
+Every mutation has a stable request key. Submission receipt, operation commit and
+decision acknowledgement stay distinct. Use [the control CLI](runtime-control.md) to query
+operations and respond to guarded decisions.
 
-[Guarded quit](guarded-quit.md) uses the Workspace controls and Decisions panel
-through the shared dispatcher. Native exit disconnects its runtime; Web quit
-leaves a closed workspace queryable in the same document.
-
-Every mutation has a stable request key. Submission receipt, operation commit and decision acknowledgement stay distinct. An uncertain delivery offers a retry of the exact original envelope and key, scoped to its original runtime.
-
-A timeout, disconnect, runtime switch or Pause updates never cancels work or chooses a guard response. JavaScript forms reject unsafe integers, while the typed Rust client and CLI can represent larger ones.
-
-The UI polls serially, observes diagnostics incrementally, keeps at most 1,000 records or 2 MiB, and renders at most 100 rows per page. It shows collector and output drops, inspector evictions, missing sequences and resynchronizations.
-
-Capture is best effort, so these bounds and the 1 MiB frame limit can leave incomplete trees or request lifecycles. Process output keeps 128 records of at most 2 KiB each, with truncation indicators. Nothing in these buffers defines authoritative task or operation state.
+Process output keeps 128 records of at most 2 KiB each, with truncation
+indicators. Diagnostics are observations of the running app.
 
 ## Capture and access boundaries
 
@@ -215,8 +206,7 @@ Control stays opt-in and development-only, and production builds contain no insp
 - The loopback server validates Host and Origin and requires the private session token.
 - The launch fragment is removed and stored in that tab's session storage, and public assets contain no credentials.
 - Keep private launch URLs and diagnostic exports private.
-- An inspector-only native origin serves only inspector assets, validates owner-only discovery and socket paths, and forwards no arbitrary filesystem or process commands.
-- Web application origins can inspect Web runtimes only, and can't proxy native IPC.
+- The development Web bridge handles browser runtimes. The CDP adapter reads private native runtime discovery and socket paths.
 
 A pixel/GPU debugger, CPU profiler and native code loader are outside this
 stage. Native IPC currently requires Unix. Native replacement continues to use

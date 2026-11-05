@@ -4,8 +4,6 @@
 use std::sync::Arc;
 
 use gpui::{AnyView, AppContext, Render, Window, WindowOptions};
-#[cfg(not(feature = "experimental-view"))]
-use gpui::{Context, IntoElement};
 
 use crate::diagnostics::{DiagnosticsConfig, DiagnosticsError};
 use crate::http::{HttpClient, HttpConfig};
@@ -54,10 +52,8 @@ mod update_services;
 #[cfg(target_family = "wasm")]
 mod web_fonts;
 
-#[cfg(feature = "experimental-view")]
 type ThemeInstaller = Box<dyn FnOnce(&mut gpui::App)>;
 
-#[cfg(feature = "experimental-view")]
 fn install_themes(themes: Vec<ThemeInstaller>, cx: &mut gpui::App) {
     for install in themes {
         install(cx);
@@ -101,7 +97,6 @@ pub struct App<R: Route = NoRoute> {
     admissions: Vec<AdmissionCallback<R>>,
     control: crate::control::ControlConfig,
     commands: crate::control::Commands,
-    #[cfg(feature = "experimental-view")]
     themes: Vec<ThemeInstaller>,
     #[cfg(feature = "updates")]
     distribution: Option<(&'static str, &'static str)>,
@@ -137,7 +132,6 @@ impl App<NoRoute> {
             admissions: Vec::new(),
             control: crate::control::ControlConfig::default(),
             commands: crate::control::Commands::new(),
-            #[cfg(feature = "experimental-view")]
             themes: Vec::new(),
             #[cfg(feature = "updates")]
             distribution: None,
@@ -197,7 +191,6 @@ impl App<NoRoute> {
             admissions: Vec::new(),
             control: self.control,
             commands: self.commands,
-            #[cfg(feature = "experimental-view")]
             themes: self.themes,
             #[cfg(feature = "updates")]
             distribution: self.distribution,
@@ -293,7 +286,7 @@ impl<R: Route> App<R> {
 
     /// Installs an owned theme once on the UI thread before the first window mounts.
     ///
-    /// Available with `experimental-view`. Calling this before or after `routes`
+    /// Calling this before or after `routes`
     /// has the same effect. Multiple theme types coexist; for repeated types the
     /// last registration wins. No `Clone` bound is required. Later theme changes
     /// use [`crate::theme::install`] and are not reset by navigation.
@@ -302,7 +295,6 @@ impl<R: Route> App<R> {
     /// struct Colors { accent: u32 }
     /// let app = rake::App::new("example.theme").theme(Colors { accent: 0x365849 });
     /// ```
-    #[cfg(feature = "experimental-view")]
     #[must_use]
     pub fn theme<T: 'static>(mut self, theme: T) -> Self {
         self.themes
@@ -768,11 +760,8 @@ impl<R: Route> App<R> {
                 return;
             }
 
-            #[cfg(feature = "experimental-view")]
-            {
-                rake_ui::init(cx);
-                install_themes(self.themes, cx);
-            }
+            rake_ui::init(cx);
+            install_themes(self.themes, cx);
 
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
@@ -821,15 +810,7 @@ impl<R: Route> App<R> {
                     }
                 };
 
-                #[cfg(feature = "experimental-view")]
-                {
-                    cx.new(|cx| rake_ui::Root::new(view, window, cx))
-                }
-
-                #[cfg(not(feature = "experimental-view"))]
-                {
-                    cx.new(|_| RootView(view))
-                }
+                cx.new(|cx| rake_ui::Root::new(view, window, cx))
             });
 
             if let Err(error) = opened {
@@ -994,16 +975,6 @@ impl gpui::http_client::HttpClient for GpuiHttp {
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod http_tests;
-
-#[cfg(not(feature = "experimental-view"))]
-struct RootView(AnyView);
-
-#[cfg(not(feature = "experimental-view"))]
-impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.0.clone()
-    }
-}
 
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 struct UpdatesDriver {

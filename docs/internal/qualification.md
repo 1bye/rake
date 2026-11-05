@@ -63,7 +63,7 @@ run. These checks require the actual devices/assistive tools and remain release 
    importing/exporting files. Capture before/after numbers with the same workload.
    An empty or synthetic CPU benchmark is not a GPU/frame performance result.
 
-The experimental markup surface is not advertised as screen-reader-qualified until
+The markup surface is not advertised as screen-reader-qualified until
 those runs pass. New convenience APIs do not eliminate these host-specific checks.
 
 ## Release gates and evidence

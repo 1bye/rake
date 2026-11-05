@@ -1,4 +1,4 @@
-//! Experimental window-scoped overlays for GPUI and `view!` components.
+//! Window-scoped overlays with an evolving API for GPUI and `view!` components.
 
 mod elements;
 mod state;

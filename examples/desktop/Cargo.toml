@@ -13,7 +13,7 @@ workspace = true
 devtools = ["rake/devtools"]
 
 [dependencies]
-rake = { workspace = true, features = ["experimental-view", "updates"] }
+rake = { workspace = true, features = ["updates"] }
 
 [build-dependencies]
 rake-build = { path = "../../crates/rake-build" }

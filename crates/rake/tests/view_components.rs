@@ -1,9 +1,9 @@
 //! Covers: component props, children, slots, callbacks, and single-evaluation ownership.
 //! Real: public macro expansion, GPUI RenderOnce components, and accessible text conversion.
 //! Doubles: none.
-//! Requires: experimental-view; no display or GPU.
+//! Requires: gpui; no display or GPU.
 
-#![cfg(feature = "experimental-view")]
+#![cfg(feature = "gpui")]
 
 use std::cell::RefCell;
 use std::rc::Rc;

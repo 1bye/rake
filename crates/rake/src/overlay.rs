@@ -1,5 +1,5 @@
-//! Experimental window-scoped overlays for GPUI and `view!` components.
+//! Window-scoped overlays with an evolving API for GPUI and `view!` components.
 
-#![doc = include_str!("../../../docs/experimental-overlays.md")]
+#![doc = include_str!("../../../docs/overlays.md")]
 
 pub use rake_ui::overlay::*;

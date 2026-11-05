@@ -58,7 +58,7 @@ it preserves the initial destination and guards.
 
 Register parameters with `(..)` or `{ .. }`, then read the full destination in the page constructor. Registration expands to a checked Rust match with no implicit fallback, so a missing destination fails compilation. The result implements `RouteViews`, which remains available for custom dispatchers and hosts.
 
-`App::theme` (available with `experimental-view`) installs each owned theme once on the UI thread, before the first window or route mounts. You can register it before or after `.routes`, and navigation never reinstalls it.
+`App::theme` (available with the default `gpui` feature) installs each owned theme once on the UI thread, before the first window or route mounts. You can register it before or after `.routes`, and navigation never reinstalls it.
 
 Ordinary shared components only implement `Render` or `RenderOnce` and needn't depend on `PageContext`. See the [small desktop app](../examples/desktop/README.md) for complete page implementations and app setup.
 

@@ -16,7 +16,7 @@ required-features = ["gui"]
 
 [features]
 default = ["gui"]
-gui = ["rake/gpui", "rake/experimental-view"]
+gui = ["rake/gpui"]
 
 [lints]
 workspace = true

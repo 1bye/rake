@@ -1,9 +1,9 @@
 //! Covers: public view expansion, real GPUI styles/semantics, and control-flow evaluation.
 //! Real: macro expansion and GPUI element construction.
 //! Doubles: none.
-//! Requires: experimental-view; no display/GPU execution.
+//! Requires: gpui; no display/GPU execution.
 
-#![cfg(feature = "experimental-view")]
+#![cfg(feature = "gpui")]
 
 use std::cell::RefCell;
 

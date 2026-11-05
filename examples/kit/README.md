@@ -8,7 +8,7 @@ shared theme from either page or dialog, and switch tabs to check retained state
 Kit is excluded from the example's default features, so ordinary workspace
 checks do not turn it on. Kit 0.9.0 is explicitly native-only in Rake: its Web
 platform defaults enable multithreading and require nightly. Core Rake and
-Base's experimental views remain available on stable single-threaded Web.
+Base's views remain available on stable single-threaded Web.
 
 The table and buttons have explicit inspection boundaries. Geometry, authored
 wrapper styles, source sites, declared handlers and explicitly supplied focus

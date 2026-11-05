@@ -19,7 +19,7 @@ Support doesn't mean every API exists everywhere:
 
 - Native secondary windows, helper processes and native installer updates are unavailable in a browser.
 - Browser background work can be suspended.
-- `experimental-view` is opt-in. It isn't a complete widget toolkit or a verified browser screen-reader interface.
+- `view!` is the standard UI syntax, included with the default `gpui` feature. It isn't a complete widget toolkit or a verified browser screen-reader interface. APIs follow the alpha policy above.
 - Web rendering uses GPUI's canvas and GPU, not HTML layout.
 
 Check capabilities and handle errors at the operation boundary, rather than branching only on the compilation target.

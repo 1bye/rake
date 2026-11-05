@@ -1,8 +1,12 @@
-# Experimental scrolling and overlays
+# Scrolling and overlays
 
-Enable Rake's `experimental-view` feature. Scrolling and virtualization use GPUI's
+Available with Rake's default `gpui` feature. Scrolling and virtualization use GPUI's
 existing elements; overlay controls live in `rake::overlay` and use ordinary typed
 component tags. There is no additional `view!` grammar or component cache.
+
+The overlay API is still evolving: customizable styling and menu roles are not
+complete. This qualification applies to overlays; `view!` is Rake's standard UI
+syntax, subject to the project's [alpha API policy](support.md).
 
 ## Scrolling and large lists
 

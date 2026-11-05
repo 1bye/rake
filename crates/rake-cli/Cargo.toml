@@ -34,3 +34,11 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 
 [dev-dependencies]
 rake = { path = "../rake", default-features = false }
+
+[features]
+# Explicit consumer builds: real compiler/SDK/wasm prerequisites, outside the fast suite.
+scaffold-tests = []
+
+[[test]]
+name = "new_build"
+required-features = ["scaffold-tests"]

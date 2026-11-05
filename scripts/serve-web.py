@@ -28,7 +28,6 @@ parser.add_argument("--build-root", type=Path, help="Immutable published Web bui
 parser.add_argument("--inspector-only", action="store_true", help="Serve native runtime inspection without application assets")
 parser.add_argument("--process-output", type=Path, help="Private supervisor output snapshot")
 parser.add_argument("--inspector-app", type=Path, help="Serve the built Rake Elements Wasm frontend on the dedicated inspector origin")
-parser.add_argument("--cdp-url", help="Private loopback CDP discovery endpoint")
 parser.add_argument("--preview-helper", type=Path, help="Compiled macOS capture helper, used only on the native preview origin")
 args = parser.parse_args()
 if args.preview_helper and not (args.inspector_only and args.control and args.development_state):
@@ -41,12 +40,10 @@ if args.inspector_app:
         parser.error("--inspector-app must contain a built Rake Inspector")
 if bool(args.development_state) != bool(args.build_root) or (args.development_state and not args.control):
     parser.error("development state/build root require each other and --control")
-if args.cdp_url and not args.control:
-    parser.error("--cdp-url requires --control")
 if args.inspector_only and not args.control:
     parser.error("--inspector-only requires --control")
 bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
-inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only, cdp_url=args.cdp_url) if bridge else None
+inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only) if bridge else None
 preview = None
 if args.preview_helper:
     from preview import Preview
@@ -94,16 +91,6 @@ BOOTSTRAP_JS = rb"""(() => {
         const runtime = document.documentElement.getAttribute('data-rake-runtime');
         seenRuntime ||= !!runtime;
         if (state.published > build && !seenRuntime) location.reload();
-        let status = document.getElementById('__rake_development');
-        if (!status && document.body) {
-          status = document.createElement('div');
-          status.id = '__rake_development';
-          status.setAttribute('role', 'status');
-          status.style.cssText = 'position:fixed;bottom:8px;right:8px;max-width:70vw;max-height:35vh;overflow:auto;white-space:pre-wrap;background:#18232b;color:#f0f4e8;padding:8px;font:12px monospace;z-index:2147483647';
-          document.body.append(status);
-        }
-        const failure = runtime && state.runtimes[runtime] && state.runtimes[runtime].error;
-        if (status) { status.replaceChildren(document.createTextNode('Rake: ' + state.phase + (failure || state.error ? '\n' + (failure || state.error) : ''))); const link = document.createElement('a'); link.href = '/__rake/inspector#__rake_control=' + token; link.textContent = ' | Devtools'; link.style.color = '#b6e8cb'; link.target = '_blank'; link.rel = 'noopener'; status.append(link); }
       } catch (_) { /* The running application remains usable while disconnected. */ }
     }
     // Recursive scheduling bounds concurrent requests if the server is slow.
@@ -219,19 +206,6 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             return io.BytesIO(encoded)
-        if bridge and route in {"/__rake/inspector", "/__rake/inspector.js", "/__rake/inspector-model.js", "/__rake/inspector.css"}:
-            filename = {"/__rake/inspector": "inspector.html", "/__rake/inspector.js": "inspector.js",
-                        "/__rake/inspector-model.js": "inspector-model.js", "/__rake/inspector.css": "inspector.css"}[route]
-            encoded = Path(__file__).with_name(filename).read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8" if filename.endswith(".html") else
-                             "text/css; charset=utf-8" if filename.endswith(".css") else "text/javascript; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            return io.BytesIO(encoded)
         if args.inspector_app and route == "/__rake/elements":
             self.send_response(302)
             self.send_header("Location", "/__rake/elements/")
@@ -325,7 +299,7 @@ if bridge:
     bridge.url = f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
-    launch_url += f"{'/__rake/preview' if preview else '/__rake/elements/' if args.inspector_app else '/__rake/inspector' if args.inspector_only else '/'}#__rake_control={bridge.token}"
+    launch_url += f"{'/__rake/preview' if preview else '/__rake/elements/' if args.inspector_app else '/'}#__rake_control={bridge.token}"
 print(f"Serving {args.example} at {launch_url}", flush=True)
 
 stopping = False

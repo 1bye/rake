@@ -1,4 +1,4 @@
-//! Accessible text conversion and image delegation for experimental views.
+//! Accessible text conversion and image delegation for views.
 
 mod button;
 mod paragraph;

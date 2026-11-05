@@ -17,7 +17,6 @@ mod cache;
 
 pub(super) use cache::BoundaryCache;
 
-#[cfg(feature = "experimental-view")]
 pub(crate) mod authored;
 mod geometry;
 mod provenance;
@@ -64,9 +63,7 @@ pub fn inspect<E: IntoElement>(element: E) -> Inspected<E::Element> {
         owner: None,
         focus: None,
         scroll: None,
-        #[cfg(feature = "experimental-view")]
         definition: None,
-        #[cfg(feature = "experimental-view")]
         view_key: None,
         style_reader: None,
         original_style: None,
@@ -91,9 +88,7 @@ pub struct Inspected<E: gpui::Element> {
     owner: Option<(TabId, EntryId)>,
     focus: Option<gpui::FocusHandle>,
     scroll: Option<gpui::ScrollHandle>,
-    #[cfg(feature = "experimental-view")]
     definition: Option<&'static authored::Definition>,
-    #[cfg(feature = "experimental-view")]
     view_key: Option<ElementId>,
     style_reader: Option<fn(&mut E) -> gpui::StyleRefinement>,
     original_style: Option<gpui::StyleRefinement>,
@@ -176,9 +171,7 @@ impl<E: gpui::Element> Inspected<E> {
             kind: std::any::type_name::<E>(),
             source: self.source,
             owner,
-            #[cfg(feature = "experimental-view")]
             view_site: self.definition.map(|definition| definition.site),
-            #[cfg(feature = "experimental-view")]
             view_key: self.view_key.clone(),
         }
     }
@@ -317,9 +310,7 @@ pub(in crate::inspection) struct BoundaryKey {
     kind: &'static str,
     source: &'static Location<'static>,
     owner: Option<(TabId, EntryId)>,
-    #[cfg(feature = "experimental-view")]
     view_site: Option<&'static str>,
-    #[cfg(feature = "experimental-view")]
     view_key: Option<ElementId>,
 }
 
@@ -569,7 +560,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(timer) = timer {
             timer.finish();
         }
-        #[cfg(feature = "experimental-view")]
+
         if capturing
             && let Some(button) =
                 (&self.inner as &dyn std::any::Any).downcast_ref::<rake_ui::view::Button>()
@@ -592,7 +583,6 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     .map(|interactive| interactive.compute_style(id, None, window, cx))
             })
             .flatten();
-        #[cfg(feature = "experimental-view")]
         let style = style.or_else(|| {
             (&self.inner as &dyn std::any::Any)
                 .downcast_ref::<rake_ui::view::Button>()?
@@ -694,7 +684,6 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
 
             let (a11y, text) = a11y.expect("active capture sampled accessibility");
             let mut handlers = Vec::new();
-            #[cfg(feature = "experimental-view")]
             if let Some(definition) = self.definition {
                 for handler in definition.handlers.iter().take(32) {
                     handlers.push(super::EventHandler {
@@ -764,22 +753,13 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
                     line: self.source.line(),
                     column: self.source.column(),
                 }),
-                view: {
-                    #[cfg(feature = "experimental-view")]
-                    {
-                        self.definition.map(|definition| {
-                            self.cache
-                                .as_ref()
-                                .expect("captured boundary cache")
-                                .borrow_mut()
-                                .view(definition, std::any::type_name::<E>(), &mut truncated)
-                        })
-                    }
-                    #[cfg(not(feature = "experimental-view"))]
-                    {
-                        None
-                    }
-                },
+                view: self.definition.map(|definition| {
+                    self.cache
+                        .as_ref()
+                        .expect("captured boundary cache")
+                        .borrow_mut()
+                        .view(definition, std::any::type_name::<E>(), &mut truncated)
+                }),
                 layout: valid.then_some(layout),
                 box_model: valid
                     .then(|| {
@@ -1141,12 +1121,13 @@ fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interacti
     use gpui::InteractiveElement;
     use std::any::Any;
     let inner = inner as &mut dyn Any;
-    #[cfg(feature = "experimental-view")]
+
     if inner.is::<rake_ui::view::Button>() {
         return inner
             .downcast_mut::<rake_ui::view::Button>()?
             .inspection_interactivity();
     }
+
     if inner.is::<gpui::Div>() {
         Some(inner.downcast_mut::<gpui::Div>()?.interactivity())
     } else {
@@ -1169,7 +1150,6 @@ fn resolved_style<E: gpui::Element>(
     use gpui::Refineable;
     use std::any::Any;
     let hitbox = (prepaint as &dyn Any).downcast_ref::<Option<gpui::Hitbox>>();
-    #[cfg(feature = "experimental-view")]
     let hitbox = hitbox.or_else(|| {
         (prepaint as &dyn Any)
             .downcast_ref::<Box<dyn Any>>()?
@@ -1185,7 +1165,6 @@ fn resolved_style<E: gpui::Element>(
                 .downcast_mut::<gpui::Stateful<gpui::Div>>()
                 .map(|div| div.style().clone())
         });
-    #[cfg(feature = "experimental-view")]
     let authored = authored.or_else(|| {
         (inner as &mut dyn Any)
             .downcast_mut::<rake_ui::view::Button>()
@@ -1196,7 +1175,6 @@ fn resolved_style<E: gpui::Element>(
     base.refine(&authored);
     let style =
         interactivity(inner).map(|interactive| interactive.compute_style(id, hitbox, window, cx));
-    #[cfg(feature = "experimental-view")]
     let style = style.or_else(|| {
         (inner as &dyn Any)
             .downcast_ref::<rake_ui::view::Button>()?

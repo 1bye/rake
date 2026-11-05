@@ -129,8 +129,12 @@ def run_output(processes, command, *, cwd=None, env=None, artifact=None):
 
 class Project:
     def __init__(self, args, processes):
+        # New apps resolve their first lockfile here; existing projects stay locked.
+        workspace = json.loads(processes.output(
+            ["cargo", "metadata", "--format-version", "1", "--no-deps", "--manifest-path", str(args.manifest_path)]))
+        locked = ["--locked"] if (Path(workspace["workspace_root"]) / "Cargo.lock").is_file() else []
         metadata = json.loads(processes.output(
-            ["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", str(args.manifest_path)]))
+            ["cargo", "metadata", "--format-version", "1", *locked, "--manifest-path", str(args.manifest_path)]))
         packages = [item for item in metadata["packages"] if item["id"] in metadata["workspace_members"]]
         if args.package:
             packages = [item for item in packages if item["name"] == args.package]
@@ -308,17 +312,8 @@ class Supervisor:
         print(json.dumps({"event": phase, **fields}) if self.project.args.json else f"rake: {phase}" + (f" — {fields['error']}" if fields.get("error") else ""), flush=True)
 
     def start_server(self):
-        waiting = self.session / "waiting"
-        waiting.mkdir()
-        (waiting / "index.html").write_text("<!doctype html><html><head><title>Rake development</title></head><body>Waiting for the first successful build…</body></html>")
         env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control),
                "RAKE_SOURCE_ROOT": os.environ.get("RAKE_SOURCE_ROOT", str(self.project.root))}
-        cdp_url = None
-        preview_helper = None
-        if getattr(self.project.args, "preview", False):
-            preview_helper = self.session / "preview-capture"
-            run_output(self.processes, ["xcrun", "swiftc", str(Path(__file__).with_name("preview.swift")),
-                "-module-cache-path", str(self.session / "swift-cache"), "-o", str(preview_helper)])
         if self.project.args.cdp:
             executable = os.environ.get("RAKE_CLI") or shutil.which("rake")
             if not executable:
@@ -332,20 +327,30 @@ class Supervisor:
             cdp.stdout.close()
             private_json(self.session / "cdp.json", {"url": cdp_url})
             print(json.dumps(ready) if self.project.args.json else f"Chrome DevTools discovery: {cdp_url}/json/list", flush=True)
+        if self.project.args.target == "desktop" and not self.project.args.preview:
+            return
+
+        waiting = self.session / "waiting"
+        waiting.mkdir()
+        (waiting / "index.html").write_text("<!doctype html><html><head><title>Rake development</title></head><body>Waiting for the first successful build…</body></html>")
+        preview_helper = None
+        if self.project.args.preview:
+            preview_helper = self.session / "preview-capture"
+            run_output(self.processes, ["xcrun", "swiftc", str(Path(__file__).with_name("preview.swift")),
+                "-module-cache-path", str(self.session / "swift-cache"), "-o", str(preview_helper)])
         self.server = self.processes.start([sys.executable, str(Path(__file__).with_name("serve-web.py")),
             "--control", "--port", str(self.project.args.port), "--directory", str(waiting),
             "--development-state", str(self.status_path), "--build-root", str(self.builds),
             "--process-output", str(self.session / "output.json"),
             *(["--inspector-only"] if self.project.args.target == "desktop" else []),
-            *(["--preview-helper", str(preview_helper)] if preview_helper else []),
-            *(["--cdp-url", cdp_url] if cdp_url else [])],
+            *(["--preview-helper", str(preview_helper)] if preview_helper else [])],
             env=env, stdout=subprocess.PIPE, text=True)
         # Server writes its private launch URL after binding, before serving requests.
         line = self.server.stdout.readline()
         if not line.startswith("Serving "):
             raise RuntimeError("development server could not start")
         url = line.split(" at ", 1)[1].strip()
-        print(json.dumps({"event": "preview_listening" if preview_helper else "web_listening" if self.project.args.target == "web" else "inspector_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
+        print(json.dumps({"event": "preview_listening" if preview_helper else "web_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
               f"{line.strip()}\nSession: {self.session}", flush=True)
         self.server.stdout.close()
         if not self.project.args.no_open:
@@ -622,6 +627,8 @@ def main():
             parser.error("output cannot be a symlink")
         args.output = args.output.resolve()
     if args.command == "inspect":
+        if not args.elements:
+            parser.error("the legacy inspector was removed; use rake cdp --session PATH to connect Chrome DevTools")
         env = dict(os.environ)
         if args.session:
             # Keep the advertised socket spelling: macOS /tmp and /private/tmp
@@ -634,25 +641,19 @@ def main():
             raise KeyboardInterrupt()
         signal.signal(signal.SIGTERM, interrupt_inspector)
         try:
-            elements_artifact = None
-            if args.elements:
-                elements_directory = tempfile.TemporaryDirectory(prefix="rake-elements-", dir="/tmp")
-                inspector_args = copy.copy(args)
-                inspector_args.package = "rake-inspector"
-                inspector_args.bin = None
-                inspector_args.features = None
-                inspector_args.web_dir = None
-                inspector_args.output = None
-                project = Project(inspector_args, processes)
-                elements_artifact = project.build(processes, Path(elements_directory.name) / "application")
+            elements_directory = tempfile.TemporaryDirectory(prefix="rake-elements-", dir="/tmp")
+            inspector_args = copy.copy(args)
+            inspector_args.package = "rake-inspector"
+            inspector_args.bin = None
+            inspector_args.features = None
+            inspector_args.web_dir = None
+            inspector_args.output = None
+            project = Project(inspector_args, processes)
+            elements_artifact = project.build(processes, Path(elements_directory.name) / "application")
             command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", str(args.port)]
-            if args.elements and args.target == "web":
+            if args.target == "web":
                 command += ["--inspector-app", str(elements_artifact)]
             if args.session:
-                cdp_metadata = args.session / "cdp.json"
-                if cdp_metadata.is_file():
-                    from inspector import private_read
-                    command += ["--cdp-url", private_read(cdp_metadata)["url"]]
                 command += ["--development-state", str(args.session.resolve() / "status.json"),
                             "--build-root", str(args.session.resolve() / "builds"),
                             "--process-output", str(args.session.resolve() / "output.json")]
@@ -661,13 +662,13 @@ def main():
             if not line.startswith("Serving "):
                 raise RuntimeError("inspector server could not start")
             url = line.split(" at ", 1)[1].strip()
-            if args.instance and (not args.elements or args.target == "web"):
+            if args.instance and args.target == "web":
                 from urllib.parse import quote
                 url = url.replace("#__rake_control=", "?instance=" + quote(args.instance, safe="") + "#__rake_control=")
             print(json.dumps({"event": "inspector_listening", "url": url}) if args.json else url, flush=True)
             viewer = None
             if not args.no_open:
-                if args.elements and args.target == "desktop":
+                if args.target == "desktop":
                     viewer_env = {**env, "RAKE_INSPECTOR_URL": url}
                     if args.instance:
                         viewer_env["RAKE_INSPECTOR_INSTANCE"] = args.instance

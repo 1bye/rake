@@ -22,7 +22,7 @@ GROUPS = {
         ["cargo", "clippy", "-p", "rake", "-p", "rake-foundation", "-p", "rake-desktop-example", "-p", "rake-files", "--all-targets", "--features", "rake/view-test-support,rake/devtools", "--locked", "--", "-D", "warnings"],
         ["cargo", "test", "-p", "rake", "--features", "view-test-support,devtools,updates", "--lib", "--test", "view_state", "--test", "services", "--test", "platform", "--test", "web_deployment", "--test", "actions", "--locked"],
         ["cargo", "test", "-p", "rake-files", "--lib", "--locked"],
-        ["cargo", "test", "-p", "rake", "--features", "experimental-view", "--doc", "--locked"],
+        ["cargo", "test", "-p", "rake", "--doc", "--locked"],
     ],
     "web": [
         ["cargo", "clippy", "-p", "rake-foundation", "-p", "rake-routing", "-p", "rake-notes", "-p", "rake-files", "-p", "renamed-facade", "--lib", "--target", "wasm32-unknown-unknown", "--locked", "--", "-D", "warnings"],
