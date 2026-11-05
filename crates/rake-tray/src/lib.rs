@@ -4,8 +4,10 @@
 //! Registration and presentation are distinct: a shell may hide registered items.
 
 mod accelerator;
+mod animation;
 mod backend;
 mod capability;
+mod composition;
 mod event;
 mod host;
 mod image;
@@ -17,8 +19,13 @@ mod spec;
 pub mod windows;
 
 pub use accelerator::Accelerator;
+pub use animation::Animation;
 pub use capability::{Backend, Capabilities, Feature, Support};
-pub use event::{Anchor, Button, CoordinateSpace, Event, EventKind, Input, Point, Rect};
+pub use composition::Corner;
+pub use event::{
+    Anchor, BalloonEvent, Button, CoordinateSpace, Event, EventKind, Input, Modifiers, Point,
+    PointerAction, Rect,
+};
 pub use host::{Applied, Collection, Handle, Host, Registration, State};
 pub use image::{Image, ImageRepresentation, Rendering};
 pub use menu::{CheckState, ItemKind, Menu, MenuItem};

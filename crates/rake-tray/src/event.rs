@@ -66,6 +66,45 @@ pub struct Input {
     pub click_count: Option<u32>,
     /// Opaque short-lived compositor activation token.
     pub activation_token: Option<String>,
+    /// Native monotonic event time; Windows message milliseconds wrap after 2^32 ms.
+    pub timestamp: Option<std::time::Duration>,
+    /// Actual native event modifiers, when available.
+    pub modifiers: Option<Modifiers>,
+}
+
+/// Native legacy balloon lifecycle; delivery remains shell-controlled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BalloonEvent {
+    /// Balloon became visible.
+    Shown,
+    /// Balloon was hidden.
+    Hidden,
+    /// Balloon timed out.
+    TimedOut,
+    /// User selected the balloon.
+    Selected,
+}
+/// Native pointer detail, separate from semantic activation to avoid duplicate commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerAction {
+    /// Native button press.
+    Down,
+    /// Native button release.
+    Up,
+    /// Native double click.
+    DoubleClick,
+}
+/// Input modifiers observed from the native event/message.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    /// Shift.
+    pub shift: bool,
+    /// Control.
+    pub control: bool,
+    /// Alt/Option.
+    pub alt: bool,
+    /// Command/Windows/Super.
+    pub super_key: bool,
 }
 
 /// Semantic native event with stable registration context.
@@ -103,6 +142,14 @@ pub enum EventKind {
     Removed,
     /// Application requested hiding this registration.
     Hidden,
+    /// Native pointer message; does not dispatch semantic Activate again.
+    Pointer(PointerAction),
+    /// Legacy Windows balloon lifecycle.
+    Balloon(BalloonEvent),
+    /// Shell requests rich-tooltip presentation.
+    TooltipRequested,
+    /// Shell requests rich-tooltip dismissal.
+    TooltipDismissed,
     /// Native callback ingress overflowed; commands were not silently ignored.
     Overflow,
 }

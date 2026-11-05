@@ -524,6 +524,7 @@ impl Handle {
             spec.validate()?;
             backend::validate(&spec)?;
             if spec.interaction != entry.spec.interaction { return Err(Error::InvalidInput("primary interaction is fixed for a registration; recreate the item to change it".into())); }
+            if spec.windows.as_ref().and_then(|w| w.guid) != entry.spec.windows.as_ref().and_then(|w| w.guid) { return Err(Error::InvalidInput("Windows GUID is fixed for a registration".into())); }
             if spec.linux.as_ref().is_some_and(|l| l.sandboxed) != entry.spec.linux.as_ref().is_some_and(|l| l.sandboxed) {
                 return Err(Error::InvalidInput("SNI bus-name policy is fixed for a registration".into()));
             }
@@ -605,6 +606,26 @@ impl Handle {
     /// Requests hiding and stops item-owned transient presentation.
     pub fn hide(&self) -> Request<Applied> {
         self.change(|s| s.visible = false)
+    }
+
+    /// Sends/withdraws an optional Windows legacy balloon, separate from modern notifications.
+    /// # Errors
+    /// Reports unsupported platforms, invalid buffers, removal, shutdown or Shell failure.
+    pub fn legacy_balloon(&self, balloon: crate::windows::LegacyBalloon) -> Request<()> {
+        if let Err(error) = balloon.validate() {
+            return crate::ready(Err(error));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            match self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable)) {
+                Ok(native) => native.legacy_balloon(balloon),
+                Err(error) => crate::ready(Err(error)),
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            crate::ready(Err(Error::Unsupported(crate::Feature::LegacyBalloon)))
+        }
     }
 
     /// Queries current geometry evidence without inventing an empty rectangle.

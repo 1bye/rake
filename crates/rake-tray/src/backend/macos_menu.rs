@@ -54,6 +54,16 @@ define_class!(
                 .sink
                 .send(EventKind::MenuOpened, None, Input::default());
         }
+        #[unsafe(method(menu:willHighlightItem:))]
+        fn highlighted(&self, _: &NSMenu, item: Option<&NSMenuItem>) {
+            let id = item
+                .and_then(|item| item.representedObject())
+                .and_then(|value| value.downcast::<NSString>().ok())
+                .map(|value| value.to_string());
+            self.ivars()
+                .sink
+                .send(EventKind::MenuHighlighted(id), None, Input::default());
+        }
         #[unsafe(method(menuDidClose:))]
         fn did_close(&self, _: &NSMenu) {
             self.ivars().tracking.set(false);
@@ -193,6 +203,9 @@ fn build(
                     item.setMixedStateImage(mixed.as_deref());
                 }
             }
+            if let Some(text) = &appearance.attributed_title {
+                item.setAttributedTitle(Some(&*super::macos::attributed_text(text)?));
+            }
             item.setAlternate(appearance.alternate);
             item.setIndentationLevel(appearance.indentation.into());
             item.setToolTip(
@@ -259,6 +272,10 @@ fn build(
             item.setTarget(Some(&target));
         }
         targets.push(target);
+        // SAFETY: Rake owns this private NSString payload; no user pointer is attached.
+        unsafe {
+            item.setRepresentedObject(Some(&NSString::from_str(&spec.id)));
+        }
         menu.addItem(&item);
     }
 

@@ -36,6 +36,7 @@ pub struct Tray {
     pub(crate) host_policy: HostPolicy,
     pub(crate) macos: Option<crate::macos::Appearance>,
     pub(crate) linux: Option<crate::linux::Presentation>,
+    pub(crate) windows: Option<crate::windows::Presentation>,
 }
 
 impl Tray {
@@ -51,6 +52,7 @@ impl Tray {
             host_policy: HostPolicy::Wait,
             macos: None,
             linux: None,
+            windows: None,
         }
     }
     /// Sets the image source.
@@ -93,6 +95,11 @@ impl Tray {
         self.linux = Some(presentation);
         self
     }
+    /// Requests Windows identity/presentation; other backends reject it.
+    pub fn windows(mut self, presentation: crate::windows::Presentation) -> Self {
+        self.windows = Some(presentation);
+        self
+    }
     /// Returns the application-stable name.
     pub fn id(&self) -> &str {
         &self.id
@@ -114,7 +121,18 @@ impl Tray {
         crate::identifier(&self.id)?;
         crate::text(&self.tooltip, "tooltip", 16 * 1024)?;
 
+        if let Some(windows) = &self.windows
+            && windows.guid == Some([0; 16])
+        {
+            return Err(Error::InvalidInput("Windows GUID cannot be nil".into()));
+        }
         if let Some(mac) = &self.macos {
+            for text in [&mac.attributed_title, &mac.attributed_alternate_title]
+                .into_iter()
+                .flatten()
+            {
+                text.validate()?;
+            }
             for value in [
                 &mac.title,
                 &mac.alternate_title,

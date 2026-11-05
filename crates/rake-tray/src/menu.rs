@@ -170,6 +170,14 @@ impl Menu {
                 crate::Accelerator::parse(accelerator)?;
             }
             if let Some(mac) = &item.macos {
+                if let Some(text) = &mac.attributed_title {
+                    text.validate()?;
+                }
+                if mac.attributed_title.is_some() && mac.subtitle.is_some() {
+                    return Err(Error::InvalidInput(
+                        "AppKit subtitles require a plain menu title".into(),
+                    ));
+                }
                 if let Some(crate::macos::Badge::Text(value)) = &mac.badge {
                     crate::text(value, "badge", 1024)?;
                 }

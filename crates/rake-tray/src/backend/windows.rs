@@ -36,6 +36,7 @@ struct WindowState {
     removed: Cell<bool>,
     revision: Cell<u64>,
     image: RefCell<Option<crate::Image>>,
+    balloon_icon: Cell<HICON>,
 }
 
 // SAFETY: This procedure only borrows WindowState while its owning Item keeps the
@@ -101,6 +102,21 @@ unsafe extern "system" fn window_proc(
             let kind = match code {
                 NIN_SELECT | NIN_KEYSELECT => Some(EventKind::Activate),
                 WM_CONTEXTMENU => Some(EventKind::ContextMenu),
+                NIN_BALLOONSHOW => Some(EventKind::Balloon(crate::BalloonEvent::Shown)),
+                NIN_BALLOONHIDE => Some(EventKind::Balloon(crate::BalloonEvent::Hidden)),
+                NIN_BALLOONTIMEOUT => Some(EventKind::Balloon(crate::BalloonEvent::TimedOut)),
+                NIN_BALLOONUSERCLICK => Some(EventKind::Balloon(crate::BalloonEvent::Selected)),
+                NIN_POPUPOPEN => Some(EventKind::TooltipRequested),
+                NIN_POPUPCLOSE => Some(EventKind::TooltipDismissed),
+                WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+                    Some(EventKind::Pointer(crate::PointerAction::Down))
+                }
+                WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => {
+                    Some(EventKind::Pointer(crate::PointerAction::Up))
+                }
+                WM_LBUTTONDBLCLK | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK => {
+                    Some(EventKind::Pointer(crate::PointerAction::DoubleClick))
+                }
                 _ => None,
             };
 
@@ -117,11 +133,27 @@ unsafe extern "system" fn window_proc(
                 };
                 // Version-4 coordinates are documented for select/keyboard select;
                 // WM_CONTEXTMENU does not promise a meaningful packed position.
-                let anchor = (code != WM_CONTEXTMENU).then_some(anchor);
+                let anchor =
+                    matches!(code, NIN_SELECT | NIN_KEYSELECT | NIN_POPUPOPEN).then_some(anchor);
+                // SAFETY: Reads the timestamp of this thread's current native message.
+                let timestamp = unsafe { GetMessageTime() } as u32 as u64;
                 state.sink.send(
                     kind,
                     anchor,
                     Input {
+                        timestamp: Some(std::time::Duration::from_millis(timestamp)),
+                        button: match code {
+                            WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
+                                Some(crate::Button::Primary)
+                            }
+                            WM_RBUTTONDOWN | WM_RBUTTONUP | WM_RBUTTONDBLCLK => {
+                                Some(crate::Button::Secondary)
+                            }
+                            WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MBUTTONDBLCLK => {
+                                Some(crate::Button::Middle)
+                            }
+                            _ => None,
+                        },
                         keyboard: match code {
                             NIN_KEYSELECT => Some(true),
                             NIN_SELECT => Some(false),
@@ -174,10 +206,16 @@ impl Item {
         unsafe {
             RegisterClassW(&class);
         }
-        let identity = uuid::Uuid::new_v5(
+        let derived_identity = uuid::Uuid::new_v5(
             &uuid::Uuid::NAMESPACE_URL,
             format!("{application}/{}", spec.id).as_bytes(),
         );
+        let identity = spec
+            .windows
+            .as_ref()
+            .and_then(|w| w.guid)
+            .map(uuid::Uuid::from_bytes)
+            .unwrap_or(derived_identity);
         let data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             uID: 1,
@@ -196,6 +234,7 @@ impl Item {
             removed: Cell::new(false),
             revision: Cell::new(0),
             image: RefCell::new(None),
+            balloon_icon: Cell::new(null_mut()),
         });
         // A hidden top-level window receives TaskbarCreated broadcasts; HWND_MESSAGE does not.
         // SAFETY: Box remains at a stable address until DestroyWindow completes in Item::drop.
@@ -269,6 +308,15 @@ impl Item {
             *slot = ch;
         }
 
+        if spec
+            .windows
+            .as_ref()
+            .is_some_and(|w| w.tooltip == crate::windows::TooltipMode::Events)
+        {
+            data.uFlags &= !NIF_SHOWTIP;
+        } else {
+            data.uFlags |= NIF_SHOWTIP;
+        }
         data.dwState = if spec.visible { 0 } else { NIS_HIDDEN };
         self.state.data.set(data);
 
@@ -358,6 +406,74 @@ impl Item {
             space: CoordinateSpace::PhysicalScreen,
         }))
     }
+    pub(crate) fn legacy_balloon(&self, balloon: crate::windows::LegacyBalloon) -> Request<()> {
+        use crate::windows::BalloonIcon;
+        let result = (|| {
+            if self.state.removed.get() {
+                return Err(Error::Removed);
+            }
+            let custom = match &balloon.icon {
+                BalloonIcon::Custom(image) => Some(make_icon(image, self.hwnd)?),
+                _ => None,
+            };
+            let mut data = self.state.data.get();
+            data.uFlags = NIF_GUID | NIF_INFO | if balloon.realtime { NIF_REALTIME } else { 0 };
+            data.szInfo.fill(0);
+            data.szInfoTitle.fill(0);
+            for (slot, ch) in data.szInfo.iter_mut().zip(balloon.body.encode_utf16()) {
+                *slot = ch;
+            }
+            for (slot, ch) in data
+                .szInfoTitle
+                .iter_mut()
+                .zip(balloon.title.encode_utf16())
+            {
+                *slot = ch;
+            }
+            data.dwInfoFlags = match balloon.icon {
+                BalloonIcon::None => NIIF_NONE,
+                BalloonIcon::Information => NIIF_INFO,
+                BalloonIcon::Warning => NIIF_WARNING,
+                BalloonIcon::Error => NIIF_ERROR,
+                BalloonIcon::Custom(_) => NIIF_USER,
+            } | if balloon.silent { NIIF_NOSOUND } else { 0 }
+                | if balloon.large_icon {
+                    NIIF_LARGE_ICON
+                } else {
+                    0
+                }
+                | if balloon.respect_quiet_time {
+                    NIIF_RESPECT_QUIET_TIME
+                } else {
+                    0
+                };
+            data.hBalloonIcon = custom.unwrap_or(null_mut());
+            // SAFETY: Valid fixed buffers and owned custom HICON remain live during Shell copy.
+            let accepted = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } != 0;
+            if !accepted {
+                if let Some(icon) = custom {
+                    /* SAFETY: New, unattached icon owned here. */
+                    unsafe {
+                        DestroyIcon(icon);
+                    }
+                }
+                return Err(failure("send legacy tray balloon"));
+            }
+            let old = self
+                .state
+                .balloon_icon
+                .replace(custom.unwrap_or(null_mut()));
+            if !old.is_null() {
+                /* SAFETY: Previous balloon image is no longer the desired resource. */
+                unsafe {
+                    DestroyIcon(old);
+                }
+            }
+            Ok(())
+        })();
+        crate::ready(result)
+    }
+
     pub(crate) fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
         let Some(icon) = self.anchor()?.and_then(|anchor| anchor.rect) else {
             return Ok(None);
@@ -418,6 +534,10 @@ impl Drop for Item {
         // SAFETY: The HWND and Box are exclusively owned; no callback can access the Box after destroy.
         unsafe {
             DestroyWindow(self.hwnd);
+            let balloon = self.state.balloon_icon.get();
+            if !balloon.is_null() {
+                DestroyIcon(balloon);
+            }
             let icon = self.state.data.get().hIcon;
 
             if !icon.is_null() {

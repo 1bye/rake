@@ -110,9 +110,15 @@ fn probe() -> Result<(), Box<dyn std::error::Error>> {
         return Err("invalid native popup work area".into());
     }
     first.probe_menu_selection(0)?;
-    let selected = block_on(collection.next_event())?;
+    let selected = loop {
+        let event = block_on(collection.next_event())?;
+        if event.kind == EventKind::Removed && event.id == "text-only" {
+            continue;
+        }
+        break event;
+    };
     if selected.kind != EventKind::MenuSelected("open".into()) {
-        return Err("native menu target/action did not reach the event consumer".into());
+        return Err(format!("unexpected native menu event: {:?}", selected.kind).into());
     }
     block_on(first.set_tooltip("Updated first item"))?;
     first.probe_menu_selection(0)?;

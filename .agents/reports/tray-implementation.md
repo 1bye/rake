@@ -130,3 +130,29 @@ Validation: deterministic placement regression, facade all-target Clippy, actual
 AppKit display/anchor query probe. Full popup focus/accessibility journeys remain
 manual qualification. macOS 27 expanded sessions cannot compile/run with installed
 26.6 SDK and are explicitly unavailable; no absent symbol is hard-linked.
+
+## P7 — bounded effects, input and legacy compatibility
+
+Added straight-alpha bilinear badge composition and antialiased progress rings for
+all raster representations, plus bounded animation descriptions/playback. Playback
+is item-owned, respects reduced motion, never catches up in bursts, and stops on
+hide/removal/host loss/external revision/shutdown. Windows legacy balloons validate
+UTF-16 limits, own custom images, expose quiet-time/sound/realtime options, and
+report native lifecycle separately from modern notifications. Windows Shell pointer
+messages do not duplicate semantic command activation. AppKit includes native
+modifier/time/click evidence and menu highlight events. Attributed native text
+supports per-run font size/bold/color for item/alternate/menu titles. Windows GUID
+and rich-tooltip request policy are explicit registration/presentation options.
+
+Validation: core 10 tests including alpha edges, progress bounds, invalid cadence
+and UTF-16 balloons; actual AppKit run-loop probe passed; facade Clippy and foreign
+Linux Clippy passed. Windows foreign Clippy was rerun after its safety-comment fix.
+
+Advanced compatibility disposition: no XEmbed fallback is installed (SNI is the
+selected Linux backend; fallback arbitration/legacy-panel qualification is absent).
+No Ayatana label/order API is exported by ksni 0.3.7. Native AppKit view replacement,
+Windows owner-draw/modeless/drag menus, hover/drag destination hooks and macOS 27
+expanded sessions are not claimed: the required public host integration and native
+keyboard/accessibility gates are not established in this environment. These are
+explicit unsupported surfaces, with GPUI popup/SNI/composed-image alternatives;
+the final API inventory records the individual families without stub success.

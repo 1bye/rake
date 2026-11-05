@@ -35,13 +35,21 @@ define_class!(
             let button = event.as_ref().and_then(|event| match event.r#type() {
                 NSEventType::LeftMouseUp => Some(Button::Primary),
                 NSEventType::RightMouseUp => Some(Button::Secondary),
+                NSEventType::OtherMouseUp if event.buttonNumber() == 2 => Some(Button::Middle),
                 NSEventType::OtherMouseUp => Some(Button::Other(event.buttonNumber() as u16)),
                 _ => None,
             });
             let kind = if button == Some(Button::Secondary) { EventKind::ContextMenu }
-                else if matches!(button, Some(Button::Other(2))) { EventKind::SecondaryActivate }
+                else if button == Some(Button::Middle) { EventKind::SecondaryActivate }
                 else { EventKind::Activate };
-            let input = Input { button, keyboard: button.map(|_| false),
+            let modifiers = event.as_ref().map(|event| {
+                let flags = event.modifierFlags();
+                use objc2_app_kit::NSEventModifierFlags as Flags;
+                crate::Modifiers { shift: flags.contains(Flags::Shift), control: flags.contains(Flags::Control), alt: flags.contains(Flags::Option), super_key: flags.contains(Flags::Command) }
+            });
+            let timestamp = event.as_ref().and_then(|event| std::time::Duration::try_from_secs_f64(event.timestamp()).ok());
+            let keyboard = event.as_ref().and_then(|event| match event.r#type() { NSEventType::KeyDown | NSEventType::KeyUp => Some(true), _ => button.map(|_| false) });
+            let input = Input { button, keyboard, modifiers, timestamp,
                 click_count: event.as_ref().filter(|_| button.is_some()).map(|event| event.clickCount() as u32), ..Input::default() };
             self.ivars().send(kind, None, input);
         }
@@ -190,6 +198,16 @@ impl Item {
             .as_ref()
             .map(|image| native_image(image, &appearance.accessibility_label))
             .transpose()?;
+        let attributed = appearance
+            .attributed_title
+            .as_ref()
+            .map(attributed_text)
+            .transpose()?;
+        let alternate_attributed = appearance
+            .attributed_alternate_title
+            .as_ref()
+            .map(attributed_text)
+            .transpose()?;
         if spec.interaction == crate::Interaction::NativeMenu {
             self.item.setMenu(menu.as_ref().map(|m| &*m.menu));
         } else {
@@ -203,6 +221,12 @@ impl Item {
         });
         button.setTitle(&NSString::from_str(&appearance.title));
         button.setAlternateTitle(&NSString::from_str(&appearance.alternate_title));
+        if let Some(text) = attributed {
+            button.setAttributedTitle(&text);
+        }
+        if let Some(text) = alternate_attributed {
+            button.setAttributedAlternateTitle(&text);
+        }
         button.setAlternateImage(alternate.as_deref());
         button.setImagePosition(NSCellImagePosition::ImageLeading);
         button.setAppearsDisabled(appearance.appears_disabled);
@@ -435,4 +459,48 @@ pub(super) fn native_image(
     image.setSize(NSSize::new(18.0, 18.0));
     image.setTemplate(source.rendering == Rendering::Template);
     Ok(image)
+}
+
+pub(super) fn attributed_text(
+    text: &crate::macos::AttributedText,
+) -> Result<Retained<objc2_foundation::NSAttributedString>, Error> {
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName};
+    use objc2_foundation::{NSAttributedString, NSDictionary, NSMutableAttributedString};
+    let result = NSMutableAttributedString::new();
+    for run in &text.runs {
+        let font = if run.bold {
+            NSFont::boldSystemFontOfSize(run.size.into())
+        } else {
+            NSFont::systemFontOfSize(run.size.into())
+        };
+        let color = run.color.map(|rgba| {
+            NSColor::colorWithSRGBRed_green_blue_alpha(
+                f64::from(rgba[0]) / 255.0,
+                f64::from(rgba[1]) / 255.0,
+                f64::from(rgba[2]) / 255.0,
+                f64::from(rgba[3]) / 255.0,
+            )
+        });
+        // SAFETY: Static AppKit attribute keys; paired values have the documented NSFont/NSColor types.
+        let attributes: Retained<NSDictionary<NSString, AnyObject>> = unsafe {
+            let mut keys = vec![NSFontAttributeName];
+            let mut values: Vec<&AnyObject> = vec![&font];
+            if let Some(color) = &color {
+                keys.push(NSForegroundColorAttributeName);
+                values.push(color);
+            }
+            NSDictionary::from_slices(&keys, &values)
+        };
+        // SAFETY: Attribute keys and values above match AppKit's documented attributed-string contract.
+        let part = unsafe {
+            NSAttributedString::initWithString_attributes(
+                NSAttributedString::alloc(),
+                &NSString::from_str(&run.text),
+                Some(&attributes),
+            )
+        };
+        result.appendAttributedString(&part);
+    }
+    Ok(result.into_super())
 }

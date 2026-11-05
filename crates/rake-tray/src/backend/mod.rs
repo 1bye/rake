@@ -45,6 +45,16 @@ pub(crate) fn capabilities() -> Capabilities {
     let mut features = std::collections::BTreeMap::new();
 
     if backend != Backend::Unsupported {
+        features.insert(
+            Feature::Popup,
+            Support::Conditional(
+                "requires the Rake GPUI host; SNI uses explicit centered-window fallback",
+            ),
+        );
+        features.insert(
+            Feature::Animation,
+            Support::Conditional("requires application-owned GPUI playback; obeys reduced motion"),
+        );
         for feature in [
             Feature::MultipleItems,
             Feature::Image,
@@ -91,6 +101,15 @@ pub(crate) fn capabilities() -> Capabilities {
         }
     }
     if backend == Backend::Windows {
+        features.insert(Feature::LegacyBalloon, Support::Supported);
+        features.insert(
+            Feature::PointerEvents,
+            Support::Conditional("only native callbacks delivered by the current Shell"),
+        );
+        features.insert(
+            Feature::DoubleClick,
+            Support::Conditional("only native double-click messages; no timer synthesis"),
+        );
         features.insert(Feature::ShowMenu, Support::Supported);
         features.insert(Feature::MenuImages, Support::Supported);
         features.insert(
@@ -124,6 +143,9 @@ pub(crate) fn validate(spec: &Tray) -> Result<(), Error> {
     if capabilities.backend() == Backend::Unsupported {
         return Err(Error::Unsupported(Feature::MultipleItems));
     }
+    if spec.windows.is_some() && !cfg!(target_os = "windows") {
+        return Err(Error::Unsupported(Feature::PersistentIdentity));
+    }
     if spec.macos.is_some() && !cfg!(target_os = "macos") {
         return Err(Error::Unsupported(Feature::InlineText));
     }
@@ -147,7 +169,15 @@ pub(crate) fn validate(spec: &Tray) -> Result<(), Error> {
             validate_image(image)?;
         }
     }
-    if spec.image.is_none() && !spec.macos.as_ref().is_some_and(|mac| !mac.title.is_empty()) {
+    if spec.image.is_none()
+        && !spec.macos.as_ref().is_some_and(|mac| {
+            !mac.title.is_empty()
+                || mac
+                    .attributed_title
+                    .as_ref()
+                    .is_some_and(|text| text.runs.iter().any(|run| !run.text.is_empty()))
+        })
+    {
         return Err(Error::InvalidInput("tray item requires an image".into()));
     }
     if let Some(menu) = &spec.menu {

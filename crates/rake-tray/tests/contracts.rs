@@ -74,3 +74,40 @@ fn native_text_and_accelerators_are_validated_without_a_desktop() {
     item.access_key = Some('x');
     assert!(Menu::new().item(item).validate().is_err());
 }
+
+#[test]
+fn composed_badges_preserve_straight_alpha_and_progress_bounds() {
+    use rake_tray::{Animation, Corner};
+    let transparent = Image::new(ImageRepresentation::rgba(4, 4, vec![0; 64]).unwrap());
+    let badge = Image::new(ImageRepresentation::rgba(1, 1, vec![255, 0, 0, 128]).unwrap());
+    let composed = transparent.badge(&badge, Corner::BottomRight, 0.5).unwrap();
+    let bytes = composed.representations()[0].bytes();
+    assert_eq!(
+        &bytes[60..64],
+        &[255, 0, 0, 128],
+        "transparent pixels must not darken badge edges"
+    );
+    assert_eq!(&bytes[..4], &[0, 0, 0, 0]);
+    assert_eq!(
+        transparent
+            .progress(0.0, 0.25, [0, 255, 0, 255])
+            .unwrap()
+            .representations()[0]
+            .bytes(),
+        transparent.representations()[0].bytes()
+    );
+    assert!(transparent.progress(f32::NAN, 0.1, [0; 4]).is_err());
+    assert!(transparent.badge(&badge, Corner::TopLeft, 1.1).is_err());
+    assert!(
+        Animation::new(
+            vec![transparent.clone(), transparent],
+            std::time::Duration::from_millis(1)
+        )
+        .is_err()
+    );
+    assert!(
+        rake_tray::windows::LegacyBalloon::new("x", "💡".repeat(128))
+            .validate()
+            .is_err()
+    );
+}

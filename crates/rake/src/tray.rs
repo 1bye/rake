@@ -5,10 +5,11 @@
 //! handles do not retain the runtime or unregister an item when dropped.
 
 pub use rake_tray::{
-    Accelerator, Anchor, Applied, Backend, Button, Capabilities, CheckState, Collection,
-    CoordinateSpace, Error, Event, EventKind, Feature, Handle, HostPolicy, Image,
-    ImageRepresentation, Input, Interaction, ItemKind, Menu, MenuItem, Point, Rect, Registration,
-    Rendering, Request, State, Support, Tray, linux, macos, windows,
+    Accelerator, Anchor, Animation, Applied, Backend, BalloonEvent, Button, Capabilities,
+    CheckState, Collection, CoordinateSpace, Corner, Error, Event, EventKind, Feature, Handle,
+    HostPolicy, Image, ImageRepresentation, Input, Interaction, ItemKind, Menu, MenuItem,
+    Modifiers, Point, PointerAction, Rect, Registration, Rendering, Request, State, Support, Tray,
+    linux, macos, windows,
 };
 
 mod popup;
@@ -74,6 +75,7 @@ struct Owner {
     host: rake_tray::Host,
     dispatch: Dispatcher,
     popups: popup::Popups,
+    animations: std::collections::BTreeMap<String, gpui::Task<()>>,
     _startup: gpui::Task<()>,
     _events: gpui::Task<()>,
     _quit: gpui::Subscription,
@@ -152,6 +154,7 @@ pub(crate) fn install(
     });
     let quit = cx.on_app_quit(|cx| {
         popup::dismiss_all(cx);
+        cx.global_mut::<Owner>().animations.clear();
         let shutdown = cx.global::<Owner>().host.shutdown();
         async move {
             if let Err(error) = shutdown.await {
@@ -171,6 +174,7 @@ pub(crate) fn install(
                         | EventKind::VisibilityChanged(false)
                 ) {
                     popup::removed(&event.id, event.generation, cx);
+                    cx.global_mut::<Owner>().animations.remove(&event.id);
                 }
                 if let Ok(handle) = collection.get(&event.id)
                     && let Ok(spec) = handle.specification()
@@ -218,12 +222,70 @@ pub(crate) fn install(
         host,
         dispatch,
         popups,
+        animations: Default::default(),
         _startup: startup,
         _events: events,
         _quit: quit,
     });
 
     Ok(services)
+}
+
+/// Starts item-owned animation, replacing any previous playback for this ID.
+/// Stops on hide/removal/host loss/shutdown or external icon updates. Reduced
+/// motion applies the first frame and stops. No timer exists for a static item.
+/// # Errors
+/// Reports a missing/stopped host, absent item or unsupported image rendering.
+pub fn animate(id: &str, animation: Animation, cx: &mut gpui::App) -> Result<(), Error> {
+    let handle = cx
+        .try_global::<Owner>()
+        .ok_or(Error::HostUnavailable)?
+        .host
+        .collection()
+        .get(id)?;
+    let initial = handle.state()?;
+    let mut revision = initial.requested_revision;
+    let frames = animation.frames().to_vec();
+    let interval = animation.interval();
+    let id = id.to_owned();
+    let task = cx.spawn(async move |cx| {
+        let mut frame = 0;
+        loop {
+            let Ok(state) = handle.state() else {
+                break;
+            };
+            if !state.requested_visible
+                || state.registration != Registration::Registered
+                || state.requested_revision != revision
+            {
+                break;
+            }
+            match handle.set_icon(frames[frame].clone()).await {
+                Ok(applied) => revision = applied.revision,
+                Err(error) => {
+                    crate::error!(%error, "tray animation stopped");
+                    break;
+                }
+            }
+            if cx.update(|cx| cx.reduce_motion()) {
+                break;
+            }
+            frame = (frame + 1) % frames.len();
+            cx.background_executor().timer(interval).await;
+        }
+    });
+    cx.global_mut::<Owner>().animations.insert(id, task);
+    Ok(())
+}
+/// Cancels playback while preserving the last applied icon.
+/// # Errors
+/// Reports an absent/stopped tray host.
+pub fn stop_animation(id: &str, cx: &mut gpui::App) -> Result<(), Error> {
+    if cx.try_global::<Owner>().is_none() {
+        return Err(Error::HostUnavailable);
+    }
+    cx.global_mut::<Owner>().animations.remove(id);
+    Ok(())
 }
 
 #[cfg(test)]

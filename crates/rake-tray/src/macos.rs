@@ -19,8 +19,12 @@ pub struct Appearance {
     pub length: ItemLength,
     /// Text beside the icon; permits a text-only item.
     pub title: String,
+    /// Attributed inline text, replacing the plain title.
+    pub attributed_title: Option<AttributedText>,
     /// Pressed-state text.
     pub alternate_title: String,
+    /// Attributed pressed text, replacing alternate_title.
+    pub attributed_alternate_title: Option<AttributedText>,
     /// Pressed-state image.
     pub alternate_image: Option<Image>,
     /// Appearance-only disabled styling; events still work.
@@ -39,6 +43,8 @@ pub struct Appearance {
 pub struct MenuAppearance {
     /// Native secondary text (macOS 14.4+).
     pub subtitle: Option<String>,
+    /// Native attributed label, replacing the plain label.
+    pub attributed_title: Option<AttributedText>,
     /// Native tooltip.
     pub tooltip: Option<String>,
     /// Option-key alternate item.
@@ -134,4 +140,43 @@ pub struct Metrics {
     pub length: f64,
     /// Actual native visible property, independent of requested visibility.
     pub visible: bool,
+}
+
+/// A run of attributed native text using a system font and explicit color.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextRun {
+    /// Plain text for this run.
+    pub text: String,
+    /// System font size in logical points, 1–256.
+    pub size: u16,
+    /// Bold system font.
+    pub bold: bool,
+    /// Optional sRGB RGBA8 foreground color; None uses native default styling.
+    pub color: Option<[u8; 4]>,
+}
+/// Attributed native text; each run can have its own system font and color.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AttributedText {
+    /// Ordered runs; at most 128, with at most 16 KiB of combined UTF-8 text.
+    pub runs: Vec<TextRun>,
+}
+impl AttributedText {
+    pub(crate) fn validate(&self) -> Result<(), crate::Error> {
+        if self.runs.len() > 128
+            || self.runs.iter().map(|run| run.text.len()).sum::<usize>() > 16 * 1024
+        {
+            return Err(crate::Error::InvalidInput(
+                "attributed text exceeds run/text limits".into(),
+            ));
+        }
+        for run in &self.runs {
+            crate::text(&run.text, "attributed text", 16 * 1024)?;
+            if !(1..=256).contains(&run.size) {
+                return Err(crate::Error::InvalidInput(
+                    "attributed font size must be 1–256 points".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
