@@ -256,11 +256,11 @@ rake::view! {
     <div class="flex flex-row gap-3">
         <button disabled={!can_check}
             on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}>
-            "Check for updates"
+            Check for updates
         </button>
         <button disabled={!can_restart}
             on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}>
-            "Restart to update"
+            Restart to update
         </button>
     </div>
 }
