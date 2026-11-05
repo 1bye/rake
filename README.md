@@ -51,7 +51,11 @@ struct Hello;
 
 impl Render for Hello {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        rake::view! { <main class="size-full p-6"><h1>"Hello, Rake!"</h1></main> }
+        rake::view! { 
+          <main class="size-full p-6">
+            <h1>"Hello, Rake!"</h1>
+          </main> 
+        }
     }
 }
 
