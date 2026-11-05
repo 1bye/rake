@@ -15,10 +15,11 @@ proc-macro = true
 workspace = true
 
 [features]
-view = []
+view = ["dep:rake-view-syntax"]
 
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full"] }
 proc-macro-crate = "3.5"
+rake-view-syntax = { version = "=0.1.0-alpha.3", path = "../rake-view-syntax", optional = true }

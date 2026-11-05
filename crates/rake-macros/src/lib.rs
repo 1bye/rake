@@ -10,7 +10,7 @@ use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 mod command;
 mod route;
 #[cfg(feature = "view")]
-mod view;
+use rake_view_syntax as view;
 
 /// Builds a GPUI element tree from HTML-like markup.
 ///
@@ -316,7 +316,7 @@ pub fn app(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Theme)]
 #[cfg(feature = "view")]
 pub fn derive_theme(input: TokenStream) -> TokenStream {
-    view::theme::derive(parse_macro_input!(input as DeriveInput))
+    view::derive_theme(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -333,7 +333,7 @@ pub fn style(attributes: TokenStream, input: TokenStream) -> TokenStream {
     let item = parse_macro_input!(input as syn::ForeignItemFn);
 
     facade()
-        .and_then(|rake| view::preset::expand(classes, item, &rake))
+        .and_then(|rake| view::expand_preset(classes, item, &rake))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

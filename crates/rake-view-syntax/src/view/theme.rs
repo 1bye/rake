@@ -135,7 +135,11 @@ fn nodes_use(nodes: &[Node]) -> Option<Span> {
     })
 }
 
-pub(crate) fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
+/// Generates a theme implementation for the supplied derive input.
+///
+/// # Errors
+/// Returns an error for unsupported declarations or invalid utilities.
+pub fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let syn::Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(
             &input.ident,
