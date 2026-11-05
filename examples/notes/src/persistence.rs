@@ -73,7 +73,7 @@ fn schema() -> Result<Schema, StorageError> {
     Schema::new(1)
         .with_migration(0, |value| {
             let envelope = legacy_envelope(value)
-                .map_err(|error| rake::storage::StorageError::Backend(Box::new(error)))?;
+                .map_err(|error| rake::storage::StorageError::invalid_data(error.to_string()))?;
 
             Ok(rake::serde_json::to_value(envelope)?)
         })
@@ -81,6 +81,12 @@ fn schema() -> Result<Schema, StorageError> {
 }
 
 fn schema_error(error: rake::storage::StorageError) -> StorageError {
+    if let rake::storage::StorageError::Migration { source, .. } = &error
+        && let rake::storage::StorageError::InvalidData(message) = source.as_ref()
+    {
+        return StorageError::Invalid(message.clone());
+    }
+
     match error {
         rake::storage::StorageError::NewerVersion { stored, .. } => {
             StorageError::Unsupported(stored)
@@ -426,3 +432,25 @@ impl Repository {
 mod browser;
 #[cfg(not(target_family = "wasm"))]
 mod native;
+
+#[cfg(test)]
+mod tests {
+    //! Covers: preserving application validation messages across schema migration errors.
+    //! Real: schema codec and Notes decoder. Doubles: none. Requires: none.
+
+    use super::{StorageError, decode};
+
+    #[test]
+    fn legacy_migration_keeps_the_application_error_message() {
+        assert_eq!(
+            decode("{}").unwrap_err(),
+            StorageError::Invalid("Missing library format.".into()),
+        );
+        let exhausted = r#"{"format":0,"revision":1,"selected":null,"notes":[{"id":18446744073709551615,"title":"Old","text":"Keep"}]}"#;
+
+        assert_eq!(
+            decode(exhausted).unwrap_err(),
+            StorageError::Invalid("Document IDs exhausted.".into()),
+        );
+    }
+}

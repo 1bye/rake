@@ -451,3 +451,42 @@ fn migration_serialization_failure_preserves_the_original() {
         assert_eq!(backend.get("note").await.unwrap().unwrap(), raw);
     });
 }
+
+#[test]
+fn application_validation_error_is_the_migration_source_and_preserves_bytes() {
+    use std::error::Error;
+
+    block_on(async {
+        let backend = MemoryBackend::new();
+        let raw = b"[]";
+
+        backend.set("note", raw).await.unwrap();
+        let schema = Schema::new(1)
+            .with_migration(0, |value| {
+                value
+                    .as_object()
+                    .ok_or_else(|| StorageError::invalid_data("expected a legacy note object"))?;
+
+                Ok(value)
+            })
+            .unwrap();
+        let store = Store::<Value>::new(backend.clone()).with_schema(schema);
+        let error = store.get("note").await.unwrap_err();
+
+        assert!(matches!(
+            &error,
+            StorageError::Migration { from: 0, source }
+                if matches!(source.as_ref(), StorageError::InvalidData(message)
+                    if message == "expected a legacy note object")
+        ));
+        let source = error
+            .source()
+            .expect("migration retains the validation error");
+
+        assert_eq!(
+            source.to_string(),
+            "storage data is invalid: expected a legacy note object"
+        );
+        assert_eq!(backend.get("note").await.unwrap().unwrap(), raw);
+    });
+}

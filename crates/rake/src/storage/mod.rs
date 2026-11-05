@@ -81,6 +81,9 @@ pub enum StorageError {
     /// Serialization or typed deserialization failed; existing data is preserved.
     #[error("storage JSON conversion failed: {0}")]
     Codec(#[from] serde_json::Error),
+    /// Stored JSON has an unexpected application-defined shape or value.
+    #[error("storage data is invalid: {0}")]
+    InvalidData(String),
     /// The stored schema belongs to a newer application; the value is preserved.
     #[error("storage schema version {stored} is newer than supported version {current}")]
     NewerVersion {
@@ -118,6 +121,16 @@ pub enum StorageError {
     /// A backend returned keys outside the pagination contract.
     #[error("storage backend returned an invalid key page")]
     InvalidBackendPage,
+}
+
+impl StorageError {
+    /// Creates a data-validation failure without classifying it as a backend error.
+    ///
+    /// Migration steps can return this error for invalid old data. The schema wraps
+    /// it as the source of [`Self::Migration`], retaining the failing version.
+    pub fn invalid_data(message: impl Into<String>) -> Self {
+        Self::InvalidData(message.into())
+    }
 }
 
 impl From<std::io::Error> for StorageError {
