@@ -1,8 +1,7 @@
-//! Experimental macOS GPU presentation through GPUI Fast composition.
+//! Experimental desktop GPU presentation through GPUI Fast composition.
 //!
-//! Retain one host per layout slot. The Metal layer keeps its platform allocation
-//! alive independently of the window. Stop the producer when `closed` is reported.
-//! The producer supplies its own device and frame loop.
+//! Retain one host per layout slot. The producer supplies its own device and
+//! frame loop and observes the host for geometry and lifecycle changes.
 
 use gpui::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
@@ -14,14 +13,43 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+use macos::Host;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use native::Host;
+
+/// The native attachment a renderer can present to.
+///
+/// Create the renderer using the variant available on the current platform.
+/// Rake does not depend on the producer's graphics API or device.
+#[non_exhaustive]
+pub enum SurfaceTarget {
+    /// An owned reference to the Metal layer. Keep it until the renderer releases its surface.
+    #[cfg(target_os = "macos")]
+    Metal(metal::MetalLayer),
+    /// The GPUI-owned Linux child window or subsurface and its display connection.
+    #[cfg(target_os = "linux")]
+    Linux {
+        /// XCB or Wayland window handle for the child surface.
+        window: raw_window_handle::RawWindowHandle,
+        /// Display handle from the same GPUI window.
+        display: raw_window_handle::RawDisplayHandle,
+    },
+    /// An owned reference to the current DirectComposition visual.
+    #[cfg(target_os = "windows")]
+    DirectComposition(windows::Win32::Graphics::DirectComposition::IDCompositionVisual),
+}
 
 /// Latest physical extent, logical-to-physical scale and lifecycle status.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SurfaceState {
-    /// Full producer viewport in physical pixels, before rectangular clipping.
+    /// Producer width in physical pixels. Linux and Windows use the clipped extent.
     pub width_px: u32,
-    /// Full producer viewport in physical pixels, before rectangular clipping.
+    /// Producer height in physical pixels. Linux and Windows use the clipped extent.
     pub height_px: u32,
     /// Physical pixels per GPUI logical pixel.
     pub scale: f32,
@@ -31,7 +59,7 @@ pub struct SurfaceState {
     pub closed: bool,
 }
 
-/// AppKit host initialization or placement failure.
+/// Platform host initialization, target lookup or placement failure.
 #[derive(Debug, thiserror::Error)]
 #[error("GPU surface host failed: {0}")]
 pub struct SurfaceError(String);
@@ -48,7 +76,7 @@ pub struct GpuSurface {
 struct Inner {
     id: usize,
     changes: SurfaceChanges,
-    host: macos::Host,
+    host: Host,
     closed_subscription: RefCell<Option<gpui::Subscription>>,
     visibility_subscription: RefCell<Option<gpui::Subscription>>,
 }
@@ -65,6 +93,10 @@ impl SurfaceChanges {
             return;
         }
 
+        self.notify(state);
+    }
+
+    fn notify(&self, state: SurfaceState) {
         let Some(mut handler) = self.handler.borrow_mut().take() else {
             return;
         };
@@ -96,7 +128,7 @@ impl GpuSurface {
     /// Allocates a host in an existing window; no renderer or device is created.
     ///
     /// # Errors
-    /// Returns a host initialization failure if AppKit or GPUI cannot attach the layer.
+    /// Returns a host initialization failure if GPUI cannot attach a native surface.
     pub fn new(window: &mut Window, cx: &mut App) -> Result<Self, SurfaceError> {
         let inner = Rc::new(Inner {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
@@ -107,7 +139,7 @@ impl GpuSurface {
                 }),
                 ..Default::default()
             },
-            host: macos::Host::new(window, cx)?,
+            host: Host::new(window, cx)?,
             closed_subscription: RefCell::new(None),
             visibility_subscription: RefCell::new(None),
         });
@@ -136,10 +168,52 @@ impl GpuSurface {
             },
         ));
 
+        #[cfg(target_os = "windows")]
+        {
+            let weak = Rc::downgrade(&inner);
+            let cx = cx.to_async();
+            inner.host.on_compositor_recreated(move || {
+                let weak = weak.clone();
+                // Fast invokes recovery while its renderer is borrowed.
+                cx.spawn(async move |_| {
+                    if let Some(inner) = weak.upgrade() {
+                        let state = inner.changes.state.get();
+                        if !state.closed {
+                            inner.changes.notify(state);
+                        }
+                    }
+                })
+                .detach();
+            })?;
+        }
+
         Ok(Self { inner })
     }
 
+    /// Returns the current renderer target.
+    ///
+    /// On Linux, the raw handles borrow the platform window and connection.
+    /// A producer must release its graphics surface before the host or window
+    /// is destroyed. The raw handles do not keep either alive.
+    ///
+    /// On Windows, query the target again after a composition recovery
+    /// notification and recreate the swapchain if the visual has changed.
+    /// Keep the visual alive until the associated graphics surface is released.
+    ///
+    /// # Errors
+    /// Returns an error if the window has closed or GPUI cannot supply the target.
+    pub fn target(&self) -> Result<SurfaceTarget, SurfaceError> {
+        if self.state().closed {
+            return Err(SurfaceError("the host window has closed".into()));
+        }
+        #[cfg(target_os = "macos")]
+        return Ok(SurfaceTarget::Metal(self.metal_layer()));
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        self.inner.host.target()
+    }
+
     /// Retains the CAMetalLayer so a producer can configure and present on its thread.
+    #[cfg(target_os = "macos")]
     pub fn metal_layer(&self) -> metal::MetalLayer {
         self.inner.host.metal_layer()
     }
@@ -151,6 +225,8 @@ impl GpuSurface {
 
     /// Installs one UI-thread callback, immediately delivering the latest state.
     /// A handler can replace itself during a state change.
+    /// On Windows a compositor recovery can repeat the current state to signal
+    /// that the producer needs to check for a replacement target.
     /// Native producers should forward this snapshot through a channel.
     pub fn on_change(&self, handler: impl FnMut(SurfaceState) + 'static) {
         self.inner.changes.on_change(handler);
@@ -231,9 +307,14 @@ impl Element for GpuSurfaceElement {
         let scale = window.scale_factor();
         let visible =
             style.visibility == Visibility::Visible && !clip.is_empty() && window.is_visible();
+        // Fast's native child surfaces use one rectangle for size and clip.
+        #[cfg(target_os = "macos")]
+        let extent = bounds.size;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let extent = clip.size;
         let state = SurfaceState {
-            width_px: (bounds.size.width.as_f32() * scale).round().max(0.) as u32,
-            height_px: (bounds.size.height.as_f32() * scale).round().max(0.) as u32,
+            width_px: (extent.width.as_f32() * scale).round().max(0.) as u32,
+            height_px: (extent.height.as_f32() * scale).round().max(0.) as u32,
             scale,
             visible,
             closed: false,

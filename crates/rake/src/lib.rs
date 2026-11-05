@@ -74,7 +74,10 @@ pub mod router;
 pub mod runtime;
 pub mod services;
 pub mod storage;
-#[cfg(all(feature = "gpu-surface", target_os = "macos"))]
+#[cfg(all(
+    feature = "gpu-surface",
+    any(target_os = "macos", target_os = "linux", target_os = "windows")
+))]
 pub mod surface;
 pub mod tasks;
 pub mod web;
