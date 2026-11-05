@@ -110,6 +110,28 @@ fn explanations_are_available_without_a_project() {
 
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("Before:\n<img"));
+    let output = run("", "", &["--explain", "view-button-label", "--json"]);
+    let rule: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        rule["rule"]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("visible text as the label (label-in-name); add context only after it")
+    );
+    assert!(
+        rule["rule"]["after"]
+            .as_str()
+            .unwrap()
+            .contains("aria-label={title.clone()}")
+    );
+    assert!(
+        rule["rule"]["after"]
+            .as_str()
+            .unwrap()
+            .contains("aria-label=\"Search\"")
+    );
 }
 
 #[test]
@@ -151,4 +173,36 @@ fn malformed_source_is_an_error_and_help_is_successful() {
 
     assert_eq!(report["diagnostics"][0]["rule_id"], "syntax-error");
     assert!(run("", "", &["--help"]).status.success());
+}
+
+#[test]
+fn compile_fail_fixtures_and_project_excludes_do_not_fail_the_command() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+
+    fs::write(root.join("Cargo.toml"), "[package]\nname='lint-fixture'\nversion='0.1.0'\n[package.metadata.rake.lint]\nexclude=['tests/custom']\n").unwrap();
+    fs::create_dir_all(root.join("tests/ui")).unwrap();
+    fs::create_dir_all(root.join("tests/custom")).unwrap();
+    fs::write(root.join("tests/ui/bad.rs"), "fn {").unwrap();
+    fs::write(root.join("tests/ui/bad.stderr"), "intentional syntax error").unwrap();
+    fs::write(root.join("tests/custom/bad.rs"), "fn {").unwrap();
+    fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["lint", "--json"])
+        .current_dir(root)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(report["files_checked"], 1);
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+    assert_eq!(report["denied"], false);
 }

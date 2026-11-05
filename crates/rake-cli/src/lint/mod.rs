@@ -62,7 +62,11 @@ impl Diagnostic {
         Self {
             rule_id: id,
             level: rule.level,
-            file: file.to_string_lossy().into_owned(),
+            file: file
+                .iter()
+                .map(|part| part.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/"),
             span: SourceSpan {
                 start: position(span.start()),
                 end: position(span.end()),
@@ -175,14 +179,18 @@ fn render(diagnostic: &Diagnostic, source: &str) -> String {
         "warning"
     };
 
+    let line_number = start.line;
+    let gutter = line_number.to_string().len();
+    let arrow = " ".repeat(gutter);
+    let padding = " ".repeat(gutter + 1);
+
     format!(
-        "{severity}[{}]: {}\n --> {}:{}:{}\n  |\n{:>3} | {line}\n  | {}{}\n  = note: {}\n  = help: {}\n\n",
+        "{severity}[{}]: {}\n{arrow}--> {}:{}:{}\n{padding}|\n{line_number:>gutter$} | {line}\n{padding}| {}{}\n{padding}= note: {}\n{padding}= help: {}\n\n",
         diagnostic.rule_id,
         diagnostic.message,
         diagnostic.file,
         start.line,
         start.column,
-        start.line,
         " ".repeat(start.column - 1),
         "^".repeat(width),
         diagnostic.explanation,
@@ -194,9 +202,10 @@ fn render(diagnostic: &Diagnostic, source: &str) -> String {
 #[serde(default, deny_unknown_fields)]
 struct Config {
     levels: Levels,
+    exclude: Vec<PathBuf>,
 }
 
-fn load_levels(directory: &Path) -> Result<Levels> {
+fn load_config(directory: &Path) -> Result<Config> {
     let manifest = directory.join("Cargo.toml");
     let value: toml::Value = toml::from_str(&fs::read_to_string(&manifest)?)?;
     let config = value
@@ -205,7 +214,7 @@ fn load_levels(directory: &Path) -> Result<Levels> {
         .and_then(|v| v.get("rake"))
         .and_then(|v| v.get("lint"))
         .cloned();
-    let config: Config = config
+    let mut config: Config = config
         .map(|value| value.try_into())
         .transpose()?
         .unwrap_or_default();
@@ -220,7 +229,29 @@ fn load_levels(directory: &Path) -> Result<Levels> {
         }
     }
 
-    Ok(config.levels)
+    for excluded in &mut config.exclude {
+        if excluded.as_os_str().is_empty()
+            || excluded.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!(
+                "{}: lint exclude paths must be nonempty and package-relative without '..': {}",
+                manifest.display(),
+                excluded.display()
+            )
+            .into());
+        }
+
+        *excluded = directory.join(&*excluded);
+    }
+
+    Ok(config)
 }
 
 fn check_project(root: &Path) -> Result<Report> {
@@ -239,7 +270,7 @@ fn check_project(root: &Path) -> Result<Report> {
         denied: false,
     };
 
-    scan_directory(root, root, &Levels::new(), &mut report)?;
+    scan_directory(root, root, &Config::default(), &mut report)?;
     report.diagnostics.sort_by(|left, right| {
         (
             &left.file,
@@ -262,12 +293,13 @@ fn check_project(root: &Path) -> Result<Report> {
 fn scan_directory(
     root: &Path,
     directory: &Path,
-    inherited: &Levels,
+    inherited: &Config,
     report: &mut Report,
 ) -> Result<()> {
-    let local;
-    let levels = if directory.join("Cargo.toml").is_file() {
-        local = load_levels(directory)?;
+    let mut local;
+    let config = if directory.join("Cargo.toml").is_file() {
+        local = load_config(directory)?;
+        local.exclude.extend_from_slice(&inherited.exclude);
 
         &local
     } else {
@@ -281,20 +313,31 @@ fn scan_directory(
         let kind = entry.file_type()?;
         let path = entry.path();
 
+        if config
+            .exclude
+            .iter()
+            .any(|excluded| path.starts_with(excluded))
+        {
+            continue;
+        }
+
         if kind.is_dir() {
             if !matches!(
                 entry.file_name().to_str(),
                 Some("target" | ".git" | "node_modules")
             ) {
-                scan_directory(root, &path, levels, report)?;
+                scan_directory(root, &path, config, report)?;
             }
-        } else if kind.is_file() && path.extension().is_some_and(|extension| extension == "rs") {
+        } else if kind.is_file()
+            && path.extension().is_some_and(|extension| extension == "rs")
+            && !path.with_extension("stderr").is_file()
+        {
             let source = fs::read_to_string(&path)?;
             let relative = path.strip_prefix(root)?;
 
             report
                 .diagnostics
-                .extend(check_source(relative, &source, levels));
+                .extend(check_source(relative, &source, &config.levels));
             report.files_checked += 1;
         }
     }

@@ -14,7 +14,11 @@ rake lint --explain view-loop-index-id --json
 
 The directory must contain `Cargo.toml`. Discovery recursively checks `.rs`
 files, including tests, examples and `build.rs`, and nested packages. It skips
-`target`, `.git`, `node_modules`, and symlinks. It does not use Cargo target
+`target`, `.git`, `node_modules`, and symlinks. By default a `.rs` file with a
+same-stem `.stderr` sibling is also skipped: for example, `tests/ui/bad.rs` beside
+`tests/ui/bad.stderr` is a trybuild compile-fail fixture, not an application error.
+Use package-relative `exclude` paths below for other intentional fixtures or
+generated inputs. It does not use Cargo target
 selection or `cfg` evaluation: disabled Rust branches are also checked.
 Generated files outside the skipped directories are checked too. Custom target
 paths outside the selected directory are not followed.
@@ -97,10 +101,10 @@ Diagnostic text goes to stderr; the summary goes to stdout.
 warning[view-button-label]: button content has no automatic accessible label
  --> src/main.rs:4:14
   |
-  4 |             <button>{icon}</button>
+4 |             <button>{icon}</button>
   |              ^^^^^^
   = note: Rake automatically labels only nonempty buttons made entirely of literal text. ...
-  = help: add aria-label="Describe the action" to the button
+  = help: add aria-label={visible_text}; use the visible text as the label (label-in-name); add context only after it
 ```
 
 The full explanation is printed in actual output. Index diagnostics underline
@@ -111,7 +115,8 @@ the ID expression; missing attributes underline the tag name.
 `--json` writes one JSON object to stdout, even when denied diagnostics cause a
 nonzero exit. Operational errors use the CLI's existing stderr envelope:
 `{"error":{"message":"..."}}`. Paths are relative to the selected directory,
-use the host's separators, and diagnostics are ordered by path, location, then ID.
+always use `/` as the separator on every OS, and diagnostics are ordered by path,
+location, then ID.
 
 ```json
 {
@@ -171,12 +176,22 @@ Use the existing Rake metadata namespace in each package's `Cargo.toml`, alongsi
 `package.metadata.rake.bundle`:
 
 ```toml
+[package.metadata.rake.lint]
+exclude = ["tests/ui", "src/generated.rs"]
+
 [package.metadata.rake.lint.levels]
 view-button-label = "deny"
 view-image-alt = "warn"
 view-loop-index-id = "allow"
 suppression-reason = "deny"
 ```
+
+`exclude` accepts files or whole directory trees, relative to the package that
+declares them, without globs. Empty paths, absolute paths, and `..` components are
+errors. Directory names match complete path components: `tests/ui` does not
+exclude `tests/ui-other`. An exclusion still applies when traversal reaches a
+nested package inside that path. Exclusions do not change rule levels, and
+unknown configuration keys are rejected.
 
 The accepted levels are `allow`, `warn`, and `deny`. Unknown keys and levels are
 errors. `syntax-error` is always denied and cannot be overridden. The nearest

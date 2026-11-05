@@ -296,3 +296,154 @@ fn config_rejects_typo_levels_rules_and_syntax_override() {
         assert!(check_project(project.path()).is_err(), "{config}");
     }
 }
+
+#[test]
+fn trybuild_stderr_siblings_skip_only_the_matching_source_file() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+
+    fs::write(root.join("Cargo.toml"), "[package]\nname='fixture'\n").unwrap();
+    fs::create_dir_all(root.join("tests/ui")).unwrap();
+    fs::write(root.join("tests/ui/intentional.rs"), "fn {").unwrap();
+    fs::write(
+        root.join("tests/ui/intentional.stderr"),
+        "expected compiler error",
+    )
+    .unwrap();
+    fs::write(root.join("tests/ui/real_error.rs"), "fn {").unwrap();
+    fs::write(
+        root.join("tests/ui/real_error.rs.stderr"),
+        "not the sibling convention",
+    )
+    .unwrap();
+    fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+
+    let report = check_project(root).unwrap();
+
+    assert_eq!(report.files_checked, 2);
+    assert!(report.denied);
+    assert_eq!(ids(&report.diagnostics), [SYNTAX]);
+    assert_eq!(report.diagnostics[0].file, "tests/ui/real_error.rs");
+}
+
+#[test]
+fn project_excludes_match_files_and_directory_components() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+
+    fs::write(root.join("Cargo.toml"), "[package]\nname='fixture'\n[package.metadata.rake.lint]\nexclude=['tests/ui', 'generated.rs']\n").unwrap();
+    fs::create_dir_all(root.join("tests/ui/nested")).unwrap();
+    fs::create_dir_all(root.join("tests/ui-other")).unwrap();
+    fs::write(root.join("tests/ui/nested/fail.rs"), "fn {").unwrap();
+    fs::write(root.join("tests/ui-other/error.rs"), "fn {").unwrap();
+    fs::write(root.join("generated.rs"), "fn {").unwrap();
+    fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+
+    let report = check_project(root).unwrap();
+
+    assert_eq!(report.files_checked, 2);
+    assert_eq!(ids(&report.diagnostics), [SYNTAX]);
+    assert_eq!(report.diagnostics[0].file, "tests/ui-other/error.rs");
+}
+
+#[test]
+fn exclusions_remain_relative_to_the_package_that_declares_them() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+
+    fs::write(root.join("Cargo.toml"), "[package]\nname='fixture'\n[package.metadata.rake.lint]\nexclude=['ignored', 'nested/shared-ignore']\n").unwrap();
+    fs::create_dir_all(root.join("ignored")).unwrap();
+    fs::write(root.join("ignored/fail.rs"), "fn {").unwrap();
+    fs::create_dir_all(root.join("nested/src/generated")).unwrap();
+    fs::create_dir_all(root.join("nested/shared-ignore")).unwrap();
+    fs::create_dir_all(root.join("nested/ignored")).unwrap();
+    fs::write(
+        root.join("nested/Cargo.toml"),
+        "[package]\nname='nested'\n[package.metadata.rake.lint]\nexclude=['src/generated']\n",
+    )
+    .unwrap();
+    fs::write(root.join("nested/src/generated/fail.rs"), "fn {").unwrap();
+    fs::write(root.join("nested/shared-ignore/fail.rs"), "fn {").unwrap();
+    fs::write(root.join("nested/ignored/keep.rs"), "fn main() {}").unwrap();
+    fs::write(root.join("nested/src/lib.rs"), "fn main() {}").unwrap();
+
+    let report = check_project(root).unwrap();
+
+    assert_eq!(report.files_checked, 2);
+    assert!(report.diagnostics.is_empty());
+}
+
+#[test]
+fn exclude_config_rejects_unknown_keys_and_non_relative_paths() {
+    for config in [
+        "excludes=['tests/ui']",
+        "exclude=['../outside']",
+        "exclude=['/outside']",
+        "exclude=['']",
+    ] {
+        let project = tempfile::tempdir().unwrap();
+
+        fs::write(
+            project.path().join("Cargo.toml"),
+            format!("[package]\nname='fixture'\n[package.metadata.rake.lint]\n{config}\n"),
+        )
+        .unwrap();
+
+        assert!(check_project(project.path()).is_err(), "{config}");
+    }
+}
+
+#[test]
+fn terminal_gutter_aligns_single_and_multiple_digit_lines() {
+    for (number, arrow, empty, row, underline, note) in [
+        (
+            3,
+            " --> main.rs:3:2",
+            "  |",
+            "3 | <button/>",
+            "  |  ^^^^^^",
+            "  = note: ",
+        ),
+        (
+            123,
+            "   --> main.rs:123:2",
+            "    |",
+            "123 | <button/>",
+            "    |  ^^^^^^",
+            "    = note: ",
+        ),
+    ] {
+        let mut diagnostic =
+            Diagnostic::new(BUTTON, Path::new("main.rs"), proc_macro2::Span::call_site());
+
+        diagnostic.span.start = Position {
+            line: number,
+            column: 2,
+        };
+        diagnostic.span.end = Position {
+            line: number,
+            column: 8,
+        };
+        let source = format!("{}<button/>", "\n".repeat(number - 1));
+
+        let rendered = render(&diagnostic, &source);
+        let lines: Vec<_> = rendered.lines().collect();
+
+        assert_eq!(lines[1], arrow);
+        assert_eq!(lines[2], empty);
+        assert_eq!(lines[3], row);
+        assert_eq!(lines[4], underline);
+        assert!(lines[5].starts_with(note), "{rendered}");
+        assert_eq!(lines[5].find('='), lines[2].find('|'));
+        assert_eq!(lines[6].find('='), lines[2].find('|'));
+    }
+}
+
+#[test]
+fn json_paths_use_forward_slashes_for_native_path_components() {
+    let path = Path::new("src").join("nested folder").join("日本語.rs");
+    let diagnostic = Diagnostic::new(IMAGE, &path, proc_macro2::Span::call_site());
+    let json = serde_json::to_value(diagnostic).unwrap();
+
+    assert_eq!(json["file"], "src/nested folder/日本語.rs");
+}
