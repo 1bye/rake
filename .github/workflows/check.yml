@@ -57,8 +57,6 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/test-web-loading.mjs
-      - run: node scripts/test-inspector.mjs
-      - run: node scripts/test-inspector-ui.mjs
       - run: node scripts/test-notes-storage.mjs
       - run: node scripts/test-platform.mjs
       - run: node scripts/test-web-runtime.mjs

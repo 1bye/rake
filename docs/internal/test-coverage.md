@@ -21,8 +21,7 @@ unverified.
 portable behavior, including registered save commands, revisions, histories,
 both job policies, cancellation, retries and reload exclusion. `cargo test -p
 rake-cli --test runtime` includes real Unix-socket CLI decisions and quit status.
-`node scripts/test-inspector-ui.mjs` checks actual panel code with DOM/transport
-doubles. `python3 scripts/test-quit.py` is a separate macOS display test for real
+`python3 scripts/test-quit.py` is a separate macOS display test for real
 native exit and pending HTTP-command coordination. Wasm compilation checks the
 Web adapter; a real browser is required to verify its page lifecycle and warning.
  

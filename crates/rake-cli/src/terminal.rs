@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const HELP: &str = "rake new NAME [--rake-path PATH | --rake-rev REV] [--git] [--json]
-rake inspect [--elements --target desktop|web] [--session PATH] [--instance UUID|application-id] [--no-open]
 rake agent --url URL [--target ID] [--window ID] JSON_ACTION (Node 22+; see docs/cdp-agents.md)
 rake cdp [--session PATH] [--instance UUID|application-id] [--port PORT] [--no-open] [--json] [--export-trace FILE]
 rake highlight ID|none [--generation CAPTURE] [--instance UUID|application-id]
@@ -51,7 +50,7 @@ Package: rake bundle --target desktop|web --package PACKAGE [--debug] [--json].
 Web deployment: --base-path /notes/ --routing path|hash.
 macOS signing: --sign-identity IDENTITY [--entitlements FILE]; default ad-hoc.
 Update keys: rake update-key generate|public --private-key PATH --public-key PATH.
-Prerequisites: rake doctor. Graphical devtools: rake inspect, or the Devtools link in a Web dev session.";
+Prerequisites: rake doctor. Chrome DevTools: rake dev --cdp.";
 
 fn flag(args: &mut Vec<String>, name: &str) -> bool {
     if let Some(index) = args.iter().position(|arg| arg == name) {

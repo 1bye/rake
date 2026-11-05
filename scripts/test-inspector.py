@@ -7,13 +7,11 @@ import concurrent.futures
 import json
 import os
 from pathlib import Path
-import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -53,15 +51,12 @@ class InspectorHTTP(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.load(response)
 
-    def test_assets_have_no_secret_and_untrusted_content_cannot_be_executed(self):
+    def test_legacy_frontend_is_gone_and_control_stays_private(self):
         for filename in ["inspector", "inspector.js", "inspector-model.js", "inspector.css"]:
-            with urllib.request.urlopen(self.url + "/__rake/" + filename) as response:
-                content = response.read().decode()
-                self.assertNotIn(self.token, content)
-                self.assertIn("frame-ancestors 'none'", response.headers['Content-Security-Policy'])
-                if filename == "inspector.js":
-                    self.assertNotIn("innerHTML", content)
-                    self.assertNotIn("eval(", content)
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(self.url + "/__rake/" + filename, timeout=5)
+            self.assertEqual(error.exception.code, 404)
+            error.exception.close()
         with self.assertRaises(urllib.error.HTTPError) as error:
             self.post("inspect_instances", {}, token="wrong")
         self.assertEqual(error.exception.code, 403)
@@ -71,33 +66,13 @@ class InspectorHTTP(unittest.TestCase):
         self.assertEqual(error.exception.code, 404)
         error.exception.close()
 
-    def test_cli_inspector_attaches_without_building_and_stops_its_server(self):
+    def test_cli_redirects_legacy_inspector_users_to_chrome_devtools(self):
         cli = Path(__file__).resolve().parents[1] / "target" / "debug" / "rake"
-        process = subprocess.Popen([str(cli), "inspect", "--session", str(self.root), "--no-open", "--json"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            event = json.loads(process.stdout.readline())
-            self.assertEqual(event["event"], "inspector_listening")
-            launch = urllib.parse.urlsplit(event["url"])
-            with urllib.request.urlopen(f"http://{launch.netloc}/__rake/inspector") as response:
-                self.assertIn(b"Rake DevTools", response.read())
-            process.send_signal(signal.SIGTERM)
-            self.assertEqual(process.wait(timeout=8), 0)
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                try:
-                    with socket.create_connection((launch.hostname, launch.port), timeout=.2):
-                        pass
-                except OSError:
-                    break
-            else:
-                self.fail("inspector server outlived its CLI owner")
-            self.assertFalse((self.root / "builds").exists())
-        finally:
-            if process.poll() is None:
-                process.send_signal(signal.SIGTERM)
-                process.wait(timeout=8)
-            process.stdout.close(); process.stderr.close()
+        result = subprocess.run([str(cli), "inspect", "--session", str(self.root), "--no-open"],
+            capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rake cdp --session PATH", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_native_forwarding_uses_the_exact_runtime_envelope_and_hides_credentials(self):
         runtime = str(uuid.uuid4())
@@ -199,8 +174,6 @@ class ElementsHosting(unittest.TestCase):
                         urllib.request.urlopen(origin + path)
                     self.assertEqual(error.exception.code, 404)
                     error.exception.close()
-                with urllib.request.urlopen(origin + "/__rake/inspector") as response:
-                    self.assertIn(b"Rake DevTools", response.read())
             finally:
                 process.terminate(); process.wait(timeout=5); process.stdout.close()
             rejected = subprocess.run([sys.executable, str(Path(__file__).with_name("serve-web.py")), "--control", "--inspector-app", str(assets)], capture_output=True)
@@ -209,19 +182,6 @@ class ElementsHosting(unittest.TestCase):
 
 
 class Bounds(unittest.TestCase):
-    def test_cdp_discovery_rejects_non_loopback_and_defaults_to_disabled(self):
-        with tempfile.TemporaryDirectory(prefix="rake-cdp-link-", dir="/tmp") as temporary:
-            root = Path(temporary)
-            root.chmod(0o700)
-            bridge = DevBridge("http://127.0.0.1:1", root)
-            try:
-                self.assertEqual(Inspector(bridge).handle("inspect_cdp", {}), [])
-                for url in ["https://example.test", "http://127.0.0.1:9/other", "http://user@127.0.0.1:9", "http://localhost:9"]:
-                    with self.assertRaises(BridgeError):
-                        Inspector(bridge, cdp_url=url).handle("inspect_cdp", {})
-            finally:
-                bridge.close()
-
     def test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime(self):
         with tempfile.TemporaryDirectory(prefix="rake-lineage-", dir="/tmp") as temporary:
             root = Path(temporary)

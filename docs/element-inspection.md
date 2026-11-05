@@ -113,13 +113,13 @@ Resolved `layers` partition properties by observed origin: `default`, `inherited
 
 GPUI doesn't expose the individual interaction rule, equal-valued overrides or per-method declaration locations. `source` stays the boundary's construction site, and older runtimes omit layers.
 
-Automatic nodes add `view: { tag, style_sources }`. A style source records its `scope` tag, attribute name, bounded Rust expression spelling and attribute `SourceLocation`. Both Rake frontends show these in Source, and Chrome exposes the read-only `rakeStyleSources` JSON string.
+Automatic nodes add `view: { tag, style_sources }`. A style source records its `scope` tag, attribute name, bounded Rust expression spelling and attribute `SourceLocation`. Chrome exposes these in the read-only `rakeStyleSources` JSON string.
 
 They list authored declarations, including inline paragraph declarations and untaken conditional branches, and don't claim which one won. Opaque style closures have an attribute location, not fabricated per-method provenance. Metadata is bounded to 4 KiB per boundary and 512 bytes per expression, with `metadata_truncated` on truncation. Older and manual boundaries omit `view`.
 
 Generated macro site IDs and explicit loop keys keep presentation identities without changing GPUI state IDs. Component keys accept `ElementId`, strings, common integer keys, common named-integer tuples and UUIDs. Other typed `id` properties are accepted but provide no inspection key, and duplicate unkeyed sites stay ambiguous. Use `ElementId` for custom component keys when identity must survive reordering.
 
-Each resolved style, including layers, is bounded to 16 KiB and the remaining snapshot budget. If it doesn't fit, `resolved` is omitted and `metadata_truncated` is true, while the boundary and authored metadata stay. Both Rake frontends provide a **Computed** tab that refreshes while the exact ID is live, and **Styles** keeps the authored refinements.
+Each resolved style, including layers, is bounded to 16 KiB and the remaining snapshot budget. If it doesn't fit, `resolved` is omitted and `metadata_truncated` is true, while the boundary and authored metadata stay. Chrome’s **Computed** tab refreshes while the exact ID is live, and **Styles** keeps the authored refinements.
 
 | Limit | Value |
 | --- | --- |
@@ -133,11 +133,10 @@ Shortened or omitted metadata sets `metadata_truncated`, and non-finite geometry
 
 > Source paths, semantic IDs and supplied style values are developer metadata, and shouldn't contain secrets.
 
-Verify portable contracts and the panel with:
+Verify the portable inspection contracts with:
 
 ```sh
 cargo test -p rake --no-default-features --test element_inspection
-node scripts/test-inspector-ui.mjs
 ```
 
 The explicit display integration requires a macOS GUI session:
@@ -168,8 +167,8 @@ Highlights and capture geometry are window-local, while inspect mode is shared a
 These are transient development commands: they return acknowledgement, retain no
 operation or retry-key entry, and never modify router/application state. Closing
 CDP clears its controls immediately; crashed or disconnected clients lose input
-capture within one lease. Both Rake inspector frontends expose **Pick** and
-hover-to-highlight controls in Elements.
+capture within one lease. Chrome DevTools exposes picking and hover highlights
+in Elements.
 
 ```sh
 rake highlight element-3-21 --session /tmp/rake-dev-EXAMPLE
@@ -193,7 +192,7 @@ not replay a click. Enabling mode once from the CLI expires unless renewed.
 
 ## Elements navigation
 
-Both Rake inspectors search captured names and semantic and opaque IDs. Chrome's Elements Find (`Cmd/Ctrl+F`) supports case-insensitive name and ID substrings, and an exact semantic ID with `#id`. Results include collapsed descendants and reveal their ancestor path without replacing known nodes.
+Chrome's Elements Find (`Cmd/Ctrl+F`) supports case-insensitive name and ID substrings, and an exact semantic ID with `#id`. Results include collapsed descendants and reveal their ancestor path without replacing known nodes.
 
 Searches are bounded to eight retained result sets, and removed nodes and runtime replacement invalidate results. XPath and arbitrary browser selectors aren't evaluated.
 
@@ -239,7 +238,7 @@ Source opening queries the exact capture's construction site and invokes the sys
 - Clients supply element IDs, never paths or commands. No source contents are served or captured.
 - The default editor may open only the file. Line and column come back as metadata, because file associations have no portable jump convention.
 - Compiler-remapped or missing source paths fail explicitly.
-- Standalone Python hosts must set `RAKE_CLI` to the built CLI. `rake dev` and `rake inspect` configure it already.
+- Standalone Python hosts must set `RAKE_CLI` to the built CLI. `rake dev` configures it automatically.
 
 For Web inspection, keep the application in a visible tab/window while using
 DevTools (separate windows worked in Chrome 156). A hidden or suspended application
@@ -254,7 +253,7 @@ expires the picker; it does not keep application input captured indefinitely.
 - Index entries omit styles, box models and style expressions, and `inspect_element` loads those on selection.
 - Legacy `inspect_tree` stays a bounded prefix, counting the rest as omitted.
 
-Chrome and both Rake inspectors use the paged index when advertised, and Chrome delivers branches lazily. Stable identities keep selection across captures, but removed or ambiguous nodes are never retargeted by name.
+Chrome uses the paged index when advertised and loads branches lazily. Stable identities keep selection across captures, but removed or ambiguous nodes are never retargeted by name.
 
 ## Capture cost and cache lifetime
 
@@ -320,7 +319,7 @@ Chrome sends `DOM.setNodeValue`; see [text editing controls](devtools.md) for re
 
 ## Accessibility and interaction metadata
 
-Both Rake Elements frontends have **Accessibility** and **Events** tabs. Chrome supports Accessibility root, full, partial, child and ancestor queries and node updates, and its Properties pane exposes read-only `rakeAccessibility` and `rakeHandlers` JSON strings.
+Chrome supports Accessibility root, full, partial, child and ancestor queries and node updates, and its Properties pane exposes read-only `rakeAccessibility` and `rakeHandlers` JSON strings.
 
 This projects inspected GPUI boundaries, not the complete platform accessibility tree. Opaque nodes and synthetic descendants aren't enumerated. Full-tree responses are bounded, so use root and child queries for larger trees.
 
@@ -350,9 +349,8 @@ At most 32 handler sites or 8 KiB per boundary are kept, with explicit truncatio
 
 ### Captured Rust source targets
 
-Source and Events panes open individual authored style attributes and handler
-registration sites using the system default editor. These are captured sites, not
-locations inferred inside arbitrary closures. The host resolves the exact element
+The CLI and Chrome DevTools can open captured style attributes and handler
+registration sites in the system default editor. The host resolves the exact element
 and a typed target, then applies the same workspace-confined Rust-file validation.
 It never accepts a client-supplied path.
 
@@ -377,6 +375,4 @@ Copies contain retained metadata only, so clipped text and opaque children can't
 - Invalid or cyclic graphs and oversized copies fail explicitly, rather than returning partial output.
 
 The picker excludes captured hidden branches, including descendants without their
-own style reader. Disabled visible controls remain inspectable. The HTTP inspector
-keeps its tree action toolbar visible while scrolling and defers tree replacement
-through click dispatch; unrelated diagnostic traffic does not rebuild the tree.
+own style reader. Disabled visible controls remain inspectable.

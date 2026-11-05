@@ -23,22 +23,6 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
                 "inspector.py",
                 include_str!("../../../scripts/inspector.py"),
             ),
-            (
-                "inspector.html",
-                include_str!("../../../scripts/inspector.html"),
-            ),
-            (
-                "inspector.css",
-                include_str!("../../../scripts/inspector.css"),
-            ),
-            (
-                "inspector.js",
-                include_str!("../../../scripts/inspector.js"),
-            ),
-            (
-                "inspector-model.js",
-                include_str!("../../../scripts/inspector-model.js"),
-            ),
             ("dev.py", include_str!("../../../scripts/dev.py")),
             (
                 "rake-web-font-licenses.txt",

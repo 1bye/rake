@@ -30,7 +30,7 @@ This source preview requires the Rake workspace, Python 3.11+, the native GPUI
 build prerequisites, and the `wasm32-unknown-unknown` target for Web. Web also
 requires the `wasm-bindgen-cli` version recorded in `Cargo.lock`, as with other
 Rake Web builds. The CLI reports the required install command if it is missing.
-The existing multi-panel HTML DevTools remains available through `rake inspect`.
+The multi-panel HTML DevTools frontend has been removed.
 
 ## Elements
 
