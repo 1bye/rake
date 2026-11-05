@@ -117,7 +117,7 @@ impl CrashReporter {
             let location = info.location().map(|location| {
                 format!(
                     "{}:{}:{}",
-                    basename(location.file()),
+                    source_path(location.file()),
                     location.line(),
                     location.column()
                 )
@@ -482,8 +482,22 @@ fn prefix(text: &str, bytes: usize) -> &str {
     &text[..text.floor_char_boundary(bytes.min(text.len()))]
 }
 
-fn basename(path: &str) -> &str {
-    path.rsplit(['/', '\\']).next().unwrap_or("unknown")
+fn source_path(path: &str) -> String {
+    let absolute = path.starts_with(['/', '\\']) || path.as_bytes().get(1) == Some(&b':');
+
+    if !absolute {
+        return path.into();
+    }
+
+    let normalized = path.replace('\\', "/");
+
+    if let Some((parent, source)) = normalized.rsplit_once("/src/")
+        && let Some(crate_name) = parent.rsplit('/').next().filter(|name| !name.is_empty())
+    {
+        return format!("{crate_name}/src/{source}");
+    }
+
+    normalized.rsplit('/').next().unwrap_or("unknown").into()
 }
 
 fn data_root() -> io::Result<PathBuf> {

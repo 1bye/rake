@@ -186,7 +186,7 @@ fn panic_is_delivered_on_second_run_and_absent_on_third() {
         record
             .location
             .expect("panic location")
-            .starts_with("crash_reports.rs:")
+            .starts_with(concat!(file!(), ":"))
     );
     assert!(!record.backtrace.contains("/Github/"));
     assert_eq!(record.diagnostics.expect("tail").len(), 1);

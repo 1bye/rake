@@ -345,3 +345,36 @@ fn newer_schema_records_are_still_subject_to_oldest_first_retention() {
     );
     assert!(reporter.records().expect("records").is_empty());
 }
+
+#[test]
+fn relative_source_paths_are_kept_and_absolute_build_roots_are_removed() {
+    for (input, expected) in [
+        (
+            "crates/rake/src/storage/mod.rs",
+            "crates/rake/src/storage/mod.rs",
+        ),
+        (
+            r"crates\rake\src\storage\mod.rs",
+            r"crates\rake\src\storage\mod.rs",
+        ),
+        (
+            "/home/private/.cargo/registry/serde-1.0/src/de/mod.rs",
+            "serde-1.0/src/de/mod.rs",
+        ),
+        (
+            r"C:\Users\private\registry\serde-1.0\src\de\mod.rs",
+            "serde-1.0/src/de/mod.rs",
+        ),
+        (r"\\server\private\dep\src\lib.rs", "dep/src/lib.rs"),
+        (
+            "/home/private/src/workspace/pkg/src/nested/mod.rs",
+            "pkg/src/nested/mod.rs",
+        ),
+        ("/home/private/build/generated.rs", "generated.rs"),
+        (r"C:\Users\private\generated.rs", "generated.rs"),
+        ("/src/lib.rs", "lib.rs"),
+        ("lib.rs", "lib.rs"),
+    ] {
+        assert_eq!(source_path(input), expected, "source path {input}");
+    }
+}

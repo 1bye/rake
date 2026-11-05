@@ -124,7 +124,8 @@ pub struct CrashRecord {
     pub timestamp_ms: u64,
     /// Privacy marker by default; opted-in string payloads are capped at 1 KiB UTF-8.
     pub message: String,
-    /// Rust source basename and line/column, without source directory paths.
+    /// Relative Rust source path and line/column, capped at 256 UTF-8 bytes.
+    /// Absolute build roots are stripped to crate/src-relative paths or a basename.
     pub location: Option<String>,
     /// Bounded standard-library backtrace with source-path lines omitted.
     pub backtrace: String,

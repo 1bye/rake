@@ -154,7 +154,9 @@ changes can affect chronological ordering. Each record has:
 - `schema_version: 1`, stable `id`, Unix `timestamp_ms`, app version and OS name;
 - `message`, `Rust panic (payload omitted for privacy)` by default; opt-in string
   payloads are capped at 1 KiB of UTF-8 and may be shortened further by the JSON budget;
-- `location`, a Rust source basename with line/column;
+- `location`, the relative Rust source path with line/column, capped at 256 UTF-8
+  bytes; absolute paths keep only `crate/src/...` after the last source root, or
+  fall back to the basename (both Unix and Windows path separators are handled);
 - a standard-library backtrace, captured even without `RUST_BACKTRACE`, with source
   path lines removed and formatting capped at 32 KiB;
 - optional diagnostic entries: sequence, elapsed microseconds, normalized level and
@@ -174,7 +176,9 @@ option does not enable diagnostic content capture or any uploading.
 
 The previous panic hook still receives the original payload and prints its usual
 output; these privacy rules cover persisted records, not the host's stderr policy.
-Source locations and symbol names are developer/build metadata; use compiler path
+Relative source locations and symbol names are developer/build metadata. Absolute
+source locations omit the build-machine prefix. Backtrace `at <path>` lines are
+still dropped entirely; only the panic location uses the more useful path rule. Use compiler path
 remapping if other development tools retain full source paths.
 
 If JSON escaping or metadata exceeds the encoded byte budget, oldest diagnostics
