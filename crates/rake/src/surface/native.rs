@@ -69,6 +69,19 @@ impl Host {
     }
 
     #[cfg(target_os = "windows")]
+    pub(super) fn commit_target(&self, window: &Window) -> Result<(), SurfaceError> {
+        if self.window.window_id() != window.window_handle().window_id() {
+            return Err(SurfaceError("GPU surface belongs to another window".into()));
+        }
+        // Enabling composition also synchronizes the existing visual tree.
+        // Fast commits the DirectComposition device as part of that operation.
+        window
+            .enable_window_composition()
+            .map(|_| ())
+            .map_err(host_error)
+    }
+
+    #[cfg(target_os = "windows")]
     pub(super) fn on_compositor_recreated(
         &self,
         callback: impl Fn() + 'static,

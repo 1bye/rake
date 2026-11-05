@@ -199,6 +199,7 @@ impl GpuSurface {
     /// On Windows, query the target again after a composition recovery
     /// notification and recreate the swapchain if the visual has changed.
     /// Keep the visual alive until the associated graphics surface is released.
+    /// Call [`Self::commit_target`] after attaching or replacing the swapchain.
     ///
     /// # Errors
     /// Returns an error if the window has closed or GPUI cannot supply the target.
@@ -210,6 +211,25 @@ impl GpuSurface {
         return Ok(SurfaceTarget::Metal(self.metal_layer()));
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         self.inner.host.target()
+    }
+
+    /// Applies a renderer's target attachment changes to the window compositor.
+    ///
+    /// Call on the UI thread with the owning window after configuring a
+    /// swapchain on the target. Windows commits the DirectComposition tree.
+    /// On macOS and Linux the producer's normal presentation applies the changes.
+    ///
+    /// # Errors
+    /// Returns an error if the host has closed or Windows cannot commit the tree.
+    pub fn commit_target(&self, window: &Window) -> Result<(), SurfaceError> {
+        if self.state().closed {
+            return Err(SurfaceError("the host window has closed".into()));
+        }
+        #[cfg(target_os = "windows")]
+        self.inner.host.commit_target(window)?;
+        #[cfg(not(target_os = "windows"))]
+        let _ = window;
+        Ok(())
     }
 
     /// Retains the CAMetalLayer so a producer can configure and present on its thread.
