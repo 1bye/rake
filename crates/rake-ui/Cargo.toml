@@ -13,16 +13,18 @@ workspace = true
 [dependencies]
 tracing.workspace = true
 unicode-segmentation = "1.13.3"
-gpui = { workspace = true }
+gpui_pre = { package = "gpui-pre", version = "=0.3.11", default-features = false }
+gpui_fast = { workspace = true, optional = true }
 gpui-base.workspace = true
 
 [features]
+gpui-fast = ["dep:gpui_fast", "gpui-base/gpui-fast", "gpui-kit?/gpui-fast"]
 kit = ["dep:gpui-kit"]
-test-support = ["gpui/test-support"]
+test-support = ["gpui_pre/test-support", "gpui_fast?/test-support"]
 
 [dev-dependencies]
 # The observer regression exercises GPUI's actual global effect queue.
-gpui = { workspace = true, features = ["test-support"] }
+gpui_pre = { package = "gpui-pre", version = "=0.3.11", default-features = false, features = ["test-support"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 gpui-kit = { workspace = true, optional = true }

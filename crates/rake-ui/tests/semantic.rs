@@ -2,6 +2,11 @@
 //! Real: GPUI global effects, Base theme projection and Rake ambient themes.
 //! Doubles: TestPlatform; no display or GPU.
 
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_fast as gpui;
+#[cfg(not(feature = "gpui-fast"))]
+extern crate gpui_pre as gpui;
+
 use rake_ui::theme::{self, Appearance, Semantic, ThemeGlobal};
 use std::{cell::Cell, rc::Rc};
 

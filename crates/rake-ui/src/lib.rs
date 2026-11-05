@@ -1,5 +1,10 @@
 //! GPUI view construction, ambient themes and owned overlay state.
 
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_fast as gpui;
+#[cfg(not(feature = "gpui-fast"))]
+extern crate gpui_pre as gpui;
+
 pub mod overlay;
 pub mod theme;
 #[doc(hidden)]

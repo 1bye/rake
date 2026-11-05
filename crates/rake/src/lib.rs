@@ -74,6 +74,8 @@ pub mod router;
 pub mod runtime;
 pub mod services;
 pub mod storage;
+#[cfg(all(feature = "gpu-surface", target_os = "macos"))]
+pub mod surface;
 pub mod tasks;
 pub mod web;
 
@@ -106,8 +108,12 @@ pub use rake_ui::kit;
 
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError, ClosePolicy};
-#[cfg(feature = "gpui")]
-pub use gpui;
+#[cfg(feature = "gpui-fast")]
+pub extern crate gpui_fast as gpui;
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_fast_platform as gpui_platform;
+#[cfg(all(feature = "gpui", not(feature = "gpui-fast")))]
+pub extern crate gpui_pre as gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
 #[cfg(feature = "gpui")]
 /// Builds GPUI views from HTML-like markup.

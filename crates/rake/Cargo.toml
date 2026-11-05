@@ -12,19 +12,21 @@ workspace = true
 
 [features]
 default = ["gpui"]
+gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core"]
+gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
 native-components = ["gpui", "dep:rake-native"]
 native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
 updates = ["native-lifecycle"]
 updates-sparkle = ["updates", "rake-updates/sparkle"]
 updates-appimage = ["updates", "rake-updates/appimage"]
 updates-velopack = ["updates", "rake-updates/velopack"]
-devtools = ["gpui?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
+devtools = ["gpui_pre?/profiler", "gpui_fast?/profiler", "rake-diagnostics/devtools", "rake-http/devtools", "objc2-app-kit?/objc2-quartz-core"]
 devtools-memory = ["devtools", "dep:backtrace"]
 kit = ["gpui", "rake-ui/kit"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
-view-test-support = ["gpui", "gpui/test-support", "rake-ui/test-support"]
-gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support"]
+gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 rake-updates = { path = "../rake-updates", optional = true }
@@ -45,8 +47,10 @@ url = "2.5"
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 event-listener = "5.4"
 web-time.workspace = true
-gpui = { workspace = true, optional = true }
+gpui_pre = { package = "gpui-pre", version = "=0.3.11", default-features = false, optional = true }
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
+gpui_fast = { workspace = true, optional = true }
+gpui_fast_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rake-client.workspace = true
@@ -68,6 +72,11 @@ console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+metal = { version = "0.33", optional = true }
+foreign-types = { version = "0.5", optional = true }
+objc2 = { version = "0.6.5", optional = true }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry"], optional = true }
+objc2-quartz-core = { version = "0.3.2", features = ["CALayer"], optional = true }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
