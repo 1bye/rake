@@ -47,27 +47,47 @@ pub struct GpuSurface {
 
 struct Inner {
     id: usize,
-    state: Cell<SurfaceState>,
-    change: RefCell<Option<ChangeHandler>>,
+    changes: SurfaceChanges,
     host: macos::Host,
     closed_subscription: RefCell<Option<gpui::Subscription>>,
     visibility_subscription: RefCell<Option<gpui::Subscription>>,
 }
 
-impl Inner {
+#[derive(Default)]
+struct SurfaceChanges {
+    state: Cell<SurfaceState>,
+    handler: RefCell<Option<ChangeHandler>>,
+}
+
+impl SurfaceChanges {
     fn publish(&self, state: SurfaceState) {
-        if self.state.replace(state) != state
-            && let Some(handler) = self.change.borrow_mut().as_mut()
-        {
-            handler(state);
+        if self.state.replace(state) == state {
+            return;
+        }
+
+        let Some(mut handler) = self.handler.borrow_mut().take() else {
+            return;
+        };
+        handler(state);
+
+        let mut slot = self.handler.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(handler);
         }
     }
 
+    fn on_change(&self, mut handler: impl FnMut(SurfaceState) + 'static) {
+        handler(self.state.get());
+        self.handler.replace(Some(Box::new(handler)));
+    }
+}
+
+impl Inner {
     fn hide(&self) {
         self.host.hide();
-        self.publish(SurfaceState {
+        self.changes.publish(SurfaceState {
             visible: false,
-            ..self.state.get()
+            ..self.changes.state.get()
         });
     }
 }
@@ -80,11 +100,13 @@ impl GpuSurface {
     pub fn new(window: &mut Window, cx: &mut App) -> Result<Self, SurfaceError> {
         let inner = Rc::new(Inner {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            state: Cell::new(SurfaceState {
-                scale: window.scale_factor(),
+            changes: SurfaceChanges {
+                state: Cell::new(SurfaceState {
+                    scale: window.scale_factor(),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            change: RefCell::new(None),
+            },
             host: macos::Host::new(window, cx)?,
             closed_subscription: RefCell::new(None),
             visibility_subscription: RefCell::new(None),
@@ -96,10 +118,10 @@ impl GpuSurface {
                 && let Some(inner) = weak.upgrade()
             {
                 inner.hide();
-                inner.publish(SurfaceState {
+                inner.changes.publish(SurfaceState {
                     closed: true,
                     visible: false,
-                    ..inner.state.get()
+                    ..inner.changes.state.get()
                 });
             }
         }));
@@ -124,14 +146,14 @@ impl GpuSurface {
 
     /// Returns the latest extent and visibility; initially extent is zero and hidden.
     pub fn state(&self) -> SurfaceState {
-        self.inner.state.get()
+        self.inner.changes.state.get()
     }
 
     /// Installs one UI-thread callback, immediately delivering the latest state.
+    /// A handler can replace itself during a state change.
     /// Native producers should forward this snapshot through a channel.
-    pub fn on_change(&self, mut handler: impl FnMut(SurfaceState) + 'static) {
-        handler(self.state());
-        *self.inner.change.borrow_mut() = Some(Box::new(handler));
+    pub fn on_change(&self, handler: impl FnMut(SurfaceState) + 'static) {
+        self.inner.changes.on_change(handler);
     }
 
     /// Creates the single layout slot; element-state destruction hides the host on removal.
@@ -202,7 +224,7 @@ impl Element for GpuSurfaceElement {
         _: &mut App,
     ) {
         let inner = &self.surface.inner;
-        if inner.state.get().closed {
+        if inner.changes.state.get().closed {
             return;
         }
         let clip = bounds.intersect(&window.content_mask().bounds);
@@ -221,7 +243,7 @@ impl Element for GpuSurfaceElement {
             inner.hide();
             return;
         }
-        inner.publish(state);
+        inner.changes.publish(state);
     }
     fn paint(
         &mut self,
@@ -241,6 +263,54 @@ impl Element for GpuSurfaceElement {
                     mount.unwrap_or_else(|| Mount(self.surface.inner.clone())),
                 )
             },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn change_handler_can_replace_itself_during_notification() {
+        let changes = Rc::new(SurfaceChanges::default());
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let first = Rc::clone(&received);
+        let weak_changes = Rc::downgrade(&changes);
+
+        changes.on_change(move |state| {
+            first.borrow_mut().push(("first", state));
+            if state.visible {
+                let replacement = Rc::clone(&first);
+                weak_changes.upgrade().unwrap().on_change(move |state| {
+                    replacement.borrow_mut().push(("replacement", state));
+                });
+            }
+        });
+
+        let initial = SurfaceState::default();
+        let visible = SurfaceState {
+            visible: true,
+            ..initial
+        };
+        let closed = SurfaceState {
+            closed: true,
+            ..initial
+        };
+        changes.publish(visible);
+        changes.publish(visible);
+        changes.publish(initial);
+        changes.publish(closed);
+
+        assert_eq!(
+            *received.borrow(),
+            [
+                ("first", initial),
+                ("first", visible),
+                ("replacement", visible),
+                ("replacement", initial),
+                ("replacement", closed),
+            ]
         );
     }
 }
