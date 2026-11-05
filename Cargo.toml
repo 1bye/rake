@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/rake-native", "crates/rake-dist-linux", "crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/kit", "examples/desktop", "examples/distribution", "examples/foundation", "examples/files", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "examples/preview", "examples/agent", "tests/renamed-facade", "tests/web-platform"]
+members = ["crates/rake-native", "crates/rake-dist-linux", "crates/rake-updates", "crates/rake-dist-macos", "crates/rake-build", "crates/rake-resources", "crates/rake-dist-windows", "crates/rake-dist-core", "crates/rake-dist", "crates/rake", "crates/rake-diagnostics", "crates/rake-http", "crates/rake-ui", "crates/rake-protocol", "crates/rake-client", "crates/rake-macros", "crates/rake-cli", "examples/gpu-surface", "examples/gpu-surface/renderer", "examples/kit", "examples/desktop", "examples/distribution", "examples/foundation", "examples/files", "examples/routing", "examples/notes", "examples/view", "examples/inspector", "examples/preview", "examples/agent", "tests/renamed-facade", "tests/web-platform"]
+exclude = ["vendor/gpui-base", "vendor/gpui-pre-web"]
 resolver = "3"
 
 [workspace.package]
@@ -14,6 +15,8 @@ publish = false
 # GPUI comes from the snapshot GPUI Kit and gpui-base pin. Move these with their release.
 gpui = { package = "gpui-pre", version = "=0.3.11", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", default-features = false }
+gpui_fast = { package = "gpui-fast", version = "=0.1.13", default-features = false }
+gpui_fast_platform = { package = "gpui-fast-platform", version = "=0.1.13", default-features = false }
 gpui-base = "=0.9.0"
 gpui-kit = "=0.9.0"
 rake = { package = "rake-app", version = "=0.1.0-alpha.3", path = "crates/rake" }
@@ -42,3 +45,7 @@ undocumented_unsafe_blocks = "warn"
 
 [workspace.metadata.dylint]
 libraries = [{ git = "https://github.com/1bye/workflow", rev = "f62c7d7dcdf3ffd9b77de95a523544a0c688bb9b", pattern = "rust/spacing" }]
+
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
+gpui-pre-web = { path = "vendor/gpui-pre-web" }

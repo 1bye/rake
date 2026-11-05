@@ -74,6 +74,11 @@ pub mod router;
 pub mod runtime;
 pub mod services;
 pub mod storage;
+#[cfg(all(
+    feature = "gpu-surface",
+    any(target_os = "macos", target_os = "linux", target_os = "windows")
+))]
+pub mod surface;
 pub mod tasks;
 pub mod web;
 
@@ -95,6 +100,12 @@ pub mod overlay;
 #[cfg(feature = "gpui")]
 pub use rake_ui::theme;
 
+/// Text input components for GPUI views.
+#[cfg(feature = "gpui")]
+pub mod ui {
+    pub use rake_ui::input;
+}
+
 /// Initializes Base, optional Kit and theme observation before custom GPUI windows.
 /// Rake's application builder calls this automatically.
 #[cfg(feature = "gpui")]
@@ -106,8 +117,12 @@ pub use rake_ui::kit;
 
 #[cfg(feature = "gpui")]
 pub use application::{App, AppError, ClosePolicy};
-#[cfg(feature = "gpui")]
-pub use gpui;
+#[cfg(feature = "gpui-fast")]
+pub extern crate gpui_fast as gpui;
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_fast_platform as gpui_platform;
+#[cfg(all(feature = "gpui", not(feature = "gpui-fast")))]
+pub extern crate gpui_pre as gpui;
 pub use rake_macros::{Command, Route, app, data, instrument};
 #[cfg(feature = "gpui")]
 /// Builds GPUI views from HTML-like markup.

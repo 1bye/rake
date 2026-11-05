@@ -1,0 +1,22 @@
+[package]
+name = "rake-gpu-surface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "rake-gpu-surface"
+required-features = ["fast"]
+
+[features]
+fast = ["dep:rake", "rake/gpu-surface", "dep:surface-spike-renderer", "dep:web-time", "dep:pollster", "dep:anyhow"]
+devtools = ["rake?/devtools"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rake = { workspace = true, optional = true }
+surface-spike-renderer = { path = "renderer", optional = true, features = ["gpu"] }
+web-time = { workspace = true, optional = true }
+pollster = { version = "0.4", optional = true }
+anyhow = { version = "1", optional = true }

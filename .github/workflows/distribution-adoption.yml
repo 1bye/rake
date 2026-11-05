@@ -145,7 +145,7 @@ jobs:
               subprocess.run(['sudo', 'apt-get', 'install', '-y', 'patchelf', 'desktop-file-utils', 'libfuse2'], check=True)
               subprocess.run(['cargo', 'build', '-p', 'rake-app-cli', '--locked'], check=True)
           subprocess.run(['cargo', 'test', '-p', 'rake-updates', '--features', feature, '--locked'], check=True)
-          subprocess.run(['cargo', 'check', '-p', 'rake', '--features', 'updates-' + feature, *([] if os.name == 'nt' else ['--no-default-features']), '--locked'], check=True)
+          subprocess.run(['cargo', 'check', '-p', 'rake-app', '--features', 'updates-' + feature, *([] if os.name == 'nt' else ['--no-default-features']), '--locked'], check=True)
       - name: Signed AppImage HTTPS publication and native update
         if: always() && runner.os == 'Linux' && ((inputs.mode == 'updates-controller' && success()) || inputs.mode == 'linux-deep' || inputs.mode == 'linux-final')
         timeout-minutes: 8

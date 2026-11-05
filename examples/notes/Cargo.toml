@@ -16,16 +16,17 @@ required-features = ["gui"]
 
 [features]
 default = ["gui"]
-gui = ["rake/gpui"]
+gui = ["rake/gpui", "dep:gpui-base"]
+view-test-support = ["gui", "rake/view-test-support"]
 
 [lints]
 workspace = true
 
 [dependencies]
 rake = { package = "rake-app", path = "../../crates/rake", default-features = false }
+gpui-base = { workspace = true, optional = true }
 futures.workspace = true
 thiserror.workspace = true
-unicode-segmentation = "1.13"
 event-listener = "5.4"
 uuid = { version = "1", features = ["v4", "js"] }
 

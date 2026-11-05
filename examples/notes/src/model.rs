@@ -2,6 +2,9 @@
 
 use crate::StorageError;
 
+pub(crate) const MAX_TITLE_BYTES: usize = 1024;
+pub(crate) const MAX_BODY_BYTES: usize = 512 * 1024;
+
 /// One independently editable plain-text document.
 #[rake::data(schema)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,8 +84,8 @@ impl Library {
             if note.id == 0
                 || note.id >= self.next_id
                 || !ids.insert(note.id)
-                || note.title.len() > 1024
-                || note.body.len() > 512 * 1024
+                || note.title.len() > MAX_TITLE_BYTES
+                || note.body.len() > MAX_BODY_BYTES
                 || note.version == 0
                 || note.version > 9_007_199_254_740_990
                 || note.modified_ms > 9_007_199_254_740_991

@@ -22,7 +22,7 @@ pub(super) fn node(
                 "Heading" => "heading",
                 "CheckBox" => "checkbox",
                 "RadioButton" => "radio",
-                "TextInput" | "MultilineTextInput" => "textbox",
+                "TextInput" | "MultilineTextInput" | "PasswordInput" => "textbox",
                 "List" => "list",
                 "ListItem" => "listitem",
                 "Paragraph" => "paragraph",

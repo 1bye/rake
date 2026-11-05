@@ -1,13 +1,13 @@
 //! Macro-authored Elements screen; remote work is owned by its Rake entry activity.
 
 use crate::appearance::{CODE_FONT, Icon, Palette, control, icon};
-use crate::input::FilterInput;
 use crate::{Connection, ConnectionConfig, Inspector, Update};
 use crate::{styles, tree};
 use rake::control::{Command, Query, Reply};
 use rake::gpui::{self, prelude::*, *};
 use rake::prelude::*;
 use rake::router::{MountError, RuntimeId};
+use rake::ui::input::{Input, InputAccessibility, InputEvent, InputState};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -39,10 +39,10 @@ const TREE_ACTIONS: &[(&str, &str)] = &[
 struct ElementsView {
     model: Rc<RefCell<Inspector>>,
     config_error: Option<String>,
-    filter: Entity<FilterInput>,
-    style_filter: Entity<FilterInput>,
+    filter: Entity<InputState>,
+    style_filter: Entity<InputState>,
     style_query: String,
-    style_editor: Entity<FilterInput>,
+    style_editor: Entity<InputState>,
     style_text: String,
     show_find: bool,
     show_coverage: bool,
@@ -102,59 +102,41 @@ impl RouteViews<Destination> for Views {
 
         let owned = model.clone();
 
-        rake::theme::install(cx, Palette::new(true));
+        Palette::install(true, cx);
         let view = cx.new(|cx| {
-            let weak = cx.weak_entity();
-            let style_owner = weak.clone();
-            let state = model.clone();
+            let filter = input("Find elements", "Find by ID, type or source", window, cx);
+            let style_filter = input("Filter styles", "Filter properties or values", window, cx);
+            let style_editor = input("Temporary style declaration", "color: #ff0000", window, cx);
 
-            let filter = cx.new(|cx| {
-                FilterInput::new(
-                    "Find elements",
-                    "Find by ID, type or source",
-                    move |text, cx| {
-                        state.borrow_mut().filter = text;
-                        let _ = weak.update(cx, |this: &mut ElementsView, cx| {
-                            this.collapsed.clear();
-                            cx.notify();
-                        });
-                    },
-                    window,
-                    cx,
-                )
-            });
+            cx.subscribe(&filter, |this: &mut ElementsView, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.model.borrow_mut().filter = input.read(cx).value().to_string();
+                    this.collapsed.clear();
+                }
 
-            let style_filter = cx.new(|cx| {
-                FilterInput::new(
-                    "Filter styles",
-                    "Filter properties or values",
-                    move |text, cx| {
-                        let _ = style_owner.update(cx, |this: &mut ElementsView, cx| {
-                            this.style_query = text;
-                            cx.notify();
-                        });
-                    },
-                    window,
-                    cx,
-                )
-            });
-
-            let edit_owner = cx.weak_entity();
-
-            let style_editor = cx.new(|cx| {
-                FilterInput::new(
-                    "Temporary style declaration",
-                    "color: #ff0000",
-                    move |text, cx| {
-                        let _ = edit_owner.update(cx, |this: &mut ElementsView, cx| {
-                            this.style_text = text;
-                            cx.notify();
-                        });
-                    },
-                    window,
-                    cx,
-                )
-            });
+                cx.notify();
+            })
+            .detach();
+            cx.subscribe(
+                &style_filter,
+                |this: &mut ElementsView, input, event, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.style_query = input.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                },
+            )
+            .detach();
+            cx.subscribe(
+                &style_editor,
+                |this: &mut ElementsView, input, event, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.style_text = input.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                },
+            )
+            .detach();
 
             let tree_focus = cx.focus_handle();
 
@@ -449,6 +431,49 @@ impl RouteViews<Destination> for Views {
     }
 }
 
+fn input(
+    label: &'static str,
+    placeholder: &'static str,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        let mut state = InputState::new(window, cx)
+            .placeholder(placeholder)
+            .validate(|text, _| text.len() <= 1024 && !text.chars().any(char::is_control));
+
+        state.set_accessibility(
+            InputAccessibility::new(Some(gpui::accesskit::Role::TextInput))
+                .with_label(Some(label.into()))
+                .with_placeholder(Some(placeholder.into())),
+        );
+
+        state
+    })
+}
+
+fn filter_field(
+    state: &Entity<InputState>,
+    colors: Palette,
+    window: &Window,
+    cx: &gpui::App,
+) -> impl IntoElement {
+    let focused = state.read(cx).focus_handle(cx).is_focused(window);
+
+    div()
+        .flex()
+        .h(px(24.))
+        .w_full()
+        .px_2()
+        .text_size(px(12.))
+        .line_height(px(22.))
+        .rounded(px(12.))
+        .border_1()
+        .border_color(if focused { colors.focus } else { colors.field })
+        .bg(colors.field)
+        .child(Input::new(state))
+}
+
 fn property(label: &str, value: impl Into<SharedString>, colors: Palette) -> impl IntoElement {
     let label = label.to_owned();
     let value = value.into();
@@ -591,7 +616,8 @@ impl ElementsView {
         }
 
         if clear_filter {
-            self.filter.update(cx, |input, cx| input.reset(cx));
+            self.filter
+                .update(cx, |input, cx| input.set_value("", window, cx));
             self.model.borrow_mut().filter.clear();
         }
 
@@ -732,7 +758,8 @@ impl ElementsView {
         if self.show_find {
             self.filter.update(cx, |input, cx| input.focus(window, cx));
         } else {
-            self.filter.update(cx, |input, cx| input.reset(cx));
+            self.filter
+                .update(cx, |input, cx| input.set_value("", window, cx));
             self.model.borrow_mut().filter.clear();
             self.collapsed.clear();
             window.focus(&self.tree_focus, cx);
@@ -1202,7 +1229,7 @@ impl Render for ElementsView {
                 if self.show_find {
                     <div class="flex flex-row items-center gap-2 px-2 h-[30px] shrink-0 border-b-1 border-line">
                         {icon(Icon::Search, colors.muted)}
-                        <div class="flex-1 min-w-0">{self.filter.clone()}</div>
+                        <div class="flex-1 min-w-0">{filter_field(&self.filter, colors, window, cx)}</div>
                         <button id="close-find" aria-label="Close tree search" class="w-[20px] h-[24px]" style={control} on:click={cx.listener(Self::toggle_find)}>"×"</button>
                     </div>
                 }
@@ -1255,7 +1282,7 @@ impl Render for ElementsView {
                 if current_tab == "Styles" || current_tab == "Computed" {
                     <div class="flex flex-row items-center gap-2 px-2 h-[31px] shrink-0 border-b-1 border-line">
                         {icon(Icon::Search, colors.muted)}
-                        <div class="flex-1 min-w-0">{self.style_filter.clone()}</div>
+                        <div class="flex-1 min-w-0">{filter_field(&self.style_filter, colors, window, cx)}</div>
                     </div>
                 }
                 <section id={format!("detail-content-{current_tab}")} scroll={&detail_scroll} class="flex flex-col flex-1 min-h-0 overflow-y-scroll">
@@ -1267,7 +1294,7 @@ impl Render for ElementsView {
                                 <div id="temporary-overrides" class="flex flex-col gap-1 px-2 py-2 border-b-1 border-line">
                                     <p>"Temporary base overrides"</p>
                                     <p class="text-[10px] text-muted">"Interaction styles may override these values. Rust source is unchanged."</p>
-                                    {self.style_editor.clone()}
+                                    {filter_field(&self.style_editor, colors, window, cx)}
                                     <div class="flex flex-row gap-2">
                                         <button id="apply-style" disabled={stale} style={control} on:click={cx.listener(|this, _, _, cx| {
                                             if let Some((property, value)) = this.style_text.split_once(':') {
@@ -1419,7 +1446,7 @@ impl Render for ElementsView {
                         on:click={cx.listener(|this, _, _, cx| {let mut model=this.model.borrow_mut();model.picking = !model.picking;model.mode_pending=Some(model.picking);model.hover=None;cx.notify();})}>{if model.picking {"Cancel pick"} else {"Pick"}}</button>
                     <button id="pause" aria-label={if model.paused { "Resume observation" } else { "Pause observation" }} class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.paused = !model.paused; cx.notify(); })}>{icon(if model.paused { Icon::Play } else { Icon::Pause }, if model.paused { colors.accent } else { colors.muted })}</button>
                     <button id="refresh" aria-label="Refresh capture" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.model.borrow_mut().refresh = true; cx.notify(); })}>{icon(Icon::Refresh, colors.muted)}</button>
-                    <button id="theme" aria-label="Toggle theme" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; rake::theme::install(cx, Palette::new(this.light)); this.filter.update(cx, |input, cx| input.set_light(this.light, cx)); this.style_filter.update(cx, |input, cx| input.set_light(this.light, cx)); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
+                    <button id="theme" aria-label="Toggle theme" class="w-[30px] h-full hover:bg-field" style={control} on:click={cx.listener(|this, _, _, cx| { this.light = !this.light; Palette::install(this.light, cx); cx.notify(); })}>{icon(Icon::Theme, colors.muted)}</button>
                 </div>
                 if let Some(error) = error { <p class="px-3 py-1 text-property border-b-1 border-line">{error}</p> }
                 <div class="flex flex-1 min-h-0 min-w-0" class:flex-col={narrow} class:flex-row={!narrow}>
