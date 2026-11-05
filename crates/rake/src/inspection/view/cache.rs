@@ -1,4 +1,5 @@
 //! Window-owned caches keyed by unambiguous presentation identities.
+
 use super::super::ViewMetadata;
 use super::super::{ResolvedStyle, budget, snapshot::Payload};
 use gpui::{Pixels, StyleRefinement, TextStyle};
@@ -94,6 +95,7 @@ impl BoundaryCache {
             self.resolved = None;
         }
     }
+
     pub(super) fn view(
         &mut self,
         definition: &'static super::authored::Definition,

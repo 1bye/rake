@@ -17,6 +17,7 @@ fn new(directory: &std::path::Path, arguments: &[&str]) -> Output {
 #[test]
 fn embeds_templates_and_revision_without_invoking_tools() {
     let directory = tempfile::tempdir().unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .current_dir(directory.path())
         .env("PATH", "")
@@ -105,10 +106,12 @@ fn rejects_bad_names_options_paths_and_revisions_without_creating_files() {
 #[test]
 fn supports_local_paths_explicit_revisions_and_git_without_a_commit() {
     let directory = tempfile::tempdir().unwrap();
+
     let rake = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../rake")
         .canonicalize()
         .unwrap();
+
     let output = new(
         directory.path(),
         &[
@@ -158,6 +161,7 @@ fn refuses_symlink_destinations() {
 #[test]
 fn failed_git_init_leaves_no_project() {
     let directory = tempfile::tempdir().unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .current_dir(directory.path())
         .env("PATH", "")

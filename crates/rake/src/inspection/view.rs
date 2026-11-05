@@ -16,6 +16,7 @@ mod accessibility;
 mod cache;
 
 pub(super) use cache::BoundaryCache;
+
 pub(crate) mod authored;
 mod geometry;
 mod provenance;
@@ -559,6 +560,7 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         if let Some(timer) = timer {
             timer.finish();
         }
+
         if capturing
             && let Some(button) =
                 (&self.inner as &dyn std::any::Any).downcast_ref::<rake_ui::view::Button>()
@@ -1119,11 +1121,13 @@ fn interactivity<E: gpui::Element>(inner: &mut E) -> Option<&mut gpui::Interacti
     use gpui::InteractiveElement;
     use std::any::Any;
     let inner = inner as &mut dyn Any;
+
     if inner.is::<rake_ui::view::Button>() {
         return inner
             .downcast_mut::<rake_ui::view::Button>()?
             .inspection_interactivity();
     }
+
     if inner.is::<gpui::Div>() {
         Some(inner.downcast_mut::<gpui::Div>()?.interactivity())
     } else {

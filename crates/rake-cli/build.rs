@@ -18,10 +18,12 @@ fn git(manifest: &Path, arguments: &[&str]) -> Option<String> {
 
 fn checkout_revision(manifest: &Path) -> Option<String> {
     let root = git(manifest, &["rev-parse", "--show-toplevel"])?;
+
     let expected = Path::new(&root)
         .join("crates/rake-cli")
         .canonicalize()
         .ok()?;
+
     let manifest = manifest.canonicalize().ok()?;
 
     // An unpacked crate inside an unrelated checkout must not inherit its revision.
