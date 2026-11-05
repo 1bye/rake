@@ -2928,8 +2928,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cff6377e30f0c857681662e7edc7286bf30f5606033390401b0706d7bd930833"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -3789,8 +3787,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-web"
 version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad51fcf6e251d45b092fd4a98a26325eb9cf6ad4e6228b0c6bc50672db9e0563"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7415,11 +7411,11 @@ dependencies = [
  "blocking",
  "event-listener",
  "futures",
+ "gpui-base",
  "js-sys",
  "libc",
  "rake",
  "thiserror 2.0.21",
- "unicode-segmentation",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",

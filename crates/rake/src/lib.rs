@@ -97,6 +97,12 @@ pub mod overlay;
 #[cfg(feature = "gpui")]
 pub use rake_ui::theme;
 
+/// Text input components for GPUI views.
+#[cfg(feature = "gpui")]
+pub mod ui {
+    pub use rake_ui::input;
+}
+
 /// Initializes Base, optional Kit and theme observation before custom GPUI windows.
 /// Rake's application builder calls this automatically.
 #[cfg(feature = "gpui")]

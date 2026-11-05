@@ -1,7 +1,5 @@
 //! Fieldnotes: a local-first reference application built with Rake.
 
-#[cfg(feature = "gui")]
-mod editor;
 mod model;
 mod persistence;
 mod store;

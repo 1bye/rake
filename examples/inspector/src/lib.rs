@@ -8,8 +8,6 @@ mod appearance;
 rake::theme!(appearance::Palette);
 
 mod connection;
-#[cfg(feature = "gui")]
-mod input;
 mod model;
 #[cfg(feature = "gui")]
 mod styles;

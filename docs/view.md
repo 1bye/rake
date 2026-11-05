@@ -802,6 +802,43 @@ components need no theme props. Switching calls `install` with another value
 of the same type and rebuilds views; existing styles retain their old values.
 `examples/view` demonstrates a typed `ToggleTheme` action and a T shortcut.
 
+## Text inputs
+
+With the default `gpui` feature, import `Input`, `InputState`, `Textarea`,
+`TextareaState`, and `InputEvent` from `rake::ui::input`. These are the GPUI Base
+types and follow Base's versioning. Rake initializes Base during app setup.
+
+Create the state entities once in the owning view. Pass references to those
+entities when rendering the controls.
+
+```rust,ignore
+use rake::gpui::AppContext as _;
+use rake::ui::input::{Input, InputState, Textarea, TextareaState};
+
+let message = cx.new(|cx| InputState::new(window, cx).placeholder("Message"));
+let notes = cx.new(|cx| TextareaState::new(window, cx).placeholder("Notes"));
+
+// In the owning view's render method.
+rake::view! {
+    <div class="flex flex-col gap-2">
+        {Input::new(&self.message)}
+        {Textarea::new(&self.notes)}
+    </div>
+}
+```
+
+Use `InputState::masked(true)` for a masked field. Subscribe to
+`InputEvent::Change` and retain the subscription if the owning view needs to
+react to edits. The state supplies the editing behavior and focus handle.
+Style the surrounding elements for the layout you want.
+
+Run `cargo run -p rake-view --locked` and select **Try text inputs** to try
+single-line, masked, and multiline fields. The example displays message and
+note counts and whether the masked field is filled. Its labeled inspection
+boundaries expose focus and geometry for agent actions. CDP DOM, accessibility,
+and semantic snapshots omit the live input values. Storage inspection reads
+explicitly registered stores.
+
 ## Style presets
 
 Define reusable, typed builder functions using the same class grammar:

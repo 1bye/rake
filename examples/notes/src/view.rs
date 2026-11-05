@@ -1,7 +1,7 @@
 //! Fieldnotes' application-owned shell, using the shared notebook service and Rake lifecycle.
 
-use crate::editor::Editor;
-use crate::{CreateNote, EditNote, Library, Notebook, Repository, SaveNotes};
+use crate::model::{MAX_BODY_BYTES, MAX_TITLE_BYTES};
+use crate::{CreateNote, EditNote, Library, Note, Notebook, Repository, SaveNotes};
 
 use rake::gpui::{
     self, AnyView, Bounds, ClipboardItem, Context, Entity, Focusable, FontWeight, Task, Window,
@@ -10,12 +10,20 @@ use rake::gpui::{
 
 use rake::prelude::*;
 use rake::router::{GuardReason, MountError};
+use rake::ui::input::{Input, InputAccessibility, InputEvent, InputState, Textarea, TextareaState};
 use std::rc::Rc;
+
+mod text_keys;
+#[cfg(target_family = "wasm")]
+mod web_accessibility;
 
 const INK: u32 = 0x252d27;
 const MUTED: u32 = 0x858b80;
 const GREEN: u32 = 0x49674e;
 const LINE: u32 = 0xe3e5dc;
+const SEARCH_LABEL: &str = "Search notes";
+const TITLE_LABEL: &str = "Note title";
+const BODY_LABEL: &str = "Document body";
 
 #[derive(Clone, Route)]
 pub(crate) enum Destination {
@@ -153,6 +161,7 @@ impl RouteViews<Destination> for Views {
                 }
             })
             .map_err(|error| MountError(error.to_string()))?;
+        text_keys::bind(cx);
         let view = cx.new(|cx| NotesView::new(page.clone(), notebook.clone(), window, cx));
 
         focus_editor(&view.read(cx).body.clone(), window, cx);
@@ -220,15 +229,19 @@ impl RouteViews<Destination> for Views {
 struct NotesView {
     page: PageContext<Destination>,
     notebook: Rc<Notebook>,
-    title: Entity<Editor>,
-    body: Entity<Editor>,
-    search: Entity<Editor>,
-    query: Rc<std::cell::RefCell<String>>,
+    title: Entity<InputState>,
+    body: Entity<TextareaState>,
+    search: Entity<InputState>,
+    query: String,
     collection: Collection,
-    selected: Option<u64>,
+    selected: Option<Note>,
     sequence: u64,
+    #[cfg(target_family = "wasm")]
+    web_accessibility: Option<web_accessibility::WebAccessibility>,
     _dirty: Rc<dyn Fn(bool)>,
     _load: Task<()>,
+    title_limit_reached: bool,
+    body_limit_reached: bool,
     copied: bool,
     help: bool,
 }
@@ -237,54 +250,119 @@ impl NotesView {
     fn new(
         page: PageContext<Destination>,
         notebook: Rc<Notebook>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let title_store = notebook.clone();
+        let title = text_input(TITLE_LABEL, "Untitled note", window, cx);
+        let view = cx.weak_entity();
 
-        let title = cx.new(|cx| {
-            Editor::new(
-                "Untitled note",
-                "Note title",
-                32.,
-                false,
-                move |old, text| update_selected(&title_store, old, text, true),
-                cx,
-            )
-        });
+        title.update(cx, |title, cx| {
+            let view = view.clone();
 
-        let body_store = notebook.clone();
+            title.set_validator(
+                move |value, cx| {
+                    if value.len() <= MAX_TITLE_BYTES {
+                        return true;
+                    }
 
-        let body = cx.new(|cx| {
-            Editor::new(
-                "Start with a thought…",
-                "Document body",
-                16.,
-                true,
-                move |old, text| update_selected(&body_store, old, text, false),
-                cx,
-            )
-        });
+                    let view = view.clone();
 
-        let query = Rc::new(std::cell::RefCell::new(String::new()));
-        let changed_query = query.clone();
+                    cx.defer(move |cx| {
+                        let _ = view.update(cx, |view, cx| {
+                            view.title_limit_reached = true;
+                            cx.notify();
+                        });
+                    });
 
-        let search = cx.new(|cx| {
-            Editor::new(
-                "Search your notes…",
-                "Search notes",
-                13.,
-                false,
-                move |_, text| {
-                    *changed_query.borrow_mut() = text.into();
-
-                    Ok(())
+                    false
                 },
                 cx,
-            )
+            );
         });
 
-        cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(&title, window, |this, input, event, window, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.title_limit_reached = false;
+                let value = input.read(cx).value();
+
+                if let Err(error) =
+                    update_selected(&this.notebook, this.selected.as_mut(), &value, true)
+                {
+                    rake::warn!(%error, "Could not edit note title");
+                    this.sync(window, cx);
+                    let value = this.selected.as_ref().map_or("", |note| &note.title);
+
+                    input.update(cx, |input, cx| input.set_value(value, window, cx));
+                }
+
+                cx.notify();
+            }
+        })
+        .detach();
+        let body = cx.new(|cx| {
+            let mut state = TextareaState::new(window, cx)
+                .grapheme_editing()
+                .max_bytes(MAX_BODY_BYTES, move |cx| {
+                    let view = view.clone();
+
+                    cx.defer(move |cx| {
+                        let _ = view.update(cx, |view, cx| {
+                            view.body_limit_reached = true;
+                            cx.notify();
+                        });
+                    });
+                })
+                .placeholder("Start with a thought…");
+
+            state.set_accessibility(
+                InputAccessibility::new(Some(gpui::accesskit::Role::MultilineTextInput))
+                    .with_label(Some(BODY_LABEL.into()))
+                    .with_placeholder(Some("Start with a thought…".into())),
+            );
+
+            state
+        });
+
+        cx.subscribe_in(&body, window, |this, input, event, window, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.body_limit_reached = false;
+                let value = input.read(cx).value();
+
+                if let Err(error) =
+                    update_selected(&this.notebook, this.selected.as_mut(), &value, false)
+                {
+                    rake::warn!(%error, "Could not edit note body");
+                    this.sync(window, cx);
+                    let value = this.selected.as_ref().map_or("", |note| &note.body);
+
+                    input.update(cx, |input, cx| input.set_value(value, window, cx));
+                }
+
+                cx.notify();
+            }
+        })
+        .detach();
+
+        let search = text_input(SEARCH_LABEL, "Search your notes…", window, cx);
+
+        cx.subscribe(&search, |this, input, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.query = input.read(cx).value().to_string();
+                cx.notify();
+            }
+        })
+        .detach();
+        #[cfg(target_family = "wasm")]
+        let web_accessibility = web_accessibility::WebAccessibility::new(
+            [
+                search.read(cx).focus_handle(cx),
+                title.read(cx).focus_handle(cx),
+                body.read(cx).focus_handle(cx),
+            ],
+            window,
+            cx,
+        );
+
         let entry = page.entry();
 
         let dirty = notebook.observe_dirty(move |dirty| {
@@ -297,12 +375,16 @@ impl NotesView {
             title,
             body,
             search,
-            query,
+            query: String::new(),
             collection: Collection::All,
             selected: None,
             sequence: 0,
+            #[cfg(target_family = "wasm")]
+            web_accessibility,
             _dirty: dirty,
             _load: Task::ready(()),
+            title_limit_reached: false,
+            body_limit_reached: false,
             copied: false,
             help: false,
         }
@@ -316,21 +398,42 @@ impl NotesView {
         });
 
         if let Some(note) = selected {
-            let reset = self.selected != Some(note.id);
+            // Reset both histories on a document switch, including equal field values.
+            // On the same note, only replace fields changed outside the editor.
+            let previous = self
+                .selected
+                .as_ref()
+                .filter(|previous| previous.id == note.id);
 
-            self.title.update(cx, |editor, cx| {
-                editor.set_text(note.title.clone(), reset, cx)
-            });
-            self.body.update(cx, |editor, cx| {
-                editor.set_text(note.body.clone(), reset, cx)
-            });
+            let reset = previous.is_none();
+
+            if previous.is_none_or(|previous| previous.title != note.title) {
+                self.title.update(cx, |input, cx| {
+                    input.set_value(note.title.as_str(), window, cx)
+                });
+            }
+
+            if previous.is_none_or(|previous| previous.body != note.body) {
+                self.body.update(cx, |input, cx| {
+                    input.set_value(note.body.as_str(), window, cx)
+                });
+            }
 
             if reset {
+                self.title_limit_reached = false;
+                self.body_limit_reached = false;
                 self.copied = false;
             }
 
-            self.selected = Some(note.id);
             window.set_window_title(&format!("{} — Fieldnotes", note.display_title()));
+            self.selected = Some(note);
+        } else if self.selected.take().is_some() {
+            self.title_limit_reached = false;
+            self.body_limit_reached = false;
+            self.title
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.body
+                .update(cx, |input, cx| input.set_value("", window, cx));
         }
     }
 
@@ -349,9 +452,9 @@ impl NotesView {
 
     fn new_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.collection = Collection::All;
-        self.query.borrow_mut().clear();
+        self.query.clear();
         self.search
-            .update(cx, |editor, cx| editor.set_text(String::new(), true, cx));
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.dispatch(CreateNote {
             title: String::new(),
             body: String::new(),
@@ -545,7 +648,7 @@ impl NotesView {
     }
 
     fn list(&self, library: &Library, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.query.borrow().to_lowercase();
+        let query = self.query.to_lowercase();
 
         let mut notes: Vec<_> = library
             .notes
@@ -569,12 +672,13 @@ impl NotesView {
             )
         });
         let count = notes.len();
+        let search = fill_input(Input::new(&self.search));
 
         div().w(px(286.)).flex_shrink_0().h_full().flex().flex_col().bg(rgb(0xfafaf6)).border_r_1().border_color(rgb(LINE))
             .child(div().p_5().pb_4().child(div().flex().items_center().justify_between().mb_4()
                 .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(match self.collection { Collection::All => "All notes", Collection::Pinned => "Pinned", Collection::Archive => "Archive" }))
                 .child(div().text_color(rgb(MUTED)).text_size(px(11.)).child(count.to_string())))
-                .child(div().h_9().px_3().py_1().rounded_md().bg(rgb(0xeeefe8)).child(self.search.clone()).inspect("notes.search")))
+                .child(div().h_9().px_3().py_1().rounded_md().bg(rgb(0xeeefe8)).flex().text_size(px(13.)).line_height(px(22.)).child(search).inspect("notes.search").focus_handle(&self.search.read(cx).focus_handle(cx))))
             .child(div().id("note-list").flex_1().min_h_0().overflow_y_scroll().px_3().pb_3()
                 .when(notes.is_empty(), |list| list.child(div().p_4().mt_8().text_color(rgb(MUTED)).line_height(px(24.)).child(if query.is_empty() { "A little room for something new.\nCreate a note to get started." } else { "No notes found.\nTry a different word." })))
                 .children(notes.into_iter().map(|note| {
@@ -594,34 +698,93 @@ impl NotesView {
     }
 }
 
-fn focus_editor(editor: &Entity<Editor>, window: &mut Window, cx: &mut gpui::App) {
+fn fill_input(input: impl IntoElement) -> impl IntoElement {
+    div().size_full().min_h_0().flex().child(input)
+}
+
+fn input_limit_notice(
+    id: &'static str,
+    semantic_id: &'static str,
+    message: &'static str,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .role(gpui::accesskit::Role::Alert)
+        .aria_label(message)
+        .px_8()
+        .py_3()
+        .bg(rgb(0xffefe4))
+        .text_color(rgb(0x965639))
+        .child(message)
+        .inspect(semantic_id)
+}
+
+fn text_input(
+    label: &'static str,
+    placeholder: &'static str,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        let mut state = InputState::new(window, cx)
+            .grapheme_editing()
+            .line_breaks_as_spaces()
+            .placeholder(placeholder);
+
+        state.set_accessibility(
+            InputAccessibility::new(Some(gpui::accesskit::Role::TextInput))
+                .with_label(Some(label.into()))
+                .with_placeholder(Some(placeholder.into())),
+        );
+
+        state
+    })
+}
+
+fn focus_editor<T: Focusable>(editor: &Entity<T>, window: &mut Window, cx: &mut gpui::App) {
     let focus = editor.read(cx).focus_handle(cx);
 
     window.focus(&focus, cx);
 }
 
-fn update_selected(store: &Notebook, old: &str, text: &str, title: bool) -> Result<(), String> {
+fn update_selected(
+    store: &Notebook,
+    loaded: Option<&mut Note>,
+    text: &str,
+    title: bool,
+) -> Result<(), String> {
+    let loaded = loaded.ok_or("Select a note first.")?;
     let library = store.library().ok_or("Library is not ready.")?;
 
     let note = library
         .notes
         .iter()
-        .find(|note| Some(note.id) == library.selected)
-        .ok_or("Select a note first.")?;
+        .find(|note| library.selected == Some(loaded.id) && note.id == loaded.id)
+        .ok_or("The selected note changed. Please try your edit again.")?;
 
-    if (if title { &note.title } else { &note.body }) != old {
+    let (saved, loaded) = if title {
+        (&note.title, &mut loaded.title)
+    } else {
+        (&note.body, &mut loaded.body)
+    };
+
+    if saved != loaded {
         return Err("This note changed elsewhere. Its latest version is being loaded; please try your edit again.".into());
     }
 
-    store
-        .edit(EditNote {
-            id: note.id,
-            expected_version: note.version,
-            title: title.then(|| text.into()),
-            body: (!title).then(|| text.into()),
-        })
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    if saved != text {
+        store
+            .edit(EditNote {
+                id: note.id,
+                expected_version: note.version,
+                title: title.then(|| text.into()),
+                body: (!title).then(|| text.into()),
+            })
+            .map_err(|error| error.to_string())?;
+        *loaded = text.into();
+    }
+
+    Ok(())
 }
 
 fn relative_date(ms: u64) -> String {
@@ -641,6 +804,11 @@ impl Render for NotesView {
         self.sync(window, cx);
         let library = self.notebook.library();
 
+        #[cfg(target_family = "wasm")]
+        if let Some(accessibility) = &self.web_accessibility {
+            accessibility.sync(window, library.is_some(), self.selected.is_some());
+        }
+
         let mut root = div()
             .size_full()
             .min_h_0()
@@ -656,6 +824,7 @@ impl Render for NotesView {
             .text_size(px(13.))
             .text_color(rgb(INK))
             .bg(rgb(0xfffefa))
+            .key_context("Fieldnotes")
             .on_key_down(cx.listener(Self::key));
 
         let Some(library) = library else {
@@ -793,6 +962,22 @@ impl Render for NotesView {
             );
         }
 
+        if self.title_limit_reached {
+            document = document.child(input_limit_notice(
+                "title-limit",
+                "notes.title-limit",
+                "The title is limited to 1,024 bytes.",
+            ));
+        }
+
+        if self.body_limit_reached {
+            document = document.child(input_limit_notice(
+                "body-limit",
+                "notes.body-limit",
+                "This note has reached its editing limit. Copy or export it before adding more.",
+            ));
+        }
+
         if let Some(notice) = notice {
             document = document.child(
                 div()
@@ -900,16 +1085,24 @@ impl Render for NotesView {
                             div()
                                 .h(px(60.))
                                 .flex_shrink_0()
-                                .child(self.title.clone())
-                                .inspect("notes.title"),
+                                .flex()
+                                .text_size(px(32.))
+                                .line_height(px(45.))
+                                .child(fill_input(Input::new(&self.title)))
+                                .inspect("notes.title")
+                                .focus_handle(&self.title.read(cx).focus_handle(cx)),
                         )
                         .child(div().w_12().h(px(2.)).mt_3().mb_7().bg(rgb(0xd6dece)))
                         .child(
                             div()
                                 .flex_1()
                                 .min_h_0()
-                                .child(self.body.clone())
-                                .inspect("notes.body"),
+                                .flex()
+                                .text_size(px(16.))
+                                .line_height(px(29.6))
+                                .child(fill_input(Textarea::new(&self.body)))
+                                .inspect("notes.body")
+                                .focus_handle(&self.body.read(cx).focus_handle(cx)),
                         )
                         .child(
                             div()

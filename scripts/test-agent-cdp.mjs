@@ -1,7 +1,7 @@
 // Covers: complete public agent workflow against a real native GPUI window.
 // Real: app/GPU, Unix control, Rust CLI/CDP, Node client, ScreenCaptureKit image/source.
 // Doubles: none. Requires: unlocked macOS 14+, Screen Recording, Node22+, Xcode tools.
-// Build: cargo build -p rake-cli -p rake-agent-example --features rake-agent-example/devtools
+// Build: cargo build -p rake-cli -p rake-agent-example -p rake-view --features rake-agent-example/devtools,rake-view/devtools
 // Run: node scripts/test-agent-cdp.mjs
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -24,6 +24,78 @@ async function eventually(check,timeoutMs=20000) {
   const until=Date.now()+timeoutMs;let last;
   while(Date.now()<until) {try {const result=await check();if(result)return result;}catch(error){last=error;}await delay(50);}
   throw new Error('Native readiness deadline exceeded',{cause:last});
+}
+async function verifyBaseInputs(client) {
+  const opened = await client.click(await client.find({id:'try-inputs',role:'button',name:'Try text inputs'}));
+  await eventually(async () => {
+    await client.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});
+    const tree = await client.snapshot({id:'base-message'});
+    return tree.totalMatches === 1 && BigInt(tree.frameSequence) > BigInt(opened.beforeFrame);
+  });
+  const message = 'phase4-message café 你好 🙂';
+  const replacement = 'phase4-replacement 🧪';
+  const password = 'phase4-secret-698b';
+  const note = 'phase4-line-one\nphase4-line-two';
+  const fields = [
+    {id:'base-message',role:'TextInput',name:'Message'},
+    {id:'base-password',role:'PasswordInput',name:'Password'},
+    {id:'base-notes',role:'MultilineTextInput',name:'Notes'},
+  ];
+  const privateValues = [message,replacement,password,...note.split('\n')];
+  async function focus({id, ...query}) {
+    const field = await client.find(query);
+    assert.equal(field.id,id);
+    const action = await client.actionability(field);
+    assert.equal(action.canDispatch,true,JSON.stringify(action));
+    await client.click(field);
+    await eventually(async () => (await client.find(query)).focused === true);
+  }
+  async function assertPrivateInspection() {
+    const semantic = await client.snapshot({}, {limit:256});
+    assert.equal(semantic.hasMore,false);
+    const dom = await client.call('DOM.getDocument',{depth:-1});
+    const ax = await client.call('Accessibility.getFullAXTree');
+    const {storageKey} = await client.call('Storage.getStorageKeyForFrame',{frameId:'rake'});
+    const stores = await client.call('Rake.getStorage');
+    const local = await client.call('DOMStorage.getDOMStorageItems',{storageId:{storageKey,isLocalStorage:true}});
+    const session = await client.call('DOMStorage.getDOMStorageItems',{storageId:{storageKey,isLocalStorage:false}});
+    const nodes = node => [node,...(node.children ?? []).flatMap(nodes)];
+    for (const query of fields) {
+      const field = await client.find(query);
+      assert.equal(field.text,null);
+      assert.equal(field.textContent,'');
+      assert.equal(field.textEditable,false);
+      const node = nodes(dom.root).find(n => n.nodeId === field.nodeId);
+      assert.ok(node?.attributes.includes(query.id),`Missing DOM boundary for ${query.id}`);
+      assert.ok(!node.attributes.includes('value'),`DOM exposed a value attribute for ${query.id}`);
+      const accessible = ax.nodes.find(n => n.backendDOMNodeId === field.nodeId);
+      assert.equal(accessible?.role.value,'textbox');
+      assert.equal(accessible?.name.value,query.name);
+      assert.equal(accessible.value,undefined);
+    }
+    assert.deepEqual(stores.stores,[]);
+    assert.deepEqual(local.entries,[]);
+    assert.deepEqual(session.entries,[]);
+    for (const [surface, reply] of Object.entries({semantic,dom,ax,stores,local,session})) {
+      const wire = JSON.stringify(reply);
+      for (const value of privateValues) assert.ok(!wire.includes(value),`${surface} leaked an input value`);
+    }
+  }
+  await focus(fields[0]);
+  await client.typeText(message);
+  await client.waitFor({text:`Message characters: ${[...message].length}`});
+  await assertPrivateInspection();
+  await client.key('a',4);
+  await client.typeText(replacement);
+  await client.waitFor({text:`Message characters: ${[...replacement].length}`});
+  await focus(fields[1]);
+  await client.typeText(password);
+  await client.waitFor({text:'Password entered'});
+  await focus(fields[2]);
+  await client.typeText(note);
+  await client.waitFor({text:`Note characters: ${[...note].length} across 2 lines`});
+  await assertPrivateInspection();
+  console.log('Base Input typing, select-all replacement, masked Input and Textarea passed DOM, AX and storage privacy checks');
 }
 try {
   children.push(spawn('caffeinate',['-d','-i','-t','180'],{stdio:'ignore'}));
@@ -170,6 +242,13 @@ try {
   execFileSync(rake,['ctl','--json','windows','close',`window-${second}`],{env,timeout:10000});
   await eventually(async()=> (await client.windows()).length===1);
   console.log('Native resize, rapid draws, reconnect/restart and isolated multi-window input passed');
+
+  const previousRuntime = client.runtimeId;
+  client.close();
+  native.kill('SIGTERM');await new Promise(resolve=>native.once('exit',resolve));
+  native=spawn(join(root,'target/debug/rake-view'),[],{cwd:root,env,stdio:['ignore',log,log]});children.push(native);
+  client=await eventually(async()=>{const c=await RakeAgent.connect(endpoint);if(c.runtimeId!==previousRuntime)return c;c.close();});
+  await verifyBaseInputs(client);
 
   console.log(JSON.stringify({passed:true,directory,imagePath,runtimeId:runtime}));
 } catch(error) {
