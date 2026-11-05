@@ -7084,7 +7084,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rake-agent-example"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
 ]
@@ -7308,7 +7308,7 @@ dependencies = [
 
 [[package]]
 name = "rake-distribution-example"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
  "rake-build",
@@ -7316,7 +7316,7 @@ dependencies = [
 
 [[package]]
 name = "rake-files"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
  "rake-build",
@@ -7325,7 +7325,7 @@ dependencies = [
 
 [[package]]
 name = "rake-foundation"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
  "rake-build",
@@ -7333,7 +7333,7 @@ dependencies = [
 
 [[package]]
 name = "rake-gpu-surface"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "pollster 0.4.0",
@@ -7365,7 +7365,7 @@ dependencies = [
 
 [[package]]
 name = "rake-inspector"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "futures",
  "rake-app",
@@ -7377,7 +7377,7 @@ dependencies = [
 
 [[package]]
 name = "rake-kit-example"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
 ]
@@ -7409,7 +7409,7 @@ dependencies = [
 
 [[package]]
 name = "rake-notes"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "blocking",
  "event-listener",
@@ -7426,7 +7426,7 @@ dependencies = [
 
 [[package]]
 name = "rake-preview"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
 ]
@@ -7458,7 +7458,7 @@ dependencies = [
 
 [[package]]
 name = "rake-routing"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
  "tracing",
@@ -7503,14 +7503,14 @@ dependencies = [
 
 [[package]]
 name = "rake-view"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
 ]
 
 [[package]]
 name = "rake-web-host-fixture"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
  "wasm-bindgen",
@@ -7838,7 +7838,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "renamed-facade"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "rake-app",
 ]
@@ -9035,7 +9035,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surface-spike-renderer"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "foreign-types",
