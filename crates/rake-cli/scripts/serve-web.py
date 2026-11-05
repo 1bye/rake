@@ -48,7 +48,9 @@ preview = None
 if args.preview_helper:
     from preview import Preview
     preview = Preview(inspector, args.preview_helper)
-directory = args.directory or Path(__file__).resolve().parents[1] / "dist" / args.example
+directory = args.directory
+if directory is None and not args.inspector_only:
+    directory = Path(__file__).resolve().parents[3] / "dist" / args.example
 
 if not args.inspector_only and not (directory / "index.html").is_file():
     build_args = "routing --hash" if args.example == "routing-hash" else args.example

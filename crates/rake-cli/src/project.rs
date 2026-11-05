@@ -10,55 +10,37 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         for (name, source) in [
-            ("bundle.py", include_str!("../../../scripts/bundle.py")),
-            (
-                "web_offline.py",
-                include_str!("../../../scripts/web_offline.py"),
-            ),
+            ("bundle.py", include_str!("../scripts/bundle.py")),
+            ("web_offline.py", include_str!("../scripts/web_offline.py")),
             (
                 "web-service-worker.js",
-                include_str!("../../../scripts/web-service-worker.js"),
+                include_str!("../scripts/web-service-worker.js"),
             ),
-            (
-                "inspector.py",
-                include_str!("../../../scripts/inspector.py"),
-            ),
-            ("dev.py", include_str!("../../../scripts/dev.py")),
+            ("inspector.py", include_str!("../scripts/inspector.py")),
+            ("dev.py", include_str!("../scripts/dev.py")),
             (
                 "rake-web-font-licenses.txt",
-                include_str!("../../../scripts/rake-web-font-licenses.txt"),
+                include_str!("../scripts/rake-web-font-licenses.txt"),
             ),
-            ("preview.py", include_str!("../../../scripts/preview.py")),
+            ("preview.py", include_str!("../scripts/preview.py")),
             (
                 "preview_socket.py",
-                include_str!("../../../scripts/preview_socket.py"),
+                include_str!("../scripts/preview_socket.py"),
             ),
             (
                 "preview-stream.js",
-                include_str!("../../../scripts/preview-stream.js"),
+                include_str!("../scripts/preview-stream.js"),
             ),
             (
                 "preview-annotations.js",
-                include_str!("../../../scripts/preview-annotations.js"),
+                include_str!("../scripts/preview-annotations.js"),
             ),
-            (
-                "preview.swift",
-                include_str!("../../../scripts/preview.swift"),
-            ),
-            (
-                "preview.html",
-                include_str!("../../../scripts/preview.html"),
-            ),
-            ("preview.js", include_str!("../../../scripts/preview.js")),
-            ("preview.css", include_str!("../../../scripts/preview.css")),
-            (
-                "serve-web.py",
-                include_str!("../../../scripts/serve-web.py"),
-            ),
-            (
-                "dev_bridge.py",
-                include_str!("../../../scripts/dev_bridge.py"),
-            ),
+            ("preview.swift", include_str!("../scripts/preview.swift")),
+            ("preview.html", include_str!("../scripts/preview.html")),
+            ("preview.js", include_str!("../scripts/preview.js")),
+            ("preview.css", include_str!("../scripts/preview.css")),
+            ("serve-web.py", include_str!("../scripts/serve-web.py")),
+            ("dev_bridge.py", include_str!("../scripts/dev_bridge.py")),
         ] {
             std::fs::write(directory.join(name), source)?;
         }

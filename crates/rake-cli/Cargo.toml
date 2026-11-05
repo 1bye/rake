@@ -1,10 +1,11 @@
 [package]
-name = "rake-cli"
+name = "rak-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
 description = "Terminal client for Rake development runtime control"
 
 [lints]
@@ -17,7 +18,7 @@ doc = false
 
 [dependencies]
 tempfile = "3"
-rake-dist = { path = "../rake-dist" }
+rake-dist = { version = "=0.1.0-alpha.2", path = "../rake-dist" }
 ctrlc = { version = "3.5", features = ["termination"] }
 base64 = "0.22.1"
 regex = "1"
@@ -33,7 +34,7 @@ uuid = { version = "1", features = ["v4"] }
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
-rake = { path = "../rake", default-features = false }
+rake = { package = "rak", version = "=0.1.0-alpha.2", path = "../rake", default-features = false }
 
 [features]
 # Explicit consumer builds: real compiler/SDK/wasm prerequisites, outside the fast suite.

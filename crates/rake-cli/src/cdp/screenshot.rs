@@ -33,7 +33,7 @@ impl Screenshots {
                     .map_err(|e| e.to_string())?;
                 let source = directory.join("capture.swift");
 
-                std::fs::write(&source, include_str!("../../../../scripts/preview.swift"))
+                std::fs::write(&source, include_str!("../../scripts/preview.swift"))
                     .map_err(|e| e.to_string())?;
                 let executable = directory.join("capture");
                 let mut compiler = Command::new("xcrun");

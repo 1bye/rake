@@ -1,11 +1,16 @@
 [package]
-name = "rake"
+name = "rak"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
 description = "Portable application foundation for GPUI native and browser applications"
+readme = "../../README.md"
+
+[lib]
+name = "rake"
 
 [lints]
 workspace = true
@@ -27,13 +32,13 @@ view-test-support = ["gpui", "gpui/test-support", "rake-ui/test-support"]
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
-rake-updates = { path = "../rake-updates", optional = true }
-rake-resources = { path = "../rake-resources" }
+rake-updates = { version = "=0.1.0-alpha.2", path = "../rake-updates", optional = true }
+rake-resources = { version = "=0.1.0-alpha.2", path = "../rake-resources" }
 rake-ui = { workspace = true, optional = true }
 rake-native = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }
 rake-protocol.workspace = true
-rake-macros = { path = "../rake-macros" }
+rake-macros = { version = "=0.1.0-alpha.2", path = "../rake-macros" }
 rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -19,6 +19,8 @@ import urllib.parse
 import urllib.request
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from dev_bridge import BridgeError, DevBridge
 from inspector import Inspector, ProcessOutput
 
@@ -29,7 +31,7 @@ class InspectorHTTP(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.control = self.root / "control"
         self.control.mkdir(mode=0o700)
-        self.server = subprocess.Popen([sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", "0"],
+        self.server = subprocess.Popen([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--inspector-only", "--control", "--port", "0"],
             env={**os.environ, "RAKE_CONTROL_DIR": str(self.control)}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         launch = urllib.parse.urlsplit(self.server.stdout.readline().strip().split()[-1])
         self.url = f"http://{launch.netloc}"
@@ -155,7 +157,7 @@ class ElementsHosting(unittest.TestCase):
             for name, content in {"index.html": b"Rake Elements", "pkg/rake_inspector.js": b"export default 1", "pkg/rake_inspector_bg.wasm": b"\x00asm"}.items():
                 (assets / name).write_bytes(content)
             (root / "private.txt").write_text("private")
-            command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", "0", "--inspector-app", str(assets)]
+            command = [sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--inspector-only", "--control", "--port", "0", "--inspector-app", str(assets)]
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             try:
                 launch = urllib.parse.urlsplit(process.stdout.readline().strip().split()[-1])
@@ -176,7 +178,7 @@ class ElementsHosting(unittest.TestCase):
                     error.exception.close()
             finally:
                 process.terminate(); process.wait(timeout=5); process.stdout.close()
-            rejected = subprocess.run([sys.executable, str(Path(__file__).with_name("serve-web.py")), "--control", "--inspector-app", str(assets)], capture_output=True)
+            rejected = subprocess.run([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--control", "--inspector-app", str(assets)], capture_output=True)
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn(b"requires --inspector-only --control", rejected.stderr)
 

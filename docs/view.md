@@ -671,7 +671,7 @@ There's no global component cache or extra state runtime.
 
 Retained scroll handles work through `scroll`, and GPUI virtual lists embed through `{expression}`.
 
-The `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
+The `rake::overlay` module adds `OverlayHost`, `OverlayAnchor`, `Popover` and `Dialog` as typed components, with retained state, live anchor geometry, stacked dismissal and modal focus containment. See [scrolling and overlays](../crates/rake/overlays.md). The example opens a retained 10,000-document virtual list from a nested dialog.
 
 ## Diagnostics and editing
 
@@ -718,14 +718,14 @@ opaque unless they execute their own instrumented rendering. See
 ```sh
 cargo run -p rake-view
 python3 scripts/build-web.py --example view
-python3 scripts/serve-web.py --example view --port 8083
+python3 crates/rake-cli/scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
-cargo test -p rake --test view_ui --locked
-cargo test -p rake --test view --test view_components --test view_paragraphs --locked
-cargo test -p rake --features view-test-support --test view_state --locked
+cargo test -p rak --test view_ui --locked
+cargo test -p rak --test view --test view_components --test view_paragraphs --locked
+cargo test -p rak --features view-test-support --test view_state --locked
 cargo test -p rake-view --features view-test-support --lib --locked
-cargo test -p rake --doc --locked
+cargo test -p rak --doc --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```

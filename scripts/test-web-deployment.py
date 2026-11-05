@@ -7,6 +7,9 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from bundle import BundleConfig, web_deployment
 
 

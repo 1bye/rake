@@ -136,13 +136,13 @@ Shortened or omitted metadata sets `metadata_truncated`, and non-finite geometry
 Verify the portable inspection contracts with:
 
 ```sh
-cargo test -p rake --no-default-features --test element_inspection
+cargo test -p rak --no-default-features --test element_inspection
 ```
 
 The explicit display integration requires a macOS GUI session:
 
 ```sh
-cargo build -p rake-routing -p rake-cli --features rake/devtools
+cargo build -p rake-routing -p rak-cli --features rake/devtools
 python3 scripts/test-elements.py
 ```
 

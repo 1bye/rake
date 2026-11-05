@@ -59,12 +59,12 @@ automated through Chrome's paste guard.
 ## Repeatable verification
 
 ```sh
-cargo test -p rake-cli --offline
-cargo test -p rake --features view-test-support,devtools --lib inspection --offline
-cargo clippy -p rake-cli -p rake --all-targets --features rake/view-test-support --offline -- -D warnings
-cargo test -p rake --no-default-features --lib --offline
-cargo check -p rake -p rake-view --lib --target wasm32-unknown-unknown --offline
-cargo build -p rake-cli -p rake-view --features rake/devtools --offline
+cargo test -p rak-cli --offline
+cargo test -p rak --features view-test-support,devtools --lib inspection --offline
+cargo clippy -p rak-cli -p rak --all-targets --features rak/view-test-support --offline -- -D warnings
+cargo test -p rak --no-default-features --lib --offline
+cargo check -p rak -p rake-view --lib --target wasm32-unknown-unknown --offline
+cargo build -p rak-cli -p rake-view --features rake/devtools --offline
 node scripts/test-elements-cdp.mjs
 ```
 

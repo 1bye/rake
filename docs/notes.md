@@ -9,11 +9,11 @@ composition, commands, reload checkpoints, dirty-entry guards and inspection.
 ```sh
 cargo run -p rake-notes
 # Development runtime and graphical inspector
-cargo run -p rake-cli -- dev --package rake-notes
+cargo run -p rak-cli -- dev --package rake-notes
 # Application bundle, ad-hoc signed by default on macOS
-cargo run -p rake-cli -- bundle --package rake-notes
+cargo run -p rak-cli -- bundle --package rake-notes
 # Browser artifacts (matching wasm-bindgen-cli required)
-cargo run -p rake-cli -- build --target web --package rake-notes
+cargo run -p rak-cli -- build --target web --package rake-notes
 ```
 
 The window opens at 1220 × 820, with a 960 × 640 minimum. Cmd/Ctrl N creates a note, F focuses search and S saves now. The title and body are independent text fields, and clipboard shortcuts, selection and undo work in the focused field.

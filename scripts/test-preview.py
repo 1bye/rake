@@ -20,6 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+
 from dev_bridge import BridgeError
 from preview import Preview, Capture
 from preview_socket import Socket
@@ -264,7 +266,7 @@ class PreviewTests(unittest.TestCase):
 
     def test_preview_flag_rejects_web_and_non_dev_commands(self):
         for arguments in (["dev", "--target", "web"], ["build"]):
-            result = subprocess.run([sys.executable, str(Path(__file__).with_name("dev.py")), *arguments, "--preview"], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/dev.py")), *arguments, "--preview"], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("--preview requires", result.stderr)
 
@@ -273,7 +275,7 @@ class PreviewTests(unittest.TestCase):
             root = Path(temporary)
             state = root / "state.json"
             state.write_text('{}')
-            process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("serve-web.py")),
+            process = subprocess.Popen([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")),
                 "--control", "--inspector-only", "--port", "0", "--development-state", str(state),
                 "--build-root", str(root), "--preview-helper", "/unused"],
                 env={**os.environ, "RAKE_CONTROL_DIR": str(root / "control")}, stdout=subprocess.PIPE,

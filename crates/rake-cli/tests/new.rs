@@ -36,7 +36,15 @@ fn embeds_templates_and_revision_without_invoking_tools() {
 
     assert_eq!(result["name"], "my-app");
     assert_eq!(result["application_id"], "com.example.my-app");
-    assert!(manifest.contains(&format!("rev = \"{}\"", env!("RAKE_BUILD_REV"))));
+    let revision = env!("RAKE_BUILD_REV");
+    let pin = if revision.is_empty() {
+        format!("version = \"={}\"", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!("rev = \"{revision}\"")
+    };
+
+    assert!(manifest.contains("package = \"rak\""));
+    assert!(manifest.contains(&pin));
     assert!(!project.join("Cargo.lock").exists());
     assert!(!project.join(".git").exists());
 
@@ -177,12 +185,11 @@ fn failed_git_init_leaves_no_project() {
 #[test]
 fn local_dependency_paths_preserve_quotes_and_template_like_text() {
     let directory = tempfile::tempdir().unwrap();
-    let checkout = directory.path().join("Rake \"{{stack_guard}}\"");
+    let checkout = directory.path().join("Rake \"{{dependency}}\"");
     let rake = checkout.join("crates/rake");
 
     fs::create_dir_all(&rake).unwrap();
-    fs::create_dir_all(checkout.join("vendor/pest_stack_guard")).unwrap();
-    fs::write(rake.join("Cargo.toml"), "[package]\nname = \"rake\"\n").unwrap();
+    fs::write(rake.join("Cargo.toml"), "[package]\nname = \"rak\"\n").unwrap();
     let output = new(
         directory.path(),
         &["app", "--rake-path", rake.to_str().unwrap()],

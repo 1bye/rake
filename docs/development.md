@@ -1,6 +1,6 @@
 # Development supervisor and reload
 
-Build the CLI with `cargo build -p rake-cli` (or install it with
+Build the CLI with `cargo build -p rak-cli` (or install it with
 `cargo install --path crates/rake-cli`). The CLI bundles its Python helpers;
 Python 3.11+ and the selected Rust/platform toolchain must be on PATH.
 

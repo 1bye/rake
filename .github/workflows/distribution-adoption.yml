@@ -68,15 +68,15 @@ jobs:
               "--test", "storage_cache",
           ]
           subprocess.run(
-              ["cargo", "test", "-p", "rake", "--no-default-features", *tests, "--locked"],
+              ["cargo", "test", "-p", "rak", "--no-default-features", *tests, "--locked"],
               check=True,
           )
       - name: Check rake and desktop targets on Windows
         if: runner.os == 'Windows'
-        run: cargo check -p rake -p rake-foundation -p rake-desktop-example -p rake-files --all-targets --features rake/view-test-support,rake/devtools,rake/updates-velopack --locked
+        run: cargo check -p rak -p rake-foundation -p rake-desktop-example -p rake-files --all-targets --features rak/view-test-support,rak/devtools,rak/updates-velopack --locked
       - name: Check rake and desktop targets on Linux
         if: runner.os == 'Linux'
-        run: cargo check -p rake -p rake-foundation -p rake-desktop-example -p rake-files --all-targets --features rake/view-test-support,rake/devtools,rake/updates-appimage --locked
+        run: cargo check -p rak -p rake-foundation -p rake-desktop-example -p rake-files --all-targets --features rak/view-test-support,rak/devtools,rak/updates-appimage --locked
       - name: Platform and Web boundary regression tests
         run: |
           node scripts/test-platform.mjs
@@ -128,7 +128,7 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build CLI for deep Linux acceptance
         if: inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final'
-        run: cargo build -p rake-cli --locked
+        run: cargo build -p rak-cli --locked
       - name: Signed Linux repository install and upgrade
         if: runner.os == 'Linux' && inputs.mode == 'linux-deep'
         timeout-minutes: 10
@@ -143,7 +143,7 @@ jobs:
           if os.name != 'nt':
               subprocess.run(['sudo', 'apt-get', 'update'], check=True)
               subprocess.run(['sudo', 'apt-get', 'install', '-y', 'patchelf', 'desktop-file-utils', 'libfuse2'], check=True)
-              subprocess.run(['cargo', 'build', '-p', 'rake-cli', '--locked'], check=True)
+              subprocess.run(['cargo', 'build', '-p', 'rak-cli', '--locked'], check=True)
           subprocess.run(['cargo', 'test', '-p', 'rake-updates', '--features', feature, '--locked'], check=True)
           subprocess.run(['cargo', 'check', '-p', 'rake', '--features', 'updates-' + feature, *([] if os.name == 'nt' else ['--no-default-features']), '--locked'], check=True)
       - name: Signed AppImage HTTPS publication and native update
@@ -161,7 +161,7 @@ jobs:
         if: runner.os == 'Linux' && inputs.mode == 'linux-final'
         timeout-minutes: 3
         run: |
-          cargo test -p rake-cli --test distribution_commands --test distribution_bundle --locked
+          cargo test -p rak-cli --test distribution_commands --test distribution_bundle --locked
           python3 scripts/test-bundle.py BundleTests.test_real_native_bundle_is_signed_relocatable_and_preserves_previous_output_on_failure BundleTests.test_native_build_delegates_to_rust_and_preserves_installed_layout BundleTests.test_native_output_cannot_overlap_an_asset_input
       - name: Arch repository and Flatpak sandbox GPU render
         if: always() && runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')
@@ -183,17 +183,17 @@ jobs:
         if: runner.os == 'Linux' && inputs.mode == 'acceptance'
         run: cargo test -p rake-dist-linux --features native-tests --test native --locked
       - if: inputs.mode == 'acceptance'
-        run: cargo test -p rake-cli --test distribution_bundle --test distribution_plan --locked
+        run: cargo test -p rak-cli --test distribution_bundle --test distribution_plan --locked
       - name: Debian and Fedora install, upgrade and uninstall
         if: runner.os == 'Linux' && inputs.mode == 'acceptance'
         timeout-minutes: 8
         run: python3 scripts/test-distribution-linux.py --cli target/debug/rake --install
       - name: Build and package the real GPUI application with custom manifest
         if: runner.os == 'Windows' && inputs.mode == 'acceptance'
-        run: cargo run -p rake-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
+        run: cargo run -p rak-cli --locked -- bundle --native --package rake-foundation --debug --format nsis --output native-foundation --json
       - name: Build CLI for focused Velopack acceptance
         if: (inputs.mode == 'updates-controller' && runner.os == 'Windows') || inputs.mode == 'velopack' || inputs.mode == 'velopack-update' || inputs.mode == 'windows-update' || inputs.mode == 'windows-final' || inputs.mode == 'appinstaller'
-        run: cargo build -p rake-cli --locked
+        run: cargo build -p rak-cli --locked
       - name: Create a disposable local Windows signing profile
         timeout-minutes: 2
         if: always() && runner.os == 'Windows'
@@ -224,7 +224,7 @@ jobs:
         run: |
           cargo test -p rake-updates --features velopack --lib --locked
           cargo test -p rake-dist --test signing --locked
-          cargo test -p rake-cli --test update_key --locked
+          cargo test -p rak-cli --test update_key --locked
           cargo test -p rake-dist-core --locked
       - name: Velopack native install, upgrade and uninstall
         if: always() && runner.os == 'Windows' && inputs.mode != 'updates-controller' && inputs.mode != 'windows-update' && inputs.mode != 'velopack-update' && inputs.mode != 'windows-final' && inputs.mode != 'appinstaller' && (inputs.mode != 'velopack' || success())

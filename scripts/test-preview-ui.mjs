@@ -1,7 +1,7 @@
 // Real framing/coordinates/scroll accumulation. No native GPU/browser claims.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-const code = readFileSync(new URL('./preview-stream.js', import.meta.url),'utf8');
+const code = readFileSync(new URL('../crates/rake-cli/scripts/preview-stream.js', import.meta.url),'utf8');
 const {Packets, position, Wheel} = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 function packet(metadata, payload) {
   const h = Buffer.from(JSON.stringify(metadata)), header = Buffer.alloc(8);
@@ -31,7 +31,7 @@ assert.equal(wheel.take(true).phase,'ended');assert.equal(wheel.take(true),null)
 wheel.add(10000,-10000);input=wheel.take();assert.equal(input.dx,128000);assert.equal(input.dy,-128000);
 console.log('Preview regressions passed: fragmented binary stream, bounded parser, scaled coordinates and fractional scroll phases');
 
-const annotationCode = readFileSync(new URL('./preview-annotations.js', import.meta.url),'utf8');
+const annotationCode = readFileSync(new URL('../crates/rake-cli/scripts/preview-annotations.js', import.meta.url),'utf8');
 const {Annotations, targetKey, visibleBounds, MAX_ANNOTATIONS, formatReference, formatAnnotation, formatAnnotations} = await import('data:text/javascript;base64,' + Buffer.from(annotationCode).toString('base64'));
 const stored = new Map(), storage = {getItem:key => stored.get(key), setItem:(key, value) => stored.set(key, value)};
 const notes = new Annotations(storage);

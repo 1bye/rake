@@ -17,7 +17,7 @@ unverified.
 
 ## Guarded-Quit 
 
-`cargo test -p rake --no-default-features --test guarded_quit` exercises public
+`cargo test -p rak --no-default-features --test guarded_quit` exercises public
 portable behavior, including registered save commands, revisions, histories,
 both job policies, cancellation, retries and reload exclusion. `cargo test -p
 rake-cli --test runtime` includes real Unix-socket CLI decisions and quit status.

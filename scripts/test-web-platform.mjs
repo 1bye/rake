@@ -26,7 +26,7 @@ const bootstrap = `
 import sys, json, shutil
 from pathlib import Path
 from types import SimpleNamespace
-sys.path.insert(0, str(Path(sys.argv[1]) / 'scripts'))
+sys.path.insert(0, str(Path(sys.argv[1]) / 'crates/rake-cli/scripts'))
 from bundle import BundleConfig, web_deployment
 root, work = Path(sys.argv[1]), Path(sys.argv[2])
 for label in ['old', 'new']:

@@ -29,7 +29,7 @@ Rake needs Rust 1.98.0, native development tools and Python 3.11+. Install the C
 and create a desktop/browser app:
 
 ```sh
-cargo install --git https://github.com/1bye/rake --locked rake-cli
+cargo install rak-cli --version 0.1.0-alpha.2 --locked
 rake new hello-rake
 cd hello-rake
 rake dev
@@ -39,7 +39,7 @@ The generated app has two pages, a persistent layout, a theme and an agent-calla
 command. For the browser, use `rake dev --target web` with a WebGPU-capable browser
 and the matching `wasm-bindgen-cli` (the builder prints the install command).
 The first dev run creates `Cargo.lock`; commit it. `rake new` pins Rake to the
-exact revision the CLI was built from.
+version of the installed CLI.
 
 UI uses `view!` (it's comptime). A complete Hello window looks like this:
 
@@ -66,8 +66,8 @@ fn app() -> App {
 }
 ```
 
-To add Rake to an existing crate, copy the pinned dependency and parser patch from
-a generated `Cargo.toml`, then use the Hello entry above. `view!`, themes and style
+To add Rake to an existing crate, use `cargo add rak@0.1.0-alpha.2 --rename rake`
+and then use the Hello entry above. `view!`, themes and style
 presets are included by default; Kit and DevTools remain optional.
 
 [Getting started](docs/getting-started.md) covers browser prerequisites, local
@@ -305,7 +305,7 @@ From a clone of this repository:
 | `cargo run -p rake-desktop-example` | Pages, layouts, loading and native updates |
 | `cargo run -p rake-files` | Files, clipboard and preferences |
 | `cargo run -p rake-kit-example --features kit,devtools` | GPUI Kit in routed tabs (native) |
-| `cargo run -p rake --example native --features native-components` | AppKit controls (macOS) |
+| `cargo run -p rak --example native --features native-components` | AppKit controls (macOS) |
 
 ## Documentation
 
