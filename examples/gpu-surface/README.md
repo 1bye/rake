@@ -1,11 +1,25 @@
-# Experimental macOS GPU surface
+# Experimental desktop GPU surfaces
 
-The `rake/gpu-surface` feature enables GPUI Fast composition on macOS. A
-`GpuSurface` occupies a GPUI layout slot and exposes a retained CAMetalLayer
-through `metal_layer()`. The independent wgpu 28 producer owns its device,
-surface configuration and frame loop. GPUI places and clips the layer and
-composites its overlays above it. The producer observes `SurfaceState` for
-physical size, scale, visibility and window close.
+The `rake/gpu-surface` feature enables GPUI Fast composition on macOS, Linux
+and Windows. Create a `GpuSurface` in a GPUI window, place its `element()`
+in the layout, and pass its `target()` to the renderer. Use `on_change()`
+to receive physical size, scale, visibility and window close. The renderer
+owns its device, swapchain and frame loop. After configuring a swapchain,
+call `commit_target(window)` on the GPUI thread to apply the attachment.
+
+| Platform | `SurfaceTarget` |
+| --- | --- |
+| macOS | Retained `CAMetalLayer`. The existing `metal_layer()` accessor also works. |
+| Linux | GPUI Fast's Wayland subsurface or X11 child window with its matching display handle. Release the renderer's surface before the GPUI window or host. |
+| Windows | GPUI Fast's `IDCompositionVisual`. A compositor recovery sends another `on_change()` notification. Query `target()` again and reattach the swapchain if the visual changed. |
+
+On Linux and Windows the reported extent follows the visible rectangle. On
+macOS the layer retains the full layout extent and GPUI clips its container.
+
+## macOS example
+
+The demo attaches an independent wgpu 28 producer to the Metal layer. GPUI
+composites overlays above the renderer.
 
 Run on a logged-in macOS desktop with Metal.
 

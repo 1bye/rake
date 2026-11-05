@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 default = ["gpui"]
-gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core"]
+gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
 gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
 native-components = ["gpui", "dep:rake-native"]
 native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
@@ -80,6 +80,7 @@ objc2-quartz-core = { version = "0.3.2", features = ["CALayer"], optional = true
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Graphics_DirectComposition"], optional = true }
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm"], optional = true }
 
 [dev-dependencies]
