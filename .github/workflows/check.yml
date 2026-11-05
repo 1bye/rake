@@ -84,5 +84,5 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
-      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.2.0 --locked
+      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.3.2 --locked
       - run: python3 scripts/check-spacing.py
