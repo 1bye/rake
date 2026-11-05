@@ -97,7 +97,7 @@ impl Render for Counter {
                     this.count += 1;
                     cx.notify();
                 })}>
-                    "Increment"
+                    Increment
                 </button>
             </main>
         }
