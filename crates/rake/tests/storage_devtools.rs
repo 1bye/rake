@@ -324,3 +324,66 @@ fn shared_registry_keeps_retry_keys_scoped_to_each_runtime() {
         }
     });
 }
+
+#[test]
+fn migration_changes_revision_and_inspection_keeps_the_typed_view() {
+    use rake::storage::{Backend, Schema};
+
+    block_on(async {
+        let backend = MemoryBackend::new();
+
+        backend.set("theme", br#""old""#).await.unwrap();
+        let store = Store::<String>::new(backend.clone())
+            .with_schema(Schema::new(1).with_migration(0, Ok).unwrap())
+            .with_cache(CacheConfig::new(4, 1024).unwrap());
+        let registry = Storage::new()
+            .read_write("preferences", Area::Local, store.clone())
+            .unwrap();
+        let revision = registry.catalog()[0].revision;
+        let router = Router::<NoRoute>::with_services(
+            RouterConfig::default(),
+            ServiceRegistry::new().with(registry.clone()).unwrap(),
+        );
+        let client = router.client();
+        let page = Message::Query(Query::Storage {
+            read: Read::Entries {
+                store: "preferences".into(),
+                after: None,
+                limit: 10,
+            },
+        });
+
+        assert!(
+            matches!(client.request_async(request(&client, page.clone(), None)).await,
+            Err(ControlError::Storage { reason }) if reason.contains("store changed while reading"))
+        );
+        assert!(registry.catalog()[0].revision > revision);
+        let Reply::Data(data) = client
+            .request_async(request(&client, page, None))
+            .await
+            .unwrap()
+        else {
+            panic!("expected storage page");
+        };
+        let page: Page = serde_json::from_value(data).unwrap();
+
+        assert_eq!(page.entries, [("theme".into(), "\"old\"".into())]);
+        client
+            .request_async(request(
+                &client,
+                edit(Some("\"edited\"")),
+                Some("schema-edit"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(store.get("theme").await.unwrap().as_deref(), Some("edited"));
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&backend.get("theme").await.unwrap().unwrap()).unwrap();
+
+        assert_eq!(
+            persisted,
+            serde_json::json!({"$rake_schema":1,"value":"edited"})
+        );
+        router.shutdown();
+    });
+}

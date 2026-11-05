@@ -3,6 +3,7 @@
 //! Cloning a [`Store`] shares its backend. Values need Serde conversion, not `Clone`,
 //! `Send` or `Sync`. Backend futures run on the caller's executor; disk/network
 //! implementations must keep blocking work off the application event loop.
+//! Opt in to versioned envelopes and migration-on-read with [`Store::with_schema`].
 //!
 //! ```
 //! use rake::storage::{CacheConfig, MemoryBackend, Store};
@@ -30,8 +31,10 @@ use std::{
 };
 
 mod cache;
+mod schema;
 
 pub use cache::CacheConfig;
+pub use schema::Schema;
 
 #[cfg(feature = "devtools")]
 pub mod devtools;
@@ -78,6 +81,37 @@ pub enum StorageError {
     /// Serialization or typed deserialization failed; existing data is preserved.
     #[error("storage JSON conversion failed: {0}")]
     Codec(#[from] serde_json::Error),
+    /// The stored schema belongs to a newer application; the value is preserved.
+    #[error("storage schema version {stored} is newer than supported version {current}")]
+    NewerVersion {
+        /// Version in the stored envelope.
+        stored: u64,
+        /// Version configured by this application.
+        current: u64,
+    },
+    /// A required adjacent migration was not registered.
+    #[error("storage migration from version {from} to the next version is missing")]
+    MissingMigration {
+        /// Version requiring a migration step.
+        from: u64,
+    },
+    /// A migration was registered twice or does not precede the current version.
+    #[error("invalid or duplicate storage migration from version {from} (current: {current})")]
+    InvalidMigration {
+        /// Invalid or duplicate starting version.
+        from: u64,
+        /// Configured current version.
+        current: u64,
+    },
+    /// An application migration failed; the original value is preserved.
+    #[error("storage migration from version {from} to the next version failed: {source}")]
+    Migration {
+        /// Starting version of the failed step.
+        from: u64,
+        /// Original migration failure.
+        #[source]
+        source: Box<StorageError>,
+    },
     /// A backend failed; its original error remains available as the source.
     #[error("storage backend failed: {0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
@@ -132,6 +166,8 @@ struct Inner {
     backend: Rc<dyn Backend>,
     cache: RefCell<Option<cache::Cache>>,
     epoch: Cell<u64>,
+    schema: RefCell<Option<Rc<Schema>>>,
+    operations: futures::lock::Mutex<()>,
     writes: Cell<usize>,
     #[cfg(feature = "devtools")]
     revision: Cell<u64>,
@@ -236,6 +272,8 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
                 backend: Rc::new(backend),
                 cache: RefCell::new(None),
                 epoch: Cell::new(0),
+                schema: RefCell::new(None),
+                operations: futures::lock::Mutex::new(()),
                 writes: Cell::new(0),
                 #[cfg(feature = "devtools")]
                 revision: Cell::new(0),
@@ -255,36 +293,84 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
         self
     }
 
+    /// Enables schema envelopes and migration-on-read across cloned handles.
+    ///
+    /// Configure before starting operations. Reads validate every migration and
+    /// the current type before atomic write-back. Versioned get/set/remove calls
+    /// serialize across clones; independent stores/backend writers require caller
+    /// coordination for the entire read/migrate/write sequence and explicit cache
+    /// invalidation. Backend operations already started can outlive cancellation.
+    pub fn with_schema(self, schema: Schema) -> Self {
+        self.inner.invalidate();
+        *self.inner.schema.borrow_mut() = Some(Rc::new(schema));
+
+        self
+    }
+
     /// Drops cached values across clones, including cached absence. External
     /// writers require explicit invalidation after their write has completed.
     pub fn invalidate(&self) {
         self.inner.invalidate();
     }
 
-    /// Loads and decodes a value. Invalid JSON/type data returns a codec error.
+    /// Loads a value, migrating and writing back when a schema is configured.
+    ///
+    /// # Errors
+    /// Invalid JSON/types, unsupported versions, missing/failing migrations and
+    /// oversized results preserve existing data. Backend write-back errors are
+    /// returned rather than reporting an upgrade that was not persisted.
     pub async fn get(&self, key: &str) -> Result<Option<T>, StorageError> {
         validate_key(key)?;
+        let schema = self.inner.schema.borrow().clone();
+        let _operation = if schema.is_some() {
+            Some(self.inner.operations.lock().await)
+        } else {
+            None
+        };
 
-        self.inner
-            .get(key)
-            .await?
-            .map(|bytes| {
-                validate_value(&bytes)?;
+        let Some(bytes) = self.inner.get(key).await? else {
+            return Ok(None);
+        };
 
-                Ok(serde_json::from_slice(&bytes)?)
-            })
-            .transpose()
+        let Some(schema) = schema else {
+            return Ok(Some(serde_json::from_slice(&bytes)?));
+        };
+
+        let (value, changed) = schema.decode::<T>(&bytes)?;
+
+        if changed {
+            let bytes = schema.encode(&value)?;
+
+            validate_value(&bytes)?;
+            self.write(key, &bytes).await?;
+        }
+
+        Ok(Some(value))
     }
 
     /// Serializes before changing the backend. Invalid keys/oversized values fail
     /// without writing. Persistence failures preserve the previous backend value.
     pub async fn set(&self, key: &str, value: &T) -> Result<(), StorageError> {
         validate_key(key)?;
-        let bytes = serde_json::to_vec(value)?;
+        let schema = self.inner.schema.borrow().clone();
+        let bytes = match &schema {
+            Some(schema) => schema.encode(value)?,
+            None => serde_json::to_vec(value)?,
+        };
 
         validate_value(&bytes)?;
+        let _operation = if schema.is_some() {
+            Some(self.inner.operations.lock().await)
+        } else {
+            None
+        };
+
+        self.write(key, &bytes).await
+    }
+
+    async fn write(&self, key: &str, bytes: &[u8]) -> Result<(), StorageError> {
         let mutation = Mutation::new(&self.inner);
-        let result = self.inner.backend.set(key, &bytes).await;
+        let result = self.inner.backend.set(key, bytes).await;
 
         mutation.finish();
 
@@ -294,6 +380,13 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     /// Deletes a key; deleting a missing key is a success.
     pub async fn remove(&self, key: &str) -> Result<(), StorageError> {
         validate_key(key)?;
+        let versioned = self.inner.schema.borrow().is_some();
+        let _operation = if versioned {
+            Some(self.inner.operations.lock().await)
+        } else {
+            None
+        };
+
         let mutation = Mutation::new(&self.inner);
         let result = self.inner.backend.remove(key).await;
 
