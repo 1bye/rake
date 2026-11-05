@@ -382,6 +382,16 @@ impl Collection {
             let event = ingress.next().await?;
             let registry = self.registry()?;
             let mut registry = registry.borrow_mut();
+            if matches!(event.kind, EventKind::Removed) {
+                if registry
+                    .entries
+                    .get(&event.id)
+                    .is_none_or(|entry| entry.state.generation == event.generation)
+                {
+                    return Ok(event);
+                }
+                continue;
+            }
             let Some(entry) = registry
                 .entries
                 .get_mut(&event.id)
@@ -535,6 +545,23 @@ impl Handle {
             Err(error) => return crate::ready(Err(error)),
         };
         let handle = self.clone();
+        if let Ok(registry) = self.collection.registry() {
+            let registry = registry.borrow();
+            if registry
+                .entries
+                .get(&self.id)
+                .is_some_and(|entry| !entry.spec.visible)
+            {
+                registry.ingress.send(Event {
+                    id: self.id.clone(),
+                    generation: self.generation,
+                    menu_revision: None,
+                    kind: EventKind::Hidden,
+                    anchor: None,
+                    input: crate::Input::default(),
+                });
+            }
+        }
 
         Box::pin(async move {
             apply.await?;
@@ -584,13 +611,32 @@ impl Handle {
     /// # Errors
     /// Reports a removed item, stopped host or native query failure.
     pub fn anchor(&self) -> Result<Option<crate::Anchor>, Error> {
-        self.with(|entry| {
-            entry
-                .native
-                .as_ref()
-                .ok_or(Error::HostUnavailable)?
-                .anchor()
-        })
+        let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+        native.anchor()
+    }
+
+    /// Sets native AppKit popup highlight without synthesizing activation.
+    /// # Errors
+    /// Reports unsupported platforms, removed registrations or stopped hosts.
+    pub fn set_popup_highlight(&self, highlighted: bool) -> Result<(), Error> {
+        #[cfg(target_os = "macos")]
+        {
+            let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+            native.set_popup_highlight(highlighted)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = highlighted;
+            Err(Error::Unsupported(crate::Feature::Popup))
+        }
+    }
+
+    /// Queries display-aware icon placement for an application popup.
+    /// # Errors
+    /// Reports native failure, removal or shutdown. None means no reliable anchor.
+    pub fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
+        let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+        native.popup_anchor()
     }
 
     /// Removes this registration immediately; completion awaits native cleanup.
@@ -611,6 +657,14 @@ impl Handle {
                 return crate::ready(Ok(()));
             }
 
+            registry.ingress.send(Event {
+                id: self.id.clone(),
+                generation: self.generation,
+                menu_revision: None,
+                kind: EventKind::Removed,
+                anchor: None,
+                input: crate::Input::default(),
+            });
             registry
                 .entries
                 .remove(&self.id)

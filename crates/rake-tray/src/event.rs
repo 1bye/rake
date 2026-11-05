@@ -99,6 +99,10 @@ pub enum EventKind {
     VisibilityChanged(bool),
     /// User removal requested managed application quit.
     RemovalRequestedQuit,
+    /// Explicit removal of this generation.
+    Removed,
+    /// Application requested hiding this registration.
+    Hidden,
     /// Native callback ingress overflowed; commands were not silently ignored.
     Overflow,
 }

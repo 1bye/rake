@@ -12,6 +12,7 @@ mod image;
 pub mod linux;
 pub mod macos;
 mod menu;
+mod placement;
 mod spec;
 pub mod windows;
 
@@ -21,6 +22,7 @@ pub use event::{Anchor, Button, CoordinateSpace, Event, EventKind, Input, Point,
 pub use host::{Applied, Collection, Handle, Host, Registration, State};
 pub use image::{Image, ImageRepresentation, Rendering};
 pub use menu::{CheckState, ItemKind, Menu, MenuItem};
+pub use placement::PopupAnchor;
 pub use spec::{HostPolicy, Interaction, Tray};
 
 /// An initiated local native operation; dropping observation cannot undo committed work.

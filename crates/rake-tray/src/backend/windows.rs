@@ -15,7 +15,7 @@ use windows_sys::{
         Graphics::Gdi::*,
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
+            HiDpi::{GetDpiForMonitor, GetDpiForWindow, GetSystemMetricsForDpi, MDT_EFFECTIVE_DPI},
             Shell::*,
             WindowsAndMessaging::*,
         },
@@ -358,6 +358,48 @@ impl Item {
             space: CoordinateSpace::PhysicalScreen,
         }))
     }
+    pub(crate) fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
+        let Some(icon) = self.anchor()?.and_then(|anchor| anchor.rect) else {
+            return Ok(None);
+        };
+        let rect = RECT {
+            left: icon.origin.x as i32,
+            top: icon.origin.y as i32,
+            right: (icon.origin.x + icon.width) as i32,
+            bottom: (icon.origin.y + icon.height) as i32,
+        };
+        // SAFETY: Valid rectangle/output storage and live monitor handle.
+        unsafe {
+            let monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO {
+                cbSize: size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return Err(failure("query popup monitor"));
+            }
+            let (mut x, mut y) = (0, 0);
+            let result = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y);
+            if result < 0 || x == 0 {
+                return Err(Error::HostUnavailable);
+            }
+            let scale = f64::from(x) / 96.0;
+            let convert = |rect: RECT| Rect {
+                origin: Point {
+                    x: f64::from(rect.left) / scale,
+                    y: f64::from(rect.top) / scale,
+                },
+                width: f64::from(rect.right - rect.left) / scale,
+                height: f64::from(rect.bottom - rect.top) / scale,
+            };
+            Ok(Some(crate::PopupAnchor {
+                display_id: monitor as usize as u64,
+                icon: convert(rect),
+                work_area: convert(info.rcWork),
+            }))
+        }
+    }
+
     pub(crate) fn shutdown(&self) -> Request<()> {
         if !self.state.removed.replace(true) {
             // SAFETY: Same native identity; repeated deletion is prevented.

@@ -112,6 +112,8 @@ pub struct App<R: Route = NoRoute> {
     trays: Vec<crate::tray::Tray>,
     #[cfg(feature = "tray")]
     tray_handlers: Vec<crate::tray::Handler>,
+    #[cfg(feature = "tray")]
+    tray_popups: Vec<(String, crate::tray::Popup)>,
     #[cfg(feature = "updates")]
     distribution: Option<(&'static str, &'static str)>,
 }
@@ -152,6 +154,8 @@ impl App<NoRoute> {
             trays: Vec::new(),
             #[cfg(feature = "tray")]
             tray_handlers: Vec::new(),
+            #[cfg(feature = "tray")]
+            tray_popups: Vec::new(),
             #[cfg(feature = "updates")]
             distribution: None,
         }
@@ -216,6 +220,8 @@ impl App<NoRoute> {
             trays: self.trays,
             #[cfg(feature = "tray")]
             tray_handlers: self.tray_handlers,
+            #[cfg(feature = "tray")]
+            tray_popups: self.tray_popups,
             #[cfg(feature = "updates")]
             distribution: self.distribution,
         }
@@ -582,6 +588,14 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Attaches a rich popup; set the tray's primary interaction to Popup.
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn tray_popup(mut self, id: impl Into<String>, popup: crate::tray::Popup) -> Self {
+        self.tray_popups.push((id.into(), popup));
+        self
+    }
+
     /// Starts the native application runtime without opening an initial window.
     /// Use the GPUI app context to install a tray or other platform-owned UI.
     /// Browser hosts reject this mode explicitly.
@@ -853,6 +867,7 @@ impl<R: Route> App<R> {
                 services,
                 self.trays,
                 self.tray_handlers,
+                self.tray_popups,
                 errors.clone(),
                 cx,
             ) {

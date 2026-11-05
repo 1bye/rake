@@ -11,6 +11,11 @@ pub use rake_tray::{
     Rendering, Request, State, Support, Tray, linux, macos, windows,
 };
 
+mod popup;
+pub use popup::{
+    Popup, PopupFallback, PopupPlacement, PopupRetention, dismiss_popup, toggle_popup,
+};
+
 use crate::application::startup::StartupErrors;
 use crate::{AppError, Services};
 use std::{cell::RefCell, rc::Rc};
@@ -68,6 +73,7 @@ pub(crate) fn command_handler<C: crate::control::ApplicationCommand>(
 struct Owner {
     host: rake_tray::Host,
     dispatch: Dispatcher,
+    popups: popup::Popups,
     _startup: gpui::Task<()>,
     _events: gpui::Task<()>,
     _quit: gpui::Subscription,
@@ -91,6 +97,7 @@ pub(crate) fn install(
     services: Services,
     specs: Vec<Tray>,
     handlers: Vec<Handler>,
+    popups: Vec<(String, Popup)>,
     errors: StartupErrors,
     cx: &mut gpui::App,
 ) -> Result<Services, Error> {
@@ -99,6 +106,20 @@ pub(crate) fn install(
         return Ok(services);
     }
 
+    for (id, _) in &popups {
+        if !specs
+            .iter()
+            .any(|spec| spec.id() == id && spec.primary_interaction() == Interaction::Popup)
+        {
+            return Err(Error::InvalidInput(
+                "popup attachment requires a declared tray with Popup interaction".into(),
+            ));
+        }
+    }
+    if !popups.is_empty() {
+        cx.set_quit_mode(gpui::QuitMode::Explicit);
+    }
+    let popups = popup::Popups::new(popups)?;
     let host = rake_tray::Host::new(application)?;
     let collection = host.collection();
     let dispatch = Dispatcher::default();
@@ -130,6 +151,7 @@ pub(crate) fn install(
         }
     });
     let quit = cx.on_app_quit(|cx| {
+        popup::dismiss_all(cx);
         let shutdown = cx.global::<Owner>().host.shutdown();
         async move {
             if let Err(error) = shutdown.await {
@@ -141,6 +163,15 @@ pub(crate) fn install(
         let mut handlers = handlers;
         while let Ok(event) = collection.next_event().await {
             cx.update(|cx| {
+                if matches!(
+                    event.kind,
+                    EventKind::Removed
+                        | EventKind::Hidden
+                        | EventKind::HostChanged(false)
+                        | EventKind::VisibilityChanged(false)
+                ) {
+                    popup::removed(&event.id, event.generation, cx);
+                }
                 if let Ok(handle) = collection.get(&event.id)
                     && let Ok(spec) = handle.specification()
                 {
@@ -155,6 +186,12 @@ pub(crate) fn install(
                     if matches!(event.kind, EventKind::RemovalRequestedQuit) {
                         cx.dispatch_action(&crate::quit::RequestQuit);
                     }
+                    if matches!(event.kind, EventKind::Activate)
+                        && spec.primary_interaction() == Interaction::Popup
+                        && let Err(error) = toggle_popup(&event.id, cx)
+                    {
+                        crate::error!(%error, "tray popup could not open");
+                    }
                     let menu_gesture = matches!(event.kind, EventKind::ContextMenu)
                         || (matches!(event.kind, EventKind::Activate)
                             && spec.primary_interaction() == Interaction::NativeMenu);
@@ -168,6 +205,7 @@ pub(crate) fn install(
                     }
                 }
                 if matches!(event.kind, EventKind::Overflow) {
+                    popup::dismiss_all(cx);
                     crate::error!("tray ingress saturated; input could not be delivered");
                 }
                 for handler in &mut handlers {
@@ -179,6 +217,7 @@ pub(crate) fn install(
     cx.set_global(Owner {
         host,
         dispatch,
+        popups,
         _startup: startup,
         _events: events,
         _quit: quit,

@@ -323,6 +323,49 @@ impl Item {
         }))
     }
 
+    pub(crate) fn set_popup_highlight(&self, highlighted: bool) -> Result<(), Error> {
+        self.item
+            .button(self.mtm)
+            .ok_or(Error::Removed)?
+            .highlight(highlighted);
+        Ok(())
+    }
+
+    pub(crate) fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
+        let Some(button) = self.item.button(self.mtm) else {
+            return Ok(None);
+        };
+        let Some(window) = button.window() else {
+            return Ok(None);
+        };
+        let Some(screen) = window.screen() else {
+            return Ok(None);
+        };
+        let Some(number) = screen
+            .deviceDescription()
+            .objectForKey(&NSString::from_str("NSScreenNumber"))
+        else {
+            return Ok(None);
+        };
+        // SAFETY: NSScreenNumber is documented as an NSNumber in the device description.
+        let id: u32 = unsafe { msg_send![&*number, unsignedIntValue] };
+        let frame = screen.frame();
+        let convert = |rect: objc2_foundation::NSRect| Rect {
+            origin: Point {
+                x: rect.origin.x - frame.origin.x,
+                y: frame.origin.y + frame.size.height - rect.origin.y - rect.size.height,
+            },
+            width: rect.size.width,
+            height: rect.size.height,
+        };
+        let icon = window.convertRectToScreen(button.convertRect_toView(button.bounds(), None));
+        Ok(Some(crate::PopupAnchor {
+            display_id: id.into(),
+            icon: convert(icon),
+            work_area: convert(screen.visibleFrame()),
+        }))
+    }
+
     pub(crate) fn shutdown(&self) -> Request<()> {
         self.remove();
         crate::ready(Ok(()))

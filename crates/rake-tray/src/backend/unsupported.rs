@@ -21,6 +21,9 @@ impl Item {
     pub(crate) fn registration(&self) -> Registration {
         Registration::WaitingForHost
     }
+    pub(crate) fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
+        Ok(None)
+    }
     pub(crate) fn shutdown(&self) -> Request<()> {
         crate::ready(Ok(()))
     }

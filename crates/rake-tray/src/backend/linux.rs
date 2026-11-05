@@ -429,6 +429,9 @@ impl Item {
     pub(crate) fn anchor(&self) -> Result<Option<Anchor>, Error> {
         Ok(None)
     }
+    pub(crate) fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
+        Ok(None)
+    }
     pub(crate) fn shutdown(&self) -> Request<()> {
         let shutdown = match &self.driver {
             Driver::Menu(handle) => handle.shutdown(),

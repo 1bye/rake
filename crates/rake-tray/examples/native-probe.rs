@@ -103,6 +103,12 @@ fn probe() -> Result<(), Box<dyn std::error::Error>> {
         return Err("AppKit did not supply native icon geometry".into());
     }
 
+    let placement = first
+        .popup_anchor()?
+        .ok_or("AppKit did not supply popup placement")?;
+    if placement.work_area.width <= 0.0 || placement.work_area.height <= 0.0 {
+        return Err("invalid native popup work area".into());
+    }
     first.probe_menu_selection(0)?;
     let selected = block_on(collection.next_event())?;
     if selected.kind != EventKind::MenuSelected("open".into()) {

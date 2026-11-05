@@ -109,3 +109,24 @@ explicit length, target/action and cleanup); facade tray/view-test-support
 all-target Clippy. Windows/Linux foreign compile and Clippy are tracked separately
 from desktop qualification. Native attributed text and specialized custom drawing
 remain advanced dispositions; no blanket feature claim is made for these hooks.
+
+## P6 — rich GPUI popup windows
+
+Added App::tray_popup and typed popup dimensions, retention and fallback policies.
+One popup is open at a time; activation toggles, Escape/blur dismiss, and explicit
+hide/remove/host loss clear transient presentation. Content mounting is retryable;
+registration generations prevent retained content crossing a recreated item.
+Popup windows do not mount another Rake runtime or request application quit.
+AppKit highlight follows the popup lifetime.
+
+Placement uses current NSScreen identity/local top-left work-area coordinates on
+AppKit, and monitor identity/effective-DPI logical coordinates on Windows, matching
+the pinned GPUI adapters. Placement clamps to the work area, handles negative
+origins and all panel edges, and is re-queried per session. SNI has no reliable
+rectangle: require-anchor errors, or an explicitly chosen ordinary centered window
+provides compositor-owned placement. No fabricated Wayland global coordinates.
+
+Validation: deterministic placement regression, facade all-target Clippy, actual
+AppKit display/anchor query probe. Full popup focus/accessibility journeys remain
+manual qualification. macOS 27 expanded sessions cannot compile/run with installed
+26.6 SDK and are explicitly unavailable; no absent symbol is hard-linked.
