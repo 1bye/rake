@@ -454,6 +454,10 @@ impl<R: Route> App<R> {
     /// errors fail startup. The sink runs synchronously, so UI consent needs a durable
     /// inbox. On Web this method stores nothing and does nothing; Web delivery is the
     /// follow-up from issue #16. The existing Web console hook is unchanged.
+    ///
+    /// Native records every panic, including ones caught by `catch_unwind` and
+    /// background-thread panics when the application keeps running. A record does
+    /// not establish that the app exited.
     #[must_use]
     pub fn crash_reports(
         self,

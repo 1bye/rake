@@ -7,6 +7,8 @@
 //! The hook records locally; delivery policy belongs to the application. Arbitrary
 //! panic payloads are omitted by default; diagnostic content is always omitted. Successful delivery
 //! deletes a record; failed or interrupted delivery can be retried by stable ID.
+//! A record reports a panic, including caught and worker-thread panics; it does not
+//! establish that the application exited.
 //!
 //! ```no_run
 //! use rake::crash::{CrashConfig, CrashLimits, CrashRecord};

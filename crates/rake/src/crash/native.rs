@@ -86,6 +86,10 @@ pub struct CrashReporter {
 impl CrashReporter {
     /// Installs one process-wide hook and chains to the previously installed hook.
     ///
+    /// Records every panic after installation, including panics caught by
+    /// `catch_unwind` and worker-thread panics while the application keeps running.
+    /// A record establishes that a panic occurred, not that the app exited.
+    ///
     /// The hook never invokes a sink, tracing, panic payload formatting, or blocking
     /// application locks. I/O failures are ignored so the original panic can proceed.
     /// Keep the directory trusted for the process lifetime. Installation persists

@@ -108,6 +108,11 @@ fn crash_child() {
         fs::remove_dir_all(&directory).expect("remove directory");
         fs::write(&directory, "not a directory").expect("replace directory");
     }
+    if operation == "caught" {
+        assert!(std::panic::catch_unwind(|| panic!("SECRET_USER_CONTENT")).is_err());
+        println!("CONTINUED_AFTER_PANIC");
+        return;
+    }
     if operation == "message-static" {
         panic!("static test panic");
     }
@@ -301,4 +306,19 @@ fn opted_in_panic_messages_are_string_only_and_utf8_bounded() {
             assert!(record.truncated);
         }
     }
+}
+
+#[test]
+fn a_caught_panic_is_recorded_even_when_the_process_continues() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let directory = temporary.path().join("crashes");
+    let output = crash(&directory, "caught");
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("CONTINUED_AFTER_PANIC"));
+    let paths = records(&directory);
+    assert_eq!(paths.len(), 1);
+    let record: CrashRecord = serde_json::from_slice(&fs::read(&paths[0]).expect("record bytes"))
+        .expect("valid panic record");
+    assert_eq!(record.message, "Rust panic (payload omitted for privacy)");
 }

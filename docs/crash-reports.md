@@ -35,6 +35,14 @@ mounting. The hook lasts until process exit; installing a second Rake hook retur
 `AlreadyExists`. Install before starting worker threads. Hosts that replace the
 panic hook later must chain to the installed hook if they want recording to continue.
 
+The native hook records **every panic in the process after installation**, including
+panics caught by `catch_unwind` (such as recovery paths in `rake-updates`) and panics
+on background threads while the rest of the application continues running. A crash
+record proves that a panic occurred; it does **not** prove the app exited. Sinks and
+consent UI should describe it as a previous panic rather than assume an app crash.
+Thread names are not recorded: the structural diagnostic tail and source location
+remain the context, without adding a new developer-supplied string to the format.
+
 A headless host controls these steps directly:
 
 ```rust,no_run
