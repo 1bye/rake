@@ -12,7 +12,7 @@ native bundles retain their layout and JSON through the same Rust coordinator.
 as `rake build`. It needs no running app, dev supervisor or runtime connection.
 
 ```sh
-cargo build -p rak-cli
+cargo build -p rake-app-cli
 target/debug/rake bundle --target desktop --package rake-routing --json
 target/debug/rake bundle --target web --package rake-routing --base-path /notes/ --routing path --json
 target/debug/rake bundle --target web --package rake-routing --routing hash
@@ -134,7 +134,7 @@ Rake creates artifacts and host guidance; it does not upload to a hosting accoun
 
 ```sh
 python3 scripts/test-bundle.py
-cargo test -p rak --no-default-features --test web_deployment
+cargo test -p rake-app --no-default-features --test web_deployment
 ```
 
 The packaging suite uses real tiny Rust/Wasm apps, platform codesign/archive tools,

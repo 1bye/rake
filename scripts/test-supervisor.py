@@ -75,7 +75,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_only_dev_auto_enables_inspection_including_renamed_dependencies(self):
         project = object.__new__(dev.Project)
-        project.package = {"features": {}, "dependencies": [{"name": "rake", "rename": "framework", "kind": None}]}
+        project.package = {"features": {}, "dependencies": [{"name": "rake-app", "rename": "framework", "kind": None}]}
         for command in ["build", "bundle", "dev"]:
             project.args = SimpleNamespace(command=command, features=None)
             self.assertEqual(project.build_features(), "framework/devtools" if command == "dev" else "")

@@ -145,7 +145,7 @@ Use a persistent client connection when a workflow needs retained references, wa
 ## Verification
 
 ```sh
-cargo build -p rak-cli -p rake-agent-example --features rake-agent-example/devtools
+cargo build -p rake-app-cli -p rake-agent-example --features rake-agent-example/devtools
 node --test scripts/test-agent-client.mjs
 node scripts/test-agent-cdp.mjs
 ```

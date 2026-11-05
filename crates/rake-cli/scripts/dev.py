@@ -203,7 +203,7 @@ class Project:
                 features.append("devtools")
             else:
                 for dependency in self.package["dependencies"]:
-                    if dependency["name"] in {"rak", "rake"} and dependency["kind"] is None:
+                    if dependency["name"] in {"rake-app", "rak", "rake"} and dependency["kind"] is None:
                         features.append((dependency["rename"] or dependency["name"]) + "/devtools")
         return ",".join(features)
 

@@ -22,7 +22,7 @@ gui = ["rake/gpui"]
 workspace = true
 
 [dependencies]
-rake = { package = "rak", path = "../../crates/rake", default-features = false }
+rake = { package = "rake-app", path = "../../crates/rake", default-features = false }
 futures.workspace = true
 thiserror.workspace = true
 unicode-segmentation = "1.13"

@@ -1,7 +1,7 @@
 # macOS native preview prototype
 
 ```sh
-cargo build -p rak-cli --offline
+cargo build -p rake-app-cli --offline
 target/debug/rake dev -p rake-preview --preview
 ```
 
@@ -133,9 +133,9 @@ Runtime bindings also need `RAKE_DEV_PREVIEW=1`, set by the supervisor. Without 
 python3 scripts/test-preview.py
 node scripts/test-preview-ui.mjs
 python3 scripts/test-dev-bridge.py
-cargo test -p rak-cli --bin rake --offline
-cargo test -p rak --no-default-features --features devtools --lib native_preview --offline
-cargo test -p rak --test inspection_compiled_out --offline
+cargo test -p rake-app-cli --bin rake --offline
+cargo test -p rake-app --no-default-features --features devtools --lib native_preview --offline
+cargo test -p rake-app --test inspection_compiled_out --offline
 ```
 
 Python tests cover routing, bounded input, stale references, source metadata and

@@ -43,7 +43,7 @@ fn embeds_templates_and_revision_without_invoking_tools() {
         format!("rev = \"{revision}\"")
     };
 
-    assert!(manifest.contains("package = \"rak\""));
+    assert!(manifest.contains("package = \"rake-app\""));
     assert!(manifest.contains(&pin));
     assert!(!project.join("Cargo.lock").exists());
     assert!(!project.join(".git").exists());
@@ -189,7 +189,7 @@ fn local_dependency_paths_preserve_quotes_and_template_like_text() {
     let rake = checkout.join("crates/rake");
 
     fs::create_dir_all(&rake).unwrap();
-    fs::write(rake.join("Cargo.toml"), "[package]\nname = \"rak\"\n").unwrap();
+    fs::write(rake.join("Cargo.toml"), "[package]\nname = \"rake-app\"\n").unwrap();
     let output = new(
         directory.path(),
         &["app", "--rake-path", rake.to_str().unwrap()],

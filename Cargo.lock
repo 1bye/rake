@@ -6695,8 +6695,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
-name = "rak"
+name = "rake-agent-example"
 version = "0.1.0-alpha.2"
+dependencies = [
+ "rake-app",
+]
+
+[[package]]
+name = "rake-app"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "async-io",
@@ -6738,14 +6745,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "rak-cli"
-version = "0.1.0-alpha.2"
+name = "rake-app-cli"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "ctrlc",
  "futures",
  "libc",
- "rak",
+ "rake-app",
  "rake-client",
  "rake-diagnostics",
  "rake-dist",
@@ -6757,13 +6764,6 @@ dependencies = [
  "tungstenite",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "rake-agent-example"
-version = "0.1.0-alpha.2"
-dependencies = [
- "rak",
 ]
 
 [[package]]
@@ -6798,7 +6798,7 @@ dependencies = [
 name = "rake-desktop-example"
 version = "0.1.0"
 dependencies = [
- "rak",
+ "rake-app",
  "rake-build",
 ]
 
@@ -6817,7 +6817,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "command-group",
@@ -6914,7 +6914,7 @@ dependencies = [
 name = "rake-distribution-example"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
  "rake-build",
 ]
 
@@ -6922,7 +6922,7 @@ dependencies = [
 name = "rake-files"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
  "rake-build",
  "thiserror 2.0.21",
 ]
@@ -6931,7 +6931,7 @@ dependencies = [
 name = "rake-foundation"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
  "rake-build",
 ]
 
@@ -6961,7 +6961,7 @@ name = "rake-inspector"
 version = "0.1.0-alpha.2"
 dependencies = [
  "futures",
- "rak",
+ "rake-app",
  "serde",
  "serde_json",
  "url",
@@ -6972,12 +6972,12 @@ dependencies = [
 name = "rake-kit-example"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
 ]
 
 [[package]]
 name = "rake-macros"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -7009,7 +7009,7 @@ dependencies = [
  "futures",
  "js-sys",
  "libc",
- "rak",
+ "rake-app",
  "thiserror 2.0.21",
  "unicode-segmentation",
  "uuid",
@@ -7021,7 +7021,7 @@ dependencies = [
 name = "rake-preview"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
 ]
 
 [[package]]
@@ -7053,7 +7053,7 @@ dependencies = [
 name = "rake-routing"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
  "tracing",
 ]
 
@@ -7097,14 +7097,14 @@ dependencies = [
 name = "rake-view"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
 ]
 
 [[package]]
 name = "rake-web-host-fixture"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -7432,7 +7432,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "renamed-facade"
 version = "0.1.0-alpha.2"
 dependencies = [
- "rak",
+ "rake-app",
 ]
 
 [[package]]

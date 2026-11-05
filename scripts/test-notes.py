@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Covers: real Fieldnotes commands, journal recovery after SIGKILL and guarded quit.
 Real: native GPUI app, private local transport, files, locks and rake CLI.
-Doubles: none. Requires: macOS GUI; cargo build -p rake-notes -p rak-cli.
+Doubles: none. Requires: macOS GUI; cargo build -p rake-notes -p rake-app-cli.
 All documents and processes belong to an isolated temporary test library.
 """
 import json

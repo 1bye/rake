@@ -32,7 +32,7 @@ All hosts are disabled by default, in debug and release builds.
 Build and run the terminal client locally:
 
 ```sh
-cargo build -p rak-cli
+cargo build -p rake-app-cli
 RAKE_DEV_CONTROL=1 cargo run -p rake-routing
 # In another terminal:
 target/debug/rake instances --json
@@ -233,9 +233,9 @@ use the same registry, including generated metadata.
 ## Verification
 
 ```sh
-cargo test -p rak --no-default-features --test runtime_control --test application_commands
-cargo test -p rak-cli
-cargo build -p rak-cli
+cargo test -p rake-app --no-default-features --test runtime_control --test application_commands
+cargo test -p rake-app-cli
+cargo build -p rake-app-cli
 python3 scripts/test-dev-bridge.py
 ```
 

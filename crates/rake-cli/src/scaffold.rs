@@ -267,7 +267,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
         }
 
         format!(
-            "{{ package = \"rak\", path = {} }}",
+            "{{ package = \"rake-app\", path = {} }}",
             serde_json::to_string(&path)?
         )
     } else if let Some(revision) = revision
@@ -277,11 +277,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
         validate_revision(revision)?;
 
         format!(
-            "{{ package = \"rak\", git = \"https://github.com/1bye/rake\", rev = \"{revision}\" }}"
+            "{{ package = \"rake-app\", git = \"https://github.com/1bye/rake\", rev = \"{revision}\" }}"
         )
     } else {
         format!(
-            "{{ package = \"rak\", version = \"={}\" }}",
+            "{{ package = \"rake-app\", version = \"={}\" }}",
             env!("CARGO_PKG_VERSION")
         )
     };

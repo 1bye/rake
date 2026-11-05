@@ -1,6 +1,6 @@
 [package]
-name = "rak"
-version.workspace = true
+name = "rake-app"
+version = "0.1.0-alpha.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -38,7 +38,7 @@ rake-ui = { workspace = true, optional = true }
 rake-native = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }
 rake-protocol.workspace = true
-rake-macros = { version = "=0.1.0-alpha.2", path = "../rake-macros" }
+rake-macros = { version = "=0.1.0-alpha.3", path = "../rake-macros" }
 rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true

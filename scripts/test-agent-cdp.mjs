@@ -1,7 +1,7 @@
 // Covers: complete public agent workflow against a real native GPUI window.
 // Real: app/GPU, Unix control, Rust CLI/CDP, Node client, ScreenCaptureKit image/source.
 // Doubles: none. Requires: unlocked macOS 14+, Screen Recording, Node22+, Xcode tools.
-// Build: cargo build -p rak-cli -p rake-agent-example --features rake-agent-example/devtools
+// Build: cargo build -p rake-app-cli -p rake-agent-example --features rake-agent-example/devtools
 // Run: node scripts/test-agent-cdp.mjs
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';

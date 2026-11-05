@@ -120,8 +120,8 @@ GPUI builds show a window with live settings and light/dark theme buttons. The
 automated script explicitly uses `--headless` to avoid GPU initialization:
 
 ```sh
-cargo build -p rak-cli --offline
-cargo build -p rak --features devtools --example storage --offline
+cargo build -p rake-app-cli --offline
+cargo build -p rake-app --features devtools --example storage --offline
 node scripts/test-storage-cdp.mjs
 node scripts/test-storage-cdp.mjs --serve
 ```

@@ -5,7 +5,7 @@ Stock Chrome DevTools is Rake's graphical frontend, connected through a CDP adap
 AI agents can use the [CDP agent client](cdp-agents.md) for native input, semantic
 snapshots, condition waits, screenshots and Rust source lookup.
 
-Build the CLI with `cargo build -p rak-cli`, then run:
+Build the CLI with `cargo build -p rake-app-cli`, then run:
 
 ```sh
 target/debug/rake dev --target desktop --package rake-view --cdp --no-open

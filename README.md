@@ -29,7 +29,7 @@ Rake needs Rust 1.98.0, native development tools and Python 3.11+. Install the C
 and create a desktop/browser app:
 
 ```sh
-cargo install rak-cli --version 0.1.0-alpha.2 --locked
+cargo install rake-app-cli --version 0.1.0-alpha.3 --locked
 rake new hello-rake
 cd hello-rake
 rake dev
@@ -66,7 +66,7 @@ fn app() -> App {
 }
 ```
 
-To add Rake to an existing crate, use `cargo add rak@0.1.0-alpha.2 --rename rake`
+To add Rake to an existing crate, use `cargo add rake-app@0.1.0-alpha.3 --rename rake`
 and then use the Hello entry above. `view!`, themes and style
 presets are included by default; Kit and DevTools remain optional.
 
@@ -305,7 +305,7 @@ From a clone of this repository:
 | `cargo run -p rake-desktop-example` | Pages, layouts, loading and native updates |
 | `cargo run -p rake-files` | Files, clipboard and preferences |
 | `cargo run -p rake-kit-example --features kit,devtools` | GPUI Kit in routed tabs (native) |
-| `cargo run -p rak --example native --features native-components` | AppKit controls (macOS) |
+| `cargo run -p rake-app --example native --features native-components` | AppKit controls (macOS) |
 
 ## Documentation
 

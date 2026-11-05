@@ -6,7 +6,7 @@ Enable `rake`'s `native-components` feature, which is off by default, and import
 
 ```toml
 [dependencies]
-rake = { package = "rak", path = "../rake/crates/rake", features = ["native-components"] }
+rake = { package = "rake-app", path = "../rake/crates/rake", features = ["native-components"] }
 ```
 
 Create controls once in a GPUI entity, then insert their `.element()` on each
@@ -65,7 +65,7 @@ To do this, the adapter replaces `accessibilityChildren` and `accessibilityHitTe
 Run the facade example on macOS:
 
 ```sh
-cargo run -p rak --example native --features native-components
+cargo run -p rake-app --example native --features native-components
 ```
 
 Verification:
@@ -73,8 +73,8 @@ Verification:
 ```sh
 cargo test -p rake-native --doc
 cargo clippy -p rake-native --all-targets -- -D warnings
-cargo check -p rak --features native-components --example native
-cargo check -p rak --features native-components --lib --target wasm32-unknown-unknown
+cargo check -p rake-app --features native-components --example native
+cargo check -p rake-app --features native-components --lib --target wasm32-unknown-unknown
 ```
 
 The explicit native suite opens an actual GPUI window, exercises native actions,

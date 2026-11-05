@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 workspace = true
 
 [dependencies]
-rake = { package = "rak", path = "../../crates/rake", default-features = false }
+rake = { package = "rake-app", path = "../../crates/rake", default-features = false }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen = "0.2"

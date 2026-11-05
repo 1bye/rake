@@ -14,7 +14,7 @@ This takes you from nothing to a running app, then adds the CLI, the browser and
 Install the CLI, then scaffold an app:
 
 ```sh
-cargo install rak-cli --version 0.1.0-alpha.2 --locked
+cargo install rake-app-cli --version 0.1.0-alpha.3 --locked
 rake new my-app
 cd my-app
 rake dev
@@ -32,9 +32,9 @@ The generated `rust-toolchain.toml` selects Rust 1.98.0 and the Wasm target. The
 first `rake dev` or `rake build` resolves dependencies and creates `Cargo.lock`;
 commit it. Subsequent builds use `--locked`.
 
-The installed CLI pins the generated project to its matching `rak` release. A
+The installed CLI pins the generated project to its matching `rake-app` release. A
 CLI built from a checkout pins that checkout revision instead. Pass
-`--rake-rev REV` to use a full Git commit hash from a revision with the `rak`
+`--rake-rev REV` to use a full Git commit hash from a revision with the `rake-app`
 package name.
 
 When developing Rake itself, use a checkout path instead:
@@ -46,7 +46,7 @@ rake new my-app --rake-path /absolute/path/to/rake/crates/rake --git
 
 The path is stored absolutely, so moving the generated app doesn't silently
 change its dependency. Its README explains where to change the application ID.
-For an existing crate, run `cargo add rak@0.1.0-alpha.2 --rename rake` and follow the [README Hello example](../README.md#quick-start).
+For an existing crate, run `cargo add rake-app@0.1.0-alpha.3 --rename rake` and follow the [README Hello example](../README.md#quick-start).
 
 On macOS, Ruby also provides `/usr/bin/rake`. Check that `which rake` shows the CLI
 you just installed, normally `~/.cargo/bin/rake`. If it shows Ruby's, put Cargo first:

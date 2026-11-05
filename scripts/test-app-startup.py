@@ -13,7 +13,7 @@ import subprocess
 root = Path(__file__).resolve().parents[1]
 env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG="0", CARGO_INCREMENTAL="0")
 build = subprocess.run(
-    ["cargo", "build", "-p", "rak", "--example", "startup-failure", "--locked", "--message-format=json"],
+    ["cargo", "build", "-p", "rake-app", "--example", "startup-failure", "--locked", "--message-format=json"],
     cwd=root, env=env, text=True, stdout=subprocess.PIPE, check=True,
 )
 artifacts = [json.loads(line) for line in build.stdout.splitlines()]

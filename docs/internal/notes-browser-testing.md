@@ -7,7 +7,7 @@ that guest session's data. Its crash procedure below concerns a renderer crash;
 the Safari and Firefox procedures interrupt the whole test browser.
 
 ```sh
-cargo run -p rak-cli -- build --target web --package rake-notes --output /tmp/fieldnotes-web-check
+cargo run -p rake-app-cli -- build --target web --package rake-notes --output /tmp/fieldnotes-web-check
 python3 crates/rake-cli/scripts/serve-web.py --example notes --directory /tmp/fieldnotes-web-check --control --port 0
 ```
 

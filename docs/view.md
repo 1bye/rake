@@ -721,11 +721,11 @@ python3 scripts/build-web.py --example view
 python3 crates/rake-cli/scripts/serve-web.py --example view --port 8083
 
 cargo test -p rake-macros --locked
-cargo test -p rak --test view_ui --locked
-cargo test -p rak --test view --test view_components --test view_paragraphs --locked
-cargo test -p rak --features view-test-support --test view_state --locked
+cargo test -p rake-app --test view_ui --locked
+cargo test -p rake-app --test view --test view_components --test view_paragraphs --locked
+cargo test -p rake-app --features view-test-support --test view_state --locked
 cargo test -p rake-view --features view-test-support --lib --locked
-cargo test -p rak --doc --locked
+cargo test -p rake-app --doc --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
 cargo check -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
