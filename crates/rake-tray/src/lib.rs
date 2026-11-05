@@ -3,14 +3,19 @@
 //! A host owns native resources; control handles do not extend that host's life.
 //! Registration and presentation are distinct: a shell may hide registered items.
 
+mod accelerator;
 mod backend;
 mod capability;
 mod event;
 mod host;
 mod image;
+pub mod linux;
+pub mod macos;
 mod menu;
 mod spec;
+pub mod windows;
 
+pub use accelerator::Accelerator;
 pub use capability::{Backend, Capabilities, Feature, Support};
 pub use event::{Anchor, Button, CoordinateSpace, Event, EventKind, Input, Point, Rect};
 pub use host::{Applied, Collection, Handle, Host, Registration, State};

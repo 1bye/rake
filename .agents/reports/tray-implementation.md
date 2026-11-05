@@ -86,3 +86,26 @@ Validation: GPUI TestPlatform regression exercises failed first mount, focus wit
 remount, close/reopen with identical runtime identity, and shutdown rejection. This
 is scheduler/host-adapter coverage, not native focus qualification. Browser factory
 configuration is explicitly rejected.
+
+## P5 — native appearance and menu extensions
+
+AppKit now supports content/square/point lengths, text-only/combined items,
+alternate images/title, appearance-only versus interaction disable, accessible
+name/help, autosave identity and KVO user-removal events. Managed removal Quit is
+separate from native unguarded termination. Read-only metrics expose actual native
+visibility. All raster representations become native image representations.
+Menus include native shortcuts, alternates, indentation, tooltips, state images,
+14+ badges/palette/selection layout and 14.4+ subtitles with selector gates.
+
+Windows menus include owned DIB images, explicit mnemonics/default items, column
+breaks and right-order cascading. Icons select representations for native DPI and
+refresh for display/settings changes. SNI maps rich plain-text tooltips (escaped
+body), title/category/status, theme paths, overlay/attention images and movie,
+menu shortcuts/mnemonics, and registration-time sandbox bus-name policy. Host
+shortcut interpretation remains conditional.
+
+Validation: core 9 tests; AppKit native probe (two icons, transient text-only item,
+explicit length, target/action and cleanup); facade tray/view-test-support
+all-target Clippy. Windows/Linux foreign compile and Clippy are tracked separately
+from desktop qualification. Native attributed text and specialized custom drawing
+remain advanced dispositions; no blanket feature claim is made for these hooks.

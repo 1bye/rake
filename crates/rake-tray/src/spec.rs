@@ -34,6 +34,8 @@ pub struct Tray {
     pub(crate) visible: bool,
     pub(crate) interaction: Interaction,
     pub(crate) host_policy: HostPolicy,
+    pub(crate) macos: Option<crate::macos::Appearance>,
+    pub(crate) linux: Option<crate::linux::Presentation>,
 }
 
 impl Tray {
@@ -47,6 +49,8 @@ impl Tray {
             visible: true,
             interaction: Interaction::NativeMenu,
             host_policy: HostPolicy::Wait,
+            macos: None,
+            linux: None,
         }
     }
     /// Sets the image source.
@@ -79,6 +83,16 @@ impl Tray {
         self.visible = false;
         self
     }
+    /// Requests AppKit appearance; other platforms return Unsupported.
+    pub fn macos(mut self, appearance: crate::macos::Appearance) -> Self {
+        self.macos = Some(appearance);
+        self
+    }
+    /// Requests SNI fields; other platforms return Unsupported.
+    pub fn linux(mut self, presentation: crate::linux::Presentation) -> Self {
+        self.linux = Some(presentation);
+        self
+    }
     /// Returns the application-stable name.
     pub fn id(&self) -> &str {
         &self.id
@@ -100,6 +114,32 @@ impl Tray {
         crate::identifier(&self.id)?;
         crate::text(&self.tooltip, "tooltip", 16 * 1024)?;
 
+        if let Some(mac) = &self.macos {
+            for value in [
+                &mac.title,
+                &mac.alternate_title,
+                &mac.accessibility_label,
+                &mac.accessibility_help,
+            ] {
+                crate::text(value, "AppKit text", 16 * 1024)?;
+            }
+            if let crate::macos::ItemLength::Points(value) = mac.length
+                && (!value.is_finite() || value <= 0.0 || value > 4096.0)
+            {
+                return Err(Error::InvalidInput(
+                    "item length must be finite and in (0, 4096] points".into(),
+                ));
+            }
+        }
+        if let Some(linux) = &self.linux {
+            for value in [&linux.title, &linux.icon_theme_path, &linux.attention_movie] {
+                crate::text(value, "SNI text", 16 * 1024)?;
+            }
+            if let Some(tooltip) = &linux.tooltip {
+                crate::text(&tooltip.title, "tooltip title", 16 * 1024)?;
+                crate::text(&tooltip.body, "tooltip body", 16 * 1024)?;
+            }
+        }
         if let Some(menu) = &self.menu {
             menu.validate()?;
         }

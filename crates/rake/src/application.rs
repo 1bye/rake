@@ -1164,6 +1164,26 @@ mod theme_tests {
     }
 }
 
+/// Shows/focuses the registered main window, recreating it after close.
+///
+/// Uses the existing runtime and services. A failed mount leaves the factory
+/// available for retry. Routed apps can reveal an existing window through their
+/// navigator's window host instead.
+/// # Errors
+/// Returns an error without a registered factory, after runtime shutdown, or
+/// when native window creation/mounting fails. Browser hosts are unsupported.
+pub fn show_main_window(cx: &mut gpui::App) -> Result<(), AppError> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        managed::show_main_window(cx)
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = cx;
+        Err(AppError::BackgroundUnsupported)
+    }
+}
+
 #[cfg(test)]
 mod configuration_tests {
     //! Covers: same-type route replacement retains the configured destination and guards.
@@ -1253,25 +1273,5 @@ mod configuration_tests {
             .routes(pages());
 
         assert!(!custom.navigation_feedback);
-    }
-}
-
-/// Shows/focuses the registered main window, recreating it after close.
-///
-/// Uses the existing runtime and services. A failed mount leaves the factory
-/// available for retry. Routed apps can reveal an existing window through their
-/// navigator's window host instead.
-/// # Errors
-/// Returns an error without a registered factory, after runtime shutdown, or
-/// when native window creation/mounting fails. Browser hosts are unsupported.
-pub fn show_main_window(cx: &mut gpui::App) -> Result<(), AppError> {
-    #[cfg(not(target_family = "wasm"))]
-    {
-        managed::show_main_window(cx)
-    }
-    #[cfg(target_family = "wasm")]
-    {
-        let _ = cx;
-        Err(AppError::BackgroundUnsupported)
     }
 }

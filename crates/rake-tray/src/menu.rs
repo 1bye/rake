@@ -57,6 +57,12 @@ pub struct MenuItem {
     pub image: Option<Image>,
     /// Optional menu-scoped accelerator, never a global registration.
     pub accelerator: Option<String>,
+    /// Optional AppKit presentation; rejected by other backends.
+    pub macos: Option<crate::macos::MenuAppearance>,
+    /// Native mnemonic character, explicitly separate from the plain label.
+    pub access_key: Option<char>,
+    /// Optional Windows native menu layout.
+    pub windows: Option<crate::windows::MenuAppearance>,
 }
 
 impl MenuItem {
@@ -70,6 +76,9 @@ impl MenuItem {
             visible: true,
             image: None,
             accelerator: None,
+            macos: None,
+            access_key: None,
+            windows: None,
         }
     }
 
@@ -99,6 +108,8 @@ impl MenuItem {
 pub struct Menu {
     /// Root menu items in display order.
     pub items: Vec<MenuItem>,
+    /// Optional AppKit layout; other platforms reject it.
+    pub macos: Option<crate::macos::MenuLayout>,
 }
 
 impl Menu {
@@ -132,7 +143,44 @@ impl Menu {
             return Err(Error::InvalidInput("menu exceeds depth 32".into()));
         }
 
+        if self
+            .items
+            .iter()
+            .filter(|item| item.windows.as_ref().is_some_and(|w| w.default))
+            .count()
+            > 1
+        {
+            return Err(Error::InvalidInput(
+                "multiple default items in one menu".into(),
+            ));
+        }
         for item in &self.items {
+            if let Some(key) = item.access_key
+                && (key.is_control()
+                    || !item
+                        .label
+                        .to_lowercase()
+                        .contains(key.to_lowercase().next().unwrap_or(key)))
+            {
+                return Err(Error::InvalidInput(
+                    "menu access key must occur in its label".into(),
+                ));
+            }
+            if let Some(accelerator) = &item.accelerator {
+                crate::Accelerator::parse(accelerator)?;
+            }
+            if let Some(mac) = &item.macos {
+                if let Some(crate::macos::Badge::Text(value)) = &mac.badge {
+                    crate::text(value, "badge", 1024)?;
+                }
+                if mac.indentation > 15 {
+                    return Err(Error::InvalidInput("menu indentation exceeds 15".into()));
+                }
+                for text in [&mac.subtitle, &mac.tooltip].into_iter().flatten() {
+                    crate::text(text, "menu native text", 16 * 1024)?;
+                }
+            }
+
             crate::identifier(&item.id)?;
             crate::text(&item.label, "menu label", 4096)?;
 
@@ -144,6 +192,17 @@ impl Menu {
             }
             if keys.len() > 1024 {
                 return Err(Error::InvalidInput("menu exceeds 1024 items".into()));
+            }
+            if let Some(key) = item.access_key
+                && (key.is_control()
+                    || !item
+                        .label
+                        .to_lowercase()
+                        .contains(key.to_lowercase().next().unwrap_or(key)))
+            {
+                return Err(Error::InvalidInput(
+                    "menu access key must occur in its label".into(),
+                ));
             }
             if let Some(accelerator) = &item.accelerator {
                 crate::text(accelerator, "accelerator", 128)?;

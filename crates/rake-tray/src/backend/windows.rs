@@ -14,7 +14,11 @@ use windows_sys::{
         Foundation::*,
         Graphics::Gdi::*,
         System::LibraryLoader::GetModuleHandleW,
-        UI::{Shell::*, WindowsAndMessaging::*},
+        UI::{
+            HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
+            Shell::*,
+            WindowsAndMessaging::*,
+        },
     },
     core::GUID,
 };
@@ -31,6 +35,7 @@ struct WindowState {
     taskbar_created: u32,
     removed: Cell<bool>,
     revision: Cell<u64>,
+    image: RefCell<Option<crate::Image>>,
 }
 
 // SAFETY: This procedure only borrows WindowState while its owning Item keeps the
@@ -52,6 +57,26 @@ unsafe extern "system" fn window_proc(
     let state = unsafe { (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WindowState).as_ref() };
 
     if let Some(state) = state {
+        if matches!(message, WM_DPICHANGED | WM_DISPLAYCHANGE | WM_SETTINGCHANGE)
+            && !state.removed.get()
+        {
+            let image = state.image.borrow().clone();
+            if let Some(image) = image
+                && let Ok(icon) = make_icon(&image, hwnd)
+            {
+                let mut data = state.data.get();
+                let old = data.hIcon;
+                data.hIcon = icon;
+                // SAFETY: Copies the new icon before releasing the old cache handle.
+                unsafe {
+                    Shell_NotifyIconW(NIM_MODIFY, &data);
+                    if !old.is_null() {
+                        DestroyIcon(old);
+                    }
+                }
+                state.data.set(data);
+            }
+        }
         if message == state.taskbar_created && !state.removed.get() {
             let mut data = state.data.get();
             // SAFETY: Correctly initialized structure and retained HICON belong to this HWND.
@@ -170,6 +195,7 @@ impl Item {
             taskbar_created,
             removed: Cell::new(false),
             revision: Cell::new(0),
+            image: RefCell::new(None),
         });
         // A hidden top-level window receives TaskbarCreated broadcasts; HWND_MESSAGE does not.
         // SAFETY: Box remains at a stable address until DestroyWindow completes in Item::drop.
@@ -219,7 +245,6 @@ impl Item {
     }
 
     fn prepare(&self, revision: u64, spec: &Tray) -> Result<(), Error> {
-        let icon = spec.image.as_ref().map(make_icon).transpose()?;
         let menu = spec
             .menu
             .as_ref()
@@ -228,7 +253,13 @@ impl Item {
                     .map(Rc::new)
             })
             .transpose()?;
+        let icon = spec
+            .image
+            .as_ref()
+            .map(|image| make_icon(image, self.hwnd))
+            .transpose()?;
         *self.menu.borrow_mut() = menu;
+        *self.state.image.borrow_mut() = spec.image.clone();
         let mut data = self.state.data.get();
         let old = data.hIcon;
         data.hIcon = icon.unwrap_or(null_mut());
@@ -354,47 +385,16 @@ impl Drop for Item {
     }
 }
 
-fn make_icon(image: &crate::Image) -> Result<HICON, Error> {
+fn make_icon(image: &crate::Image, hwnd: HWND) -> Result<HICON, Error> {
+    // SAFETY: hwnd belongs to this item and remains live throughout image preparation.
+    let target =
+        unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForWindow(hwnd).max(96)) }.max(1) as u32;
     let rep = image
         .representations
         .iter()
-        .min_by_key(|r| r.width.abs_diff(32))
+        .min_by_key(|r| r.width.abs_diff(target))
         .ok_or(Error::Unsupported(crate::Feature::NamedImage))?;
-    let info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: rep.width as i32,
-            biHeight: -(rep.height as i32),
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let mut bits = null_mut();
-    // SAFETY: Initialized BITMAPINFO and valid output pointer; raster sizes are bounded before here.
-    let color =
-        unsafe { CreateDIBSection(null_mut(), &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0) };
-
-    if color.is_null() {
-        return Err(failure("create tray bitmap"));
-    }
-
-    // SAFETY: DIBSection owns width*height*4 bytes; converting RGBA into premultiplied BGRA.
-    unsafe {
-        let output = std::slice::from_raw_parts_mut(bits.cast::<u8>(), rep.rgba.len());
-
-        for (rgba, bgra) in rep.rgba.chunks_exact(4).zip(output.chunks_exact_mut(4)) {
-            let a = u16::from(rgba[3]);
-            bgra.copy_from_slice(&[
-                (u16::from(rgba[2]) * a / 255) as u8,
-                (u16::from(rgba[1]) * a / 255) as u8,
-                (u16::from(rgba[0]) * a / 255) as u8,
-                rgba[3],
-            ]);
-        }
-    }
+    let color = bitmap(rep)?;
     let mask_bytes = vec![0u8; rep.width.div_ceil(16) as usize * 2 * rep.height as usize];
     // SAFETY: Valid dimensions and a word-aligned monochrome bitmap buffer.
     let mask = unsafe {
@@ -433,4 +433,49 @@ fn make_icon(image: &crate::Image) -> Result<HICON, Error> {
     }
 
     Ok(icon)
+}
+
+pub(super) fn bitmap(rep: &crate::ImageRepresentation) -> Result<HBITMAP, Error> {
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: rep.width as i32,
+            biHeight: -(rep.height as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits = null_mut();
+    // SAFETY: Initialized BITMAPINFO and valid output pointer; raster sizes are bounded before here.
+    let color =
+        unsafe { CreateDIBSection(null_mut(), &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0) };
+
+    if color.is_null() {
+        return Err(failure("create tray bitmap"));
+    }
+
+    // SAFETY: DIBSection owns width*height*4 bytes; converting RGBA into premultiplied BGRA.
+    unsafe {
+        let output = std::slice::from_raw_parts_mut(bits.cast::<u8>(), rep.rgba.len());
+
+        for (rgba, bgra) in rep
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(output.as_chunks_mut::<4>().0.iter_mut())
+        {
+            let a = u16::from(rgba[3]);
+            bgra.copy_from_slice(&[
+                (u16::from(rgba[2]) * a / 255) as u8,
+                (u16::from(rgba[1]) * a / 255) as u8,
+                (u16::from(rgba[0]) * a / 255) as u8,
+                rgba[3],
+            ]);
+        }
+    }
+    Ok(color)
 }

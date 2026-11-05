@@ -481,6 +481,21 @@ impl Handle {
         native.probe_menu_selection(index)
     }
 
+    /// Returns live AppKit metrics and native visibility.
+    /// # Errors
+    /// Reports unsupported platforms, removal or host shutdown.
+    pub fn macos_metrics(&self) -> Result<crate::macos::Metrics, Error> {
+        #[cfg(target_os = "macos")]
+        {
+            let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+            Ok(native.metrics())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(Error::Unsupported(crate::Feature::ItemLength))
+        }
+    }
+
     /// Explicitly opens the attached native menu when the backend permits it.
     /// # Errors
     /// Reports unsupported programmatic display, stopped/removed items or native failure.
@@ -499,6 +514,9 @@ impl Handle {
             spec.validate()?;
             backend::validate(&spec)?;
             if spec.interaction != entry.spec.interaction { return Err(Error::InvalidInput("primary interaction is fixed for a registration; recreate the item to change it".into())); }
+            if spec.linux.as_ref().is_some_and(|l| l.sandboxed) != entry.spec.linux.as_ref().is_some_and(|l| l.sandboxed) {
+                return Err(Error::InvalidInput("SNI bus-name policy is fixed for a registration".into()));
+            }
             let native = entry.native.clone().ok_or(Error::HostUnavailable)?;
             let revision = entry
                 .state

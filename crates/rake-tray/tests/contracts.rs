@@ -52,3 +52,25 @@ fn disabled_or_hidden_ancestors_prevent_stale_menu_dispatch() {
     parent.visible = false;
     assert!(!Menu::new().item(parent).actionable("check"));
 }
+
+#[test]
+fn native_text_and_accelerators_are_validated_without_a_desktop() {
+    use rake_tray::{Accelerator, macos};
+    let key = Accelerator::parse("Cmd+Shift+k").unwrap();
+    assert!(key.super_key && key.shift);
+    assert_eq!(key.key, "k");
+    assert!(Accelerator::parse("Ctrl+Ctrl+k").is_err());
+    assert!(Accelerator::parse("Meta+long").is_err());
+    assert!(
+        Tray::new("bad-width")
+            .macos(macos::Appearance {
+                length: macos::ItemLength::Points(f64::NAN),
+                ..Default::default()
+            })
+            .validate()
+            .is_err()
+    );
+    let mut item = MenuItem::new("mnemonic", "Open");
+    item.access_key = Some('x');
+    assert!(Menu::new().item(item).validate().is_err());
+}

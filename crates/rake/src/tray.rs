@@ -5,9 +5,10 @@
 //! handles do not retain the runtime or unregister an item when dropped.
 
 pub use rake_tray::{
-    Anchor, Applied, Backend, Button, Capabilities, CheckState, Collection, CoordinateSpace, Error,
-    Event, EventKind, Feature, Handle, HostPolicy, Image, ImageRepresentation, Input, Interaction,
-    ItemKind, Menu, MenuItem, Point, Rect, Registration, Rendering, Request, State, Support, Tray,
+    Accelerator, Anchor, Applied, Backend, Button, Capabilities, CheckState, Collection,
+    CoordinateSpace, Error, Event, EventKind, Feature, Handle, HostPolicy, Image,
+    ImageRepresentation, Input, Interaction, ItemKind, Menu, MenuItem, Point, Rect, Registration,
+    Rendering, Request, State, Support, Tray, linux, macos, windows,
 };
 
 use crate::application::startup::StartupErrors;
@@ -149,6 +150,9 @@ pub(crate) fn install(
                             .and_then(|menu| menu.find(id))
                             .is_some_and(|item| matches!(item.kind, ItemKind::Quit))
                     {
+                        cx.dispatch_action(&crate::quit::RequestQuit);
+                    }
+                    if matches!(event.kind, EventKind::RemovalRequestedQuit) {
                         cx.dispatch_action(&crate::quit::RequestQuit);
                     }
                     let menu_gesture = matches!(event.kind, EventKind::ContextMenu)

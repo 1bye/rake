@@ -142,6 +142,13 @@ impl Image {
             .iter()
             .max_by_key(|r| r.width * r.height)
             .ok_or(Error::Unsupported(crate::Feature::NamedImage))?;
+        rep.to_png()
+    }
+}
+
+impl ImageRepresentation {
+    pub(crate) fn to_png(&self) -> Result<Vec<u8>, Error> {
+        let rep = self;
         let mut data = Vec::new();
 
         {

@@ -84,6 +84,18 @@ fn probe() -> Result<(), Box<dyn std::error::Error>> {
         ),
     )?;
 
+    let text = block_on(collection.create(Tray::new("text-only").macos(
+        rake_tray::macos::Appearance {
+            title: "42%".into(),
+            accessibility_label: "Probe progress".into(),
+            length: rake_tray::macos::ItemLength::Points(60.0),
+            ..Default::default()
+        },
+    )))?;
+    if text.macos_metrics()?.length != 60.0 {
+        return Err("explicit AppKit length was not applied".into());
+    }
+    block_on(text.remove())?;
     if collection.items()?.len() != 2 {
         return Err("two independent registrations were not retained".into());
     }

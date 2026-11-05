@@ -8,15 +8,20 @@ use objc2::{
     rc::Retained, sel,
 };
 use objc2_app_kit::{
-    NSApplication, NSEventMask, NSEventType, NSImage, NSStatusBar, NSStatusItem,
-    NSVariableStatusItemLength,
+    NSAccessibility, NSApplication, NSCellImagePosition, NSEventMask, NSEventType, NSImage,
+    NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{NSData, NSObjectProtocol, NSSize, NSString};
-use std::{cell::RefCell, rc::Rc};
+use objc2_foundation::{NSKeyValueObservingOptions, NSObjectNSKeyValueObserverRegistration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
+    #[name = "RakeTrayActionTarget"]
     #[ivars = Sink]
     struct ActionTarget;
 
@@ -43,6 +48,34 @@ define_class!(
     }
 );
 
+struct VisibilityState {
+    sink: Sink,
+    programmatic: Rc<Cell<bool>>,
+    removal: Rc<Cell<crate::macos::Removal>>,
+}
+define_class!(
+    // SAFETY: The observer is retained and detached before its item owner is dropped.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RakeTrayVisibilityObserver"]
+    #[ivars = VisibilityState]
+    struct VisibilityObserver;
+    // SAFETY: NSObjectProtocol has no additional invariants.
+    unsafe impl NSObjectProtocol for VisibilityObserver {}
+    impl VisibilityObserver {
+        // SAFETY: Only registered for NSStatusItem.visible; object is our retained item.
+        #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+        fn changed(&self, _: &NSString, object: &NSStatusItem, _: *const objc2::runtime::AnyObject, _: *mut std::ffi::c_void) {
+            let visible = object.isVisible();
+            let state = self.ivars();
+            if !state.programmatic.get() { state.sink.send(EventKind::VisibilityChanged(visible), None, Input::default()); }
+            if !visible && !state.programmatic.get() && state.removal.get() == crate::macos::Removal::RequestQuit {
+                state.sink.send(EventKind::RemovalRequestedQuit, None, Input::default());
+            }
+        }
+    }
+);
+
 pub(crate) struct Item {
     item: Retained<NSStatusItem>,
     _target: Retained<ActionTarget>,
@@ -52,6 +85,9 @@ pub(crate) struct Item {
     image: RefCell<Option<Retained<NSImage>>>,
     menu: RefCell<Option<Rc<super::macos_menu::NativeMenu>>>,
     sink: Sink,
+    observer: Retained<VisibilityObserver>,
+    programmatic: Rc<Cell<bool>>,
+    removal: Rc<Cell<crate::macos::Removal>>,
 }
 
 impl Item {
@@ -77,7 +113,28 @@ impl Item {
         let allocated = ActionTarget::alloc(mtm).set_ivars(sink.clone());
         // SAFETY: ActionTarget is an NSObject subclass with initialized ivars.
         let target: Retained<ActionTarget> = unsafe { msg_send![super(allocated), init] };
+        let programmatic = Rc::new(Cell::new(false));
+        let removal = Rc::new(Cell::new(crate::macos::Removal::Prevent));
+        let allocated = VisibilityObserver::alloc(mtm).set_ivars(VisibilityState {
+            sink: sink.clone(),
+            programmatic: programmatic.clone(),
+            removal: removal.clone(),
+        });
+        // SAFETY: NSObject subclass allocation with initialized ivars.
+        let observer: Retained<VisibilityObserver> = unsafe { msg_send![super(allocated), init] };
+        // SAFETY: This dedicated observer is retained until the matching removal in Item::remove.
+        unsafe {
+            item.addObserver_forKeyPath_options_context(
+                &observer,
+                &NSString::from_str("visible"),
+                NSKeyValueObservingOptions::New,
+                std::ptr::null_mut(),
+            );
+        }
         let result = Self {
+            observer,
+            programmatic,
+            removal,
             item,
             _target: target,
             mtm,
@@ -99,7 +156,15 @@ impl Item {
         button.sendActionOn(
             NSEventMask::LeftMouseUp | NSEventMask::RightMouseUp | NSEventMask::OtherMouseUp,
         );
-        result.apply_now(0, spec)?;
+        let mut initial = spec.clone();
+        if initial
+            .macos
+            .as_ref()
+            .is_some_and(|mac| mac.removal != crate::macos::Removal::Prevent)
+        {
+            initial.visible &= result.item.isVisible();
+        }
+        result.apply_now(0, &initial)?;
 
         Ok(result)
     }
@@ -119,16 +184,50 @@ impl Item {
                     .map(Rc::new)
             })
             .transpose()?;
+        let appearance = spec.macos.clone().unwrap_or_default();
+        let alternate = appearance
+            .alternate_image
+            .as_ref()
+            .map(|image| native_image(image, &appearance.accessibility_label))
+            .transpose()?;
         if spec.interaction == crate::Interaction::NativeMenu {
             self.item.setMenu(menu.as_ref().map(|m| &*m.menu));
         } else {
             self.item.setMenu(None);
         }
         *self.menu.borrow_mut() = menu;
+        self.item.setLength(match appearance.length {
+            crate::macos::ItemLength::Content => NSVariableStatusItemLength,
+            crate::macos::ItemLength::Square => NSSquareStatusItemLength,
+            crate::macos::ItemLength::Points(value) => value,
+        });
+        button.setTitle(&NSString::from_str(&appearance.title));
+        button.setAlternateTitle(&NSString::from_str(&appearance.alternate_title));
+        button.setAlternateImage(alternate.as_deref());
+        button.setImagePosition(NSCellImagePosition::ImageLeading);
+        button.setAppearsDisabled(appearance.appears_disabled);
+        button.setEnabled(!appearance.disabled);
+        button.setAccessibilityLabel(Some(&NSString::from_str(
+            if appearance.accessibility_label.is_empty() {
+                &spec.tooltip
+            } else {
+                &appearance.accessibility_label
+            },
+        )));
+        button.setAccessibilityHelp(Some(&NSString::from_str(&appearance.accessibility_help)));
         button.setImage(image.as_deref());
         button.setToolTip(Some(&NSString::from_str(&spec.tooltip)));
         *self.image.borrow_mut() = image;
+        self.removal.set(appearance.removal);
+        self.item
+            .setBehavior(if appearance.removal == crate::macos::Removal::Prevent {
+                objc2_app_kit::NSStatusItemBehavior::empty()
+            } else {
+                objc2_app_kit::NSStatusItemBehavior::RemovalAllowed
+            });
+        self.programmatic.set(true);
         self.item.setVisible(spec.visible);
+        self.programmatic.set(false);
 
         Ok(())
     }
@@ -188,6 +287,16 @@ impl Item {
         Ok(())
     }
 
+    pub(crate) fn metrics(&self) -> crate::macos::Metrics {
+        let bar = NSStatusBar::systemStatusBar();
+        crate::macos::Metrics {
+            vertical: bar.isVertical(),
+            thickness: bar.thickness(),
+            length: self.item.length(),
+            visible: self.item.isVisible(),
+        }
+    }
+
     pub(crate) fn registration(&self) -> Registration {
         Registration::Registered
     }
@@ -224,6 +333,11 @@ impl Item {
             if let Some(menu) = self.menu.borrow().as_ref() {
                 menu.menu.cancelTracking();
             }
+            // SAFETY: This is the exact observer/key pair registered during creation.
+            unsafe {
+                self.item
+                    .removeObserver_forKeyPath(&self.observer, &NSString::from_str("visible"));
+            }
             self.item.setMenu(None);
             if let Some(button) = self.item.button(self.mtm) {
                 // SAFETY: Clear the weak target before releasing its retained owner.
@@ -259,8 +373,19 @@ pub(super) fn native_image(
     let image = if let Some(named) = named {
         named
     } else {
-        NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&source.to_png()?))
-            .ok_or(Error::HostUnavailable)?
+        if source.representations.is_empty() {
+            return Err(Error::Unsupported(crate::Feature::NamedImage));
+        }
+        let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(18.0, 18.0));
+        for rep in &source.representations {
+            let bitmap = objc2_app_kit::NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(
+                &rep.to_png()?,
+            ))
+            .ok_or(Error::HostUnavailable)?;
+            bitmap.setSize(NSSize::new(18.0, 18.0));
+            image.addRepresentation(&bitmap);
+        }
+        image
     };
     use objc2_foundation::NSCopying;
     let image = image.copy();

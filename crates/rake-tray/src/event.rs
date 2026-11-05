@@ -97,6 +97,8 @@ pub enum EventKind {
     HostChanged(bool),
     /// Native user-removal/visibility observation.
     VisibilityChanged(bool),
+    /// User removal requested managed application quit.
+    RemovalRequestedQuit,
     /// Native callback ingress overflowed; commands were not silently ignored.
     Overflow,
 }

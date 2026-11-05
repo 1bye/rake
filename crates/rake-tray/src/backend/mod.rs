@@ -65,18 +65,44 @@ pub(crate) fn capabilities() -> Capabilities {
             Feature::ShowMenu,
             Feature::MenuMixed,
             Feature::MenuImages,
+            Feature::InlineText,
+            Feature::ItemLength,
+            Feature::UserRemoval,
+            Feature::DisabledAppearance,
+            Feature::DisableInteraction,
+            Feature::MenuAlternates,
+            Feature::MenuAccelerators,
         ] {
             features.insert(feature, Support::Supported);
         }
     }
+    if backend == Backend::AppKit {
+        for feature in [
+            Feature::MenuSubtitles,
+            Feature::MenuBadges,
+            Feature::MenuPalette,
+        ] {
+            features.insert(
+                feature,
+                Support::Conditional(
+                    "requires the corresponding AppKit runtime selector (macOS 14/14.4+)",
+                ),
+            );
+        }
+    }
     if backend == Backend::Windows {
         features.insert(Feature::ShowMenu, Support::Supported);
+        features.insert(Feature::MenuImages, Support::Supported);
         features.insert(
             Feature::Rectangle,
             Support::Conditional("icon can be hidden or in overflow"),
         );
     }
     if backend == Backend::StatusNotifier {
+        features.insert(
+            Feature::MenuAccelerators,
+            Support::Conditional("DBusMenu shortcut execution is owned by the host"),
+        );
         features.insert(Feature::MenuImages, Support::Supported);
         features.insert(Feature::NamedImage, Support::Supported);
         features.insert(
@@ -84,6 +110,9 @@ pub(crate) fn capabilities() -> Capabilities {
             Support::Conditional("host-supplied coordinates are hints"),
         );
         features.insert(Feature::Scroll, Support::Supported);
+        for feature in [Feature::RichTooltip, Feature::Overlay, Feature::Attention] {
+            features.insert(feature, Support::Supported);
+        }
     }
 
     Capabilities { backend, features }
@@ -95,7 +124,30 @@ pub(crate) fn validate(spec: &Tray) -> Result<(), Error> {
     if capabilities.backend() == Backend::Unsupported {
         return Err(Error::Unsupported(Feature::MultipleItems));
     }
-    if spec.image.is_none() {
+    if spec.macos.is_some() && !cfg!(target_os = "macos") {
+        return Err(Error::Unsupported(Feature::InlineText));
+    }
+    if spec.linux.is_some() && !cfg!(target_os = "linux") {
+        return Err(Error::Unsupported(Feature::RichTooltip));
+    }
+    if let Some(mac) = &spec.macos
+        && let Some(image) = &mac.alternate_image
+    {
+        validate_image(image)?;
+    }
+    if let Some(linux) = &spec.linux {
+        for image in [
+            &linux.overlay,
+            &linux.attention,
+            &linux.tooltip.as_ref().and_then(|tip| tip.image.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            validate_image(image)?;
+        }
+    }
+    if spec.image.is_none() && !spec.macos.as_ref().is_some_and(|mac| !mac.title.is_empty()) {
         return Err(Error::InvalidInput("tray item requires an image".into()));
     }
     if let Some(menu) = &spec.menu {
@@ -129,8 +181,17 @@ fn validate_image(image: &Image) -> Result<(), Error> {
 }
 
 fn validate_menu(menu: &crate::Menu) -> Result<(), Error> {
+    if menu.macos.is_some() && !cfg!(target_os = "macos") {
+        return Err(Error::Unsupported(Feature::MenuPalette));
+    }
     for item in &menu.items {
-        if item.accelerator.is_some() {
+        if item.windows.is_some() && !cfg!(target_os = "windows") {
+            return Err(Error::Unsupported(Feature::Menu));
+        }
+        if item.macos.is_some() && !cfg!(target_os = "macos") {
+            return Err(Error::Unsupported(Feature::MenuAlternates));
+        }
+        if item.accelerator.is_some() && cfg!(target_os = "windows") {
             return Err(Error::Unsupported(Feature::MenuAccelerators));
         }
         if matches!(item.kind, crate::ItemKind::Check(crate::CheckState::Mixed))
@@ -140,13 +201,27 @@ fn validate_menu(menu: &crate::Menu) -> Result<(), Error> {
         }
         if let Some(image) = &item.image {
             validate_image(image)?;
-            if cfg!(target_os = "windows") {
-                return Err(Error::Unsupported(Feature::MenuImages));
-            }
         }
         if let crate::ItemKind::Submenu(menu) = &item.kind {
             validate_menu(menu)?;
         }
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn mnemonic(label: &str, key: Option<char>, marker: char) -> String {
+    let mut result = String::new();
+    let mut marked = false;
+    for ch in label.chars() {
+        if !marked && key.is_some_and(|key| key.to_lowercase().eq(ch.to_lowercase())) {
+            result.push(marker);
+            marked = true;
+        }
+        result.push(ch);
+        if ch == marker {
+            result.push(marker);
+        }
+    }
+    result
 }
