@@ -1,21 +1,22 @@
-//! Shared crash configuration and native panic recording, without a UI runtime.
+//! Default native App recording, opt-in delivery, and explicit headless crash handling.
 //!
 //! Configuration, record and sink types are available on native and Web. Native
 //! filesystem operations (`CrashConfig::open`, `CrashReporter`) are native-only.
 //! Web delivery is the follow-up from issue #16; the Web App builder is a no-op.
 //!
-//! The hook records locally; delivery policy belongs to the application. Arbitrary
+//! Native GPUI Apps record bounded local reports by default; they never upload.
+//! Delivery needs an explicit sink. Headless hosts install the hook explicitly. Arbitrary
 //! panic payloads are omitted by default; diagnostic content is always omitted. Successful delivery
 //! deletes a record; failed or interrupted delivery can be retried by stable ID.
 //! A record reports a panic, including caught and worker-thread panics; it does not
 //! establish that the application exited.
 //!
 //! ```no_run
-//! use rake::crash::{CrashConfig, CrashLimits, CrashRecord};
+//! use rake::crash::{CrashLimits, CrashRecord};
 //! use rake::diagnostics::Collector;
 //! # fn main() -> std::io::Result<()> {
 //! # #[cfg(not(target_family = "wasm"))] {
-//! let reporter = CrashConfig::new(env!("CARGO_PKG_VERSION"))
+//! let reporter = rake::crash_config!()
 //!     .directory("/private/app-owned/crashes")
 //!     .limits(CrashLimits { records: 4, ..CrashLimits::default() })
 //!     .open("com.example.editor")?;
@@ -39,6 +40,25 @@ mod native;
 
 #[cfg(not(target_family = "wasm"))]
 pub use native::CrashReporter;
+
+#[cfg(all(not(target_family = "wasm"), any(feature = "gpui", test)))]
+pub(crate) mod startup;
+
+/// Creates crash configuration using the consuming crate's Cargo package version.
+///
+/// Expands `env!("CARGO_PKG_VERSION")` in the caller, rather than using Rake's
+/// version. It creates no directory or hook. Use with `App::crash_reports` for an
+/// explicit sink, or with native `CrashConfig::open` for a headless host.
+///
+/// ```
+/// let _config = rake::crash_config!().include_panic_message(false);
+/// ```
+#[macro_export]
+macro_rules! crash_config {
+    () => {
+        $crate::crash::CrashConfig::new(::core::env!("CARGO_PKG_VERSION"))
+    };
+}
 
 /// Resource budgets for native records; validated when opening the directory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,7 +96,7 @@ pub struct CrashConfig {
 }
 
 impl CrashConfig {
-    /// Supplies the application's version (usually `env!("CARGO_PKG_VERSION")`).
+    /// Supplies an explicit app version; `rake::crash_config!()` captures the caller version.
     pub fn new(version: impl Into<String>) -> Self {
         Self {
             directory: None,

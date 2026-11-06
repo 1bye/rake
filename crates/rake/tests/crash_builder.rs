@@ -8,7 +8,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use rake::crash::{CrashConfig, CrashLimits, CrashRecord, CrashSink};
+use rake::crash::{CrashLimits, CrashRecord, CrashSink};
 
 struct Sink(Rc<Cell<usize>>);
 
@@ -28,11 +28,31 @@ impl Drop for Sink {
 fn shared_builder_accepts_crash_reports_without_launching() {
     let dropped = Rc::new(Cell::new(0));
     let app = rake::App::new("test.crash").crash_reports(
-        CrashConfig::new("1.0.0")
+        rake::crash_config!()
             .directory("unused-crash-directory")
             .limits(CrashLimits::default()),
         Sink(dropped.clone()),
     );
+
+    assert_eq!(dropped.get(), usize::from(cfg!(target_family = "wasm")));
+    drop(app);
+    assert_eq!(dropped.get(), 1);
+}
+
+#[test]
+fn crash_builder_last_call_wins_and_opt_out_releases_sink() {
+    let dropped = Rc::new(Cell::new(0));
+    let app = rake::App::new("test.crash")
+        .crash_reports(rake::crash_config!(), Sink(dropped.clone()))
+        .without_crash_reports();
+
+    assert_eq!(dropped.get(), 1);
+    drop(app);
+    assert_eq!(dropped.get(), 1);
+    let dropped = Rc::new(Cell::new(0));
+    let app = rake::App::new("test.crash")
+        .without_crash_reports()
+        .crash_reports(rake::crash_config!(), Sink(dropped.clone()));
 
     assert_eq!(dropped.get(), usize::from(cfg!(target_family = "wasm")));
     drop(app);
