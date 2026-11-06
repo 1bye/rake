@@ -329,8 +329,8 @@ pub(crate) fn startup(binding: &UpdateBinding, desktop: &DesktopMetadata) {
         .on_after_update_fast_callback(|_| apply(false))
         .on_before_uninstall_fast_callback(|_| {
             if let Err(error) = remove_login_item(binding) {
+                // Best effort: a stale login item must not block association cleanup or uninstall.
                 eprintln!("Rake login-item cleanup failed: {error}");
-                std::process::exit(1);
             }
             apply(true);
         })
