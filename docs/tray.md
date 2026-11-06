@@ -180,10 +180,15 @@ Wayland popups are unavailable with the established host hooks.
 Linux requires a session D-Bus and a StatusNotifierWatcher/panel extension. A bare
 GNOME session may need a compatible AppIndicator extension. X11 and Wayland panels
 are host-dependent. Watcher replacement on the same bus re-registers items. Whole
-session-bus replacement ends the worker: remove/recreate items after recovery.
+session-bus replacement requires removing/recreating items after recovery.
 No automatic XEmbed fallback, Ayatana inline-label/order API or GTK loop is installed.
-The vendored ksni patch preserves native export errors and observes bus closure;
-see [patch notes](../vendor/ksni/RAKE-PATCHES.md).
+The backend uses unmodified crates.io ksni 0.3.7. Its public `update` API
+acknowledges local model processing and hides property/menu signal export errors;
+a successful SNI receipt is not proof that D-Bus signals were sent. Rake reports
+registration errors, watcher availability callbacks and a closed service handle.
+A whole session-bus disconnect may remain undetected by upstream; recreate items
+after bus recovery. No complete connection-failure reporting is promised.
+See the [unopened upstream proposal](../.agents/reports/ksni-upstream-proposal.md).
 
 ## Verification
 

@@ -349,6 +349,7 @@ enum Driver {
 pub(crate) struct Item {
     driver: Driver,
     online: Arc<AtomicBool>,
+    sink: Sink,
 }
 
 async fn start<const MENU: bool>(
@@ -381,22 +382,37 @@ fn update<const MENU: bool>(
     handle: &Rc<ksni::Handle<Model<MENU>>>,
     revision: u64,
     spec: &Tray,
+    online: &Arc<AtomicBool>,
+    sink: &Sink,
 ) -> Request<()> {
     let handle = handle.clone();
+    let online = online.clone();
+    let sink = sink.clone();
     let spec = spec.clone();
     Box::pin(async move {
         let icons = icons(spec.menu.as_ref())?;
-        handle
-            .update_checked(move |model| {
+        if handle.is_closed() {
+            online.store(false, Ordering::Release);
+            sink.send(EventKind::HostChanged(false), None, Input::default());
+            return Err(Error::Stopped);
+        }
+        // Upstream acknowledges local model processing, but does not expose
+        // property/menu signal export errors. Never describe this as a wire ack.
+        let updated = handle
+            .update(move |model| {
                 if model.revision <= revision {
                     model.spec = spec;
                     model.revision = revision;
                     model.icons = icons;
                 }
             })
-            .await
-            .map_err(|error| crate::native("export SNI update", error))?
-            .ok_or(Error::Stopped)
+            .await;
+        if updated.is_none() || handle.is_closed() {
+            online.store(false, Ordering::Release);
+            sink.send(EventKind::HostChanged(false), None, Input::default());
+            return Err(Error::Stopped);
+        }
+        Ok(())
     })
 }
 
@@ -409,18 +425,23 @@ impl Item {
         let identity = format!("{application}.{}", spec.id);
         let online = Arc::new(AtomicBool::new(true));
         Box::pin(async move {
+            let events = sink.clone();
             let driver = if spec.interaction == Interaction::NativeMenu {
                 Driver::Menu(start(identity, spec, sink, online.clone()).await?)
             } else {
                 Driver::Events(start(identity, spec, sink, online.clone()).await?)
             };
-            Ok(Self { driver, online })
+            Ok(Self {
+                driver,
+                online,
+                sink: events,
+            })
         })
     }
     pub(crate) fn apply(&self, revision: u64, spec: &Tray) -> Request<()> {
         match &self.driver {
-            Driver::Menu(handle) => update(handle, revision, spec),
-            Driver::Events(handle) => update(handle, revision, spec),
+            Driver::Menu(handle) => update(handle, revision, spec, &self.online, &self.sink),
+            Driver::Events(handle) => update(handle, revision, spec, &self.online, &self.sink),
         }
     }
     pub(crate) fn show_menu(&self) -> Result<(), Error> {

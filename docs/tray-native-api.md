@@ -168,7 +168,7 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 | `ContextMenu(x,y)` | Host-owned exported DBusMenu path. No duplicate local ContextMenu popup/forced-show claim. |
 | `Scroll(delta,orientation)` | Implemented orientation/delta scroll events. |
 | `ProvideXdgActivationToken(token)` (deployed extension) | Implemented opaque activation token on received activation/menu events. Pinned GPUI has no tray-surface activation-token injection; centered fallback remains explicit. |
-| `NewTitle`, `NewIcon`, `NewAttentionIcon`, `NewOverlayIcon`, `NewToolTip`, `NewStatus(status)` | Implemented by SNI backend property monitor; checked export errors propagate. |
+| `NewTitle`, `NewIcon`, `NewAttentionIcon`, `NewOverlayIcon`, `NewToolTip`, `NewStatus(status)` | Implemented by SNI backend property monitor; upstream hides signal export errors; receipts acknowledge local model processing. |
 ### 6.2 All watcher/host lifecycle members
 
 | Native API family | Current implementation / disposition |
@@ -179,7 +179,7 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 | `StatusNotifierItemRegistered`, `StatusNotifierItemUnregistered` | Host-owned watcher signals; no duplicate public registry API. |
 | `StatusNotifierHostRegistered`, deployed `StatusNotifierHostUnregistered` | Host/daemon-owned; watcher ownership observations supply useful item state. |
 | `RegisterStatusNotifierHost` | Outside item scope: Rake is a client, not a desktop panel host. |
-| D-Bus name ownership changes, connection loss, Properties/Introspectable interfaces | Implemented name-change recovery and D-Bus interfaces. Closed bus worker ends with offline event; whole bus replacement requires remove/recreate. |
+| D-Bus name ownership changes, connection loss, Properties/Introspectable interfaces | Implemented name-change recovery and D-Bus interfaces. Public watcher callbacks/closed handles are observed; upstream may not detect full bus disconnection. Whole bus replacement requires remove/recreate. |
 ### 6.3 All DBusMenu protocol members and item properties
 
 | Native API family | Current implementation / disposition |
@@ -189,7 +189,7 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 | `GetGroupProperties`, `GetProperty` | Implemented native protocol queries. |
 | `Event`, `EventGroup` | Implemented backend event dispatch; scoped generations/revisions are rechecked on foreground delivery. |
 | `AboutToShow`, `AboutToShowGroup` | Implemented backend cached preparation and MenuOpened hint; no universal MenuClosed claim. |
-| `ItemsPropertiesUpdated`, `LayoutUpdated` | Implemented backend model/signals; export errors are observable. |
+| `ItemsPropertiesUpdated`, `LayoutUpdated` | Implemented backend model/signals; upstream does not expose signal export errors. |
 | `ItemActivationRequested(id,timestamp)` | Not exported: host-controlled activation request is not a guaranteed forced menu opening. |
 | Item `type`, `label`, `enabled`, `visible` | Implemented native label/type/visibility/availability. |
 | `icon-name`, `icon-data` | Implemented native name/PNG menu images. |
@@ -237,4 +237,4 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 
 NSPopover is not used as a native container: Rake uses independent GPUI windows. Direct view-controller hosting, AppKit expanded sessions, arbitrary custom menu views, Windows owner-draw/modeless/drag menus and XEmbed legacy messages remain unavailable. These require dedicated native integration and keyboard/accessibility gates; they are not stub success paths.
 
-Source inventory and primary links are preserved in the plan. New AppKit selectors check runtime availability; macOS 27 symbols are absent in the installed SDK. Linux backend modifications are recorded in [ksni patch notes](../vendor/ksni/RAKE-PATCHES.md).
+Source inventory and primary links are preserved in the plan. New AppKit selectors check runtime availability; macOS 27 symbols are absent in the installed SDK. The backend uses unmodified crates.io ksni; reduced error reporting and an unopened proposal are recorded in [upstream notes](../.agents/reports/ksni-upstream-proposal.md).
