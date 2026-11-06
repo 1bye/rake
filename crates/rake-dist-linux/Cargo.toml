@@ -1,10 +1,12 @@
 [package]
 name = "rake-dist-linux"
-version.workspace = true
+version = "0.1.0-alpha.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
+description = "Linux packaging and integration for Rake applications"
 
 [lints]
 workspace = true
@@ -14,7 +16,7 @@ native-tests = []
 
 [dependencies]
 base64 = "0.23"
-rake-dist-core = { path = "../rake-dist-core" }
+rake-dist-core = { version = "=0.1.0-alpha.2", path = "../rake-dist-core" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -9,9 +9,9 @@ not establish native platform availability; see the acceptance matrix in
 [Desktop distribution](../distribution.md).
 
 ```sh
-cargo run -p rake-cli -- bundle --plan --package rake-foundation --json
-cargo run -p rake-cli -- bundle --plan --platform windows --package rake-foundation --json
-cargo run -p rake-cli -- bundle --plan --schema --json
+cargo run -p rake-app-cli -- bundle --plan --package rake-foundation --json
+cargo run -p rake-app-cli -- bundle --plan --platform windows --package rake-foundation --json
+cargo run -p rake-app-cli -- bundle --plan --schema --json
 ```
 
 Use `--manifest-path` for another workspace. Cargo package selection is limited to

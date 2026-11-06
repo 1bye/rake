@@ -25,8 +25,10 @@ static ORIGINALS: Mutex<Vec<(&'static AnyClass, Option<HitTester>)>> = Mutex::ne
 pub(super) fn intercept(window: &NSWindow) {
     let mut originals = ORIGINALS.lock().expect("native hit testers lock poisoned");
     let selector = sel!(accessibilityHitTest:);
+
     let encoding = CString::new(format!("@@:{}", NSPoint::ENCODING))
         .expect("Objective-C point encoding has no NUL");
+
     // SAFETY: Erase only the function pointer type; hit_test preserves the
     // receiver, selector, NSPoint argument and accessibility-object return ABI.
     let replacement: Imp = unsafe { mem::transmute(hit_test as HitTester) };
@@ -71,6 +73,7 @@ unsafe extern "C-unwind" fn hit_test(
     point: NSPoint,
 ) -> *mut AnyObject {
     let superclass = OriginalCall::superclass(window, selector);
+
     let tree = WINDOWS
         .try_with(|windows| {
             windows
@@ -131,6 +134,7 @@ unsafe extern "C-unwind" fn hit_test(
 
     if let Some(original) = original {
         let _call = OriginalCall::new(window, selector, class);
+
         // SAFETY: Preserve the saved window method's receiver, selector and ABI.
         unsafe { original(window, selector, point) }
     } else if let Some(content) = window.contentView() {

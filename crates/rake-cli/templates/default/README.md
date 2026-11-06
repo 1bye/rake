@@ -28,8 +28,5 @@ rake ctl commands run app.greet --args '{"name":"Rake"}' --json
 Change the application ID (`{{application_id}}`) in `src/lib.rs` and
 `package.metadata.rake.bundle.identifier` in `Cargo.toml` together. Rake is an
 alpha; APIs can change between revisions. The dependency is pinned to the CLI's
-build revision (or the explicit local path/revision passed to `rake new`).
-
-Keep the `pest_stack_guard` patch in `Cargo.toml`: it carries Rake's parser stack
-guard fix for native-to-Wasm builds. Root manifest patches are not inherited from
-a dependency. Update its revision together with Rake's.
+release version, checkout revision, or the local path or revision passed to
+`rake new`.

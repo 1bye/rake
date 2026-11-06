@@ -8,6 +8,7 @@ use rake::{
     },
     surface::GpuSurface,
 };
+
 use web_time::Instant;
 
 mod input_layer;
@@ -40,12 +41,16 @@ impl Demo {
     fn new(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
         let overlays = OverlayHostState::new(cx);
         let no_surface = std::env::args().any(|argument| argument == "--baseline");
+
         let preview = (!no_surface)
             .then(|| GpuSurface::new(window, cx).expect("surface host initialization"));
+
         let focus = cx.focus_handle();
+
         window.focus(&focus, cx);
         let popup = overlays.popover(cx);
         let dialog = overlays.dialog(cx);
+
         let producer = preview.as_ref().map(|preview| {
             producer::Producer::start(
                 preview,
@@ -56,6 +61,7 @@ impl Demo {
                 popup.clone(),
             )
         });
+
         let input_activity = cx.observe_window_activation(window, |this, window, _| {
             if !window.is_window_active()
                 && let Some(producer) = &this._producer
@@ -63,6 +69,7 @@ impl Demo {
                 producer.cancel(window);
             }
         });
+
         Self {
             preview,
             _producer: producer,
@@ -95,10 +102,12 @@ impl Render for Demo {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let begin = Instant::now();
+
         self.frames += 1;
         self.frame_intervals_ms += begin.duration_since(self.last_frame).as_secs_f64() * 1000.;
         self.last_frame = begin;
         let entity = cx.entity().downgrade();
+
         window.on_next_frame(move |_, cx| {
             let _ = entity.update(cx, |_, cx| cx.notify());
         });
@@ -106,11 +115,13 @@ impl Render for Demo {
         let open_dialog = self.dialog.clone();
         let open_popup = self.popup.clone();
         let close_dialog = self.dialog.clone();
+
         let status = self
             .preview
             .as_ref()
             .map(GpuSurface::state)
             .unwrap_or_default();
+
         let slot = if self.mounted {
             self.preview.as_ref().map(|preview| {
                 preview
@@ -123,10 +134,12 @@ impl Render for Demo {
         } else {
             None
         };
+
         let input_layer = self
             ._producer
             .as_ref()
             .map(|producer| producer.input_layer(self.mounted && !self.hidden, window, cx));
+
         let controls = gpui::div().flex().gap_3().children([
             control("Hide / show")
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -163,6 +176,7 @@ impl Render for Demo {
             }
             .into_any_element(),
         ]);
+
         let controls = controls.child(
             control("UI focus")
                 .track_focus(&self.ui_focus)
@@ -177,6 +191,7 @@ impl Render for Demo {
                     }),
                 ),
         );
+
         let controls = controls.children(self._producer.as_ref().map(|producer| {
             control("Text input")
                 .when(producer.input.text_mode(), |element| {
@@ -189,6 +204,7 @@ impl Render for Demo {
                     }
                 }))
         }));
+
         let body = gpui::div()
             .id("surface-demo")
             .size_full()
@@ -206,19 +222,24 @@ impl Render for Demo {
                     }
 
                     this.keys += 1;
+
                     #[cfg(feature = "devtools")]
                     if event.keystroke.key == "m" {
                         window.reset_debug_frame_overlay_stats();
                     }
+
                     if event.keystroke.key == "h" {
                         this.hidden = !this.hidden;
                     }
+
                     if event.keystroke.key == "r" {
                         this.mounted = !this.mounted;
                     }
+
                     if event.keystroke.key == "b" {
                         this.busy = !this.busy;
                     }
+
                     cx.notify();
                 }),
             )
@@ -286,6 +307,7 @@ impl Render for Demo {
                 self.frame_intervals_ms / self.frames as f64,
                 self.started.elapsed().as_secs_f64()
             ));
+
         let view = rake::view! {
             <OverlayHost state={self.overlays.clone()} body={body.into_any_element()}>
                 <Popover state={self.popup.clone()} anchor={self.anchor.clone()}>
@@ -298,10 +320,12 @@ impl Render for Demo {
                 </Dialog>
             </OverlayHost>
         };
+
         let view = {
             let ui_focus = self.ui_focus.clone();
             let dialog = self.dialog.clone();
             let popup = self.popup.clone();
+
             gpui::div()
                 .size_full()
                 .capture_key_down(move |event, window, _| {
@@ -316,12 +340,15 @@ impl Render for Demo {
                 })
                 .child(view)
         };
+
         self.render_ms += begin.elapsed().as_secs_f64() * 1000.;
+
         #[cfg(feature = "devtools")]
         if self.frames.is_multiple_of(300) {
             let timing = window.frame_duration_snapshot();
             let draw = &timing.draw_duration_histogram;
             let interval = &timing.present_interval_histogram;
+
             let measurement = format!(
                 "GPUI_PROFILE draw_mean_ms={:.4} draw_p95_ms={:.4} interval_mean_ms={:.4} interval_p95_ms={:.4} n={} busy={}",
                 draw.mean() / 1e6,
@@ -331,6 +358,7 @@ impl Render for Demo {
                 draw.len(),
                 self.busy
             );
+
             eprintln!("{measurement}");
         }
 
@@ -343,6 +371,7 @@ impl Render for Demo {
                 self.busy
             );
         }
+
         view
     }
 }
@@ -357,7 +386,9 @@ fn control(label: &'static str) -> gpui::Stateful<gpui::Div> {
         .cursor_pointer()
         .child(label)
 }
+
 struct Tip;
+
 impl Render for Tip {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         gpui::div()
@@ -382,6 +413,7 @@ fn app() -> rake::App {
         })
         .root(|_, window, cx| {
             window.set_window_title("Rake macOS GPU Surface");
+
             cx.new(|cx| Demo::new(window, cx)).into()
         })
 }

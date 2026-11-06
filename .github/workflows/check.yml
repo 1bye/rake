@@ -16,37 +16,37 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo clippy -p rake --features native-components --all-targets --locked -- -D warnings
+      - run: cargo clippy -p rake-app --features native-components --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
       - run: cargo test -p rake-native --doc --locked
       - run: cargo test -p rake-native --features native-tests --test appkit --locked
       - run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
       - run: cargo test -p rake-tray --locked
-      - run: cargo clippy -p rake --features tray --all-targets --locked -- -D warnings
-      - run: cargo test -p rake --features tray,view-test-support --lib --locked
-      - run: cargo check -p rake --features tray,gpui-fast --all-targets --locked
-      - run: cargo check -p rake --features tray --target wasm32-unknown-unknown --locked
+      - run: cargo clippy -p rake-app --features tray --all-targets --locked -- -D warnings
+      - run: cargo test -p rake-app --features tray,view-test-support --lib --locked
+      - run: cargo check -p rake-app --features tray,gpui-fast --all-targets --locked
+      - run: cargo check -p rake-app --features tray --target wasm32-unknown-unknown --locked
       - run: cargo check -p renamed-facade --features tray --locked
       - run: cargo test --workspace --locked --no-fail-fast
-      - run: cargo test -p rake --features view-test-support --lib --test view_state --test actions --test inspection_compiled_out --locked
-      - run: cargo test -p rake --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
-      - run: cargo clippy -p rake --all-targets --features view-test-support,devtools --locked -- -D warnings
+      - run: cargo test -p rake-app --features view-test-support --lib --test view_state --test actions --test inspection_compiled_out --locked
+      - run: cargo test -p rake-app --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
+      - run: cargo clippy -p rake-app --all-targets --features view-test-support,devtools --locked -- -D warnings
       - run: cargo test -p rake-ui --features kit --test semantic --locked
-      - run: cargo test -p rake --features kit,view-test-support,devtools --lib --test view_state --locked
+      - run: cargo test -p rake-app --features kit,view-test-support,devtools --lib --test view_state --locked
       - run: cargo clippy -p rake-kit-example --features kit,devtools --all-targets --locked -- -D warnings
       - run: cargo check -p renamed-facade --features devtools --locked
       - run: cargo test -p rake-view --features view-test-support --lib --locked
-      - run: cargo check -p rake --lib --target wasm32-unknown-unknown --locked
+      - run: cargo check -p rake-app --lib --target wasm32-unknown-unknown --locked
       - run: cargo test -p rake-notes --features view-test-support --locked
-      - run: cargo check -p rake --no-default-features --locked
-      - run: cargo check -p rake --features native-components --lib --target wasm32-unknown-unknown --locked
+      - run: cargo check -p rake-app --no-default-features --locked
+      - run: cargo check -p rake-app --features native-components --lib --target wasm32-unknown-unknown --locked
       - run: cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
       - run: cargo check -p rake-macros --no-default-features --locked
       - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
       - run: cargo test -p rake-ui --features test-support --locked
-      - run: cargo clippy -p rake --no-default-features --locked -- -D warnings
-      - run: cargo test -p rake-cli --features scaffold-tests --test new_build --locked
-      - run: cargo build -p rake-cli --locked
+      - run: cargo clippy -p rake-app --no-default-features --locked -- -D warnings
+      - run: cargo test -p rake-app-cli --features scaffold-tests --test new_build --locked
+      - run: cargo build -p rake-app-cli --locked
       - name: Install matching Wasm bindings tool
         run: |
           python3 - <<'PY'
@@ -72,23 +72,23 @@ jobs:
       - run: cargo test -p rake-files --lib --locked
       - run: cargo clippy -p rake-files --lib --target wasm32-unknown-unknown --locked -- -D warnings
       - run: python3 scripts/test-web-deployment.py
-      - run: cargo test -p rake --no-default-features --test platform --locked
-      - run: cargo test -p rake --test platform --locked
+      - run: cargo test -p rake-app --no-default-features --test platform --locked
+      - run: cargo test -p rake-app --test platform --locked
       - run: cargo clippy -p rake-web-host-fixture --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo clippy -p rake --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings
+      - run: cargo clippy -p rake-app --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings
       - run: cargo test -p rake-inspector --no-default-features --locked
       - run: cargo clippy -p rake-inspector --no-default-features --all-targets --locked -- -D warnings
       - run: cargo test -p rake-notes --no-default-features --locked
       - run: cargo clippy -p rake-notes --no-default-features --all-targets --locked -- -D warnings
-      - run: cargo test -p rake --no-default-features --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
+      - run: cargo test -p rake-app --no-default-features --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
       - run: cargo check -p rake-foundation -p rake-routing -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
       - run: cargo check -p rake-view -p renamed-facade --lib --features rake/devtools --target wasm32-unknown-unknown --locked
-      - run: cargo clippy -p rake -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
+      - run: cargo clippy -p rake-app -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
       - run: cargo build -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector --lib --target wasm32-unknown-unknown --locked
       - run: cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
       - run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
       - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
-      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.2.0 --locked
+      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.3.2 --locked
       - run: python3 scripts/check-spacing.py

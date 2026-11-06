@@ -46,10 +46,10 @@ fn main() {
 From the workspace:
 
 ```sh
-cargo run -p rake-cli -- doctor --distribution --package rake-distribution-example --json
-cargo run -p rake-cli -- build --native --package rake-distribution-example --json
-cargo run -p rake-cli -- bundle --package rake-distribution-example --plan --json
-cargo run -p rake-cli -- bundle --package rake-distribution-example --debug --json
+cargo run -p rake-app-cli -- doctor --distribution --package rake-distribution-example --json
+cargo run -p rake-app-cli -- build --native --package rake-distribution-example --json
+cargo run -p rake-app-cli -- bundle --package rake-distribution-example --plan --json
+cargo run -p rake-app-cli -- bundle --package rake-distribution-example --debug --json
 ```
 
 `build --native` compiles Cargo executables and reports their paths. `bundle` prepares icons, installed resources, components and a native installation artifact. Pass `--features feature-one,feature-two` to either, and required updater features are merged into bundle builds.

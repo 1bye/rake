@@ -1,7 +1,7 @@
 // Covers: complete public agent workflow against a real native GPUI window.
 // Real: app/GPU, Unix control, Rust CLI/CDP, Node client, ScreenCaptureKit image/source.
 // Doubles: none. Requires: unlocked macOS 14+, Screen Recording, Node22+, Xcode tools.
-// Build: cargo build -p rake-cli -p rake-agent-example -p rake-view --features rake-agent-example/devtools,rake-view/devtools
+// Build: cargo build -p rake-app-cli -p rake-agent-example -p rake-view --features rake-agent-example/devtools,rake-view/devtools
 // Run: node scripts/test-agent-cdp.mjs
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -11,7 +11,7 @@ import {fileURLToPath} from 'node:url';
 import {join} from 'node:path';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
-import {RakeAgent} from './rake-agent.mjs';
+import {RakeAgent} from '../crates/rake-cli/scripts/rake-agent.mjs';
 assert.equal(process.platform,'darwin','requires a native macOS GUI; never silently skip');
 const root=fileURLToPath(new URL('../',import.meta.url)), directory=mkdtempSync('/tmp/rake-agent-cdp-');
 const control=join(directory,'control');mkdirSync(control,{mode:0o700});

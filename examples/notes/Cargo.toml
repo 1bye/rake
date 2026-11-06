@@ -23,7 +23,7 @@ view-test-support = ["gui", "rake/view-test-support"]
 workspace = true
 
 [dependencies]
-rake = { path = "../../crates/rake", default-features = false }
+rake = { package = "rake-app", path = "../../crates/rake", default-features = false }
 gpui-base = { workspace = true, optional = true }
 futures.workspace = true
 thiserror.workspace = true

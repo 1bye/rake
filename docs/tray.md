@@ -189,8 +189,8 @@ see [patch notes](../vendor/ksni/RAKE-PATCHES.md).
 
 ```sh
 cargo test -p rake-tray --locked
-cargo test -p rake --features tray,view-test-support --lib --locked
-cargo clippy -p rake --features tray --all-targets --locked -- -D warnings
+cargo test -p rake-app --features tray,view-test-support --lib --locked
+cargo clippy -p rake-app --features tray --all-targets --locked -- -D warnings
 python3 scripts/test-tray-native.py appkit
 python3 scripts/test-tray-native.py sni
 python3 scripts/test-tray-native.py gpui

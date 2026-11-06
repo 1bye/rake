@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Covers: presented GPUI tree, layout/styles/source/semantics, ownership and stale IDs.
 Real: native routing app, GPU/window, Unix runtime control, CLI and inspector HTTP proxy.
-Doubles: none. Requires: macOS GUI session, cargo build -p rake-routing -p rake-cli --features rake/devtools.
+Doubles: none. Requires: macOS GUI session, cargo build -p rake-routing -p rake-app-cli --features rake/devtools.
 This is an explicit display test; headless/CI suites do not substitute a fake tree.
 """
 import json
@@ -92,7 +92,7 @@ def main():
                 stale = subprocess.run([str(ROOT / "target/debug/rake"), "ctl", "--json", "inspect", "element", edit["id"]], env=env, capture_output=True, text=True, timeout=10)
                 assert stale.returncode != 0 and "refresh" in stale.stderr
                 # Forward the same query through the actual Elements panel's HTTP endpoint.
-                server = subprocess.Popen([sys.executable, str(ROOT / "scripts/serve-web.py"), "--inspector-only", "--control", "--port", "0"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                server = subprocess.Popen([sys.executable, str(ROOT / "crates/rake-cli/scripts/serve-web.py"), "--inspector-only", "--control", "--port", "0"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 launch = urllib.parse.urlsplit(server.stdout.readline().strip().split()[-1])
                 runtime = ctl("info")["value"]["runtime_id"]
                 envelope = {"protocol": 1, "runtime_id": runtime, "key": None, "message": {"type": "query", "value": {"type": "inspect_tree"}}}

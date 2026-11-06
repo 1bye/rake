@@ -1,10 +1,11 @@
 [package]
 name = "rake-http"
-version.workspace = true
+version = "0.1.0-alpha.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
 description = "Executor-portable HTTP with bounded deadlines and diagnostics"
 
 [lints]

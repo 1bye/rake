@@ -114,9 +114,15 @@ pub fn command(input: TokenStream) -> TokenStream {
 }
 
 fn facade() -> syn::Result<Tokens> {
-    match crate_name("rake") {
+    match crate_name("rake-app").or_else(|_| crate_name("rak")) {
+        // Without a dependency rename, Cargo uses the facade library target name.
         Ok(FoundCrate::Itself) => Ok(quote!(::rake)),
         Ok(FoundCrate::Name(name)) => {
+            let name = match name.as_str() {
+                "rake_app" | "rak" => "rake",
+                _ => &name,
+            };
+
             let name = format_ident!("{name}");
 
             Ok(quote!(::#name))

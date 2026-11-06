@@ -56,7 +56,7 @@ monitor traffic made through unrelated clients, browser internals or raw sockets
 ## Verification
 
 ```sh
-cargo build -p rake-cli -p rake-routing --features rake-routing/network-test --offline
+cargo build -p rake-app-cli -p rake-routing --features rake-routing/network-test --offline
 node scripts/test-network-cdp.mjs
 node scripts/test-network-cdp.mjs --serve
 ```

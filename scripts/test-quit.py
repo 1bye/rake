@@ -2,7 +2,7 @@
 """Covers: real native quit, response delivery, waiting/cancelling commands and cleanup.
 Real: macOS GPUI window, activities, HTTP command, CLI and private Unix transport.
 Doubles: a gated loopback HTTP service. Requires: macOS GUI session and
-cargo build -p rake-routing -p rake-cli. Dirty guards have separate portable/CLI tests.
+cargo build -p rake-routing -p rake-app-cli. Dirty guards have separate portable/CLI tests.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json

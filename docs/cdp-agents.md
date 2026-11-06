@@ -101,7 +101,7 @@ accepts `rakeWindowId` and `rakeCapture`; a failed owner/capture precondition re
 native UI thread. A stale-reference rejection admits no input; transport failure
 or a lost acknowledgement has an uncertain outcome and must not be replayed.
 
-The dependency-free Node 22+ client is `scripts/rake-agent.mjs`, with TypeScript exports in `scripts/rake-agent.d.mts`.
+The dependency-free Node 22+ client is `crates/rake-cli/scripts/rake-agent.mjs`, with TypeScript exports in `crates/rake-cli/scripts/rake-agent.d.mts`.
 
 - It discovers exactly one runtime (or requires `targetId`) and selects exactly one window (or requires `windowId`).
 - It rejects ambiguous queries, and resolves references by stable identity with no name-based fallback.
@@ -111,7 +111,7 @@ The dependency-free Node 22+ client is `scripts/rake-agent.mjs`, with TypeScript
 - Disconnects and timeouts retire the client and never replay mutations.
 
 ```js
-import {RakeAgent} from './scripts/rake-agent.mjs';
+import {RakeAgent} from './crates/rake-cli/scripts/rake-agent.mjs';
 const app = await RakeAgent.connect('http://127.0.0.1:PORT/TOKEN');
 try {
   const button = await app.find({role: 'button', name: 'Increment counter'});
@@ -145,7 +145,7 @@ Use a persistent client connection when a workflow needs retained references, wa
 ## Verification
 
 ```sh
-cargo build -p rake-cli -p rake-agent-example --features rake-agent-example/devtools
+cargo build -p rake-app-cli -p rake-agent-example --features rake-agent-example/devtools
 node --test scripts/test-agent-client.mjs
 node scripts/test-agent-cdp.mjs
 ```

@@ -67,7 +67,7 @@ for name, arguments, forbidden in [
     ("stable Web views", ["--target", "wasm32-unknown-unknown"],
      {"gpui-kit", "gpui-component", "gpui-kit-assets", "wasm_thread"}),
 ]:
-    tree = cargo("tree", "-p", "rake", "--locked", "--edges", "normal", "--prefix", "none",
+    tree = cargo("tree", "-p", "rake-app", "--locked", "--edges", "normal", "--prefix", "none",
                  "--format", "{p}", *arguments)
     names = {line.split(" v", 1)[0] for line in tree.splitlines()}
     if unwanted := names & forbidden:

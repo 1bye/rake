@@ -7,6 +7,7 @@ use web_time::Instant;
 mod input;
 mod native_input;
 mod text_input;
+
 pub use native_input::NativeInputController;
 pub use text_input::TextInput;
 
@@ -52,8 +53,10 @@ impl Renderer {
     /// Returns adapter, device or unsupported surface configuration failures.
     pub async fn attach(target: metal::MetalLayer) -> Result<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+
         let surface = {
             use foreign_types::ForeignType as _;
+
             // SAFETY: MetalLayer owns a valid CAMetalLayer, retained in Self until
             // after Surface is dropped. AppKit only manipulates its host view.
             unsafe {
@@ -62,28 +65,34 @@ impl Renderer {
                 ))?
             }
         };
+
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
                 ..Default::default()
             })
             .await?;
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
+
         let config = surface
             .get_default_config(&adapter, 1, 1)
             .context("no supported surface configuration")?;
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("surface spike edges and moving shape"),
             source: wgpu::ShaderSource::Wgsl(include_str!("pattern.wgsl").into()),
         });
+
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("time and physical dimensions"),
             size: 48,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -97,6 +106,7 @@ impl Renderer {
                 count: None,
             }],
         });
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &layout,
@@ -105,11 +115,13 @@ impl Renderer {
                 resource: uniform.as_entire_binding(),
             }],
         });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&layout],
             immediate_size: 0,
         });
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
@@ -135,6 +147,7 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+
         Ok(Self {
             surface,
             _target: target,
@@ -163,7 +176,9 @@ impl Renderer {
         if width_px == 0 || height_px == 0 {
             return Ok(());
         }
+
         let begin = Instant::now();
+
         if self.metrics.frames == 0
             || self.config.width != width_px
             || self.config.height != height_px
@@ -172,15 +187,18 @@ impl Renderer {
             self.config.height = height_px;
             self.surface.configure(&self.device, &self.config);
         }
+
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
+
                 self.surface.get_current_texture()?
             }
             Err(wgpu::SurfaceError::Timeout) => return Ok(()),
             Err(error) => return Err(error.into()),
         };
+
         let values = [
             self.started.elapsed().as_secs_f32(),
             width_px as f32,
@@ -195,13 +213,17 @@ impl Renderer {
             (self.input.key_downs % 2) as f32,
             0.,
         ];
+
         let mut bytes = [0_u8; 48];
+
         for (slot, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
             slot.copy_from_slice(&value.to_ne_bytes());
         }
+
         self.queue.write_buffer(&self.uniform, 0, &bytes);
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -219,6 +241,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
@@ -226,11 +249,13 @@ impl Renderer {
         self.queue.submit([encoder.finish()]);
         frame.present();
         let ms = begin.elapsed().as_secs_f64() * 1000.;
+
         self.metrics.frames += 1;
         self.metrics.last_submit_ms = ms;
         self.metrics.mean_submit_ms +=
             (ms - self.metrics.mean_submit_ms) / self.metrics.frames as f64;
         self.metrics.max_submit_ms = self.metrics.max_submit_ms.max(ms);
+
         Ok(())
     }
 
@@ -246,6 +271,7 @@ mod tests {
     fn animated_pattern_is_valid_for_the_producer_shader_version() {
         let module = naga::front::wgsl::parse_str(include_str!("pattern.wgsl"))
             .expect("the standalone producer shader must parse");
+
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::empty(),

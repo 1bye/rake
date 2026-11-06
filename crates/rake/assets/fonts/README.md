@@ -7,7 +7,7 @@ Native builds do not embed them. This preserves the previous default families
 and regular, italic, bold/semibold and bold/semibold italic styles.
 
 Both families use the SIL Open Font License. Copyright and license notices are
-in [rake-web-font-licenses.txt](../../../../scripts/rake-web-font-licenses.txt),
+in [rake-web-font-licenses.txt](LICENSES.txt),
 which the Web build tools include in their output.
 
 SHA-256:

@@ -3,7 +3,7 @@
 // Requires: Node 22+; node --test scripts/test-agent-client.mjs.
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {RakeAgent} from './rake-agent.mjs';
+import {RakeAgent} from '../crates/rake-cli/scripts/rake-agent.mjs';
 class Socket extends EventTarget {
   sent=[]; closed=false;
   send(text) {this.sent.push(JSON.parse(text));}

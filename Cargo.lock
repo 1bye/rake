@@ -389,9 +389,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
+checksum = "f426a31126c735126297bc5ea7a521263c9faff4f63ca415267ee625651c4f37"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -6452,7 +6452,9 @@ dependencies = [
 
 [[package]]
 name = "pest_stack_guard"
-version = "1.0.0"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ac6154fd4418b8f0b82532c59c26f303f9ca59a64c883e8ce3971fd82733439"
 dependencies = [
  "psm",
  "stacker",
@@ -7105,8 +7107,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
-name = "rake"
+name = "rake-agent-example"
 version = "0.1.0"
+dependencies = [
+ "rake-app",
+]
+
+[[package]]
+name = "rake-app"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "async-io",
@@ -7157,34 +7166,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "rake-agent-example"
-version = "0.1.0"
-dependencies = [
- "rake",
-]
-
-[[package]]
-name = "rake-build"
-version = "0.1.0"
-dependencies = [
- "image",
- "rake-dist-core",
- "resvg 0.45.1",
- "serde_json",
- "tauri-winres",
- "tempfile",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "rake-cli"
-version = "0.1.0"
+name = "rake-app-cli"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "ctrlc",
  "futures",
  "libc",
- "rake",
+ "rake-app",
  "rake-client",
  "rake-diagnostics",
  "rake-dist",
@@ -7199,8 +7188,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-build"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "image",
+ "rake-dist-core",
+ "resvg 0.45.1",
+ "serde_json",
+ "tauri-winres",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "rake-client"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-io",
  "futures",
@@ -7217,13 +7219,13 @@ dependencies = [
 name = "rake-desktop-example"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
  "rake-build",
 ]
 
 [[package]]
 name = "rake-diagnostics"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -7236,7 +7238,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist"
-version = "0.1.0"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.23.1",
  "command-group",
@@ -7272,7 +7274,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-core"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "schemars 1.2.3",
  "semver",
@@ -7286,7 +7288,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-linux"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -7303,7 +7305,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-macos"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "base64 0.23.1",
  "object 0.37.3",
@@ -7316,7 +7318,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-windows"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "dunce",
  "object 0.37.3",
@@ -7333,7 +7335,7 @@ dependencies = [
 name = "rake-distribution-example"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
  "rake-build",
 ]
 
@@ -7341,7 +7343,7 @@ dependencies = [
 name = "rake-files"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
  "rake-build",
  "thiserror 2.0.21",
 ]
@@ -7350,7 +7352,7 @@ dependencies = [
 name = "rake-foundation"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
  "rake-build",
 ]
 
@@ -7360,14 +7362,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "pollster 0.4.0",
- "rake",
+ "rake-app",
  "surface-spike-renderer",
  "web-time",
 ]
 
 [[package]]
 name = "rake-http"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-compat",
  "async-io",
@@ -7391,7 +7393,7 @@ name = "rake-inspector"
 version = "0.1.0"
 dependencies = [
  "futures",
- "rake",
+ "rake-app",
  "serde",
  "serde_json",
  "url",
@@ -7402,12 +7404,12 @@ dependencies = [
 name = "rake-kit-example"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
 ]
 
 [[package]]
 name = "rake-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -7417,7 +7419,7 @@ dependencies = [
 
 [[package]]
 name = "rake-native"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "futures",
  "gpui-base",
@@ -7440,7 +7442,7 @@ dependencies = [
  "gpui-base",
  "js-sys",
  "libc",
- "rake",
+ "rake-app",
  "thiserror 2.0.21",
  "uuid",
  "wasm-bindgen",
@@ -7451,12 +7453,12 @@ dependencies = [
 name = "rake-preview"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
 ]
 
 [[package]]
 name = "rake-protocol"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "percent-encoding",
  "rake-diagnostics",
@@ -7469,7 +7471,7 @@ dependencies = [
 
 [[package]]
 name = "rake-resources"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "command-group",
  "fs2",
@@ -7483,13 +7485,13 @@ dependencies = [
 name = "rake-routing"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
  "tracing",
 ]
 
 [[package]]
 name = "rake-tray"
-version = "0.1.0"
+version = "0.1.0-alpha.3"
 dependencies = [
  "block2 0.6.2",
  "event-listener",
@@ -7510,12 +7512,12 @@ name = "rake-tray-example"
 version = "0.1.0"
 dependencies = [
  "futures",
- "rake",
+ "rake-app",
 ]
 
 [[package]]
 name = "rake-ui"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "gpui-base",
  "gpui-fast",
@@ -7527,7 +7529,7 @@ dependencies = [
 
 [[package]]
 name = "rake-updates"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 dependencies = [
  "cc",
  "ed25519-dalek",
@@ -7554,14 +7556,14 @@ dependencies = [
 name = "rake-view"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
 ]
 
 [[package]]
 name = "rake-web-host-fixture"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -7889,7 +7891,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "renamed-facade"
 version = "0.1.0"
 dependencies = [
- "rake",
+ "rake-app",
 ]
 
 [[package]]

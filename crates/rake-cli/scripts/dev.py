@@ -203,16 +203,17 @@ class Project:
                 features.append("devtools")
             else:
                 for dependency in self.package["dependencies"]:
-                    if dependency["name"] == "rake" and dependency["kind"] is None:
-                        features.append((dependency["rename"] or "rake") + "/devtools")
+                    if dependency["name"] in {"rake-app", "rak", "rake"} and dependency["kind"] is None:
+                        features.append((dependency["rename"] or dependency["name"]) + "/devtools")
         return ",".join(features)
 
     def build(self, processes, output):
         if self.args.target == "desktop":
             cli = os.environ.get("RAKE_CLI") or shutil.which("rake")
-            candidate = Path(__file__).resolve().parents[1] / "target/debug/rake"
-            if not cli and candidate.is_file():
-                cli = str(candidate)
+            if not cli and not os.environ.get("RAKE_EMBEDDED_HELPERS"):
+                candidate = Path(__file__).resolve().parents[3] / "target/debug/rake"
+                if candidate.is_file():
+                    cli = str(candidate)
             if not cli:
                 raise RuntimeError("native builds require the Rust rake CLI; set RAKE_CLI or launch rake dev")
             command = [cli, "bundle", "--native", "--compat", "--json", "--manifest-path", self.package["manifest_path"], "--package", self.package["name"], "--bin", self.target["name"], "--output", str(output), "--release" if self.args.release else "--debug"]
