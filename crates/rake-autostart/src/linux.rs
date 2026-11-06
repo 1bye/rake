@@ -83,6 +83,8 @@ fn desktop_entry(login: &LaunchAtLogin, executable: &Path) -> Result<String, Err
     let executable = executable
         .to_str()
         .ok_or_else(|| Error::InvalidCommand("desktop executable path is not UTF-8".into()))?;
+    // Desktop Entry §7 forbids '=' in the executable name/path, even when quoted.
+    // https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html
     if executable.contains('=') {
         return Err(Error::InvalidCommand(
             "desktop executable path cannot contain '='".into(),
@@ -318,6 +320,25 @@ mod tests {
             1,
             "failure cleans its temp file"
         );
+    }
+
+    #[test]
+    fn equals_is_valid_in_arguments_but_not_the_desktop_executable_path() {
+        let login = LaunchAtLogin::new("dev.rake.test")
+            .unwrap()
+            .args(["--profile=a=b"])
+            .unwrap();
+
+        let entry = desktop_entry(&login, Path::new("/opt/Rake App/app")).unwrap();
+
+        assert!(
+            entry.contains(r#"Exec="/opt/Rake App/app" "--profile=a=b""#),
+            "{entry}"
+        );
+        assert!(matches!(
+            desktop_entry(&login, Path::new("/opt/Rake=App/app")),
+            Err(Error::InvalidCommand(_))
+        ));
     }
 
     #[test]

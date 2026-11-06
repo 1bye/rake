@@ -43,6 +43,11 @@ location on Windows/Linux; enabling again updates a moved application's path.
 | Snap | Detects SNAP and returns Unsupported. Confinement and snap-specific startup integration are not bypassed by writing a desktop file. |
 | Web / wasm / other platforms | Compiles and returns Unsupported. |
 
+The [Desktop Entry specification §7](https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html)
+explicitly forbids an equal sign (=) in the executable name or path, independently
+of quoting. Rake rejects those executable paths to keep the entry conformant.
+Equal signs in ordinary arguments (for example, --profile=a=b) are supported.
+
 The tray workbench adds a **Launch at login** menu checkbox and displays the actual
 result in its event history. It changes nothing until selected. Flatpak retains
 the last portal response for the checkbox because it cannot query existing state.
