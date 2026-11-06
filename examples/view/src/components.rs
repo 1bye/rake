@@ -12,7 +12,16 @@ pub(super) struct Badge {
 impl RenderOnce for Badge {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
         rake::view! {
-            <span id={self.id} class={if self.highlighted { "text-xs px-2 py-1 rounded-md bg-warning" } else { "text-xs px-2 py-1 rounded-md bg-accent" }}>
+            <span
+                id={self.id}
+                class={
+                    if self.highlighted {
+                        "text-xs px-2 py-1 rounded-md bg-warning"
+                    } else {
+                        "text-xs px-2 py-1 rounded-md bg-accent"
+                    }
+                }
+            >
                 {self.label}
             </span>
         }
@@ -30,9 +39,12 @@ pub(super) struct Card {
 impl RenderOnce for Card {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
         rake::view! {
-            <section id={self.id} class="w-full flex flex-col gap-4 p-6 rounded-xl max-w-[640px] bg-panel">
+            <section
+                id={self.id}
+                class="w-full flex flex-col gap-4 p-6 rounded-xl max-w-[640px] bg-panel"
+            >
                 {self.header}
-                <div class="flex flex-col gap-4" style={|s| s.children(self.children)}/>
+                <div class="flex flex-col gap-4" style={|s| s.children(self.children)} />
                 if let Some(footer) = self.footer {
                     {footer}
                 }

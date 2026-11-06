@@ -76,16 +76,43 @@ impl gpui::RenderOnce for DeepThemed {
 
         if self.preset {
             return rake::view! {
-                <div style={|s| { let mut s = themed_control(s); *background.borrow_mut() = s.style().background.clone(); s }}>
-                    {gpui::canvas(move |_, window, _| color.set(window.text_style().color), |_, _, _, _| {}).size_full()}
+                <div
+                    style={
+                        |s| {
+                            let mut s = themed_control(s);
+                            *background.borrow_mut() = s.style().background.clone();
+                            s
+                        }
+                    }
+                >
+                    {
+                        gpui::canvas(
+                            move |_, window, _| color.set(window.text_style().color),
+                            |_, _, _, _| {}
+                        )
+                        .size_full()
+                    }
                 </div>
             };
         }
 
         rake::view! {
-            <div class="w-20 h-20 bg-surface text-surface hover:bg-hover hover:text-hover"
-                style={|mut s| { *background.borrow_mut() = s.style().background.clone(); s }}>
-                {gpui::canvas(move |_, window, _| color.set(window.text_style().color), |_, _, _, _| {}).size_full()}
+            <div
+                class="w-20 h-20 bg-surface text-surface hover:bg-hover hover:text-hover"
+                style={
+                    |mut s| {
+                        *background.borrow_mut() = s.style().background.clone();
+                        s
+                    }
+                }
+            >
+                {
+                    gpui::canvas(
+                        move |_, window, _| color.set(window.text_style().color),
+                        |_, _, _, _| {}
+                    )
+                    .size_full()
+                }
             </div>
         }
     }
@@ -104,7 +131,15 @@ impl gpui::Render for ThemedHost {
         _: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         rake::view! {
-            <div><section><DeepThemed preset={self.preset} color={self.color.clone()} background={self.background.clone()}/></section></div>
+            <div>
+                <section>
+                    <DeepThemed
+                        preset={self.preset}
+                        color={self.color.clone()}
+                        background={self.background.clone()}
+                    />
+                </section>
+            </div>
         }
     }
 }

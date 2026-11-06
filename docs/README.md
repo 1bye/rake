@@ -32,6 +32,7 @@ New here? Start with [Getting started](getting-started.md), then read
 
 | Guide | Covers |
 | --- | --- |
+| [Formatting](format.md) | Rust and view markup formatting, editor setup |
 | [Source linting](lint.md) | Accessibility and loop IDs without building the project |
 | [Development and reload](development.md) | `rake dev`, watched builds, checkpoints |
 | [Chrome DevTools](devtools.md) | Connecting DevTools to a running app |

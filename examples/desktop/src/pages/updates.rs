@@ -62,24 +62,38 @@ impl Render for Updates {
                 <h2>"Updates"</h2>
                 <p>{label}</p>
                 <div class="flex flex-row gap-3">
-                    <button disabled={!can_check} class="disabled:opacity-50"
-                        on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}>
+                    <button
+                        disabled={!can_check}
+                        class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}
+                    >
                         "Check for updates"
                     </button>
-                    <button disabled={!can_download} class="disabled:opacity-50"
-                        on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}>
+                    <button
+                        disabled={!can_download}
+                        class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}
+                    >
                         "Download"
                     </button>
-                    <button disabled={!can_cancel} class="disabled:opacity-50"
-                        on:click={cx.listener(|this, _, _, cx| this.updates.cancel(cx))}>
+                    <button
+                        disabled={!can_cancel}
+                        class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| this.updates.cancel(cx))}
+                    >
                         "Cancel"
                     </button>
-                    <button disabled={!can_restart} class="disabled:opacity-50"
-                        on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}>
+                    <button
+                        disabled={!can_restart}
+                        class="disabled:opacity-50"
+                        on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}
+                    >
                         "Restart to update"
                     </button>
                 </div>
-                if let Some(error) = error { <p>{error}</p> }
+                if let Some(error) = error {
+                    <p>{error}</p>
+                }
             </section>
         }
     }

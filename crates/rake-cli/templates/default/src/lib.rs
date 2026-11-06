@@ -42,11 +42,18 @@ impl Render for Home {
             <section class="gap-4">
                 <h2>"Hello, Rake!"</h2>
                 <p>"One Rust app for desktop and the browser."</p>
-                <button id="increment" class="px-4 py-2 rounded-md bg-primary text-primary-foreground"
-                    on:click={cx.listener(|this, _, _, cx| {
-                        this.count += 1;
-                        cx.notify();
-                    })}>"Increment"</button>
+                <button
+                    id="increment"
+                    class="px-4 py-2 rounded-md bg-primary text-primary-foreground"
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            this.count += 1;
+                            cx.notify();
+                        })
+                    }
+                >
+                    "Increment"
+                </button>
                 <p>{format!("Count: {}", self.count)}</p>
             </section>
         }
@@ -91,21 +98,50 @@ impl Render for Shell {
             <main class="size-full p-6 gap-4 bg-background text-foreground" tab-navigation>
                 <h1>"{{name}}"</h1>
                 <nav class="flex-row gap-4">
-                    <button id="home" on:click={cx.listener(|this, _, _, cx| {
-                        this.visits += 1;
-                        drop(this.layout.navigator().open(Destination::Home, OpenTarget::CurrentTab));
-                        cx.notify();
-                    })}>"Home"</button>
-                    <button id="about" on:click={cx.listener(|this, _, _, cx| {
-                        this.visits += 1;
-                        drop(this.layout.navigator().open(Destination::About, OpenTarget::CurrentTab));
-                        cx.notify();
-                    })}>"About"</button>
-                    <button id="back" on:click={cx.listener(|this, _, _, _| {
-                        if let Ok(tab) = this.layout.navigator().current_tab() {
-                            drop(tab.back());
+                    <button
+                        id="home"
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.visits += 1;
+                                drop(
+                                    this.layout
+                                        .navigator()
+                                        .open(Destination::Home, OpenTarget::CurrentTab)
+                                );
+                                cx.notify();
+                            })
                         }
-                    })}>"Back"</button>
+                    >
+                        "Home"
+                    </button>
+                    <button
+                        id="about"
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.visits += 1;
+                                drop(
+                                    this.layout
+                                        .navigator()
+                                        .open(Destination::About, OpenTarget::CurrentTab)
+                                );
+                                cx.notify();
+                            })
+                        }
+                    >
+                        "About"
+                    </button>
+                    <button
+                        id="back"
+                        on:click={
+                            cx.listener(|this, _, _, _| {
+                                if let Ok(tab) = this.layout.navigator().current_tab() {
+                                    drop(tab.back());
+                                }
+                            })
+                        }
+                    >
+                        "Back"
+                    </button>
                 </nav>
                 <section class="flex-1">{outlet}</section>
                 <footer>{format!("Navigation clicks: {}", self.visits)}</footer>

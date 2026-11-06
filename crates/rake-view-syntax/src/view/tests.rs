@@ -687,3 +687,42 @@ fn signed_bracket_values_explain_where_negatives_belong() {
 
     assert!(expanded.contains(".mt(::renamed::gpui::px(-5f32))"));
 }
+
+#[test]
+fn only_the_root_retains_layout_for_nested_elements_and_markup_properties() {
+    use super::{AttributeValue, Element, Node};
+
+    fn check(element: &Element) {
+        assert!(
+            element.layout.children.is_empty(),
+            "nested layout was copied into the semantic tree"
+        );
+        for attribute in &element.attributes {
+            if let AttributeValue::Markup(child) = &attribute.value {
+                check(child);
+            }
+        }
+        for child in &element.children {
+            if let Node::Element(child) = child {
+                check(child);
+            }
+        }
+    }
+
+    let view: View = syn::parse_str(
+        "<Panel heading={<h1><strong>Title</strong></h1>}><div><span>Body</span></div></Panel>",
+    )
+    .unwrap();
+    let layout = view.layout().unwrap();
+    assert!(!layout.children.is_empty());
+    for attribute in &view.root().attributes {
+        if let AttributeValue::Markup(child) = &attribute.value {
+            check(child);
+        }
+    }
+    for child in &view.root().children {
+        if let Node::Element(child) = child {
+            check(child);
+        }
+    }
+}

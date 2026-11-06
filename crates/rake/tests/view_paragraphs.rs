@@ -16,13 +16,49 @@ fn paragraph_controls_and_selected_text_evaluate_once_in_source_order() {
     let __rake_paragraph_content_1 = "Caller variable";
 
     let paragraph = rake::view! {
-        <p id="summary"
-            wrap={ { seen.borrow_mut().push(0); true } }
-            max-lines={ { seen.borrow_mut().push(1); 3 } }
-            ellipsis={ { seen.borrow_mut().push(2); true } }>
-            { { seen.borrow_mut().push(3); "Hello " } }
-            <strong style={ { seen.borrow_mut().push(4); gpui::FontWeight::SEMIBOLD.into() } }>
-                <em>{ { seen.borrow_mut().push(5); String::from("world") } }</em>
+        <p
+            id="summary"
+            wrap={
+                {
+                    seen.borrow_mut().push(0);
+                    true
+                }
+            }
+            max-lines={
+                {
+                    seen.borrow_mut().push(1);
+                    3
+                }
+            }
+            ellipsis={
+                {
+                    seen.borrow_mut().push(2);
+                    true
+                }
+            }
+        >
+            {
+                {
+                    seen.borrow_mut().push(3);
+                    "Hello "
+                }
+            }
+            <strong
+                style={
+                    {
+                        seen.borrow_mut().push(4);
+                        gpui::FontWeight::SEMIBOLD.into()
+                    }
+                }
+            >
+                <em>
+                    {
+                        {
+                            seen.borrow_mut().push(5);
+                            String::from("world")
+                        }
+                    }
+                </em>
             </strong>
             <br/>
             if false {
@@ -31,9 +67,16 @@ fn paragraph_controls_and_selected_text_evaluate_once_in_source_order() {
                 {__rake_paragraph_content_1}
             }
             for (index, label) in labels.iter().enumerate() {
-                if index > 0 { ", " }
+                if index > 0 {
+                    ", "
+                }
                 <span class="font-medium" font-family="monospace">
-                    { { seen.borrow_mut().push(6 + index); label } }
+                    {
+                        {
+                            seen.borrow_mut().push(6 + index);
+                            label
+                        }
+                    }
                 </span>
             }
         </p>
@@ -53,14 +96,20 @@ fn borrowed_and_shared_strings_are_text_without_display_or_element_coercion() {
     let shared = gpui::SharedString::from("shared");
 
     let _paragraph = rake::view! {
-        <p>{&owned}{shared}<span>" static"</span></p>
+        <p>
+            {&owned}
+            {shared}
+            <span>" static"</span>
+        </p>
     };
 }
 
 #[test]
 fn inline_literal_colors_and_font_families_compile_with_styled_runs() {
     let heading = rake::view! {
-        <h2><span class="text-[#aabbcc] font-[JetBrains_Mono]">Typed text</span></h2>
+        <h2>
+            <span class="text-[#aabbcc] font-[JetBrains_Mono]">Typed text</span>
+        </h2>
     };
 
     let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
@@ -75,11 +124,34 @@ fn inline_literal_branches_keep_run_attribute_evaluation_order() {
     let visits = RefCell::new(Vec::new());
 
     let heading = rake::view! {
-        <h2><span font-family={{ visits.borrow_mut().push(0); "monospace" }}
-            class={if { visits.borrow_mut().push(1); true } { "font-bold text-[#abc]" } else { "font-normal" }}
-            style={{ visits.borrow_mut().push(2); gpui::FontStyle::Italic.into() }}>
-            Inline branch
-        </span></h2>
+        <h2>
+            <span
+                font-family={
+                    {
+                        visits.borrow_mut().push(0);
+                        "monospace"
+                    }
+                }
+                class={
+                    if {
+                        visits.borrow_mut().push(1);
+                        true
+                    } {
+                        "font-bold text-[#abc]"
+                    } else {
+                        "font-normal"
+                    }
+                }
+                style={
+                    {
+                        visits.borrow_mut().push(2);
+                        gpui::FontStyle::Italic.into()
+                    }
+                }
+            >
+                Inline branch
+            </span>
+        </h2>
     };
 
     let mut node = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
@@ -105,10 +177,14 @@ fn wrapping_ellipsis_and_zero_line_limits_configure_the_real_gpui_style() {
 
 #[test]
 fn empty_paragraphs_construct_and_standalone_spans_keep_their_layout_contract() {
-    let _empty = rake::view! { <p/> };
+    let _empty = rake::view! {
+        <p/>
+    };
 
     let span = rake::view! {
-        <span id="container"><button>"A widget outside a paragraph"</button></span>
+        <span id="container">
+            <button>"A widget outside a paragraph"</button>
+        </span>
     };
 
     assert_eq!(Element::id(&span), Some("container".into()));
@@ -124,7 +200,10 @@ fn headings_accept_composed_runs_and_paragraph_controls() {
 
     let mut heading = rake::view! {
         <h1 wrap={false} ellipsis={true} max-lines={2}>
-            "Hello, "<strong>{name}</strong><br/><em>"Welcome"</em>
+            "Hello, "
+            <strong>{name}</strong>
+            <br/>
+            <em>"Welcome"</em>
         </h1>
     };
 
@@ -142,10 +221,15 @@ fn paragraph_and_heading_match_arms_share_the_same_text_composition() {
     let selected = Some("Ada");
 
     let heading = rake::view! {
-        <h2>"Hello, "
+        <h2>
+            "Hello, "
             match selected {
-                Some(name) if !name.is_empty() => { <strong>{name}</strong> }
-                _ => { <em>"guest"</em> }
+                Some(name) if !name.is_empty() => {
+                    <strong>{name}</strong>
+                }
+                _ => {
+                    <em>"guest"</em>
+                }
             }
         </h2>
     };
@@ -156,7 +240,16 @@ fn paragraph_and_heading_match_arms_share_the_same_text_composition() {
 
     assert_eq!(node.label(), Some("Hello, Ada"));
     let _ = rake::view! {
-        <p>match selected { Some(name) => { {name} }, None => { "guest" } }</p>
+        <p>
+            match selected {
+                Some(name) => {
+                    {name}
+                },
+                None => {
+                    "guest"
+                }
+            }
+        </p>
     };
 }
 
@@ -170,9 +263,22 @@ fn unquoted_text_composes_with_inline_markup_expressions_and_control_flow() {
             Hello, <strong>{name}</strong>!<br/>
             Welcome
             back, {name}.
-            if true { <em> Good</em> } else { Unreachable }
-            match selected { Some(label) => { <span>{label}</span> } _ => { guest } }
-            for word in ["one", "two"] { <span>{word}</span> }
+            if true {
+                <em> Good</em>
+            } else {
+                Unreachable
+            }
+            match selected {
+                Some(label) => {
+                    <span>{label}</span>
+                }
+                _ => {
+                    guest
+                }
+            }
+            for word in ["one", "two"] {
+                <span>{word}</span>
+            }
         </h2>
     };
 
@@ -188,8 +294,12 @@ fn unquoted_text_composes_with_inline_markup_expressions_and_control_flow() {
 
 #[test]
 fn unquoted_button_text_gets_an_accessible_label_and_quoted_spacing_stays_exact() {
-    let button = rake::view! { <button>Save changes</button> };
-    let heading = rake::view! { <h2>"  exact   spacing  "</h2> };
+    let button = rake::view! {
+        <button>Save changes</button>
+    };
+    let heading = rake::view! {
+        <h2>"  exact   spacing  "</h2>
+    };
     let mut button_info = gpui::accesskit::Node::new(button.a11y_role().unwrap());
     let mut heading_info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
 

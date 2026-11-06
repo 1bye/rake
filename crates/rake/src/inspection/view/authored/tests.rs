@@ -18,7 +18,9 @@ struct Row {
 
 impl gpui::RenderOnce for Row {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
-        crate::view! { <button id={self.id} class="px-2 py-1 hover:opacity-50">"Private label"</button> }
+        crate::view! {
+            <button id={self.id} class="px-2 py-1 hover:opacity-50">"Private label"</button>
+        }
     }
 }
 
@@ -33,17 +35,29 @@ impl Render for Fixture {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         crate::view! {
             <section id="root" class="size-full flex flex-col">
-                <div id="styled" class={if self.selected { "p-4" } else { "p-2" }}
-                    style={|s| { self.calls.set(self.calls.get() + 1); s.w(px(120.)) }}>
+                <div
+                    id="styled"
+                    class={if self.selected { "p-4" } else { "p-2" }}
+                    style={
+                        |s| {
+                            self.calls.set(self.calls.get() + 1);
+                            s.w(px(120.))
+                        }
+                    }
+                >
                     "Private text content"
                 </div>
-                <p id="paragraph" class="text-sm"><strong class="font-bold">"Private inline content"</strong></p>
+                <p id="paragraph" class="text-sm">
+                    <strong class="font-bold">"Private inline content"</strong>
+                </p>
                 for row in &self.rows {
-                    <Row id={gpui::ElementId::from(("row", *row))}/>
+                    <Row id={gpui::ElementId::from(("row", *row))} />
                 }
                 {gpui::div().id("opaque").size(px(10.))}
             </section>
-        }.inspect("renamed-root").root(self.store.clone(), 0, WindowId(1))
+        }
+        .inspect("renamed-root")
+        .root(self.store.clone(), 0, WindowId(1))
     }
 }
 
@@ -394,7 +408,9 @@ fn views_without_an_inspection_host_do_not_sample_styles() {
             _: &mut gpui::Window,
             _: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
-            let mut element = crate::view! { <div class="p-2">"Normal application"</div> };
+            let mut element = crate::view! {
+                <div class="p-2">"Normal application"</div>
+            };
             element.style_reader = Some(|_| panic!("disabled inspection must not sample styles"));
             element
         }
@@ -418,7 +434,9 @@ fn component_properties_do_not_require_clone_debug_or_gpui_key_conversion() {
             gpui::div()
         }
     }
-    let component = crate::view! { <CustomComponent id={CustomId(17)}/> };
+    let component = crate::view! {
+        <CustomComponent id={CustomId(17)} />
+    };
     assert_eq!(component.id.0, 17);
     let element = component.into_element();
     assert!(
@@ -438,12 +456,27 @@ impl Render for AccessibleFixture {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         let clicks = self.clicks.clone();
         crate::view! {
-            <section id="accessibility-root" role={gpui::accesskit::Role::Group} aria-label="Tools" focus={&self.scope} tab-navigation={true}>
-                <button id="save" aria-label="Save changes" aria-description="Writes document" disabled={self.disabled} tabindex={3}
-                    on:click={move |_, _, _| clicks.set(clicks.get() + 1)}>"Rendered body text"</button>
-                <button id="cancel" aria-label="Cancel" tabindex={0}/>
+            <section
+                id="accessibility-root"
+                role={gpui::accesskit::Role::Group}
+                aria-label="Tools"
+                focus={&self.scope}
+                tab-navigation={true}
+            >
+                <button
+                    id="save"
+                    aria-label="Save changes"
+                    aria-description="Writes document"
+                    disabled={self.disabled}
+                    tabindex={3}
+                    on:click={move |_, _, _| clicks.set(clicks.get() + 1)}
+                >
+                    "Rendered body text"
+                </button>
+                <button id="cancel" aria-label="Cancel" tabindex={0} />
             </section>
-        }.root(self.store.clone(), 0, WindowId(1))
+        }
+        .root(self.store.clone(), 0, WindowId(1))
     }
 }
 
@@ -550,25 +583,57 @@ impl Render for TextContents {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         crate::view! {
             <section id="text-contents" class="flex flex-col">
-                <h1 id="heading">"Hello "<em>"世界"</em></h1>
-                <p id="paragraph">"Count: "<strong>{self.count.to_string()}</strong><br/>"🌍"</p>
+                <h1 id="heading">
+                    "Hello "
+                    <em>"世界"</em>
+                </h1>
+                <p id="paragraph">
+                    "Count: "
+                    <strong>{self.count.to_string()}</strong>
+                    <br/>
+                    "🌍"
+                </p>
                 <button id="button">"Press me"</button>
                 <span id="label">"Label"</span>
                 <div id="content-name" role={gpui::accesskit::Role::Button}>
-                    <span>"Open"</span><span>{format!("document {}", self.count)}</span>
-                    <span style={|mut s| { s.style().visibility = Some(gpui::Visibility::Hidden); s }}>"Ignore me"</span>
+                    <span>"Open"</span>
+                    <span>{format!("document {}", self.count)}</span>
+                    <span
+                        style={
+                            |mut s| {
+                                s.style().visibility = Some(gpui::Visibility::Hidden);
+                                s
+                            }
+                        }
+                    >
+                        "Ignore me"
+                    </span>
                 </div>
-                <div id="check-state" role={gpui::accesskit::Role::CheckBox}
-                    style={|s| s.aria_toggled(gpui::accesskit::Toggled::Mixed).aria_selected(self.count > 0).aria_expanded(self.count == 0)}>
+                <div
+                    id="check-state"
+                    role={gpui::accesskit::Role::CheckBox}
+                    style={
+                        |s|
+                            s.aria_toggled(gpui::accesskit::Toggled::Mixed)
+                                .aria_selected(self.count > 0)
+                                .aria_expanded(self.count == 0)
+                        }
+                >
                     "Enable feature"
                 </div>
                 {gpui::Text::new_inaccessible("Inaccessible text".into())}
                 {gpui::StyledText::new("Styled text")}
                 {""}
                 {"🌍".repeat(5000)}
-                {gpui::div().id("input").role(gpui::accesskit::Role::TextInput).aria_value("secret input value")}
+                {
+                    gpui::div()
+                        .id("input")
+                        .role(gpui::accesskit::Role::TextInput)
+                        .aria_value("secret input value")
+                }
             </section>
-        }.root(self.store.clone(), 0, WindowId(1))
+        }
+        .root(self.store.clone(), 0, WindowId(1))
     }
 }
 
@@ -707,15 +772,30 @@ impl Render for ExpressionLabels {
             <section id="expression-labels">
                 "private literal text"
                 {borrowed}
-                {{ self.calls.set(self.calls.get() + 1); "private owned text".to_owned() }}
+                {
+                    {
+                        self.calls.set(self.calls.get() + 1);
+                        "private owned text".to_owned()
+                    }
+                }
                 {gpui::SharedString::new_static("private shared text")}
-                {gpui::Text::new("explicit-text".into(), gpui::SharedString::new_static("private explicit text"))}
+                {
+                    gpui::Text::new(
+                        "explicit-text".into(),
+                        gpui::SharedString::new_static("private explicit text")
+                    )
+                }
                 {gpui::div().id("concrete-child").size(px(10.))}
-                {Row { id: "expression-component".into() }}
+                {
+                    Row {
+                        id: "expression-component".into()
+                    }
+                }
                 {gpui::div().into_any_element()}
                 {crate::inspection::inspect(gpui::div().size(px(10.)))}
             </section>
-        }.root(self.store.clone(), 0, WindowId(1))
+        }
+        .root(self.store.clone(), 0, WindowId(1))
     }
 }
 
@@ -810,8 +890,17 @@ struct BaseButtonStyles(Store);
 impl Render for BaseButtonStyles {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         crate::view! {
-            <button id="base-button" role={gpui::accesskit::Role::MenuItem} style={|s| s.w(px(100.)).h(px(40.))
-                .bg(gpui::rgb(0x112233)).hover(|s| s.bg(gpui::rgb(0x445566)))}>
+            <button
+                id="base-button"
+                role={gpui::accesskit::Role::MenuItem}
+                style={
+                    |s|
+                        s.w(px(100.))
+                            .h(px(40.))
+                            .bg(gpui::rgb(0x112233))
+                            .hover(|s| s.bg(gpui::rgb(0x445566)))
+                    }
+            >
                 "Inspectable Base button"
             </button>
         }

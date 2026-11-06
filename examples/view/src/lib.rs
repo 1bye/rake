@@ -113,12 +113,15 @@ impl Render for HistoryItem {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
             <li class="px-3 py-1 rounded-md bg-surface">
-                <button focus={&self.focus} key-context="HistoryItem"
+                <button
+                    focus={&self.focus}
+                    key-context="HistoryItem"
                     on:BumpRow={cx.listener(Self::bump)}
                     aria-label={format!("Count {}, row clicks {}", self.count, self.clicks)}
                     aria-keyshortcuts="B"
                     class="focus-visible:bg-accent"
-                    on:click={|_, window, cx| window.dispatch_action(Box::new(BumpRow), cx)}>
+                    on:click={|_, window, cx| window.dispatch_action(Box::new(BumpRow), cx)}
+                >
                     {format!("Reached {} · row clicks: {}", self.count, self.clicks)}
                 </button>
             </li>
@@ -242,17 +245,24 @@ impl Counter {
     fn content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.show_inputs {
             return rake::view! {
-                <div class="size-full flex flex-col items-center justify-center p-6 bg-surface text-ink"
-                    tab-navigation={true}>
+                <div
+                    class="size-full flex flex-col items-center justify-center p-6 bg-surface text-ink"
+                    tab-navigation={true}
+                >
                     <div class="w-full max-w-[600px] flex flex-col gap-3">
                         <h1>"Base text inputs"</h1>
-                        <view entity={&self.inputs}/>
-                        <button id="close-inputs" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
-                            on:click={cx.listener(|this, _, window, cx| {
-                                this.show_inputs = false;
-                                window.focus(&this.focus, cx);
-                                cx.notify();
-                            })}>
+                        <view entity={&self.inputs} />
+                        <button
+                            id="close-inputs"
+                            class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                            on:click={
+                                cx.listener(|this, _, window, cx| {
+                                    this.show_inputs = false;
+                                    window.focus(&this.focus, cx);
+                                    cx.notify();
+                                })
+                            }
+                        >
                             Back to counter
                         </button>
                     </div>
@@ -269,16 +279,22 @@ impl Counter {
         };
 
         rake::view! {
-            <div class="size-full flex flex-col items-center justify-center p-6 bg-surface text-ink"
-                role={gpui::accesskit::Role::Group} aria-label="Counter"
-                focus={&self.focus} key-context="Counter" tab-navigation={true}
+            <div
+                class="size-full flex flex-col items-center justify-center p-6 bg-surface text-ink"
+                role={gpui::accesskit::Role::Group}
+                aria-label="Counter"
+                focus={&self.focus}
+                key-context="Counter"
+                tab-navigation={true}
                 on:Increment={cx.listener(Self::increment)}
                 on:Reset={cx.listener(Self::reset)}
                 on:ToggleHistory={cx.listener(Self::toggle_history)}
                 on:ReverseHistory={cx.listener(Self::reverse_history)}
                 on:ToggleLocked={cx.listener(Self::toggle_locked)}
-                on:ToggleTheme={cx.listener(Self::toggle_theme)}>
-                <components::Card id={"counter-card".into()}
+                on:ToggleTheme={cx.listener(Self::toggle_theme)}
+            >
+                <components::Card
+                    id={"counter-card".into()}
                     header={
                         <div class="flex flex-col gap-2">
                             <h1>HTML-like views. Native GPUI.</h1>
@@ -287,12 +303,25 @@ impl Counter {
                             </p>
                         </div>
                     }
-                    footer={Some(rake::view! {
-                        <p class="text-xs">Card header and footer are typed slots; its body contains retained history views.</p>
-                    }.into_any_element())}>
-                    <components::Badge id={"editing-status".into()}
-                        label={if self.locked { "Locked".into() } else { "Editing enabled".into() }}
-                        highlighted={self.locked}/>
+                    footer={
+                        Some(rake::view! {
+                            <p class="text-xs">
+                                Card header and footer are typed slots; its body contains retained history views.
+                            </p>
+                        }.into_any_element())
+                    }
+                >
+                    <components::Badge
+                        id={"editing-status".into()}
+                        label={
+                            if self.locked {
+                                "Locked".into()
+                            } else {
+                                "Editing enabled".into()
+                            }
+                        }
+                        highlighted={self.locked}
+                    />
                     <p class="text-3xl font-bold">Count: {self.count.to_string()}</p>
 
                     if self.locked {
@@ -303,11 +332,13 @@ impl Counter {
                         <p>You have counted {self.count.to_string()} times.</p>
                     }
 
-                    <p class="text-sm" wrap={true} max-lines={2} ellipsis={true}>
-                        <strong>Rich text preview.</strong> Count <span
-                            class="text-success">
-                            {self.count.to_string()}
-                        </span>: styled runs wrap together in one paragraph, including <em>italic text</em> and Unicode such as café, 你好 and {"🙂"}.
+                    <p
+                        class="text-sm"
+                        wrap={true}
+                        max-lines={2}
+                        ellipsis={true}
+                    >
+                        <strong>Rich text preview.</strong> Count <span class="text-success">{self.count.to_string()}</span>: styled runs wrap together in one paragraph, including <em>italic text</em> and Unicode such as café, 你好 and {"🙂"}.
                         This preview stops at two lines, while the complete text remains available to accessibility.
                         More content demonstrates the ellipsis.
                     </p>
@@ -317,79 +348,159 @@ impl Counter {
                     </p>
 
                     <div class="flex flex-row flex-wrap gap-2">
-                        <button id="increment" disabled={self.locked} aria-label="Increment counter"
+                        <button
+                            id="increment"
+                            disabled={self.locked}
+                            aria-label="Increment counter"
                             aria-keyshortcuts={increment_shortcut}
                             class="px-4 py-2 rounded-md font-semibold disabled:opacity-40 bg-accent focus-visible:bg-accent-focus"
-                            on:click={|_, window, cx| window.dispatch_action(Box::new(Increment), cx)}>
+                            on:click={|_, window, cx| window.dispatch_action(Box::new(Increment), cx)}
+                        >
                             Increment
                         </button>
-                        <button id="reset" disabled={reset_disabled} aria-keyshortcuts="Escape"
+                        <button
+                            id="reset"
+                            disabled={reset_disabled}
+                            aria-keyshortcuts="Escape"
                             class="px-4 py-2 rounded-md border disabled:opacity-40 border-line focus-visible:bg-accent"
-                            on:click={|_, window, cx| window.dispatch_action(Box::new(Reset), cx)}>
+                            on:click={|_, window, cx| window.dispatch_action(Box::new(Reset), cx)}
+                        >
                             Reset
                         </button>
-                        <button id="toggle-history" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
-                            aria-label={if self.show_history { "Hide history" } else { "Show history" }}
-                            aria-expanded={self.show_history} aria-keyshortcuts="H"
-                            on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleHistory), cx)}>
-                            if self.show_history { Hide history } else { Show history }
+                        <button
+                            id="toggle-history"
+                            class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                            aria-label={
+                                if self.show_history {
+                                    "Hide history"
+                                } else {
+                                    "Show history"
+                                }
+                            }
+                            aria-expanded={self.show_history}
+                            aria-keyshortcuts="H"
+                            on:click={
+                                |_, window, cx| window.dispatch_action(Box::new(ToggleHistory), cx)
+                            }
+                        >
+                            if self.show_history {
+                                Hide history
+                            } else {
+                                Show history
+                            }
                         </button>
                         <OverlayAnchor state={self.actions_anchor.clone()}>
-                            <button id="actions" aria-label="More actions" aria-expanded={self.actions_popup.is_open()}
+                            <button
+                                id="actions"
+                                aria-label="More actions"
+                                aria-expanded={self.actions_popup.is_open()}
                                 aria-description="Open actions or browse a virtualized list of 10,000 documents"
                                 class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
-                                tooltip={{ let hint = self.actions_hint.clone(); move |_, _| hint.clone().into() }}
-                                on:click={cx.listener(|this, _, window, cx| { this.actions_popup.open(window, cx); })}>
+                                tooltip={
+                                    {
+                                        let hint = self.actions_hint.clone();
+                                        move |_, _| hint.clone().into()
+                                    }
+                                }
+                                on:click={
+                                    cx.listener(|this, _, window, cx| {
+                                        this.actions_popup.open(window, cx);
+                                    })
+                                }
+                            >
                                 More actions
                             </button>
                         </OverlayAnchor>
-                        <button id="toggle-lock" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
-                            aria-label={if self.locked { "Unlock counter" } else { "Lock counter" }}
+                        <button
+                            id="toggle-lock"
+                            class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                            aria-label={
+                                if self.locked {
+                                    "Unlock counter"
+                                } else {
+                                    "Lock counter"
+                                }
+                            }
                             aria-keyshortcuts="L"
-                            on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleLocked), cx)}>
-                            if self.locked { Unlock counter } else { Lock counter }
+                            on:click={
+                                |_, window, cx| window.dispatch_action(Box::new(ToggleLocked), cx)
+                            }
+                        >
+                            if self.locked {
+                                Unlock counter
+                            } else {
+                                Lock counter
+                            }
                         </button>
                     </div>
-                    <button class="px-4 py-2 rounded-md hover:bg-hover focus-visible:bg-hover"
+                    <button
+                        class="px-4 py-2 rounded-md hover:bg-hover focus-visible:bg-hover"
                         aria-keyshortcuts="T"
-                        on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleTheme), cx)}>
+                        on:click={|_, window, cx| window.dispatch_action(Box::new(ToggleTheme), cx)}
+                    >
                         Switch theme
                     </button>
-                    <button id="try-inputs" class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
-                        on:click={cx.listener(|this, _, _, cx| { this.show_inputs = true; cx.notify(); })}>
+                    <button
+                        id="try-inputs"
+                        class="px-4 py-2 rounded-md border border-line focus-visible:bg-accent"
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.show_inputs = true;
+                                cx.notify();
+                            })
+                        }
+                    >
                         Try text inputs
                     </button>
-                    <p class="text-xs">"⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock"</p>
+                    <p class="text-xs">
+                        "⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock"
+                    </p>
 
                     if self.show_history {
                         <section class="flex flex-col gap-2">
                             <div class="flex flex-row items-center justify-between">
                                 <h2 class="text-lg">Recent counts</h2>
-                                <button id="reverse-history" disabled={self.history.len() < 2}
-                                    aria-keyshortcuts="R" class="text-sm px-3 py-1 rounded-md border disabled:opacity-40 border-line focus-visible:bg-accent"
-                                    on:click={|_, window, cx| window.dispatch_action(Box::new(ReverseHistory), cx)}>
+                                <button
+                                    id="reverse-history"
+                                    disabled={self.history.len() < 2}
+                                    aria-keyshortcuts="R"
+                                    class="text-sm px-3 py-1 rounded-md border disabled:opacity-40 border-line focus-visible:bg-accent"
+                                    on:click={
+                                        |_, window, cx|
+                                            window.dispatch_action(Box::new(ReverseHistory), cx)
+                                        }
+                                >
                                     Reverse order
                                 </button>
                             </div>
-                            <p class="text-xs">Click a row, then press R: its state and focus follow it. B activates the focused row.</p>
+                            <p class="text-xs">
+                                Click a row, then press R: its state and focus follow it. B activates the focused row.
+                            </p>
                             if self.history.is_empty() {
                                 <p>No entries yet.</p>
                             }
-                            <ul class="flex flex-col gap-1 max-h-[150px] overflow-y-scroll" scroll={&self.history_scroll}>
+                            <ul
+                                class="flex flex-col gap-1 max-h-[150px] overflow-y-scroll"
+                                scroll={&self.history_scroll}
+                            >
                                 if self.newest_first {
                                     for item in self.history.iter().rev() {
-                                        <view entity={&item}/>
+                                        <view entity={&item} />
                                     }
                                 } else {
                                     for item in &self.history {
-                                        <view entity={&item}/>
+                                        <view entity={&item} />
                                     }
                                 }
                             </ul>
                         </section>
                     }
 
-                    {div().text_xs().child("Existing GPUI elements embed with {expression}.")}
+                    {
+                        div()
+                            .text_xs()
+                            .child("Existing GPUI elements embed with {expression}.")
+                    }
                 </components::Card>
             </div>
         }.into_any_element()
@@ -402,33 +513,74 @@ impl Render for Counter {
 
         let footer = rake::view! {
             <div class="flex flex-row gap-2">
-                <button class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
-                    on:click={cx.listener(|this, _, window, cx| {
-                        this.documents.update(cx, |documents, cx| documents.jump(4_999, window, cx));
-                    })}>Jump to 5,000</button>
-                <button class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
-                    on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.close(window, cx); })}>Close</button>
+                <button
+                    class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
+                    on:click={
+                        cx.listener(|this, _, window, cx| {
+                            this.documents
+                                .update(cx, |documents, cx| documents.jump(4_999, window, cx));
+                        })
+                    }
+                >
+                    Jump to 5,000
+                </button>
+                <button
+                    class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
+                    on:click={
+                        cx.listener(|this, _, window, cx| {
+                            this.documents_dialog.close(window, cx);
+                        })
+                    }
+                >
+                    Close
+                </button>
             </div>
-        }.into_any_element();
+        }
+        .into_any_element();
 
         rake::view! {
             <OverlayHost state={self.overlays.clone()} body={body}>
                 <Popover state={self.actions_popup.clone()} anchor={self.actions_anchor.clone()}>
                     <p class="font-semibold">Document actions</p>
-                    <button disabled={self.locked} class="px-3 py-2 rounded-md bg-accent focus-visible:bg-focus disabled:opacity-40"
-                        on:click={cx.listener(|this, _, window, cx| {
-                            this.actions_popup.close(window, cx);
-                            this.increment(&Increment, window, cx);
-                        })}>Increment counter</button>
-                    <button class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
-                        on:click={cx.listener(|this, _, window, cx| { this.documents_dialog.open(window, cx); })}>
+                    <button
+                        disabled={self.locked}
+                        class="px-3 py-2 rounded-md bg-accent focus-visible:bg-focus disabled:opacity-40"
+                        on:click={
+                            cx.listener(|this, _, window, cx| {
+                                this.actions_popup.close(window, cx);
+                                this.increment(&Increment, window, cx);
+                            })
+                        }
+                    >
+                        Increment counter
+                    </button>
+                    <button
+                        class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
+                        on:click={
+                            cx.listener(|this, _, window, cx| {
+                                this.documents_dialog.open(window, cx);
+                            })
+                        }
+                    >
                         Browse 10,000 documents
                     </button>
-                    <button class="px-3 py-2 rounded-md focus-visible:bg-accent"
-                        on:click={cx.listener(|this, _, window, cx| { this.actions_popup.close(window, cx); })}>Close actions</button>
+                    <button
+                        class="px-3 py-2 rounded-md focus-visible:bg-accent"
+                        on:click={
+                            cx.listener(|this, _, window, cx| {
+                                this.actions_popup.close(window, cx);
+                            })
+                        }
+                    >
+                        Close actions
+                    </button>
                 </Popover>
-                <Dialog state={self.documents_dialog.clone()} title={"Document browser".into()} footer={Some(footer)}>
-                    <view entity={&self.documents}/>
+                <Dialog
+                    state={self.documents_dialog.clone()}
+                    title={"Document browser".into()}
+                    footer={Some(footer)}
+                >
+                    <view entity={&self.documents} />
                 </Dialog>
             </OverlayHost>
         }

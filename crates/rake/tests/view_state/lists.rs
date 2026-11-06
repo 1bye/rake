@@ -26,21 +26,35 @@ impl Render for Host {
             <section>
                 if self.shown {
                     <section style={|s| s.w(gpui::px(240.)).h(gpui::px(160.)).overflow_hidden()}>
-                        {gpui::uniform_list("large", 10_000, cx.processor(|this, range: std::ops::Range<usize>, _, _| {
-                            range.map(|index| {
-                                this.rendered.borrow_mut().insert(index);
+                        {
+                            gpui::uniform_list(
+                                "large",
+                                10_000,
+                                cx.processor(|this, range: std::ops::Range<usize>, _, _| {
+                                    range
+                                        .map(|index| {
+                                            this.rendered.borrow_mut().insert(index);
 
-                                rake::view! {
-                                    <div id={("record", index)} style={|s| s.h(gpui::px(32.))}>
-                                        {format!("Record {index}")}
-                                    </div>
-                                }
-                            }).collect()
-                        })).track_scroll(&self.scroll).h(gpui::px(160.))}
+                                            rake::view! {
+                                                <div
+                                                    id={("record", index)}
+                                                    style={|s| s.h(gpui::px(32.))}
+                                                >
+                                                    {format!("Record {index}")}
+                                                </div>
+                                            }
+                                        })
+                                        .collect()
+                                })
+                            )
+                            .track_scroll(&self.scroll)
+                            .h(gpui::px(160.))
+                        }
                     </section>
                 }
             </section>
-        }.into_any_element();
+        }
+        .into_any_element();
 
         rake::view! {
             <OverlayHost state={self.overlays.clone()} body={gpui::Empty.into_any_element()}>

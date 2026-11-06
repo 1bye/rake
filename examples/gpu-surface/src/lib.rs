@@ -312,11 +312,31 @@ impl Render for Demo {
             <OverlayHost state={self.overlays.clone()} body={body.into_any_element()}>
                 <Popover state={self.popup.clone()} anchor={self.anchor.clone()}>
                     <p>"GPUI popover above the renderer"</p>
-                    <button on:click={move |_, _, _| { eprintln!("POPOVER_CLICK"); }}>"Popover input target"</button>
+                    <button
+                        on:click={
+                            move |_, _, _| {
+                                eprintln!("POPOVER_CLICK");
+                            }
+                        }
+                    >
+                        "Popover input target"
+                    </button>
                 </Popover>
-                <Dialog state={self.dialog.clone()} title={"GPUI dialog above renderer".into()} footer={None}>
+                <Dialog
+                    state={self.dialog.clone()}
+                    title={"GPUI dialog above renderer".into()}
+                    footer={None}
+                >
                     <p>"Tab, Escape and pointer input should stay in this GPUI dialog."</p>
-                    <button on:click={move |_, window, cx| { close_dialog.close(window, cx); }}>"Close dialog"</button>
+                    <button
+                        on:click={
+                            move |_, window, cx| {
+                                close_dialog.close(window, cx);
+                            }
+                        }
+                    >
+                        "Close dialog"
+                    </button>
                 </Dialog>
             </OverlayHost>
         };

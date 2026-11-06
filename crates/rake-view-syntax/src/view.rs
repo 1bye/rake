@@ -17,10 +17,21 @@ use self::tag::{Tag, display_name};
 /// Parsed root of one `view!` invocation, retaining the source token spans.
 pub struct View(Element);
 
+pub use layout::{Layout, LayoutKind};
+
 impl View {
     /// Borrows the parsed root without applying compiler recovery or lowering.
     pub fn root(&self) -> &Element {
         &self.0
+    }
+
+    /// Borrows source layout, rejecting recovered attribute syntax errors.
+    ///
+    /// # Errors
+    /// Returns the first recovered syntax error, including errors in nested markup.
+    pub fn layout(&self) -> syn::Result<&Layout> {
+        self.0.layout.validate()?;
+        Ok(&self.0.layout)
     }
 }
 
@@ -38,6 +49,7 @@ pub struct Element {
     pub children: Vec<Node>,
     parse_errors: Vec<syn::Error>,
     defaults: Option<Expr>,
+    layout: Layout,
 }
 
 #[derive(Clone)]
@@ -166,6 +178,7 @@ impl Parse for View {
 
 impl Parse for Element {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let start = input.cursor();
         input.parse::<Token![<]>()?;
         let tag = input.call(syn::Path::parse_mod_style)?;
         let tag_name = display_name(&tag);
@@ -174,13 +187,36 @@ impl Parse for Element {
         let mut names = BTreeSet::new();
         let mut parse_errors = Vec::new();
         let mut defaults = None;
+        let mut opening_layout = vec![Layout::capture(
+            LayoutKind::Literal,
+            start,
+            input,
+            Vec::new(),
+        )];
 
         while !input.peek(Token![>]) && !input.peek(Token![/]) {
             if input.is_empty() {
                 return Err(input.error("expected `>` after attributes"));
             }
 
-            match parse_attribute(input, resolved) {
+            let attribute_start = input.cursor();
+            let mut parsed = parse_attribute(input, resolved);
+            let mut parts = Vec::new();
+            if let Ok(ParsedAttribute::Named(Attribute {
+                value: AttributeValue::Markup(element),
+                ..
+            })) = &mut parsed
+            {
+                parts.push(std::mem::take(&mut element.layout));
+            }
+            opening_layout.push(Layout::capture(
+                LayoutKind::Attribute,
+                attribute_start,
+                input,
+                parts,
+            ));
+
+            match parsed {
                 Ok(ParsedAttribute::Defaults(value, span)) => {
                     if resolved != Tag::Component {
                         parse_errors.push(syn::Error::new(
@@ -250,6 +286,7 @@ impl Parse for Element {
             }
         }
 
+        let opening_end = input.cursor();
         let self_closing = input.peek(Token![/]);
 
         if self_closing {
@@ -257,6 +294,14 @@ impl Parse for Element {
         }
 
         let opening: Token![>] = input.parse()?;
+        opening_layout.push(Layout::capture(
+            LayoutKind::Literal,
+            opening_end,
+            input,
+            Vec::new(),
+        ));
+        let opening_layout = Layout::capture(LayoutKind::Opening, start, input, opening_layout);
+        let mut layout_children = vec![opening_layout];
         let mut children = Vec::new();
         let mut previous = opening.span();
 
@@ -269,9 +314,10 @@ impl Parse for Element {
                     ));
                 }
 
-                text::push_node(input, &mut children, &mut previous)?;
+                layout_children.push(text::push_node(input, &mut children, &mut previous)?);
             }
 
+            let closing_start = input.cursor();
             input.parse::<Token![<]>()?;
             input.parse::<Token![/]>()?;
             let closing = input.call(syn::Path::parse_mod_style)?;
@@ -284,7 +330,16 @@ impl Parse for Element {
             }
 
             input.parse::<Token![>]>()?;
+            layout_children.push(Layout::capture(
+                LayoutKind::Closing,
+                closing_start,
+                input,
+                Vec::new(),
+            ));
         }
+
+        let mut layout = Layout::capture(LayoutKind::Element, start, input, layout_children);
+        layout.errors = parse_errors.clone();
 
         Ok(Self {
             tag,
@@ -295,6 +350,7 @@ impl Parse for Element {
             children,
             parse_errors,
             defaults,
+            layout,
         })
     }
 }
@@ -507,108 +563,167 @@ fn parse_class_name(input: ParseStream<'_>) -> syn::Result<String> {
 
 impl Parse for Node {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        Self::parse_layout(input).map(|(node, _)| node)
+    }
+}
+
+impl Node {
+    fn parse_layout(input: ParseStream<'_>) -> syn::Result<(Self, Layout)> {
+        let start = input.cursor();
         if input.peek(Token![<]) {
-            return input.parse().map(Self::Element);
+            let mut element: Element = input.parse()?;
+            let layout = std::mem::take(&mut element.layout);
+            return Ok((Self::Element(element), layout));
         }
 
         if input.peek(LitStr) {
-            return input.parse().map(Self::Text);
+            let text = input.parse()?;
+            return Ok((
+                Self::Text(text),
+                Layout::capture(LayoutKind::Literal, start, input, Vec::new()),
+            ));
         }
 
         if input.peek(syn::token::Brace) {
-            return parse_expression_block(input).map(Self::Expression);
+            let expression = parse_expression_block(input)?;
+            return Ok((
+                Self::Expression(expression),
+                Layout::capture(LayoutKind::Rust, start, input, Vec::new()),
+            ));
         }
 
         if input.peek(Token![match]) && text::starts_control(input) {
             input.parse::<Token![match]>()?;
             let expression = input.call(Expr::parse_without_eager_brace)?;
+            let header = Layout::capture(LayoutKind::Header, start, input, Vec::new());
+            let block_start = input.cursor();
             let content;
-
             braced!(content in input);
             let mut arms = Vec::new();
+            let mut arm_layouts = Vec::new();
 
             while !content.is_empty() {
+                let arm_start = content.cursor();
                 let pattern = content.call(Pat::parse_multi_with_leading_vert)?;
-
                 let guard = if content.peek(Token![if]) {
                     content.parse::<Token![if]>()?;
-
                     Some(content.call(Expr::parse_without_eager_brace)?)
                 } else {
                     None
                 };
-
                 content.parse::<Token![=>]>()?;
-                let children = parse_nodes(&content)?;
-
+                let header = Layout::capture(LayoutKind::Header, arm_start, &content, Vec::new());
+                let (children, body) = parse_nodes(&content)?;
+                let mut parts = vec![header, body];
                 if content.peek(Token![,]) {
+                    let comma_start = content.cursor();
                     content.parse::<Token![,]>()?;
+                    parts.push(Layout::capture(
+                        LayoutKind::Literal,
+                        comma_start,
+                        &content,
+                        Vec::new(),
+                    ));
                 }
-
+                arm_layouts.push(Layout::capture(
+                    LayoutKind::Flow,
+                    arm_start,
+                    &content,
+                    parts,
+                ));
                 arms.push(MatchArm {
                     pattern,
                     guard,
                     children,
                 });
             }
-
-            return Ok(Self::Match { expression, arms });
+            let block = Layout::capture(LayoutKind::Block, block_start, input, arm_layouts);
+            let layout = Layout::capture(LayoutKind::Flow, start, input, vec![header, block]);
+            return Ok((Self::Match { expression, arms }, layout));
         }
 
         if input.peek(Token![if]) && text::starts_control(input) {
             input.parse::<Token![if]>()?;
             let condition = input.call(Expr::parse_without_eager_brace)?;
-            let then_nodes = parse_nodes(input)?;
+            let mut parts = vec![Layout::capture(
+                LayoutKind::Header,
+                start,
+                input,
+                Vec::new(),
+            )];
+            let (then_nodes, body) = parse_nodes(input)?;
+            parts.push(body);
             let mut else_nodes = Vec::new();
-
             if input.peek(Token![else]) {
+                let else_start = input.cursor();
                 input.parse::<Token![else]>()?;
-
+                parts.push(Layout::capture(
+                    LayoutKind::Literal,
+                    else_start,
+                    input,
+                    Vec::new(),
+                ));
                 if input.peek(Token![if]) {
-                    else_nodes.push(input.parse()?);
+                    let (node, layout) = Self::parse_layout(input)?;
+                    else_nodes.push(node);
+                    parts.push(layout);
                 } else {
-                    else_nodes = parse_nodes(input)?;
+                    let (nodes, layout) = parse_nodes(input)?;
+                    else_nodes = nodes;
+                    parts.push(layout);
                 }
             }
-
-            return Ok(Self::If {
-                condition,
-                then_nodes,
-                else_nodes,
-            });
+            let layout = Layout::capture(LayoutKind::Flow, start, input, parts);
+            return Ok((
+                Self::If {
+                    condition,
+                    then_nodes,
+                    else_nodes,
+                },
+                layout,
+            ));
         }
 
         if input.peek(Token![for]) && text::starts_control(input) {
             input.parse::<Token![for]>()?;
             let pattern = input.call(Pat::parse_single)?;
-
             input.parse::<Token![in]>()?;
             let iterator = input.call(Expr::parse_without_eager_brace)?;
-            let children = parse_nodes(input)?;
-
-            return Ok(Self::For {
-                pattern,
-                iterator,
-                children,
-            });
+            let header = Layout::capture(LayoutKind::Header, start, input, Vec::new());
+            let (children, body) = parse_nodes(input)?;
+            let layout = Layout::capture(LayoutKind::Flow, start, input, vec![header, body]);
+            return Ok((
+                Self::For {
+                    pattern,
+                    iterator,
+                    children,
+                },
+                layout,
+            ));
         }
 
-        text::parse(input).map(Self::Text)
+        let text = text::parse(input)?;
+        Ok((
+            Self::Text(text),
+            Layout::capture(LayoutKind::Text, start, input, Vec::new()),
+        ))
     }
 }
 
-fn parse_nodes(input: ParseStream<'_>) -> syn::Result<Vec<Node>> {
+fn parse_nodes(input: ParseStream<'_>) -> syn::Result<(Vec<Node>, Layout)> {
+    let start = input.cursor();
     let content;
-
     braced!(content in input);
     let mut nodes = Vec::new();
+    let mut layouts = Vec::new();
     let mut previous = content.span();
-
     while !content.is_empty() {
-        text::push_node(&content, &mut nodes, &mut previous)?;
+        layouts.push(text::push_node(&content, &mut nodes, &mut previous)?);
     }
-
-    Ok(nodes)
+    Ok((
+        nodes,
+        Layout::capture(LayoutKind::Block, start, input, layouts),
+    ))
 }
 
 fn parse_expression_block(input: ParseStream<'_>) -> syn::Result<Expr> {
@@ -1329,3 +1444,5 @@ mod tests;
 
 pub(crate) mod preset;
 pub(crate) mod theme;
+
+mod layout;

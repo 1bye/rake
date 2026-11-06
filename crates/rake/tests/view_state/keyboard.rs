@@ -49,30 +49,75 @@ impl Render for KeyboardHost {
         let focused_color = self.focused_color.clone();
 
         rake::view! {
-            <section focus={&self.root} key-context={self.key_context} tab-navigation={self.navigation}
+            <section
+                focus={&self.root}
+                key-context={self.key_context}
+                tab-navigation={self.navigation}
                 style={|s| s.size_full()}
                 on:Save={cx.listener(Self::save)}
                 on:Cancel={cx.listener(Self::cancel)}
-                on:click={cx.listener(|this, _, _, cx| { this.parent_clicks += 1; cx.notify(); })}
-                on:key-down={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    if event.keystroke.key == "tab" {
-                        if this.consume_tab { cx.stop_propagation(); }
-                        if this.consume_default { window.prevent_default(); }
+                on:click={
+                    cx.listener(|this, _, _, cx| {
+                        this.parent_clicks += 1;
+                        cx.notify();
+                    })
+                }
+                on:key-down={
+                    cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "tab" {
+                            if this.consume_tab {
+                                cx.stop_propagation();
+                            }
+                            if this.consume_default {
+                                window.prevent_default();
+                            }
+                        }
+                    })
+                }
+            >
+                <button
+                    id="save"
+                    focus={&self.save}
+                    disabled={self.disabled}
+                    style={
+                        |s|
+                            s.w(gpui::px(160.))
+                                .h(gpui::px(40.))
+                                .text_color(gpui::rgb(0x111111))
+                                .focus_visible(|s| s.text_color(gpui::rgb(0xff0000)))
+                        }
+                    on:Local={
+                        cx.listener(|this, _, _, cx| {
+                            this.local += 1;
+                            cx.notify();
+                        })
                     }
-                })}>
-                <button id="save" focus={&self.save} disabled={self.disabled}
-                    style={|s| s.w(gpui::px(160.)).h(gpui::px(40.))
-                        .text_color(gpui::rgb(0x111111))
-                        .focus_visible(|s| s.text_color(gpui::rgb(0xff0000)))}
-                    on:Local={cx.listener(|this, _, _, cx| { this.local += 1; cx.notify(); })}
-                    on:click={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}>
-                    {gpui::canvas(move |_, window, _| focused_color.set(window.text_style().color), |_, _, _, _| {}).size_full()}
+                    on:click={|_, window, cx| window.dispatch_action(Box::new(Save), cx)}
+                >
+                    {
+                        gpui::canvas(
+                            move |_, window, _| focused_color.set(window.text_style().color),
+                            |_, _, _, _| {}
+                        )
+                        .size_full()
+                    }
                 </button>
-                <button id="middle" tabindex={self.middle_index} focus={&self.middle}
-                    style={|s| s.w(gpui::px(160.)).h(gpui::px(40.))}>"Middle"</button>
-                <button id="last" focus={&self.last}
+                <button
+                    id="middle"
+                    tabindex={self.middle_index}
+                    focus={&self.middle}
                     style={|s| s.w(gpui::px(160.)).h(gpui::px(40.))}
-                    on:click={|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)}>"Cancel"</button>
+                >
+                    "Middle"
+                </button>
+                <button
+                    id="last"
+                    focus={&self.last}
+                    style={|s| s.w(gpui::px(160.)).h(gpui::px(40.))}
+                    on:click={|_, window, cx| window.dispatch_action(Box::new(Cancel), cx)}
+                >
+                    "Cancel"
+                </button>
             </section>
         }
     }

@@ -11,4 +11,4 @@ mod view;
 
 pub use view::preset::expand as expand_preset;
 pub use view::theme::derive as derive_theme;
-pub use view::{Attribute, AttributeValue, Element, MatchArm, Node, View};
+pub use view::{Attribute, AttributeValue, Element, Layout, LayoutKind, MatchArm, Node, View};

@@ -20,7 +20,12 @@ struct Content {
 impl Render for Content {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         crate::view! {
-            <div id="content" class="h-10" style={|s| s.w(gpui::px(120.))} focus={&self.focus}>
+            <div
+                id="content"
+                class="h-10"
+                style={|s| s.w(gpui::px(120.))}
+                focus={&self.focus}
+            >
                 <button id="button">"Standalone"</button>
             </div>
         }

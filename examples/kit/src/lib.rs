@@ -113,33 +113,67 @@ impl Render for Demo {
             .focus_handle(&self.increment_focus)
             .inspect_handler("click");
 
-        let dialog = KitButton::new("kit-dialog-trigger").label("Open Kit dialog")
-            .on_click(|_, window, cx| window.open_dialog(cx, |dialog, _, _| {
-                dialog.title("One Semantic theme").child(rake::view! {
-                    <section id="kit-dialog-content" class="gap-3">
-                        <p class="text-foreground">"This dialog is owned by Kit's window presentation layer."</p>
-                        <button id="dialog-theme" class="px-3 py-2 rounded-md bg-primary text-primary-foreground"
-                            on:click={switch_theme}>"Switch shared theme"</button>
-                    </section>
-                }.inspect("kit.dialog.content"))
-            })).inspect("kit.dialog.trigger").inspect_handler("click");
+        let dialog =
+            KitButton::new("kit-dialog-trigger")
+                .label("Open Kit dialog")
+                .on_click(|_, window, cx| {
+                    window.open_dialog(cx, |dialog, _, _| {
+                        dialog.title("One Semantic theme").child(rake::view! {
+                            <section id="kit-dialog-content" class="gap-3">
+                                <p class="text-foreground">
+                                    "This dialog is owned by Kit's window presentation layer."
+                                </p>
+                                <button
+                                    id="dialog-theme"
+                                    class="px-3 py-2 rounded-md bg-primary text-primary-foreground"
+                                    on:click={switch_theme}
+                                >
+                                    "Switch shared theme"
+                                </button>
+                            </section>
+                        }.inspect("kit.dialog.content"))
+                    })
+                })
+                .inspect("kit.dialog.trigger")
+                .inspect_handler("click");
 
         let table = token_table(&palette).inspect("kit.table");
 
         rake::view! {
-            <section id="kit-page" class="size-full flex flex-col p-6 gap-4 bg-background text-foreground">
+            <section
+                id="kit-page"
+                class="size-full flex flex-col p-6 gap-4 bg-background text-foreground"
+            >
                 <h1>"Rake + GPUI Kit"</h1>
-                <p>"Routed tabs retain their count. Rake views and Kit controls use one Semantic palette."</p>
+                <p>
+                    "Routed tabs retain their count. Rake views and Kit controls use one Semantic palette."
+                </p>
                 <div class="flex flex-row gap-3">
-                    <button id="open-components" class="px-3 py-2 rounded-md bg-secondary text-secondary-foreground"
-                        on:click={move |_, _, _| { drop(navigator.open(Destination::Components, OpenTarget::NewTab)); }}>"Open components tab"</button>
-                    <button id="switch-theme" class="px-3 py-2 rounded-md bg-secondary text-secondary-foreground"
-                        on:click={switch_theme}>"Switch shared theme"</button>
+                    <button
+                        id="open-components"
+                        class="px-3 py-2 rounded-md bg-secondary text-secondary-foreground"
+                        on:click={
+                            move |_, _, _| {
+                                drop(navigator.open(Destination::Components, OpenTarget::NewTab));
+                            }
+                        }
+                    >
+                        "Open components tab"
+                    </button>
+                    <button
+                        id="switch-theme"
+                        class="px-3 py-2 rounded-md bg-secondary text-secondary-foreground"
+                        on:click={switch_theme}
+                    >
+                        "Switch shared theme"
+                    </button>
                 </div>
                 if self.components {
                     <div id="kit-buttons" class="flex flex-row gap-3">{button}{dialog}</div>
                     <div id="kit-table-frame" class="w-full">{table}</div>
-                    <p>"Kit boundaries expose geometry, construction sites and explicit focus; their private descendants remain opaque."</p>
+                    <p>
+                        "Kit boundaries expose geometry, construction sites and explicit focus; their private descendants remain opaque."
+                    </p>
                 } else {
                     <p>"Open a components tab to try Kit's button, dialog and table."</p>
                 }
