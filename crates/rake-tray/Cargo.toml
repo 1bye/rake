@@ -1,0 +1,50 @@
+[package]
+name = "rake-tray"
+description = "Native tray resources and portable tray contracts for Rake"
+version = "0.1.0-alpha.3"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
+
+[lints]
+workspace = true
+
+[features]
+# Deterministic failing native boundary for downstream host tests.
+test-support = []
+sni-tests = ["dep:ksni", "dep:zbus"]
+native-tests = ["dep:block2", "objc2-foundation/NSRunLoop", "objc2-foundation/NSDate", "objc2-foundation/block2"]
+
+[dependencies]
+thiserror.workspace = true
+event-listener = "5.4"
+futures.workspace = true
+png = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ksni = { version = "0.3.7", optional = true, default-features = false, features = ["async-io"] }
+block2 = { version = "0.6.2", optional = true }
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSData", "NSGeometry", "NSArray", "NSThread", "NSKeyValueObserving", "NSDictionary", "NSAttributedString"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSButton", "NSCell", "NSControl", "NSEvent", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSMenu", "NSMenuItem", "NSMenuItemBadge", "NSAttributedString", "NSFont", "NSColor", "NSResponder", "NSScreen", "NSGraphics", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSAccessibility", "NSAccessibilityProtocols", "objc2-core-foundation"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_UI_HiDpi"] }
+uuid = { version = "1", features = ["v5"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.7", default-features = false, features = ["async-io"] }
+
+[target.'cfg(unix)'.dependencies]
+zbus = { version = "5", optional = true, default-features = false, features = ["async-io"] }
+
+[[example]]
+name = "sni-probe"
+required-features = ["sni-tests"]
+
+[[example]]
+name = "native-probe"
+required-features = ["native-tests"]
+

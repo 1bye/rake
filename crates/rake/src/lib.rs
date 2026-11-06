@@ -82,6 +82,8 @@ pub mod storage;
 ))]
 pub mod surface;
 pub mod tasks;
+#[cfg(feature = "tray")]
+pub mod tray;
 pub mod web;
 
 #[cfg(all(feature = "gpui", feature = "updates"))]
@@ -118,7 +120,7 @@ pub use rake_ui::init as init_ui;
 pub use rake_ui::kit;
 
 #[cfg(feature = "gpui")]
-pub use application::{App, AppError, ClosePolicy};
+pub use application::{App, AppError, ClosePolicy, show_main_window};
 #[cfg(feature = "gpui-fast")]
 pub extern crate gpui_fast as gpui;
 #[cfg(feature = "gpui-fast")]

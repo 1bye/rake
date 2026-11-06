@@ -350,6 +350,30 @@ impl<R: Route> RuntimeClient<R> {
         })
     }
 
+    /// Executes a local typed user action through the shared command scheduler.
+    /// Unlike transport dispatch, this does not retain a retry key. Repeated calls
+    /// are distinct actions; use `dispatch` when a remote retry must be deduplicated.
+    /// # Errors
+    /// Rejects stopped runtimes, malformed arguments and unavailable command/window capabilities.
+    pub fn execute<C: ApplicationCommand>(&self, command: C) -> Result<Reply, ControlError> {
+        self.dispatch_local_command(
+            C::id(),
+            serde_json::to_value(command)
+                .map_err(|error| CommandError::Arguments(error.to_string()))?,
+        )
+    }
+
+    pub(crate) fn dispatch_local_command(
+        &self,
+        id: String,
+        arguments: serde_json::Value,
+    ) -> Result<Reply, ControlError> {
+        if self.router.is_shutdown() {
+            return Err(ControlError::RuntimeShutdown);
+        }
+        self.command(&Command::Run { id, arguments })
+    }
+
     fn command(&self, command: &Command) -> Result<Reply, ControlError> {
         let navigator = self.router.navigator();
 

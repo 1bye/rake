@@ -155,6 +155,27 @@ pub struct RuntimeContext<R: Route = NoRoute> {
 }
 
 impl<R: Route> RuntimeContext<R> {
+    /// Returns weak access to the native application tray host.
+    /// # Errors
+    /// Reports an unavailable GUI host or stopped runtime.
+    #[cfg(feature = "tray")]
+    pub fn trays(&self) -> Result<crate::tray::Collection, crate::tray::Error> {
+        self.client().map_err(|_| crate::tray::Error::Stopped)?;
+        #[cfg(target_family = "wasm")]
+        {
+            Err(crate::tray::Error::Unsupported(
+                crate::tray::Feature::MultipleItems,
+            ))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.services
+                .get::<crate::tray::Collection>()
+                .map(|c| c.as_ref().clone())
+                .map_err(|_| crate::tray::Error::HostUnavailable)
+        }
+    }
+
     /// Binds an initiated user-action future to this view, with automatic redraw,
     /// cancellation and finite-work quit tracking. Start gesture-sensitive browser
     /// requests before calling this method. For reusable preparation, use `load`.
@@ -236,6 +257,16 @@ impl<R: Route> RuntimeContext<R> {
     /// alive, but cannot reopen admission after shutdown.
     pub fn client(&self) -> Result<RuntimeClient<R>, OperationError> {
         Ok(self.router()?.client())
+    }
+
+    /// Reveals the application's registered repeatable standalone main window.
+    /// # Errors
+    /// Rejects a stopped runtime, missing factory, browser host or failed mount.
+    #[cfg(feature = "gpui")]
+    pub fn show_main_window(&self, cx: &mut gpui::App) -> Result<(), crate::AppError> {
+        self.client()
+            .map_err(|error| crate::AppError::Window(error.to_string()))?;
+        crate::show_main_window(cx)
     }
 
     /// Requests guarded application quit. Dropped/closed contexts return a

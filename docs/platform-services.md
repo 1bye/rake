@@ -54,3 +54,10 @@ startup arguments. Registration metadata alone cannot supply a running event loo
 The adapter does not launch browser helper processes or invent native paths for
 browser files. Native GPUI clipboard/URL methods have no system success receipt;
 successful delegation is the documented boundary.
+
+
+## Native tray icons
+
+Enable `tray` for application-owned multiple icons, native menus and rich popup
+windows. This GUI capability is separate from portable notifications and launch
+services. Browser/headless GUI calls are explicit errors. See [tray icons](tray.md).

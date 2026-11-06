@@ -28,6 +28,15 @@ type WindowRoot = Box<
     dyn FnOnce(Services, &mut Window, &mut gpui::App) -> Result<AnyView, crate::router::MountError>,
 >;
 
+type MainWindow = Rc<
+    dyn Fn(
+        crate::runtime::RuntimeContext,
+        &mut Window,
+        &mut gpui::App,
+    ) -> Result<AnyView, crate::router::MountError>,
+>;
+type WindowOptionsFactory = Rc<dyn Fn() -> WindowOptions>;
+
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
 
 /// What closing a standalone application's window requests.
@@ -46,7 +55,7 @@ mod managed;
 #[doc(hidden)]
 pub use factory::{AppFactoryOutput, run_app_factory};
 
-mod startup;
+pub(crate) mod startup;
 #[cfg(all(feature = "updates", not(target_family = "wasm")))]
 mod update_services;
 #[cfg(target_family = "wasm")]
@@ -81,7 +90,7 @@ pub struct App<R: Route = NoRoute> {
     platform: crate::platform::Platform,
     layout: Option<crate::router::layout::LayoutFactory<R>>,
     new_window_options: Option<Rc<dyn Fn(crate::router::WindowId) -> WindowOptions>>,
-    configuration_error: Option<&'static str>,
+    configuration_error: Option<AppError>,
     diagnostics: DiagnosticsConfig,
     #[cfg(not(target_family = "wasm"))]
     crash_reports: crate::crash::startup::CrashReports,
@@ -89,6 +98,7 @@ pub struct App<R: Route = NoRoute> {
     crash_version: Option<String>,
     root: Option<Root>,
     background: Option<Background>,
+    main_window: Option<(WindowOptionsFactory, MainWindow)>,
     close_policy: ClosePolicy,
     close_policy_set: bool,
     route_options: bool,
@@ -102,6 +112,12 @@ pub struct App<R: Route = NoRoute> {
     control: crate::control::ControlConfig,
     commands: crate::control::Commands,
     themes: Vec<ThemeInstaller>,
+    #[cfg(feature = "tray")]
+    trays: Vec<crate::tray::Tray>,
+    #[cfg(feature = "tray")]
+    tray_handlers: Vec<crate::tray::Handler>,
+    #[cfg(feature = "tray")]
+    tray_popups: Vec<(String, crate::tray::Popup)>,
     #[cfg(feature = "updates")]
     distribution: Option<(&'static str, &'static str)>,
 }
@@ -132,6 +148,7 @@ impl App<NoRoute> {
             crash_version: None,
             root: None,
             background: None,
+            main_window: None,
             close_policy: ClosePolicy::default(),
             close_policy_set: false,
             route_options: false,
@@ -145,6 +162,12 @@ impl App<NoRoute> {
             control: crate::control::ControlConfig::default(),
             commands: crate::control::Commands::new(),
             themes: Vec::new(),
+            #[cfg(feature = "tray")]
+            trays: Vec::new(),
+            #[cfg(feature = "tray")]
+            tray_handlers: Vec::new(),
+            #[cfg(feature = "tray")]
+            tray_popups: Vec::new(),
             #[cfg(feature = "updates")]
             distribution: None,
         }
@@ -167,11 +190,12 @@ impl App<NoRoute> {
     /// let app = app.routes(pages); // use replace_routes instead
     /// ```
     pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
-        let configuration_error = if self.layout.is_some()
-            || !self.guards.is_empty()
-            || !self.admissions.is_empty()
-        {
-            Some("register routes before configuring layouts, entry guards, or entry admissions")
+        let configuration_error = if self.configuration_error.is_some() {
+            self.configuration_error
+        } else if self.layout.is_some() || !self.guards.is_empty() || !self.admissions.is_empty() {
+            Some(AppError::InvalidConfiguration(
+                "register routes before configuring layouts, entry guards, or entry admissions",
+            ))
         } else {
             self.configuration_error
         };
@@ -195,6 +219,7 @@ impl App<NoRoute> {
             crash_version: self.crash_version,
             root: self.root,
             background: self.background,
+            main_window: self.main_window,
             close_policy: self.close_policy,
             close_policy_set: self.close_policy_set,
             route_options: self.route_options,
@@ -208,6 +233,12 @@ impl App<NoRoute> {
             control: self.control,
             commands: self.commands,
             themes: self.themes,
+            #[cfg(feature = "tray")]
+            trays: self.trays,
+            #[cfg(feature = "tray")]
+            tray_handlers: self.tray_handlers,
+            #[cfg(feature = "tray")]
+            tray_popups: self.tray_popups,
             #[cfg(feature = "updates")]
             distribution: self.distribution,
         }
@@ -215,6 +246,46 @@ impl App<NoRoute> {
 }
 
 impl<R: Route> App<R> {
+    /// Declares an independent application-owned tray item. IDs must be unique.
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn tray(mut self, tray: crate::tray::Tray) -> Self {
+        self.trays.push(tray);
+        self
+    }
+
+    /// Observes validated tray events on GPUI's foreground driver.
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn on_tray_event(
+        mut self,
+        handler: impl FnMut(&crate::tray::Event, &mut gpui::App) + 'static,
+    ) -> Self {
+        self.tray_handlers.push(Box::new(handler));
+        self
+    }
+
+    /// Binds a tray menu selection without interrupting the application builder chain.
+    /// Serialization errors are deferred to [`Self::run`] as [`AppError::Command`].
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn tray_command<C: crate::control::ApplicationCommand>(
+        mut self,
+        tray: &str,
+        item: &str,
+        command: C,
+    ) -> Self {
+        match crate::tray::command_handler(tray, item, command) {
+            Ok(handler) => self.tray_handlers.push(handler),
+            Err(error) => {
+                if self.configuration_error.is_none() {
+                    self.configuration_error = Some(AppError::Command(error));
+                }
+            }
+        }
+        self
+    }
+
     /// Captures the consuming application's build-script update policy and resource layout.
     /// `#[rake::app]` supplies this automatically; manual entry points can call it too.
     #[must_use]
@@ -585,6 +656,35 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Registers a repeatable standalone main window using one retained runtime.
+    ///
+    /// Without `background`, opens immediately. With `background`, opens on the
+    /// first [`show_main_window`] call. Closing follows `close_policy`; select
+    /// `KeepRunning` for tray applications. The options factory runs per creation.
+    /// Browser hosts and combinations with `root` or `routes` are rejected.
+    #[must_use]
+    pub fn main_window(
+        mut self,
+        options: impl Fn() -> WindowOptions + 'static,
+        mount: impl Fn(
+            crate::runtime::RuntimeContext,
+            &mut Window,
+            &mut gpui::App,
+        ) -> Result<AnyView, crate::router::MountError>
+        + 'static,
+    ) -> Self {
+        self.main_window = Some((Rc::new(options), Rc::new(mount)));
+        self
+    }
+
+    /// Attaches a rich popup; set the tray's primary interaction to Popup.
+    #[cfg(feature = "tray")]
+    #[must_use]
+    pub fn tray_popup(mut self, id: impl Into<String>, popup: crate::tray::Popup) -> Self {
+        self.tray_popups.push((id.into(), popup));
+        self
+    }
+
     /// Starts the native application runtime without opening an initial window.
     /// Use the GPUI app context to install a tray or other platform-owned UI.
     /// Browser hosts reject this mode explicitly.
@@ -677,7 +777,7 @@ impl<R: Route> App<R> {
         }
 
         if let Some(error) = self.configuration_error {
-            return Err(AppError::InvalidConfiguration(error));
+            return Err(error);
         }
 
         let services = self.services()?;
@@ -687,6 +787,10 @@ impl<R: Route> App<R> {
             + usize::from(self.background.is_some())
             > 1
         {
+            return Err(AppError::ConflictingRoots);
+        }
+
+        if self.main_window.is_some() && (self.root.is_some() || self.routes.is_some()) {
             return Err(AppError::ConflictingRoots);
         }
 
@@ -701,7 +805,7 @@ impl<R: Route> App<R> {
         }
 
         #[cfg(target_family = "wasm")]
-        if self.background.is_some() {
+        if self.background.is_some() || self.main_window.is_some() {
             return Err(AppError::BackgroundUnsupported);
         }
 
@@ -724,7 +828,8 @@ impl<R: Route> App<R> {
             quit_guards: self.quit_guards.clone(),
         };
 
-        let background_config = self.background.as_ref().map(|_| managed.clone());
+        let background_config =
+            (self.background.is_some() || self.main_window.is_some()).then(|| managed.clone());
 
         let root: Option<WindowRoot> = if let Some(routes) = self.routes.take() {
             #[cfg(not(target_family = "wasm"))]
@@ -795,7 +900,7 @@ impl<R: Route> App<R> {
             Some(Box::new(move |services, window, cx| {
                 managed::mount(mount, services, managed, window, cx)
             }))
-        } else if self.background.is_some() {
+        } else if self.background.is_some() || self.main_window.is_some() {
             None
         } else {
             return Err(AppError::MissingRoot);
@@ -858,6 +963,24 @@ impl<R: Route> App<R> {
             rake_ui::init(cx);
             install_themes(self.themes, cx);
 
+            #[cfg(feature = "tray")]
+            let services = match crate::tray::install(
+                &self.id,
+                services,
+                self.trays,
+                self.tray_handlers,
+                self.tray_popups,
+                errors.clone(),
+                cx,
+            ) {
+                Ok(services) => services,
+                Err(error) => {
+                    errors.record(AppError::Tray(error));
+                    crate::tray::stop(cx);
+                    return;
+                }
+            };
+
             #[cfg(all(feature = "updates", not(target_family = "wasm")))]
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
                 #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
@@ -878,6 +1001,13 @@ impl<R: Route> App<R> {
                 });
 
                 cx.set_global(UpdatesDriver { _task: task });
+            }
+
+            #[cfg(not(target_family = "wasm"))]
+            if let Some((options, mount)) = self.main_window {
+                let config = background_config.expect("main window configuration validated");
+                managed::install_main_window(options, mount, self.background, services, config, cx);
+                return;
             }
 
             let Some(root) = root else {
@@ -946,6 +1076,10 @@ impl<R: Route> App<R> {
 /// Application configuration and synchronous host initialization failures.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// Required native tray integration failed.
+    #[cfg(feature = "tray")]
+    #[error(transparent)]
+    Tray(#[from] crate::tray::Error),
     /// A typed service could not be registered or resolved during application setup.
     #[error(transparent)]
     Service(#[from] ServiceError),
@@ -1151,6 +1285,26 @@ mod theme_tests {
     }
 }
 
+/// Shows/focuses the registered main window, recreating it after close.
+///
+/// Uses the existing runtime and services. A failed mount leaves the factory
+/// available for retry. Routed apps can reveal an existing window through their
+/// navigator's window host instead.
+/// # Errors
+/// Returns an error without a registered factory, after runtime shutdown, or
+/// when native window creation/mounting fails. Browser hosts are unsupported.
+pub fn show_main_window(cx: &mut gpui::App) -> Result<(), AppError> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        managed::show_main_window(cx)
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = cx;
+        Err(AppError::BackgroundUnsupported)
+    }
+}
+
 #[cfg(test)]
 mod configuration_tests {
     //! Covers: same-type route replacement retains the configured destination and guards.
@@ -1161,6 +1315,43 @@ mod configuration_tests {
     enum Destination {
         #[route(id = "main", path = "/main")]
         Main,
+    }
+
+    #[cfg(feature = "tray")]
+    #[crate::data(schema)]
+    #[derive(crate::Command)]
+    #[command(id = "tray.serialization-test", capability = Headless)]
+    struct SerializationCommand {
+        #[serde(serialize_with = "reject_command")]
+        value: String,
+    }
+    #[cfg(feature = "tray")]
+    fn reject_command<S: serde::Serializer>(_: &str, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "fixture command cannot serialize",
+        ))
+    }
+
+    #[cfg(feature = "tray")]
+    #[test]
+    fn tray_command_stays_chainable_and_defers_serialization_errors_across_routes() {
+        let pages = crate::router::__routes(|_: &Destination, _, _, _| {
+            Err(crate::router::MountError("unused fixture".into()))
+        });
+        let app = App::new("tray.builder-test")
+            .tray_command(
+                "main",
+                "action",
+                SerializationCommand {
+                    value: "value".into(),
+                },
+            )
+            .tray(crate::tray::Tray::new("main"))
+            .routes(pages)
+            .navigation_feedback(false);
+        assert!(
+            matches!(app.run(), Err(AppError::Command(crate::control::CommandError::Arguments(message))) if message.contains("fixture command cannot serialize"))
+        );
     }
 
     #[test]

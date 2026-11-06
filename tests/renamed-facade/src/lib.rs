@@ -348,3 +348,12 @@ fn themed_control();
 pub fn preset_markup() -> impl gpui::IntoElement {
     framework::view! { <div style={themed_control}/> }
 }
+
+/// Tray contracts are usable through a renamed facade without backend imports.
+#[cfg(feature = "tray")]
+pub fn tray_configuration() -> framework::tray::Tray {
+    use framework::tray::{Interaction, Menu, MenuItem, Tray};
+    Tray::new("renamed")
+        .primary(Interaction::NativeMenu)
+        .menu(Menu::new().item(MenuItem::quit("quit", "Quit")))
+}
