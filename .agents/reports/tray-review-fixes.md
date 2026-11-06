@@ -22,3 +22,17 @@ no upstream PR/issue was opened.
 Validation: foreign Linux check and isolated SNI probe passed. Also packaged
 rake-tray and checked the unpacked crate as a standalone Linux consumer outside
 this workspace, so no workspace patch/path overrides could satisfy its build.
+
+## 3. Optional trays do not block application startup
+
+Validate duplicate IDs/shared configuration up front. Required operational
+failures still roll back and fail startup; optional creation failures now leave
+recoverable items to their backend or skip them while keeping the window/runtime
+alive. Diagnostics reach the same foreground on_tray_event handlers. A missing
+optional host is skipped and reports generation-zero startup diagnostics.
+
+A feature-isolated failing native boundary tests the real registry/driver and GPUI
+TestPlatform window host: Wait leaves the main window open and delivers an event;
+Require records AppError::Tray and requests application UI shutdown. A missing
+optional host is also covered. No native desktop behavior is inferred from these
+doubles. Focused host tests, core test-support tests and facade Clippy passed.

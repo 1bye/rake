@@ -73,7 +73,12 @@ Explicit `shutdown().await` stops admission and joins cleanup; `Drop` is best ef
 Handles/contexts remain safe after shutdown and return `Stopped`/`Removed`.
 
 `HostPolicy::Wait` permits exporting an SNI item before a watcher exists;
-`Require` fails if it cannot register. `Registration` distinguishes creating,
+`Require` makes startup fail if it cannot register. With `Wait`, native failures
+keep a recoverable registration offline when supported, or skip the item while
+letting the main window start. `on_tray_event` receives `OperationFailed` and/or
+`HostChanged(false)` plus a diagnostic. Failures before a registration exists use
+generation zero. Duplicate IDs and invalid configuration still fail startup.
+`Registration` distinguishes creating,
 registered and waiting. Requested visibility is distinct from actual native
 visibility and user shell policy. SNI `Passive` is a hint, not guaranteed hiding.
 

@@ -52,6 +52,8 @@ struct Entry {
 }
 
 struct Registry {
+    #[cfg(feature = "test-support")]
+    creation_failure: Option<Error>,
     application: String,
     generation: u64,
     alive: bool,
@@ -173,8 +175,14 @@ impl Host {
         crate::identifier(application)?;
         backend::check_thread()?;
 
-        Ok(Self {
+        Ok(Self::unregistered(application))
+    }
+
+    fn unregistered(application: &str) -> Self {
+        Self {
             registry: Rc::new(RefCell::new(Registry {
+                #[cfg(feature = "test-support")]
+                creation_failure: None,
                 application: application.into(),
                 generation: 0,
                 alive: true,
@@ -182,7 +190,19 @@ impl Host {
                 ingress: Arc::new(Ingress::new()),
                 operations: Rc::default(),
             })),
-        })
+        }
+    }
+
+    /// Creates a failing native boundary for deterministic application host tests.
+    /// No OS resources are allocated and no native thread check runs.
+    /// # Errors
+    /// Rejects an invalid application identity.
+    #[cfg(feature = "test-support")]
+    pub fn with_creation_failure(application: &str, error: Error) -> Result<Self, Error> {
+        crate::identifier(application)?;
+        let host = Self::unregistered(application);
+        host.registry.borrow_mut().creation_failure = Some(error);
+        Ok(host)
     }
 
     /// Returns weak local control access; it does not retain this host.
@@ -377,7 +397,13 @@ impl Collection {
                 id: spec.id.clone(),
                 generation,
             };
+            #[cfg(not(feature = "test-support"))]
             let native = backend::create(&state.application, &spec, sink);
+            #[cfg(feature = "test-support")]
+            let native = match &state.creation_failure {
+                Some(error) => crate::ready(Err(error.clone())),
+                None => backend::create(&state.application, &spec, sink),
+            };
             let status = State {
                 id: spec.id.clone(),
                 generation,
@@ -797,6 +823,8 @@ mod tests {
     fn host() -> Host {
         Host {
             registry: Rc::new(RefCell::new(Registry {
+                #[cfg(feature = "test-support")]
+                creation_failure: None,
                 application: "dev.rake.test".into(),
                 generation: 0,
                 alive: true,

@@ -146,6 +146,109 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// Real window factory/scheduler and registry; injected native creation failure.
+    #[cfg(feature = "tray")]
+    #[test]
+    fn optional_tray_failure_opens_main_window_but_required_failure_stops_startup() {
+        use crate::tray::{EventKind, HostPolicy, Image, ImageRepresentation, Tray};
+        for policy in [HostPolicy::Wait, HostPolicy::Require] {
+            let app = gpui::TestAppContext::single();
+            let errors = super::super::super::startup::StartupErrors::default();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let received = events.clone();
+            app.update(|cx| {
+                rake_ui::init(cx);
+                let base = crate::App::new("tray.startup-test").services().unwrap();
+                let spec = Tray::new("main").host_policy(policy).icon(Image::new(
+                    ImageRepresentation::rgba(1, 1, vec![255; 4]).unwrap(),
+                ));
+                let failure = crate::tray::Error::Native {
+                    operation: "create",
+                    message: "fixture rejected icon".into(),
+                    source: None,
+                };
+                let host = rake_tray::Host::with_creation_failure("tray.startup-test", failure);
+                let services = crate::tray::install_for_tests(
+                    base,
+                    vec![spec],
+                    vec![Box::new(move |event, _| {
+                        received.borrow_mut().push(event.clone())
+                    })],
+                    errors.clone(),
+                    host,
+                    cx,
+                )
+                .unwrap();
+                let config = ManagedConfig {
+                    config: Default::default(),
+                    control: crate::control::ControlConfig::Disabled,
+                    commands: Default::default(),
+                    application_id: "tray.startup-test".into(),
+                    close_policy: super::super::ClosePolicy::KeepRunning,
+                    quit_guards: Vec::new(),
+                };
+                install_main_window(
+                    Rc::new(gpui::WindowOptions::default),
+                    Rc::new(|_, _, cx| Ok(cx.new(|_| gpui::Empty).into())),
+                    None,
+                    services,
+                    config,
+                    cx,
+                );
+            });
+            app.run_until_parked();
+            match policy {
+                HostPolicy::Wait => {
+                    assert!(
+                        !errors.failed(),
+                        "optional native failure must not poison startup"
+                    );
+                    assert_eq!(app.windows().len(), 1, "main window must remain open");
+                    assert!(events.borrow().iter().any(|event| matches!(&event.kind, EventKind::OperationFailed(message) if message.contains("fixture rejected icon"))), "optional failure must reach on_tray_event");
+                }
+                HostPolicy::Require => {
+                    assert!(matches!(errors.finish(), Err(crate::AppError::Tray(_))));
+                    assert!(
+                        app.update(|cx| cx.try_global::<crate::tray::StartupStopped>().is_some())
+                    );
+                    assert!(
+                        app.windows().is_empty(),
+                        "required startup failure must close the application UI"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "tray")]
+    #[test]
+    fn unavailable_optional_tray_host_reports_without_poisoning_startup() {
+        let app = gpui::TestAppContext::single();
+        let errors = super::super::super::startup::StartupErrors::default();
+        let received = Rc::new(Cell::new(false));
+        let seen = received.clone();
+        app.update(|cx| {
+            let services = crate::App::new("tray.host-test").services().unwrap();
+            crate::tray::install_for_tests(
+                services,
+                vec![crate::tray::Tray::new("optional")],
+                vec![Box::new(move |event, _| {
+                    seen.set(
+                        event.generation == 0
+                            && matches!(event.kind, crate::tray::EventKind::OperationFailed(_)),
+                    )
+                })],
+                errors.clone(),
+                Err(crate::tray::Error::HostUnavailable),
+                cx,
+            )
+            .unwrap();
+        });
+        app.run_until_parked();
+        assert!(received.get());
+        assert!(!errors.failed());
+    }
+
     // Real scheduler/factory ownership; GPUI TestPlatform supplies physical windows.
     #[test]
     fn failed_mount_and_close_reopen_keep_one_runtime() {

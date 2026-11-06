@@ -156,12 +156,12 @@ pub enum EventKind {
     OperationFailed(String),
 }
 
-/// One event from a specific registration, never merely a reused string name.
+/// Registration-scoped native event or an unregistered startup diagnostic.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Event {
     /// Application-stable tray ID.
     pub id: String,
-    /// Unique registration generation, scoped to one host.
+    /// Unique generation scoped to one host; zero marks an unregistered startup diagnostic.
     pub generation: u64,
     /// Native menu projection revision, when the event belongs to a menu.
     pub menu_revision: Option<u64>,

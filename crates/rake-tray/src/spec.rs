@@ -100,6 +100,11 @@ impl Tray {
         self.windows = Some(presentation);
         self
     }
+    /// Returns whether registration is required or may wait/skip an unavailable host.
+    pub fn host_requirement(&self) -> HostPolicy {
+        self.host_policy
+    }
+
     /// Returns the application-stable name.
     pub fn id(&self) -> &str {
         &self.id

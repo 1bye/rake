@@ -128,9 +128,78 @@ pub(crate) fn install(
     errors: StartupErrors,
     cx: &mut gpui::App,
 ) -> Result<Services, Error> {
+    install_with(
+        Installation {
+            application: application.into(),
+            specs,
+            handlers,
+            popups,
+            errors,
+        },
+        services,
+        rake_tray::Host::new,
+        stop,
+        cx,
+    )
+}
+
+struct Installation {
+    application: String,
+    specs: Vec<Tray>,
+    handlers: Vec<Handler>,
+    popups: Vec<(String, Popup)>,
+    errors: StartupErrors,
+}
+
+fn configuration_failure(error: &Error) -> bool {
+    matches!(error, Error::InvalidInput(_) | Error::Duplicate(_))
+}
+
+fn report_unregistered_failure(
+    id: String,
+    error: &Error,
+    handlers: &mut [Handler],
+    cx: &mut gpui::App,
+) {
+    crate::error!(tray = %id, %error, "optional tray could not register");
+    let event = Event {
+        id,
+        generation: 0,
+        menu_revision: None,
+        kind: EventKind::OperationFailed(error.to_string()),
+        anchor: None,
+        input: Input::default(),
+    };
+    for handler in handlers {
+        handler(&event, cx);
+    }
+}
+
+fn install_with(
+    installation: Installation,
+    services: Services,
+    create_host: impl FnOnce(&str) -> Result<rake_tray::Host, Error>,
+    stop_host: fn(&mut gpui::App),
+    cx: &mut gpui::App,
+) -> Result<Services, Error> {
+    let Installation {
+        application,
+        specs,
+        mut handlers,
+        popups,
+        errors,
+    } = installation;
     #[cfg(target_family = "wasm")]
     if specs.is_empty() {
         return Ok(services);
+    }
+
+    let mut ids = std::collections::BTreeSet::new();
+    for spec in &specs {
+        spec.validate()?;
+        if !ids.insert(spec.id()) {
+            return Err(Error::Duplicate(spec.id().into()));
+        }
     }
 
     for (id, _) in &popups {
@@ -143,11 +212,29 @@ pub(crate) fn install(
             ));
         }
     }
-    if !popups.is_empty() {
+    let has_popups = !popups.is_empty();
+    let popups = popup::Popups::new(popups)?;
+    let host = match create_host(&application) {
+        Ok(host) => host,
+        Err(error)
+            if !configuration_failure(&error)
+                && specs
+                    .iter()
+                    .all(|spec| spec.host_requirement() == HostPolicy::Wait) =>
+        {
+            cx.defer(move |cx| {
+                for spec in specs {
+                    report_unregistered_failure(spec.id().into(), &error, &mut handlers, cx);
+                }
+            });
+            return Ok(services);
+        }
+        Err(error) => return Err(error),
+    };
+    if has_popups {
         cx.set_quit_mode(gpui::QuitMode::Explicit);
     }
-    let popups = popup::Popups::new(popups)?;
-    let host = rake_tray::Host::new(application)?;
+    let handlers = Rc::new(RefCell::new(handlers));
     let collection = host.collection();
     let dispatch = Dispatcher::default();
     let registry = services
@@ -169,11 +256,33 @@ pub(crate) fn install(
     });
     let requests = specs
         .into_iter()
-        .map(|spec| collection.create(spec))
+        .map(|spec| {
+            let id = spec.id().to_owned();
+            let policy = spec.host_requirement();
+            let request = collection.create(spec);
+            let reserved = collection.get(&id).is_ok();
+            (id, policy, reserved, request)
+        })
         .collect::<Vec<_>>();
+    let startup_handlers = handlers.clone();
     let startup = cx.spawn(async move |cx| {
-        for request in requests {
+        for (id, policy, reserved, request) in requests {
             if let Err(error) = request.await {
+                if policy == HostPolicy::Wait && !configuration_failure(&error) {
+                    // Admitted work reports via the registry event stream. Rejections
+                    // before reservation have no generation and need direct delivery.
+                    if !reserved {
+                        cx.update(|cx| {
+                            report_unregistered_failure(
+                                id,
+                                &error,
+                                &mut startup_handlers.borrow_mut(),
+                                cx,
+                            )
+                        });
+                    }
+                    continue;
+                }
                 let shutdown = cx.update(|cx| {
                     errors.record(AppError::Tray(error));
                     cx.global::<Owner>().host.shutdown()
@@ -181,7 +290,7 @@ pub(crate) fn install(
                 if let Err(error) = shutdown.await {
                     crate::error!(%error, "tray startup rollback failed");
                 }
-                cx.update(stop);
+                cx.update(stop_host);
                 return;
             }
         }
@@ -198,7 +307,6 @@ pub(crate) fn install(
         }
     });
     let events = cx.spawn(async move |cx| {
-        let mut handlers = handlers;
         while let Ok(event) = collection.next_event().await {
             cx.update(|cx| {
                 if matches!(
@@ -258,7 +366,7 @@ pub(crate) fn install(
                     popup::dismiss_all(cx);
                     crate::error!("tray ingress saturated; input could not be delivered");
                 }
-                for handler in &mut handlers {
+                for handler in handlers.borrow_mut().iter_mut() {
                     handler(&event, cx);
                 }
             });
@@ -357,6 +465,40 @@ pub fn stop_animation(id: &str, cx: &mut gpui::App) -> Result<(), Error> {
     }
     cx.global_mut::<Owner>().animations.remove(id);
     Ok(())
+}
+
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+pub(crate) struct StartupStopped;
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+impl gpui::Global for StartupStopped {}
+
+#[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
+pub(crate) fn install_for_tests(
+    services: Services,
+    specs: Vec<Tray>,
+    handlers: Vec<Handler>,
+    errors: StartupErrors,
+    host: Result<rake_tray::Host, Error>,
+    cx: &mut gpui::App,
+) -> Result<Services, Error> {
+    install_with(
+        Installation {
+            application: "tray.startup-test".into(),
+            specs,
+            handlers,
+            popups: Vec::new(),
+            errors,
+        },
+        services,
+        move |_| host,
+        |cx| {
+            cx.set_global(StartupStopped);
+            for window in cx.windows() {
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            }
+        },
+        cx,
+    )
 }
 
 #[cfg(test)]
