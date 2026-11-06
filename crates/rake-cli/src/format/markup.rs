@@ -79,11 +79,23 @@ fn format_once(source: &str, rustfmt: &mut Rustfmt) -> Result<(String, Vec<Probl
             });
             continue;
         }
-        // Reparse the output with the exact same grammar before writing anything.
-        if syn::parse_str::<View>(&result)
-            .and_then(|view| view.layout().map(|_| ()))
-            .is_err()
-        {
+        // Unquoted markup text adopts source gaps, so token equivalence alone
+        // cannot establish that its lowered string is unchanged.
+        let reparsed = syn::parse_str::<View>(&result).and_then(|view| {
+            view.layout()?;
+            Ok(view)
+        });
+        if let Ok(reparsed) = reparsed {
+            if text_values(&view) != text_values(&reparsed) {
+                problems.push(Problem {
+                    line: invocation.open.start().line,
+                    column: invocation.open.start().column + 1,
+                    message: "unquoted text preservation check failed; invocation left unchanged"
+                        .into(),
+                });
+                continue;
+            }
+        } else {
             problems.push(Problem {
                 line: invocation.open.start().line,
                 column: invocation.open.start().column + 1,
@@ -290,19 +302,6 @@ impl Renderer<'_> {
 
     fn attribute(&mut self, layout: &Layout, indent: usize) -> Result<String> {
         let source = self.raw(layout).to_owned();
-        if let Some(element) = layout.children.first() {
-            let range = self.range(layout);
-            let child = self.range(element);
-            let nested = indent + self.rustfmt.tab_spaces;
-            return Ok(format!(
-                "{}\n{}{}\n{}{}",
-                compact(self.source[range.start..child.start].trim_end(), true),
-                self.rustfmt.indent(nested),
-                self.render(element, nested)?,
-                self.rustfmt.indent(indent),
-                compact(self.source[child.end..range.end].trim_start(), true)
-            ));
-        }
         let tokens: proc_macro2::TokenStream = source.parse()?;
         let group = tokens.into_iter().find_map(|token| match token {
             proc_macro2::TokenTree::Group(group)
@@ -314,6 +313,25 @@ impl Renderer<'_> {
         });
         if let Some(group) = group {
             let range = span_range(&source, group.span_open(), group.span_close());
+            if let Some(element) = layout.children.first() {
+                let attribute = self.range(layout);
+                let child = self.range(element);
+                let nested = indent + self.rustfmt.tab_spaces;
+                let before = self.gap(
+                    attribute.start + range.start + 1..child.start,
+                    &format!("\n{}", self.rustfmt.indent(nested)),
+                );
+                let after = self.gap(
+                    child.end..attribute.start + range.end - 1,
+                    &format!("\n{}", self.rustfmt.indent(indent)),
+                );
+                return Ok(format!(
+                    "{}{{{before}{}{after}}}{}",
+                    compact(&source[..range.start], true),
+                    self.render(element, nested)?,
+                    compact(&source[range.end..], true)
+                ));
+            }
             let rust = self.rust_text(&source[range.clone()], indent)?;
             Ok(format!(
                 "{}{}{}",
@@ -339,10 +357,7 @@ impl Renderer<'_> {
             self.rustfmt.indent(indent)
         );
         let wrapped = format!("{prefix}{formatted}; }}");
-        let (nested, problems) = format_source(&wrapped, self.rustfmt)?;
-        if !problems.is_empty() {
-            return Ok(formatted);
-        }
+        let (nested, _) = format_source(&wrapped, self.rustfmt)?;
         Ok(nested[prefix.len()..nested.len() - 3].to_owned())
     }
 
@@ -353,21 +368,32 @@ impl Renderer<'_> {
         let nested = indent + self.rustfmt.tab_spaces;
         let mut output = String::from("{");
         let mut previous = open;
+        let mut previous_text = false;
         for child in &layout.children {
             let child_range = self.range(child);
-            output.push_str(&self.gap(
-                previous..child_range.start,
-                &format!("\n{}", self.rustfmt.indent(nested)),
-            ));
+            let gap = if previous_text || child.kind == LayoutKind::Text {
+                self.source[previous..child_range.start].to_owned()
+            } else {
+                self.gap(
+                    previous..child_range.start,
+                    &format!("\n{}", self.rustfmt.indent(nested)),
+                )
+            };
+            output.push_str(&gap);
             output.push_str(&self.render(child, nested)?);
             previous = child_range.end;
+            previous_text = child.kind == LayoutKind::Text;
         }
         let desired = if layout.children.is_empty() && self.source[open..close].trim().is_empty() {
             String::new()
         } else {
             format!("\n{}", self.rustfmt.indent(indent))
         };
-        output.push_str(&self.gap(previous..close, &desired));
+        if previous_text {
+            output.push_str(&self.source[previous..close]);
+        } else {
+            output.push_str(&self.gap(previous..close, &desired));
+        }
         output.push('}');
         Ok(output)
     }
@@ -399,4 +425,42 @@ fn nested_problems(tokens: proc_macro2::TokenStream, problems: &mut Vec<Problem>
         Ok(()) => nested_problems(invocation.tokens, problems),
         Err(error) => problems.push(Problem::parse(error)),
     });
+}
+
+fn text_values(view: &View) -> Vec<String> {
+    use rake_view_syntax::{AttributeValue, Element, Node};
+    fn element(value: &Element, output: &mut Vec<String>) {
+        for attribute in &value.attributes {
+            if let AttributeValue::Markup(child) = &attribute.value {
+                element(child, output);
+            }
+        }
+        nodes(&value.children, output);
+    }
+    fn nodes(children: &[Node], output: &mut Vec<String>) {
+        for child in children {
+            match child {
+                Node::Text(text) => output.push(text.value()),
+                Node::Element(child) => element(child, output),
+                Node::If {
+                    then_nodes,
+                    else_nodes,
+                    ..
+                } => {
+                    nodes(then_nodes, output);
+                    nodes(else_nodes, output);
+                }
+                Node::For { children, .. } => nodes(children, output),
+                Node::Match { arms, .. } => {
+                    for arm in arms {
+                        nodes(&arm.children, output);
+                    }
+                }
+                Node::Expression(_) => {}
+            }
+        }
+    }
+    let mut output = Vec::new();
+    element(view.root(), &mut output);
+    output
 }

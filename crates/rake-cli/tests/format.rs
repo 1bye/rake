@@ -80,7 +80,8 @@ fn check_reports_diff_without_writing_then_format_reaches_a_fixed_point() {
 #[test]
 fn stdin_is_a_complete_rust_analyzer_formatter() {
     let directory = project();
-    let source = "async fn f(){let x=view!{<div><span>\"hello\"</span></div>};}\n";
+    let source =
+        "async fn f(){let x=view!{<div><span>\"hello\"</span></div>}.into_any_element();}\n";
     let first = run(
         directory.path(),
         &["format", "--stdin", "--edition", "2024", "--emit", "stdout"],

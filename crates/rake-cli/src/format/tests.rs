@@ -81,7 +81,7 @@ fn malformed_invocation_is_untouched_and_siblings_still_format() {
 
 #[test]
 fn unquoted_text_keeps_lowered_whitespace() {
-    let input = r#"fn main() { view! { <p>Hello <strong>world</strong>! " literal " end</p> }; }"#;
+    let input = r#"fn main() { view! { <p>Hello <strong>world</strong>! " literal " end if ready {Hello <strong>world</strong>!} match choice { _ => {Good <em>day</em>!} }</p> }; }"#;
     let output = formatted(input);
     fn texts(source: &str) -> Vec<String> {
         fn collect(nodes: &[rake_view_syntax::Node], output: &mut Vec<String>) {
@@ -89,6 +89,20 @@ fn unquoted_text_keeps_lowered_whitespace() {
                 match node {
                     rake_view_syntax::Node::Text(text) => output.push(text.value()),
                     rake_view_syntax::Node::Element(element) => collect(&element.children, output),
+                    rake_view_syntax::Node::If {
+                        then_nodes,
+                        else_nodes,
+                        ..
+                    } => {
+                        collect(then_nodes, output);
+                        collect(else_nodes, output);
+                    }
+                    rake_view_syntax::Node::Match { arms, .. } => {
+                        for arm in arms {
+                            collect(&arm.children, output);
+                        }
+                    }
+                    rake_view_syntax::Node::For { children, .. } => collect(children, output),
                     _ => {}
                 }
             }
@@ -238,7 +252,7 @@ fn deeply_indented_rust_keeps_indentation_when_rustfmt_cannot_fit_a_line() {
 
 #[test]
 fn nested_invalid_views_are_reported_and_other_macro_bodies_are_opaque() {
-    let source = "fn main() { rsx!{<div  id = \"keep\"/>}; view! { <div>{view! { <span>\n        </div> }}</div> }; }";
+    let source = "fn main() { rsx!{<div  id = \"keep\"/>}; view! { <div>{(view! { <span>\n        </div> }, view!{<div><span/></div>})}</div> }; }";
     let mut rustfmt = Rustfmt::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
     let (output, problems) = format_source(source, &mut rustfmt).unwrap();
     assert_eq!(problems.len(), 1);
@@ -247,6 +261,10 @@ fn nested_invalid_views_are_reported_and_other_macro_bodies_are_opaque() {
         "{output}"
     );
     assert!(output.contains("rsx!{<div  id = \"keep\"/>}"), "{output}");
+    assert!(
+        output.contains("<div>\n"),
+        "valid nested sibling did not format: {output}"
+    );
     assert!(source::equivalent(source, &output));
 }
 
@@ -268,4 +286,11 @@ fn expected_errors(source: &str) -> usize {
         .into_iter()
         .map(errors)
         .sum()
+}
+
+#[test]
+fn markup_property_comments_keep_their_exact_bytes() {
+    formatted(
+        "fn main() { view! { <Panel heading= // before brace   \n { // before child   \n <h1>\"Title\"</h1> // after child   \n /* before close */ }>\"body\"</Panel> }; }",
+    );
 }

@@ -83,8 +83,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
         if let Some(edition) = edition {
             rustfmt.edition = edition;
         }
-        let rust = rustfmt.run(&source, rustfmt.width)?;
-        let (output, problems) = markup::format_source(&rust, &mut rustfmt)?;
+        let (output, problems) = format_file(&source, &mut rustfmt)?;
         std::io::stdout().write_all(output.as_bytes())?;
         report(Path::new("<stdin>"), &problems);
         return Ok(!problems.is_empty());
@@ -117,6 +116,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
         resolved.dedup();
         resolved
     };
+    let inputs = paths
+        .iter()
+        .map(fs::read_to_string)
+        .collect::<std::io::Result<Vec<_>>>()?;
     let mut failed = false;
     if project {
         let mut cargo = Command::new("cargo");
@@ -135,15 +138,17 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
             failed = true;
         }
     }
-    for path in paths {
+    for (path, before_cargo) in paths.into_iter().zip(inputs) {
         let original = fs::read_to_string(&path)?;
+        let input = source::preserve_views(&before_cargo, &original);
         let mut rustfmt = Rustfmt::load(path.parent().ok_or("file has no parent directory")?)?;
-        let rust = if project {
-            original.clone()
+        let has_views = crate::view_source::invocations(&input)
+            .is_ok_and(|invocations| !invocations.is_empty());
+        let (formatted, problems) = if !project || has_views {
+            format_file(&input, &mut rustfmt)?
         } else {
-            rustfmt.run(&original, rustfmt.width)?
+            markup::format_source(&input, &mut rustfmt)?
         };
-        let (formatted, problems) = markup::format_source(&rust, &mut rustfmt)?;
         report(&path, &problems);
         failed |= !problems.is_empty();
         if formatted != original {
@@ -188,4 +193,17 @@ fn diff(path: &Path, original: &str, formatted: &str) -> Result<()> {
     }
     std::io::stdout().write_all(&output.stdout)?;
     Ok(())
+}
+
+fn format_file(source: &str, rustfmt: &mut Rustfmt) -> Result<(String, Vec<Problem>)> {
+    let mut current = source.to_owned();
+    for _ in 0..8 {
+        let rust = rustfmt.run(&current, rustfmt.width)?;
+        let (formatted, problems) = markup::format_source(&rust, rustfmt)?;
+        if formatted == current {
+            return Ok((formatted, problems));
+        }
+        current = formatted;
+    }
+    Err("Rust and markup formatting did not converge; file left unchanged".into())
 }

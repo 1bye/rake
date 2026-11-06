@@ -41,10 +41,8 @@ impl Rustfmt {
         };
         let width = number("max_width", 100);
         let tab_spaces = number("tab_spaces", 4);
-        if width < 20 || tab_spaces == 0 {
-            return Err(
-                "rustfmt max_width must be at least 20 and tab_spaces must be positive".into(),
-            );
+        if width == 0 || tab_spaces == 0 {
+            return Err("rustfmt max_width and tab_spaces must be positive".into());
         }
         let mut edition = value
             .get("edition")
@@ -162,7 +160,7 @@ impl Rustfmt {
             .width
             .saturating_sub(indent)
             .saturating_add(self.tab_spaces)
-            .max(20);
+            .max(1);
         let formatted = self.run(&wrapped, width)?;
         let file = syn::parse_file(&formatted)?;
         let syn::Item::Fn(function) = &file.items[0] else {

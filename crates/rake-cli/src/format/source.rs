@@ -185,6 +185,9 @@ pub(super) fn compact(source: &str, tight: bool) -> String {
         result.push_str(atom.text);
         previous = Some(atom);
     }
+    if previous.is_some_and(|atom| atom.text.starts_with("//")) {
+        result.push('\n');
+    }
     result
 }
 
