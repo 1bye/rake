@@ -288,53 +288,9 @@ behavior. Keyboard events require the appropriate focus path.
 
 ## Formatting
 
-Rustfmt formats surrounding Rust but does not format `view!` bodies. Once a tag
-has more than about three attributes, put one attribute on each line. Extract
-long styling closures and listeners into named bindings or methods. A named style
-closure may need a GPUI builder type annotation when Rust cannot infer it.
-
-For example, this inspector-style control is difficult to scan:
-
-```rust
-# use rake::gpui::{self, IntoElement};
-# fn dense(selected: bool) -> impl IntoElement {
-rake::view! {
-    <button id="details" class="px-3 rounded-md" aria-label="Show details" style={|s| s.h(gpui::px(28.)).bg(gpui::rgb(if selected { 0x365849 } else { 0x22323d })).hover(|s| s.bg(gpui::rgb(0x526857)))} on:click={|_, _, _| {}}>"Details"</button>
-}
-# }
-```
-
-The same control can keep its layout, appearance and handler easy to find:
-
-```rust
-# use rake::gpui::{self, prelude::*};
-# fn formatted(selected: bool) -> impl IntoElement {
-let details_style = move |s: gpui::Stateful<gpui::Div>| {
-    s.h(gpui::px(28.))
-        .bg(gpui::rgb(if selected { 0x365849 } else { 0x22323d }))
-        .hover(|s| s.bg(gpui::rgb(0x526857)))
-};
-let show_details = |_: &gpui::ClickEvent, _: &mut gpui::Window, _: &mut gpui::App| {};
-
-rake::view! {
-    <button
-        id="details"
-        class="px-3 rounded-md"
-        aria-label="Show details"
-        style={details_style}
-        on:click={show_details}
-    >
-        "Details"
-    </button>
-}
-# }
-```
-
-For stateful listeners, a binding such as `let save = cx.listener(Self::save);`
-keeps GPUI's typed callback context. Extract widgets into typed components when
-they have reusable structure; keep their retained entities and handles in their
-owner. A dedicated formatter for macro bodies, similar to `leptosfmt`, is a
-follow-up outside this plan.
+Run `rake format` after editing Rust or `view!` markup. See
+[Formatting Rust and view markup](format.md) for layout rules, preservation
+guarantees, check mode, and rust-analyzer setup.
 
 ## Paragraph and heading composition, wrapping and truncation
 

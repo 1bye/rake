@@ -225,6 +225,9 @@ an ordinary feature declaration would incorrectly label development-only use as
 a release mistake. A future release-aware check needs a defined build invocation
 or a resolved feature graph, with tests for actual release selection.
 
-The deep/type-aware tier, `--fix`, `--guide`/skill generation, style-closure and
+The deep/type-aware tier, `--fix`, skill generation, style-closure and
 hard-coded-colour rules, broader loop data flow and workspace defaults remain
 follow-ups. Linting is not hooked into `rake dev`, DevTools or CI.
+
+Run [rake format](format.md) after editing, then run `rake lint`.
+Use `rake lint --guide` for the agent workflow and editor setup.
