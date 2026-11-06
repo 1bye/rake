@@ -305,7 +305,9 @@ impl Counter {
                     }
                     footer={
                         Some(rake::view! {
-                            <p class="text-xs">Card header and footer are typed slots; its body contains retained history views.</p>
+                            <p class="text-xs">
+                                Card header and footer are typed slots; its body contains retained history views.
+                            </p>
                         }.into_any_element())
                     }
                 >
@@ -320,8 +322,8 @@ impl Counter {
                         }
                         highlighted={self.locked}
                     />
-                    <p class="text-3xl font-bold">Count: {self.count.to_string()}
-                    </p>
+                    <p class="text-3xl font-bold">Count: {self.count.to_string()}</p>
+
                     if self.locked {
                         <p>Counter locked. Increment and Reset are disabled.</p>
                     } else if self.count == 0 {
@@ -329,6 +331,7 @@ impl Counter {
                     } else {
                         <p>You have counted {self.count.to_string()} times.</p>
                     }
+
                     <p
                         class="text-sm"
                         wrap={true}
@@ -343,6 +346,7 @@ impl Counter {
                         <span class="font-semibold">Single-line title: </span>
                         A deliberately long document title that demonstrates truncation without splitting the text into separate layout elements or cutting through UTF-8 characters.
                     </p>
+
                     <div class="flex flex-row flex-wrap gap-2">
                         <button
                             id="increment"
@@ -379,7 +383,11 @@ impl Counter {
                                 |_, window, cx| window.dispatch_action(Box::new(ToggleHistory), cx)
                             }
                         >
-                            if self.show_history { Hide history } else { Show history }
+                            if self.show_history {
+                                Hide history
+                            } else {
+                                Show history
+                            }
                         </button>
                         <OverlayAnchor state={self.actions_anchor.clone()}>
                             <button
@@ -418,7 +426,11 @@ impl Counter {
                                 |_, window, cx| window.dispatch_action(Box::new(ToggleLocked), cx)
                             }
                         >
-                            if self.locked { Unlock counter } else { Lock counter }
+                            if self.locked {
+                                Unlock counter
+                            } else {
+                                Lock counter
+                            }
                         </button>
                     </div>
                     <button
@@ -443,6 +455,7 @@ impl Counter {
                     <p class="text-xs">
                         "⌘/Ctrl+I: increment · Esc: reset · H: history · R: reorder · L: lock"
                     </p>
+
                     if self.show_history {
                         <section class="flex flex-col gap-2">
                             <div class="flex flex-row items-center justify-between">
@@ -460,7 +473,9 @@ impl Counter {
                                     Reverse order
                                 </button>
                             </div>
-                            <p class="text-xs">Click a row, then press R: its state and focus follow it. B activates the focused row.</p>
+                            <p class="text-xs">
+                                Click a row, then press R: its state and focus follow it. B activates the focused row.
+                            </p>
                             if self.history.is_empty() {
                                 <p>No entries yet.</p>
                             }
@@ -480,6 +495,7 @@ impl Counter {
                             </ul>
                         </section>
                     }
+
                     {
                         div()
                             .text_xs()
@@ -505,7 +521,9 @@ impl Render for Counter {
                                 .update(cx, |documents, cx| documents.jump(4_999, window, cx));
                         })
                     }
-                >Jump to 5,000</button>
+                >
+                    Jump to 5,000
+                </button>
                 <button
                     class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
                     on:click={
@@ -513,7 +531,9 @@ impl Render for Counter {
                             this.documents_dialog.close(window, cx);
                         })
                     }
-                >Close</button>
+                >
+                    Close
+                </button>
             </div>
         }
         .into_any_element();
@@ -531,7 +551,9 @@ impl Render for Counter {
                                 this.increment(&Increment, window, cx);
                             })
                         }
-                    >Increment counter</button>
+                    >
+                        Increment counter
+                    </button>
                     <button
                         class="px-3 py-2 rounded-md border border-line focus-visible:bg-accent"
                         on:click={
@@ -549,7 +571,9 @@ impl Render for Counter {
                                 this.actions_popup.close(window, cx);
                             })
                         }
-                    >Close actions</button>
+                    >
+                        Close actions
+                    </button>
                 </Popover>
                 <Dialog
                     state={self.documents_dialog.clone()}

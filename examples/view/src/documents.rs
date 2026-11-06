@@ -115,7 +115,9 @@ impl Render for Documents {
                         .flex_shrink_0()
                     }
                 </section>
-                <p class="text-xs">Scroll or select a row, then use {"↑/↓"}, Home or End. Selection and scroll survive closing this dialog.</p>
+                <p class="text-xs">
+                    Scroll or select a row, then use {"↑/↓"}, Home or End. Selection and scroll survive closing this dialog.
+                </p>
             </section>
         }
     }

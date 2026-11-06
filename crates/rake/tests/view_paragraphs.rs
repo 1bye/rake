@@ -149,8 +149,8 @@ fn inline_literal_branches_keep_run_attribute_evaluation_order() {
                     }
                 }
             >
-            Inline branch
-        </span>
+                Inline branch
+            </span>
         </h2>
     };
 
@@ -265,12 +265,16 @@ fn unquoted_text_composes_with_inline_markup_expressions_and_control_flow() {
             back, {name}.
             if true {
                 <em> Good</em>
-            } else { Unreachable }
+            } else {
+                Unreachable
+            }
             match selected {
                 Some(label) => {
                     <span>{label}</span>
                 }
-                _ => { guest }
+                _ => {
+                    guest
+                }
             }
             for word in ["one", "two"] {
                 <span>{word}</span>

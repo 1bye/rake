@@ -169,10 +169,7 @@ impl Render for Demo {
                     </button>
                 </div>
                 if self.components {
-                    <div id="kit-buttons" class="flex flex-row gap-3">
-                        {button}
-                        {dialog}
-                    </div>
+                    <div id="kit-buttons" class="flex flex-row gap-3">{button}{dialog}</div>
                     <div id="kit-table-frame" class="w-full">{table}</div>
                     <p>
                         "Kit boundaries expose geometry, construction sites and explicit focus; their private descendants remain opaque."

@@ -1154,7 +1154,7 @@ impl ElementsView {
                                 </span>
                             }
                             if row.collapsed {
-                                <span class="text-tag">">"</span>
+                                <span class="text-tag"> ">"</span>
                                 <span class="px-[3px] text-muted">"…"</span>
                                 <span class="text-tag">{format!("</{kind}>")}</span>
                             } else {
