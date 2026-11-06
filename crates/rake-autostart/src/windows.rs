@@ -181,7 +181,9 @@ pub fn remove_installed(app_id: &str, executable: &Path) -> Result<(), Error> {
         return Ok(());
     };
     let utf16 = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .take_while(|ch| *ch != 0)
         .collect::<Vec<_>>();
