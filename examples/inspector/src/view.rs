@@ -530,7 +530,7 @@ impl ElementsView {
 
     fn detail_button(&self, tab: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
-            <button id={format!("detail-{tab}")} class={if self.detail_tab == tab { "px-3 h-full border-accent hover:bg-hover text-accent border-b-[2px]" } else { "px-3 h-full border-accent hover:bg-hover text-muted border-b-0" }} style={control}
+            <button id={format!("detail-{tab}")} aria-label={tab} class={if self.detail_tab == tab { "px-3 h-full border-accent hover:bg-hover text-accent border-b-[2px]" } else { "px-3 h-full border-accent hover:bg-hover text-muted border-b-0" }} style={control}
                 on:click={cx.listener(move |this, _, _, cx| { this.detail_tab = tab; cx.notify(); })}>{tab}</button>
         }.inspect_with(|| format!("inspector.tab.{tab}"))
     }
@@ -1251,7 +1251,7 @@ impl Render for ElementsView {
                         <div id={format!("crumb-{id}")} class="flex flex-row items-center h-full shrink-0">
                             if stale { <span class="px-2 text-muted whitespace-nowrap">{label.clone()}</span> }
                             else {
-                                <button id={format!("select-crumb-{id}")} class={if model.selected.as_ref() == Some(id) { "px-2 h-full whitespace-nowrap hover:bg-field bg-field" } else { "px-2 h-full whitespace-nowrap hover:bg-field bg-bar" }} style={control}
+                                <button id={format!("select-crumb-{id}")} aria-label={label.clone()} class={if model.selected.as_ref() == Some(id) { "px-2 h-full whitespace-nowrap hover:bg-field bg-field" } else { "px-2 h-full whitespace-nowrap hover:bg-field bg-bar" }} style={control}
                                     on:click={ { let id = id.clone(); cx.listener(move |this, _, window, cx| this.select(&id, true, window, cx)) } }>{label.clone()}</button>
                             }
                             {icon(Icon::Right, colors.muted)}
@@ -1308,7 +1308,7 @@ impl Render for ElementsView {
                                         <button id="undo-style" disabled={stale} style={control} on:click={cx.listener(|this, _, _, cx| { this.edit_style(rake::inspection::StyleEdit::Undo); cx.notify(); })}>"Undo"</button>
                                     </div>
                                     for declaration in &element.style_overrides {
-                                        <button id={format!("override-{}", declaration.property)} disabled={stale} style={control} on:click={{ let mut declaration = declaration.clone(); declaration.enabled = !declaration.enabled;
+                                        <button id={format!("override-{}", declaration.property)} aria-label={format!("{}: {}; ({})", declaration.property, declaration.value, if declaration.enabled { "enabled" } else { "disabled" })} disabled={stale} style={control} on:click={{ let mut declaration = declaration.clone(); declaration.enabled = !declaration.enabled;
                                             cx.listener(move |this, _, _, cx| { this.edit_style(rake::inspection::StyleEdit::Set { declaration: declaration.clone() }); cx.notify(); })
                                         }}>{format!("{} {}: {};", if declaration.enabled { "☑" } else { "☐" }, declaration.property, declaration.value)}</button>
                                     }
@@ -1386,9 +1386,11 @@ impl Render for ElementsView {
                         }
                         if current_tab == "Events" {
                             for (index, handler) in element.handlers.iter().enumerate() {
+                                // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                 <div id={format!("handler-{index}")} class="flex flex-col px-3 py-2 border-b-1 border-line font-code text-[11px]">
                                     <p>{format!("{} · {}", handler.name, handler.origin)}</p>
-                                    <button id={format!("open-handler-source-{index}")} disabled={!can_reveal} class="text-muted" style={control}
+                                    // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
+                                    <button id={format!("open-handler-source-{index}")} aria-label={format!("{}:{}:{} (open {} handler source)", handler.source.file, handler.source.line, handler.source.column, handler.name)} disabled={!can_reveal} class="text-muted" style={control}
                                         on:click={cx.listener(move |this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Handler { index })); cx.notify(); })}>{format!("{}:{}:{}", handler.source.file, handler.source.line, handler.source.column)}</button>
                                 </div>
                             }
@@ -1405,10 +1407,12 @@ impl Render for ElementsView {
                             if let Some(view) = &element.view {
                                 {property("Authored tag", view.tag.clone(), colors)}
                                 for (index, style) in view.style_sources.iter().enumerate() {
+                                    // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                     <div id={format!("style-source-{index}")} class="px-3 py-2 border-b-1 border-line font-code text-[11px]">
                                         <p>{format!("{} · {}", style.scope, style.attribute)}</p>
                                         <p class="text-muted">{style.expression.clone()}</p>
-                                        <button id={format!("open-style-source-{index}")} disabled={!can_reveal} class="text-muted" style={control}
+                                        // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
+                                        <button id={format!("open-style-source-{index}")} aria-label={format!("{}:{}:{} (open {} {} source)", style.source.file, style.source.line, style.source.column, style.scope, style.attribute)} disabled={!can_reveal} class="text-muted" style={control}
                                             on:click={cx.listener(move |this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Style { index })); cx.notify(); })}>{format!("{}:{}:{}", style.source.file, style.source.line, style.source.column)}</button>
                                     </div>
                                 }
@@ -1469,7 +1473,7 @@ impl Render for ElementsView {
                     <span class="flex-1"/>
                     <span class={if model.disconnected { "w-[6px] h-[6px] rounded-full bg-muted" } else if self.config_error.is_some() || model.error.is_some() { "w-[6px] h-[6px] rounded-full bg-property" } else { "w-[6px] h-[6px] rounded-full bg-status-success" }}/>
                     <span>{status}</span>
-                    <button id="disconnect" class="h-full px-[5px] hover:text-ink" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
+                    <button id="disconnect" aria-label={if model.disconnected { "Reconnect" } else { "Disconnect" }} class="h-full px-[5px] hover:text-ink" style={control} on:click={cx.listener(|this, _, _, cx| { let mut model = this.model.borrow_mut(); model.disconnected = !model.disconnected; let runtime = model.runtime; model.select_runtime(runtime); cx.notify(); })}>{if model.disconnected { "Reconnect" } else { "Disconnect" }}</button>
                 </div>
                 if let Some(position) = self.context_menu {
                     <div id="element-actions-menu" role={gpui::accesskit::Role::Menu} aria-label="Element actions" focus={&self.context_focus}
@@ -1477,7 +1481,7 @@ impl Render for ElementsView {
                         style={|s| s.left(position.x).top(position.y).occlude()}
                         on:mouse-down-out={cx.listener(|this, _, _, cx| { this.context_menu = None; cx.notify(); })}>
                         for (index, (action, label)) in TREE_ACTIONS.iter().enumerate() {
-                            <button id={format!("tree-action-{action}")} role={gpui::accesskit::Role::MenuItem} tabindex={-1}
+                            <button id={format!("tree-action-{action}")} aria-label={*label} role={gpui::accesskit::Role::MenuItem} tabindex={-1}
                                 disabled={ !self.tree_action_enabled(action) }
                                 class={if index == self.context_index { "px-3 py-1 justify-start bg-field" } else { "px-3 py-1 justify-start hover:bg-field" }} style={control}
                                 on:hover={cx.listener(move |this, hovered: &bool, _, cx| { if *hovered { this.context_index = index; cx.notify(); } })}
@@ -1488,7 +1492,7 @@ impl Render for ElementsView {
                 if self.show_targets {
                     <section id="target-menu" class="flex flex-col p-1 border absolute top-[32px] right-[6px] w-[490px] max-w-[100%] max-h-[220px] overflow-y-scroll bg-background border-line shadow-lg">
                         for instance in &model.instances {
-                            <button id={format!("runtime-{}", instance.info.runtime_id)} class="px-3 py-2 justify-start text-[11px] hover:bg-hover" style={control} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
+                            <button id={format!("runtime-{}", instance.info.runtime_id)} aria-label={format!("{} · {} {}", instance.application_id, instance.info.platform, instance.info.runtime_id)} class="px-3 py-2 justify-start text-[11px] hover:bg-hover" style={control} on:click={ { let runtime = instance.info.runtime_id; cx.listener(move |this, _, _, cx| this.select_runtime(runtime, cx)) } }>{format!("{} · {}\n{}", instance.application_id, instance.info.platform, instance.info.runtime_id)}</button>
                         }
                         if model.instances.is_empty() { <p class="p-3">"No runtimes advertised by this broker."</p> }
                     </section>

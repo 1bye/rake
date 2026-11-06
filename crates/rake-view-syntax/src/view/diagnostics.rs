@@ -8,7 +8,11 @@ use super::tag::{HEADING_CONTENT, PARAGRAPH_CONTENT, Tag};
 use super::{Attribute, AttributeValue, Diagnostics, Element, Node, View, require_loop_ids};
 
 impl View {
-    pub(crate) fn expand_resilient(mut self, rake: &TokenStream) -> syn::Result<TokenStream> {
+    /// Lowers a view, collecting local errors while preserving IDE type context.
+    ///
+    /// # Errors
+    /// Returns unrecoverable lowering errors; recoverable errors become compile errors.
+    pub fn expand_resilient(mut self, rake: &TokenStream) -> syn::Result<TokenStream> {
         let mut diagnostics = Diagnostics::default();
 
         self.0.recover(rake, None, &mut diagnostics);

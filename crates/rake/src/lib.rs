@@ -54,6 +54,8 @@ macro_rules! early_startup {
 
 pub mod control;
 
+pub mod crash;
+
 #[cfg(all(feature = "devtools-memory", unix))]
 pub mod memory;
 

@@ -31,11 +31,11 @@ impl Render for Preview {
                 <h1 class="text-2xl">"Native macOS preview"</h1>
                 <p>"The translucent area uses the real macOS window backdrop."</p>
                 <div class="flex gap-3">
-                    <button id="preview-increment" class="px-4 py-2 rounded-md" style={|s| s.bg(gpui::rgb(0x2857a4))}
+                    <button id="preview-increment" aria-label={format!("Clicks: {count}")} class="px-4 py-2 rounded-md" style={|s| s.bg(gpui::rgb(0x2857a4))}
                         on:click={cx.listener(|this, _, _, cx| { this.count += 1; cx.notify(); })}>
                         {format!("Clicks: {count}")}
                     </button>
-                    <button id="preview-blur" class="px-4 py-2 rounded-md" style={|s| s.bg(gpui::rgb(0x2857a4))}
+                    <button id="preview-blur" aria-label={if blurred { "Backdrop: native blur" } else { "Backdrop: opaque" }} class="px-4 py-2 rounded-md" style={|s| s.bg(gpui::rgb(0x2857a4))}
                         on:click={cx.listener(|this, _, window, cx| {
                             this.blurred = !this.blurred;
                             window.set_background_appearance(if this.blurred {
