@@ -378,6 +378,14 @@ async fn start<const MENU: bool>(
     Ok(Rc::new(handle))
 }
 
+fn stopped(online: &AtomicBool, sink: &Sink) -> Error {
+    if online.swap(false, Ordering::AcqRel) {
+        sink.send(EventKind::HostChanged(false), None, Input::default());
+    }
+
+    Error::Stopped
+}
+
 fn update<const MENU: bool>(
     handle: &Rc<ksni::Handle<Model<MENU>>>,
     revision: u64,
@@ -392,9 +400,7 @@ fn update<const MENU: bool>(
     Box::pin(async move {
         let icons = icons(spec.menu.as_ref())?;
         if handle.is_closed() {
-            online.store(false, Ordering::Release);
-            sink.send(EventKind::HostChanged(false), None, Input::default());
-            return Err(Error::Stopped);
+            return Err(stopped(&online, &sink));
         }
         // Upstream acknowledges local model processing, but does not expose
         // property/menu signal export errors. Never describe this as a wire ack.
@@ -408,9 +414,7 @@ fn update<const MENU: bool>(
             })
             .await;
         if updated.is_none() || handle.is_closed() {
-            online.store(false, Ordering::Release);
-            sink.send(EventKind::HostChanged(false), None, Input::default());
-            return Err(Error::Stopped);
+            return Err(stopped(&online, &sink));
         }
         Ok(())
     })
@@ -642,4 +646,37 @@ pub(super) async fn probe() -> Result<(), Box<dyn std::error::Error>> {
     watcher.close().await?;
     connection.close().await?;
     Ok(())
+}
+
+#[cfg(all(test, feature = "sni-tests", unix))]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+
+    #[test]
+    fn repeated_stopped_updates_emit_host_loss_only_on_transition() {
+        let online = AtomicBool::new(true);
+        let sink = crate::host::probe_sink("host-loss");
+
+        for _ in 0..3 {
+            assert!(matches!(stopped(&online, &sink), Error::Stopped));
+        }
+
+        assert!(!online.load(Ordering::Acquire));
+        let event = crate::host::probe_next(&sink)
+            .now_or_never()
+            .expect("host loss must be queued")
+            .expect("event sink must remain open");
+        assert_eq!(event.kind, EventKind::HostChanged(false));
+        assert!(crate::host::probe_next(&sink).now_or_never().is_none());
+
+        online.store(true, Ordering::Release);
+        assert!(matches!(stopped(&online, &sink), Error::Stopped));
+        let event = crate::host::probe_next(&sink)
+            .now_or_never()
+            .expect("a later host loss must be queued")
+            .expect("event sink must remain open");
+        assert_eq!(event.kind, EventKind::HostChanged(false));
+        assert!(crate::host::probe_next(&sink).now_or_never().is_none());
+    }
 }

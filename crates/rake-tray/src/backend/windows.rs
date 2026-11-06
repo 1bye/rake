@@ -94,7 +94,7 @@ impl WindowState {
             }
         })?;
         if !registered.online && identity == Identity::ExplicitGuid {
-            self.sink.send(EventKind::Diagnostic("explicit tray GUID was rejected; identity is preserved while waiting for the Shell".into()), None, Input::default());
+            self.sink.send(EventKind::Diagnostic("Shell did not accept the tray icon (Explorer may not be running, or the explicit GUID is bound to a different executable path); waiting for TaskbarCreated".into()), None, Input::default());
         }
         self.online.set(registered.online);
         Ok(registered.online)
@@ -142,9 +142,11 @@ unsafe extern "system" fn window_proc(
                 let mut data = state.data.get();
                 let old = data.hIcon;
                 data.hIcon = icon;
-                // SAFETY: Copies the new icon before releasing the old cache handle.
+                // SAFETY: Online Shell copies the new icon; the old cache handle is owned here.
                 unsafe {
-                    Shell_NotifyIconW(NIM_MODIFY, &data);
+                    if state.online.get() {
+                        Shell_NotifyIconW(NIM_MODIFY, &data);
+                    }
                     if !old.is_null() {
                         DestroyIcon(old);
                     }
@@ -460,10 +462,12 @@ impl Item {
             }
         }
         menu.show(self.hwnd, position.x, position.y)?;
-        let data = self.state.data.get();
-        // SAFETY: Restore notification-area keyboard focus using our live identity.
-        unsafe {
-            Shell_NotifyIconW(NIM_SETFOCUS, &data);
+        if self.state.online.get() {
+            let data = self.state.data.get();
+            // SAFETY: Restore notification-area keyboard focus using our live identity.
+            unsafe {
+                Shell_NotifyIconW(NIM_SETFOCUS, &data);
+            }
         }
         Ok(())
     }
@@ -507,6 +511,9 @@ impl Item {
         let result = (|| {
             if self.state.removed.get() {
                 return Err(Error::Removed);
+            }
+            if !self.state.online.get() {
+                return Err(Error::HostUnavailable);
             }
             let custom = match &balloon.icon {
                 BalloonIcon::Custom(image) => Some(make_icon(image, self.hwnd)?),
@@ -616,6 +623,7 @@ impl Item {
 
     pub(crate) fn shutdown(&self) -> Request<()> {
         if !self.state.removed.replace(true) {
+            // Deleting an offline icon is harmless if the Shell has no registration.
             // SAFETY: Same native identity; repeated deletion is prevented.
             unsafe {
                 Shell_NotifyIconW(NIM_DELETE, &self.state.data.get());
