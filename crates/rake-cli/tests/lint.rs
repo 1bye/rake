@@ -206,3 +206,17 @@ fn compile_fail_fixtures_and_project_excludes_do_not_fail_the_command() {
     assert_eq!(report["diagnostics"], serde_json::json!([]));
     assert_eq!(report["denied"], false);
 }
+
+#[test]
+fn agent_guide_recommends_formatting_without_requiring_a_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["lint", "--guide"])
+        .current_dir(directory.path())
+        .env("PATH", "")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("run rake format, then rake lint"));
+}

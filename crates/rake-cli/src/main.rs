@@ -12,11 +12,13 @@ mod source;
 mod terminal;
 
 mod distribution;
+mod format;
 mod lint;
 mod native_commands;
 mod release;
 mod scaffold;
 mod update_key;
+mod view_source;
 
 fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
@@ -31,6 +33,20 @@ fn main() {
     }
 
     let json = arguments.iter().any(|argument| argument == "--json");
+
+    if arguments
+        .first()
+        .is_some_and(|command| matches!(command.as_str(), "format" | "fmt"))
+    {
+        match format::run(&arguments[1..]) {
+            Ok(false) => return,
+            Ok(true) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("rake: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     if arguments.first().is_some_and(|command| command == "lint") {
         match lint::run(&arguments[1..]) {

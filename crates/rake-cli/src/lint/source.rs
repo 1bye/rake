@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use proc_macro2::{Span, TokenStream, TokenTree};
+use proc_macro2::{Span, TokenStream};
 use rake_view_syntax::{AttributeValue, Element, Node, View};
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
@@ -150,26 +150,9 @@ impl Checker<'_> {
     // Other macros are opaque to syn. Inspect their token groups for nested view!
     // invocations, still delegating all markup parsing to View.
     fn nested_tokens(&mut self, tokens: TokenStream) {
-        let tokens: Vec<_> = tokens.into_iter().collect();
-        let mut position = 0;
-
-        while position < tokens.len() {
-            if position + 2 < tokens.len()
-                && matches!(&tokens[position], TokenTree::Ident(name) if name == "view")
-                && matches!(&tokens[position + 1], TokenTree::Punct(mark) if mark.as_char() == '!')
-                && let TokenTree::Group(group) = &tokens[position + 2]
-            {
-                self.view(group.stream());
-                position += 3;
-                continue;
-            }
-
-            if let TokenTree::Group(group) = &tokens[position] {
-                self.nested_tokens(group.stream());
-            }
-
-            position += 1;
-        }
+        crate::view_source::nested_views(tokens, &mut |invocation| {
+            self.view(invocation.tokens);
+        });
     }
 
     fn view(&mut self, tokens: TokenStream) {

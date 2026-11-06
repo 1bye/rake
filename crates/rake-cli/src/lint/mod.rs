@@ -80,6 +80,7 @@ impl Diagnostic {
 
 pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     let mut json = false;
+    let mut guide = false;
     let mut explain = None;
     let mut path = None;
     let mut args = arguments.iter();
@@ -87,10 +88,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--json" => json = true,
+            "--guide" => guide = true,
             "--explain" => explain = Some(args.next().ok_or("--explain requires a rule ID")?),
             "--help" | "-h" => {
                 println!(
-                    "Usage: rake lint [PATH] [--json]\n       rake lint --explain <ID> [--json]"
+                    "Usage: rake lint [PATH] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide [--json]"
                 );
 
                 return Ok(false);
@@ -101,6 +103,22 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
             _ if path.is_none() => path = Some(PathBuf::from(argument)),
             _ => return Err("lint accepts only one project path".into()),
         }
+    }
+
+    if guide {
+        if path.is_some() || explain.is_some() {
+            return Err("--guide cannot be combined with a project path or --explain".into());
+        }
+        let guide = "After editing Rust or view! markup, run rake format, then rake lint.\nUse rake format --check in CI. Configure rust-analyzer with\n[rustfmt]\noverrideCommand = [\"rake\", \"format\", \"--stdin\"]\nSee docs/format.md for formatting rules and docs/lint.md for lint rules.";
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"schema_version": 1, "guide": guide})
+            );
+        } else {
+            println!("{guide}");
+        }
+        return Ok(false);
     }
 
     if let Some(id) = explain {
@@ -270,7 +288,15 @@ fn check_project(root: &Path) -> Result<Report> {
         denied: false,
     };
 
-    scan_directory(root, root, &Config::default(), &mut report)?;
+    scan_directory(root, &Config::default(), &mut |path, config| {
+        let source = fs::read_to_string(path)?;
+        let relative = path.strip_prefix(root)?;
+        report
+            .diagnostics
+            .extend(check_source(relative, &source, &config.levels));
+        report.files_checked += 1;
+        Ok(())
+    })?;
     report.diagnostics.sort_by(|left, right| {
         (
             &left.file,
@@ -291,10 +317,9 @@ fn check_project(root: &Path) -> Result<Report> {
 }
 
 fn scan_directory(
-    root: &Path,
     directory: &Path,
     inherited: &Config,
-    report: &mut Report,
+    visit: &mut impl FnMut(&Path, &Config) -> Result<()>,
 ) -> Result<()> {
     let mut local;
     let config = if directory.join("Cargo.toml").is_file() {
@@ -326,19 +351,13 @@ fn scan_directory(
                 entry.file_name().to_str(),
                 Some("target" | ".git" | "node_modules")
             ) {
-                scan_directory(root, &path, config, report)?;
+                scan_directory(&path, config, visit)?;
             }
         } else if kind.is_file()
             && path.extension().is_some_and(|extension| extension == "rs")
             && !path.with_extension("stderr").is_file()
         {
-            let source = fs::read_to_string(&path)?;
-            let relative = path.strip_prefix(root)?;
-
-            report
-                .diagnostics
-                .extend(check_source(relative, &source, &config.levels));
-            report.files_checked += 1;
+            visit(&path, config)?;
         }
     }
 
@@ -363,4 +382,14 @@ fn check_source(file: &Path, text: &str, levels: &Levels) -> Vec<Diagnostic> {
     });
 
     diagnostics
+}
+
+/// Reuse lint discovery, package excludes, and compile-fail fixture handling.
+pub(crate) fn files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    scan_directory(root, &Config::default(), &mut |path, _| {
+        files.push(path.to_owned());
+        Ok(())
+    })?;
+    Ok(files)
 }
