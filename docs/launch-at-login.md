@@ -83,8 +83,9 @@ No packaged login/logout or uninstall end-to-end qualification is claimed.
 | --- | --- |
 | devbox-ts Linux x86_64 (headless) | Real temporary-XDG filesystem round trips, idempotence, Hidden state, command escaping, AppImage selection, inode replacement, and external consumer API tests. No real user-profile writes or desktop login cycle. |
 | Linux wasm32-unknown-unknown | Core compile check; no browser runtime test. |
-| macOS | Checks pending; see PR verification table for final commands. |
-| Windows x86_64-pc-windows-msvc | Checks pending; registry calls must not run on a user's profile during verification. |
+| macOS 26.6.2 arm64, Rust 1.98.0 | Core compile, strict Clippy, 4 unit tests (all native status mappings plus portable tests), doctest, and tray-example compile passed. Read-only unbundled probe returned Unsupported with the signed-.app explanation. Signed registration/login cycles not run. |
+| Windows x86_64-pc-windows-msvc (cross-check on Mac) | Core strict Clippy with all Cargo targets passed, including registry and installed-value removal code. Portable quoting/ownership tests ran on Linux and Mac. Registry calls were compile-checked only. Broader rake-updates/Velopack cross-check blocked by ring's cross C build (missing Windows assert.h). No Windows desktop or uninstall run. |
+| Linux GPUI example | Compile blocked in yeslogic-fontconfig-sys: pkg-config is absent and fontconfig development prerequisites are unavailable. No packages installed. The example compiled on Mac. |
 | Flatpak / Snap | Sandbox paths implemented; no installed sandbox/portal end-to-end qualification. |
 
 ## Native references
