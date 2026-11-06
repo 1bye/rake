@@ -91,7 +91,7 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 | `NIM_SETVERSION`, `NOTIFYICON_VERSION_4` | Implemented version-4 negotiation on create and Explorer restoration. |
 | `NOTIFYICONDATAW.cbSize` | Internal current NOTIFYICONDATAW size. |
 | `hWnd`, `uID`, `uCallbackMessage` | Internal per-item top-level callback HWND; native ID is independent from application ID. |
-| `guidItem`, `NIF_GUID` | Implemented deterministic per-item GUID or windows::Presentation explicit UUID. |
+| `guidItem`, `NIF_GUID` | Implemented derived per-item GUID with diagnosed HWND/uID fallback after rejection; explicit UUIDs are never replaced. |
 | `uFlags`: `NIF_MESSAGE`, `NIF_ICON`, `NIF_TIP`, `NIF_STATE` | Implemented native flags and fixed buffers. |
 | `NIF_SHOWTIP` | Implemented windows::TooltipMode Standard versus Events. |
 | `hIcon` | Implemented owned HICON and premultiplied BGRA DIB conversion. |
@@ -99,7 +99,7 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 | `dwState`, `dwStateMask`, `NIS_HIDDEN` | Implemented requested hidden state; pin/overflow presentation is shell-owned. |
 | `NIS_SHAREDICON` | Not selected: independently owned icons avoid shared-handle ownership ambiguity. |
 | `uVersion` | Internal version-4 union use. |
-| `NOTIFYICONIDENTIFIER.{cbSize,hWnd,uID,guidItem}` | Internal exact native identity for queries. |
+| `NOTIFYICONIDENTIFIER.{cbSize,hWnd,uID,guidItem}` | Internal current GUID or HWND/uID identity for queries; fallback clears guidItem. |
 | `Shell_NotifyIconGetRect` | Implemented optional exact rectangle; hidden/overflow queries may fail. |
 ### 5.2 Full callback/event families relevant to tray interaction
 

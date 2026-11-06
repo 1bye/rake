@@ -89,6 +89,21 @@ registration and version-4 negotiation with the latest cached configuration.
 `Registration::WaitingForHost` continues to state that nothing is registered.
 This initial-login/Explorer-restart path still needs Windows desktop qualification.
 
+Windows binds a tray GUID to the executable path that first registers it. A
+worktree/dev build, installed copy or updater that moves the executable can
+therefore reject the same derived GUID. Rake retries that rejection once using
+`hWnd` + `uID`, emits a `Diagnostic` event/warning, and retains that mode for all
+later updates, removal, focus return, balloons, rectangle queries and shell
+recovery. GUID-based shell preferences/persistence are not promised in fallback
+mode. If neither attempt succeeds under `Wait`, the item stays offline and keeps
+the derived GUID for the next shell registration attempt.
+
+An explicit `windows::Presentation::guid` is never substituted: rejection returns
+an error under `Require`, or an offline/failure event under `Wait`. Apps that need
+strict persistent identity should supply their GUID and keep a stable executable
+path across development, installation and updates. No API bypasses Windows' path
+binding policy. Fallback behavior still needs Windows desktop qualification.
+
 ## Menus, input and commands
 
 Menu trees support actions, submenus, separators, disabled/hidden ancestors,

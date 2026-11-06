@@ -362,6 +362,9 @@ fn install_with(
                 if matches!(event.kind, EventKind::HostChanged(false)) {
                     crate::warn!(tray = %event.id, "tray host unavailable; registration is waiting");
                 }
+                if let EventKind::Diagnostic(message) = &event.kind {
+                    crate::warn!(tray = %event.id, %message, "native tray diagnostic");
+                }
                 if let EventKind::OperationFailed(message) = &event.kind {
                     crate::error!(tray = %event.id, %message, "native tray operation failed");
                 }

@@ -48,3 +48,16 @@ callbacks are ignored while offline. Host-unavailable events also log a diagnost
 Validation: cross-platform scripted Shell seam tests cover initial Wait failure,
 recovery, Require failure and negotiation rollback. Core tests and foreign Windows
 Clippy passed. Actual login/Explorer desktop qualification remains open.
+
+## 5. Derived Windows GUID fallback
+
+Retry a rejected derived GUID once using HWND/uID, and retain the selected identity
+mode through recovery and every subsequent Shell operation. NIF_GUID is cleared
+and guidItem is zero in fallback mode, including rectangle queries and balloons.
+Explicit GUIDs are never replaced. Native diagnostics report identity fallback or
+an offline explicit GUID; persistent identity capability is conditional.
+
+Validation: scripted tests cover derived retry/mode retention, explicit rejection,
+no-host retries preserving derived identity, and version-failure cleanup under the
+fallback identity. Core tests and foreign Windows Clippy passed. Actual path-bound
+GUID and Explorer behavior remain subject to Windows desktop qualification.

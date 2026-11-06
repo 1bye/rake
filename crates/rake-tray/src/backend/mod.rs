@@ -110,6 +110,7 @@ pub(crate) fn capabilities() -> Capabilities {
         }
     }
     if backend == Backend::Windows {
+        features.insert(Feature::PersistentIdentity, Support::Conditional("derived GUID rejection can select HWND/uID fallback; explicit GUIDs are never substituted"));
         features.insert(Feature::LegacyBalloon, Support::Supported);
         features.insert(
             Feature::PointerEvents,

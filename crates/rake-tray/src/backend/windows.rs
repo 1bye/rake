@@ -23,6 +23,8 @@ use windows_sys::{
     core::GUID,
 };
 
+use super::windows_registration::Identity;
+
 const NIN_KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
 const CALLBACK: u32 = WM_APP + 0x321;
 const CLASS: &[u16] = &[
@@ -32,6 +34,7 @@ const CLASS: &[u16] = &[
 struct WindowState {
     sink: Sink,
     data: Cell<NOTIFYICONDATAW>,
+    identity: Cell<Identity>,
     taskbar_created: u32,
     removed: Cell<bool>,
     online: Cell<bool>,
@@ -46,7 +49,11 @@ impl WindowState {
         self.online.set(false);
         let mut data = self.data.get();
         let mut code = 0;
-        let result = windows_registration::register(policy, |command| {
+        let guid = data.guidItem;
+        let previous_identity = self.identity.get();
+        let mut identity = previous_identity;
+        let result = windows_registration::register(policy, &mut identity, |command, mode| {
+            apply_identity(&mut data, mode, guid);
             let operation = match command {
                 Command::Add => NIM_ADD,
                 Command::SetVersion => {
@@ -63,8 +70,15 @@ impl WindowState {
             }
             accepted
         });
+        self.identity.set(identity);
+        apply_identity(&mut data, identity, guid);
         self.data.set(data);
-        let online = result.map_err(|failure| {
+        if result.as_ref().is_ok_and(|registered| registered.fell_back)
+            || (result.is_err() && identity != previous_identity)
+        {
+            self.sink.send(EventKind::Diagnostic("derived tray GUID was rejected; using HWND/uID identity (Windows GUIDs are bound to executable paths)".into()), None, Input::default());
+        }
+        let registered = result.map_err(|failure| {
             if code == 0 {
                 Error::Native {
                     operation: failure.operation(),
@@ -79,8 +93,23 @@ impl WindowState {
                 )
             }
         })?;
-        self.online.set(online);
-        Ok(online)
+        if !registered.online && identity == Identity::ExplicitGuid {
+            self.sink.send(EventKind::Diagnostic("explicit tray GUID was rejected; identity is preserved while waiting for the Shell".into()), None, Input::default());
+        }
+        self.online.set(registered.online);
+        Ok(registered.online)
+    }
+}
+
+// Shell_NotifyIcon uses NIF_GUID; GetRect uses a zero guidItem to select HWND/uID.
+// Keep both representations consistent for every later modify/delete/focus/balloon/query.
+fn apply_identity(data: &mut NOTIFYICONDATAW, identity: Identity, guid: GUID) {
+    if identity.uses_guid() {
+        data.uFlags |= NIF_GUID;
+        data.guidItem = guid;
+    } else {
+        data.uFlags &= !NIF_GUID;
+        data.guidItem = GUID::from_u128(0);
     }
 }
 
@@ -275,6 +304,18 @@ impl Item {
         let mut state = Box::new(WindowState {
             sink,
             data: Cell::new(data),
+            identity: Cell::new(
+                if spec
+                    .windows
+                    .as_ref()
+                    .and_then(|windows| windows.guid)
+                    .is_some()
+                {
+                    Identity::ExplicitGuid
+                } else {
+                    Identity::DerivedGuid
+                },
+            ),
             taskbar_created,
             removed: Cell::new(false),
             online: Cell::new(false),
@@ -472,7 +513,9 @@ impl Item {
                 _ => None,
             };
             let mut data = self.state.data.get();
-            data.uFlags = NIF_GUID | NIF_INFO | if balloon.realtime { NIF_REALTIME } else { 0 };
+            data.uFlags = (data.uFlags & NIF_GUID)
+                | NIF_INFO
+                | if balloon.realtime { NIF_REALTIME } else { 0 };
             data.szInfo.fill(0);
             data.szInfoTitle.fill(0);
             for (slot, ch) in data.szInfo.iter_mut().zip(balloon.body.encode_utf16()) {

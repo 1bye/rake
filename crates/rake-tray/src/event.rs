@@ -154,6 +154,8 @@ pub enum EventKind {
     Overflow,
     /// Admitted native work failed; the receipt retains the structured native cause.
     OperationFailed(String),
+    /// Informational native fallback or identity diagnostic; not an operation failure.
+    Diagnostic(String),
 }
 
 /// Registration-scoped native event or an unregistered startup diagnostic.
