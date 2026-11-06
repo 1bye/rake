@@ -318,7 +318,8 @@ impl Renderer<'_> {
         let short = if values.is_empty() {
             format!("{name}{close}")
         } else {
-            format!("{name} {} {close}", values.join(" ")).replace(" >", ">")
+            let separator = if close == "/>" { " " } else { "" };
+            format!("{name} {}{separator}{close}", values.join(" "))
         };
         let comments = parts.windows(2).any(|pair| {
             !self.source[self.range(&pair[0]).end..self.range(&pair[1]).start]
