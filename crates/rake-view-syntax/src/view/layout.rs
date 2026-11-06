@@ -43,6 +43,19 @@ pub enum LayoutKind {
     Block,
 }
 
+impl Default for Layout {
+    fn default() -> Self {
+        let span = Span::call_site();
+        Self {
+            start: span,
+            end: span,
+            kind: LayoutKind::Literal,
+            children: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+}
+
 impl Layout {
     pub(super) fn capture(
         kind: LayoutKind,
@@ -51,6 +64,21 @@ impl Layout {
         children: Vec<Self>,
     ) -> Self {
         let first = start.span();
+        // Container endpoints already belong to their final child. Avoid
+        // rescanning every descendant token at each level of markup nesting.
+        if matches!(
+            kind,
+            LayoutKind::Element | LayoutKind::Opening | LayoutKind::Flow
+        ) && let Some(last) = children.last()
+        {
+            return Self {
+                start: first,
+                end: last.end,
+                kind,
+                children,
+                errors: Vec::new(),
+            };
+        }
         let mut last = first;
         while start != input.cursor() {
             let Some((token, next)) = start.token_tree() else {

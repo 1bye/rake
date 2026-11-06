@@ -200,14 +200,14 @@ impl Parse for Element {
             }
 
             let attribute_start = input.cursor();
-            let parsed = parse_attribute(input, resolved);
+            let mut parsed = parse_attribute(input, resolved);
             let mut parts = Vec::new();
             if let Ok(ParsedAttribute::Named(Attribute {
                 value: AttributeValue::Markup(element),
                 ..
-            })) = &parsed
+            })) = &mut parsed
             {
-                parts.push(element.layout.clone());
+                parts.push(std::mem::take(&mut element.layout));
             }
             opening_layout.push(Layout::capture(
                 LayoutKind::Attribute,
@@ -571,8 +571,8 @@ impl Node {
     fn parse_layout(input: ParseStream<'_>) -> syn::Result<(Self, Layout)> {
         let start = input.cursor();
         if input.peek(Token![<]) {
-            let element: Element = input.parse()?;
-            let layout = element.layout.clone();
+            let mut element: Element = input.parse()?;
+            let layout = std::mem::take(&mut element.layout);
             return Ok((Self::Element(element), layout));
         }
 
