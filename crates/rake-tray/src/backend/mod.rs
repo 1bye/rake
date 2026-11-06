@@ -14,6 +14,8 @@ pub(crate) use macos::Item;
 mod windows;
 #[cfg(target_os = "windows")]
 mod windows_menu;
+#[cfg(any(target_os = "windows", test))]
+mod windows_registration;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::Item;
 #[cfg(any(target_os = "linux", all(feature = "sni-tests", unix)))]

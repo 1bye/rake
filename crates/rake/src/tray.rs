@@ -359,6 +359,9 @@ fn install_with(
                         crate::error!(%error, "tray menu could not open");
                     }
                 }
+                if matches!(event.kind, EventKind::HostChanged(false)) {
+                    crate::warn!(tray = %event.id, "tray host unavailable; registration is waiting");
+                }
                 if let EventKind::OperationFailed(message) = &event.kind {
                     crate::error!(tray = %event.id, %message, "native tray operation failed");
                 }

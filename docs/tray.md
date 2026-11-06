@@ -82,6 +82,13 @@ generation zero. Duplicate IDs and invalid configuration still fail startup.
 registered and waiting. Requested visibility is distinct from actual native
 visibility and user shell policy. SNI `Passive` is a hint, not guaranteed hiding.
 
+On Windows, an initial `NIM_ADD` rejection under `Wait` retains the hidden
+broadcast window, icon/menu resources and offline item. `TaskbarCreated` retries
+registration and version-4 negotiation with the latest cached configuration.
+`Require` returns the initial error. Offline updates change that cache, while
+`Registration::WaitingForHost` continues to state that nothing is registered.
+This initial-login/Explorer-restart path still needs Windows desktop qualification.
+
 ## Menus, input and commands
 
 Menu trees support actions, submenus, separators, disabled/hidden ancestors,

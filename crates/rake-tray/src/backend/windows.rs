@@ -40,6 +40,50 @@ struct WindowState {
     balloon_icon: Cell<HICON>,
 }
 
+impl WindowState {
+    fn register(&self, policy: crate::HostPolicy) -> Result<bool, Error> {
+        use super::windows_registration::{self, Command};
+        self.online.set(false);
+        let mut data = self.data.get();
+        let mut code = 0;
+        let result = windows_registration::register(policy, |command| {
+            let operation = match command {
+                Command::Add => NIM_ADD,
+                Command::SetVersion => {
+                    data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+                    NIM_SETVERSION
+                }
+                Command::Delete => NIM_DELETE,
+            };
+            // SAFETY: Data/HICON/HWND are owned by the live Item during registration.
+            let accepted = unsafe { Shell_NotifyIconW(operation, &data) } != 0;
+            if !accepted && command != Command::Delete {
+                // SAFETY: Read immediately after the rejected Shell operation.
+                code = unsafe { GetLastError() };
+            }
+            accepted
+        });
+        self.data.set(data);
+        let online = result.map_err(|failure| {
+            if code == 0 {
+                Error::Native {
+                    operation: failure.operation(),
+                    message: "Shell rejected registration without extended error information"
+                        .into(),
+                    source: None,
+                }
+            } else {
+                crate::native(
+                    failure.operation(),
+                    std::io::Error::from_raw_os_error(code as i32),
+                )
+            }
+        })?;
+        self.online.set(online);
+        Ok(online)
+    }
+}
+
 // SAFETY: This procedure only borrows WindowState while its owning Item keeps the
 // hidden HWND alive. No application callback runs here; only owned events are queued.
 unsafe extern "system" fn window_proc(
@@ -80,27 +124,22 @@ unsafe extern "system" fn window_proc(
             }
         }
         if message == state.taskbar_created && !state.removed.get() {
-            let mut data = state.data.get();
-            // SAFETY: Correctly initialized structure and retained HICON belong to this HWND.
-            unsafe {
-                state.online.set(false);
-                if Shell_NotifyIconW(NIM_ADD, &data) != 0 {
-                    data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-                    let online = Shell_NotifyIconW(NIM_SETVERSION, &data) != 0;
-                    state.online.set(online);
-                    state
-                        .sink
-                        .send(EventKind::HostChanged(online), None, Input::default());
-                } else {
-                    state
-                        .sink
-                        .send(EventKind::HostChanged(false), None, Input::default());
-                }
+            if let Err(error) = state.register(crate::HostPolicy::Wait) {
+                state.sink.send(
+                    EventKind::OperationFailed(error.to_string()),
+                    None,
+                    Input::default(),
+                );
             }
+            state.sink.send(
+                EventKind::HostChanged(state.online.get()),
+                None,
+                Input::default(),
+            );
 
             return 0;
         }
-        if message == CALLBACK && !state.removed.get() {
+        if message == CALLBACK && state.online.get() && !state.removed.get() {
             let code = (lparam as u32) & 0xffff;
             let kind = match code {
                 NIN_SELECT | NIN_KEYSELECT => Some(EventKind::Activate),
@@ -275,19 +314,11 @@ impl Item {
         data.hWnd = hwnd;
         item.state.data.set(data);
         item.prepare(0, spec)?;
-        let mut data = item.state.data.get();
-        // SAFETY: Native structure and icon are initialized and owned by item.
-        if unsafe { Shell_NotifyIconW(NIM_ADD, &data) } == 0 {
-            return Err(failure("add tray icon"));
+        if !item.state.register(spec.host_policy)? {
+            item.state
+                .sink
+                .send(EventKind::HostChanged(false), None, Input::default());
         }
-
-        data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-        // SAFETY: Same stable native identity, version-4 union is initialized.
-        if unsafe { Shell_NotifyIconW(NIM_SETVERSION, &data) } == 0 {
-            return Err(failure("negotiate tray version"));
-        }
-
-        item.state.online.set(true);
         Ok(item)
     }
 
@@ -354,6 +385,11 @@ impl Item {
                 return Ok(());
             }
             item.prepare(revision, &spec)?;
+            if !item.state.online.get() {
+                // Keep the latest owned icon/menu/tooltip for TaskbarCreated.
+                item.state.revision.set(revision);
+                return Ok(());
+            }
             let data = item.state.data.get();
             // SAFETY: Correct live identity and owned resources remain valid during the call.
             if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } == 0 {

@@ -84,7 +84,7 @@ This mirrors every inventory row in sections 4–6 of the [implementation plan](
 
 | Native API family | Current implementation / disposition |
 | --- | --- |
-| `Shell_NotifyIconW(NIM_ADD)` | Implemented registration. |
+| `Shell_NotifyIconW(NIM_ADD)` | Implemented registration; Wait retains the item offline after an initial rejection for TaskbarCreated recovery. |
 | `NIM_MODIFY` | Implemented update, including DPI/settings resource refresh. |
 | `NIM_DELETE` | Implemented explicit/remove/partial-failure/Drop cleanup. |
 | `NIM_SETFOCUS` | Implemented after native menu tracking. |

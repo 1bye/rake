@@ -36,3 +36,15 @@ TestPlatform window host: Wait leaves the main window open and delivers an event
 Require records AppError::Tray and requests application UI shutdown. A missing
 optional host is also covered. No native desktop behavior is inferred from these
 doubles. Focused host tests, core test-support tests and facade Clippy passed.
+
+## 4. Wait for initial Windows shell registration
+
+Initial NIM_ADD failure under Wait retains the hidden broadcast HWND, native
+resources and offline item. TaskbarCreated reuses the same add/version-4 sequence;
+Require returns the error. Offline updates retain the latest cache for recovery.
+Version-negotiation failure removes the partial legacy-format registration, and
+callbacks are ignored while offline. Host-unavailable events also log a diagnostic.
+
+Validation: cross-platform scripted Shell seam tests cover initial Wait failure,
+recovery, Require failure and negotiation rollback. Core tests and foreign Windows
+Clippy passed. Actual login/Explorer desktop qualification remains open.
