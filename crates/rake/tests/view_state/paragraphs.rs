@@ -21,12 +21,19 @@ impl Render for Host {
     fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         let observed = self.bounds.clone();
 
-        gpui::div().flex().flex_col().text_size(gpui::px(14.)).line_height(gpui::px(20.))
-            .on_children_prepainted(move |bounds, _, _| { observed.replace(bounds); })
+        gpui::div()
+            .flex()
+            .flex_col()
+            .text_size(gpui::px(14.))
+            .line_height(gpui::px(20.))
+            .on_children_prepainted(move |bounds, _, _| {
+                observed.replace(bounds);
+            })
             .children([
                 rake::view! {
                     <p wrap={true} style={|s| s.w(gpui::px(self.width))}>
-                        "one two "<span>{&TEXT["one two ".len()..]}</span>
+                        "one two "
+                        <span>{&TEXT["one two ".len()..]}</span>
                     </p>
                 },
                 rake::view! {
@@ -36,17 +43,29 @@ impl Render for Host {
                     <p wrap={false} ellipsis={true} style={|s| s.w(gpui::px(self.width))}>{TEXT}</p>
                 },
                 rake::view! {
-                    <p max-lines={2} ellipsis={true} style={|s| s.w(gpui::px(self.width))}>{TEXT}</p>
+                    <p max-lines={2} ellipsis={true} style={|s| s.w(gpui::px(self.width))}>
+                        {TEXT}
+                    </p>
                 },
                 rake::view! {
-                    <p wrap={false} style={|s| s.w(gpui::px(self.width))}>"first"<br/>"second"</p>
+                    <p wrap={false} style={|s| s.w(gpui::px(self.width))}>
+                        "first"
+                        <br/>
+                        "second"
+                    </p>
                 },
                 rake::view! {
                     <p max-lines={0} style={|s| s.w(gpui::px(self.width))}>{TEXT}</p>
                 },
-                rake::view! { <p/> },
                 rake::view! {
-                    <p max-lines={1} ellipsis={true} style={|s| s.w(gpui::px(self.width))}>"first"<br/>"second"</p>
+                    <p/>
+                },
+                rake::view! {
+                    <p max-lines={1} ellipsis={true} style={|s| s.w(gpui::px(self.width))}>
+                        "first"
+                        <br/>
+                        "second"
+                    </p>
                 },
             ])
     }
@@ -114,12 +133,17 @@ impl Render for HeadingHost {
 
         let heading = rake::view! {
             <h2 max-lines={1} style={|s| s.w(gpui::px(400.))}>
-                "Count: "<strong>{count.to_string()}</strong><em>" finished"</em>
+                "Count: "
+                <strong>{count.to_string()}</strong>
+                <em>" finished"</em>
             </h2>
         };
 
         let explicit = rake::view! {
-            <h3 aria-label="Custom name">"Visible "<strong>"text"</strong></h3>
+            <h3 aria-label="Custom name">
+                "Visible "
+                <strong>"text"</strong>
+            </h3>
         };
 
         let mut info = Vec::new();

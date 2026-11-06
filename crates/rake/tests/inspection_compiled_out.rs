@@ -14,16 +14,24 @@ struct Panel {
 
 impl gpui::RenderOnce for Panel {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
-        rake::view! { <div id={self.id}/> }
+        rake::view! {
+            <div id={self.id} />
+        }
     }
 }
 
 #[test]
 fn markup_returns_original_types_and_removes_metadata_tokens() {
-    let _: gpui::Stateful<gpui::Div> =
-        rake::view! { <div class="p-2"><p>Text</p>{"Accessible text"}</div> };
+    let _: gpui::Stateful<gpui::Div> = rake::view! {
+        <div class="p-2">
+            <p>Text</p>
+            {"Accessible text"}
+        </div>
+    };
 
-    let _: Panel = rake::view! { <Panel id={"owned".to_owned()}/> };
+    let _: Panel = rake::view! {
+        <Panel id={"owned".to_owned()} />
+    };
 
     let _: gpui::Div = rake::__private::inspection!(
         compile_error!("inspection-only code must not expand in this build"),

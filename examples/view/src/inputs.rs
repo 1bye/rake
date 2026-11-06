@@ -71,16 +71,49 @@ impl Render for Inputs {
         rake::view! {
             <section id="base-inputs" class="flex flex-col gap-2 text-ink">
                 <p>"Message"</p>
-                <div style={|s| s.child(field("base-message", "Message", Role::TextInput,
-                    message.focus_handle(cx), Some(message_value), Input::new(&self.message)))}/>
+                <div
+                    style={
+                        |s|
+                            s.child(field(
+                                "base-message",
+                                "Message",
+                                Role::TextInput,
+                                message.focus_handle(cx),
+                                Some(message_value),
+                                Input::new(&self.message)
+                            ))
+                        }
+                />
                 <p class="text-xs">{message_length}</p>
                 <p>"Password"</p>
-                <div style={|s| s.child(field("base-password", "Password", Role::PasswordInput,
-                    password.focus_handle(cx), None, Input::new(&self.password)))}/>
+                <div
+                    style={
+                        |s|
+                            s.child(field(
+                                "base-password",
+                                "Password",
+                                Role::PasswordInput,
+                                password.focus_handle(cx),
+                                None,
+                                Input::new(&self.password)
+                            ))
+                        }
+                />
                 <p class="text-xs">{password_status}</p>
                 <p>"Notes"</p>
-                <div style={|s| s.child(field("base-notes", "Notes", Role::MultilineTextInput,
-                    notes.focus_handle(cx), Some(notes_value), Textarea::new(&self.notes)))}/>
+                <div
+                    style={
+                        |s|
+                            s.child(field(
+                                "base-notes",
+                                "Notes",
+                                Role::MultilineTextInput,
+                                notes.focus_handle(cx),
+                                Some(notes_value),
+                                Textarea::new(&self.notes)
+                            ))
+                        }
+                />
                 <p class="text-xs">{notes_summary}</p>
             </section>
         }

@@ -47,10 +47,13 @@ struct Draft {
 impl Render for Draft {
     fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
-            <div focus={&self.focus} scroll={&self.scroll}
-                style={|s| s.h(gpui::px(64.)).w(gpui::px(200.)).overflow_y_scroll()}>
+            <div
+                focus={&self.focus}
+                scroll={&self.scroll}
+                style={|s| s.h(gpui::px(64.)).w(gpui::px(200.)).overflow_y_scroll()}
+            >
                 <p>{self.text.clone()}</p>
-                <div style={|s| s.min_h(gpui::px(500.))}/>
+                <div style={|s| s.min_h(gpui::px(500.))} />
             </div>
         }
     }
@@ -71,7 +74,7 @@ impl Render for RetainedHost {
             <div>
                 for row in &self.rows {
                     <div id={("row", row.id)}>
-                        <view entity={&row.editor}/>
+                        <view entity={&row.editor} />
                     </div>
                 }
             </div>
@@ -186,7 +189,9 @@ impl Render for KeyedHost {
             <div>
                 for key in &self.keys {
                     <button id={("row", *key)} style={|s| s.size(gpui::px(80.))}>
-                        {state_probe(*key, self.observed.clone(), self.states_created.clone())}
+                        {
+                            state_probe(*key, self.observed.clone(), self.states_created.clone())
+                        }
                     </button>
                 }
             </div>
@@ -286,7 +291,10 @@ fn mounting_the_same_entity_twice_in_one_scope_is_diagnosed() {
         fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
             let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 rake::view! {
-                    <div><view entity={&self.editor}/><view entity={&self.editor}/></div>
+                    <div>
+                        <view entity={&self.editor} />
+                        <view entity={&self.editor} />
+                    </div>
                 }
             }));
 

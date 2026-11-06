@@ -20,7 +20,7 @@ struct Tile {
 impl RenderOnce for Tile {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
         rake::view! {
-            <button id={self.id} style={|s| s.size(gpui::px(80.)).children(self.children)}/>
+            <button id={self.id} style={|s| s.size(gpui::px(80.)).children(self.children)} />
         }
     }
 }
@@ -38,11 +38,13 @@ impl Render for ComponentHost {
             <section>
                 for key in &self.keys {
                     <Tile id={("tile", *key).into()}>
-                        {state_probe(*key, self.observed.clone(), self.states_created.clone())}
+                        {
+                            state_probe(*key, self.observed.clone(), self.states_created.clone())
+                        }
                     </Tile>
                 }
                 <Tile id={"editor".into()}>
-                    <view entity={&self.editor}/>
+                    <view entity={&self.editor} />
                 </Tile>
             </section>
         }

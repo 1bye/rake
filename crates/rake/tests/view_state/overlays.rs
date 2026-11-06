@@ -51,54 +51,141 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let body = rake::view! {
-            <section focus={&self.body} scroll={&self.scroll} key-context="Background" style={|s| s.size_full().overflow_y_scroll()}
-                on:BackgroundAction={cx.listener(|this, _, _, cx| { this.actions += 1; cx.notify(); })}
-                on:click={cx.listener(|this, _, _, cx| { this.clicks += 1; cx.notify(); })}>
-                <div style={|s| s.absolute().left(gpui::px(self.anchor_x)).top(gpui::px(self.anchor_y))}>
+            <section
+                focus={&self.body}
+                scroll={&self.scroll}
+                key-context="Background"
+                style={|s| s.size_full().overflow_y_scroll()}
+                on:BackgroundAction={
+                    cx.listener(|this, _, _, cx| {
+                        this.actions += 1;
+                        cx.notify();
+                    })
+                }
+                on:click={
+                    cx.listener(|this, _, _, cx| {
+                        this.clicks += 1;
+                        cx.notify();
+                    })
+                }
+            >
+                <div
+                    style={
+                        |s|
+                            s.absolute()
+                                .left(gpui::px(self.anchor_x))
+                                .top(gpui::px(self.anchor_y))
+                        }
+                >
                     if self.show_anchor {
                         <OverlayAnchor state={self.anchor.clone()}>
-                            <button focus={&self.trigger} style={|s| s.w(gpui::px(120.)).h(gpui::px(32.))}
-                                on:click={cx.listener(|this, _, window, cx| { this.popup.open(window, cx); })}>"Actions"</button>
+                            <button
+                                focus={&self.trigger}
+                                style={|s| s.w(gpui::px(120.)).h(gpui::px(32.))}
+                                on:click={
+                                    cx.listener(|this, _, window, cx| {
+                                        this.popup.open(window, cx);
+                                    })
+                                }
+                            >
+                                "Actions"
+                            </button>
                         </OverlayAnchor>
                     }
                 </div>
-                <button focus={&self.other} style={|s| s.w(gpui::px(100.)).h(gpui::px(32.))}>"Background"</button>
-                <div style={|s| s.h(gpui::px(2000.)).flex_shrink_0()}/>
+                <button focus={&self.other} style={|s| s.w(gpui::px(100.)).h(gpui::px(32.))}>
+                    "Background"
+                </button>
+                <div style={|s| s.h(gpui::px(2000.)).flex_shrink_0()} />
             </section>
-        }.into_any_element();
+        }
+        .into_any_element();
 
         let footer = rake::view! {
-            <button focus={&self.dialog_last} style={|s| s.h(gpui::px(32.))}
-                on:key-down={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    if this.consume_tab && event.keystroke.key == "tab" {
-                        window.focus_next(cx);
-                        cx.stop_propagation();
-                    }
-                })}
-                on:click={cx.listener(|this, _, window, cx| { this.dialog.close(window, cx); })}>"Close dialog"</button>
-        }.into_any_element();
+            <button
+                focus={&self.dialog_last}
+                style={|s| s.h(gpui::px(32.))}
+                on:key-down={
+                    cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if this.consume_tab && event.keystroke.key == "tab" {
+                            window.focus_next(cx);
+                            cx.stop_propagation();
+                        }
+                    })
+                }
+                on:click={
+                    cx.listener(|this, _, window, cx| {
+                        this.dialog.close(window, cx);
+                    })
+                }
+            >
+                "Close dialog"
+            </button>
+        }
+        .into_any_element();
 
         rake::view! {
             <OverlayHost state={self.overlays.clone()} body={body}>
                 if self.show_popup {
                     <Popover state={self.popup.clone()} anchor={self.anchor.clone()}>
-                        <button focus={&self.popup_first} style={|s| s.h(gpui::px(32.))}
-                            on:click={cx.listener(|this, _, window, cx| { this.dialog.open(window, cx); })}>"Open dialog"</button>
-                        <button focus={&self.popup_last} style={|s| s.h(gpui::px(32.))}
-                            on:click={cx.listener(|this, _, window, cx| { this.popup.close(window, cx); })}>"Close popup"</button>
+                        <button
+                            focus={&self.popup_first}
+                            style={|s| s.h(gpui::px(32.))}
+                            on:click={
+                                cx.listener(|this, _, window, cx| {
+                                    this.dialog.open(window, cx);
+                                })
+                            }
+                        >
+                            "Open dialog"
+                        </button>
+                        <button
+                            focus={&self.popup_last}
+                            style={|s| s.h(gpui::px(32.))}
+                            on:click={
+                                cx.listener(|this, _, window, cx| {
+                                    this.popup.close(window, cx);
+                                })
+                            }
+                        >
+                            "Close popup"
+                        </button>
                     </Popover>
                 }
                 if self.show_dialog {
-                    <Dialog state={self.dialog.clone()} title={"Dialog".into()} footer={if self.empty_dialog { None } else { Some(footer) }}>
+                    <Dialog
+                        state={self.dialog.clone()}
+                        title={"Dialog".into()}
+                        footer={
+                            if self.empty_dialog {
+                                None
+                            } else {
+                                Some(footer)
+                            }
+                        }
+                    >
                         if !self.empty_dialog {
-                        <button focus={&self.dialog_first} style={|s| s.h(gpui::px(32.))}
-                            on:key-down={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                                if this.consume_escape && event.keystroke.key == "escape" {
-                                    window.prevent_default();
-                                    cx.stop_propagation();
+                            <button
+                                focus={&self.dialog_first}
+                                style={|s| s.h(gpui::px(32.))}
+                                on:key-down={
+                                    cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                                        if this.consume_escape && event.keystroke.key == "escape" {
+                                            window.prevent_default();
+                                            cx.stop_propagation();
+                                        }
+                                    })
                                 }
-                            })}>"First"</button>
-                        <button disabled={true} focus={&self.disabled} style={|s| s.h(gpui::px(32.))}>"Disabled"</button>
+                            >
+                                "First"
+                            </button>
+                            <button
+                                disabled={true}
+                                focus={&self.disabled}
+                                style={|s| s.h(gpui::px(32.))}
+                            >
+                                "Disabled"
+                            </button>
                         }
                     </Dialog>
                 }

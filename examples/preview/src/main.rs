@@ -26,31 +26,71 @@ impl Render for Preview {
         let blurred = self.blurred;
 
         rake::view! {
-            <div id="preview-root" class="size-full flex flex-col p-6 gap-4"
-                style={|s| s.bg(gpui::rgba(0x15233266)).text_color(gpui::rgb(0xffffff))}>
+            <div
+                id="preview-root"
+                class="size-full flex flex-col p-6 gap-4"
+                style={|s| s.bg(gpui::rgba(0x15233266)).text_color(gpui::rgb(0xffffff))}
+            >
                 <h1 class="text-2xl">"Native macOS preview"</h1>
                 <p>"The translucent area uses the real macOS window backdrop."</p>
                 <div class="flex gap-3">
-                    <button id="preview-increment" aria-label={format!("Clicks: {count}")} class="px-4 py-2 rounded-md" style={|s| s.bg(gpui::rgb(0x2857a4))}
-                        on:click={cx.listener(|this, _, _, cx| { this.count += 1; cx.notify(); })}>
+                    <button
+                        id="preview-increment"
+                        aria-label={format!("Clicks: {count}")}
+                        class="px-4 py-2 rounded-md"
+                        style={|s| s.bg(gpui::rgb(0x2857a4))}
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.count += 1;
+                                cx.notify();
+                            })
+                        }
+                    >
                         {format!("Clicks: {count}")}
                     </button>
-                    <button id="preview-blur" aria-label={if blurred { "Backdrop: native blur" } else { "Backdrop: opaque" }} class="px-4 py-2 rounded-md" style={|s| s.bg(gpui::rgb(0x2857a4))}
-                        on:click={cx.listener(|this, _, window, cx| {
-                            this.blurred = !this.blurred;
-                            window.set_background_appearance(if this.blurred {
-                                gpui::WindowBackgroundAppearance::Blurred
-                            } else { gpui::WindowBackgroundAppearance::Opaque });
-                            cx.notify();
-                        })}>
-                        {if blurred { "Backdrop: native blur" } else { "Backdrop: opaque" }}
+                    <button
+                        id="preview-blur"
+                        aria-label={
+                            if blurred {
+                                "Backdrop: native blur"
+                            } else {
+                                "Backdrop: opaque"
+                            }
+                        }
+                        class="px-4 py-2 rounded-md"
+                        style={|s| s.bg(gpui::rgb(0x2857a4))}
+                        on:click={
+                            cx.listener(|this, _, window, cx| {
+                                this.blurred = !this.blurred;
+                                window.set_background_appearance(if this.blurred {
+                                    gpui::WindowBackgroundAppearance::Blurred
+                                } else {
+                                    gpui::WindowBackgroundAppearance::Opaque
+                                });
+                                cx.notify();
+                            })
+                        }
+                    >
+                        {
+                            if blurred {
+                                "Backdrop: native blur"
+                            } else {
+                                "Backdrop: opaque"
+                            }
+                        }
                     </button>
                 </div>
-                <div id="preview-scroll" class="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2"
-                    scroll={&self.scroll}>
+                <div
+                    id="preview-scroll"
+                    class="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2"
+                    scroll={&self.scroll}
+                >
                     for row in 1..=40 {
-                        <p id={format!("preview-row-{row}")} class="p-3 rounded-md"
-                            style={|s| s.bg(gpui::rgba(0x30476688))}>
+                        <p
+                            id={format!("preview-row-{row}")}
+                            class="p-3 rounded-md"
+                            style={|s| s.bg(gpui::rgba(0x30476688))}
+                        >
                             {format!("Scrollable row {row}")}
                         </p>
                     }

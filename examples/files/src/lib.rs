@@ -212,74 +212,211 @@ impl Render for Toolkit {
             });
 
         rake::view! {
-            <main id="text-toolkit" class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink" tab-navigation>
+            <main
+                id="text-toolkit"
+                class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink"
+                tab-navigation
+            >
                 <h1>"Text Toolkit"</h1>
                 <p>{status}</p>
                 <div class="flex flex-row gap-3">
-                    <button id="import-file" disabled={busy || dirty || !capabilities.file_import.supported}
-                        on:click={cx.listener(|this, _, _, cx| this.import(cx))}>"Import text"</button>
-                    <button id="normalize-text" disabled={busy || document.is_none()}
-                        on:click={cx.listener(|this, _, _, cx| this.normalize(cx))}>"Normalize line endings"</button>
-                    <button id="export-file" disabled={busy || document.is_none() || !capabilities.file_export.supported}
-                        on:click={cx.listener(|this, _, _, cx| this.export(cx))}>"Export"</button>
-                    <button id="copy-text" disabled={busy || document.is_none() || !capabilities.clipboard_write.supported}
-                        on:click={cx.listener(|this, _, _, cx| {
-                            if this.busy(cx) { return; }
-                            let Some(document) = this.workspace.current() else { return; };
-                            let request = this.runtime.services().platform().write_clipboard(&document.text, cx);
-                            this.work = Some(this.runtime.action(cx, async move { request.await?; Ok("Copied text") }));
-                        })}>"Copy text"</button>
+                    <button
+                        id="import-file"
+                        disabled={busy || dirty || !capabilities.file_import.supported}
+                        on:click={cx.listener(|this, _, _, cx| this.import(cx))}
+                    >
+                        "Import text"
+                    </button>
+                    <button
+                        id="normalize-text"
+                        disabled={busy || document.is_none()}
+                        on:click={cx.listener(|this, _, _, cx| this.normalize(cx))}
+                    >
+                        "Normalize line endings"
+                    </button>
+                    <button
+                        id="export-file"
+                        disabled={busy || document.is_none() || !capabilities.file_export.supported}
+                        on:click={cx.listener(|this, _, _, cx| this.export(cx))}
+                    >
+                        "Export"
+                    </button>
+                    <button
+                        id="copy-text"
+                        disabled={
+                            busy || document.is_none() || !capabilities.clipboard_write.supported
+                        }
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                if this.busy(cx) {
+                                    return;
+                                }
+                                let Some(document) = this.workspace.current() else {
+                                    return;
+                                };
+                                let request = this
+                                    .runtime
+                                    .services()
+                                    .platform()
+                                    .write_clipboard(&document.text, cx);
+                                this.work = Some(this.runtime.action(cx, async move {
+                                    request.await?;
+                                    Ok("Copied text")
+                                }));
+                            })
+                        }
+                    >
+                        "Copy text"
+                    </button>
                 </div>
-                <button id="trim-lines" disabled={busy || !self.settings_applied}
-                    aria-label={format!("Trim trailing spaces: {}", if self.trim_lines { "on" } else { "off" })}
-                    on:click={cx.listener(|this, _, _, cx| {
-                        if this.busy(cx) || !this.settings_applied { return; }
-                        this.trim_lines = !this.trim_lines;
-                        let value = if this.trim_lines { "true" } else { "false" };
-                        let preferences = this.preferences.clone();
-                        this.work = Some(this.runtime.action(cx, async move { preferences.set("trim-lines", value).await?; Ok("Preference saved") }));
-                    })}>{format!("Trim trailing spaces: {}", if self.trim_lines { "on" } else { "off" })}</button>
+                <button
+                    id="trim-lines"
+                    disabled={busy || !self.settings_applied}
+                    aria-label={
+                        format!(
+                            "Trim trailing spaces: {}",
+                            if self.trim_lines { "on" } else { "off" }
+                        )
+                    }
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            if this.busy(cx) || !this.settings_applied {
+                                return;
+                            }
+                            this.trim_lines = !this.trim_lines;
+                            let value = if this.trim_lines { "true" } else { "false" };
+                            let preferences = this.preferences.clone();
+                            this.work = Some(this.runtime.action(cx, async move {
+                                preferences.set("trim-lines", value).await?;
+                                Ok("Preference saved")
+                            }));
+                        })
+                    }
+                >
+                    {
+                        format!(
+                            "Trim trailing spaces: {}",
+                            if self.trim_lines { "on" } else { "off" }
+                        )
+                    }
+                </button>
                 if let Some(error) = settings_error {
                     <p>{error}</p>
-                    <button on:click={cx.listener(|this, _, _, cx| this.settings.retry(cx))}>"Retry preferences"</button>
+                    <button on:click={cx.listener(|this, _, _, cx| this.settings.retry(cx))}>
+                        "Retry preferences"
+                    </button>
                 }
                 if dirty {
                     <p>"Unsaved transformation. Export or discard before quitting or updating."</p>
-                    <button id="discard" disabled={busy} on:click={cx.listener(|this, _, _, cx| {
-                        if !this.busy(cx) { this.workspace.discard(); cx.notify(); }
-                    })}>"Discard transformation"</button>
+                    <button
+                        id="discard"
+                        disabled={busy}
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                if !this.busy(cx) {
+                                    this.workspace.discard();
+                                    cx.notify();
+                                }
+                            })
+                        }
+                    >
+                        "Discard transformation"
+                    </button>
                 }
                 if self.workspace.download_requested() {
-                    <button id="confirm-export" disabled={busy} on:click={cx.listener(|this, _, _, cx| {
-                        if !this.busy(cx) { this.workspace.confirm_download(); cx.notify(); }
-                    })}>"Confirm downloaded file was saved"</button>
+                    <button
+                        id="confirm-export"
+                        disabled={busy}
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                if !this.busy(cx) {
+                                    this.workspace.confirm_download();
+                                    cx.notify();
+                                }
+                            })
+                        }
+                    >
+                        "Confirm downloaded file was saved"
+                    </button>
                 }
                 if let Some(document) = document {
                     <h2>{document.name}</h2>
-                    <p>{format!("{} bytes · {} characters · {} words · {} lines", document.statistics.bytes, document.statistics.characters, document.statistics.words, document.statistics.lines)}</p>
-                    <p wrap={true} max-lines={8} ellipsis={true}>{document.text.chars().take(600).collect::<String>()}</p>
+                    <p>
+                        {
+                            format!(
+                                "{} bytes · {} characters · {} words · {} lines",
+                                document.statistics.bytes,
+                                document.statistics.characters,
+                                document.statistics.words,
+                                document.statistics.lines
+                            )
+                        }
+                    </p>
+                    <p wrap={true} max-lines={8} ellipsis={true}>
+                        {document.text.chars().take(600).collect::<String>()}
+                    </p>
                 }
                 <div class="flex flex-row gap-3">
-                    <button disabled={!can_check} on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}>"Check native updates"</button>
-                    <button disabled={!can_download} on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}>"Download update"</button>
-                    <button disabled={!can_restart} on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}>"Restart to update"</button>
+                    <button
+                        disabled={!can_check}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}
+                    >
+                        "Check native updates"
+                    </button>
+                    <button
+                        disabled={!can_download}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}
+                    >
+                        "Download update"
+                    </button>
+                    <button
+                        disabled={!can_restart}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}
+                    >
+                        "Restart to update"
+                    </button>
                 </div>
-                if let Some(version) = update_version { <p>{format!("Native version {version} available")}</p> }
-                if let Some(error) = update_error { <p>{error}</p> }
+                if let Some(version) = update_version {
+                    <p>{format!("Native version {version} available")}</p>
+                }
+                if let Some(error) = update_error {
+                    <p>{error}</p>
+                }
                 if let Some(status) = web_status {
                     <p>{status}</p>
-                    <button on:click={cx.listener(|this, _, _, cx| {
-                        if let Some(updates) = &mut this.web_updates { updates.retry(cx); }
-                    })}>"Check Web deployment"</button>
-                    <button disabled={!web_available || busy} on:click={cx.listener(|this, _, _, cx| {
-                        let Some(deployment) = this.deployment.clone() else { return; };
-                        let runtime = this.runtime.clone();
-                        this.work = Some(this.runtime.action(cx, async move {
-                            // Return after submission; awaiting quit inside this finite action would wait on itself.
-                            drop(runtime.reload_web_update(&deployment, QuitOptions::default()).await?);
-                            Ok("Reload requested; export/discard approval is required")
-                        }));
-                    })}>"Reload to update"</button>
+                    <button
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                if let Some(updates) = &mut this.web_updates {
+                                    updates.retry(cx);
+                                }
+                            })
+                        }
+                    >
+                        "Check Web deployment"
+                    </button>
+                    <button
+                        disabled={!web_available || busy}
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                let Some(deployment) = this.deployment.clone() else {
+                                    return;
+                                };
+                                let runtime = this.runtime.clone();
+                                this.work = Some(this.runtime.action(cx, async move {
+                                    // Return after submission; awaiting quit inside this finite action would wait on itself.
+                                    drop(
+                                        runtime
+                                            .reload_web_update(&deployment, QuitOptions::default())
+                                            .await?
+                                    );
+                                    Ok("Reload requested; export/discard approval is required")
+                                }));
+                            })
+                        }
+                    >
+                        "Reload to update"
+                    </button>
                 }
             </main>
         }

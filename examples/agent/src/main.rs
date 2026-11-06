@@ -198,59 +198,146 @@ impl Render for Demo {
         .size_full();
 
         rake::view! {
-            <div id="agent-root" class="size-full flex flex-col p-4 gap-2" style={|s|s.bg(rgb(0x172330)).text_color(rgb(0xffffff))}
-                on:key-down={cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    if event.keystroke.key == "f2" { this.keys += 1; cx.notify(); }
-                    if event.keystroke.key == "f6" { this.covered = !this.covered;cx.notify(); }
-                    if event.keystroke.key == "f3" { window.resize(size(px(700.),px(740.))); }
-                    if event.keystroke.key == "f4" {
-                        this.ticks = 0;
-                        this.animation = Some(cx.spawn(async move |view, cx| {
-                            for _ in 0..24 {
-                                cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
-                                if view.update(cx, |this,cx| { this.ticks+=1;cx.notify(); }).is_err() { break; }
-                            }
-                        }));
-                    }
-                    if event.keystroke.key == "f5" && let Some(http)=this.http.clone() {
-                        let url=std::env::var("RAKE_AGENT_HTTP_URL").unwrap_or_else(|_|"http://127.0.0.1:1".into());
-                        this.network=Some(cx.spawn(async move |view,cx| {
-                            let status=match http.get(&url).send().await {
-                                Ok(response)=>{let status=response.status();let _=response.bytes().await;status.to_string()},
-                                Err(error)=>error.to_string(),
-                            };
+            <div
+                id="agent-root"
+                class="size-full flex flex-col p-4 gap-2"
+                style={|s| s.bg(rgb(0x172330)).text_color(rgb(0xffffff))}
+                on:key-down={
+                    cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "f2" {
+                            this.keys += 1;
+                            cx.notify();
+                        }
+                        if event.keystroke.key == "f6" {
+                            this.covered = !this.covered;
+                            cx.notify();
+                        }
+                        if event.keystroke.key == "f3" {
+                            window.resize(size(px(700.), px(740.)));
+                        }
+                        if event.keystroke.key == "f4" {
+                            this.ticks = 0;
+                            this.animation = Some(cx.spawn(async move |view, cx| {
+                                for _ in 0..24 {
+                                    cx.background_executor()
+                                        .timer(std::time::Duration::from_millis(16))
+                                        .await;
+                                    if view
+                                        .update(cx, |this, cx| {
+                                            this.ticks += 1;
+                                            cx.notify();
+                                        })
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                            }));
+                        }
+                        if event.keystroke.key == "f5"
+                            && let Some(http) = this.http.clone()
+                        {
+                            let url = std::env::var("RAKE_AGENT_HTTP_URL")
+                                .unwrap_or_else(|_| "http://127.0.0.1:1".into());
+                            this.network = Some(cx.spawn(async move |view, cx| {
+                                let status = match http.get(&url).send().await {
+                                    Ok(response) => {
+                                        let status = response.status();
+                                        let _ = response.bytes().await;
+                                        status.to_string()
+                                    },
+                                Err(error) =>error.to_string(),
+                                };
                             rake::warn!(status=%status,"Agent HTTP diagnostic");
-                            let _=view.update(cx,|this,cx|{this.http_status=status;cx.notify();});
+                            let _=view.update(cx,|this,cx|{this.http_status=status;cx.notify();
+                });
                         }));
                     }
                     if event.keystroke.modifiers.platform && event.keystroke.key == "a" { this.selection = 0..this.text.len(); cx.stop_propagation(); }
-                })}>
+                })}
+            >
                 <h1>"Native agent workflow"</h1>
                 <div id="agent-button-stack" class="relative">
-                <button id="agent-increment" aria-label="Increment counter" class="w-full p-2 rounded-md" style={|s|s.bg(rgb(0x2857a4))}
-                    on:click={cx.listener(|this, _, _, cx| {this.count+=1;cx.notify();})}>"Increment"</button>
-                if covered {
-                    <div id="agent-cover" class="absolute inset-0 flex items-center justify-center" style={|s|s.bg(rgb(0x665533))}>"Cover (pointer interception unknown)"</div>
-                }
+                    <button
+                        id="agent-increment"
+                        aria-label="Increment counter"
+                        class="w-full p-2 rounded-md"
+                        style={|s| s.bg(rgb(0x2857a4))}
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.count += 1;
+                                cx.notify();
+                            })
+                        }
+                    >
+                        "Increment"
+                    </button>
+                    if covered {
+                        <div
+                            id="agent-cover"
+                            class="absolute inset-0 flex items-center justify-center"
+                            style={|s| s.bg(rgb(0x665533))}
+                        >
+                            "Cover (pointer interception unknown)"
+                        </div>
+                    }
                 </div>
-                <button id="agent-disabled" disabled={true} class="px-2 py-1">"Disabled target"</button>
+                <button id="agent-disabled" disabled={true} class="px-2 py-1">
+                    "Disabled target"
+                </button>
                 <p id="agent-count">{format!("Count: {count}")}</p>
-                <div id="agent-input" role={gpui::accesskit::Role::TextInput} aria-label="Message" focus={&self.focus}
-                    class="relative p-2 rounded-md" style={|s|s.bg(rgb(0x304766))}
-                    on:mouse-down={cx.listener(|this, _: &MouseDownEvent, window, cx|window.focus(&this.focus,cx))}>
-                    {if text.is_empty() { "Click and type".into() } else { text.clone() }}
+                <div
+                    id="agent-input"
+                    role={gpui::accesskit::Role::TextInput}
+                    aria-label="Message"
+                    focus={&self.focus}
+                    class="relative p-2 rounded-md"
+                    style={|s| s.bg(rgb(0x304766))}
+                    on:mouse-down={
+                        cx.listener(|this, _: &MouseDownEvent, window, cx|
+                            window.focus(&this.focus, cx))
+                    }
+                >
+                    {
+                        if text.is_empty() {
+                            "Click and type".into()
+                        } else {
+                            text.clone()
+                        }
+                    }
                     {input}
                 </div>
                 <p id="agent-echo">{format!("Text: {text}")}</p>
                 <p id="agent-http">{format!("HTTP: {http_status}")}</p>
                 <p id="agent-keys">{format!("Keys: {keys}; ticks: {ticks}")}</p>
-                <div id="agent-drag" class="p-3 rounded-md" style={|s|s.bg(rgb(0x395b4b))}
-                    on:mouse-move={cx.listener(|this, event: &MouseMoveEvent, _, cx| {if event.dragging() {this.drags+=1;cx.notify();}})}>
+                <div
+                    id="agent-drag"
+                    class="p-3 rounded-md"
+                    style={|s| s.bg(rgb(0x395b4b))}
+                    on:mouse-move={
+                        cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                            if event.dragging() {
+                                this.drags += 1;
+                                cx.notify();
+                            }
+                        })
+                    }
+                >
                     {format!("Drags: {drags}")}
                 </div>
-                <div id="agent-scroll" scroll={&self.scroll} class="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2">
+                <div
+                    id="agent-scroll"
+                    scroll={&self.scroll}
+                    class="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2"
+                >
                     for row in 1..=40 {
-                        <p id={format!("agent-row-{row}")} class="p-3" style={|s|s.bg(rgb(0x243749))}>{format!("Row {row}")}</p>
+                        <p
+                            id={format!("agent-row-{row}")}
+                            class="p-3"
+                            style={|s| s.bg(rgb(0x243749))}
+                        >
+                            {format!("Row {row}")}
+                        </p>
                     }
                 </div>
             </div>

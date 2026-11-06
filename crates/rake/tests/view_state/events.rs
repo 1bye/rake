@@ -15,13 +15,19 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
-            <button disabled={self.disabled} style={|s| s.w(gpui::px(200.)).h(gpui::px(80.))}
+            <button
+                disabled={self.disabled}
+                style={|s| s.w(gpui::px(200.)).h(gpui::px(80.))}
                 on:right-mouse-down={cx.listener(|this, _, _, _| this.events.push("right-down"))}
                 on:right-mouse-up={cx.listener(|this, _, _, _| this.events.push("right-up"))}
                 on:middle-mouse-down={cx.listener(|this, _, _, _| this.events.push("middle-down"))}
                 on:middle-mouse-up={cx.listener(|this, _, _, _| this.events.push("middle-up"))}
-                on:hover={cx.listener(|this, hovered: &bool, _, _| this.events.push(if *hovered { "enter" } else { "leave" }))}
-                on:scroll-wheel={cx.listener(|this, _, _, _| this.events.push("wheel"))}>
+                on:hover={
+                    cx.listener(|this, hovered: &bool, _, _|
+                        this.events.push(if *hovered { "enter" } else { "leave" }))
+                }
+                on:scroll-wheel={cx.listener(|this, _, _, _| this.events.push("wheel"))}
+            >
                 "Events"
             </button>
         }

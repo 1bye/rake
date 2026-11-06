@@ -61,24 +61,72 @@ impl Render for Home {
         rake::view! {
             <section class="gap-3">
                 <p>{self.welcome.clone()}</p>
-                <button disabled={!self.page.services().platform().capabilities().clipboard_write.supported}
-                    on:click={cx.listener(|this, _, _, cx| {
-                        let request = this.page.services().platform().write_clipboard(&this.welcome, cx);
-                        this.copy = Some(this.page.action(cx, request));
-                    })}>"Copy welcome text"</button>
-                if let Some(status) = copied { <p>{status}</p> }
+                <button
+                    disabled={
+                        !self
+                            .page
+                            .services()
+                            .platform()
+                            .capabilities()
+                            .clipboard_write
+                            .supported
+                    }
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let request = this
+                                .page
+                                .services()
+                                .platform()
+                                .write_clipboard(&this.welcome, cx);
+                            this.copy = Some(this.page.action(cx, request));
+                        })
+                    }
+                >
+                    "Copy welcome text"
+                </button>
+                if let Some(status) = copied {
+                    <p>{status}</p>
+                }
                 <p>{format!("Retained local edits: {}", self.edits)}</p>
-                <button on:click={cx.listener(|this, _, _, cx| {
-                    this.error = this.page.entry().set_dirty(true).err().map(|e| e.to_string());
-                    if this.error.is_none() { this.edits += 1; }
-                    cx.notify();
-                })}>"Make an unsaved change"</button>
-                <button on:click={cx.listener(|this, _, _, cx| {
-                    this.error = this.page.entry().set_dirty(false).err().map(|e| e.to_string());
-                    cx.notify();
-                })}>"Mark clean"</button>
-                <p>"Back/Forward retain this screen. Quit or update restart asks before discarding dirty state."</p>
-                if let Some(error) = &self.error { <p>{error.clone()}</p> }
+                <button
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            this.error = this
+                                .page
+                                .entry()
+                                .set_dirty(true)
+                                .err()
+                                .map(|e| e.to_string());
+                            if this.error.is_none() {
+                                this.edits += 1;
+                            }
+                            cx.notify();
+                        })
+                    }
+                >
+                    "Make an unsaved change"
+                </button>
+                <button
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            this.error = this
+                                .page
+                                .entry()
+                                .set_dirty(false)
+                                .err()
+                                .map(|e| e.to_string());
+                            cx.notify();
+                        })
+                    }
+                >
+                    "Mark clean"
+                </button>
+                <p>
+                    "Back/Forward retain this screen. Quit or update restart asks before discarding dirty state."
+                </p>
+                if let Some(error) = &self.error {
+                    <p>{error.clone()}</p>
+                }
             </section>
         }
     }

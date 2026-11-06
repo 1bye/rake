@@ -45,42 +45,73 @@ impl Documents {
 impl Render for Documents {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rake::view! {
-            <section focus={&self.focus} key-context="Documents" class="flex flex-col gap-2"
-                on:key-down={cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    if event.keystroke.modifiers.modified() { return; }
+            <section
+                focus={&self.focus}
+                key-context="Documents"
+                class="flex flex-col gap-2"
+                on:key-down={
+                    cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if event.keystroke.modifiers.modified() {
+                            return;
+                        }
 
-                    let index = this.selected.unwrap_or(0);
-                    let next = match event.keystroke.key.as_str() {
-                        "down" => this.selected.map(|index| index.saturating_add(1)).unwrap_or(0),
-                        "up" => index.saturating_sub(1),
-                        "home" => 0,
-                        "end" => this.rows.len().saturating_sub(1),
-                        _ => return,
-                    };
+                        let index = this.selected.unwrap_or(0);
+                        let next = match event.keystroke.key.as_str() {
+                            "down" => this
+                                .selected
+                                .map(|index| index.saturating_add(1))
+                                .unwrap_or(0),
+                            "up" => index.saturating_sub(1),
+                            "home" => 0,
+                            "end" => this.rows.len().saturating_sub(1),
+                            _ => return,
+                        };
 
-                    this.jump(next, window, cx);
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })}>
+                        this.jump(next, window, cx);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
+                }
+            >
                 <p class="text-sm">
-                    10,000 retained records. {self.selected.map(|id| format!("Selected: {}.", id + 1)).unwrap_or_else(|| "No selection.".into())}
+                    10,000 retained records. {
+                        self.selected
+                            .map(|id| format!("Selected: {}.", id + 1))
+                            .unwrap_or_else(|| "No selection.".into())
+                    }
                 </p>
                 <section class="h-[280px] overflow-hidden">
-                    {gpui::uniform_list("documents", self.rows.len(), cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
-                        range.map(|index| {
+                    {
+                        gpui::uniform_list(
+                            "documents",
+                            self.rows.len(),
+                            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                                range.map(|index| {
                             let row = &this.rows[index];
                             let id = row.id;
                             let selected = this.selected == Some(id);
 
                             rake::view! {
-                                <button id={("document", id)} aria-label={row.title.clone()}
-                                    class="h-[32px] px-3 justify-start focus-visible:bg-focus" class:bg-accent={selected}
-                                    on:click={cx.listener(move |this, _, window, cx| this.jump(index, window, cx))}>
+                                <button
+                                    id={("document", id)}
+                                    aria-label={row.title.clone()}
+                                    class="h-[32px] px-3 justify-start focus-visible:bg-focus"
+                                    class:bg-accent={selected}
+                                    on:click={
+                                        cx.listener(move |this, _, window, cx|
+                                            this.jump(index, window, cx))
+                                    }
+                                >
                                     {row.title.clone()}
                                 </button>
                             }
                         }).collect()
-                    })).track_scroll(&self.scroll).h(gpui::px(280.)).flex_shrink_0()}
+                            })
+                        )
+                        .track_scroll(&self.scroll)
+                        .h(gpui::px(280.))
+                        .flex_shrink_0()
+                    }
                 </section>
                 <p class="text-xs">Scroll or select a row, then use {"↑/↓"}, Home or End. Selection and scroll survive closing this dialog.</p>
             </section>

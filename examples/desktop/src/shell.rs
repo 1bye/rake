@@ -45,26 +45,71 @@ impl Render for Shell {
             <main class="size-full p-6 gap-4 bg-surface text-ink" tab-navigation>
                 <h1>{self.app.name}</h1>
                 <nav class="flex flex-row gap-3">
-                    <button disabled={!ready} class="px-3 py-2 rounded-md bg-accent"
-                        on:click={cx.listener(|this, _, _, cx| {
-                            this.navigation_clicks += 1;
-                            drop(this.layout.navigator().open(Destination::Home, OpenTarget::CurrentTab));
-                            cx.notify();
-                        })}>"Home"</button>
-                    <button disabled={!ready} class="px-3 py-2 rounded-md bg-accent"
-                        on:click={cx.listener(|this, _, _, cx| {
-                            this.navigation_clicks += 1;
-                            drop(this.layout.navigator().open(Destination::Updates, OpenTarget::CurrentTab));
-                            cx.notify();
-                        })}>"Updates"</button>
-                    <button disabled={!ready} on:click={cx.listener(|this, _, _, _| this.travel(false))}>"Back"</button>
-                    <button disabled={!ready} on:click={cx.listener(|this, _, _, _| this.travel(true))}>"Forward"</button>
-                    <button on:click={cx.listener(|this, _, _, _| {
-                        drop(this.layout.runtime().quit(QuitOptions::default()));
-                    })}>"Quit"</button>
+                    <button
+                        disabled={!ready}
+                        class="px-3 py-2 rounded-md bg-accent"
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.navigation_clicks += 1;
+                                drop(
+                                    this.layout
+                                        .navigator()
+                                        .open(Destination::Home, OpenTarget::CurrentTab)
+                                );
+                                cx.notify();
+                            })
+                        }
+                    >
+                        "Home"
+                    </button>
+                    <button
+                        disabled={!ready}
+                        class="px-3 py-2 rounded-md bg-accent"
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                this.navigation_clicks += 1;
+                                drop(
+                                    this.layout
+                                        .navigator()
+                                        .open(Destination::Updates, OpenTarget::CurrentTab)
+                                );
+                                cx.notify();
+                            })
+                        }
+                    >
+                        "Updates"
+                    </button>
+                    <button
+                        disabled={!ready}
+                        on:click={cx.listener(|this, _, _, _| this.travel(false))}
+                    >
+                        "Back"
+                    </button>
+                    <button
+                        disabled={!ready}
+                        on:click={cx.listener(|this, _, _, _| this.travel(true))}
+                    >
+                        "Forward"
+                    </button>
+                    <button
+                        on:click={
+                            cx.listener(|this, _, _, _| {
+                                drop(this.layout.runtime().quit(QuitOptions::default()));
+                            })
+                        }
+                    >
+                        "Quit"
+                    </button>
                 </nav>
                 <section class="flex-1 overflow-hidden">{outlet}</section>
-                <footer>{format!("Version {} · Navigation clicks {}", self.app.version, self.navigation_clicks)}</footer>
+                <footer>
+                    {
+                        format!(
+                            "Version {} · Navigation clicks {}",
+                            self.app.version, self.navigation_clicks
+                        )
+                    }
+                </footer>
             </main>
         }
     }

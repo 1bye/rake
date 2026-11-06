@@ -32,7 +32,9 @@ impl Render for Desktop {
         }
 
         rake::view! {
-            <div class="flex flex-col items-center justify-center size-full gap-4 bg-surface text-ink">
+            <div
+                class="flex flex-col items-center justify-center size-full gap-4 bg-surface text-ink"
+            >
                 <div class="text-3xl">"Rake Desktop"</div>
                 <div>"One application. Native distribution."</div>
             </div>

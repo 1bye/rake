@@ -30,9 +30,12 @@ struct Badge {
 impl RenderOnce for Badge {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
         rake::view! {
-            <button id={self.id} aria-label={self.label.clone()}
+            <button
+                id={self.id}
+                aria-label={self.label.clone()}
                 style={|s| s.opacity(if self.tone == Tone::Quiet { 0.5 } else { 1. })}
-                on:click={move |_, _, _| (self.on_activate)()}>
+                on:click={move |_, _, _| (self.on_activate)()}
+            >
                 {self.label}
             </button>
         }
@@ -68,8 +71,12 @@ fn properties_keep_their_types_and_move_owned_values_once() {
     let label = String::from("Experimental");
 
     let badge = rake::view! {
-        <Badge id={"status".into()} label={label} tone={Tone::Highlighted}
-            on_activate={Box::new(move || activated.borrow_mut().push("activated"))}/>
+        <Badge
+            id={"status".into()}
+            label={label}
+            tone={Tone::Highlighted}
+            on_activate={Box::new(move || activated.borrow_mut().push("activated"))}
+        />
     };
 
     assert_eq!(badge.id, ElementId::from("status"));
@@ -85,17 +92,52 @@ fn paired_components_collect_selected_children_and_typed_slots_in_order() {
 
     let mut card = rake::view! {
         <ui::Card
-            id={ { visited.borrow_mut().push(0); "card".into() } }
-            header={ { visited.borrow_mut().push(1); gpui::div().id("header").into_any_element() } }
-            footer={ { visited.borrow_mut().push(2); None } }>
-            { { visited.borrow_mut().push(3); "Body" } }
+            id={
+                {
+                    visited.borrow_mut().push(0);
+                    "card".into()
+                }
+            }
+            header={
+                {
+                    visited.borrow_mut().push(1);
+                    gpui::div().id("header").into_any_element()
+                }
+            }
+            footer={
+                {
+                    visited.borrow_mut().push(2);
+                    None
+                }
+            }
+        >
+            {
+                {
+                    visited.borrow_mut().push(3);
+                    "Body"
+                }
+            }
             if false {
                 {unreachable_child()}
             } else {
-                <p id="selected">{ { visited.borrow_mut().push(4); "Selected" } }</p>
+                <p id="selected">
+                    {
+                        {
+                            visited.borrow_mut().push(4);
+                            "Selected"
+                        }
+                    }
+                </p>
             }
             for index in 0..2usize {
-                <div id={("row", index)}>{ { visited.borrow_mut().push(5 + index); "Row" } }</div>
+                <div id={("row", index)}>
+                    {
+                        {
+                            visited.borrow_mut().push(5 + index);
+                            "Row"
+                        }
+                    }
+                </div>
             }
         </ui::Card>
     };
@@ -124,12 +166,17 @@ fn paired_components_collect_selected_children_and_typed_slots_in_order() {
 #[test]
 fn empty_paired_tags_and_explicit_children_accept_empty_vectors() {
     let paired = rake::view! {
-        <ui::Card id={"paired".into()} header={gpui::div().into_any_element()} footer={None}></ui::Card>
+        <ui::Card id={"paired".into()} header={gpui::div().into_any_element()} footer={None}>
+        </ui::Card>
     };
 
     let explicit = rake::view! {
-        <ui::Card id={"explicit".into()} header={gpui::div().into_any_element()} footer={None}
-            children={Vec::new()}/>
+        <ui::Card
+            id={"explicit".into()}
+            header={gpui::div().into_any_element()}
+            footer={None}
+            children={Vec::new()}
+        />
     };
 
     assert!(paired.children.is_empty());
@@ -189,10 +236,30 @@ fn component_shorthand_booleans_defaults_and_match_children_compose() {
     let seen = RefCell::new(Vec::new());
 
     let panel = rake::view! {
-        <DefaultsPanel {id} compact {..{ seen.borrow_mut().push("defaults"); DefaultsPanel::default() }}>
+        <DefaultsPanel
+            {id}
+            compact
+            {
+                ..{
+                    seen.borrow_mut().push("defaults");
+                    DefaultsPanel::default()
+                }
+            }
+        >
             match Some("Body") {
-                Some(label) if !label.is_empty() => { <p>{ { seen.borrow_mut().push("child"); label } }</p> }
-                _ => { <p>"Empty"</p> }
+                Some(label) if !label.is_empty() => {
+                    <p>
+                        {
+                            {
+                                seen.borrow_mut().push("child");
+                                label
+                            }
+                        }
+                    </p>
+                }
+                _ => {
+                    <p>"Empty"</p>
+                }
             }
         </DefaultsPanel>
     };
@@ -202,7 +269,9 @@ fn component_shorthand_booleans_defaults_and_match_children_compose() {
     assert!(panel.footer.is_none());
     assert_eq!(panel.children.len(), 1);
     assert_eq!(*seen.borrow(), ["child", "defaults"]);
-    let panel = rake::view! { <DefaultsPanel compact {..DefaultsPanel::default()}/> };
+    let panel = rake::view! {
+        <DefaultsPanel compact {..DefaultsPanel::default()} />
+    };
 
     assert!(panel.compact);
     assert!(panel.children.is_empty());
@@ -215,10 +284,37 @@ fn markup_slots_convert_to_any_element_and_evaluate_once_before_children() {
 
     let mut card = rake::view! {
         <ui::Card
-            id={{ seen.borrow_mut().push(0); "inline-slots".into() }}
-            header={<h2>{ { seen.borrow_mut().push(1); title } }</h2>}
-            footer={{ seen.borrow_mut().push(2); None }}>
-            <p>{ { seen.borrow_mut().push(3); "Account details" } }</p>
+            id={
+                {
+                    seen.borrow_mut().push(0);
+                    "inline-slots".into()
+                }
+            }
+            header={
+                <h2>
+                    {
+                        {
+                            seen.borrow_mut().push(1);
+                            title
+                        }
+                    }
+                </h2>
+            }
+            footer={
+                {
+                    seen.borrow_mut().push(2);
+                    None
+                }
+            }
+        >
+            <p>
+                {
+                    {
+                        seen.borrow_mut().push(3);
+                        "Account details"
+                    }
+                }
+            </p>
         </ui::Card>
     };
 
@@ -240,12 +336,24 @@ fn markup_slots_convert_to_any_element_and_evaluate_once_before_children() {
 #[test]
 fn nested_markup_slots_accept_component_roots() {
     let card = rake::view! {
-        <ui::Card id={"outer".into()} footer={None}
-            header={<ui::Card id={"inner".into()} header={<h2>Inner</h2>} footer={None}>
-                <p>Nested body</p>
-            </ui::Card>}
+        <ui::Card
+            id={"outer".into()}
+            footer={None}
+            header={
+                <ui::Card
+                    id={"inner".into()}
+                    header={
+                        <h2>Inner</h2>
+                    }
+                    footer={None}
+                >
+                    <p>Nested body</p>
+                </ui::Card>
+            }
         >
-            if false { <p>Untaken</p> }
+            if false {
+                <p>Untaken</p>
+            }
             <p>Outer body</p>
         </ui::Card>
     };

@@ -100,64 +100,128 @@ impl Render for Foundation {
             <main class="size-full p-6 gap-4 bg-[#18232b] text-[#f0f4e8]" tab-navigation>
                 <h1>"Rake"</h1>
                 <p>{message}</p>
-                <button id="load-message" disabled={loading}
-                    on:click={cx.listener(|this, _, _, cx| this.message.retry(cx))}>
+                <button
+                    id="load-message"
+                    disabled={loading}
+                    on:click={cx.listener(|this, _, _, cx| this.message.retry(cx))}
+                >
                     "Reload / Retry"
                 </button>
-                <button id="managed-job" on:click={cx.listener(|this, _, _, cx| {
-                    let work = this.runtime.tasks().spawn("example-job", async {
-                        rake::tasks::sleep(std::time::Duration::from_secs(1)).await;
-                        rake::info!("Managed example job finished");
-                        Ok(())
-                    });
-                    this.status = match work {
-                        Ok(_) => "Job started; normal quit waits for it to finish".into(),
-                        Err(error) => error.to_string(),
-                    };
-                    cx.notify();
-                })}>"Run managed job"</button>
+                <button
+                    id="managed-job"
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let work = this.runtime.tasks().spawn("example-job", async {
+                                rake::tasks::sleep(std::time::Duration::from_secs(1)).await;
+                                rake::info!("Managed example job finished");
+                                Ok(())
+                            });
+                            this.status = match work {
+                                Ok(_) => "Job started; normal quit waits for it to finish".into(),
+                                Err(error) => error.to_string(),
+                            };
+                            cx.notify();
+                        })
+                    }
+                >
+                    "Run managed job"
+                </button>
                 <p>{self.status.clone()}</p>
-                <button id="copy-message" disabled={!self.runtime.services().platform().capabilities().clipboard_write.supported}
-                    on:click={cx.listener(|this, _, _, cx| {
-                        let text = match this.message.state(cx) {
-                            LoadStatus::Ready(message) => message.title.clone(),
-                            _ => "Rake".into(),
-                        };
-                        let request = this.runtime.services().platform().write_clipboard(&text, cx);
-                        this.clipboard = Some(this.runtime.action(cx, request));
-                    })}>"Copy message"</button>
-                if let Some(status) = clipboard_status { <p>{status}</p> }
+                <button
+                    id="copy-message"
+                    disabled={
+                        !self
+                            .runtime
+                            .services()
+                            .platform()
+                            .capabilities()
+                            .clipboard_write
+                            .supported
+                    }
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let text = match this.message.state(cx) {
+                                LoadStatus::Ready(message) => message.title.clone(),
+                                _ => "Rake".into(),
+                            };
+                            let request = this
+                                .runtime
+                                .services()
+                                .platform()
+                                .write_clipboard(&text, cx);
+                            this.clipboard = Some(this.runtime.action(cx, request));
+                        })
+                    }
+                >
+                    "Copy message"
+                </button>
+                if let Some(status) = clipboard_status {
+                    <p>{status}</p>
+                }
                 <p>{update_status}</p>
-                if let Some(version) = version { <p>{format!("Version {version}")}</p> }
+                if let Some(version) = version {
+                    <p>{format!("Version {version}")}</p>
+                }
                 <div class="flex flex-row gap-3">
-                    <button disabled={!can_check}
-                        on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}>
+                    <button
+                        disabled={!can_check}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.check(cx))}
+                    >
                         "Check for updates"
                     </button>
-                    <button disabled={!can_download}
-                        on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}>
+                    <button
+                        disabled={!can_download}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.download(cx))}
+                    >
                         "Download"
                     </button>
-                    <button disabled={!can_restart}
-                        on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}>
+                    <button
+                        disabled={!can_restart}
+                        on:click={cx.listener(|this, _, _, cx| this.updates.restart(cx))}
+                    >
                         "Restart to update"
                     </button>
                 </div>
-                if let Some(error) = update_error { <p>{error}</p> }
+                if let Some(error) = update_error {
+                    <p>{error}</p>
+                }
                 if let Some(version) = web_version {
                     <p>{version}</p>
-                    <button on:click={cx.listener(|this, _, _, cx| {
-                        if let Some(updates) = &mut this.web_updates { updates.retry(cx); }
-                    })}>"Check Web deployment"</button>
-                    <button disabled={!can_reload_web} on:click={cx.listener(|this, _, _, cx| {
-                        let Some(deployment) = this.deployment.clone() else { return; };
-                        let runtime = this.runtime.clone();
-                        this.reload = Some(this.runtime.action(cx, async move {
-                            drop(runtime.reload_web_update(&deployment, QuitOptions::default()).await?);
-                            Ok(())
-                        }));
-                    })}>"Reload to update"</button>
-                    if let Some(error) = reload_error { <p>{error}</p> }
+                    <button
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                if let Some(updates) = &mut this.web_updates {
+                                    updates.retry(cx);
+                                }
+                            })
+                        }
+                    >
+                        "Check Web deployment"
+                    </button>
+                    <button
+                        disabled={!can_reload_web}
+                        on:click={
+                            cx.listener(|this, _, _, cx| {
+                                let Some(deployment) = this.deployment.clone() else {
+                                    return;
+                                };
+                                let runtime = this.runtime.clone();
+                                this.reload = Some(this.runtime.action(cx, async move {
+                                    drop(
+                                        runtime
+                                            .reload_web_update(&deployment, QuitOptions::default())
+                                            .await?
+                                    );
+                                    Ok(())
+                                }));
+                            })
+                        }
+                    >
+                        "Reload to update"
+                    </button>
+                    if let Some(error) = reload_error {
+                        <p>{error}</p>
+                    }
                 }
             </main>
         }

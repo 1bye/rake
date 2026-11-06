@@ -22,20 +22,38 @@ impl Render for Host {
 
         if self.branch {
             return rake::view! {
-                <div class={if self.selected {
-                    "w-20 h-20 text-[#111111] hover:text-[#00ff00] hover:font-bold"
-                } else {
-                    "w-20 h-20 text-[#111111] hover:text-[#ff0000]"
-                }}>
-                    {gpui::canvas(move |_, window, _| color.set(window.text_style().color), |_, _, _, _| {}).size_full()}
+                <div
+                    class={
+                        if self.selected {
+                            "w-20 h-20 text-[#111111] hover:text-[#00ff00] hover:font-bold"
+                        } else {
+                            "w-20 h-20 text-[#111111] hover:text-[#ff0000]"
+                        }
+                    }
+                >
+                    {
+                        gpui::canvas(
+                            move |_, window, _| color.set(window.text_style().color),
+                            |_, _, _, _| {}
+                        )
+                        .size_full()
+                    }
                 </div>
             };
         }
 
         rake::view! {
-            <div class="w-20 h-20 text-[#111111] hover:text-[#ff0000] hover:font-bold"
-                class:hover:text-[#00ff00]={self.selected}>
-                {gpui::canvas(move |_, window, _| color.set(window.text_style().color), |_, _, _, _| {}).size_full()}
+            <div
+                class="w-20 h-20 text-[#111111] hover:text-[#ff0000] hover:font-bold"
+                class:hover:text-[#00ff00]={self.selected}
+            >
+                {
+                    gpui::canvas(
+                        move |_, window, _| color.set(window.text_style().color),
+                        |_, _, _, _| {}
+                    )
+                    .size_full()
+                }
             </div>
         }
     }
