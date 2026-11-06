@@ -1,0 +1,17 @@
+[package]
+name = "rake-view-syntax"
+version = "0.1.0-alpha.3"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = ["crates-io"]
+description = "Internal view syntax for matching Rake versions; no external stability guarantees"
+
+[lints]
+workspace = true
+
+[dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+syn = { version = "2", features = ["full"] }

@@ -7148,15 +7148,19 @@ dependencies = [
  "ctrlc",
  "futures",
  "libc",
+ "proc-macro2",
  "rake-app",
  "rake-client",
  "rake-diagnostics",
  "rake-dist",
  "rake-protocol",
+ "rake-view-syntax",
  "regex",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
  "tungstenite",
  "url",
  "uuid",
@@ -7389,6 +7393,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "rake-view-syntax",
  "syn 2.0.119",
 ]
 
@@ -7506,6 +7511,15 @@ name = "rake-view"
 version = "0.1.0"
 dependencies = [
  "rake-app",
+]
+
+[[package]]
+name = "rake-view-syntax"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

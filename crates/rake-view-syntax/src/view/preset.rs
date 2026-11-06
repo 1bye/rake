@@ -6,7 +6,11 @@ use syn::{Expr, ForeignItemFn, LitStr, ReturnType};
 
 use super::{classes, style_plan::Variant, theme};
 
-pub(crate) fn expand(
+/// Lowers a style preset using the supplied facade path.
+///
+/// # Errors
+/// Returns an error for unsupported declarations or invalid utilities.
+pub fn expand(
     classes: LitStr,
     item: ForeignItemFn,
     rake: &TokenStream,

@@ -59,6 +59,8 @@ Outside paragraphs and headings, literal strings and expressions whose GPUI elem
 is `SharedString` or a static string become identified, accessible `gpui::Text` nodes. Other embedded elements
 keep their own identity and semantics. Literal-only buttons get an
 accessible label automatically; supply `aria-label` for dynamic or icon buttons.
+[Run `rake lint`](lint.md) to check accessible labels and positional loop IDs
+without building the project. The linter and macro share `rake-view-syntax`.
 
 | Tags | GPUI behavior |
 | --- | --- |

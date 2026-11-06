@@ -12,6 +12,7 @@ mod source;
 mod terminal;
 
 mod distribution;
+mod lint;
 mod native_commands;
 mod release;
 mod scaffold;
@@ -30,6 +31,25 @@ fn main() {
     }
 
     let json = arguments.iter().any(|argument| argument == "--json");
+
+    if arguments.first().is_some_and(|command| command == "lint") {
+        match lint::run(&arguments[1..]) {
+            Ok(false) => return,
+            Ok(true) => std::process::exit(1),
+            Err(error) => {
+                if json {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"error":{"message":error.to_string()}})
+                    );
+                } else {
+                    eprintln!("rake: {error}");
+                }
+
+                std::process::exit(1);
+            }
+        }
+    }
 
     if arguments.first().is_some_and(|command| {
         matches!(

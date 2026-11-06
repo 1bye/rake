@@ -14,31 +14,50 @@ use self::style_plan::StylePlan;
 use self::tag::{Tag, display_name};
 
 #[derive(Clone)]
-pub(super) struct View(Element);
+/// Parsed root of one `view!` invocation, retaining the source token spans.
+pub struct View(Element);
+
+impl View {
+    /// Borrows the parsed root without applying compiler recovery or lowering.
+    pub fn root(&self) -> &Element {
+        &self.0
+    }
+}
 
 #[derive(Clone)]
-struct Element {
-    tag: syn::Path,
+/// A parsed element, including component properties and control-flow children.
+pub struct Element {
+    /// Original Rust path spelling of the tag.
+    pub tag: syn::Path,
     resolved: Tag,
     display_name: String,
     self_closing: bool,
-    attributes: Vec<Attribute>,
-    children: Vec<Node>,
+    /// Named attributes in source order.
+    pub attributes: Vec<Attribute>,
+    /// Children in source order.
+    pub children: Vec<Node>,
     parse_errors: Vec<syn::Error>,
     defaults: Option<Expr>,
 }
 
 #[derive(Clone)]
-struct Attribute {
-    name: String,
+/// A named attribute with its original source span.
+pub struct Attribute {
+    /// Attribute name, including hyphens and event prefixes.
+    pub name: String,
     action: Option<syn::Path>,
-    span: Span,
-    value: AttributeValue,
+    /// Source span of the attribute name.
+    pub span: Span,
+    /// Parsed property value.
+    pub value: AttributeValue,
 }
 
 #[derive(Clone)]
-enum AttributeValue {
+/// A Rust expression or markup-valued component property.
+pub enum AttributeValue {
+    /// Embedded Rust expression.
     Expression(Box<Expr>),
+    /// Nested element passed to a component.
     Markup(Box<Element>),
 }
 
@@ -55,31 +74,50 @@ impl Attribute {
 }
 
 #[derive(Clone)]
-enum Node {
+/// A parsed child or Rust control-flow construct.
+pub enum Node {
+    /// Pattern-based selection of children.
     Match {
+        /// Rust expression selecting the branch.
         expression: Expr,
+        /// Match arms in source order.
         arms: Vec<MatchArm>,
     },
+    /// Nested element.
     Element(Element),
+    /// Quoted or normalized unquoted literal text.
     Text(LitStr),
+    /// Embedded Rust expression.
     Expression(Expr),
+    /// Conditional children.
     If {
+        /// Rust branch condition.
         condition: Expr,
+        /// Children of the true branch.
         then_nodes: Vec<Node>,
+        /// Children of the false branch.
         else_nodes: Vec<Node>,
     },
+    /// Repeated children with a Rust pattern and iterator.
     For {
+        /// Rust pattern introducing bindings.
         pattern: Pat,
+        /// Rust iterator expression.
         iterator: Expr,
+        /// Children in source order.
         children: Vec<Node>,
     },
 }
 
 #[derive(Clone)]
-struct MatchArm {
-    pattern: Pat,
-    guard: Option<Expr>,
-    children: Vec<Node>,
+/// A pattern, optional guard, and markup body of a match arm.
+pub struct MatchArm {
+    /// Rust pattern introducing bindings.
+    pub pattern: Pat,
+    /// Optional Rust match guard.
+    pub guard: Option<Expr>,
+    /// Children in source order.
+    pub children: Vec<Node>,
 }
 
 enum ParsedAttribute {
