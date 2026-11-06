@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 futures.workspace = true
-rake = { workspace = true, features = ["tray"] }
+rake = { workspace = true, features = ["tray", "launch-at-login"] }
 
 [features]
 gpui-fast = ["rake/gpui-fast"]
