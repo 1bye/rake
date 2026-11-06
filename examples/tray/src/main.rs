@@ -240,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .events
                         .borrow_mut()
                         .push(format!("Launch at login: {result:?}"));
-                    let _ = cx.update(|cx| cx.refresh_windows());
+                    cx.update(|cx| cx.refresh_windows());
                 })
                 .detach();
             }
