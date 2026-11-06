@@ -46,6 +46,8 @@ New here? Start with [Getting started](getting-started.md), then read
 
 ## Ship
 
+See the [changelog](../CHANGELOG.md) for unreleased behavior changes.
+
 | Guide | Covers |
 | --- | --- |
 | [Packaging](packaging.md) | Archives and Web bundles |

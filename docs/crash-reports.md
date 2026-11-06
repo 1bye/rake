@@ -1,22 +1,34 @@
 # Native crash reports
 
-Native panic records are **opt-in**. Rake writes locally and never uploads a report.
+Native GPUI **App recording is on by default; delivery is opt-in**. Rake writes
+bounded local panic records to the app's data directory without being asked, in
+both development and packaged runs. It never uploads anything. Panic payloads are
+omitted by default, and the normal size/count/privacy limits below apply.
+
+With no crash builder calls, `App::run` opens the default crash directory and
+installs the hook with the App's diagnostics collector before native GPUI starts.
+There is no sink, delivery pass or acknowledgement deletion: records wait for a
+later run that configures a sink. Ordinary oldest-first retention still applies.
+Default directory/hook setup failures emit a warning and startup continues, including
+when a host already installed a Rake hook. Constructing an App alone performs no I/O.
+
 The configuration, limits, record and sink types in `rake::crash` are available on
 native and Web, including with `--no-default-features`. Native filesystem operations
-(`CrashConfig::open`, `CrashReporter`, `install`, `deliver`) remain native-only and
-need no GPUI or display. `App::crash_reports` is a no-op on Web: it stores neither
-configuration nor sink and performs no hook installation, file I/O or delivery.
-Shared native/Web App builders can call it without target-specific `cfg` guards.
-Web sink delivery is the follow-up from issue #16; the existing Web console hook
-is unchanged.
-With GPUI, configure the application before calling `run`:
+(`CrashConfig::open`, `CrashReporter`, `install`, `deliver`) remain native-only.
+Headless hosts still opt into installation and delivery explicitly; no implicit
+headless hook is installed. Web installs no new hook or default recording. Both
+crash builder methods are no-ops on Web, and Web sink delivery is the follow-up
+from issue #16. The existing Web console hook is unchanged.
+
+To opt into delivery and replace the default directory, limits or privacy options,
+configure an explicit sink before `run`:
 
 ```rust,no_run
-use rake::crash::{CrashConfig, CrashRecord};
+use rake::crash::CrashRecord;
 
 # #[cfg(feature = "gpui")] {
 let app = rake::App::new("com.example.editor").crash_reports(
-    CrashConfig::new(env!("CARGO_PKG_VERSION")),
+    rake::crash_config!(),
     |record: &CrashRecord| {
         // Hand off to application-owned storage before acknowledging success.
         eprintln!("Previous panic: {} ({})", record.id, record.app_version);
@@ -27,13 +39,39 @@ let app = rake::App::new("com.example.editor").crash_reports(
 # }
 ```
 
-`App` opens the directory, installs the hook using its diagnostics collector and
-attempts waiting delivery before native GPUI initialization. Setup errors fail
-startup; a sink error leaves the record waiting and startup continues. No UI exists
-yet: a graphical application should use a durable inbox sink, then prompt after
-mounting. The hook lasts until process exit; installing a second Rake hook returns
-`AlreadyExists`. Install before starting worker threads. Hosts that replace the
-panic hook later must chain to the installed hook if they want recording to continue.
+`rake::crash_config!()` captures `CARGO_PKG_VERSION` in the caller's crate. The
+implicit default instead uses the consumer version already embedded in the
+build-script `RAKE_UPDATE_POLICY` and passed through `App::distribution_policy`
+(automatically by `#[rake::app]`). This works without enabling update services.
+When that metadata is absent or invalid, the default records `"unknown"`, never
+Rake's own version. There is no new build-script requirement. Manual entry points
+can pass existing metadata through `distribution_policy`, or use the macro with an
+explicit sink to supply their own Cargo version.
+
+Explicit `App::crash_reports(config, sink)` setup errors still fail startup; sink
+errors retain records and startup continues. The sink runs before UI initialization:
+use a durable inbox, then prompt after mounting. An app that adds a sink later can
+deliver older default records by using the same app ID and default directory.
+
+Opt out when another reporter such as Sentry or a host-owned hook owns reporting:
+
+```rust,no_run
+# #[cfg(feature = "gpui")] {
+let app = rake::App::new("com.example.editor").without_crash_reports();
+// Add the application's root, routes or background entry point, then run.
+# }
+```
+
+Opt-out creates no crash directory and installs no hook; it does not remove a hook
+already installed by the host. **Last call wins**: `.crash_reports(...).without_crash_reports()`
+disables Rake setup and drops the sink, while `.without_crash_reports().crash_reports(...)`
+enables the explicit configuration and delivery.
+
+The hook lasts until process exit. **Any hook installed later must chain to Rake's
+hook or recording stops**, including apps using default recording without a sink.
+Installing a second Rake hook returns `AlreadyExists`; the automatic App path warns
+and continues, while the explicit path fails startup. Install host hooks before
+launch or chain them deliberately.
 
 The native hook records **every panic in the process after installation**, including
 panics caught by `catch_unwind` (such as recovery paths in `rake-updates`) and panics
@@ -46,10 +84,10 @@ remain the context, without adding a new developer-supplied string to the format
 A headless host controls these steps directly:
 
 ```rust,no_run
-use rake::crash::{CrashConfig, CrashLimits, CrashRecord};
+use rake::crash::{CrashLimits, CrashRecord};
 use rake::diagnostics::Collector;
 # fn main() -> std::io::Result<()> {
-let reporter = CrashConfig::new(env!("CARGO_PKG_VERSION"))
+let reporter = rake::crash_config!()
     .directory("/private/app-owned/crashes")
     .limits(CrashLimits { records: 4, record_bytes: 16 * 1024, diagnostics: 16 })
     .open("com.example.editor")?;
