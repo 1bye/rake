@@ -86,26 +86,28 @@ impl Render for Documents {
                             "documents",
                             self.rows.len(),
                             cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
-                                range.map(|index| {
-                            let row = &this.rows[index];
-                            let id = row.id;
-                            let selected = this.selected == Some(id);
+                                range
+                                    .map(|index| {
+                                        let row = &this.rows[index];
+                                        let id = row.id;
+                                        let selected = this.selected == Some(id);
 
-                            rake::view! {
-                                <button
-                                    id={("document", id)}
-                                    aria-label={row.title.clone()}
-                                    class="h-[32px] px-3 justify-start focus-visible:bg-focus"
-                                    class:bg-accent={selected}
-                                    on:click={
-                                        cx.listener(move |this, _, window, cx|
-                                            this.jump(index, window, cx))
-                                    }
-                                >
-                                    {row.title.clone()}
-                                </button>
-                            }
-                        }).collect()
+                                        rake::view! {
+                                            <button
+                                                id={("document", id)}
+                                                aria-label={row.title.clone()}
+                                                class="h-[32px] px-3 justify-start focus-visible:bg-focus"
+                                                class:bg-accent={selected}
+                                                on:click={
+                                                    cx.listener(move |this, _, window, cx|
+                                                        this.jump(index, window, cx))
+                                                }
+                                            >
+                                                {row.title.clone()}
+                                            </button>
+                                        }
+                                    })
+                                    .collect()
                             })
                         )
                         .track_scroll(&self.scroll)

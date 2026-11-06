@@ -1645,13 +1645,19 @@ impl Render for ElementsView {
                                             style={control}
                                             on:click={
                                                 cx.listener(|this, _, _, cx| {
-                                                if let Some((property, value)) = this.style_text.split_once(':') {
-                                                    this.edit_style(rake::inspection::StyleEdit::Set { declaration: rake::inspection::StyleDeclaration {
-                                                        property: property.trim().into(), value: value.trim().trim_end_matches(';').into(), enabled: true,
-                                                    }});
-                                                } else { this.model.borrow_mut().lookup_error = Some("Use property: value".into()); }
-                                                cx.notify();
-                                            })
+                                                    if let Some((property, value)) = this.style_text.split_once(':') {
+                                                        this.edit_style(rake::inspection::StyleEdit::Set {
+                                                            declaration: rake::inspection::StyleDeclaration {
+                                                                property: property.trim().into(),
+                                                                value: value.trim().trim_end_matches(';').into(),
+                                                                enabled: true,
+                                                            }
+                                                        });
+                                                    } else {
+                                                        this.model.borrow_mut().lookup_error = Some("Use property: value".into());
+                                                    }
+                                                    cx.notify();
+                                                })
                                             }
                                         >
                                             "Apply"
@@ -2057,7 +2063,14 @@ impl Render for ElementsView {
                                         class="text-muted"
                                         style={control}
                                         on:click={
-                                            cx.listener(move |this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Handler { index })); cx.notify(); })
+                                            cx.listener(move |this, _, _, cx| {
+                                                let mut model = this.model.borrow_mut();
+                                                model.source_pending = model
+                                                    .selected
+                                                    .clone()
+                                                    .map(|id| (id, rake::inspection::SourceTarget::Handler { index }));
+                                                cx.notify();
+                                            })
                                         }
                                     >
                                         {
@@ -2116,7 +2129,14 @@ impl Render for ElementsView {
                                             class="text-muted"
                                             style={control}
                                             on:click={
-                                                cx.listener(move |this, _, _, cx| { let mut model=this.model.borrow_mut(); model.source_pending=model.selected.clone().map(|id| (id, rake::inspection::SourceTarget::Style { index })); cx.notify(); })
+                                                cx.listener(move |this, _, _, cx| {
+                                                    let mut model = this.model.borrow_mut();
+                                                    model.source_pending = model
+                                                        .selected
+                                                        .clone()
+                                                        .map(|id| (id, rake::inspection::SourceTarget::Style { index }));
+                                                    cx.notify();
+                                                })
                                             }
                                         >
                                             {

@@ -31,15 +31,20 @@ impl Render for Host {
                                 "large",
                                 10_000,
                                 cx.processor(|this, range: std::ops::Range<usize>, _, _| {
-                                    range.map(|index| {
-                                this.rendered.borrow_mut().insert(index);
+                                    range
+                                        .map(|index| {
+                                            this.rendered.borrow_mut().insert(index);
 
-                                rake::view! {
-                                    <div id={("record", index)} style={|s| s.h(gpui::px(32.))}>
-                                        {format!("Record {index}")}
-                                    </div>
-                                }
-                            }).collect()
+                                            rake::view! {
+                                                <div
+                                                    id={("record", index)}
+                                                    style={|s| s.h(gpui::px(32.))}
+                                                >
+                                                    {format!("Record {index}")}
+                                                </div>
+                                            }
+                                        })
+                                        .collect()
                                 })
                             )
                             .track_scroll(&self.scroll)
