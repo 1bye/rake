@@ -161,6 +161,13 @@ impl Rustfmt {
             .saturating_sub(indent)
             .saturating_add(self.tab_spaces)
             .max(1);
+        // Establish standard Rust indentation before applying the narrower markup
+        // budget. Rustfmt can leave an expression untouched when it cannot fit.
+        let wrapped = if width < self.width {
+            self.run(&wrapped, self.width)?
+        } else {
+            wrapped
+        };
         let formatted = self.run(&wrapped, width)?;
         let file = syn::parse_file(&formatted)?;
         let syn::Item::Fn(function) = &file.items[0] else {

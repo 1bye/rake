@@ -238,7 +238,7 @@ fn deeply_indented_rust_keeps_indentation_when_rustfmt_cannot_fit_a_line() {
     let source = format!(
         "fn main() {{ view! {{ {}<button on:click={{cx.listener(|this, _, _, cx| {{
             if let Some((property, value)) = this.style_text.split_once(':') {{
-                this.edit_style(Edit::Set {{ declaration: Declaration {{
+                this.edit_style(rake::inspection::StyleEdit::Set {{ declaration: rake::inspection::StyleDeclaration {{
                     property: property.trim().into(), value: value.trim().trim_end_matches(';').into(), enabled: true,
                 }}}});
             }} else {{ this.error = Some(\"Use property: value\".into()); }}
@@ -247,7 +247,11 @@ fn deeply_indented_rust_keeps_indentation_when_rustfmt_cannot_fit_a_line() {
         "<div>".repeat(9),
         "</div>".repeat(9),
     );
-    formatted(&source);
+    let output = formatted(&source);
+    assert!(
+        !output.contains("Set { declaration:"),
+        "complex closure was left unformatted: {output}"
+    );
 }
 
 #[test]

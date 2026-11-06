@@ -48,7 +48,8 @@ discovered too. Macro definitions are left to their author.
   directory and accepts rust-analyzer's appended `--edition EDITION` argument.
 
 Width counts Unicode characters, rather than UTF-8 bytes, and expands tabs to
-configured tab stops. Unbreakable literals and comments can exceed the width.
+configured tab stops. Unbreakable tokens, comments, and Rust expressions that
+rustfmt cannot fit can exceed the width.
 There is no separate formatter configuration.
 
 ## Preservation
