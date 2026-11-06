@@ -36,8 +36,12 @@ discovered too. Macro definitions are left to their author.
 - Opening tags fit on one line when they have at most three attributes and fit
   the width. Otherwise attributes occupy separate indented lines, with
   `>` or `/>` on its own line.
-- Children are indented one level. One short quoted text or expression child can
-  stay inline, such as `<span>"Saved"</span>`.
+- Existing blank lines between sibling nodes and between attributes are kept,
+  with runs collapsed to one. Formatting does not introduce blank lines.
+- Children are indented one level. A short text or expression child, or an
+  existing short run of mixed inline content, can stay inline with its closing
+  tag, such as `<span>"Saved"</span>`. If the complete line is too wide, the
+  content moves below the opening tag.
 - Embedded Rust uses rustfmt with the project's configuration. Short closures
   remain inline; longer expressions break within the available indentation budget.
 - Markup `if`, `match`, and `for` use Rust-style braces, with indented markup

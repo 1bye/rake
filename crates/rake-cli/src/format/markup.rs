@@ -127,9 +127,39 @@ impl Renderer<'_> {
     }
 
     fn gap(&self, range: Range<usize>, desired: &str) -> String {
+        self.layout_gap(range, desired, false)
+    }
+
+    fn sibling_gap(&self, range: Range<usize>, desired: &str) -> String {
+        self.layout_gap(range, desired, true)
+    }
+
+    fn has_blank_line(&self, range: Range<usize>) -> bool {
         let source = &self.source[range];
+        let Some(parts) = atoms(source) else {
+            return false;
+        };
+        let mut previous = 0;
+        for part in parts {
+            if source[previous..part.range.start].matches('\n').count() > 1 {
+                return true;
+            }
+            previous = part.range.end;
+        }
+        source[previous..].matches('\n').count() > 1
+    }
+
+    fn layout_gap(&self, range: Range<usize>, desired: &str, preserve_blank: bool) -> String {
+        let source = &self.source[range];
+        let whitespace = |gap: &str| {
+            if preserve_blank && desired.contains('\n') && gap.matches('\n').count() > 1 {
+                format!("\n{desired}")
+            } else {
+                desired.to_owned()
+            }
+        };
         if source.trim().is_empty() {
-            return desired.into();
+            return whitespace(source);
         }
         let Some(parts) = atoms(source) else {
             return source.into();
@@ -139,6 +169,9 @@ impl Renderer<'_> {
         for part in &parts {
             let before = &source[previous..part.range.start];
             if before.contains('\n') {
+                if preserve_blank && before.matches('\n').count() > 1 {
+                    result.push('\n');
+                }
                 result.push('\n');
                 result.push_str(desired.rsplit_once('\n').map_or("", |(_, indent)| indent));
             } else {
@@ -151,7 +184,7 @@ impl Renderer<'_> {
         if trailing_line_comment && !desired.contains('\n') {
             result.push('\n');
         } else {
-            result.push_str(desired);
+            result.push_str(&whitespace(&source[previous..]));
         }
         result
     }
@@ -182,51 +215,76 @@ impl Renderer<'_> {
         let closing = layout.children.last().expect("nonempty element layout");
         let children = &layout.children[1..layout.children.len() - 1];
         let close = self.render(closing, indent)?;
-        if children.len() <= 1 && !output.contains('\n') {
-            let child = children.first();
-            let inline = if let Some(child) = child {
-                if matches!(child.kind, LayoutKind::Literal | LayoutKind::Rust) {
-                    Some(self.render(child, indent)?)
-                } else {
-                    None
-                }
-            } else {
-                Some(String::new())
-            };
-            if let Some(inline) = inline {
-                let content_start = self.range(opening).end;
-                let content_end = self.range(closing).start;
-                let comment_free = if let Some(child) = child {
-                    self.source[content_start..self.range(child).start]
-                        .trim()
-                        .is_empty()
-                        && self.source[self.range(child).end..content_end]
-                            .trim()
-                            .is_empty()
-                } else {
-                    self.source[content_start..content_end].trim().is_empty()
-                };
-                if comment_free
-                    && !inline.contains('\n')
-                    && indent
-                        + self.rustfmt.columns(&output)
-                        + self.rustfmt.columns(&inline)
-                        + self.rustfmt.columns(&close)
-                        <= self.rustfmt.width
+        let content_start = self.range(opening).end;
+        let content_end = self.range(closing).start;
+        let originally_inline = children.first().is_some_and(|first| {
+            opening.end.end().line == first.start.start().line
+                && children
+                    .last()
+                    .is_some_and(|last| first.start.start().line == last.end.end().line)
+        });
+        if !output.contains('\n') && (children.len() <= 1 || originally_inline) {
+            let mut inline = String::new();
+            let mut previous = content_start;
+            let mut eligible = true;
+            for child in children {
+                let range = self.range(child);
+                let gap = &self.source[previous..range.start];
+                if !gap.trim().is_empty()
+                    || self.has_blank_line(previous..range.start)
+                    || child.kind == LayoutKind::Element
+                        && !children.iter().any(|child| child.kind == LayoutKind::Text)
+                    || !matches!(
+                        child.kind,
+                        LayoutKind::Text
+                            | LayoutKind::Literal
+                            | LayoutKind::Rust
+                            | LayoutKind::Element
+                    )
                 {
-                    output.push_str(&inline);
-                    output.push_str(&close);
-                    return Ok(output);
+                    eligible = false;
+                    break;
                 }
+                // Keep same-line gaps: unquoted text adopts their whitespace.
+                if !gap.contains('\n') {
+                    inline.push_str(gap);
+                }
+                inline.push_str(&self.render(child, indent)?);
+                previous = range.end;
+            }
+            let trailing = &self.source[previous..content_end];
+            eligible &= trailing.trim().is_empty() && !self.has_blank_line(previous..content_end);
+            if !trailing.contains('\n') {
+                inline.push_str(trailing);
+            }
+            if eligible
+                && !inline.contains('\n')
+                && indent
+                    + self.rustfmt.columns(&output)
+                    + self.rustfmt.columns(&inline)
+                    + self.rustfmt.columns(&close)
+                    <= self.rustfmt.width
+            {
+                output.push_str(&inline);
+                output.push_str(&close);
+                return Ok(output);
             }
         }
         let nested = indent + self.rustfmt.tab_spaces;
         let mut previous = self.range(opening).end;
         let mut previous_text = false;
-        for child in children {
+        for (index, child) in children.iter().enumerate() {
             let range = self.range(child);
-            let gap = if previous_text || child.kind == LayoutKind::Text {
-                self.source[previous..range.start].to_owned()
+            let source_gap = &self.source[previous..range.start];
+            let gap = if (previous_text || child.kind == LayoutKind::Text && index > 0)
+                && !source_gap.contains('\n')
+            {
+                source_gap.to_owned()
+            } else if index > 0 {
+                self.sibling_gap(
+                    previous..range.start,
+                    &format!("\n{}", self.rustfmt.indent(nested)),
+                )
             } else {
                 self.gap(
                     previous..range.start,
@@ -238,15 +296,10 @@ impl Renderer<'_> {
             previous = range.end;
             previous_text = child.kind == LayoutKind::Text;
         }
-        let gap = if previous_text {
-            self.source[previous..self.range(closing).start].to_owned()
-        } else {
-            self.gap(
-                previous..self.range(closing).start,
-                &format!("\n{}", self.rustfmt.indent(indent)),
-            )
-        };
-        output.push_str(&gap);
+        output.push_str(&self.gap(
+            previous..self.range(closing).start,
+            &format!("\n{}", self.rustfmt.indent(indent)),
+        ));
         output.push_str(&close);
         Ok(output)
     }
@@ -272,19 +325,27 @@ impl Renderer<'_> {
                 .trim()
                 .is_empty()
         });
-        let split = attributes.len() > 3
+        let blank_lines = attributes
+            .windows(2)
+            .any(|pair| self.has_blank_line(self.range(&pair[0]).end..self.range(&pair[1]).start));
+        let split = blank_lines
+            || attributes.len() > 3
             || comments
             || short.contains('\n')
             || indent + self.rustfmt.columns(&short) > self.rustfmt.width;
         let mut output = name;
         let mut previous = self.range(&parts[0]).end;
-        for (attribute, value) in attributes.iter().zip(values) {
+        for (index, (attribute, value)) in attributes.iter().zip(values).enumerate() {
             let desired = if split {
                 format!("\n{}", self.rustfmt.indent(nested))
             } else {
                 " ".into()
             };
-            output.push_str(&self.gap(previous..self.range(attribute).start, &desired));
+            output.push_str(&self.layout_gap(
+                previous..self.range(attribute).start,
+                &desired,
+                index > 0,
+            ));
             output.push_str(&value);
             previous = self.range(attribute).end;
         }
@@ -369,14 +430,18 @@ impl Renderer<'_> {
         let mut output = String::from("{");
         let mut previous = open;
         let mut previous_text = false;
-        for child in &layout.children {
+        for (index, child) in layout.children.iter().enumerate() {
             let child_range = self.range(child);
-            let gap = if previous_text || child.kind == LayoutKind::Text {
-                self.source[previous..child_range.start].to_owned()
+            let source_gap = &self.source[previous..child_range.start];
+            let gap = if (previous_text || child.kind == LayoutKind::Text && index > 0)
+                && !source_gap.contains('\n')
+            {
+                source_gap.to_owned()
             } else {
-                self.gap(
+                self.layout_gap(
                     previous..child_range.start,
                     &format!("\n{}", self.rustfmt.indent(nested)),
+                    index > 0,
                 )
             };
             output.push_str(&gap);
@@ -389,11 +454,7 @@ impl Renderer<'_> {
         } else {
             format!("\n{}", self.rustfmt.indent(indent))
         };
-        if previous_text {
-            output.push_str(&self.source[previous..close]);
-        } else {
-            output.push_str(&self.gap(previous..close, &desired));
-        }
+        output.push_str(&self.gap(previous..close, &desired));
         output.push('}');
         Ok(output)
     }

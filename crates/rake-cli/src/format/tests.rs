@@ -185,10 +185,8 @@ fn every_repository_view_is_token_equivalent_and_idempotent() {
                 .and_then(|view| view.layout().map(|_| ()))
                 .is_ok();
             if valid {
-                syn::parse2::<rake_view_syntax::View>(after.tokens.clone())
-                    .unwrap()
-                    .layout()
-                    .unwrap();
+                let view = syn::parse2::<rake_view_syntax::View>(after.tokens.clone()).unwrap();
+                assert_closing_line(view.layout().unwrap(), &path);
             } else {
                 let before_range = source::span_range(&source, before.open, before.close);
                 let after_range = source::span_range(&once, after.open, after.close);
@@ -297,4 +295,96 @@ fn markup_property_comments_keep_their_exact_bytes() {
     formatted(
         "fn main() { view! { <Panel heading= // before brace   \n { // before child   \n <h1>\"Title\"</h1> // after child   \n /* before close */ }>\"body\"</Panel> }; }",
     );
+}
+
+#[test]
+fn inline_mixed_content_keeps_its_closing_tag_before_a_blank_line() {
+    let input = r#"fn main() { view! {
+        <div>
+            <p class="text-3xl font-bold">Count: {self.count.to_string()}</p>
+
+            <span>"Next"</span>
+        </div>
+    }; }"#;
+    let output = formatted(input);
+    assert!(
+        output.contains("<p class=\"text-3xl font-bold\">Count: {self.count.to_string()}</p>\n\n"),
+        "{output}"
+    );
+    let repaired = formatted(&input.replace("to_string()}</p>", "to_string()}\n            </p>"));
+    assert_eq!(output, repaired);
+}
+
+#[test]
+fn wide_mixed_content_moves_the_whole_run_below_the_opening_tag() {
+    let opening_fits = formatted(
+        r#"fn main() { view! { <div><p class="text-3xl font-bold">Count after all of the buttons have been pressed: {self.count.to_string()}</p></div> }; }"#,
+    );
+    assert!(opening_fits.contains("<p class=\"text-3xl font-bold\">\n            Count after all of the buttons have been pressed: {self.count.to_string()}\n        </p>"), "{opening_fits}");
+    let input = r#"fn main() { view! { <div><p class="text-3xl font-bold" aria-label="A deliberately long label for the paragraph">Count: {self.count.to_string()}</p></div> }; }"#;
+    let output = formatted(input);
+    assert!(
+        output.contains(">\n            Count: {self.count.to_string()}\n        </p>"),
+        "{output}"
+    );
+}
+
+#[test]
+fn sibling_and_attribute_blank_lines_collapse_to_one_without_adding_any() {
+    let input = r#"fn main() { view! {
+        <Panel
+            first={1}
+
+
+            second={2}
+            third={3}
+        >
+            <span>"First"</span>
+
+
+            // next group
+
+            <span>"Second"</span>
+            <span>"Third"</span>
+            if ready {
+                <span>"Branch one"</span>
+
+
+                <span>"Branch two"</span>
+            }
+        </Panel>
+    }; }"#;
+    let output = formatted(input);
+    assert!(
+        output.contains("first={1}\n\n        second={2}\n        third={3}"),
+        "{output}"
+    );
+    assert!(output.contains("</span>\n\n        // next group\n\n        <span>\"Second\"</span>\n        <span>\"Third\"</span>"), "{output}");
+    assert!(
+        output.contains("<span>\"Branch one\"</span>\n\n            <span>\"Branch two\"</span>"),
+        "{output}"
+    );
+    assert!(!output.contains("\n\n\n"), "{output}");
+}
+
+fn assert_closing_line(layout: &rake_view_syntax::Layout, path: &Path) {
+    use rake_view_syntax::LayoutKind;
+    if layout.kind == LayoutKind::Element && layout.children.len() > 2 {
+        let opening = &layout.children[0];
+        let first = &layout.children[1];
+        let last = &layout.children[layout.children.len() - 2];
+        let closing = layout.children.last().unwrap();
+        if opening.end.end().line == first.start.start().line {
+            assert_eq!(
+                last.end.end().line,
+                closing.start.start().line,
+                "{}:{}: inline content has a detached closing tag",
+                path.display(),
+                opening.start.start().line
+            );
+        }
+    }
+    for child in &layout.children {
+        assert_closing_line(child, path);
+    }
 }
