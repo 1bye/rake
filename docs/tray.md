@@ -116,7 +116,10 @@ AppKit mixed state works natively; other adapters reject it.
 
 `MenuItem::quit` uses Rake's guarded quit. A declined quit preserves items and
 managed work. Native AppKit termination-on-removal is intentionally not enabled.
-`App::tray_command(tray_id, item_id, typed_command)` dispatches through the normal
+`App::tray_command(tray_id, item_id, typed_command)` returns `App` so subsequent
+builder methods chain directly, without `?`. Argument serialization failures are
+stored as configuration errors and returned by `App::run` as `AppError::Command`,
+including across route type transitions. A successful binding dispatches through the normal
 command scheduler and capability checks, without transport retry-key retention.
 `RuntimeClient::execute(command)` is the corresponding typed local UI entry point;
 `dispatch(command, key)` remains the retry-deduplicated transport entry point.
@@ -242,3 +245,18 @@ Escape/blur, close/reopen, declined/accepted Quit, sleep/wake and display change
 Measure AppKit/GDI/USER/file-descriptor resources across repeated cycles. Test
 Explorer/panel/bus replacement only in a disposable desktop session. Compile checks
 and TestPlatform tests do not replace these gates.
+
+
+## Shared menu model for issue #13
+
+[Issue #13](https://github.com/1bye/rake/issues/13), native application menus driven
+by commands, needs the same `Menu`/`MenuItem` descriptor model. The authoritative
+model is currently `crates/rake-tray/src/menu.rs`; reuse it instead of defining a
+second menu tree, state/accelerator vocabulary or command binding contract.
+
+When #13 adds the second native menu consumer, the shared descriptors and their
+image/platform-extension value types should live in a GPUI-independent `rake-menu`
+crate, exposed through `rake::menu` with compatibility re-exports from `rake::tray`.
+Native resources and projection stay in platform adapters; typed command dispatch
+stays at the Rake application boundary. This PR documents that extraction point
+and performs no menu-model refactor.

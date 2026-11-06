@@ -159,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }
         })?
-        .tray_command("main", "increment", Increment)?
+        .tray_command("main", "increment", Increment)
         .on_tray_event(move |event, cx| {
             let mut history = events.events.borrow_mut();
             if history.len() == 32 {

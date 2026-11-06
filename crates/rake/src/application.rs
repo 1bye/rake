@@ -90,7 +90,7 @@ pub struct App<R: Route = NoRoute> {
     platform: crate::platform::Platform,
     layout: Option<crate::router::layout::LayoutFactory<R>>,
     new_window_options: Option<Rc<dyn Fn(crate::router::WindowId) -> WindowOptions>>,
-    configuration_error: Option<&'static str>,
+    configuration_error: Option<AppError>,
     diagnostics: DiagnosticsConfig,
     root: Option<Root>,
     background: Option<Background>,
@@ -178,11 +178,12 @@ impl App<NoRoute> {
     /// let app = app.routes(pages); // use replace_routes instead
     /// ```
     pub fn routes<Next: Route>(self, routes: impl RouteViews<Next>) -> App<Next> {
-        let configuration_error = if self.layout.is_some()
-            || !self.guards.is_empty()
-            || !self.admissions.is_empty()
-        {
-            Some("register routes before configuring layouts, entry guards, or entry admissions")
+        let configuration_error = if self.configuration_error.is_some() {
+            self.configuration_error
+        } else if self.layout.is_some() || !self.guards.is_empty() || !self.admissions.is_empty() {
+            Some(AppError::InvalidConfiguration(
+                "register routes before configuring layouts, entry guards, or entry admissions",
+            ))
         } else {
             self.configuration_error
         };
@@ -248,19 +249,25 @@ impl<R: Route> App<R> {
         self
     }
 
-    /// Binds a tray menu selection to a typed application command.
-    /// # Errors
-    /// Reports command argument serialization failure.
+    /// Binds a tray menu selection without interrupting the application builder chain.
+    /// Serialization errors are deferred to [`Self::run`] as [`AppError::Command`].
     #[cfg(feature = "tray")]
+    #[must_use]
     pub fn tray_command<C: crate::control::ApplicationCommand>(
         mut self,
         tray: &str,
         item: &str,
         command: C,
-    ) -> Result<Self, crate::control::CommandError> {
-        self.tray_handlers
-            .push(crate::tray::command_handler(tray, item, command)?);
-        Ok(self)
+    ) -> Self {
+        match crate::tray::command_handler(tray, item, command) {
+            Ok(handler) => self.tray_handlers.push(handler),
+            Err(error) => {
+                if self.configuration_error.is_none() {
+                    self.configuration_error = Some(AppError::Command(error));
+                }
+            }
+        }
+        self
     }
 
     /// Captures the consuming application's build-script update policy and resource layout.
@@ -684,7 +691,7 @@ impl<R: Route> App<R> {
         }
 
         if let Some(error) = self.configuration_error {
-            return Err(AppError::InvalidConfiguration(error));
+            return Err(error);
         }
 
         let services = self.services()?;
@@ -1209,6 +1216,43 @@ mod configuration_tests {
     enum Destination {
         #[route(id = "main", path = "/main")]
         Main,
+    }
+
+    #[cfg(feature = "tray")]
+    #[crate::data(schema)]
+    #[derive(crate::Command)]
+    #[command(id = "tray.serialization-test", capability = Headless)]
+    struct SerializationCommand {
+        #[serde(serialize_with = "reject_command")]
+        value: String,
+    }
+    #[cfg(feature = "tray")]
+    fn reject_command<S: serde::Serializer>(_: &str, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "fixture command cannot serialize",
+        ))
+    }
+
+    #[cfg(feature = "tray")]
+    #[test]
+    fn tray_command_stays_chainable_and_defers_serialization_errors_across_routes() {
+        let pages = crate::router::__routes(|_: &Destination, _, _, _| {
+            Err(crate::router::MountError("unused fixture".into()))
+        });
+        let app = App::new("tray.builder-test")
+            .tray_command(
+                "main",
+                "action",
+                SerializationCommand {
+                    value: "value".into(),
+                },
+            )
+            .tray(crate::tray::Tray::new("main"))
+            .routes(pages)
+            .navigation_feedback(false);
+        assert!(
+            matches!(app.run(), Err(AppError::Command(crate::control::CommandError::Arguments(message))) if message.contains("fixture command cannot serialize"))
+        );
     }
 
     #[test]

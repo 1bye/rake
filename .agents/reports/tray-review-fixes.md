@@ -61,3 +61,15 @@ Validation: scripted tests cover derived retry/mode retention, explicit rejectio
 no-host retries preserving derived identity, and version-failure cleanup under the
 fallback identity. Core tests and foreign Windows Clippy passed. Actual path-bound
 GUID and Explorer behavior remain subject to Windows desktop qualification.
+
+## 6. Keep tray command bindings chainable
+
+tray_command now returns Self. Serialization failures retain their CommandError
+inside the existing deferred configuration-error slot and surface at App::run;
+route transitions preserve the first error. Updated the workbench and guide.
+Documented the authoritative current menu model and the shared rake-menu/rake::menu
+extraction point for #13; no menu-model refactor or issue mutation was performed.
+
+Validation before commit: chainability/deferred-error/route-transition tests,
+example compilation, focused facade Clippy and workspace Clippy passed. The final
+post-commit verification matrix is recorded in the PR description.
