@@ -70,6 +70,7 @@ impl Element {
         }
 
         let original = Self {
+            layout: self.layout.clone(),
             tag: self.tag.clone(),
             resolved: self.resolved,
             display_name: self.display_name.clone(),

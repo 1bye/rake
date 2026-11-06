@@ -4,7 +4,7 @@ use proc_macro2::{Delimiter, Span, TokenTree};
 use syn::parse::ParseStream;
 use syn::{Expr, LitStr, Pat, Token};
 
-use super::Node;
+use super::{Layout, Node};
 
 pub(super) fn starts_control(input: ParseStream<'_>) -> bool {
     let fork = input.fork();
@@ -34,11 +34,11 @@ pub(super) fn push_node(
     input: ParseStream<'_>,
     nodes: &mut Vec<Node>,
     previous: &mut Span,
-) -> syn::Result<()> {
+) -> syn::Result<Layout> {
     let mut cursor = input.cursor();
     let first = cursor.span();
     let quoted = input.peek(LitStr);
-    let mut node: Node = input.parse()?;
+    let (mut node, layout) = Node::parse_layout(input)?;
 
     // Only unquoted text adopts surrounding source whitespace. Existing string
     // literals keep their exact contents and never gain indentation spaces.
@@ -62,7 +62,7 @@ pub(super) fn push_node(
 
     nodes.push(node);
 
-    Ok(())
+    Ok(layout)
 }
 
 fn same_line_gap(left: Span, right: Span) -> bool {
