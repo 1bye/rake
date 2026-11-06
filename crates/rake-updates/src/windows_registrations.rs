@@ -301,6 +301,20 @@ fn update_registrations(
     }
     Ok(())
 }
+fn remove_login_item(binding: &UpdateBinding) -> Result<(), Error> {
+    let location = ::velopack::locator::auto_locate_app_manifest(
+        ::velopack::locator::LocationContext::FromCurrentExe,
+    )
+    .map_err(|error| Error::Provider(error.to_string()))?;
+
+    if !location.get_is_portable() && location.get_manifest_id() == binding.identifier {
+        rake_autostart::remove_installed(&binding.identifier, &location.get_main_exe_path())
+            .map_err(|error| Error::Provider(error.to_string()))?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn startup(binding: &UpdateBinding, desktop: &DesktopMetadata) {
     let apply = |remove| {
         if let Err(error) = update_registrations(binding, desktop, remove) {
@@ -313,7 +327,13 @@ pub(crate) fn startup(binding: &UpdateBinding, desktop: &DesktopMetadata) {
         .on_after_install_fast_callback(|_| apply(false))
         .on_before_update_fast_callback(|_| apply(true))
         .on_after_update_fast_callback(|_| apply(false))
-        .on_before_uninstall_fast_callback(|_| apply(true))
+        .on_before_uninstall_fast_callback(|_| {
+            if let Err(error) = remove_login_item(binding) {
+                // Best effort: a stale login item must not block association cleanup or uninstall.
+                eprintln!("Rake login-item cleanup failed: {error}");
+            }
+            apply(true);
+        })
         .on_first_run(|_| apply(false))
         .on_restarted(|_| apply(false))
         .run();

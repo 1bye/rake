@@ -17,6 +17,7 @@ workspace = true
 
 [features]
 default = ["gpui"]
+launch-at-login = ["dep:rake-autostart"]
 tray = ["gpui", "dep:rake-tray"]
 gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
 gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
@@ -35,6 +36,7 @@ view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support",
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
+rake-autostart = { version = "=0.1.0-alpha.3", path = "../rake-autostart", optional = true }
 rake-tray = { version = "=0.1.0-alpha.3", path = "../rake-tray", optional = true }
 rake-updates = { version = "=0.1.0-alpha.2", path = "../rake-updates", optional = true }
 rake-resources = { version = "=0.1.0-alpha.2", path = "../rake-resources" }

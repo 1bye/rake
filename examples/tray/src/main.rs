@@ -86,6 +86,9 @@ fn icon(color: [u8; 4]) -> Result<Image, Error> {
         .representation(raster(32, color)?)
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let login = rake::login_item::LaunchAtLogin::new("dev.rake.tray-example")?;
+    let login_status = futures::executor::block_on(login.status())?;
+    let last_login_status = Rc::new(RefCell::new(login_status.clone()));
     let model = Rc::new(Model::default());
     let base = icon([70, 155, 245, 255])?;
     let command_model = model.clone();
@@ -97,6 +100,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let menu = Menu::new()
         .item(MenuItem::new("open", "Open window"))
         .item(MenuItem::new("increment", "Increment progress"))
+        .item(
+            MenuItem::new("launch-at-login", "Launch at login").kind(ItemKind::Check(
+                if login_status == rake::login_item::Status::Enabled {
+                    CheckState::On
+                } else {
+                    CheckState::Off
+                },
+            )),
+        )
         .item(
             MenuItem::new("options", "Options").kind(ItemKind::Submenu(
                 Menu::new()
@@ -176,6 +188,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 select_option(&mut menu, id);
                 drop(handle.set_menu(menu));
+            }
+            if event.id == "main"
+                && event.kind == EventKind::MenuSelected("launch-at-login".into())
+                && let Ok(trays) = collection(cx)
+                && let Ok(handle) = trays.get("main")
+            {
+                let login = login.clone();
+                let last_login_status = last_login_status.clone();
+                let events = events.clone();
+                cx.spawn(async move |cx| {
+                    let result = async {
+                        // Query the OS before toggling, including changes made in system settings.
+                        let state = login.status().await?;
+                        let state = if matches!(state, rake::login_item::Status::Unsupported(_)) {
+                            last_login_status.borrow().clone()
+                        } else {
+                            state
+                        };
+                        let state = if matches!(
+                            state,
+                            rake::login_item::Status::Enabled
+                                | rake::login_item::Status::RequiresApproval
+                        ) {
+                            login.disable().await?
+                        } else {
+                            // Flatpak cannot query; the explicit request returns its actual state.
+                            login.enable().await?
+                        };
+                        if let Ok(spec) = handle.specification()
+                            && let Some(mut menu) = spec.menu_description().cloned()
+                        {
+                            for item in &mut menu.items {
+                                if item.id == "launch-at-login" {
+                                    item.kind = ItemKind::Check(
+                                        if state == rake::login_item::Status::Enabled {
+                                            CheckState::On
+                                        } else {
+                                            CheckState::Off
+                                        },
+                                    );
+                                }
+                            }
+                            let _ = handle.set_menu(menu).await;
+                        }
+                        *last_login_status.borrow_mut() = state.clone();
+                        Ok::<_, rake::login_item::Error>(state)
+                    }
+                    .await;
+                    events
+                        .events
+                        .borrow_mut()
+                        .push(format!("Launch at login: {result:?}"));
+                    cx.update(|cx| cx.refresh_windows());
+                })
+                .detach();
             }
             if event.id == "main"
                 && event.kind == EventKind::MenuSelected("open".into())

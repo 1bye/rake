@@ -7,6 +7,10 @@
 
 extern crate self as rake;
 
+/// Optional, GPUI-independent per-user launch-at-login settings.
+#[cfg(feature = "launch-at-login")]
+pub use rake_autostart as login_item;
+
 #[path = "inspection/macros.rs"]
 mod inspection_macros;
 

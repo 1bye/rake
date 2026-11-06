@@ -16,7 +16,7 @@ sparkle = ["native-lifecycle"]
 native-tests = ["native-lifecycle"]
 native-lifecycle = ["dep:cc"]
 appimage = ["dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:fs2", "dep:tempfile"]
-velopack = ["dep:winreg", "dep:windows-sys", "dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
+velopack = ["dep:rake-autostart", "dep:winreg", "dep:windows-sys", "dep:velopack", "dep:ureq", "dep:sha2", "dep:ed25519-dalek", "dep:hex", "dep:tempfile"]
 
 [dependencies]
 serde.workspace = true
@@ -48,6 +48,7 @@ name = "native-quit"
 required-features = ["native-tests"]
 
 [target.'cfg(windows)'.dependencies]
+rake-autostart = { version = "=0.1.0-alpha.3", path = "../rake-autostart", optional = true }
 winreg = { version = "0.56", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell"], optional = true }
 
