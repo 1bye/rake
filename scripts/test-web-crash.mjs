@@ -48,7 +48,7 @@ async function close(session) {
   await call('Target.closeTarget', {targetId: targetInfo.targetId});
 }
 const prefix = 'rake:crashes:test.web-crash:';
-const records = 'Object.keys(localStorage).filter(k => k.startsWith(' + JSON.stringify(prefix) + ')).sort().map(k => ({key:k,state:localStorage[k][0],raw:localStorage[k].slice(1),record:JSON.parse(localStorage[k].slice(1))}))';
+const records = 'Object.keys(localStorage).filter(k => k.startsWith(' + JSON.stringify(prefix) + ')).sort().map(k => { const value=localStorage[k]; const modern=/^[PC][0-3]:/.test(value); const raw=value.slice(modern?3:1); return {key:k,state:value[0],attempts:modern?Number(value[1]):(value[0]==="C"?1:0),raw,record:JSON.parse(raw)}; })';
 const receipts = 'JSON.parse(localStorage.getItem("receipts") || "[]")';
 async function panic(session, large = false) {
   assert.equal(await evaluate(session, '(() => { try { fixture.panic_now(' + large + '); return false; } catch (_) { return true; } })()'), true, 'Rust panic traps');
@@ -96,12 +96,16 @@ try {
   const id = pending[0].record.id;
   await close(session);
 
-  session = await page('fail');
-  await eventually(() => evaluate(session, 'window.sinkAttempts === 1'));
-  await eventually(() => evaluate(session, records + '.every(r=>r.state==="P")'));
-  assert.equal((await evaluate(session, records))[0].record.id, id, 'failing Rust sink retains original');
-  assert.equal((await evaluate(session, receipts)).length, 0);
-  await close(session);
+  for (let load=0;load<4;load++) {
+    session = await page('fail');
+    await eventually(() => evaluate(session, 'window.sinkAttempts === 1'));
+    pending = await evaluate(session, records);
+    assert.equal(pending[0].record.id, id, 'failing Rust sink retains original');
+    assert.equal(pending[0].state, 'P');
+    assert.equal(pending[0].attempts, 0, 'ordinary Err never consumes the interrupted-attempt budget');
+    assert.equal((await evaluate(session, receipts)).length, 0);
+    await close(session);
+  }
   const tabs = await Promise.all([page(), page()]);
   await eventually(() => evaluate(tabs[0], receipts + '.length === 1'));
   assert.equal((await evaluate(tabs[0], receipts))[0].id, id);
@@ -121,7 +125,7 @@ try {
   assert(Buffer.byteLength(pending[0].record.message) <= 1024);
   const boundedId = pending[0].record.id;
   // Test interrupted claim, then a new page retries it.
-  await evaluate(session, 'localStorage[' + JSON.stringify(pending[0].key) + '] = "C" + ' + JSON.stringify(pending[0].raw));
+  await evaluate(session, 'localStorage[' + JSON.stringify(pending[0].key) + '] = "C1:" + ' + JSON.stringify(pending[0].raw));
   await close(session);
   session = await page();
   await eventually(() => evaluate(session, receipts + '.length === 1'));
@@ -129,18 +133,42 @@ try {
   await evaluate(session, 'localStorage.clear()');
   await close(session);
 
-  // A Rust sink panic traps wasm but the host finally still restores its claim.
-  session = await page('automatic');
-  await panic(session);
-  const trappedId = (await evaluate(session, records))[0].record.id;
+  // Two real records survive repeated sink panics even at the two-record limit.
+  for (let i=0;i<2;i++) { session = await page('automatic'); await panic(session); await close(session); }
+  session = await page('disabled');
+  const originalIds = (await evaluate(session, records)).map(record => record.record.id);
+  assert.equal(originalIds.length, 2);
   await close(session);
-  session = await page('unwind');
-  await eventually(() => evaluate(session, 'window.sinkAttempts === 1'));
-  pending = await evaluate(session, records);
-  assert(pending.some(r => r.record.id === trappedId && r.state === 'P'), 'trapping Rust sink retains original');
+  for (let load=1;load<=4;load++) {
+    session = await page('unwind');
+    await eventually(() => evaluate(session, 'window.sinkAttempts === 1'));
+    pending = await evaluate(session, records);
+    assert.deepEqual(await evaluate(session, 'window.sinkIds'), [originalIds[load < 4 ? 0 : 1]], 'no sink-panic record is delivered in its own pass');
+    const warnings = await evaluate(session, 'JSON.parse(fixture.warnings())');
+    const abandoned = warnings.filter(warning => warning.message === 'crash record discarded after three interrupted deliveries');
+    if (load < 4) {
+      assert.deepEqual(pending.map(record => record.record.id), originalIds, 'sink panic must not evict either real record');
+      assert.equal(pending[0].state, 'C');
+      assert.equal(pending[0].attempts, load);
+      assert.equal(abandoned.length, 0);
+    } else {
+      assert(!pending.some(record => record.record.id === originalIds[0]), 'three interrupted attempts exhaust the record');
+      assert(pending.some(record => record.record.id === originalIds[1]), 'the other real record survives');
+      assert.equal(abandoned.length, 1);
+      assert.deepEqual(abandoned[0], {message:'crash record discarded after three interrupted deliveries', record_id:originalIds[0]}, 'warning contains only the record ID and fixed text');
+    }
+    await close(session);
+  }
+  session = await page();
+  await eventually(() => evaluate(session, receipts + '.length === 2'));
+  const remaining = await evaluate(session, receipts);
+  assert(remaining.some(record => record.id === originalIds[1]), 'healthy sink receives the remaining real record');
+  assert(!remaining.some(record => record.id === originalIds[0]), 'exhausted record is never sent again');
+  assert.equal((await evaluate(session, records)).length, 0);
   await close(session);
   session = await page();
-  await eventually(() => evaluate(session, receipts + '.some(r => r.id === ' + JSON.stringify(trappedId) + ')'));
+  assert.equal((await evaluate(session, receipts)).length, 2);
+  assert.equal((await evaluate(session, 'JSON.parse(fixture.warnings())')).filter(warning => warning.record_id === originalIds[0]).length, 0, 'drop warning is emitted once');
   await evaluate(session, 'localStorage.clear()');
   await close(session);
 
@@ -159,9 +187,9 @@ try {
   const hostChecks = await evaluate(session, '(async () => {' +
     'const p="rake:crashes:adapter-test:"; const raw=JSON.stringify({schema_version:2,future:"preserve"});' +
     'adapter.crash_write(p,"001",raw,1024,2);await navigator.locks.request(p+"spool",()=>{});' +
-    'let failed=false;try{await adapter.crash_deliver(p,1024,2,()=>{throw Error("sink")})}catch{failed=true}' +
-    'if(!failed||localStorage[p+"001"]!=="P"+raw)throw Error("throwing sink lost record");' +
-    'await adapter.crash_deliver(p,1024,2,()=>0);if(localStorage[p+"001"]!=="P"+raw)throw Error("future schema lost");' +
+    'const trapped=await adapter.crash_deliver(p,1024,2,()=>{throw Error("sink")});' +
+    'if(trapped!==-2||localStorage[p+"001"]!=="C1:"+raw)throw Error("throwing sink lost record");' +
+    'await adapter.crash_deliver(p,1024,2,()=>0);if(localStorage[p+"001"]!=="P1:"+raw)throw Error("future schema lost");' +
     'const original=Storage.prototype.setItem;Storage.prototype.setItem=()=>{throw Error("quota")};try{adapter.crash_write(p,"002",raw,1024,2)}finally{Storage.prototype.setItem=original}' +
     'const huge="🦀".repeat(300);adapter.crash_write(p,"003",huge,1024,2);if(localStorage[p+"003"])throw Error("encoded bytes");' +
     'await navigator.locks.request(p+"spool",async()=>{if(await adapter.crash_deliver(p,1024,2,()=>{throw Error("busy sink")}))throw Error("busy")});' +
@@ -171,7 +199,7 @@ try {
     'return true;})()');
   assert(hostChecks);
   await close(session);
-  console.log(JSON.stringify({browser:browser.Browser, passed:['real App panic and next-load Rust sink', 'default privacy and consumer version', 'console hook', 'failing Rust sink retry', 'two simultaneous tabs deliver once', 'later launch stays empty', 'minimum byte budget with Unicode/escaping', 'interrupted claim recovery', 'count bound across panic pages', 'builder opt-out', 'throwing sink restores claim', 'future schema preservation', 'quota exception is nonfatal', 'UTF-8 byte rejection', 'busy lock skips sink', 'no-lock delivery defers']}));
+  console.log(JSON.stringify({browser:browser.Browser, passed:['real App panic and next-load Rust sink', 'default privacy and consumer version', 'console hook', 'failing Rust sink retry', 'two simultaneous tabs deliver once', 'later launch stays empty', 'minimum byte budget with Unicode/escaping', 'interrupted claim recovery', 'count bound across panic pages', 'builder opt-out', 'three interrupted attempts discard once without evicting real records', 'sink traps retain claims', 'future schema preservation', 'quota exception is nonfatal', 'UTF-8 byte rejection', 'busy lock skips sink', 'no-lock delivery defers']}));
 } finally {
   cdp?.close(); socket?.close();
   if (processChrome) {

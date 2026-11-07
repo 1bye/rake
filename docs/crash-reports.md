@@ -281,8 +281,9 @@ startup is retried on a later launch, or by calling `CrashReporter::deliver` aga
 ## Web storage and browser limits
 
 Web Apps synchronously save panic records to **origin-scoped localStorage**.
-Keys are `rake:crashes:APP_ID:RECORD_ID`; values contain a pending (`P`) or claimed
-(`C`) marker followed by the same schema-v1 JSON as native. A native
+Keys are `rake:crashes:APP_ID:RECORD_ID`; values contain a pending `P<n>:` or
+claimed `C<n>:` marker followed by the same schema-v1 JSON as native. The small
+counter tracks interrupted attempts; old one-character `P`/`C` values are also read. A native
 `CrashConfig::directory` override is ignored: the app ID is the browser namespace.
 Apps sharing an origin and ID share this spool. Other origin scripts can read
 or modify it; storage is unencrypted. Browser policy, eviction, clearing site data
@@ -290,7 +291,7 @@ or private-session disposal can remove it.
 
 The same size/count/diagnostic budgets and privacy filters apply on both platforms:
 8 records / 64 KiB encoded JSON per record / 32 structural entries by default.
-The state marker adds one character. Browser IDs use time, a random per-page
+The state/counter marker adds three characters. Browser IDs use time, a random per-page
 identity generated before hook installation, and a counter. Wasm has no
 standard-library backtrace, so that field is empty. JavaScript stacks, page URLs,
 user agents and browser/OS fingerprint strings are not persisted; `os` is the
@@ -300,9 +301,20 @@ panic. Explicit setup errors fail startup; default setup errors warn and continu
 
 Delivery holds the exclusive Web Lock `rake:crashes:APP_ID:spool` across the
 synchronous sink callback. A busy lock skips that pass; a later load retries.
-A single atomic value replacement claims a record; success deletes it, failure
-or a throwing/trapping sink restores pending state, and a claim interrupted by
-page disposal retries on a later load. Future schemas are preserved byte-for-byte;
+A single atomic value replacement claims a record and increments its attempt
+counter before calling the sink. Success deletes it. An ordinary sink
+`Err` restores pending state with the previous counter and stops the pass;
+these errors do not consume the interrupted-attempt budget. A throwing/trapping
+sink leaves the claim in storage, as does page disposal during delivery.
+
+On a later load, an existing claim counts as one failed attempt. After three
+interrupted attempts, delivery removes the record without invoking the sink and
+logs one `tracing::warn` with its opaque record ID only, never its content.
+This deliberately bounds retries even if an interrupted sink had committed a side
+effect before the page died. Delivery iterates a fixed snapshot, so records written
+by a sink's panic are never delivered in that pass. When the count budget is full,
+retention discards those newly written records before the queue that was already
+waiting, preventing a faulty sink from evicting real records on every load. Future schemas are preserved byte-for-byte;
 corrupt/oversized records are discarded without invoking the sink. Retention holds
 the same lock so it cannot prune a record during delivery. Panic persistence cannot
 await a lock: retention is queued after writing, so in-flight/concurrent writes

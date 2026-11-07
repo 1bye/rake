@@ -30,6 +30,7 @@ extern "C" {
         bytes: usize,
         count: usize,
         report: &js_sys::Function,
+        abandoned: &js_sys::Function,
     ) -> js_sys::Promise;
 }
 
@@ -121,13 +122,13 @@ impl CrashReporter {
     }
 
     pub(crate) async fn deliver(&self, sink: Box<dyn CrashSink>) -> io::Result<()> {
-        let report = Closure::wrap(Box::new(move |raw: String| -> Result<u32, JsValue> {
+        let report = Closure::wrap(Box::new(move |raw: String| -> u32 {
             #[derive(serde::Deserialize)]
             struct Version {
                 schema_version: u64,
             }
             if serde_json::from_str::<Version>(&raw).is_ok_and(|v| v.schema_version > 1) {
-                return Ok(0);
+                return 0;
             }
             let record = serde_json::from_str::<CrashRecord>(&raw)
                 .ok()
@@ -141,20 +142,34 @@ impl CrashReporter {
                             .all(|byte| byte.is_ascii_digit() || byte == b'-')
                 });
             let Some(record) = record else {
-                return Ok(2);
+                return 2;
             };
-            sink.report(&record)
-                .map_err(|_| JsValue::from_str("crash sink failed; retry later"))?;
-            Ok(1)
-        }) as Box<dyn FnMut(String) -> Result<u32, JsValue>>);
-        JsFuture::from(crash_deliver(
+            if sink.report(&record).is_err() {
+                return 3;
+            }
+            1
+        }) as Box<dyn FnMut(String) -> u32>);
+        let abandoned = Closure::wrap(Box::new(move |id: String| {
+            // Storage keys are untrusted; log only the opaque numeric record ID.
+            if !id.is_empty()
+                && id.len() <= 96
+                && id.bytes().all(|byte| byte.is_ascii_digit() || byte == b'-')
+            {
+                tracing::warn!(record_id = %id, "crash record discarded after three interrupted deliveries");
+            }
+        }) as Box<dyn FnMut(String)>);
+        let result = JsFuture::from(crash_deliver(
             &self.prefix,
             self.config.limits.record_bytes,
             self.config.limits.records,
             report.as_ref().unchecked_ref(),
+            abandoned.as_ref().unchecked_ref(),
         ))
         .await
         .map_err(storage_error)?;
+        if matches!(result.as_f64(), Some(-1.0 | -2.0)) {
+            return Err(storage_error(JsValue::UNDEFINED));
+        }
         Ok(())
     }
 }
