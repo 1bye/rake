@@ -186,7 +186,10 @@ jobs:
           XDG_RUNTIME_DIR="$(mktemp -d)"
           export XDG_RUNTIME_DIR
           trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          lavapipe=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#lavapipe[@]}" -eq 1
+          test -f "${lavapipe[0]}"
+          export VK_ICD_FILENAMES="${lavapipe[0]}"
           export LIBGL_ALWAYS_SOFTWARE=1
           unset WAYLAND_DISPLAY
           # shellcheck disable=SC2016 # The inner shell expands its own environment.
