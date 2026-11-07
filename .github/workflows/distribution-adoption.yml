@@ -39,6 +39,10 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-adoption
+          cache-targets: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GPUI Linux development libraries
         if: runner.os == 'Linux'
         run: |
@@ -97,6 +101,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rake-adoption
+          cache-targets: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: tests/distribution-adoption
       - run: python scripts/test-distribution-adoption.py --output adoption-results.json
       - uses: actions/upload-artifact@v4
@@ -119,6 +126,9 @@ jobs:
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rake-adoption
+          cache-targets: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - name: Install deep Linux prerequisites
         if: runner.os == 'Linux' && (inputs.mode == 'linux-deep' || inputs.mode == 'flatpak' || inputs.mode == 'linux-final')

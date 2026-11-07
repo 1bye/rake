@@ -121,7 +121,7 @@ fn explicit_files_do_not_write_siblings_and_check_has_a_unified_diff() {
         None,
     );
     assert_eq!(check.status.code(), Some(1));
-    let diff = String::from_utf8(check.stdout).unwrap();
+    let diff = String::from_utf8(check.stdout).unwrap().replace('\\', "/");
     assert!(diff.starts_with("--- "), "{diff}");
     assert!(diff.contains("\n+++ "), "{diff}");
     assert!(diff.contains("\n@@ "), "{diff}");
@@ -234,7 +234,7 @@ fn project_formats_workspace_members_examples_and_nested_qualified_views() {
     let check = run(directory.path(), &["format", "--check"], None);
 
     assert_eq!(check.status.code(), Some(1), "{check:?}");
-    let diff = String::from_utf8(check.stdout).unwrap();
+    let diff = String::from_utf8(check.stdout).unwrap().replace('\\', "/");
     for path in paths {
         assert!(diff.contains(path), "{diff}");
         assert_eq!(

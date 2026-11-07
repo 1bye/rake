@@ -552,7 +552,8 @@ mod tests {
     #[test]
     fn marked_mirrors_are_hidden_live_but_retained_after_runtime_failure() {
         use std::os::unix::fs::OpenOptionsExt;
-        let path = std::env::temp_dir().join(format!("rake-mirror-{}.json", uuid::Uuid::new_v4()));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.json");
 
         let file = std::fs::OpenOptions::new()
             .write(true)
@@ -581,7 +582,8 @@ mod tests {
     #[test]
     fn process_output_has_its_own_clock_cursor_and_loss() {
         use std::os::unix::fs::OpenOptionsExt;
-        let path = std::env::temp_dir().join(format!("rake-output-{}.json", uuid::Uuid::new_v4()));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.json");
 
         let file = std::fs::OpenOptions::new()
             .write(true)

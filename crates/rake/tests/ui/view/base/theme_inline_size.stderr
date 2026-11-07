@@ -1,5 +1,5 @@
 error[E0277]: the trait bound `Hsla: From<TextToken>` is not satisfied
- --> tests/ui/view/theme_inline_size.rs:4:21
+ --> tests/ui/view/base/theme_inline_size.rs:4:21
   |
 4 | fn main() { let _ = rake::view! { <p><span class="text-body">Hello</span></p> }; }
   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

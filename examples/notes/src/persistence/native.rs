@@ -88,8 +88,10 @@ impl Files {
                 }
             }
             #[cfg(not(unix))]
-            file.try_lock()
-                .map_err(|error| StorageError::Io(error.to_string()))?;
+            file.try_lock().map_err(|error| match error {
+                std::fs::TryLockError::WouldBlock => StorageError::Locked,
+                std::fs::TryLockError::Error(error) => io(error),
+            })?;
             *lease = Some(file);
         }
 
@@ -215,10 +217,16 @@ fn atomic(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), StorageError
 
         file.write_all(bytes).map_err(io)?;
         file.sync_all().map_err(io)?;
-        std::fs::rename(&temporary, directory.join(name)).map_err(io)?;
-        File::open(directory)
-            .and_then(|file| file.sync_all())
-            .map_err(io)?;
+        drop(file);
+        #[cfg(target_os = "windows")]
+        replace_windows(&temporary, &directory.join(name)).map_err(io)?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::fs::rename(&temporary, directory.join(name)).map_err(io)?;
+            File::open(directory)
+                .and_then(|file| file.sync_all())
+                .map_err(io)?;
+        }
 
         Ok(())
     })();
@@ -228,4 +236,37 @@ fn atomic(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), StorageError
     }
 
     result
+}
+
+// Windows cannot use the Unix directory-fsync sequence. Flush the file first,
+// then publish it with the documented write-through replacement operation.
+#[cfg(target_os = "windows")]
+fn replace_windows(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    // SAFETY: Both buffers are live NUL-terminated paths produced in one existing
+    // directory. No copy-across-volumes fallback is requested.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }

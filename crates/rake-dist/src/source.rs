@@ -576,7 +576,8 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
                     ""
                 },
             );
-            let path = files::confined(&source.root, Path::new(&expanded))?;
+            let relative = rake_dist_core::portable_relative_path(Path::new(&expanded))?;
+            let path = files::confined(&source.root, &relative)?;
             if !path.is_file() {
                 return Err(source_error("program.path must be a loose executable file"));
             }

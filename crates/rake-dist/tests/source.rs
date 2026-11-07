@@ -797,3 +797,18 @@ fn prebuilt_component_cache_must_not_be_a_symlink() {
     let error = plan_source(&request).unwrap_err().to_string();
     assert!(error.contains("cache must not be a symlink"), "{error}");
 }
+
+#[test]
+fn prebuilt_native_separators_are_normalized_before_confinement() {
+    let (_root, mut request) = prebuilt_fixture();
+    if let Program::Prebuilt { path, .. } = &mut request.source.program {
+        *path = if cfg!(windows) {
+            "bin\\viewer.exe"
+        } else {
+            "bin\\viewer"
+        }
+        .into();
+    }
+
+    assert!(plan_source(&request).is_ok());
+}

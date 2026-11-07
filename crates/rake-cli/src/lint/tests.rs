@@ -164,7 +164,9 @@ fn json_report_snapshot() {
     };
     let json = serde_json::to_string_pretty(&report).unwrap();
 
-    assert_eq!(json, include_str!("snapshots/report.json").trim_end());
+    let expected = include_str!("snapshots/report.json").replace("\r\n", "\n");
+
+    assert_eq!(json, expected.trim_end());
 }
 
 #[test]

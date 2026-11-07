@@ -1,0 +1,5 @@
+# Keep source and generated documentation consistent across native hosts.
+* text=auto eol=lf
+# Fixtures can contain signed payloads or protocol-specific line endings.
+**/fixtures/** -text
+**/snapshots/** text eol=lf
