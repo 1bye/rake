@@ -204,3 +204,61 @@ fn invalid_arguments_do_not_write_anything_and_help_succeeds() {
             .success()
     );
 }
+
+#[test]
+fn project_formats_workspace_members_examples_and_nested_qualified_views() {
+    let directory = project();
+    let manifest = directory.path().join("Cargo.toml");
+    let mut content = fs::read_to_string(&manifest).unwrap();
+    content.push_str("[workspace]\nmembers=['crates/member']\nresolver='3'\n");
+    fs::write(manifest, content).unwrap();
+    fs::create_dir_all(directory.path().join("crates/member/src")).unwrap();
+    fs::write(
+        directory.path().join("crates/member/Cargo.toml"),
+        "[package]\nname='format-member'\nversion='0.1.0'\nedition='2024'\n",
+    )
+    .unwrap();
+    fs::create_dir_all(directory.path().join("examples/nested")).unwrap();
+    let source =
+        "fn render(){let _=rake::view!{<div>{Some(rake::view!{<span id=\"nested\"/>})}</div>};}\n";
+    let paths = ["crates/member/src/lib.rs", "examples/nested/main.rs"];
+
+    for path in paths {
+        fs::write(directory.path().join(path), source).unwrap();
+    }
+
+    let check = run(directory.path(), &["format", "--check"], None);
+
+    assert_eq!(check.status.code(), Some(1), "{check:?}");
+    let diff = String::from_utf8(check.stdout).unwrap();
+    for path in paths {
+        assert!(diff.contains(path), "{diff}");
+        assert_eq!(
+            fs::read_to_string(directory.path().join(path)).unwrap(),
+            source
+        );
+    }
+    let format = run(directory.path(), &["format"], None);
+    assert!(format.status.success(), "{format:?}");
+    let formatted: Vec<_> = paths
+        .iter()
+        .map(|path| fs::read_to_string(directory.path().join(path)).unwrap())
+        .collect();
+
+    for output in &formatted {
+        assert_eq!(output.matches("rake::view! {").count(), 2, "{output}");
+        assert!(output.contains("<div>\n"), "{output}");
+        assert!(output.contains("<span id=\"nested\" />"), "{output}");
+    }
+
+    let check = run(directory.path(), &["fmt", "--check"], None);
+    assert!(check.status.success(), "{check:?}");
+    assert!(check.stdout.is_empty(), "{check:?}");
+
+    for (path, output) in paths.iter().zip(formatted) {
+        assert_eq!(
+            fs::read_to_string(directory.path().join(path)).unwrap(),
+            output
+        );
+    }
+}

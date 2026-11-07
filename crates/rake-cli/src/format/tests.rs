@@ -138,6 +138,42 @@ fn project_width_tabs_and_unicode() {
 }
 
 #[test]
+fn tag_width_counts_literal_text_and_closing_delimiters() {
+    let directory = tempfile::tempdir().unwrap();
+    let literal = format!("\"{}\"", " >".repeat(13));
+
+    for close in [">", " />"] {
+        let opening = format!("<div id={literal}{close}");
+        let width = 4 + opening.chars().count();
+
+        for (width, split) in [(width, false), (width - 1, true)] {
+            std::fs::write(
+                directory.path().join("rustfmt.toml"),
+                format!("max_width = {width}\n"),
+            )
+            .unwrap();
+            let mut rustfmt = Rustfmt::load(directory.path()).unwrap();
+            let closing = if close == ">" { "</div>" } else { "" };
+            let input = format!("fn main() {{ view! {{ {opening}{closing} }}; }}");
+
+            let (output, problems) = format_source(&input, &mut rustfmt).unwrap();
+
+            assert!(problems.is_empty());
+            assert!(source::equivalent(&input, &output), "{output}");
+            assert_eq!(output.contains("<div\n"), split, "width {width}: {output}");
+            assert!(
+                output.lines().all(|line| line.chars().count() <= width),
+                "{output}"
+            );
+
+            let (again, problems) = format_source(&output, &mut rustfmt).unwrap();
+            assert!(problems.is_empty());
+            assert_eq!(output, again);
+        }
+    }
+}
+
+#[test]
 fn every_repository_view_is_token_equivalent_and_idempotent() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
