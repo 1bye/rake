@@ -155,7 +155,7 @@ try {
 
   // Production JS boundary: real storage/Web Locks, fault injection only for failures.
   session = await page('disabled');
-  await evaluate(session, 'window.adapter = await import("/adapter.js")');
+  await evaluate(session, 'import("/adapter.js").then(adapter => { window.adapter = adapter; })');
   const hostChecks = await evaluate(session, '(async () => {' +
     'const p="rake:crashes:adapter-test:"; const raw=JSON.stringify({schema_version:2,future:"preserve"});' +
     'adapter.crash_write(p,"001",raw,1024,2);await navigator.locks.request(p+"spool",()=>{});' +

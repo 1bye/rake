@@ -1,5 +1,5 @@
 //! Browser regression app: real App builder, panic hook, storage and Rust sink.
-//! Run with scripts/test-web-crash.mjs; no window or GPU drawing is exercised.
+//! Run with scripts/test-web-crash.mjs; no rendered UI assertion is made.
 
 #[cfg(target_family = "wasm")]
 mod browser {
