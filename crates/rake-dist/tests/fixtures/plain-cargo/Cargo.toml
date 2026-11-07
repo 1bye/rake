@@ -1,0 +1,9 @@
+[workspace]
+
+[package]
+name = "plain-cargo-app"
+version = "1.2.3"
+edition = "2024"
+
+[features]
+smoke = []

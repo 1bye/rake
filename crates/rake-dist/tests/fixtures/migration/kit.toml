@@ -1,0 +1,7 @@
+# Migrated from examples/kit/Cargo.toml
+"schema_version" = 1
+"name" = "Rake Kit"
+"identifier" = "com.example.rake.kit"
+
+["program"]
+"type" = "cargo"

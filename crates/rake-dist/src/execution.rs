@@ -140,41 +140,15 @@ pub fn bundle(
     executable: &Path,
     cancelled: &AtomicBool,
 ) -> Result<Distribution, Error> {
-    let output = std::path::absolute(&request.output)?;
-
-    let parent = output
-        .parent()
-        .ok_or_else(|| Error::Execution("output requires parent".into()))?;
-
-    fs::create_dir_all(parent)?;
-    // Parent owns staging so a forcibly terminated worker cannot leak its job.
-    let workspace = tempfile::Builder::new()
-        .prefix(".rake-worker-")
-        .tempdir_in(parent)?;
-
-    let request_file = workspace.path().join("request.json");
     let mut worker_request = request.clone();
-
     worker_request.manifest = std::path::absolute(&request.manifest)?;
-    worker_request.output = output;
-    files::write_json(&request_file, &worker_request)?;
-    let mut command = Command::new(executable);
-
-    command
-        .arg("__distribution-worker")
-        .arg(&request_file)
-        .arg(workspace.path())
-        .current_dir(workspace.path());
-    let mut worker = Worker::spawn(&mut command)?;
-    let status = worker.wait(cancelled, Duration::from_secs(1800))?;
-
-    if !status.success() {
-        return Err(Error::Execution(format!("worker exited {status}")));
-    }
-
-    Ok(serde_json::from_slice(&fs::read(
-        request.output.join("distribution.json"),
-    )?)?)
+    worker_request.output = std::path::absolute(&request.output)?;
+    spawn_worker(
+        &worker_request,
+        &worker_request.output,
+        executable,
+        cancelled,
+    )
 }
 
 /// Executes a request in the current process. Call only in a dedicated worker.
@@ -234,44 +208,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         )?;
     }
 
-    if request.compatibility
-        && (plan.packages().len() != 1
-            || !matches!(
-                (plan.platform(), plan.packages()[0].format()),
-                (Platform::Macos, Format::Zip) | (Platform::Linux, Format::Tar)
-            ))
-    {
-        return Err(Error::Execution(
-            "legacy compatibility requires one macOS ZIP or Linux tar format".into(),
-        ));
-    }
-
-    if request.entitlements.is_some() && plan.platform() != Platform::Macos {
-        return Err(Error::Execution("--entitlements requires macOS".into()));
-    }
-
     let metadata: Metadata = serde_json::from_slice(&metadata_output.stdout)?;
-
-    for item in plan.packages() {
-        if item.format() == Format::Velopack {
-            rake_dist_windows::verify_velopack_tool()
-                .map_err(|error| Error::Execution(error.to_string()))?;
-        }
-
-        let trust = effective_trust(item.config(), &request.trust);
-
-        match plan.platform() {
-            Platform::Macos => {
-                rake_dist_macos::preflight(&trust).map_err(|e| Error::Execution(e.to_string()))?
-            }
-            Platform::Windows => {
-                rake_dist_windows::preflight(&trust, item.config().windows.timestamp_url.as_deref())
-                    .map_err(|e| Error::Execution(e.to_string()))?
-            }
-            _ => {}
-        }
-    }
-
     let selected = metadata
         .packages
         .iter()
@@ -283,8 +220,6 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
 
     let canonical_root =
         dunce::canonicalize(selected.manifest_path.parent().ok_or(Error::Package)?)?;
-
-    let root = canonical_root.as_path();
 
     if (request.platform == Platform::Windows
         || plan
@@ -311,7 +246,287 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         return Err(Error::Execution("select one executable with --bin".into()));
     }
 
-    let binary = &binaries[0].name;
+    let binary = binaries[0].name.clone();
+    let package = selected.name.clone();
+    let selected_index = metadata
+        .packages
+        .iter()
+        .position(|p| p.id == selected.id)
+        .ok_or(Error::Package)?;
+    execute_job(
+        &JobOptions::from(request),
+        job_parent,
+        plan,
+        target,
+        JobInput {
+            lock_path: canonical_root.join("rake-dist.lock"),
+            cache: metadata.target_directory.join("rake-component-cache"),
+            root: canonical_root,
+            package,
+            binary,
+            cargo: Some((metadata, selected_index)),
+            prebuilt: None,
+        },
+    )
+}
+
+struct JobInput {
+    root: PathBuf,
+    lock_path: PathBuf,
+    cache: PathBuf,
+    package: String,
+    binary: String,
+    cargo: Option<(Metadata, usize)>,
+    prebuilt: Option<PathBuf>,
+}
+
+struct JobOptions {
+    platform: Platform,
+    output: PathBuf,
+    release: bool,
+    features: Vec<String>,
+    offline_components: bool,
+    locked_components: bool,
+    compatibility: bool,
+    entitlements: Option<PathBuf>,
+    trust: rake_dist_core::TrustOptions,
+}
+
+impl From<&BundleRequest> for JobOptions {
+    fn from(r: &BundleRequest) -> Self {
+        Self {
+            platform: r.platform,
+            output: r.output.clone(),
+            release: r.release,
+            features: r.features.clone(),
+            offline_components: r.offline_components,
+            locked_components: r.locked_components,
+            compatibility: r.compatibility,
+            entitlements: r.entitlements.clone(),
+            trust: r.trust.clone(),
+        }
+    }
+}
+
+/// Runs a normalized standalone request in an owned process implementing the worker protocol.
+/// The executable is the packager host, not the application being packaged.
+/// # Errors
+/// Returns source validation, worker, cancellation or output errors.
+pub fn bundle_source(
+    request: &crate::SourceBundleRequest,
+    executable: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Distribution, Error> {
+    let plan = crate::plan_source(request)?;
+    let mut request = request.clone();
+    request.output = plan.output;
+    spawn_worker(&request, &request.output, executable, cancelled)
+}
+
+fn spawn_worker(
+    request: &impl Serialize,
+    output: &Path,
+    executable: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Distribution, Error> {
+    let parent = output
+        .parent()
+        .ok_or_else(|| Error::Execution("output requires parent".into()))?;
+    fs::create_dir_all(parent)?;
+    let workspace = tempfile::Builder::new()
+        .prefix(".rake-worker-")
+        .tempdir_in(parent)?;
+    let request_file = workspace.path().join("request.json");
+    files::write_json(&request_file, request)?;
+    let mut command = Command::new(executable);
+    command
+        .arg("__distribution-worker")
+        .arg(&request_file)
+        .arg(workspace.path())
+        .current_dir(workspace.path());
+    let mut worker = Worker::spawn(&mut command)?;
+    let status = worker.wait(cancelled, Duration::from_secs(1800))?;
+    if !status.success() {
+        return Err(Error::Execution(format!("worker exited {status}")));
+    }
+    Ok(serde_json::from_slice(&fs::read(
+        output.join("distribution.json"),
+    )?)?)
+}
+
+/// Dispatches a worker invocation before an embedding host starts its runtime.
+///
+/// Arguments exclude `argv[0]`. Returns None for ordinary host invocations, and
+/// never prints or exits. The host must handle the returned result.
+/// # Errors
+/// Returns malformed request, source, build or native execution errors.
+#[must_use]
+pub fn dispatch_worker(arguments: &[std::ffi::OsString]) -> Option<Result<Distribution, Error>> {
+    if arguments
+        .first()
+        .is_none_or(|arg| arg != "__distribution-worker")
+    {
+        return None;
+    }
+    Some((|| {
+        if arguments.len() != 3 {
+            return Err(Error::Execution(
+                "worker requires request and workspace paths".into(),
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(Path::new(&arguments[1]))?)?;
+        let workspace = Path::new(&arguments[2]);
+        if value.get("source").is_some() {
+            execute_source_worker(&serde_json::from_value(value)?, workspace)
+        } else {
+            execute_worker(&serde_json::from_value(value)?, workspace)
+        }
+    })())
+}
+
+/// Revalidates the owned source snapshot and executes it without rereading its file.
+/// # Errors
+/// Returns source/input validation, unsupported build integration, or native job errors.
+pub fn execute_source_worker(
+    request: &crate::SourceBundleRequest,
+    job_parent: &Path,
+) -> Result<Distribution, Error> {
+    if request.platform != native_platform()? {
+        return Err(Error::Execution(
+            "packaging requires a native runner".into(),
+        ));
+    }
+    let resolved = crate::plan_source(request)?;
+    let (package, binary, cargo, prebuilt, cache) = match &resolved.program {
+        crate::ResolvedProgram::Cargo {
+            manifest,
+            package,
+            bin,
+            version,
+            ..
+        } => {
+            let metadata = crate::source::cargo_metadata(manifest)?;
+            let selected = crate::source::select_package(&metadata, Some(package))?;
+            if &selected.version != version {
+                return Err(Error::Execution(
+                    "Cargo package version changed during selection".into(),
+                ));
+            }
+            if selected
+                .dependencies
+                .iter()
+                .any(|d| d.name == "rake-build" && d.kind.as_deref() == Some("build"))
+            {
+                return Err(Error::Execution("standalone rake-build integration requires the RFC step-2 build-context handoff".into()));
+            }
+            let index = metadata
+                .packages
+                .iter()
+                .position(|p| p.id == selected.id)
+                .ok_or(Error::Package)?;
+            let cache = metadata.target_directory.join("rake-component-cache");
+            (
+                package.clone(),
+                bin.clone(),
+                Some((metadata, index)),
+                None,
+                cache,
+            )
+        }
+        crate::ResolvedProgram::Prebuilt { path, .. } => {
+            let name = crate::source::executable_name(path, request.platform)?;
+            (
+                name.clone(),
+                name,
+                None,
+                Some(path.clone()),
+                request.source.root.join(".rake-component-cache"),
+            )
+        }
+    };
+    let features = match &resolved.program {
+        crate::ResolvedProgram::Cargo { features, .. } => features.clone(),
+        _ => Vec::new(),
+    };
+    let options = JobOptions {
+        platform: request.platform,
+        output: resolved.output,
+        release: request.release,
+        features,
+        offline_components: request.offline_components,
+        locked_components: request.locked_components,
+        compatibility: false,
+        entitlements: request.entitlements.clone(),
+        trust: request.trust.clone(),
+    };
+    execute_job(
+        &options,
+        job_parent,
+        resolved.plan,
+        resolved.target,
+        JobInput {
+            root: request.source.root.clone(),
+            lock_path: request.source.lock_path.clone(),
+            cache,
+            package,
+            binary,
+            cargo,
+            prebuilt,
+        },
+    )
+}
+
+fn execute_job(
+    request: &JobOptions,
+    job_parent: &Path,
+    plan: crate::Plan,
+    target: String,
+    input: JobInput,
+) -> Result<Distribution, Error> {
+    let root = input.root.as_path();
+    let binary = input.binary.as_str();
+    let selected = input
+        .cargo
+        .as_ref()
+        .map(|(metadata, index)| &metadata.packages[*index]);
+
+    if request.compatibility
+        && (plan.packages().len() != 1
+            || !matches!(
+                (plan.platform(), plan.packages()[0].format()),
+                (Platform::Macos, Format::Zip) | (Platform::Linux, Format::Tar)
+            ))
+    {
+        return Err(Error::Execution(
+            "legacy compatibility requires one macOS ZIP or Linux tar format".into(),
+        ));
+    }
+
+    if request.entitlements.is_some() && plan.platform() != Platform::Macos {
+        return Err(Error::Execution("--entitlements requires macOS".into()));
+    }
+
+    for item in plan.packages() {
+        if item.format() == Format::Velopack {
+            rake_dist_windows::verify_velopack_tool()
+                .map_err(|error| Error::Execution(error.to_string()))?;
+        }
+
+        let trust = effective_trust(item.config(), &request.trust);
+
+        match plan.platform() {
+            Platform::Macos => {
+                rake_dist_macos::preflight(&trust).map_err(|e| Error::Execution(e.to_string()))?
+            }
+            Platform::Windows => {
+                rake_dist_windows::preflight(&trust, item.config().windows.timestamp_url.as_deref())
+                    .map_err(|e| Error::Execution(e.to_string()))?
+            }
+            _ => {}
+        }
+    }
+
     let output = std::path::absolute(&request.output)?;
 
     let output_parent = output
@@ -370,7 +585,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         .map_err(|_| Error::Execution("another distribution job owns this output".into()))?;
 
     if output.exists()
-        && !(request.compatibility && crate::compatibility::owns(&output, &selected.name))
+        && !(request.compatibility && crate::compatibility::owns(&output, &input.package))
         && (output.is_symlink()
             || fs::read_to_string(output.join(".rake-distribution"))
                 .ok()
@@ -409,7 +624,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             &target,
             root,
             &stage.join("components"),
-            &metadata.target_directory.join("rake-component-cache"),
+            &input.cache,
             request.offline_components,
         )?;
 
@@ -418,7 +633,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             &target,
             root,
             &stage,
-            &metadata.target_directory.join("rake-component-cache"),
+            &input.cache,
             request.offline_components,
             &mut prepared,
         )?;
@@ -430,6 +645,12 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
         };
 
         let build_for = |target| {
+            let Some(selected) = selected else {
+                return input
+                    .prebuilt
+                    .clone()
+                    .ok_or_else(|| Error::Execution("missing executable input".into()));
+            };
             build(
                 selected,
                 binary,
@@ -697,11 +918,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             prepared.locks.extend(crt);
         }
 
-        components::check_lock(
-            &prepared.locks,
-            &root.join("rake-dist.lock"),
-            request.locked_components,
-        )?;
+        components::check_lock(&prepared.locks, &input.lock_path, request.locked_components)?;
         let descriptor_path = resource_stage.join("rake-installation.json");
 
         if descriptor_path.exists() {
@@ -723,7 +940,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             if let Some(manifest) = &config.windows.manifest {
                 rake_dist_windows::apply_manifest(&binary_path, &files::confined(root, manifest)?)
                     .map_err(|error| Error::Execution(error.to_string()))?;
-            } else {
+            } else if input.prebuilt.is_none() {
                 rake_dist_windows::apply_default_manifest(
                     &binary_path,
                     plan.identifier(),
@@ -894,8 +1111,15 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                         &plan,
                         index,
                         binary,
-                        selected,
-                        &metadata,
+                        selected
+                            .ok_or_else(|| Error::Execution("Flatpak requires Cargo".into()))?,
+                        &input
+                            .cargo
+                            .as_ref()
+                            .ok_or_else(|| {
+                                Error::Execution("Flatpak requires Cargo metadata".into())
+                            })?
+                            .0,
                         &target,
                         &payload,
                         &stage,
@@ -923,7 +1147,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                             name,
                         )?;
 
-                        archive.append_dir_all(&selected.name, &application)?;
+                        archive.append_dir_all(&input.package, &application)?;
                     } else {
                         archive.append_dir_all(".", &payload)?;
                     }
@@ -1136,7 +1360,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     if request.compatibility {
         crate::compatibility::write(
             &plan,
-            &selected.name,
+            &input.package,
             binary,
             &result_dir,
             &result.artifacts,
@@ -1150,7 +1374,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             &result_dir,
             &output,
             plan.identifier(),
-            Some(&selected.name),
+            Some(&input.package),
         )?;
     } else {
         files::commit(&result_dir, &output, plan.identifier())?;
@@ -1159,7 +1383,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     Ok(result)
 }
 
-fn reject_input_overlap(
+pub(crate) fn reject_input_overlap(
     plan: &crate::Plan,
     root: &Path,
     output: &Path,
@@ -1220,6 +1444,7 @@ fn reject_input_overlap(
 
         for path in paths {
             let input = files::confined(root, &path)?;
+            files::validate_tree(&input)?;
 
             if output.starts_with(&input) || input.starts_with(output) {
                 return Err(Error::Execution(format!(

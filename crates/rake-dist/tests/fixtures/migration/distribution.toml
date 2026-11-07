@@ -1,0 +1,9 @@
+# Migrated from examples/distribution/Cargo.toml
+"schema_version" = 1
+"name" = "Rake Desktop"
+"identifier" = "dev.rake.desktop-example"
+"icon" = "assets/icon.svg"
+"resources" = [{ "from" = "assets/welcome.txt", "to" = "welcome.txt" }]
+
+["program"]
+"type" = "cargo"
