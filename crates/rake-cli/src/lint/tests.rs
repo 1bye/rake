@@ -742,6 +742,20 @@ fn catalogue_artifacts_are_current() {
         guide::generate(),
         "regenerate with cargo run -p rake-app-cli -- lint --guide > .agents/skills/rake-gpui/SKILL.md"
     );
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert_eq!(
+        guide::refresh_agents(&agents).unwrap(),
+        agents,
+        "refresh root AGENTS.md with --guide=agents --update"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("crates/rake-cli/templates/default/AGENTS.md")).unwrap(),
+        guide::agents()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("crates/rake-cli/templates/default/CLAUDE.md")).unwrap(),
+        "@AGENTS.md\n"
+    );
     let docs = fs::read_to_string(root.join("docs/lint.md")).unwrap();
     let generated = docs
         .split("<!-- lint-rules:begin -->\n")
@@ -995,4 +1009,92 @@ fn file_suppression_does_not_leak_to_other_files_in_a_themed_package() {
 
     assert_eq!(ids(&report.diagnostics), [catalogue::THEME]);
     assert_eq!(report.diagnostics[0].file, "other.rs");
+}
+
+#[test]
+fn agent_block_refresh_preserves_surroundings_and_refuses_ambiguous_markers() {
+    let original = format!(
+        "User notes café\r\n{}\r\nOld rules\r\n{}\r\nKeep footer\r\n",
+        guide::BEGIN,
+        guide::END
+    );
+    let updated = guide::refresh_agents(&original).unwrap();
+    assert!(updated.starts_with("User notes café\r\n"));
+    assert!(updated.ends_with("Keep footer\r\n"));
+    assert_eq!(guide::refresh_agents(&updated).unwrap(), updated);
+    assert!(updated.contains("Never derive loop IDs from positions"));
+    assert!(!updated.replace("\r\n", "").contains('\n'));
+    for text in [
+        "",
+        guide::BEGIN,
+        &format!("{}\n{}", guide::END, guide::BEGIN),
+        &format!("{}\n{}\n{}", guide::BEGIN, guide::BEGIN, guide::END),
+        &format!("{}\n{}\n{}", guide::BEGIN, guide::END, guide::END),
+        &format!("inline {}\n{}", guide::BEGIN, guide::END),
+        &format!("{}\n{} suffix", guide::BEGIN, guide::END),
+    ] {
+        assert!(guide::refresh_agents(text).is_err(), "{text}");
+    }
+}
+
+#[test]
+fn agent_summaries_are_compact_imperatives_for_actionable_rules() {
+    let block = guide::agents();
+    assert!(block.lines().count() <= 16);
+    assert_eq!(block.matches(guide::BEGIN).count(), 1);
+    assert_eq!(block.matches(guide::END).count(), 1);
+    for entry in catalogue::RULES {
+        if let Some(summary) = entry.agent_summary {
+            assert!(!summary.contains('\n'));
+            assert!(summary.starts_with("Never ") || summary.starts_with("Always "));
+            assert_eq!(block.matches(summary).count(), 1);
+        }
+    }
+    assert!(catalogue::rule(SYNTAX).unwrap().agent_summary.is_none());
+    assert!(
+        catalogue::rule(SUPPRESSION)
+            .unwrap()
+            .agent_summary
+            .is_none()
+    );
+}
+
+#[test]
+fn single_file_lint_uses_package_theme_evidence_without_visiting_nested_packages() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(root.join("Cargo.toml"), "[package]\nname='app'\nversion='0.1.0'\n[package.metadata.rake.lint.levels]\nview-theme-literal='deny'").unwrap();
+    fs::write(
+        root.join("theme.rs"),
+        "fn install() { rake::theme::install(cx, colors); }",
+    )
+    .unwrap();
+    fs::write(
+        root.join("view.rs"),
+        "fn f() { rake::view! { <div class=\"bg-[#123456]\"/> }; }",
+    )
+    .unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    fs::write(root.join("nested/Cargo.toml"), "malformed nested package").unwrap();
+    let (_, report) = check_target(&root.join("view.rs")).unwrap();
+    assert_eq!(report.files_checked, 1);
+    assert_eq!(ids(&report.diagnostics), [catalogue::THEME]);
+    assert!(report.denied);
+    assert_eq!(report.diagnostics[0].file, "view.rs");
+}
+
+#[test]
+fn single_file_lint_respects_exclusions_and_compile_fail_fixtures() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(root.join("Cargo.toml"), "[package]\nname='app'\nversion='0.1.0'\n[package.metadata.rake.lint]\nexclude=['generated.rs']").unwrap();
+    for name in ["generated.rs", "fixture.rs"] {
+        fs::write(root.join(name), "fn {").unwrap();
+    }
+    fs::write(root.join("fixture.stderr"), "intentional failure").unwrap();
+    for name in ["generated.rs", "fixture.rs"] {
+        let (_, report) = check_target(&root.join(name)).unwrap();
+        assert_eq!(report.files_checked, 0);
+        assert!(report.diagnostics.is_empty());
+    }
 }
