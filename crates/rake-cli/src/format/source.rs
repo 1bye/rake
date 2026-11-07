@@ -10,6 +10,7 @@ pub(super) fn offset(source: &str, point: LineColumn) -> usize {
         .take(point.line.saturating_sub(1))
         .map(str::len)
         .sum::<usize>();
+
     line + source[line..]
         .chars()
         .take(point.column)
@@ -39,7 +40,9 @@ pub(super) fn atoms(source: &str) -> Option<Vec<Atom<'_>>> {
                 if group.delimiter() != Delimiter::None {
                     ranges.push(span_range(source, group.span_open(), group.span_open()));
                 }
+
                 walk(source, group.stream(), ranges);
+
                 if group.delimiter() != Delimiter::None {
                     ranges.push(span_range(source, group.span_close(), group.span_close()));
                 }
@@ -50,15 +53,18 @@ pub(super) fn atoms(source: &str) -> Option<Vec<Atom<'_>>> {
     }
 
     let mut ranges = Vec::new();
+
     walk(source, source.parse().ok()?, &mut ranges);
     ranges.sort_by_key(|range| (range.start, std::cmp::Reverse(range.end)));
     let mut result = Vec::new();
     let mut end = 0;
+
     for range in ranges {
         // Doc comments synthesize several tokens with the same source range.
         if range.start < end || range.is_empty() {
             continue;
         }
+
         comments(source, end..range.start, &mut result)?;
         result.push(Atom {
             text: source.get(range.clone())?,
@@ -66,16 +72,21 @@ pub(super) fn atoms(source: &str) -> Option<Vec<Atom<'_>>> {
         });
         end = range.end;
     }
+
     comments(source, end..source.len(), &mut result)?;
+
     Some(result)
 }
 
 fn comments<'a>(source: &'a str, gap: Range<usize>, result: &mut Vec<Atom<'a>>) -> Option<()> {
     let mut position = gap.start;
+
     while position < gap.end {
         let rest = source.get(position..gap.end)?;
+
         if rest.starts_with("//") {
             let end = position + rest.find('\n').unwrap_or(rest.len());
+
             result.push(Atom {
                 range: position..end,
                 text: &source[position..end],
@@ -83,8 +94,10 @@ fn comments<'a>(source: &'a str, gap: Range<usize>, result: &mut Vec<Atom<'a>>) 
             position = end;
         } else if rest.starts_with("/*") {
             let start = position;
+
             position += 2;
             let mut depth = 1;
+
             while depth > 0 && position < gap.end {
                 if source[position..].starts_with("/*") {
                     depth += 1;
@@ -96,21 +109,26 @@ fn comments<'a>(source: &'a str, gap: Range<usize>, result: &mut Vec<Atom<'a>>) 
                     position += source[position..].chars().next()?.len_utf8();
                 }
             }
+
             if depth != 0 {
                 return None;
             }
+
             result.push(Atom {
                 range: start..position,
                 text: &source[start..position],
             });
         } else {
             let character = rest.chars().next()?;
+
             if !character.is_whitespace() {
                 return None;
             }
+
             position += character.len_utf8();
         }
     }
+
     Some(())
 }
 
@@ -130,31 +148,40 @@ pub(super) fn project(original: &str, formatted: &str) -> String {
     let (Some(before), Some(after)) = (atoms(original), atoms(formatted)) else {
         return original.into();
     };
+
     let mut output = String::new();
     let mut cursor = 0;
     let mut previous_original = 0;
+
     for atom in &before {
         let found = after[cursor..]
             .iter()
             .position(|candidate| candidate.text == atom.text);
+
         if let Some(found) = found {
             let index = cursor + found;
+
             let gap_start = if index == 0 {
                 0
             } else {
                 after[index - 1].range.end
             };
+
             let gap = &formatted[gap_start..after[index].range.start];
+
             if !output.is_empty() {
                 output.push_str(gap);
             }
+
             cursor = index + 1;
         } else {
             output.push_str(&original[previous_original..atom.range.start]);
         }
+
         output.push_str(atom.text);
         previous_original = atom.range.end;
     }
+
     if equivalent(original, &output) {
         output
     } else {
@@ -166,11 +193,14 @@ pub(super) fn compact(source: &str, tight: bool) -> String {
     let Some(atoms) = atoms(source) else {
         return source.into();
     };
+
     let mut result = String::new();
     let mut previous: Option<&Atom<'_>> = None;
+
     for atom in &atoms {
         if let Some(left) = previous {
             let gap = &source[left.range.end..atom.range.start];
+
             if left.text.starts_with("//") {
                 result.push('\n');
             } else if !gap.is_empty()
@@ -182,12 +212,15 @@ pub(super) fn compact(source: &str, tight: bool) -> String {
                 result.push(' ');
             }
         }
+
         result.push_str(atom.text);
         previous = Some(atom);
     }
+
     if previous.is_some_and(|atom| atom.text.starts_with("//")) {
         result.push('\n');
     }
+
     result
 }
 
@@ -196,6 +229,7 @@ pub(super) fn compact(source: &str, tight: bool) -> String {
 pub(super) fn preserve_views(before: &str, after: &str) -> String {
     fn bodies(source: &str) -> Vec<Range<usize>> {
         let mut ranges = Vec::new();
+
         if let Ok(tokens) = source.parse() {
             crate::view_source::nested_views(tokens, &mut |invocation| {
                 ranges.push(
@@ -204,16 +238,21 @@ pub(super) fn preserve_views(before: &str, after: &str) -> String {
                 );
             });
         }
+
         ranges
     }
     let before_ranges = bodies(before);
     let after_ranges = bodies(after);
+
     if before_ranges.len() != after_ranges.len() {
         return after.into();
     }
+
     let mut output = after.to_owned();
+
     for (original, formatted) in before_ranges.into_iter().zip(after_ranges).rev() {
         output.replace_range(formatted, &before[original]);
     }
+
     output
 }

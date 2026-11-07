@@ -1,5 +1,6 @@
 //! Display-aware placement evidence for a separate application popup window.
 use crate::Rect;
+
 /// Native icon and work area translated to GPUI's target-display logical units.
 ///
 /// AppKit uses display-local top-left coordinates. Windows uses screen coordinates

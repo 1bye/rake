@@ -11,11 +11,13 @@ pub(crate) fn value_name(login: &LaunchAtLogin) -> &str {
 fn quote(value: &str) -> String {
     let mut result = String::from("\"");
     let mut slashes = 0;
+
     for ch in value.chars() {
         if ch == '\\' {
             slashes += 1;
             continue;
         }
+
         result.extend(std::iter::repeat_n(
             '\\',
             if ch == '"' { slashes * 2 + 1 } else { slashes },
@@ -23,8 +25,10 @@ fn quote(value: &str) -> String {
         result.push(ch);
         slashes = 0;
     }
+
     result.extend(std::iter::repeat_n('\\', slashes * 2));
     result.push('"');
+
     result
 }
 
@@ -34,19 +38,25 @@ pub(crate) fn command(login: &LaunchAtLogin, executable: &str) -> Result<String,
             "invalid Windows executable path".into(),
         ));
     }
+
     // current_exe may use an extended-length spelling while installer locators do not.
     let normalized;
+
     let executable = if let Some(unc) = executable.strip_prefix(r"\\?\UNC\") {
         normalized = format!(r"\\{unc}");
+
         normalized.as_str()
     } else {
         executable.strip_prefix(r"\\?\").unwrap_or(executable)
     };
+
     let mut command = quote(executable);
+
     for arg in &login.args {
         command.push(' ');
         command.push_str(&quote(arg));
     }
+
     // Run documents a 260-character command-line limit.
     if command.encode_utf16().count() > 260 {
         return Err(Error::InvalidCommand(
@@ -73,6 +83,7 @@ mod tests {
     fn uninstall_matches_only_the_installed_executable_including_login_args() {
         let login = LaunchAtLogin::new("dev.rake.app").unwrap();
         let prefix = command(&login, r"C:\Program Files\Rake\app.exe").unwrap();
+
         assert!(belongs_to(&format!("{prefix} \"--background\""), &prefix));
         assert!(belongs_to(&prefix.to_lowercase(), &prefix));
         assert!(!belongs_to(r#""C:\Other\app.exe""#, &prefix));
@@ -93,6 +104,7 @@ mod tests {
             .unwrap()
             .args(["", "a b", r#"say "hello""#, r"C:\tail\"])
             .unwrap();
+
         assert_eq!(value_name(&login), "dev.rake.app");
         assert_eq!(RUN_KEY, r"Software\Microsoft\Windows\CurrentVersion\Run");
         assert_eq!(

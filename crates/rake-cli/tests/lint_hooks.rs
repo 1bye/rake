@@ -18,10 +18,13 @@ fn invoke(cwd: &Path, payload: &[u8]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+
     child.stdin.take().unwrap().write_all(payload).unwrap();
     let result = child.wait_with_output().unwrap();
+
     assert!(result.status.success(), "{result:?}");
     assert!(result.stderr.is_empty(), "{result:?}");
+
     result
 }
 
@@ -29,16 +32,20 @@ fn hook(process_cwd: &Path, cwd: Option<&Path>, tool: &str, input: serde_json::V
     let mut event = serde_json::json!({
         "hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": input,
     });
+
     if let Some(cwd) = cwd {
         event["cwd"] = serde_json::json!(cwd);
     }
+
     invoke(process_cwd, event.to_string().as_bytes())
 }
 
 fn context(result: &Output) -> String {
     let output: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+
     assert_eq!(output.as_object().unwrap().len(), 1);
     assert_eq!(output["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+
     output["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap()
@@ -47,11 +54,13 @@ fn context(result: &Output) -> String {
 
 fn project() -> tempfile::TempDir {
     let project = tempfile::tempdir().unwrap();
+
     fs::write(
         project.path().join("Cargo.toml"),
         "[package]\nname='app'\nversion='0.1.0'",
     )
     .unwrap();
+
     project
 }
 
@@ -62,7 +71,9 @@ fn claude_edit_and_write_resolve_payload_cwd_and_return_compact_findings() {
     let process_cwd = tempfile::tempdir().unwrap();
     let file = root.join("space ü.rs");
     let original = "fn f() { rake::view! { <button/> }; }";
+
     fs::write(&file, original).unwrap();
+
     for tool in ["Edit", "Write"] {
         let result = hook(
             process_cwd.path(),
@@ -70,9 +81,12 @@ fn claude_edit_and_write_resolve_payload_cwd_and_return_compact_findings() {
             tool,
             serde_json::json!({"file_path": "space ü.rs"}),
         );
+
         let context = context(&result);
+
         assert!(context.starts_with("rake lint found 1 issue in the edited files:\n"));
         let line = context.lines().nth(1).unwrap();
+
         assert!(line.starts_with("space ü.rs:1:"), "{line}");
         assert!(line.contains("view-button-label (warn):"));
         assert!(line.contains(". Fix: add aria-label="));
@@ -86,6 +100,7 @@ fn claude_edit_and_write_resolve_payload_cwd_and_return_compact_findings() {
 fn multiedit_and_future_tools_with_file_paths_get_linted() {
     let project = project();
     let root = project.path();
+
     fs::write(
         root.join("main.rs"),
         "fn f() { rake::view! { <button/> }; }",
@@ -99,6 +114,7 @@ fn multiedit_and_future_tools_with_file_paths_get_linted() {
             tool,
             serde_json::json!({"file_path": "main.rs"}),
         );
+
         assert!(context(&result).contains("main.rs:1:"));
         assert!(context(&result).contains("view-button-label (warn):"));
     }
@@ -122,6 +138,7 @@ fn notebook_and_unknown_tools_without_usable_file_paths_stay_silent() {
         ("MultiEdit", serde_json::json!({"file_path": ""})),
     ] {
         let result = hook(root, Some(&missing_cwd), tool, input);
+
         assert!(result.stdout.is_empty(), "{tool}: {result:?}");
     }
 }
@@ -130,18 +147,23 @@ fn notebook_and_unknown_tools_without_usable_file_paths_stay_silent() {
 fn codex_patch_handles_spaces_multiple_files_move_delete_and_duplicates() {
     let project = project();
     let root = project.path();
+
     for name in ["added space.rs", "updated space.rs", "moved ü.rs"] {
         fs::write(root.join(name), "fn f() { rake::view! { <button/> }; }").unwrap();
     }
+
     fs::write(root.join("unrelated.rs"), "fn { broken source").unwrap();
     let patch = "*** Begin Patch\n*** Add File: added space.rs\n+...\n*** Update File: added space.rs\n@@\n-...\n+...\n*** Update File: updated space.rs\n@@\n-...\n+...\n*** Update File: old.rs\n*** Move to: moved ü.rs\n@@\n-...\n+...\n*** Delete File: deleted.rs\n*** End Patch\n";
+
     let result = hook(
         root,
         Some(root),
         "apply_patch",
         serde_json::json!({"command": patch}),
     );
+
     let context = context(&result);
+
     assert!(context.starts_with("rake lint found 3 issues"));
     assert_eq!(context.matches("view-button-label").count(), 3);
     assert_eq!(context.lines().count(), 4);
@@ -153,6 +175,7 @@ fn codex_patch_handles_spaces_multiple_files_move_delete_and_duplicates() {
 fn missing_cwd_falls_back_to_the_process_directory() {
     let project = project();
     let root = project.path();
+
     fs::write(
         root.join("main.rs"),
         "fn f() { rake::view! { <button/> }; }",
@@ -164,6 +187,7 @@ fn missing_cwd_falls_back_to_the_process_directory() {
         "Edit",
         serde_json::json!({"file_path": "main.rs"}),
     );
+
     assert!(context(&result).contains("main.rs:1:"));
 }
 
@@ -171,8 +195,10 @@ fn missing_cwd_falls_back_to_the_process_directory() {
 fn clean_non_rust_and_deleted_files_have_empty_stdout() {
     let project = project();
     let root = project.path();
+
     fs::write(root.join("clean.rs"), "fn main() {}").unwrap();
     fs::write(root.join("notes.md"), "text").unwrap();
+
     for file in ["clean.rs", "notes.md", "deleted.rs"] {
         let result = hook(
             root,
@@ -180,14 +206,17 @@ fn clean_non_rust_and_deleted_files_have_empty_stdout() {
             "Write",
             serde_json::json!({"file_path": root.join(file)}),
         );
+
         assert!(result.stdout.is_empty(), "{result:?}");
     }
+
     let result = hook(
         root,
         Some(root),
         "apply_patch",
         serde_json::json!({"command": "*** Begin Patch\n*** Delete File: deleted.rs\n*** End Patch\n"}),
     );
+
     assert!(result.stdout.is_empty());
 }
 
@@ -195,18 +224,23 @@ fn clean_non_rust_and_deleted_files_have_empty_stdout() {
 fn malformed_and_unreadable_payloads_return_advisory_context() {
     let project = project();
     let root = project.path();
+
     for input in [b"not json".as_slice(), b"{}", b"[]", b"\xff"] {
         let result = invoke(root, input);
+
         assert!(context(&result).contains("run rake lint manually"));
     }
+
     let wrong_event = serde_json::json!({
         "hook_event_name": "PreToolUse", "tool_name": "Edit",
         "tool_input": {"file_path": "main.rs"},
     });
+
     assert!(
         context(&invoke(root, wrong_event.to_string().as_bytes()))
             .contains("run rake lint manually")
     );
+
     for (tool, input) in [
         ("apply_patch", serde_json::json!({})),
         (
@@ -215,6 +249,7 @@ fn malformed_and_unreadable_payloads_return_advisory_context() {
         ),
     ] {
         let result = hook(root, Some(root), tool, input);
+
         assert!(context(&result).contains("run rake lint manually"));
     }
 }
@@ -223,6 +258,7 @@ fn malformed_and_unreadable_payloads_return_advisory_context() {
 fn lint_failures_and_denied_findings_never_block_the_edit() {
     let project = project();
     let root = project.path();
+
     fs::write(root.join("main.rs"), "fn {").unwrap();
     let result = hook(
         root,
@@ -230,6 +266,7 @@ fn lint_failures_and_denied_findings_never_block_the_edit() {
         "Edit",
         serde_json::json!({"file_path": "main.rs"}),
     );
+
     assert!(context(&result).contains("syntax-error (deny):"));
     fs::write(root.join("Cargo.toml"), "not valid TOML").unwrap();
     let result = hook(
@@ -238,7 +275,9 @@ fn lint_failures_and_denied_findings_never_block_the_edit() {
         "Edit",
         serde_json::json!({"file_path": "main.rs"}),
     );
+
     let context = context(&result);
+
     assert!(context.contains("could not check an edited file; run rake lint manually"));
     assert!(!context.contains("schema_version"));
 }
@@ -247,10 +286,12 @@ fn lint_failures_and_denied_findings_never_block_the_edit() {
 fn findings_are_capped_at_twenty_with_the_remaining_count() {
     let project = project();
     let root = project.path();
+
     let source = format!(
         "fn f() {{ rake::view! {{ <div>{}</div> }}; }}",
         "<button/>\n".repeat(27)
     );
+
     fs::write(root.join("many.rs"), source).unwrap();
     let result = hook(
         root,
@@ -258,7 +299,9 @@ fn findings_are_capped_at_twenty_with_the_remaining_count() {
         "Write",
         serde_json::json!({"file_path": "many.rs"}),
     );
+
     let context = context(&result);
+
     assert!(context.starts_with("rake lint found 27 issues"));
     assert_eq!(context.matches("view-button-label").count(), 20);
     assert!(context.ends_with("7 more; run rake lint"));
@@ -270,6 +313,7 @@ fn manifest_findings_are_compact_and_read_only() {
     let project = project();
     let root = project.path();
     let manifest = root.join("Cargo.toml");
+
     fs::write(
         &manifest,
         "[package]\nname='app'\nversion='0.1.0'\n[profile.release]\ndebug-assertions=true # keep\n",
@@ -281,6 +325,7 @@ fn manifest_findings_are_compact_and_read_only() {
         "Write",
         serde_json::json!({"file_path": manifest}),
     );
+
     assert!(context(&result).contains("Cargo.toml:5:18 release-debug-assertions (warn):"));
     assert!(
         fs::read_to_string(root.join("Cargo.toml"))
@@ -294,11 +339,14 @@ fn long_fields_are_shortened_without_losing_the_rule_and_fix() {
     let project = project();
     let root = project.path();
     let mut directory = root.to_owned();
+
     for ch in ['a', 'b', 'c'] {
         directory.push(ch.to_string().repeat(170));
         fs::create_dir(&directory).unwrap();
     }
+
     let path = directory.join("main.rs");
+
     fs::write(&path, "fn f() { rake::view! { <button/> }; }").unwrap();
     let result = hook(
         root,
@@ -306,8 +354,10 @@ fn long_fields_are_shortened_without_losing_the_rule_and_fix() {
         "Edit",
         serde_json::json!({"file_path": path}),
     );
+
     let context = context(&result);
     let line = context.lines().nth(1).unwrap();
+
     assert!(line.contains("..."));
     assert!(line.contains("view-button-label (warn):"));
     assert!(line.contains(". Fix: add aria-label="));

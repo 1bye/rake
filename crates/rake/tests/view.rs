@@ -121,6 +121,7 @@ fn maps_headings_buttons_lists_and_images_to_accessibility_roles() {
     let list = rake::view! {
         <ul/>
     };
+
     let item = rake::view! {
         <li/>
     };
@@ -137,6 +138,7 @@ fn maps_headings_buttons_lists_and_images_to_accessibility_roles() {
     let decorative = rake::view! {
         <img src="texture.png" alt="" />
     };
+
     let mut heading_info = accesskit::Node::new(accesskit::Role::Heading);
     let mut image_info = accesskit::Node::new(accesskit::Role::Image);
     let mut button_info = accesskit::Node::new(accesskit::Role::Button);
@@ -164,6 +166,7 @@ fn empty_loops_do_not_evaluate_children_and_distinct_sites_have_distinct_ids() {
     let first = rake::view! {
         <div/>
     };
+
     let second = rake::view! {
         <div/>
     };
@@ -329,64 +332,77 @@ fn every_supported_utility_compiles_against_gpui() {
             class="p-13 gap-1.5 gap-x-2.5 gap-y-[4px] w-[320px] h-[0.75rem] size-[50%] w-1/2 h-2/3 basis-1/3 -mt-1 -mx-[4px] -top-2 right-1 bottom-[2px] left-[10%] inset-0 text-[11px] text-[0.75rem] text-[#abc] bg-[#123456] border-[#12345678] leading-[20px] leading-none opacity-35 opacity-[0.35] font-[JetBrains_Mono] rounded-[4px] border-[2px] border-t-[2px] border-b-[1px] border-l-[3px] border-r-[0px] min-w-[12px] max-w-[50%] min-h-[1rem] max-h-[240px]"
         />
     };
+
     let _ = rake::view! {
         <div class:w-[320px]={true} class:gap-1.5={true} class:-mt-1={true} />
     };
+
     let _ = rake::view! {
         <div
             class="flex block grid hidden flex-col flex-row flex-wrap flex-1 items-start items-center items-end justify-start justify-center justify-end justify-between w-full h-full size-full min-w-0 min-h-0 overflow-hidden overflow-scroll overflow-x-scroll overflow-y-scroll rounded-none rounded-sm rounded-md rounded-lg rounded-xl rounded-full border-0 border-1"
         />
     };
+
     let _ = rake::view! {
         <div
             class="border-2 shadow-sm shadow-md shadow-lg cursor-pointer text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-left text-center text-right rounded border shrink-0 grow grow-0 flex-none relative absolute items-stretch self-start self-center self-end justify-around truncate whitespace-nowrap overflow-x-hidden overflow-y-hidden"
         />
     };
+
     let _ = rake::view! {
         <div
             class="border-t border-t-0 border-t-1 border-t-2 border-b border-b-0 border-b-1 border-b-2 border-l border-l-0 border-l-1 border-l-2 border-r border-r-0 border-r-1 border-r-2 font-normal font-medium font-semibold font-bold grid-cols-1 grid-cols-2 grid-cols-3 grid-cols-4 grid-cols-5 grid-cols-6 grid-cols-7 grid-cols-8 grid-cols-9 grid-cols-10 grid-cols-11 grid-cols-12"
         />
     };
+
     let _ = rake::view! {
         <div
             class="p-0 p-1 p-2 p-3 p-4 p-5 p-6 p-7 p-8 p-12 p-16 p-20 p-24 p-32 px-0 px-1 px-2 px-3 px-4 px-5 px-6 px-7 px-8 px-12 px-16 px-20 px-24 px-32 py-0 py-1 py-2 py-3"
         />
     };
+
     let _ = rake::view! {
         <div
             class="py-4 py-5 py-6 py-7 py-8 py-12 py-16 py-20 py-24 py-32 pt-0 pt-1 pt-2 pt-3 pt-4 pt-5 pt-6 pt-7 pt-8 pt-12 pt-16 pt-20 pt-24 pt-32 pb-0 pb-1 pb-2 pb-3 pb-4 pb-5 pb-6 pb-7"
         />
     };
+
     let _ = rake::view! {
         <div
             class="pb-8 pb-12 pb-16 pb-20 pb-24 pb-32 pl-0 pl-1 pl-2 pl-3 pl-4 pl-5 pl-6 pl-7 pl-8 pl-12 pl-16 pl-20 pl-24 pl-32 pr-0 pr-1 pr-2 pr-3 pr-4 pr-5 pr-6 pr-7 pr-8 pr-12 pr-16 pr-20"
         />
     };
+
     let _ = rake::view! {
         <div
             class="pr-24 pr-32 m-0 m-1 m-2 m-3 m-4 m-5 m-6 m-7 m-8 m-12 m-16 m-20 m-24 m-32 mx-0 mx-1 mx-2 mx-3 mx-4 mx-5 mx-6 mx-7 mx-8 mx-12 mx-16 mx-20 mx-24 mx-32 my-0 my-1"
         />
     };
+
     let _ = rake::view! {
         <div
             class="my-2 my-3 my-4 my-5 my-6 my-7 my-8 my-12 my-16 my-20 my-24 my-32 mt-0 mt-1 mt-2 mt-3 mt-4 mt-5 mt-6 mt-7 mt-8 mt-12 mt-16 mt-20 mt-24 mt-32 mb-0 mb-1 mb-2 mb-3 mb-4 mb-5"
         />
     };
+
     let _ = rake::view! {
         <div
             class="mb-6 mb-7 mb-8 mb-12 mb-16 mb-20 mb-24 mb-32 ml-0 ml-1 ml-2 ml-3 ml-4 ml-5 ml-6 ml-7 ml-8 ml-12 ml-16 ml-20 ml-24 ml-32 mr-0 mr-1 mr-2 mr-3 mr-4 mr-5 mr-6 mr-7 mr-8 mr-12"
         />
     };
+
     let _ = rake::view! {
         <div
             class="mr-16 mr-20 mr-24 mr-32 gap-0 gap-1 gap-2 gap-3 gap-4 gap-5 gap-6 gap-7 gap-8 gap-12 gap-16 gap-20 gap-24 gap-32 gap-x-0 gap-x-1 gap-x-2 gap-x-3 gap-x-4 gap-x-5 gap-x-6 gap-x-7 gap-x-8 gap-x-12 gap-x-16 gap-x-20 gap-x-24 gap-x-32"
         />
     };
+
     let _ = rake::view! {
         <div
             class="gap-y-0 gap-y-1 gap-y-2 gap-y-3 gap-y-4 gap-y-5 gap-y-6 gap-y-7 gap-y-8 gap-y-12 gap-y-16 gap-y-20 gap-y-24 gap-y-32 w-0 w-1 w-2 w-3 w-4 w-5 w-6 w-7 w-8 w-12 w-16 w-20 w-24 w-32 h-0 h-1 h-2 h-3"
         />
     };
+
     let _ = rake::view! {
         <div
             class="h-4 h-5 h-6 h-7 h-8 h-12 h-16 h-20 h-24 h-32 size-0 size-1 size-2 size-3 size-4 size-5 size-6 size-7 size-8 size-12 size-16 size-20 size-24 size-32"
@@ -428,9 +444,11 @@ fn disabled_classes_use_the_existing_predicate_and_keep_base_order() {
     let mut disabled = rake::view! {
         <button disabled class="opacity-100 disabled:opacity-35" />
     };
+
     let mut enabled = rake::view! {
         <button class="opacity-100 disabled:opacity-35" />
     };
+
     let mut overridden = rake::view! {
         <button disabled class="disabled:opacity-35 opacity-100" />
     };
@@ -732,6 +750,7 @@ fn semantic_containers_rules_and_svg_expose_their_documented_semantics() {
     let mut rule = rake::view! {
         <hr/>
     };
+
     let mut expected = div().w_full().h(px(1.));
 
     assert_eq!(rule.a11y_role(), None);
@@ -751,9 +770,11 @@ fn semantic_containers_rules_and_svg_expose_their_documented_semantics() {
 #[test]
 fn bare_boolean_attributes_and_builtin_shorthand_keep_their_types() {
     let disabled = true;
+
     let button = rake::view! {
         <button {disabled} aria-expanded>"Unavailable"</button>
     };
+
     let mut info = accesskit::Node::new(button.a11y_role().unwrap());
 
     button.write_a11y_info(&mut info);
@@ -827,54 +848,65 @@ fn every_supported_style_utility_compiles_inside_a_merged_hover_variant() {
             class="hover:flex hover:block hover:grid hover:hidden hover:flex-col hover:flex-row hover:flex-wrap hover:flex-1 hover:items-start hover:items-center hover:items-end hover:justify-start hover:justify-center hover:justify-end hover:justify-between hover:w-full hover:h-full hover:size-full hover:min-w-0 hover:min-h-0 hover:overflow-hidden hover:rounded-none hover:rounded-sm hover:rounded-md hover:rounded-lg hover:rounded-xl hover:rounded-full hover:border-0 hover:border-1 hover:border-2 hover:shadow-sm hover:shadow-md hover:shadow-lg hover:cursor-pointer hover:text-xs hover:text-sm hover:text-base hover:text-lg hover:text-xl hover:text-2xl hover:text-3xl hover:text-left"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:text-center hover:text-right hover:rounded hover:border hover:shrink-0 hover:grow hover:grow-0 hover:flex-none hover:relative hover:absolute hover:items-stretch hover:self-start hover:self-center hover:self-end hover:justify-around hover:truncate hover:whitespace-nowrap hover:overflow-x-hidden hover:overflow-y-hidden hover:border-t hover:border-t-0 hover:border-t-1 hover:border-t-2 hover:border-b hover:border-b-0 hover:border-b-1 hover:border-b-2 hover:border-l hover:border-l-0 hover:border-l-1 hover:border-l-2 hover:border-r hover:border-r-0 hover:border-r-1 hover:border-r-2 hover:p-0 hover:p-1 hover:p-2 hover:p-3 hover:p-4 hover:p-5 hover:p-6 hover:p-7 hover:p-8 hover:p-12"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:p-16 hover:p-20 hover:p-24 hover:p-32 hover:px-0 hover:px-1 hover:px-2 hover:px-3 hover:px-4 hover:px-5 hover:px-6 hover:px-7 hover:px-8 hover:px-12 hover:px-16 hover:px-20 hover:px-24 hover:px-32 hover:py-0 hover:py-1 hover:py-2 hover:py-3 hover:py-4 hover:py-5 hover:py-6 hover:py-7 hover:py-8 hover:py-12 hover:py-16 hover:py-20 hover:py-24 hover:py-32 hover:pt-0 hover:pt-1 hover:pt-2 hover:pt-3 hover:pt-4 hover:pt-5 hover:pt-6 hover:pt-7 hover:pt-8 hover:pt-12 hover:pt-16 hover:pt-20 hover:pt-24"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:pt-32 hover:pb-0 hover:pb-1 hover:pb-2 hover:pb-3 hover:pb-4 hover:pb-5 hover:pb-6 hover:pb-7 hover:pb-8 hover:pb-12 hover:pb-16 hover:pb-20 hover:pb-24 hover:pb-32 hover:pl-0 hover:pl-1 hover:pl-2 hover:pl-3 hover:pl-4 hover:pl-5 hover:pl-6 hover:pl-7 hover:pl-8 hover:pl-12 hover:pl-16 hover:pl-20 hover:pl-24 hover:pl-32 hover:pr-0 hover:pr-1 hover:pr-2 hover:pr-3 hover:pr-4 hover:pr-5 hover:pr-6 hover:pr-7 hover:pr-8 hover:pr-12 hover:pr-16 hover:pr-20 hover:pr-24 hover:pr-32 hover:m-0 hover:m-1"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:m-2 hover:m-3 hover:m-4 hover:m-5 hover:m-6 hover:m-7 hover:m-8 hover:m-12 hover:m-16 hover:m-20 hover:m-24 hover:m-32 hover:mx-0 hover:mx-1 hover:mx-2 hover:mx-3 hover:mx-4 hover:mx-5 hover:mx-6 hover:mx-7 hover:mx-8 hover:mx-12 hover:mx-16 hover:mx-20 hover:mx-24 hover:mx-32 hover:my-0 hover:my-1 hover:my-2 hover:my-3 hover:my-4 hover:my-5 hover:my-6 hover:my-7 hover:my-8 hover:my-12 hover:my-16 hover:my-20 hover:my-24 hover:my-32 hover:mt-0 hover:mt-1 hover:mt-2 hover:mt-3 hover:mt-4"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:mt-5 hover:mt-6 hover:mt-7 hover:mt-8 hover:mt-12 hover:mt-16 hover:mt-20 hover:mt-24 hover:mt-32 hover:mb-0 hover:mb-1 hover:mb-2 hover:mb-3 hover:mb-4 hover:mb-5 hover:mb-6 hover:mb-7 hover:mb-8 hover:mb-12 hover:mb-16 hover:mb-20 hover:mb-24 hover:mb-32 hover:ml-0 hover:ml-1 hover:ml-2 hover:ml-3 hover:ml-4 hover:ml-5 hover:ml-6 hover:ml-7 hover:ml-8 hover:ml-12 hover:ml-16 hover:ml-20 hover:ml-24 hover:ml-32 hover:mr-0 hover:mr-1 hover:mr-2 hover:mr-3 hover:mr-4 hover:mr-5 hover:mr-6 hover:mr-7"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:mr-8 hover:mr-12 hover:mr-16 hover:mr-20 hover:mr-24 hover:mr-32 hover:gap-0 hover:gap-1 hover:gap-2 hover:gap-3 hover:gap-4 hover:gap-5 hover:gap-6 hover:gap-7 hover:gap-8 hover:gap-12 hover:gap-16 hover:gap-20 hover:gap-24 hover:gap-32 hover:gap-x-0 hover:gap-x-1 hover:gap-x-2 hover:gap-x-3 hover:gap-x-4 hover:gap-x-5 hover:gap-x-6 hover:gap-x-7 hover:gap-x-8 hover:gap-x-12 hover:gap-x-16 hover:gap-x-20 hover:gap-x-24 hover:gap-x-32 hover:gap-y-0 hover:gap-y-1 hover:gap-y-2 hover:gap-y-3 hover:gap-y-4 hover:gap-y-5 hover:gap-y-6 hover:gap-y-7 hover:gap-y-8 hover:gap-y-12 hover:gap-y-16"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:gap-y-20 hover:gap-y-24 hover:gap-y-32 hover:w-0 hover:w-1 hover:w-2 hover:w-3 hover:w-4 hover:w-5 hover:w-6 hover:w-7 hover:w-8 hover:w-12 hover:w-16 hover:w-20 hover:w-24 hover:w-32 hover:h-0 hover:h-1 hover:h-2 hover:h-3 hover:h-4 hover:h-5 hover:h-6 hover:h-7 hover:h-8 hover:h-12 hover:h-16 hover:h-20 hover:h-24 hover:h-32 hover:size-0 hover:size-1 hover:size-2 hover:size-3 hover:size-4 hover:size-5 hover:size-6 hover:size-7 hover:size-8 hover:size-12 hover:size-16 hover:size-20 hover:size-24 hover:size-32"
         />
     };
+
     let _ = rake::view! {
         <div
             class="hover:font-normal hover:font-medium hover:font-semibold hover:font-bold hover:grid-cols-1 hover:grid-cols-2 hover:grid-cols-3 hover:grid-cols-4 hover:grid-cols-5 hover:grid-cols-6 hover:grid-cols-7 hover:grid-cols-8 hover:grid-cols-9 hover:grid-cols-10 hover:grid-cols-11 hover:grid-cols-12 hover:p-13 hover:gap-1.5 hover:w-[320px] hover:h-[50%] hover:w-1/2 hover:basis-1/3 hover:-mt-1 hover:-top-2 hover:text-[11px] hover:text-[#abc] hover:bg-[#123456] hover:border-[#12345678] hover:leading-[20px] hover:leading-none hover:opacity-[0.35] hover:font-[JetBrains_Mono] hover:rounded-[4px] hover:border-t-[2px] hover:min-w-[12px] hover:max-h-[240px]"
         />
     };
+
     let _ = rake::view! {
         <div
             class="group/card hover:opacity-50 active:border-2 focus:bg-[#fff] focus-visible:text-[#000] in-focus:opacity-100 group-hover/card:p-2 group-active/card:border-1"
         />
     };
+
     let _ = rake::view! {
         <img src="x.png" alt="Preview" class="hover:opacity-50 focus-visible:border-2" />
     };
+
     let _ = rake::view! {
         <button disabled class="disabled:opacity-35" class:disabled:font-bold={true} />
     };
@@ -978,9 +1010,11 @@ fn presets_are_typed_style_functions_and_compose_with_builders() {
     let _ = rake::view! {
         <div style={|s| control(s).w(px(10.))} />
     };
+
     let _ = rake::view! {
         <div style={scrolling} />
     };
+
     let _ = focus_only(gpui::div());
 }
 
@@ -1099,6 +1133,7 @@ fn conditional_negative_classes_build_real_gpui_styles() {
     let mut actual = rake::view! {
         <div class:-mt-1={true} class:hover:-mt-1={true} />
     };
+
     let mut expected = div().flex().flex_col().mt(rake::gpui::rems(-0.25));
 
     assert_eq!(
@@ -1110,6 +1145,7 @@ fn conditional_negative_classes_build_real_gpui_styles() {
 #[test]
 fn lint_style_class_fix_preserves_real_gpui_style_and_attribute_evaluation_order() {
     let calls = RefCell::new(Vec::new());
+
     let mut before = rake::view! {
         <div
             aria-label={
@@ -1127,7 +1163,9 @@ fn lint_style_class_fix_preserves_real_gpui_style_and_attribute_evaluation_order
             }
         />
     };
+
     let before_calls = calls.replace(Vec::new());
+
     let mut after = rake::view! {
         <div
             aria-label={

@@ -10,6 +10,7 @@ pub enum Column {
     /// Start another column with a dividing line.
     Divider,
 }
+
 /// Native menu item layout and default selection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MenuAppearance {
@@ -36,6 +37,7 @@ pub enum BalloonIcon {
     /// Owned custom icon.
     Custom(crate::Image),
 }
+
 /// Optional Windows legacy notification-area balloon.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LegacyBalloon {
@@ -54,6 +56,7 @@ pub struct LegacyBalloon {
     /// Respect system quiet-time policy (recommended).
     pub respect_quiet_time: bool,
 }
+
 impl LegacyBalloon {
     /// Describes a balloon respecting system quiet time by default.
     pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
@@ -64,17 +67,20 @@ impl LegacyBalloon {
             ..Default::default()
         }
     }
+
     /// Validates fixed native UTF-16 buffers before any native call.
     /// # Errors
     /// Rejects embedded NULs and oversized strings.
     pub fn validate(&self) -> Result<(), crate::Error> {
         crate::text(&self.title, "balloon title", 4096)?;
         crate::text(&self.body, "balloon body", 4096)?;
+
         if self.title.encode_utf16().count() > 63 || self.body.encode_utf16().count() > 255 {
             return Err(crate::Error::InvalidInput(
                 "legacy balloon exceeds native UTF-16 limits".into(),
             ));
         }
+
         Ok(())
     }
 }
@@ -88,6 +94,7 @@ pub enum TooltipMode {
     /// Emit Shell rich-tooltip open/close requests instead.
     Events,
 }
+
 /// Windows identity and Shell presentation options.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Presentation {

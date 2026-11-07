@@ -50,10 +50,12 @@ impl ImageRepresentation {
     pub fn width(&self) -> u32 {
         self.width
     }
+
     /// Raster height in physical pixels.
     pub fn height(&self) -> u32 {
         self.height
     }
+
     /// Straight-alpha sRGB RGBA8 bytes.
     pub fn bytes(&self) -> &[u8] {
         &self.rgba
@@ -83,6 +85,7 @@ impl Image {
     /// Rejects empty, NUL-containing or excessive names.
     pub fn named(name: impl Into<String>) -> Result<Self, Error> {
         let name = name.into();
+
         crate::text(&name, "image name", 1024)?;
 
         if name.is_empty() {
@@ -122,12 +125,15 @@ impl Image {
     /// Selects native color or template rendering.
     pub fn rendering(mut self, rendering: Rendering) -> Self {
         self.rendering = rendering;
+
         self
     }
+
     /// Returns raster representations without copying their buffers.
     pub fn representations(&self) -> &[ImageRepresentation] {
         &self.representations
     }
+
     /// Returns the optional platform-native image name.
     pub fn native_name(&self) -> Option<&str> {
         self.name.as_deref()
@@ -142,6 +148,7 @@ impl Image {
             .iter()
             .max_by_key(|r| r.width * r.height)
             .ok_or(Error::Unsupported(crate::Feature::NamedImage))?;
+
         rep.to_png()
     }
 }
@@ -153,11 +160,13 @@ impl ImageRepresentation {
 
         {
             let mut encoder = png::Encoder::new(&mut data, rep.width, rep.height);
+
             encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             let mut writer = encoder
                 .write_header()
                 .map_err(|e| crate::native("encode image", e))?;
+
             writer
                 .write_image_data(&rep.rgba)
                 .map_err(|e| crate::native("encode image", e))?;

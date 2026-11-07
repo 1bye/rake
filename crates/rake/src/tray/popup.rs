@@ -1,11 +1,13 @@
 //! Separate GPUI windows for rich tray content, with explicit placement fallback.
 use super::{Error, Feature, Owner};
 use gpui::{AnyView, Window};
+
 #[cfg(not(target_family = "wasm"))]
 use gpui::{
     AppContext, Bounds, Context, FocusHandle, WindowBounds, WindowOptions, point, prelude::*, px,
     size,
 };
+
 #[cfg(not(target_family = "wasm"))]
 use std::cell::RefCell;
 use std::{collections::BTreeMap, rc::Rc};
@@ -19,6 +21,7 @@ pub enum PopupFallback {
     #[default]
     CenteredWindow,
 }
+
 /// Content entity lifetime between popup sessions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PopupRetention {
@@ -28,6 +31,7 @@ pub enum PopupRetention {
     /// Keep the GPUI entity; content must not own resources tied to its previous window.
     Retain,
 }
+
 /// How the last popup invocation was actually positioned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PopupPlacement {
@@ -38,6 +42,7 @@ pub enum PopupPlacement {
     /// An open popup was closed by a toggle invocation.
     Dismissed,
 }
+
 type Mount = Rc<dyn Fn(&mut Window, &mut gpui::App) -> Result<AnyView, crate::router::MountError>>;
 
 /// Repeatable rich popup content attached to one tray item.
@@ -53,6 +58,7 @@ pub struct Popup {
     )]
     mount: Mount,
 }
+
 impl std::fmt::Debug for Popup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Popup")
@@ -63,6 +69,7 @@ impl std::fmt::Debug for Popup {
             .finish_non_exhaustive()
     }
 }
+
 impl Popup {
     /// Mounts rich content at a fixed logical size, with centered fallback by default.
     pub fn new(
@@ -79,16 +86,21 @@ impl Popup {
             mount: Rc::new(mount),
         }
     }
+
     /// Selects explicit behavior on hosts lacking reliable global tray geometry.
     pub fn fallback(mut self, fallback: PopupFallback) -> Self {
         self.fallback = fallback;
+
         self
     }
+
     /// Selects content lifetime; recreated content is safest for native child views.
     pub fn retention(mut self, retention: PopupRetention) -> Self {
         self.retention = retention;
+
         self
     }
+
     pub(super) fn validate(&self) -> Result<(), Error> {
         if !self.width.is_finite()
             || !self.height.is_finite()
@@ -99,9 +111,11 @@ impl Popup {
                 "popup dimensions must be finite and in [1, 4096] logical points".into(),
             ));
         }
+
         Ok(())
     }
 }
+
 struct Attachment {
     #[cfg_attr(
         target_family = "wasm",
@@ -112,6 +126,7 @@ struct Attachment {
     window: Option<gpui::AnyWindowHandle>,
     generation: Option<u64>,
 }
+
 #[derive(Default)]
 pub(super) struct Popups {
     items: BTreeMap<String, Attachment>,
@@ -121,11 +136,14 @@ pub(super) struct Popups {
     )]
     opening: bool,
 }
+
 impl Popups {
     pub(super) fn new(specs: Vec<(String, Popup)>) -> Result<Self, Error> {
         let mut items = BTreeMap::new();
+
         for (id, popup) in specs {
             popup.validate()?;
+
             if items
                 .insert(
                     id.clone(),
@@ -141,6 +159,7 @@ impl Popups {
                 return Err(Error::Duplicate(id));
             }
         }
+
         Ok(Self {
             items,
             opening: false,
@@ -155,51 +174,65 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
     #[cfg(target_family = "wasm")]
     {
         let _ = (id, cx);
+
         Err(Error::Unsupported(Feature::Popup))
     }
+
     #[cfg(not(target_family = "wasm"))]
     {
         let owner = cx.try_global::<Owner>().ok_or(Error::HostUnavailable)?;
         let handle = owner.host.collection().get(id)?;
         let generation = handle.state()?.generation;
+
         let attached = owner
             .popups
             .items
             .get(id)
             .ok_or_else(|| Error::InvalidInput("tray has no popup attachment".into()))?;
+
         if owner.popups.opening {
             return Err(Error::InvalidInput("popup is already opening".into()));
         }
+
         let current = attached
             .window
             .filter(|_| attached.generation == Some(generation));
+
         if let Some(current) = current
             && current.update(cx, |_, _, _| ()).is_ok()
         {
             dismiss_popup(id, cx)?;
+
             return Ok(PopupPlacement::Dismissed);
         }
+
         dismiss_all(cx);
         let owner = cx.global::<Owner>();
         let attached = owner.popups.items.get(id).expect("validated attachment");
         let popup = attached.popup.clone();
+
         let content = if attached.generation == Some(generation) {
             attached.content.clone()
         } else {
             None
         };
+
         let anchor = handle.popup_anchor()?;
+
         if anchor.is_none() && popup.fallback == PopupFallback::RequireAnchor {
             return Err(Error::Unsupported(Feature::Rectangle));
         }
+
         let placement = if anchor.is_some() {
             PopupPlacement::Anchored
         } else {
             PopupPlacement::Centered
         };
+
         let bounds = anchor
             .as_ref()
             .map(|anchor| position(anchor, popup.width, popup.height));
+
         let options = WindowOptions {
             window_bounds: bounds.map(WindowBounds::Windowed),
             display_id: anchor
@@ -217,25 +250,32 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
             focus: true,
             ..Default::default()
         };
+
         let failure = Rc::new(RefCell::new(None));
         let failed = failure.clone();
         let retained = Rc::new(RefCell::new(None));
         let saved = retained.clone();
+
         cx.global_mut::<Owner>().popups.opening = true;
         let popup_handle = handle.clone();
+
         let result = cx.open_window(options, move |window, cx| {
             let content = match content.map(Ok).unwrap_or_else(|| (popup.mount)(window, cx)) {
                 Ok(view) => view,
                 Err(error) => {
                     *failed.borrow_mut() = Some(error);
+
                     cx.new(|_| gpui::Empty).into()
                 }
             };
+
             if popup.retention == PopupRetention::Retain {
                 *saved.borrow_mut() = Some(content.clone());
             }
+
             let view = cx.new(|cx| {
                 let focus = cx.focus_handle();
+
                 window.focus(&focus, cx);
                 let blur = cx.observe_window_activation(window, |_, window, cx| {
                     if !window.is_window_active() {
@@ -243,6 +283,7 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
                         cx.notify();
                     }
                 });
+
                 PopupRoot {
                     content,
                     focus,
@@ -250,39 +291,51 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
                     handle: popup_handle,
                 }
             });
+
             cx.new(|cx| rake_ui::Root::new(view, window, cx))
         });
+
         cx.global_mut::<Owner>().popups.opening = false;
         let opened =
             result.map_err(|e| Error::InvalidInput(format!("popup window could not open: {e}")))?;
+
         if let Some(error) = failure.borrow_mut().take() {
             let _ = opened.update(cx, |_, window, _| window.remove_window());
+
             return Err(Error::InvalidInput(format!(
                 "popup content could not mount: {error}"
             )));
         }
+
         if let Err(error) = handle.state() {
             let _ = opened.update(cx, |_, window, _| window.remove_window());
+
             return Err(error);
         }
+
         #[cfg(target_os = "macos")]
         if let Err(error) = handle.set_popup_highlight(true) {
             let _ = opened.update(cx, |_, window, _| window.remove_window());
+
             return Err(error);
         }
+
         let attached = cx
             .global_mut::<Owner>()
             .popups
             .items
             .get_mut(id)
             .expect("validated attachment");
+
         attached.window = Some(opened.into());
         attached.content = retained.borrow_mut().take();
         attached.generation = Some(generation);
         cx.activate(true);
+
         Ok(placement)
     }
 }
+
 /// Dismisses an attached popup without requesting application quit.
 /// # Errors
 /// Reports an absent tray host or attachment.
@@ -290,22 +343,28 @@ pub fn dismiss_popup(id: &str, cx: &mut gpui::App) -> Result<(), Error> {
     if cx.try_global::<Owner>().is_none() {
         return Err(Error::HostUnavailable);
     }
+
     let attached = cx
         .global_mut::<Owner>()
         .popups
         .items
         .get_mut(id)
         .ok_or(Error::HostUnavailable)?;
+
     let window = attached.window.take();
+
     if let Some(window) = window {
         let _ = window.update(cx, |_, window, _| window.remove_window());
     }
+
     Ok(())
 }
+
 pub(super) fn dismiss_all(cx: &mut gpui::App) {
     if cx.try_global::<Owner>().is_none() {
         return;
     }
+
     let windows = cx
         .global_mut::<Owner>()
         .popups
@@ -313,10 +372,12 @@ pub(super) fn dismiss_all(cx: &mut gpui::App) {
         .values_mut()
         .filter_map(|item| item.window.take())
         .collect::<Vec<_>>();
+
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.remove_window());
     }
 }
+
 pub(super) fn removed(id: &str, generation: u64, cx: &mut gpui::App) {
     if cx
         .global::<Owner>()
@@ -326,11 +387,13 @@ pub(super) fn removed(id: &str, generation: u64, cx: &mut gpui::App) {
         .is_some_and(|item| item.generation == Some(generation))
     {
         let _ = dismiss_popup(id, cx);
+
         if let Some(item) = cx.global_mut::<Owner>().popups.items.get_mut(id) {
             item.content = None;
         }
     }
 }
+
 #[cfg(not(target_family = "wasm"))]
 fn position(anchor: &rake_tray::PopupAnchor, width: f32, height: f32) -> Bounds<gpui::Pixels> {
     let icon = &anchor.icon;
@@ -339,11 +402,13 @@ fn position(anchor: &rake_tray::PopupAnchor, width: f32, height: f32) -> Bounds<
     let height = f64::from(height).min(work.height);
     let below = icon.origin.y + icon.height + 4.0;
     let above = icon.origin.y - height - 4.0;
+
     let y = if below + height <= work.origin.y + work.height {
         below
     } else {
         above
     };
+
     let (x, y) = if icon.origin.x + icon.width <= work.origin.x {
         (
             icon.origin.x + icon.width + 4.0,
@@ -357,13 +422,16 @@ fn position(anchor: &rake_tray::PopupAnchor, width: f32, height: f32) -> Bounds<
     } else {
         (icon.origin.x + icon.width / 2.0 - width / 2.0, y)
     };
+
     let x = x.clamp(work.origin.x, work.origin.x + work.width - width);
     let y = y.clamp(work.origin.y, work.origin.y + work.height - height);
+
     Bounds::new(
         point(px(x as f32), px(y as f32)),
         size(px(width as f32), px(height as f32)),
     )
 }
+
 #[cfg(not(target_family = "wasm"))]
 struct PopupRoot {
     content: AnyView,
@@ -371,15 +439,18 @@ struct PopupRoot {
     _blur: gpui::Subscription,
     handle: super::Handle,
 }
+
 #[cfg(not(target_family = "wasm"))]
 impl Drop for PopupRoot {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
         let _ = self.handle.set_popup_highlight(false);
+
         #[cfg(not(target_os = "macos"))]
         let _ = &self.handle;
     }
 }
+
 #[cfg(not(target_family = "wasm"))]
 impl Render for PopupRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -395,9 +466,11 @@ impl Render for PopupRoot {
             .child(self.content.clone())
     }
 }
+
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
+
     #[test]
     fn placement_clamps_negative_origins_and_bottom_panels() {
         let anchor = rake_tray::PopupAnchor {
@@ -413,10 +486,13 @@ mod tests {
                 height: 740.0,
             },
         };
+
         let bounds = position(&anchor, 300.0, 400.0);
+
         assert_eq!(bounds.origin.x, px(-300.0));
         assert_eq!(bounds.origin.y, px(336.0));
         let huge = position(&anchor, 4000.0, 4000.0);
+
         assert_eq!(huge.size, size(px(800.0), px(740.0)));
     }
 }

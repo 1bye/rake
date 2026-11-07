@@ -373,6 +373,7 @@ impl<R: Route> RuntimeClient<R> {
         if self.router.is_shutdown() {
             return Err(ControlError::RuntimeShutdown);
         }
+
         self.command(&Command::Run { id, arguments })
     }
 

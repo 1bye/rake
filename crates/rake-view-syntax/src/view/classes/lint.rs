@@ -12,6 +12,7 @@ pub fn style_classes(expression: &Expr) -> Option<String> {
     let Expr::Closure(closure) = expression else {
         return None;
     };
+
     if closure.asyncness.is_some()
         || closure.movability.is_some()
         || closure.capture.is_some()
@@ -23,9 +24,11 @@ pub fn style_classes(expression: &Expr) -> Option<String> {
     {
         return None;
     }
+
     let Pat::Ident(binding) = &closure.inputs[0] else {
         return None;
     };
+
     if !binding.attrs.is_empty()
         || binding.by_ref.is_some()
         || binding.mutability.is_some()
@@ -33,6 +36,7 @@ pub fn style_classes(expression: &Expr) -> Option<String> {
     {
         return None;
     }
+
     fn chain(expression: &Expr, binding: &syn::Ident, classes: &mut Vec<String>) -> Option<()> {
         match expression {
             Expr::Path(path) if path.attrs.is_empty() && path.path.is_ident(binding) => Some(()),
@@ -40,6 +44,7 @@ pub fn style_classes(expression: &Expr) -> Option<String> {
                 let [Stmt::Expr(expression, None)] = block.block.stmts.as_slice() else {
                     return None;
                 };
+
                 chain(expression, binding, classes)
             }
             Expr::Paren(paren) if paren.attrs.is_empty() => chain(&paren.expr, binding, classes),
@@ -48,6 +53,7 @@ pub fn style_classes(expression: &Expr) -> Option<String> {
             {
                 chain(&call.receiver, binding, classes)?;
                 let method = call.method.to_string();
+
                 let utility = FIXED
                     .iter()
                     .find_map(|(utility, candidate)| {
@@ -57,18 +63,23 @@ pub fn style_classes(expression: &Expr) -> Option<String> {
                         PREFIXES.iter().find_map(|prefix| {
                             SCALES.iter().find_map(|scale| {
                                 let utility = format!("{prefix}-{scale}");
+
                                 (utility.replace('-', "_") == method).then_some(utility)
                             })
                         })
                     })?;
+
                 classes.push(utility);
+
                 Some(())
             }
             _ => None,
         }
     }
     let mut classes = Vec::new();
+
     chain(&closure.body, &binding.ident, &mut classes)?;
+
     (!classes.is_empty()).then(|| classes.join(" "))
 }
 
@@ -91,10 +102,12 @@ mod tests {
                         .iter()
                         .map(move |scale| format!("{}_{scale}", prefix.replace('-', "_")))
                 }));
+
         for method in methods {
             let expression: Expr = syn::parse_str(&format!("|s| s.{method}()")).unwrap();
             let utility = style_classes(&expression).unwrap();
             let emitted = utility_methods(&utility, Span::call_site(), &quote!(::rake)).unwrap();
+
             assert_eq!(emitted.to_string(), format!(". {method} ()"), "{utility}");
         }
     }

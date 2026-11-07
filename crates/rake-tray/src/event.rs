@@ -84,6 +84,7 @@ pub enum BalloonEvent {
     /// User selected the balloon.
     Selected,
 }
+
 /// Native pointer detail, separate from semantic activation to avoid duplicate commands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerAction {
@@ -94,6 +95,7 @@ pub enum PointerAction {
     /// Native double click.
     DoubleClick,
 }
+
 /// Input modifiers observed from the native event/message.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {

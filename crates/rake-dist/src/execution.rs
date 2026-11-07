@@ -141,8 +141,10 @@ pub fn bundle(
     cancelled: &AtomicBool,
 ) -> Result<Distribution, Error> {
     let mut worker_request = request.clone();
+
     worker_request.manifest = std::path::absolute(&request.manifest)?;
     worker_request.output = std::path::absolute(&request.output)?;
+
     spawn_worker(
         &worker_request,
         &worker_request.output,
@@ -209,6 +211,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
     }
 
     let metadata: Metadata = serde_json::from_slice(&metadata_output.stdout)?;
+
     let selected = metadata
         .packages
         .iter()
@@ -248,11 +251,13 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
 
     let binary = binaries[0].name.clone();
     let package = selected.name.clone();
+
     let selected_index = metadata
         .packages
         .iter()
         .position(|p| p.id == selected.id)
         .ok_or(Error::Package)?;
+
     execute_job(
         &JobOptions::from(request),
         job_parent,
@@ -319,7 +324,9 @@ pub fn bundle_source(
 ) -> Result<Distribution, Error> {
     let plan = crate::plan_source(request)?;
     let mut request = request.clone();
+
     request.output = plan.output;
+
     spawn_worker(&request, &request.output, executable, cancelled)
 }
 
@@ -332,13 +339,17 @@ fn spawn_worker(
     let parent = output
         .parent()
         .ok_or_else(|| Error::Execution("output requires parent".into()))?;
+
     fs::create_dir_all(parent)?;
     let workspace = tempfile::Builder::new()
         .prefix(".rake-worker-")
         .tempdir_in(parent)?;
+
     let request_file = workspace.path().join("request.json");
+
     files::write_json(&request_file, request)?;
     let mut command = Command::new(executable);
+
     command
         .arg("__distribution-worker")
         .arg(&request_file)
@@ -346,9 +357,11 @@ fn spawn_worker(
         .current_dir(workspace.path());
     let mut worker = Worker::spawn(&mut command)?;
     let status = worker.wait(cancelled, Duration::from_secs(1800))?;
+
     if !status.success() {
         return Err(Error::Execution(format!("worker exited {status}")));
     }
+
     Ok(serde_json::from_slice(&fs::read(
         output.join("distribution.json"),
     )?)?)
@@ -368,15 +381,19 @@ pub fn dispatch_worker(arguments: &[std::ffi::OsString]) -> Option<Result<Distri
     {
         return None;
     }
+
     Some((|| {
         if arguments.len() != 3 {
             return Err(Error::Execution(
                 "worker requires request and workspace paths".into(),
             ));
         }
+
         let value: serde_json::Value =
             serde_json::from_slice(&fs::read(Path::new(&arguments[1]))?)?;
+
         let workspace = Path::new(&arguments[2]);
+
         if value.get("source").is_some() {
             execute_source_worker(&serde_json::from_value(value)?, workspace)
         } else {
@@ -397,7 +414,9 @@ pub fn execute_source_worker(
             "packaging requires a native runner".into(),
         ));
     }
+
     let resolved = crate::plan_source(request)?;
+
     let (package, binary, cargo, prebuilt, cache) = match &resolved.program {
         crate::ResolvedProgram::Cargo {
             manifest,
@@ -408,11 +427,13 @@ pub fn execute_source_worker(
         } => {
             let metadata = crate::source::cargo_metadata(manifest)?;
             let selected = crate::source::select_package(&metadata, Some(package))?;
+
             if &selected.version != version {
                 return Err(Error::Execution(
                     "Cargo package version changed during selection".into(),
                 ));
             }
+
             if selected
                 .dependencies
                 .iter()
@@ -420,12 +441,15 @@ pub fn execute_source_worker(
             {
                 return Err(Error::Execution("standalone rake-build integration requires the RFC step-2 build-context handoff".into()));
             }
+
             let index = metadata
                 .packages
                 .iter()
                 .position(|p| p.id == selected.id)
                 .ok_or(Error::Package)?;
+
             let cache = metadata.target_directory.join("rake-component-cache");
+
             (
                 package.clone(),
                 bin.clone(),
@@ -436,6 +460,7 @@ pub fn execute_source_worker(
         }
         crate::ResolvedProgram::Prebuilt { path, .. } => {
             let name = crate::source::executable_name(path, request.platform)?;
+
             (
                 name.clone(),
                 name,
@@ -448,10 +473,12 @@ pub fn execute_source_worker(
             )
         }
     };
+
     let features = match &resolved.program {
         crate::ResolvedProgram::Cargo { features, .. } => features.clone(),
         _ => Vec::new(),
     };
+
     let options = JobOptions {
         platform: request.platform,
         output: resolved.output,
@@ -463,6 +490,7 @@ pub fn execute_source_worker(
         entitlements: request.entitlements.clone(),
         trust: request.trust.clone(),
     };
+
     execute_job(
         &options,
         job_parent,
@@ -489,6 +517,7 @@ fn execute_job(
 ) -> Result<Distribution, Error> {
     let root = input.root.as_path();
     let binary = input.binary.as_str();
+
     let selected = input
         .cargo
         .as_ref()
@@ -654,6 +683,7 @@ fn execute_job(
                     .clone()
                     .ok_or_else(|| Error::Execution("missing executable input".into()));
             };
+
             build(
                 selected,
                 binary,
@@ -1451,12 +1481,14 @@ pub(crate) fn reject_input_overlap(
 
         for path in paths {
             let input = files::confined(root, &path)?;
+
             if output.starts_with(&input) || input.starts_with(output) {
                 return Err(Error::Execution(format!(
                     "{reserved_name} overlaps packaging input {}",
                     input.display()
                 )));
             }
+
             files::validate_tree(&input)?;
         }
     }

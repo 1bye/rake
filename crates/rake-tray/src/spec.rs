@@ -55,51 +55,70 @@ impl Tray {
             windows: None,
         }
     }
+
     /// Sets the image source.
     pub fn icon(mut self, image: Image) -> Self {
         self.image = Some(image);
+
         self
     }
+
     /// Sets plain native tooltip text.
     pub fn tooltip(mut self, text: impl Into<String>) -> Self {
         self.tooltip = text.into();
+
         self
     }
+
     /// Attaches a separately projected menu description.
     pub fn menu(mut self, menu: Menu) -> Self {
         self.menu = Some(menu);
+
         self
     }
+
     /// Selects the owner of primary activation.
     pub fn primary(mut self, interaction: Interaction) -> Self {
         self.interaction = interaction;
+
         self
     }
+
     /// Chooses whether creation can wait for a native panel.
     pub fn host_policy(mut self, policy: HostPolicy) -> Self {
         self.host_policy = policy;
+
         self
     }
+
     /// Describes an initially hidden item.
     pub fn hidden(mut self) -> Self {
         self.visible = false;
+
         self
     }
+
     /// Requests AppKit appearance; other platforms return Unsupported.
     pub fn macos(mut self, appearance: crate::macos::Appearance) -> Self {
         self.macos = Some(appearance);
+
         self
     }
+
     /// Requests SNI fields; other platforms return Unsupported.
     pub fn linux(mut self, presentation: crate::linux::Presentation) -> Self {
         self.linux = Some(presentation);
+
         self
     }
+
     /// Requests Windows identity/presentation; other backends reject it.
     pub fn windows(mut self, presentation: crate::windows::Presentation) -> Self {
         self.windows = Some(presentation);
+
         self
     }
+
     /// Returns whether registration is required or may wait/skip an unavailable host.
     pub fn host_requirement(&self) -> HostPolicy {
         self.host_policy
@@ -114,6 +133,7 @@ impl Tray {
     pub fn menu_description(&self) -> Option<&Menu> {
         self.menu.as_ref()
     }
+
     /// Returns the selected primary interaction policy.
     pub fn primary_interaction(&self) -> Interaction {
         self.interaction
@@ -131,6 +151,7 @@ impl Tray {
         {
             return Err(Error::InvalidInput("Windows GUID cannot be nil".into()));
         }
+
         if let Some(mac) = &self.macos {
             for text in [&mac.attributed_title, &mac.attributed_alternate_title]
                 .into_iter()
@@ -138,6 +159,7 @@ impl Tray {
             {
                 text.validate()?;
             }
+
             for value in [
                 &mac.title,
                 &mac.alternate_title,
@@ -146,6 +168,7 @@ impl Tray {
             ] {
                 crate::text(value, "AppKit text", 16 * 1024)?;
             }
+
             if let crate::macos::ItemLength::Points(value) = mac.length
                 && (!value.is_finite() || value <= 0.0 || value > 4096.0)
             {
@@ -154,15 +177,18 @@ impl Tray {
                 ));
             }
         }
+
         if let Some(linux) = &self.linux {
             for value in [&linux.title, &linux.icon_theme_path, &linux.attention_movie] {
                 crate::text(value, "SNI text", 16 * 1024)?;
             }
+
             if let Some(tooltip) = &linux.tooltip {
                 crate::text(&tooltip.title, "tooltip title", 16 * 1024)?;
                 crate::text(&tooltip.body, "tooltip body", 16 * 1024)?;
             }
         }
+
         if let Some(menu) = &self.menu {
             menu.validate()?;
         }

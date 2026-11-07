@@ -36,6 +36,7 @@ impl CrashReports {
                         reporter.install(collector)?;
                         #[cfg(target_family = "wasm")]
                         reporter.prune();
+
                         Ok(())
                     });
 
@@ -46,12 +47,14 @@ impl CrashReports {
             Self::Disabled => {}
             Self::Configured(config, sink) => {
                 let reporter = config.open(application_id)?;
+
                 reporter.install(collector)?;
 
                 #[cfg(not(target_family = "wasm"))]
                 if reporter.deliver(sink.as_ref()).is_err() {
                     tracing::warn!("crash delivery failed; waiting record retained");
                 }
+
                 #[cfg(target_family = "wasm")]
                 wasm_bindgen_futures::spawn_local(async move {
                     if let Err(error) = reporter.deliver(sink).await {

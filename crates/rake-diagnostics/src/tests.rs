@@ -36,20 +36,25 @@ fn a_full_output_queue_reports_loss_and_keeps_collecting() {
 fn crash_tail_skips_locked_and_poisoned_buffers() {
     let collector = Collector::new(8);
     let guard = collector.0.buffer.lock().expect("buffer lock");
+
     assert!(collector.try_crash_tail(8).is_none());
     drop(guard);
     let copy = collector.clone();
+
     let _ = std::thread::spawn(move || {
         let _guard = copy.0.buffer.lock().expect("buffer lock");
+
         panic!("poison test buffer");
     })
     .join();
+
     assert!(collector.try_crash_tail(8).is_none());
 }
 
 #[test]
 fn crash_tail_keeps_only_bounded_structural_metadata() {
     let collector = Collector::new(200);
+
     for _ in 0..150 {
         collector.record(
             "SECRET",
@@ -59,12 +64,15 @@ fn crash_tail_keeps_only_bounded_structural_metadata() {
             [("password".into(), serde_json::json!("secret"))].into(),
         );
     }
+
     let tail = collector
         .try_crash_tail(usize::MAX)
         .expect("available buffer");
+
     assert_eq!(tail.len(), 128);
     assert_eq!(tail[0].sequence, 23);
     let json = serde_json::to_string(&tail).expect("tail JSON");
+
     assert!(!json.contains("private"));
     assert!(!json.contains("secret"));
     assert!(

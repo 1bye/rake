@@ -336,15 +336,20 @@ fn migration_changes_revision_and_inspection_keeps_the_typed_view() {
         let store = Store::<String>::new(backend.clone())
             .with_schema(Schema::new(1).with_migration(0, Ok).unwrap())
             .with_cache(CacheConfig::new(4, 1024).unwrap());
+
         let registry = Storage::new()
             .read_write("preferences", Area::Local, store.clone())
             .unwrap();
+
         let revision = registry.catalog()[0].revision;
+
         let router = Router::<NoRoute>::with_services(
             RouterConfig::default(),
             ServiceRegistry::new().with(registry.clone()).unwrap(),
         );
+
         let client = router.client();
+
         let page = Message::Query(Query::Storage {
             read: Read::Entries {
                 store: "preferences".into(),
@@ -358,6 +363,7 @@ fn migration_changes_revision_and_inspection_keeps_the_typed_view() {
             Err(ControlError::Storage { reason }) if reason.contains("store changed while reading"))
         );
         assert!(registry.catalog()[0].revision > revision);
+
         let Reply::Data(data) = client
             .request_async(request(&client, page, None))
             .await
@@ -365,6 +371,7 @@ fn migration_changes_revision_and_inspection_keeps_the_typed_view() {
         else {
             panic!("expected storage page");
         };
+
         let page: Page = serde_json::from_value(data).unwrap();
 
         assert_eq!(page.entries, [("theme".into(), "\"old\"".into())]);

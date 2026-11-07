@@ -13,6 +13,7 @@ pub use rake_tray::{
 };
 
 mod popup;
+
 pub use popup::{
     Popup, PopupFallback, PopupPlacement, PopupRetention, dismiss_popup, toggle_popup,
 };
@@ -22,6 +23,7 @@ use crate::{AppError, Services};
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type Handler = Box<dyn FnMut(&Event, &mut gpui::App)>;
+
 type Dispatch = Rc<
     dyn Fn(
         String,
@@ -30,6 +32,7 @@ type Dispatch = Rc<
 >;
 
 type Quit = Rc<dyn Fn() -> crate::router::Operation<crate::quit::QuitResult>>;
+
 #[derive(Clone, Default)]
 struct Dispatcher {
     command: Rc<RefCell<Option<Dispatch>>>,
@@ -42,11 +45,13 @@ pub(crate) fn bind<R: crate::router::Route>(
 ) {
     if let Ok(dispatcher) = services.get::<Dispatcher>() {
         let quitting = navigator.clone();
+
         *dispatcher.quit.borrow_mut() = Some(Rc::new(move || quitting.quit(Default::default())));
         *dispatcher.command.borrow_mut() = Some(Rc::new(move |id, arguments| {
             let router = navigator
                 .runtime()
                 .map_err(|_| crate::control::ControlError::RuntimeShutdown)?;
+
             router.client().dispatch_local_command(id, arguments)
         }));
     }
@@ -60,17 +65,22 @@ pub(crate) fn command_handler<C: crate::control::ApplicationCommand>(
     let tray = tray.to_owned();
     let item = item.to_owned();
     let command_id = C::id();
+
     let arguments = serde_json::to_value(command)
         .map_err(|e| crate::control::CommandError::Arguments(e.to_string()))?;
+
     Ok(Box::new(move |event, cx| {
         if event.id != tray || !matches!(&event.kind, EventKind::MenuSelected(id) if id == &item) {
             return;
         }
+
         let dispatcher = cx.global::<Owner>().dispatch.clone();
         let dispatch = dispatcher.command.borrow().clone();
+
         let result = dispatch
             .ok_or(crate::control::ControlError::RuntimeShutdown)
             .and_then(|dispatch| dispatch(command_id.clone(), arguments.clone()));
+
         if let Err(error) = result {
             crate::error!(%error, "tray command rejected");
         }
@@ -88,9 +98,11 @@ async fn quit_from_removal(
         ),
         None => false,
     };
+
     if !committed {
         restore().await?;
     }
+
     Ok(())
 }
 
@@ -113,6 +125,7 @@ pub(crate) fn stop(cx: &mut gpui::App) {
     if let Err(error) = rake_updates::stop_application_run_loop() {
         crate::error!(%error, "native tray startup could not stop the host loop");
     }
+
     #[cfg(not(target_os = "macos"))]
     cx.quit();
     #[cfg(target_os = "macos")]
@@ -170,6 +183,7 @@ fn report_unregistered_failure(
         anchor: None,
         input: Input::default(),
     };
+
     for handler in handlers {
         handler(&event, cx);
     }
@@ -189,14 +203,17 @@ fn install_with(
         popups,
         errors,
     } = installation;
+
     #[cfg(target_family = "wasm")]
     if specs.is_empty() {
         return Ok(services);
     }
 
     let mut ids = std::collections::BTreeSet::new();
+
     for spec in &specs {
         spec.validate()?;
+
         if !ids.insert(spec.id()) {
             return Err(Error::Duplicate(spec.id().into()));
         }
@@ -212,8 +229,10 @@ fn install_with(
             ));
         }
     }
+
     let has_popups = !popups.is_empty();
     let popups = popup::Popups::new(popups)?;
+
     let host = match create_host(&application) {
         Ok(host) => host,
         Err(error)
@@ -227,33 +246,41 @@ fn install_with(
                     report_unregistered_failure(spec.id().into(), &error, &mut handlers, cx);
                 }
             });
+
             return Ok(services);
         }
         Err(error) => return Err(error),
     };
+
     if has_popups {
         cx.set_quit_mode(gpui::QuitMode::Explicit);
     }
+
     let handlers = Rc::new(RefCell::new(handlers));
     let collection = host.collection();
     let dispatch = Dispatcher::default();
+
     let registry = services
         .registry()
         .with(collection.clone())
         .and_then(|registry| registry.with(dispatch.clone()))
         .map_err(|error| Error::InvalidInput(error.to_string()))?;
+
     let services = Services::with_platform(
         services.http(),
         services.diagnostics(),
         registry,
         services.platform(),
     );
+
     let work = host.drive();
+
     let operations = cx.spawn(async move |_| {
         if let Err(error) = work.await {
             crate::error!(%error, "tray operation driver stopped");
         }
     });
+
     let requests = specs
         .into_iter()
         .map(|spec| {
@@ -261,10 +288,13 @@ fn install_with(
             let policy = spec.host_requirement();
             let request = collection.create(spec);
             let reserved = collection.get(&id).is_ok();
+
             (id, policy, reserved, request)
         })
         .collect::<Vec<_>>();
+
     let startup_handlers = handlers.clone();
+
     let startup = cx.spawn(async move |cx| {
         for (id, policy, reserved, request) in requests {
             if let Err(error) = request.await {
@@ -281,31 +311,40 @@ fn install_with(
                             )
                         });
                     }
+
                     continue;
                 }
+
                 let shutdown = cx.update(|cx| {
                     errors.record(AppError::Tray(error));
+
                     cx.global::<Owner>().host.shutdown()
                 });
+
                 if let Err(error) = shutdown.await {
                     crate::error!(%error, "tray startup rollback failed");
                 }
+
                 cx.update(stop_host);
+
                 return;
             }
         }
     });
+
     let quit = cx.on_app_quit(|cx| {
         popup::dismiss_all(cx);
         cx.global_mut::<Owner>().animations.clear();
         cx.global_mut::<Owner>().removal_quits.clear();
         let shutdown = cx.global::<Owner>().host.shutdown();
+
         async move {
             if let Err(error) = shutdown.await {
                 crate::error!(%error, "native tray shutdown failed");
             }
         }
     });
+
     let events = cx.spawn(async move |cx| {
         while let Ok(event) = collection.next_event().await {
             cx.update(|cx| {
@@ -318,8 +357,10 @@ fn install_with(
                 ) {
                     popup::removed(&event.id, event.generation, cx);
                     cx.global_mut::<Owner>().animations.remove(&event.id);
+
                     if matches!(event.kind, EventKind::Removed) { cx.global_mut::<Owner>().removal_quits.remove(&event.id); }
                 }
+
                 if let Ok(handle) = collection.get(&event.id)
                     && let Ok(spec) = handle.specification()
                 {
@@ -331,25 +372,31 @@ fn install_with(
                     {
                         cx.dispatch_action(&crate::quit::RequestQuit);
                     }
+
                     if matches!(event.kind, EventKind::RemovalRequestedQuit) {
                         let quit = cx.global::<Owner>().dispatch.quit.borrow().clone();
                         let item = handle.clone();
+
                         let task = cx.spawn(async move |_| {
                             if let Err(error) = quit_from_removal(quit, move || item.show()).await {
                                 crate::error!(%error, "removed tray item could not be restored after declined quit");
                             }
                         });
+
                         cx.global_mut::<Owner>().removal_quits.insert(event.id.clone(), task);
                     }
+
                     if matches!(event.kind, EventKind::Activate)
                         && spec.primary_interaction() == Interaction::Popup
                         && let Err(error) = toggle_popup(&event.id, cx)
                     {
                         crate::error!(%error, "tray popup could not open");
                     }
+
                     let menu_gesture = matches!(event.kind, EventKind::ContextMenu)
                         || (matches!(event.kind, EventKind::Activate)
                             && spec.primary_interaction() == Interaction::NativeMenu);
+
                     if menu_gesture
                         && spec.menu_description().is_some()
                         && collection.capabilities().support(Feature::ShowMenu)
@@ -359,25 +406,31 @@ fn install_with(
                         crate::error!(%error, "tray menu could not open");
                     }
                 }
+
                 if matches!(event.kind, EventKind::HostChanged(false)) {
                     crate::warn!(tray = %event.id, "tray host unavailable; registration is waiting");
                 }
+
                 if let EventKind::Diagnostic(message) = &event.kind {
                     crate::warn!(tray = %event.id, %message, "native tray diagnostic");
                 }
+
                 if let EventKind::OperationFailed(message) = &event.kind {
                     crate::error!(tray = %event.id, %message, "native tray operation failed");
                 }
+
                 if matches!(event.kind, EventKind::Overflow) {
                     popup::dismiss_all(cx);
                     crate::error!("tray ingress saturated; input could not be delivered");
                 }
+
                 for handler in handlers.borrow_mut().iter_mut() {
                     handler(&event, cx);
                 }
             });
         }
     });
+
     cx.set_global(Owner {
         host,
         dispatch,
@@ -412,7 +465,9 @@ pub fn collection(cx: &gpui::App) -> Result<Collection, Error> {
         .ok_or(Error::HostUnavailable)?
         .host
         .collection();
+
     collection.items()?;
+
     Ok(collection)
 }
 
@@ -428,23 +483,28 @@ pub fn animate(id: &str, animation: Animation, cx: &mut gpui::App) -> Result<(),
         .host
         .collection()
         .get(id)?;
+
     let initial = handle.state()?;
     let mut revision = initial.requested_revision;
     let frames = animation.frames().to_vec();
     let interval = animation.interval();
     let id = id.to_owned();
+
     let task = cx.spawn(async move |cx| {
         let mut frame = 0;
+
         loop {
             let Ok(state) = handle.state() else {
                 break;
             };
+
             if !state.requested_visible
                 || state.registration != Registration::Registered
                 || state.requested_revision != revision
             {
                 break;
             }
+
             match handle.set_icon(frames[frame].clone()).await {
                 Ok(applied) => revision = applied.revision,
                 Err(error) => {
@@ -452,16 +512,21 @@ pub fn animate(id: &str, animation: Animation, cx: &mut gpui::App) -> Result<(),
                     break;
                 }
             }
+
             if cx.update(|cx| cx.reduce_motion()) {
                 break;
             }
+
             frame = (frame + 1) % frames.len();
             cx.background_executor().timer(interval).await;
         }
     });
+
     cx.global_mut::<Owner>().animations.insert(id, task);
+
     Ok(())
 }
+
 /// Cancels playback while preserving the last applied icon.
 /// # Errors
 /// Reports an absent/stopped tray host.
@@ -469,12 +534,15 @@ pub fn stop_animation(id: &str, cx: &mut gpui::App) -> Result<(), Error> {
     if cx.try_global::<Owner>().is_none() {
         return Err(Error::HostUnavailable);
     }
+
     cx.global_mut::<Owner>().animations.remove(id);
+
     Ok(())
 }
 
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
 pub(crate) struct StartupStopped;
+
 #[cfg(all(test, feature = "view-test-support", not(target_family = "wasm")))]
 impl gpui::Global for StartupStopped {}
 
@@ -499,6 +567,7 @@ pub(crate) fn install_for_tests(
         move |_| host,
         |cx| {
             cx.set_global(StartupStopped);
+
             for window in cx.windows() {
                 let _ = window.update(cx, |_, window, _| window.remove_window());
             }
@@ -527,14 +596,18 @@ mod tests {
         let base = crate::App::new("dev.rake.removal-test").services().unwrap();
         let dispatch = Dispatcher::default();
         let registry = base.registry().with(dispatch.clone()).unwrap();
+
         let services =
             Services::with_platform(base.http(), base.diagnostics(), registry, base.platform());
+
         let runtime = crate::runtime::Runtime::new(Default::default(), services.clone());
         let blocked = Rc::new(Cell::new(true));
         let guard = blocked.clone();
+
         runtime
             .quit_guard(move |_| {
                 let blocked = guard.get();
+
                 async move {
                     if blocked {
                         Err(crate::router::GuardReason("keep item".into()))
@@ -548,14 +621,17 @@ mod tests {
         let quit = dispatch.quit.borrow().clone().unwrap();
         let mut pool = LocalPool::new();
         let driver = runtime.router.clone();
+
         pool.spawner()
             .spawn_local(async move {
                 driver.run().await.unwrap();
             })
             .unwrap();
         let restored = Rc::new(Cell::new(0));
+
         let restore = || {
             restored.set(restored.get() + 1);
+
             Box::pin(async {
                 Ok(Applied {
                     revision: 1,
@@ -563,6 +639,7 @@ mod tests {
                 })
             }) as Request<Applied>
         };
+
         pool.run_until(quit_from_removal(Some(quit.clone()), restore))
             .unwrap();
         assert_eq!(
@@ -586,23 +663,31 @@ mod tests {
         let base = crate::App::new("dev.rake.tray-test")
             .services()
             .expect("configured services");
+
         let dispatch = Dispatcher::default();
+
         let registry = base
             .registry()
             .with(dispatch.clone())
             .expect("install dispatch bridge");
+
         let services =
             Services::with_platform(base.http(), base.diagnostics(), registry, base.platform());
+
         let runtime =
             crate::runtime::Runtime::new(crate::router::RouterConfig::default(), services.clone());
+
         let count = Rc::new(Cell::new(0));
         let observed = count.clone();
+
         runtime
             .commands()
             .register(move |_: Probe, _| {
                 let count = observed.clone();
+
                 async move {
                     count.set(count.get() + 1);
+
                     Ok(())
                 }
             })
@@ -613,8 +698,10 @@ mod tests {
             .borrow()
             .clone()
             .expect("bound weak runtime");
+
         let mut pool = LocalPool::new();
         let driver = runtime.router.clone();
+
         pool.spawner()
             .spawn_local(async move {
                 driver.run().await.expect("scheduler driver");
