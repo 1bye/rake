@@ -30,6 +30,9 @@ pub(super) struct Rule {
     pub after: &'static str,
 }
 
+pub(super) const STYLE: &str = "view-style-class";
+pub(super) const THEME: &str = "view-theme-literal";
+pub(super) const RELEASE: &str = "release-debug-assertions";
 pub(super) const BUTTON: &str = "view-button-label";
 pub(super) const IMAGE: &str = "view-image-alt";
 pub(super) const INDEX: &str = "view-loop-index-id";
@@ -38,6 +41,33 @@ pub(super) const SUPPRESSION: &str = "invalid-suppression";
 pub(super) const SYNTAX: &str = "syntax-error";
 
 pub(super) const RULES: &[Rule] = &[
+    Rule {
+        id: STYLE,
+        level: Level::Warn,
+        message: "style closure has an exact class equivalent",
+        explanation: "Pure zero-argument utility method chains duplicate the class vocabulary, making intent harder for agents to recognize. Write the equivalent class utilities in the same attribute position. The syntax tier accepts only methods emitted verbatim by the shared class compiler, without conversions, captured values, side effects or variants. Existing class attributes and component properties are left alone. Comments inside the attribute prevent an automatic edit.",
+        fix: "replace the style attribute with the equivalent class string, preserving attribute order",
+        before: "<div style={|s| s.flex().gap_4()}/>",
+        after: "<div class=\"flex gap-4\"/>",
+    },
+    Rule {
+        id: THEME,
+        level: Level::Warn,
+        message: "literal color or design size bypasses the installed theme",
+        explanation: "Literal colors, typography sizes and corner radii cannot follow a theme change. In a package with an explicit rake::theme::install call or rake::App::new(...).theme(...) chain, prefer semantic theme utilities or read the installed theme in a dynamic style. This conservative check covers arbitrary color/text/radius classes and literal rgb/rgba/hsl/hsla or px/rems constructor arguments in the corresponding style methods. Ordinary layout spacing is not diagnosed. It does not expand macros, evaluate cfg, follow aliases or prove which theme a view uses; suppress intentional samples with a reason.",
+        fix: "use a semantic utility such as bg-surface, text-ink, text-body or rounded-control; keep dynamic styles for theme values",
+        before: "<div class=\"bg-[#112233] text-[13px]\"/>",
+        after: "<div class=\"bg-surface text-body\"/>",
+    },
+    Rule {
+        id: RELEASE,
+        level: Level::Warn,
+        message: "debug assertions are explicitly enabled in a release profile",
+        explanation: "Release builds normally disable debug assertions. Enabling this development control retains debug-only checks and cfg(debug_assertions) code in shipped artifacts. Set debug-assertions to false for release and profiles inheriting release, including explicit package/build overrides; keep intentional diagnostics builds separate or suppress this setting with a reason. Cargo profiles do not select features, so this rule never guesses release devtools selection from feature declarations or dependencies.",
+        fix: "set debug-assertions = false; use the dev profile for development checks",
+        before: "[profile.release]\ndebug-assertions = true",
+        after: "[profile.release]\ndebug-assertions = false",
+    },
     Rule {
         id: BUTTON,
         level: Level::Warn,
@@ -70,7 +100,7 @@ pub(super) const RULES: &[Rule] = &[
         level: Level::Warn,
         message: "lint suppression needs a reason",
         explanation: "A reason documents why a rule does not apply here. A suppression without a reason is ignored, so the original diagnostic is still reported.",
-        fix: "append a nonempty reason after allow(<rule-id>)",
+        fix: "append a nonempty reason after allow(<rule-id>) or allow-file(<rule-id>)",
         before: "// rake-lint: allow(view-button-label)",
         after: "// rake-lint: allow(view-button-label) The mounted widget supplies its own name.",
     },
@@ -78,8 +108,8 @@ pub(super) const RULES: &[Rule] = &[
         id: SUPPRESSION,
         level: Level::Warn,
         message: "invalid lint suppression",
-        explanation: "Suppressions must name one known, suppressible rule. Misspellings and malformed directives are ignored. Syntax errors and suppression diagnostics cannot themselves be suppressed inline.",
-        fix: "use // rake-lint: allow(<known-rule-id>) <reason>",
+        explanation: "Suppressions must name one known, suppressible rule and have a reason. Misspellings and malformed directives are ignored. Use allow-file only as a standalone file-header comment for an intentional decision applying throughout that file. Unused file suppressions, including duplicates and those made redundant by allow levels, are reported here; remove them when no emitted finding needs the exception. Syntax errors and suppression diagnostics cannot themselves be suppressed.",
+        fix: "use a reasoned allow directive; put allow-file in the file header and remove unused file suppressions",
         before: "// rake-lint: allow(view-buton-label) Named by widget.",
         after: "// rake-lint: allow(view-button-label) Named by widget.",
     },
@@ -99,5 +129,5 @@ pub(super) fn rule(id: &str) -> Option<&'static Rule> {
 }
 
 pub(super) fn suppressible(id: &str) -> bool {
-    matches!(id, BUTTON | IMAGE | INDEX)
+    matches!(id, BUTTON | IMAGE | INDEX | STYLE | THEME | RELEASE)
 }

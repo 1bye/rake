@@ -1429,7 +1429,7 @@ fn expand_text_child(
     ), |__rake_child| #siblings.push_child(&mut #parent, __rake_child, #rake::gpui::ElementId::from(("rake::view:child", #index))));)
 }
 
-mod classes;
+pub(crate) mod classes;
 mod component;
 mod diagnostics;
 mod events;

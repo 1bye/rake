@@ -8,6 +8,7 @@ use super::style_plan::{StylePlan, Variant};
 
 mod branch;
 pub(super) mod error;
+pub(crate) mod lint;
 pub(super) mod value;
 
 pub(super) use branch::{compile as expression_plan, compile_with as expression_plan_with};

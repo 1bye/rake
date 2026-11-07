@@ -8,6 +8,8 @@ expand Rust macros, or require GPUI/Linux GUI libraries.
 rake lint                         # current project or workspace directory
 rake lint examples/view           # another project directory
 rake lint --json
+rake lint --fix --json            # safe edits, followed by a fresh check
+rake lint --guide > .agents/skills/rake-gpui/SKILL.md
 rake lint --explain view-button-label
 rake lint --explain view-loop-index-id --json
 ```
@@ -30,18 +32,26 @@ silently succeed.
 
 ## Rules
 
+<!-- lint-rules:begin -->
 | Stable ID | Default | Check |
 | --- | --- | --- |
-| `view-button-label` | warn | A built-in button without `aria-label` cannot derive a nonempty literal-only name. |
-| `view-image-alt` | deny | A built-in `img` has no `alt`; `alt=""` is valid for decorative images. |
-| `view-loop-index-id` | warn | An `id` is visibly derived from an `.enumerate()` index. |
-| `suppression-reason` | warn | A suppression has no reason and is ignored. |
-| `invalid-suppression` | warn | A directive is malformed or names an unknown/unsuppressible rule. |
-| `syntax-error` | deny (fixed) | Rust or view markup could not be parsed. |
+| `view-style-class` | warn | style closure has an exact class equivalent |
+| `view-theme-literal` | warn | literal color or design size bypasses the installed theme |
+| `release-debug-assertions` | warn | debug assertions are explicitly enabled in a release profile |
+| `view-button-label` | warn | button content has no automatic accessible label |
+| `view-image-alt` | deny | image is missing alt text |
+| `view-loop-index-id` | warn | loop item ID is derived from an enumerate index |
+| `suppression-reason` | warn | lint suppression needs a reason |
+| `invalid-suppression` | warn | invalid lint suppression |
+| `syntax-error` | deny | source could not be parsed |
+<!-- lint-rules:end -->
 
 The catalogue in `crates/rake-cli/src/lint/catalogue.rs` owns each rule's ID,
 default level, message, explanation, fix, and before/after example. Terminal,
-JSON and `--explain` output all use that catalogue.
+JSON, `--explain` and `--guide` output all use that catalogue.
+The committed agent skill is `.agents/skills/rake-gpui/SKILL.md`.
+The `catalogue_artifacts_are_current` test compares the entire generated skill
+and this generated rule table against the catalogue; CI runs it explicitly.
 
 The button rule matches the lowering contract: **all** children must be literal
 text to receive an automatic label. Dynamic content mixed with literal text,
@@ -161,14 +171,44 @@ rake::view! {
 A standalone directive applies to the next nonblank line that is not a line
 comment. A trailing directive applies to its own line. Put the directive next
 to the opening tag (or the ID expression's starting line for the index rule).
+In `Cargo.toml`, use the same directive in a TOML `#` comment next to
+`debug-assertions`; standalone directives target the next nonblank, noncomment
+line. Strings (including multiline TOML strings) cannot act as directives.
 Multiple directives can precede the same code line. Suppression is line scoped,
 so multiple diagnostics of the same rule on that line are all suppressed.
 
 Directives inside strings, raw strings, doc comments and block comments do not
 apply. A missing reason warns and **does not suppress** the original diagnostic.
-Malformed directives and unknown IDs warn. Only the three view rules can be
+Malformed directives and unknown IDs warn. All view rules and the release-profile rule can be
 suppressed inline; syntax errors and suppression diagnostics cannot hide each
 other. A reason is free text, not automatically judged for adequacy.
+
+For one deliberate decision that applies throughout a file, put a standalone
+file-level directive in the header, before the first line of code:
+
+```rust
+//! Inspector views.
+// rake-lint: allow-file(view-theme-literal) Inspector chrome intentionally uses fixed compact typography.
+
+use rake::prelude::*;
+```
+
+`allow-file` accepts the same rule IDs and requires a reason, just like `allow`.
+Blank lines and header comments may precede it. It suppresses every finding for
+that rule in this file, including nested modules; it never applies to another
+file or package. Use a line directive when the exception is local. In
+`Cargo.toml`, use `# rake-lint: allow-file(ID) reason` before any TOML entries.
+
+Missing reasons produce `suppression-reason` and do not suppress findings.
+Malformed IDs, unsuppressible rules, directives after code or trailing code,
+and unused file directives produce `invalid-suppression` at the directive's
+source span. A file directive is used only when it suppresses a finding whose
+effective level is not `allow`. Redundant duplicate file directives are unused;
+remove them rather than retain stale exceptions. These diagnostics use the same
+terminal/JSON output and configurable levels as invalid line suppressions.
+Ordinary line directives keep their existing behavior, including no unused check.
+Syntax errors and suppression diagnostics cannot be hidden by either scope.
+File-suppressed findings also receive no edits from `--fix`.
 
 ## Project levels
 
@@ -214,20 +254,84 @@ A Cargo workspace root without package metadata uses catalogue defaults.
 4. Document the rule and limitations here. Keep compiler and expansion snapshots
    unchanged unless a separate task explicitly changes macro semantics.
 
-## Deferred work
+## Exact style classes and safe fixes
 
-A manifest-only release/devtools rule is not shipped. `rake` wires `devtools`
-through dependency features (`devtools-memory` enables it too); control and
-inspection paths use feature gates rather than Cargo profiles. Cargo profiles do
-not select features, and manifest inspection cannot resolve command-line feature
-selection, workspace feature unification, aliases or release scripts. Checking
-an ordinary feature declaration would incorrectly label development-only use as
-a release mistake. A future release-aware check needs a defined build invocation
-or a resolved feature graph, with tests for actual release selection.
+`view-style-class` recognizes pure identity closures made entirely of the
+zero-argument methods emitted by the shared utility compiler, such as
+`|s| s.flex().gap_4()`. It rewrites the whole attribute to
+`class="flex gap-4"` at the same position. It preserves the method order,
+including repeated or overlapping utilities. Existing literal class attributes,
+multiple style attributes, custom component properties, calls with arguments,
+typed/capturing closures, statements and variants are left alone. This deliberately
+misses some convertible styles rather than guess about units, types or evaluation.
 
-The deep/type-aware tier, `--fix`, skill generation, style-closure and
-hard-coded-colour rules, broader loop data flow and workspace defaults remain
-follow-ups. Linting is not hooked into `rake dev`, DevTools or CI.
+`rake lint --fix` applies only advertised machine-applicable edits from emitted
+diagnostics (allowed or suppressed findings are untouched). It validates source
+ranges before editing, refuses stale/overlapping edits, skips files with syntax
+errors, formats changed Rust files through the same engine as `rake format`,
+then rechecks the project. Remaining diagnostics and the exit status describe the
+edited files. Fixes are idempotent. An attribute containing comments still receives
+guidance but has no automatic edit, so comments cannot be lost. Formatting errors
+are reported before any prepared file is written. Checking and JSON need no build;
+fixing Rust files additionally requires the installed `rustfmt`.
+
+JSON retains schema version 1 and the human `fix` advice. Fixable diagnostics also
+have `machine_fix: {"applicability":"machine-applicable","span":{...},
+"replacement":"class=\"flex\""}`. Its span uses the same Unicode positions as
+diagnostics and covers the entire replacement. A diagnostic-only finding omits
+`machine_fix`. After `--fix --json`, fixed findings are absent.
+
+## Theme literals
+
+`view-theme-literal` requires an explicit `rake::theme::install(cx, theme)` call
+or a `rake::App::new(...).theme(theme)` builder chain in a discovered Rust file
+in the same package. Evidence crosses source files but stops at nested package
+boundaries and respects discovery exclusions. It does not follow imports, renamed
+facades, aliases, arbitrary helper functions or macro expansions for theme evidence.
+Like the other syntax checks, it does not evaluate `cfg`.
+
+The conservative rule diagnoses arbitrary hex colors (including variants),
+arbitrary absolute typography sizes and corner radii in classes, and numeric
+`rgb/rgba/hsl/hsla` or `px/rems` constructors passed to the corresponding
+`bg/text_color/border_color` or `text_size/rounded` methods in pure style chains.
+Constructors must be bare, `gpui::` or `rake::gpui::` paths. Ordinary layout
+spacing and dimensions are left alone: they are often intentional, and the class
+theme vocabulary has no general layout-size fields. Named defaults such as
+`text-sm` and `rounded-md` are also left alone. Use semantic theme fields for
+design tokens, or read the installed theme in a dynamic style. Intentional palette
+swatches or code typography can use reasoned suppressions. There is no automatic
+fix because choosing the correct semantic field requires design intent.
+
+## Release development controls
+
+`release-debug-assertions` checks explicit `debug-assertions = true` in
+`[profile.release]`, custom profiles that transitively inherit release, and their
+package/build overrides. Its fix changes only the boolean token to `false`,
+preserving TOML layout and comments. Intentional diagnostics artifacts can use
+`# rake-lint: allow(release-debug-assertions) <reason>` on the setting.
+
+Feature-based release devtools detection remains deferred: Cargo profiles do not
+select features. A feature declaration or dependency feature list cannot establish
+the intended release invocation, command-line selection, workspace unification or
+Cargo configuration overrides. This rule covers the explicit profile development
+control only; it does not claim a resolved release feature graph.
+
+## Catalogue and CI
+
+After editing a catalogue entry, regenerate the skill with `rake lint --guide`.
+Copy its generated rule table into the marked section above. Run:
+
+```sh
+cargo test -p rake-app-cli --locked --bin rake catalogue_artifacts_are_current
+python3 scripts/check-example-lints.py
+```
+
+The example check runs `cargo run -p rake-app-cli --locked -- lint <example> --json`
+for every top-level example package, including nested packages through discovery,
+and fails on any diagnostic, including warnings. Fix findings or add a local
+reasoned suppression; do not hide them with broad exclusions.
+
+The deep/type-aware tier, broader loop data flow and workspace defaults remain
+follow-ups. Linting is not hooked into `rake dev` or DevTools.
 
 Run [rake format](format.md) after editing, then run `rake lint`.
-Use `rake lint --guide` for the agent workflow and editor setup.
