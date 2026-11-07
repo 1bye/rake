@@ -38,6 +38,8 @@ so later phases can reuse them without porting deployment or serving now.
   both the requested path and Cargo's reported manifest path, falling back to each
   raw path if canonicalization fails. Symlink spellings such as macOS /var or
   /tmp now select the intended package in multi-member workspaces.
+- Deliberate CLI naming change: help and text argument errors say `usage: rake`
+  and `rake: error:` instead of `dev.py`. The remaining help/error text is unchanged.
 - OS errors and malformed JSON/TOML use Rust library diagnostics rather than
   emulating Python exception text. Unusual integer syntax/values outside i64
   use Rust argument parsing. Ordinary validated flags retain the old messages.
@@ -58,6 +60,7 @@ so later phases can reuse them without porting deployment or serving now.
 | test-bundle: input validation | build_rejects_unowned_output_overlap_and_symlink_markers; web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches |
 | test-bundle: invalid target options | parser_preserves_errors_flags_and_doctor_validation_order |
 | Symlinked workspace manifest selection (intentional fix) | symlinked_manifest_selects_exact_workspace_package |
+| CLI program name (deliberate naming change) | help_and_argument_errors_use_rake_program_name |
 | Artifact discovery/error paths | web_build_reports_missing_artifacts_and_ambiguous_packages |
 | Metadata bounds/process errors | project_build::processes::tests (3 tests) |
 

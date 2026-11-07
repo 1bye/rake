@@ -635,3 +635,25 @@ fn symlinked_manifest_selects_exact_workspace_package() {
         "select one binary with --bin",
     );
 }
+
+#[test]
+fn help_and_argument_errors_use_rake_program_name() {
+    let fixture = Fixture::new();
+    for command in ["doctor", "build"] {
+        let help = fixture.run(&[command, "--target", "web", "--help"]);
+        assert!(help.status.success());
+        assert!(help.stderr.is_empty());
+        let text = String::from_utf8(help.stdout).unwrap();
+        assert!(text.starts_with("usage: rake ["), "{text}");
+        assert!(!text.contains("dev.py"), "{text}");
+
+        let output = fixture.run(&[command, "--target", "web", "--unknown"]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let usage = text.split("\n\n").next().unwrap();
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("{usage}\nrake: error: unrecognized arguments: --unknown\n"),
+        );
+    }
+}

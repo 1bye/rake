@@ -1,4 +1,4 @@
-usage: dev.py [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
+usage: rake [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
               [--package PACKAGE] [--bin BIN] [--features FEATURES]
               [--release | --debug] [--web-dir WEB_DIR] [--output OUTPUT]
               [--native-reloader NATIVE_RELOADER] [--restart-without-state]

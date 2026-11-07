@@ -254,7 +254,7 @@ pub(super) fn report_error(arguments: &[String], error: &str) {
     } else {
         let help = include_str!("help.txt");
         eprintln!(
-            "{}\ndev.py: error: {error}",
+            "{}\nrake: error: {error}",
             help.split("\n\n").next().unwrap_or_default()
         );
     }
