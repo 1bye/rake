@@ -38,10 +38,16 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(target_family = "wasm"))]
 mod native;
 
+#[cfg(any(not(target_family = "wasm"), feature = "gpui", test))]
+mod record;
+
+#[cfg(all(target_family = "wasm", any(feature = "gpui", test)))]
+mod web;
+
 #[cfg(not(target_family = "wasm"))]
 pub use native::CrashReporter;
 
-#[cfg(all(not(target_family = "wasm"), any(feature = "gpui", test)))]
+#[cfg(any(feature = "gpui", test))]
 pub(crate) mod startup;
 
 /// Creates crash configuration using the consuming crate's Cargo package version.
@@ -87,8 +93,8 @@ impl Default for CrashLimits {
 pub struct CrashConfig {
     directory: Option<PathBuf>,
     #[cfg_attr(
-        target_family = "wasm",
-        expect(dead_code, reason = "Web delivery is the follow-up from issue #16")
+        all(target_family = "wasm", not(any(feature = "gpui", test))),
+        expect(dead_code, reason = "headless Web has no implicit crash hook")
     )]
     version: String,
     limits: CrashLimits,
@@ -96,6 +102,26 @@ pub struct CrashConfig {
 }
 
 impl CrashConfig {
+    #[cfg(any(not(target_family = "wasm"), feature = "gpui", test))]
+    fn validate(&self, application_id: &str) -> io::Result<()> {
+        if application_id.is_empty()
+            || application_id.len() > 128
+            || matches!(application_id, "." | "..")
+            || !application_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+            || !(1024..=1024 * 1024).contains(&self.limits.record_bytes)
+            || !(1..=128).contains(&self.limits.records)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid crash ID or limits",
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Supplies an explicit app version; `rake::crash_config!()` captures the caller version.
     pub fn new(version: impl Into<String>) -> Self {
         Self {

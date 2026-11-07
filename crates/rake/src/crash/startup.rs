@@ -43,9 +43,16 @@ impl CrashReports {
                 let reporter = config.open(application_id)?;
                 reporter.install(collector)?;
 
+                #[cfg(not(target_family = "wasm"))]
                 if reporter.deliver(sink.as_ref()).is_err() {
                     tracing::warn!("crash delivery failed; waiting record retained");
                 }
+                #[cfg(target_family = "wasm")]
+                wasm_bindgen_futures::spawn_local(async move {
+                    if reporter.deliver(sink).await.is_err() {
+                        tracing::warn!("crash delivery failed; waiting record retained");
+                    }
+                });
             }
         }
 
@@ -65,5 +72,5 @@ pub(crate) fn version_from_policy(policy: Option<&str>) -> Option<String> {
         .filter(|version| !version.trim().is_empty())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
