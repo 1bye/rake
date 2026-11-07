@@ -12,7 +12,8 @@ fn project() -> tempfile::TempDir {
     fs::create_dir(directory.path().join("src")).unwrap();
     fs::write(
         directory.path().join("Cargo.toml"),
-        "[package]\nname='format-fixture'\nversion='0.1.0'\nedition='2024'\n",
+        // Remain standalone when TMPDIR is inside another Cargo workspace.
+        "[package]\nname='format-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
     )
     .unwrap();
     fs::write(
@@ -210,7 +211,10 @@ fn project_formats_workspace_members_examples_and_nested_qualified_views() {
     let directory = project();
     let manifest = directory.path().join("Cargo.toml");
     let mut content = fs::read_to_string(&manifest).unwrap();
-    content.push_str("[workspace]\nmembers=['crates/member']\nresolver='3'\n");
+    content = content.replace(
+        "[workspace]\n",
+        "[workspace]\nmembers=['crates/member']\nresolver='3'\n",
+    );
     fs::write(manifest, content).unwrap();
     fs::create_dir_all(directory.path().join("crates/member/src")).unwrap();
     fs::write(

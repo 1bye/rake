@@ -22,6 +22,7 @@ impl Level {
 
 pub(super) struct Rule {
     pub id: &'static str,
+    pub agent_summary: Option<&'static str>,
     pub level: Level,
     pub message: &'static str,
     pub explanation: &'static str,
@@ -43,6 +44,9 @@ pub(super) const SYNTAX: &str = "syntax-error";
 pub(super) const RULES: &[Rule] = &[
     Rule {
         id: STYLE,
+        agent_summary: Some(
+            "Always prefer exact class utilities to equivalent pure style closures.",
+        ),
         level: Level::Warn,
         message: "style closure has an exact class equivalent",
         explanation: "Pure zero-argument utility method chains duplicate the class vocabulary, making intent harder for agents to recognize. Write the equivalent class utilities in the same attribute position. The syntax tier accepts only methods emitted verbatim by the shared class compiler, without conversions, captured values, side effects or variants. Existing class attributes and component properties are left alone. Comments inside the attribute prevent an automatic edit.",
@@ -52,6 +56,9 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: THEME,
+        agent_summary: Some(
+            "Never hard-code colors, typography sizes or radii in themed views; use theme values.",
+        ),
         level: Level::Warn,
         message: "literal color or design size bypasses the installed theme",
         explanation: "Literal colors, typography sizes and corner radii cannot follow a theme change. In a package with an explicit rake::theme::install call or rake::App::new(...).theme(...) chain, prefer semantic theme utilities or read the installed theme in a dynamic style. This conservative check covers arbitrary color/text/radius classes and literal rgb/rgba/hsl/hsla or px/rems constructor arguments in the corresponding style methods. Ordinary layout spacing is not diagnosed. It does not expand macros, evaluate cfg, follow aliases or prove which theme a view uses; suppress intentional samples with a reason.",
@@ -61,6 +68,9 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: RELEASE,
+        agent_summary: Some(
+            "Never enable debug assertions in release profiles; use a separate diagnostics profile.",
+        ),
         level: Level::Warn,
         message: "debug assertions are explicitly enabled in a release profile",
         explanation: "Release builds normally disable debug assertions. Enabling this development control retains debug-only checks and cfg(debug_assertions) code in shipped artifacts. Set debug-assertions to false for release and profiles inheriting release, including explicit package/build overrides; keep intentional diagnostics builds separate or suppress this setting with a reason. Cargo profiles do not select features, so this rule never guesses release devtools selection from feature declarations or dependencies.",
@@ -70,6 +80,9 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: BUTTON,
+        agent_summary: Some(
+            "Always give icon-only or dynamic buttons an aria-label, preserving any visible words.",
+        ),
         level: Level::Warn,
         message: "button content has no automatic accessible label",
         explanation: "Rake automatically labels only nonempty buttons made entirely of literal text. Icons, expressions, and control-flow children need an explicit label so assistive technology can name the action. Use the visible text as the label (label-in-name); add context only after it. For icon-only buttons, name the action.",
@@ -79,6 +92,7 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: IMAGE,
+        agent_summary: Some("Always supply img alt text; use alt=\"\" only for decorative images."),
         level: Level::Deny,
         message: "image is missing alt text",
         explanation: "The img tag maps alt to its accessible label. Describe meaningful images; an empty alt explicitly marks a decorative image. aria-label does not replace the required alt attribute.",
@@ -88,6 +102,7 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: INDEX,
+        agent_summary: Some("Never derive loop IDs from positions; use stable data keys."),
         level: Level::Warn,
         message: "loop item ID is derived from an enumerate index",
         explanation: "Position changes when items are reordered or inserted, moving retained focus and state to another item. This syntax rule recognizes index bindings from enumerate(), including rev/skip/take/step_by/by_ref adapters. It checks direct IDs, tuples, casts, arithmetic, index methods and format! arguments/captures. Arbitrary calls and data lookups are opaque; identifier spelling alone never makes a value an index.",
@@ -97,6 +112,9 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: REASON,
+        agent_summary: Some(
+            "Always explain suppressions; use allow-file only for a whole-file decision.",
+        ),
         level: Level::Warn,
         message: "lint suppression needs a reason",
         explanation: "A reason documents why a rule does not apply here. A suppression without a reason is ignored, so the original diagnostic is still reported.",
@@ -106,6 +124,7 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: SUPPRESSION,
+        agent_summary: None,
         level: Level::Warn,
         message: "invalid lint suppression",
         explanation: "Suppressions must name one known, suppressible rule and have a reason. Misspellings and malformed directives are ignored. Use allow-file only as a standalone file-header comment for an intentional decision applying throughout that file. Unused file suppressions, including duplicates and those made redundant by allow levels, are reported here; remove them when no emitted finding needs the exception. Syntax errors and suppression diagnostics cannot themselves be suppressed.",
@@ -115,6 +134,7 @@ pub(super) const RULES: &[Rule] = &[
     },
     Rule {
         id: SYNTAX,
+        agent_summary: None,
         level: Level::Deny,
         message: "source could not be parsed",
         explanation: "The syntax tier uses syn and the real view parser, without compiling the project. Unparseable Rust or view markup prevents a complete check and is always an error. This is a parse check, not validation of all attributes, classes, types, or macro expansions.",

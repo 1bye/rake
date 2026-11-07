@@ -4,9 +4,12 @@ mod catalogue;
 mod design;
 mod fix;
 mod guide;
+mod hook;
 mod manifest;
 mod source;
 mod suppression;
+
+pub(crate) use guide::generate as agent_skill;
 
 #[cfg(test)]
 mod tests;
@@ -138,8 +141,13 @@ fn byte_span(text: &str, range: std::ops::Range<usize>) -> SourceSpan {
 }
 
 pub(crate) fn run(arguments: &[String]) -> Result<bool> {
+    if arguments.iter().any(|argument| argument == "--hook") {
+        hook::run(arguments);
+        return Ok(false);
+    }
     let mut json = false;
-    let mut guide = false;
+    let mut guide = None;
+    let mut update = None;
     let mut fix = false;
     let mut explain = None;
     let mut path = None;
@@ -148,12 +156,20 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--json" => json = true,
-            "--guide" => guide = true,
+            "--guide" => guide = Some(false),
+            "--guide=agents" => guide = Some(true),
+            "--update" => {
+                update = Some(PathBuf::from(
+                    args.next()
+                        .filter(|value| !value.starts_with('-'))
+                        .ok_or("--update requires a file path")?,
+                ))
+            }
             "--fix" => fix = true,
             "--explain" => explain = Some(args.next().ok_or("--explain requires a rule ID")?),
             "--help" | "-h" => {
                 println!(
-                    "Usage: rake lint [PATH] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide [--json]"
+                    "Usage: rake lint [PATH] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide[=agents] [--json]\n       rake lint --guide=agents --update AGENTS.md\n       rake lint --hook"
                 );
 
                 return Ok(false);
@@ -162,17 +178,43 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
                 return Err(format!("unknown lint option: {value}").into());
             }
             _ if path.is_none() => path = Some(PathBuf::from(argument)),
-            _ => return Err("lint accepts only one project path".into()),
+            _ => return Err("lint accepts only one path".into()),
         }
     }
 
-    if guide {
+    if let Some(agents) = guide {
         if path.is_some() || explain.is_some() || fix {
             return Err(
                 "--guide cannot be combined with a project path, --explain or --fix".into(),
             );
         }
-        let guide = guide::generate();
+        if update.is_some() && !agents {
+            return Err("--update requires --guide=agents".into());
+        }
+        if let Some(path) = update {
+            let original = fs::read_to_string(&path)?;
+            let refreshed = guide::refresh_agents(&original)?;
+            let changed = refreshed != original;
+            if changed {
+                fs::write(&path, refreshed)?;
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "path": path, "updated": changed})
+                );
+            } else if changed {
+                println!("updated rake-lint block in {}", path.display());
+            } else {
+                println!("{} already up to date", path.display());
+            }
+            return Ok(false);
+        }
+        let guide = if agents {
+            guide::agents()
+        } else {
+            guide::generate()
+        };
         if json {
             println!(
                 "{}",
@@ -182,6 +224,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
             print!("{guide}");
         }
         return Ok(false);
+    }
+
+    if update.is_some() {
+        return Err("--update requires --guide=agents".into());
     }
 
     if let Some(id) = explain {
@@ -218,11 +264,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
         return Ok(false);
     }
 
-    let root = path.unwrap_or(std::env::current_dir()?);
-    let mut report = check_project(&root)?;
+    let path = path.unwrap_or(std::env::current_dir()?);
+    let (root, mut report) = check_target(&path)?;
     if fix {
         fix::apply(&root, &report)?;
-        report = check_project(&root)?;
+        report = check_target(&path)?.1;
     }
 
     if json {
@@ -362,7 +408,7 @@ fn check_project(root: &Path) -> Result<Report> {
 
     let mut sources = Vec::new();
     let mut manifests = BTreeMap::new();
-    scan_directory(root, &Config::default(), &mut |path, config| {
+    scan_directory(root, &Config::default(), None, &mut |path, config| {
         manifests.insert(config.package.clone(), config.clone());
         if path.extension().is_some_and(|ext| ext == "rs") {
             sources.push((path.to_owned(), fs::read_to_string(path)?, config.clone()));
@@ -401,21 +447,7 @@ fn check_project(root: &Path) -> Result<Report> {
         }
         report.diagnostics.extend(diagnostics);
     }
-    report.diagnostics.sort_by(|left, right| {
-        (
-            &left.file,
-            left.span.start.line,
-            left.span.start.column,
-            left.rule_id,
-        )
-            .cmp(&(
-                &right.file,
-                right.span.start.line,
-                right.span.start.column,
-                right.rule_id,
-            ))
-    });
-    report.denied = report.diagnostics.iter().any(|d| d.level == Level::Deny);
+    finish_report(&mut report);
 
     Ok(report)
 }
@@ -423,8 +455,12 @@ fn check_project(root: &Path) -> Result<Report> {
 fn scan_directory(
     directory: &Path,
     inherited: &Config,
+    boundary: Option<&Path>,
     visit: &mut impl FnMut(&Path, &Config) -> Result<()>,
 ) -> Result<()> {
+    if boundary.is_some_and(|root| root != directory) && directory.join("Cargo.toml").is_file() {
+        return Ok(());
+    }
     let mut local;
     let config = if directory.join("Cargo.toml").is_file() {
         local = load_config(directory)?;
@@ -458,7 +494,7 @@ fn scan_directory(
                 entry.file_name().to_str(),
                 Some("target" | ".git" | "node_modules")
             ) {
-                scan_directory(&path, config, visit)?;
+                scan_directory(&path, config, boundary, visit)?;
             }
         } else if kind.is_file()
             && path.extension().is_some_and(|extension| extension == "rs")
@@ -509,11 +545,102 @@ fn filter_diagnostics(
 /// Reuse lint discovery, package excludes, and compile-fail fixture handling.
 pub(crate) fn files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    scan_directory(root, &Config::default(), &mut |path, _| {
+    scan_directory(root, &Config::default(), None, &mut |path, _| {
         if path.extension().is_some_and(|extension| extension == "rs") {
             files.push(path.to_owned());
         }
         Ok(())
     })?;
     Ok(files)
+}
+
+fn check_target(path: &Path) -> Result<(PathBuf, Report)> {
+    let path = path.canonicalize()?;
+    if path.is_dir() {
+        return Ok((path.clone(), check_project(&path)?));
+    }
+    if !path.is_file() {
+        return Err("lint expects a regular file or project directory".into());
+    }
+    let rust = path.extension().is_some_and(|extension| extension == "rs");
+    if !rust && path.file_name().is_none_or(|name| name != "Cargo.toml") {
+        return Err("lint expects a project directory, Rust file or Cargo.toml".into());
+    }
+    let root = path
+        .parent()
+        .and_then(|parent| {
+            parent
+                .ancestors()
+                .find(|directory| directory.join("Cargo.toml").is_file())
+        })
+        .ok_or("lint file must belong to a directory containing Cargo.toml")?;
+    let config = load_config(root)?;
+    let relative = path.strip_prefix(root)?;
+    let mut report = Report {
+        schema_version: 1,
+        diagnostics: Vec::new(),
+        files_checked: 0,
+        denied: false,
+        original_sources: BTreeMap::new(),
+    };
+    let ignored = relative.components().any(|part| {
+        matches!(
+            part.as_os_str().to_str(),
+            Some("target" | ".git" | "node_modules")
+        )
+    }) || config
+        .exclude
+        .iter()
+        .any(|excluded| path.starts_with(excluded))
+        || (rust && path.with_extension("stderr").is_file());
+    if !ignored {
+        let text = fs::read_to_string(&path)?;
+        let diagnostics = if rust {
+            let mut themed = source::installs_theme(&text);
+            // Search only this package for theme installation, stopping reads as
+            // soon as evidence is found; nested packages cannot supply evidence.
+            if !themed {
+                scan_directory(root, &Config::default(), Some(root), &mut |candidate, _| {
+                    if !themed
+                        && candidate != path
+                        && candidate.extension().is_some_and(|ext| ext == "rs")
+                    {
+                        themed = source::installs_theme(&fs::read_to_string(candidate)?);
+                    }
+                    Ok(())
+                })?;
+            }
+            report.files_checked = 1;
+            source::check_themed(relative, &text, themed)
+        } else {
+            manifest::check(relative, &text)?
+        };
+        let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, !rust);
+        if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
+            report
+                .original_sources
+                .insert(diagnostic.file.clone(), text);
+        }
+        report.diagnostics = diagnostics;
+    }
+    finish_report(&mut report);
+    Ok((root.to_owned(), report))
+}
+
+fn finish_report(report: &mut Report) {
+    report.diagnostics.sort_by(|left, right| {
+        (
+            &left.file,
+            left.span.start.line,
+            left.span.start.column,
+            left.rule_id,
+        )
+            .cmp(&(
+                &right.file,
+                right.span.start.line,
+                right.span.start.column,
+                right.rule_id,
+            ))
+    });
+    report.denied = report.diagnostics.iter().any(|d| d.level == Level::Deny);
 }

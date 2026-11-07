@@ -30,3 +30,10 @@ Change the application ID (`{{application_id}}`) in `src/lib.rs` and
 alpha; APIs can change between revisions. The dependency is pinned to the CLI's
 release version, checkout revision, or the local path or revision passed to
 `rake new`.
+
+After edits, run `rake format` then `rake lint`. Agent instructions live in
+`AGENTS.md`; `CLAUDE.md` imports that file. Refresh its generated block with
+`rake lint --guide=agents --update AGENTS.md`.
+
+Optional PostToolUse feedback can run `rake lint --hook`. It reads the edit
+payload from stdin and returns compact findings without blocking the edit.

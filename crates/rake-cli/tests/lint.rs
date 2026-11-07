@@ -416,3 +416,138 @@ fn file_suppressions_control_json_exit_status_and_machine_fixes() {
         );
     }
 }
+
+#[test]
+fn compact_agent_guide_refreshes_only_marked_content() {
+    let directory = tempfile::tempdir().unwrap();
+    let execute = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rake"))
+            .args(args)
+            .current_dir(directory.path())
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    };
+    let output = execute(&["lint", "--guide=agents"]);
+    assert!(output.status.success());
+    let block = String::from_utf8(output.stdout).unwrap();
+    assert!(block.contains("Always supply img alt"));
+    let original = format!("Custom project instructions\n{block}Local footer\n");
+    fs::write(directory.path().join("AGENTS.md"),
+        "Custom project instructions\n<!-- rake-lint:begin -->\nOld rules\n<!-- rake-lint:end -->\nLocal footer\n").unwrap();
+    let updated = execute(&["lint", "--guide=agents", "--update", "AGENTS.md", "--json"]);
+    assert!(updated.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&updated.stdout).unwrap();
+    assert_eq!(json["updated"], true);
+    assert_eq!(json["path"], "AGENTS.md");
+    assert!(json.get("guide").is_none());
+    assert_eq!(
+        fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
+        original
+    );
+    let unchanged = execute(&["lint", "--guide=agents", "--update", "AGENTS.md"]);
+    assert!(unchanged.status.success());
+    assert_eq!(
+        String::from_utf8(unchanged.stdout).unwrap(),
+        "AGENTS.md already up to date\n"
+    );
+    fs::write(directory.path().join("AGENTS.md"), "Custom project instructions\n<!-- rake-lint:begin -->\nOld rules\n<!-- rake-lint:end -->\nLocal footer\n").unwrap();
+    let changed = execute(&["lint", "--guide=agents", "--update", "AGENTS.md"]);
+    assert!(changed.status.success());
+    assert_eq!(
+        String::from_utf8(changed.stdout).unwrap(),
+        "updated rake-lint block in AGENTS.md\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
+        original
+    );
+    for invalid in ["No markers\n".to_owned(), format!("{block}{block}")] {
+        fs::write(directory.path().join("AGENTS.md"), &invalid).unwrap();
+        assert!(
+            !execute(&["lint", "--guide=agents", "--update", "AGENTS.md"])
+                .status
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
+            invalid
+        );
+    }
+    for args in [
+        vec!["lint", "--update", "AGENTS.md"],
+        vec!["lint", "--guide", "--update", "AGENTS.md"],
+        vec!["lint", "--guide=unknown"],
+    ] {
+        assert!(!execute(&args).status.success());
+    }
+}
+
+#[test]
+fn single_file_json_and_fixes_do_not_touch_siblings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2024'",
+    )
+    .unwrap();
+    fs::write(
+        root.join("main.rs"),
+        "fn main() { rake::view! { <div style={|s| s.flex().gap_2()}/> }; }",
+    )
+    .unwrap();
+    let sibling = "fn { intentionally broken Rust";
+    fs::write(root.join("other.rs"), sibling).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["lint", "--json", "main.rs", "--fix"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["files_checked"], 1);
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+    assert!(
+        fs::read_to_string(root.join("main.rs"))
+            .unwrap()
+            .contains("class=\"flex gap-2\"")
+    );
+    assert_eq!(fs::read_to_string(root.join("other.rs")).unwrap(), sibling);
+}
+
+#[test]
+fn single_manifest_fix_preserves_comments_and_does_not_parse_rust_siblings() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.1.0'\n[profile.release]\ndebug-assertions=true # keep\n",
+    )
+    .unwrap();
+    fs::write(root.join("broken.rs"), "fn {").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["lint", "--json", "Cargo.toml", "--fix"])
+        .current_dir(root)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["files_checked"], 0);
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+    assert!(
+        fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .contains("false # keep")
+    );
+    assert_eq!(fs::read_to_string(root.join("broken.rs")).unwrap(), "fn {");
+}

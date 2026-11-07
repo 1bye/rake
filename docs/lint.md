@@ -8,6 +8,8 @@ expand Rust macros, or require GPUI/Linux GUI libraries.
 rake lint                         # current project or workspace directory
 rake lint examples/view           # another project directory
 rake lint --json
+rake lint --json src/main.rs        # one edited file
+rake lint --guide=agents          # compact AGENTS.md block
 rake lint --fix --json            # safe edits, followed by a fresh check
 rake lint --guide > .agents/skills/rake-gpui/SKILL.md
 rake lint --explain view-button-label
@@ -335,3 +337,118 @@ The deep/type-aware tier, broader loop data flow and workspace defaults remain
 follow-ups. Linting is not hooked into `rake dev` or DevTools.
 
 Run [rake format](format.md) after editing, then run `rake lint`.
+
+## Agent instructions in every session
+
+`rake lint --guide=agents` prints a compact block generated from the rule
+catalogue, between `<!-- rake-lint:begin -->` and `<!-- rake-lint:end -->`.
+Copy it once into an existing `AGENTS.md`, keeping your other instructions.
+Then refresh just the marked content with:
+
+```sh
+rake lint --guide=agents --update AGENTS.md
+```
+
+Refresh refuses missing, duplicated, reversed or inline markers. It preserves
+everything outside them and is idempotent, including CRLF files. Use
+`--guide=agents --json` for the JSON guide envelope. With `--update`, stdout is
+a one-line updated/already-up-to-date confirmation; `--json` instead returns
+`path` and an `updated` boolean without repeating the block. Internal parse and
+invalid-directive diagnostics are left out of the compact rules; actionable
+suppression guidance keeps its own line.
+
+`rake new` writes this block to `AGENTS.md`, a complete generated skill at
+`.agents/skills/rake-gpui/SKILL.md`, and a `CLAUDE.md` containing only
+`@AGENTS.md`. The import syntax is documented in the official
+[Claude Code memory reference](https://code.claude.com/docs/en/memory#import-additional-files).
+The catalogue drift test also checks this repository's AGENTS.md block and the
+scaffold templates. Edit the catalogue, regenerate the template with
+`rake lint --guide=agents > crates/rake-cli/templates/default/AGENTS.md`, refresh
+the root block, and regenerate the full guide before committing.
+
+## Fast checks after an edit
+
+```sh
+rake lint --json src/main.rs
+rake lint --json Cargo.toml
+```
+
+A single Rust file reports only its own findings, using its owning package's
+levels, exclusions and compile-fail fixture handling. Theme evidence comes from
+that package's discovered sources, stopping reads once evidence is found;
+nested packages and the rest of the workspace are not scanned. A manifest input
+checks only that manifest. File paths in JSON are relative to the owning package.
+`--fix` also works on a single file and leaves siblings untouched. Checking uses
+no Cargo build or external process; Rust fixes still use rustfmt.
+
+On devbox, a PostToolUse Edit payload for the 2,656-line inspector view checked
+through `target/debug/rake lint --hook` took **149.8 ms median** over 20 warm
+invocations (147.7–169.6 ms). This used Rust 1.98.0's unoptimized dev profile
+with debug info disabled, including process startup, stdin JSON, path resolution
+and package theme evidence. Every invocation exited zero with empty stdout.
+This is a measurement, not a CI timing assertion.
+
+### Post-edit hooks
+
+Set the optional PostToolUse command to `rake lint --hook`. The built-in mode
+reads one JSON payload from stdin. Both tools use the same configuration below:
+put it in `.claude/settings.json` for Claude Code or `.codex/hooks.json` for
+local Codex sessions supporting command hooks.
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "Edit|Write",
+      "hooks": [{
+        "type": "command",
+        "command": "rake lint --hook",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+Claude Code treats the matcher as a regex, so `Edit|Write` also matches
+`MultiEdit` and `NotebookEdit`. The hook lints any tool with a string
+`tool_input.file_path`, including `MultiEdit`. `NotebookEdit` uses
+`notebook_path` and is silently ignored, as are unknown tools without usable
+file paths.
+
+Use a matching `rake` executable on the agent's PATH. The formats were checked
+against official documentation on 2026-11-07:
+
+- [Claude Code hook input](https://code.claude.com/docs/en/hooks#posttooluse-input)
+  supplies `tool_input.file_path` for Edit/Write;
+  [hook output](https://code.claude.com/docs/en/hooks#posttooluse-decision-control)
+  supports `additionalContext`.
+- [Codex hooks](https://learn.chatgpt.com/docs/hooks#posttooluse) document the
+  Edit/Write aliases for `apply_patch`, its `tool_input.command` payload and
+  `additionalContext` output. Review and trust project hooks with `/hooks`.
+
+The hook resolves relative paths against the payload's `cwd`, falling back to
+its process directory when absent. It extracts Add/Update/Move headers from
+Codex textual patches and checks surviving Rust and Cargo.toml files, skipping
+deleted and non-Rust paths. Filenames are never interpolated into a shell.
+Malformed JSON, a wrong event name, an unparseable Codex patch or a lint failure
+produces a short manual-check note. Recognised PostToolUse events without
+extractable paths emit nothing.
+
+Clean checks emit nothing. Findings produce exactly one JSON object:
+
+```json
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"rake lint found 1 issue in the edited files:\nmain.rs:1:28 view-button-label (warn): button content has no automatic accessible label. Fix: add aria-label=..."}}
+```
+
+Context uses factual summaries and one compact line per finding:
+`path:line:col rule-id (level): message. Fix: <fix>`. It omits long explanations
+and full diagnostic JSON, shortens unusually long fields, and includes at most
+20 findings followed by `N more; run rake lint`. The hook always exits zero,
+including malformed/unreadable payloads or operational failures, so feedback
+cannot block or undo the completed edit. It never edits files.
+
+These are opt-in examples; this repository does not enable hooks automatically.
+They match file tools, not arbitrary shell writes or other processes. Continue
+running the full project check before committing. Hook tests exercise the real
+binary with representative payloads; they do not configure a live agent session.
