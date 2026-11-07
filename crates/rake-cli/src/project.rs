@@ -20,7 +20,18 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
                 "web-service-worker.js",
                 include_str!("../scripts/web-service-worker.js"),
             ),
-            ("inspector.py", include_str!("../scripts/inspector.py")),
+            (
+                "runtime_broker.py",
+                include_str!("../scripts/runtime_broker.py"),
+            ),
+            (
+                "embedded-devtools.mjs",
+                include_str!("../scripts/embedded-devtools.mjs"),
+            ),
+            (
+                "embedded-devtools.html",
+                include_str!("../scripts/embedded-devtools.html"),
+            ),
             ("dev.py", include_str!("../scripts/dev.py")),
             (
                 "rake-web-font-licenses.txt",

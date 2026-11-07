@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Covers: inspector HTTP authentication, native forwarding, discovery and process bounds.
-Real: HTTP server, Unix sockets and bundled assets. Doubles: a native protocol peer.
+"""Covers: runtime broker authentication, native forwarding, discovery and process bounds.
+Real: HTTP server, Unix sockets and control endpoints. Doubles: a native protocol peer.
 Requires: Unix/loopback sockets; no display or browser.
 """
 import concurrent.futures
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -22,7 +24,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
 
 from dev_bridge import BridgeError, DevBridge
-from inspector import Inspector, ProcessOutput
+from runtime_broker import RuntimeBroker, ProcessOutput
 
 
 class InspectorHTTP(unittest.TestCase):
@@ -31,7 +33,7 @@ class InspectorHTTP(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.control = self.root / "control"
         self.control.mkdir(mode=0o700)
-        self.server = subprocess.Popen([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--inspector-only", "--control", "--port", "0"],
+        self.server = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py"), "--control-only", "--control", "--port", "0"],
             env={**os.environ, "RAKE_CONTROL_DIR": str(self.control)}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         launch = urllib.parse.urlsplit(self.server.stdout.readline().strip().split()[-1])
         self.url = f"http://{launch.netloc}"
@@ -53,11 +55,11 @@ class InspectorHTTP(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.load(response)
 
-    def test_legacy_frontend_is_gone_and_control_stays_private(self):
-        for filename in ["inspector", "inspector.js", "inspector-model.js", "inspector.css"]:
+    def test_deprecated_frontends_are_unavailable_and_control_remains_authenticated(self):
+        for filename in ["inspector", "inspector.js", "inspector-model.js", "inspector.css", "elements/", "elements/pkg/rake_inspector.js"]:
             with self.assertRaises(urllib.error.HTTPError) as error:
-                urllib.request.urlopen(self.url + "/__rake/" + filename, timeout=5)
-            self.assertEqual(error.exception.code, 404)
+                urllib.request.urlopen(self.url + "/__rake/" + filename)
+            self.assertEqual(error.exception.code, 410)
             error.exception.close()
         with self.assertRaises(urllib.error.HTTPError) as error:
             self.post("inspect_instances", {}, token="wrong")
@@ -68,13 +70,22 @@ class InspectorHTTP(unittest.TestCase):
         self.assertEqual(error.exception.code, 404)
         error.exception.close()
 
-    def test_cli_redirects_legacy_inspector_users_to_chrome_devtools(self):
-        cli = Path(__file__).resolve().parents[1] / "target" / "debug" / "rake"
-        result = subprocess.run([str(cli), "inspect", "--session", str(self.root), "--no-open"],
-            capture_output=True, text=True, timeout=10)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("rake cdp --session PATH", result.stderr)
-        self.assertEqual(result.stdout, "")
+    def test_cli_inspect_attaches_to_chrome_cdp_without_building(self):
+        cli = Path(os.environ.get("CARGO_TARGET_DIR", str(Path(__file__).resolve().parents[1] / "target"))) / "debug/rake"
+        rejected = subprocess.run([str(cli), "inspect", "--elements", "--session", str(self.root)], capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("deprecated", rejected.stderr)
+        process = subprocess.Popen([str(cli), "inspect", "--session", str(self.root), "--no-open", "--json"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            event = json.loads(process.stdout.readline())
+            self.assertEqual(event["event"], "cdp_listening")
+            with urllib.request.urlopen(event["url"] + "/json/list") as response:
+                self.assertEqual(json.load(response), [])
+            self.assertFalse((self.root / "builds").exists())
+        finally:
+            process.terminate(); process.wait(timeout=5)
+            process.stdout.close(); process.stderr.close()
 
     def test_native_forwarding_uses_the_exact_runtime_envelope_and_hides_credentials(self):
         runtime = str(uuid.uuid4())
@@ -130,8 +141,8 @@ class ElementsHosting(unittest.TestCase):
             bridge = DevBridge("http://127.0.0.1:8081", directory=Path(temporary))
             runtime = str(uuid.uuid4())
             bridge.handle("connect", {"application_id": "test.web", "info": {"runtime_id": runtime, "protocol": 1, "platform": "web"}})
-            host = Inspector(bridge)
-            with patch("inspector.subprocess.run", return_value=subprocess.CompletedProcess([], 0, b'{"path":"/workspace/app.rs","line":3,"column":4}', b"")) as opener:
+            host = RuntimeBroker(bridge)
+            with patch("runtime_broker.subprocess.run", return_value=subprocess.CompletedProcess([], 0, b'{"path":"/workspace/app.rs","line":3,"column":4}', b"")) as opener:
                 result = host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "file": "/outside.rs"})
                 self.assertEqual(result["line"], 3)
                 self.assertEqual(opener.call_args.args[0][1:], ["ctl", "--instance", runtime, "inspect", "source", "element-1-0", "--json"])
@@ -149,41 +160,22 @@ class ElementsHosting(unittest.TestCase):
                 self.assertEqual(opener.call_count, 3)
             bridge.close()
 
-    def test_frontend_is_scoped_to_the_dedicated_inspector_origin(self):
-        with tempfile.TemporaryDirectory(prefix="rake-elements-test-", dir="/tmp") as temporary:
-            root = Path(temporary)
-            assets = root / "frontend"
-            (assets / "pkg").mkdir(parents=True)
-            for name, content in {"index.html": b"Rake Elements", "pkg/rake_inspector.js": b"export default 1", "pkg/rake_inspector_bg.wasm": b"\x00asm"}.items():
-                (assets / name).write_bytes(content)
-            (root / "private.txt").write_text("private")
-            command = [sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--inspector-only", "--control", "--port", "0", "--inspector-app", str(assets)]
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-            try:
-                launch = urllib.parse.urlsplit(process.stdout.readline().strip().split()[-1])
-                self.assertEqual(launch.path, "/__rake/elements/")
-                origin = f"http://{launch.netloc}"
-                for name in ["", "pkg/rake_inspector.js", "pkg/rake_inspector_bg.wasm"]:
-                    with urllib.request.urlopen(origin + launch.path + name) as response:
-                        content = response.read()
-                        self.assertNotIn(launch.fragment.encode(), content)
-                        self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
-                        self.assertEqual(response.headers["Cache-Control"], "no-store")
-                        if name.endswith("wasm"):
-                            self.assertEqual(response.headers["Content-Type"], "application/wasm")
-                for path in ["/__rake/elements/%2e%2e/private.txt", "/private.txt", "/pkg/rake_inspector.js"]:
-                    with self.assertRaises(urllib.error.HTTPError) as error:
-                        urllib.request.urlopen(origin + path)
-                    self.assertEqual(error.exception.code, 404)
-                    error.exception.close()
-            finally:
-                process.terminate(); process.wait(timeout=5); process.stdout.close()
-            rejected = subprocess.run([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--control", "--inspector-app", str(assets)], capture_output=True)
-            self.assertNotEqual(rejected.returncode, 0)
-            self.assertIn(b"requires --inspector-only --control", rejected.stderr)
 
 
 class Bounds(unittest.TestCase):
+    def test_cdp_discovery_rejects_non_loopback_and_defaults_to_disabled(self):
+        with tempfile.TemporaryDirectory(prefix="rake-cdp-link-", dir="/tmp") as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            bridge = DevBridge("http://127.0.0.1:1", root)
+            try:
+                self.assertEqual(RuntimeBroker(bridge).handle("inspect_cdp", {}), [])
+                for url in ["https://example.test", "http://127.0.0.1:9/other", "http://user@127.0.0.1:9", "http://localhost:9"]:
+                    with self.assertRaises(BridgeError):
+                        RuntimeBroker(bridge, cdp_url=url).handle("inspect_cdp", {})
+            finally:
+                bridge.close()
+
     def test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime(self):
         with tempfile.TemporaryDirectory(prefix="rake-lineage-", dir="/tmp") as temporary:
             root = Path(temporary)
@@ -197,7 +189,7 @@ class Bounds(unittest.TestCase):
                     "info": {"runtime_id": identity}, "endpoint": {"type": "local", "path": str(root / f"{identity}.sock")}}))
                 path.chmod(0o600)
             bridge = DevBridge("http://127.0.0.1:1", root, development_state=status)
-            found = Inspector(bridge, allow_native=True).instances()
+            found = RuntimeBroker(bridge, allow_native=True).instances()
             current = next(item for item in found if item["info"]["runtime_id"] == runtime)
             other = next(item for item in found if item is not current)
             self.assertEqual(current["restored_from"], predecessor)
@@ -214,7 +206,7 @@ class Bounds(unittest.TestCase):
                 "info": {"runtime_id": runtime}, "endpoint": {"type": "local", "path": str(root / f"{runtime}.sock")}}))
             manifest.chmod(0o600)
             bridge = DevBridge("http://127.0.0.1:1", root)
-            inspector = Inspector(bridge)
+            inspector = RuntimeBroker(bridge)
             self.assertEqual(inspector.instances(), [])
             with self.assertRaises(BridgeError) as error:
                 inspector.handle("inspect", {"request": {"protocol": 1, "runtime_id": runtime, "message": {"type": "query", "value": {"type": "info"}}}})

@@ -91,6 +91,9 @@ impl Options {
                 "--port" => options.port = args.next().ok_or("--port requires a port")?.parse()?,
                 "--no-open" => options.open = false,
                 "--json" => options.json = true,
+                "--elements" => {
+                    return Err("Rake Inspector is deprecated; use Chrome DevTools with rake dev --cdp or rake cdp".into());
+                }
                 _ => return Err(format!("unexpected CDP argument: {arg}\n{HELP}").into()),
             }
         }

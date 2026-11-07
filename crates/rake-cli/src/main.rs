@@ -214,9 +214,11 @@ fn main() {
         && arguments.get(1).is_some_and(|c| c == "pick")
     {
         terminal::run(arguments)
+    } else if arguments.first().is_some_and(|c| c == "inspect") {
+        cdp::run(arguments)
     } else if arguments
         .first()
-        .is_some_and(|command| matches!(command.as_str(), "dev" | "bundle" | "inspect"))
+        .is_some_and(|command| matches!(command.as_str(), "dev" | "bundle"))
     {
         project::run(arguments)
     } else {

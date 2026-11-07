@@ -16,7 +16,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
 
 from dev_bridge import DevBridge
-from inspector import Inspector
+from runtime_broker import RuntimeBroker
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +34,7 @@ def eventually(check):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('binary', nargs='?', type=Path, default=ROOT / 'target/debug/rake-preview')
+    parser.add_argument('binary', nargs='?', type=Path, default=Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target'))) / 'debug/rake-preview')
     parser.add_argument('--occluded', action='store_true', help='Cover the real native window before injecting input')
     parser.add_argument('--benchmark', action='store_true', help='Measure warmed native inspection draw time while scrolling')
     args = parser.parse_args()
@@ -58,7 +58,7 @@ def main():
                             continue
                 manifest = eventually(discovery)
                 runtime = manifest["info"]["runtime_id"]
-                inspector = Inspector(DevBridge("http://127.0.0.1:0", directory=control), allow_native=True)
+                inspector = RuntimeBroker(DevBridge("http://127.0.0.1:0", directory=control), allow_native=True)
                 def request(value, command=False):
                     return inspector.handle("inspect", {"request": {"protocol": 1, "runtime_id": runtime,
                         "key": None, "message": {"type": "command" if command else "query", "value": value}}})
