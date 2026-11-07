@@ -66,6 +66,10 @@ fn embeds_templates_and_revision_without_invoking_tools() {
         assert!(!source.contains("{{"), "unexpanded template: {file}");
     }
 
+    let readme = fs::read_to_string(project.join("README.md")).unwrap();
+    assert!(readme.contains("rake lint --hook"));
+    assert!(!readme.contains("Python"));
+    assert!(!readme.contains("rake-lint-hook.py"));
     assert_eq!(
         fs::read_to_string(project.join("CLAUDE.md")).unwrap(),
         "@AGENTS.md\n"

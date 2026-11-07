@@ -438,15 +438,25 @@ fn compact_agent_guide_refreshes_only_marked_content() {
     let updated = execute(&["lint", "--guide=agents", "--update", "AGENTS.md", "--json"]);
     assert!(updated.status.success());
     let json: serde_json::Value = serde_json::from_slice(&updated.stdout).unwrap();
-    assert_eq!(json["guide"], block);
+    assert_eq!(json["updated"], true);
+    assert_eq!(json["path"], "AGENTS.md");
+    assert!(json.get("guide").is_none());
     assert_eq!(
         fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
         original
     );
-    assert!(
-        execute(&["lint", "--guide=agents", "--update", "AGENTS.md"])
-            .status
-            .success()
+    let unchanged = execute(&["lint", "--guide=agents", "--update", "AGENTS.md"]);
+    assert!(unchanged.status.success());
+    assert_eq!(
+        String::from_utf8(unchanged.stdout).unwrap(),
+        "AGENTS.md already up to date\n"
+    );
+    fs::write(directory.path().join("AGENTS.md"), "Custom project instructions\n<!-- rake-lint:begin -->\nOld rules\n<!-- rake-lint:end -->\nLocal footer\n").unwrap();
+    let changed = execute(&["lint", "--guide=agents", "--update", "AGENTS.md"]);
+    assert!(changed.status.success());
+    assert_eq!(
+        String::from_utf8(changed.stdout).unwrap(),
+        "updated rake-lint block in AGENTS.md\n"
     );
     assert_eq!(
         fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),

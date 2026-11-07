@@ -351,7 +351,9 @@ rake lint --guide=agents --update AGENTS.md
 
 Refresh refuses missing, duplicated, reversed or inline markers. It preserves
 everything outside them and is idempotent, including CRLF files. Use
-`--guide=agents --json` for the existing JSON guide envelope. Internal parse and
+`--guide=agents --json` for the JSON guide envelope. With `--update`, stdout is
+a one-line updated/already-up-to-date confirmation; `--json` instead returns
+`path` and an `updated` boolean without repeating the block. Internal parse and
 invalid-directive diagnostics are left out of the compact rules; actionable
 suppression guidance keeps its own line.
 
@@ -379,35 +381,19 @@ checks only that manifest. File paths in JSON are relative to the owning package
 `--fix` also works on a single file and leaves siblings untouched. Checking uses
 no Cargo build or external process; Rust fixes still use rustfmt.
 
-On devbox, checking the 2,656-line `examples/inspector/src/view.rs` with
-`target/debug/rake lint --json examples/inspector/src/view.rs` took **149.2 ms**
-median across 20 warm invocations (148.4–150.6 ms). This used Rust 1.98.0's
-unoptimized dev profile with debug info disabled, including process startup,
-package theme evidence and JSON output. This is a measurement, not a CI timing
-assertion.
+On devbox, a PostToolUse Edit payload for the 2,656-line inspector view checked
+through `target/debug/rake lint --hook` took **149.8 ms median** over 20 warm
+invocations (147.7–169.6 ms). This used Rust 1.98.0's unoptimized dev profile
+with debug info disabled, including process startup, stdin JSON, path resolution
+and package theme evidence. Every invocation exited zero with empty stdout.
+This is a measurement, not a CI timing assertion.
 
 ### Post-edit hooks
 
-The formats below were checked against the official documentation on 2026-11-07.
-They are optional configuration examples, not hooks enabled by this repository.
-Use a matching installed `rake` on PATH, Python 3, and copy
-[scripts/rake-lint-hook.py](../scripts/rake-lint-hook.py) into your project's
-`scripts/` directory. In a source checkout you can set `RAKE_LINT_BIN` to the
-absolute path of `target/debug/rake` instead. The shell examples target Linux/macOS.
-The Codex command assumes a Git checkout; otherwise use the adapter's absolute path.
-
-The adapter runs `rake lint --json <edited file>` for surviving Rust/manifest
-paths. It handles spaces, multiple patch paths, moves and deleted files without
-shell-interpolating filenames. It returns findings and operational failures as
-`PostToolUse` additional context, and is silent when clean. It does not edit
-files or block the already-completed edit. Its Codex adapter extracts Add/Update/
-Move headers from textual `apply_patch` commands; unsupported payload forms
-return a request to run lint manually.
-
-For Claude Code, add this to `.claude/settings.json`. Its
-[official hooks reference](https://code.claude.com/docs/en/hooks#posttooluse-input)
-defines Edit/Write's `file_path` input and
-[additional context output](https://code.claude.com/docs/en/hooks#posttooluse-decision-control):
+Set the optional PostToolUse command to `rake lint --hook`. The built-in mode
+reads one JSON payload from stdin. Both tools use the same configuration below:
+put it in `.claude/settings.json` for Claude Code or `.codex/hooks.json` for
+local Codex sessions supporting command hooks.
 
 ```json
 {
@@ -416,7 +402,7 @@ defines Edit/Write's `file_path` input and
       "matcher": "Edit|Write",
       "hooks": [{
         "type": "command",
-        "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/rake-lint-hook.py\"",
+        "command": "rake lint --hook",
         "timeout": 30
       }]
     }]
@@ -424,28 +410,37 @@ defines Edit/Write's `file_path` input and
 }
 ```
 
-For local Codex sessions supporting command hooks, add this to `.codex/hooks.json`.
-The [official hooks reference](https://learn.chatgpt.com/docs/hooks#posttooluse)
-documents Edit/Write matcher aliases for `apply_patch`, its `tool_input.command`
-payload and model-visible `additionalContext`. Review and trust project hooks
-with `/hooks` as documented there.
+Use a matching `rake` executable on the agent's PATH. The formats were checked
+against official documentation on 2026-11-07:
+
+- [Claude Code hook input](https://code.claude.com/docs/en/hooks#posttooluse-input)
+  supplies `tool_input.file_path` for Edit/Write;
+  [hook output](https://code.claude.com/docs/en/hooks#posttooluse-decision-control)
+  supports `additionalContext`.
+- [Codex hooks](https://learn.chatgpt.com/docs/hooks#posttooluse) document the
+  Edit/Write aliases for `apply_patch`, its `tool_input.command` payload and
+  `additionalContext` output. Review and trust project hooks with `/hooks`.
+
+The hook resolves relative paths against the payload's `cwd`, falling back to
+its process directory when absent. It extracts Add/Update/Move headers from
+Codex textual patches and checks surviving Rust and Cargo.toml files, skipping
+deleted and non-Rust paths. Filenames are never interpolated into a shell.
+Unsupported payloads and lint failures produce a short manual-check note.
+
+Clean checks emit nothing. Findings produce exactly one JSON object:
 
 ```json
-{
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": "Edit|Write",
-      "hooks": [{
-        "type": "command",
-        "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/rake-lint-hook.py\"",
-        "timeout": 30
-      }]
-    }]
-  }
-}
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"rake lint found 1 issue in the edited files:\nmain.rs:1:28 view-button-label (warn): button content has no automatic accessible label. Fix: add aria-label=..."}}
 ```
 
-These match file tools, not arbitrary shell writes or edits made by other
-processes. Continue running the full project check before committing. Hook tests
-feed representative documented event payloads through the adapter and real CLI;
-they do not require a live agent session.
+Context uses factual summaries and one compact line per finding:
+`path:line:col rule-id (level): message. Fix: <fix>`. It omits long explanations
+and full diagnostic JSON, shortens unusually long fields, and includes at most
+20 findings followed by `N more; run rake lint`. The hook always exits zero,
+including malformed/unreadable payloads or operational failures, so feedback
+cannot block or undo the completed edit. It never edits files.
+
+These are opt-in examples; this repository does not enable hooks automatically.
+They match file tools, not arbitrary shell writes or other processes. Continue
+running the full project check before committing. Hook tests exercise the real
+binary with representative payloads; they do not configure a live agent session.

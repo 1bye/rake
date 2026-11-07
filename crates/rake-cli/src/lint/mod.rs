@@ -4,6 +4,7 @@ mod catalogue;
 mod design;
 mod fix;
 mod guide;
+mod hook;
 mod manifest;
 mod source;
 mod suppression;
@@ -140,6 +141,10 @@ fn byte_span(text: &str, range: std::ops::Range<usize>) -> SourceSpan {
 }
 
 pub(crate) fn run(arguments: &[String]) -> Result<bool> {
+    if arguments.iter().any(|argument| argument == "--hook") {
+        hook::run(arguments);
+        return Ok(false);
+    }
     let mut json = false;
     let mut guide = None;
     let mut update = None;
@@ -164,7 +169,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
             "--explain" => explain = Some(args.next().ok_or("--explain requires a rule ID")?),
             "--help" | "-h" => {
                 println!(
-                    "Usage: rake lint [PATH] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide[=agents] [--json]\n       rake lint --guide=agents --update AGENTS.md"
+                    "Usage: rake lint [PATH] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide[=agents] [--json]\n       rake lint --guide=agents --update AGENTS.md\n       rake lint --hook"
                 );
 
                 return Ok(false);
@@ -186,18 +191,30 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
         if update.is_some() && !agents {
             return Err("--update requires --guide=agents".into());
         }
+        if let Some(path) = update {
+            let original = fs::read_to_string(&path)?;
+            let refreshed = guide::refresh_agents(&original)?;
+            let changed = refreshed != original;
+            if changed {
+                fs::write(&path, refreshed)?;
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version": 1, "path": path, "updated": changed})
+                );
+            } else if changed {
+                println!("updated rake-lint block in {}", path.display());
+            } else {
+                println!("{} already up to date", path.display());
+            }
+            return Ok(false);
+        }
         let guide = if agents {
             guide::agents()
         } else {
             guide::generate()
         };
-        if let Some(path) = update {
-            let original = fs::read_to_string(&path)?;
-            let refreshed = guide::refresh_agents(&original)?;
-            if refreshed != original {
-                fs::write(path, refreshed)?;
-            }
-        }
         if json {
             println!(
                 "{}",
