@@ -15,7 +15,7 @@ static INSTALLED: AtomicBool = AtomicBool::new(false);
 #[wasm_bindgen(module = "/src/crash/browser.js")]
 extern "C" {
     #[wasm_bindgen(catch)]
-    fn crash_open(prefix: &str, count: usize) -> Result<(), JsValue>;
+    fn crash_open() -> Result<(), JsValue>;\n    fn crash_prune(prefix: &str, count: usize);
     #[wasm_bindgen(catch)]
     fn crash_write(
         prefix: &str,
@@ -47,7 +47,7 @@ impl CrashConfig {
     pub(crate) fn open(self, application_id: &str) -> io::Result<CrashReporter> {
         self.validate(application_id)?;
         let prefix = format!("rake:crashes:{application_id}:");
-        crash_open(&prefix, self.limits.records).map_err(storage_error)?;
+        crash_open().map_err(storage_error)?;
         Ok(CrashReporter {
             prefix,
             config: self,
@@ -55,7 +55,7 @@ impl CrashConfig {
     }
 }
 
-impl CrashReporter {
+impl CrashReporter {\n    pub(crate) fn prune(&self) {\n        crash_prune(&self.prefix, self.config.limits.records);\n    }\n
     pub(crate) fn install(&self, collector: Collector) -> io::Result<()> {
         console_error_panic_hook::set_once();
         if INSTALLED.swap(true, Ordering::AcqRel) {

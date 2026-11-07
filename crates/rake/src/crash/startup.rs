@@ -32,7 +32,12 @@ impl CrashReports {
             Self::Automatic => {
                 let result = CrashConfig::new(version.unwrap_or("unknown"))
                     .open(application_id)
-                    .and_then(|reporter| reporter.install(collector));
+                    .and_then(|reporter| {
+                        reporter.install(collector)?;
+                        #[cfg(target_family = "wasm")]
+                        reporter.prune();
+                        Ok(())
+                    });
 
                 if let Err(error) = result {
                     tracing::warn!(%error, "default crash recording unavailable; startup continues");

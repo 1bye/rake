@@ -22,12 +22,19 @@ function prune(prefix, count) {
   }
 }
 
-export function crash_open(prefix, count) {
+export function crash_open() {
   void localStorage.length;
-  if (hasLocks()) {
-    void navigator.locks.request(lockName(prefix), () => prune(prefix, count)).catch(() => {});
-  } else {
-    prune(prefix, count);
+}
+
+export function crash_prune(prefix, count) {
+  try {
+    if (hasLocks()) {
+      void navigator.locks.request(lockName(prefix), () => prune(prefix, count)).catch(() => {});
+    } else {
+      prune(prefix, count);
+    }
+  } catch (_) {
+    // Recording is best-effort even when storage policy changes after startup.
   }
 }
 
@@ -36,7 +43,7 @@ export function crash_write(prefix, id, raw, bytes, count) {
     if (encoder.encode(raw).length > bytes) return;
     localStorage.setItem(prefix + id, 'P' + raw);
     // Panic persistence cannot await. Retention settles under the delivery lock.
-    crash_open(prefix, count);
+    crash_prune(prefix, count);
   } catch (_) {
     // Quota/denied storage must not turn a panic into a second panic.
   }

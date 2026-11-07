@@ -128,7 +128,7 @@ try {
   await close(session);
 
   // Multiple actual panic pages retain only two records without a sink.
-  for (let i=0;i<4;i++) { session = await page('automatic'); await panic(session); await close(session); }
+  for (let i=0;i<4;i++) { session = await page('fail'); await panic(session); await close(session); }
   session = await page('disabled');
   await eventually(() => evaluate(session, records + '.length === 2'));
   await evaluate(session, 'localStorage.clear()');
@@ -141,7 +141,7 @@ try {
   await evaluate(session, 'window.adapter = await import("/adapter.js")');
   const hostChecks = await evaluate(session, '(async () => {' +
     'const p="rake:crashes:adapter-test:"; const raw=JSON.stringify({schema_version:2,future:"preserve"});' +
-    'adapter.crash_write(p,"001",raw,1024,2);' +
+    'adapter.crash_write(p,"001",raw,1024,2);await navigator.locks.request(p+"spool",()=>{});' +
     'let failed=false;try{await adapter.crash_deliver(p,1024,2,()=>{throw Error("sink")})}catch{failed=true}' +
     'if(!failed||localStorage[p+"001"]!=="P"+raw)throw Error("throwing sink lost record");' +
     'await adapter.crash_deliver(p,1024,2,()=>0);if(localStorage[p+"001"]!=="P"+raw)throw Error("future schema lost");' +
