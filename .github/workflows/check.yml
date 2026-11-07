@@ -139,6 +139,43 @@ jobs:
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
           -p rake-kit-example -p rake-ui -p rake-view -p rake-files
           -p rake-tray -p rake-autostart --all-targets --locked -- -D warnings
+      # Surface graphics failures before the longer workspace/trybuild suites.
+      - name: Build real desktop smoke app
+        id: smoke-build
+        if: ${{ !cancelled() }}
+        run: cargo build -p rake-desktop-example --features native-smoke --locked
+      - name: Render a GPUI frame on Linux (X11 and lavapipe)
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Linux' }}
+        timeout-minutes: 2
+        run: |
+          XDG_RUNTIME_DIR="$(mktemp -d)"
+          export XDG_RUNTIME_DIR
+          trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
+          lavapipe=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#lavapipe[@]}" -eq 1
+          test -f "${lavapipe[0]}"
+          export VK_ICD_FILENAMES="${lavapipe[0]}"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          unset WAYLAND_DISPLAY
+          # shellcheck disable=SC2016 # The inner shell expands its own environment.
+          xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash -euc '
+            openbox > "$XDG_RUNTIME_DIR/openbox.log" 2>&1 &
+            trap "kill $!" EXIT
+            vulkaninfo --summary
+            python3 scripts/desktop-smoke.py target/debug/rake-desktop-example
+          '
+      - name: Render a GPUI frame on Windows (D3D11)
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        timeout-minutes: 2
+        run: python scripts/desktop-smoke.py target/debug/rake-desktop-example.exe
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: desktop-smoke-${{ matrix.os }}
+          path: target/desktop-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Workspace tests (default native GPUI)
         if: ${{ !cancelled() }}
         run: cargo test --workspace --locked --no-fail-fast
@@ -176,40 +213,6 @@ jobs:
           -p rake-tray -p rake-autostart --all-targets --locked
           --features rake-app/gpui-fast,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools
           -- -D warnings
-      - name: Build real desktop smoke app
-        if: ${{ !cancelled() }}
-        run: cargo build -p rake-desktop-example --features native-smoke --locked
-      - name: Render a GPUI frame on Linux (X11 and lavapipe)
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
-        timeout-minutes: 2
-        run: |
-          XDG_RUNTIME_DIR="$(mktemp -d)"
-          export XDG_RUNTIME_DIR
-          trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
-          lavapipe=(/usr/share/vulkan/icd.d/lvp_icd*.json)
-          test "${#lavapipe[@]}" -eq 1
-          test -f "${lavapipe[0]}"
-          export VK_ICD_FILENAMES="${lavapipe[0]}"
-          export LIBGL_ALWAYS_SOFTWARE=1
-          unset WAYLAND_DISPLAY
-          # shellcheck disable=SC2016 # The inner shell expands its own environment.
-          xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash -euc '
-            openbox > "$XDG_RUNTIME_DIR/openbox.log" 2>&1 &
-            trap "kill $!" EXIT
-            vulkaninfo --summary
-            python3 scripts/desktop-smoke.py target/debug/rake-desktop-example
-          '
-      - name: Render a GPUI frame on Windows (D3D11)
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
-        timeout-minutes: 2
-        run: python scripts/desktop-smoke.py target/debug/rake-desktop-example.exe
-      - uses: actions/upload-artifact@v4
-        if: ${{ always() }}
-        with:
-          name: desktop-smoke-${{ matrix.os }}
-          path: target/desktop-smoke.log
-          if-no-files-found: warn
-          retention-days: 7
 
   native:
     if: github.event_name != 'schedule'
