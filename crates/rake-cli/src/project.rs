@@ -11,6 +11,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         for (name, source) in [
             ("bundle.py", include_str!("../scripts/bundle.py")),
+            (
+                "default-icon.svg",
+                include_str!("../scripts/default-icon.svg"),
+            ),
             ("web_offline.py", include_str!("../scripts/web_offline.py")),
             (
                 "web-service-worker.js",

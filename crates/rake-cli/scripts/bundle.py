@@ -2,6 +2,7 @@
 
 import hashlib
 import html
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -9,6 +10,44 @@ import shutil
 import stat
 import zipfile
 import web_offline
+
+
+class FaviconDocument(HTMLParser):
+    """Find real icon links and the document's head without matching comments/scripts."""
+    def __init__(self, document):
+        super().__init__()
+        self.document = document
+        self.has_icon = False
+        self.insertion = None
+        self.feed(document)
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "link" and "icon" in (dict(attrs).get("rel") or "").lower().split():
+            self.has_icon = True
+        if tag == "head" or (tag == "html" and self.insertion is None):
+            line, column = self.getpos()
+            self.insertion = sum(map(len, self.document.splitlines(keepends=True)[:line - 1])) + column + len(self.get_starttag_text())
+
+
+def install_favicon(site):
+    """Add Rake's static icon unless the application explicitly declares a favicon."""
+    index = site / "index.html"
+    document = index.read_text()
+    parsed = FaviconDocument(document)
+    if parsed.has_icon:
+        return
+    if parsed.insertion is None:
+        raise ValueError("Web document requires an html or head element")
+    source = Path(__file__).with_name("default-icon.svg")
+    data = source.read_bytes()
+    assets = site / "assets"
+    assets.mkdir(exist_ok=True)
+    icon = assets / "rake-icon.svg"
+    if not (icon.is_file() and not icon.is_symlink() and icon.read_bytes() == data):
+        with icon.open("xb") as file:
+            file.write(data)
+    link = '<link rel="icon" type="image/svg+xml" href="/assets/rake-icon.svg">'
+    index.write_text(document[:parsed.insertion] + link + document[parsed.insertion:])
 
 
 def base_path(value):

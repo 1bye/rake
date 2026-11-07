@@ -168,6 +168,9 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
         deployment = json.loads((site / "rake-deployment.json").read_text())
         self.assertEqual(deployment["routing"], "hash")
         self.assertEqual(deployment["base_path"], "/notes/v1/")
+        self.assertIn('href="/notes/v1/assets/rake-icon.svg"', (site / "index.html").read_text())
+        self.assertEqual((site / "assets/rake-icon.svg").read_bytes(),
+                         (ROOT / "crates/rake-build/assets/default-icon.svg").read_bytes())
         self.assertFalse(deployment["development_control"])
         self.assertIn('/notes/v1/pkg/bundle_fixture.js', (site / "loader.js").read_text())
         self.assertIn('href="/notes/v1/"', (site / "index.html").read_text())
@@ -194,6 +197,9 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
                     self.assertEqual(response.read()[:4], b'\0asm')
                 with urllib.request.urlopen(origin + "/notes/v1/assets/nested/message.txt") as response:
                     self.assertEqual(response.read(), b"owned packaged asset")
+                with urllib.request.urlopen(origin + "/notes/v1/assets/rake-icon.svg") as response:
+                    self.assertEqual(response.headers.get_content_type(), "image/svg+xml")
+                    self.assertEqual(response.read(), (ROOT / "crates/rake-build/assets/default-icon.svg").read_bytes())
                 with self.assertRaises(urllib.error.HTTPError) as error:
                     urllib.request.urlopen(origin + "/__rake/bootstrap.js")
                 self.assertEqual(error.exception.code, 404)
