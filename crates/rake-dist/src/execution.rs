@@ -441,7 +441,10 @@ pub fn execute_source_worker(
                 name,
                 None,
                 Some(path.clone()),
-                request.source.root.join(".rake-component-cache"),
+                request
+                    .source
+                    .root
+                    .join(crate::source::PREBUILT_COMPONENT_CACHE),
             )
         }
     };
@@ -546,7 +549,7 @@ fn execute_job(
         ));
     }
 
-    reject_input_overlap(&plan, root, &output, &target)?;
+    reject_input_overlap(&plan, root, &output, &target, "output")?;
 
     if let Some(path) = &request.entitlements {
         let path = dunce::canonicalize(path)?;
@@ -1388,6 +1391,7 @@ pub(crate) fn reject_input_overlap(
     root: &Path,
     output: &Path,
     target: &str,
+    reserved_name: &str,
 ) -> Result<(), Error> {
     for package in plan.packages() {
         let config = package.config();
@@ -1444,14 +1448,13 @@ pub(crate) fn reject_input_overlap(
 
         for path in paths {
             let input = files::confined(root, &path)?;
-            files::validate_tree(&input)?;
-
             if output.starts_with(&input) || input.starts_with(output) {
                 return Err(Error::Execution(format!(
-                    "output overlaps packaging input {}",
+                    "{reserved_name} overlaps packaging input {}",
                     input.display()
                 )));
             }
+            files::validate_tree(&input)?;
         }
     }
 
@@ -1759,9 +1762,19 @@ mod overlap_tests {
         let plan = config.plan("app", "1.0.0", Platform::Macos).unwrap();
 
         for output in [root.to_owned(), root.join("assets/distribution")] {
-            assert!(reject_input_overlap(&plan, root, &output, "aarch64-apple-darwin").is_err());
+            assert!(
+                reject_input_overlap(&plan, root, &output, "aarch64-apple-darwin", "output")
+                    .is_err()
+            );
         }
 
-        reject_input_overlap(&plan, root, &root.join("dist"), "aarch64-apple-darwin").unwrap();
+        reject_input_overlap(
+            &plan,
+            root,
+            &root.join("dist"),
+            "aarch64-apple-darwin",
+            "output",
+        )
+        .unwrap();
     }
 }

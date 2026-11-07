@@ -124,6 +124,25 @@ identity; all other Config values remain identical. Full-model round-trip tests
 also cover platform settings, target/format overrides, updates, release,
 extensions and Web data.
 
+## Prebuilt component cache
+
+Prebuilt downloads and extracted component inputs are cached in
+`<input-root>/.rake-component-cache/`. Cargo inputs continue to use Cargo's target
+cache. Add this entry to `.gitignore` at the selected input root:
+
+```gitignore
+/.rake-component-cache/
+```
+
+The prebuilt cache is reserved internal state. Planning rejects payload inputs
+that resolve to the cache, any cache member, or an ancestor containing it. This
+includes assets, resource trees, local components, runtimes and sidecars, even
+when a confined symlink maps the entire input root and output lives elsewhere.
+Use narrower payload mappings instead of packaging the whole root. The main
+executable and output must also remain separate from the cache, and the cache
+root must not be a symlink. These checks are repeated by the worker before
+staging, so broad payload mappings cannot accidentally include the cache directory.
+
 ## Worker and integration limits
 
 `BundleSource` owns the existing `Config`, canonical root, explicit lock and

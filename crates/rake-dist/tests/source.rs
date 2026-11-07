@@ -679,3 +679,121 @@ fn prebuilt_input_must_be_an_executable_image_not_a_native_object() {
     let error = plan_source(&request).unwrap_err().to_string();
     assert!(error.contains("executable image"), "{error}");
 }
+
+#[test]
+fn prebuilt_component_cache_cannot_be_payload_or_output() {
+    let (root, request) = prebuilt_fixture();
+    let cache = root.path().join(".rake-component-cache");
+    fs::create_dir(&cache).unwrap();
+    fs::write(cache.join("private-cache-entry"), "not application payload").unwrap();
+
+    for from in [
+        ".rake-component-cache",
+        ".rake-component-cache/private-cache-entry",
+    ] {
+        let mut changed = request.clone();
+        changed
+            .source
+            .config
+            .resources
+            .push(rake_dist_core::Resource {
+                from: from.into(),
+                to: "payload".into(),
+            });
+        let error = plan_source(&changed).unwrap_err().to_string();
+        assert!(error.contains("prebuilt component cache"), "{error}");
+    }
+    let mut changed = request.clone();
+    changed.source.config.assets = Some(".rake-component-cache".into());
+    assert!(
+        plan_source(&changed)
+            .unwrap_err()
+            .to_string()
+            .contains("prebuilt component cache")
+    );
+
+    let mut changed = request.clone();
+    changed
+        .source
+        .config
+        .components
+        .push(rake_dist_core::Component {
+            name: "cache-payload".into(),
+            target: request.target.clone().unwrap(),
+            source: rake_dist_core::ComponentSource::Local {
+                path: ".rake-component-cache".into(),
+            },
+            licenses: Vec::new(),
+        });
+    assert!(
+        plan_source(&changed)
+            .unwrap_err()
+            .to_string()
+            .contains("prebuilt component cache")
+    );
+
+    let mut changed = request.clone();
+    changed.output = cache.join("output");
+    assert!(
+        plan_source(&changed)
+            .unwrap_err()
+            .to_string()
+            .contains("prebuilt component cache")
+    );
+
+    let cached_binary = cache.join(if cfg!(windows) {
+        "cached-viewer.exe"
+    } else {
+        "cached-viewer"
+    });
+    fs::copy(native_executable(), &cached_binary).unwrap();
+    let mut changed = request.clone();
+    if let Program::Prebuilt { path, .. } = &mut changed.source.program {
+        *path = cached_binary.strip_prefix(root.path()).unwrap().into();
+    }
+    assert!(
+        plan_source(&changed)
+            .unwrap_err()
+            .to_string()
+            .contains("prebuilt component cache")
+    );
+
+    #[cfg(unix)]
+    {
+        // A confined alias can cover the entire root while output lives elsewhere.
+        std::os::unix::fs::symlink(".", root.path().join("whole-root")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        for assets in [false, true] {
+            let mut changed = request.clone();
+            changed.output = outside.path().join("output");
+            if assets {
+                changed.source.config.assets = Some("whole-root".into());
+            } else {
+                changed
+                    .source
+                    .config
+                    .resources
+                    .push(rake_dist_core::Resource {
+                        from: "whole-root".into(),
+                        to: "payload".into(),
+                    });
+            }
+            let error = plan_source(&changed).unwrap_err().to_string();
+            assert!(error.contains("prebuilt component cache"), "{error}");
+        }
+    }
+    assert!(
+        plan_source(&request).is_ok(),
+        "ordinary inputs must remain usable with an existing cache"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn prebuilt_component_cache_must_not_be_a_symlink() {
+    let (root, request) = prebuilt_fixture();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.path().join(".rake-component-cache")).unwrap();
+    let error = plan_source(&request).unwrap_err().to_string();
+    assert!(error.contains("cache must not be a symlink"), "{error}");
+}

@@ -8,6 +8,9 @@ use std::{
     process::Command,
 };
 
+/// Reserved prebuilt component cache directory, never an application payload input.
+pub(crate) const PREBUILT_COMPONENT_CACHE: &str = ".rake-component-cache";
+
 /// Main executable input. Distribution settings remain in [`Config`].
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
@@ -669,7 +672,27 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
     if source.root.starts_with(&output) {
         return Err(source_error("output overlaps application source"));
     }
-    crate::execution::reject_input_overlap(&plan, &source.root, &output, &target)?;
+    if let ResolvedProgram::Prebuilt { path, .. } = &program {
+        let cache = source.root.join(PREBUILT_COMPONENT_CACHE);
+        if fs::symlink_metadata(&cache).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(source_error(
+                "prebuilt component cache must not be a symlink",
+            ));
+        }
+        if path.starts_with(&cache) || output.starts_with(&cache) || cache.starts_with(&output) {
+            return Err(source_error(
+                "prebuilt component cache cannot be used as program input or overlap output",
+            ));
+        }
+        crate::execution::reject_input_overlap(
+            &plan,
+            &source.root,
+            &cache,
+            &target,
+            "prebuilt component cache",
+        )?;
+    }
+    crate::execution::reject_input_overlap(&plan, &source.root, &output, &target, "output")?;
     if let ResolvedProgram::Prebuilt { path, .. } = &program
         && (path.starts_with(&output) || output.starts_with(path))
     {
