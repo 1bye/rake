@@ -72,6 +72,13 @@ impl FileHandle {
                     // Never leave a blocking worker waiting forever for its writer.
                     options.custom_flags(libc::O_NONBLOCK);
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+                    // Open directories too, then reject them with the portable error below.
+                    options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+                }
                 let file = options.open(path)?;
 
                 if !file.metadata()?.is_file() {

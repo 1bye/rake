@@ -186,7 +186,12 @@ fn failed_git_init_leaves_no_project() {
 #[test]
 fn local_dependency_paths_preserve_quotes_and_template_like_text() {
     let directory = tempfile::tempdir().unwrap();
-    let checkout = directory.path().join("Rake \"{{dependency}}\"");
+    let name = if cfg!(windows) {
+        "Rake '{{dependency}}'"
+    } else {
+        "Rake \"{{dependency}}\""
+    };
+    let checkout = directory.path().join(name);
     let rake = checkout.join("crates/rake");
 
     fs::create_dir_all(&rake).unwrap();

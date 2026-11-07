@@ -210,3 +210,19 @@ its inputs. GStreamer/library groups use the same dependency configuration;
 see [distribution](../../docs/distribution.md#native-settings-and-dependencies).
 For richer managed tasks, HTTP/data and typed application commands, see
 [routing](../routing) and [notes](../notes); they use the same app/services boundary.
+
+## Native CI smoke test
+
+`cargo build -p rake-desktop-example --features native-smoke --locked` builds
+an opt-in probe of this routed application. Normal builds do not contain the
+probe. Once the initial tab is mounted, the shell schedules a GPUI post-frame
+callback, prints `RAKE_DESKTOP_SMOKE_FRAME`, and requests normal application
+shutdown. It does not use GPUI's headless TestPlatform.
+
+Run `python3 scripts/desktop-smoke.py target/debug/rake-desktop-example` from
+the repository root (`python` and the `.exe` suffix on Windows). The runner
+requires exit code zero and the exact frame marker within 60 seconds, rejects
+panic output, and saves `target/desktop-smoke.log`. Linux CI supplies Xvfb,
+Openbox, and Mesa lavapipe Vulkan; Windows CI uses the runner's D3D11 desktop.
+This proves window creation and a presented frame, not full interaction, tray
+integration, or updater installation.

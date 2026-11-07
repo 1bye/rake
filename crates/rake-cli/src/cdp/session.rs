@@ -3162,7 +3162,8 @@ mod tests {
     #[test]
     fn evaluation_errors_are_visible_exceptions_and_crash_output_survives_dead_ipc() {
         use std::os::unix::fs::OpenOptionsExt;
-        let path = std::env::temp_dir().join(format!("rake-crash-{}.json", uuid::Uuid::new_v4()));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.json");
 
         let file = std::fs::OpenOptions::new()
             .write(true)

@@ -247,7 +247,11 @@ fn automatic_boundaries_capture_styles_sources_and_rendered_text() {
         ["class", "style"]
     );
     assert!(sources[0].expression.contains("self.selected"));
-    assert_eq!(sources[0].source.line, source.line);
+    assert_eq!(
+        sources[0].source.line,
+        source.line + 2,
+        "the class attribute is two lines below the opening div tag"
+    );
     assert!(sources[1].source.line > sources[0].source.line);
     assert_eq!(sources[1].source.file, file!());
     let paragraph = named(&snapshot, "paragraph");
