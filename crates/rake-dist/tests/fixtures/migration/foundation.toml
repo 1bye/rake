@@ -1,0 +1,15 @@
+# Migrated from examples/foundation/Cargo.toml
+"schema_version" = 1
+"name" = "Rake Foundation"
+"identifier" = "com.example.rake.foundation"
+
+["web"]
+"offline" = true
+
+
+["windows"]
+"manifest" = "windows.manifest.xml"
+
+
+["program"]
+"type" = "cargo"

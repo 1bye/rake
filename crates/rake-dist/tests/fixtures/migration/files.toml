@@ -1,0 +1,16 @@
+# Migrated from examples/files/Cargo.toml
+"schema_version" = 1
+"name" = "Text Toolkit"
+"identifier" = "dev.rake.text-toolkit"
+"icon" = "assets/icon.svg"
+
+["web"]
+"offline" = true
+
+
+["windows"]
+"manifest" = "windows.manifest.xml"
+
+
+["program"]
+"type" = "cargo"

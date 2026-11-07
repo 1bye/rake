@@ -1,8 +1,14 @@
-//! Distribution planning at the Cargo package boundary.
+//! Distribution source loading, planning and owned native packaging jobs.
 //!
 //! Native execution is separate from the portable plan returned here.
 
 mod archives;
+mod source;
+
+pub use source::{
+    BundleSource, Program, ResolvedProgram, SourceBundleRequest, SourceOrigin, SourcePlan,
+    bundle_file_schema, load_bundle_file, plan_source, select_bundle_file,
+};
 mod compatibility;
 mod components;
 
@@ -36,7 +42,8 @@ mod sparkle;
 mod windows_dlls;
 
 pub use execution::{
-    Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, execute_worker, host_target,
+    Artifact, BundleRequest, Distribution, LinuxEvidence, bundle, bundle_source, dispatch_worker,
+    execute_source_worker, execute_worker, host_target,
 };
 
 pub use process::Worker;
@@ -53,6 +60,9 @@ use std::{
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Standalone source, schema or selection is invalid.
+    #[error("invalid bundle source: {0}")]
+    Source(String),
     /// Native execution or output ownership failed.
     #[error("distribution: {0}")]
     Execution(String),

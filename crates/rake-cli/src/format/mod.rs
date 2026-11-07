@@ -207,3 +207,13 @@ fn format_file(source: &str, rustfmt: &mut Rustfmt) -> Result<(String, Vec<Probl
     }
     Err("Rust and markup formatting did not converge; file left unchanged".into())
 }
+
+/// Format a lint-edited source with the same convergence and comment guarantees.
+pub(crate) fn fixed_source(path: &Path, source: &str) -> Result<String> {
+    let mut rustfmt = Rustfmt::load(path.parent().ok_or("file has no parent directory")?)?;
+    let (output, problems) = format_file(source, &mut rustfmt)?;
+    if !problems.is_empty() {
+        return Err(format!("{}: cannot format lint fix safely", path.display()).into());
+    }
+    Ok(output)
+}

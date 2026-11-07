@@ -1,5 +1,7 @@
 //! Macro-authored Elements screen; remote work is owned by its Rake entry activity.
 
+// rake-lint: allow-file(view-theme-literal) Inspector chrome intentionally uses fixed compact typography and radii; source rows align with fixed line metrics, and the transparent focus border reserves geometry.
+
 use crate::appearance::{CODE_FONT, Icon, Palette, control, icon};
 use crate::{Connection, ConnectionConfig, Inspector, Update};
 use crate::{styles, tree};
@@ -2041,14 +2043,14 @@ impl Render for ElementsView {
                         }
                         if current_tab == "Events" {
                             for (index, handler) in element.handlers.iter().enumerate() {
-                                // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                 <div
+                                    // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                     id={format!("handler-{index}")}
                                     class="flex flex-col px-3 py-2 border-b-1 border-line font-code text-[11px]"
                                 >
                                     <p>{format!("{} · {}", handler.name, handler.origin)}</p>
-                                    // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                     <button
+                                        // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                         id={format!("open-handler-source-{index}")}
                                         aria-label={
                                             format!(
@@ -2105,15 +2107,15 @@ impl Render for ElementsView {
                             if let Some(view) = &element.view {
                                 {property("Authored tag", view.tag.clone(), colors)}
                                 for (index, style) in view.style_sources.iter().enumerate() {
-                                    // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                     <div
+                                        // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                         id={format!("style-source-{index}")}
                                         class="px-3 py-2 border-b-1 border-line font-code text-[11px]"
                                     >
                                         <p>{format!("{} · {}", style.scope, style.attribute)}</p>
                                         <p class="text-muted">{style.expression.clone()}</p>
-                                        // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                         <button
+                                            // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                             id={format!("open-style-source-{index}")}
                                             aria-label={
                                                 format!(

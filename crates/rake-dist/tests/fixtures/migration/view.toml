@@ -1,0 +1,7 @@
+# Migrated from examples/view/Cargo.toml
+"schema_version" = 1
+"name" = "Rake View"
+"identifier" = "com.example.rake.view"
+
+["program"]
+"type" = "cargo"

@@ -231,6 +231,10 @@ jobs:
       # The formatter CLI depends on the distribution bundler; keep its build off the gate.
       - run: cargo run -p rake-app-cli --locked -- format --check
       - run: cargo test -p rake-ui --features test-support --locked
+      - name: Check generated lint guide and rule docs
+        run: cargo test -p rake-app-cli --locked --bin rake catalogue_artifacts_are_current
+      - name: Lint examples (including warnings)
+        run: python3 scripts/check-example-lints.py
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-app --features native-components --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
@@ -313,3 +317,4 @@ jobs:
           python3 scripts/test-supervisor.py
           python3 scripts/test-inspector.py
       - run: node scripts/test-web-loading.mjs
+      - run: node scripts/test-web-crash.mjs

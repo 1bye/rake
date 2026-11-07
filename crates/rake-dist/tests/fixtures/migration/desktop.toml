@@ -1,0 +1,63 @@
+# Migrated from examples/desktop/Cargo.toml
+"schema_version" = 1
+"name" = "Rake Starter"
+"identifier" = "dev.rake.starter"
+"icon" = "assets/icon.svg"
+"resources" = [{ "from" = "assets/welcome.txt", "to" = "welcome.txt" }]
+
+["desktop"]
+"category" = "utility"
+
+
+["macos"]
+"formats" = ["zip", "dmg"]
+"info_plist" = "packaging/Info.plist"
+
+
+["windows"]
+"formats" = ["velopack"]
+"manifest" = "packaging/app.manifest"
+"timestamp_url" = "http://timestamp.digicert.com"
+
+
+["linux"]
+"formats" = ["appimage", "deb", "rpm", "arch"]
+"package_name" = "rake-starter"
+
+
+["updates"]
+"enabled" = false
+"channel" = "stable"
+"base_url" = "https://downloads.example.com/rake-starter"
+
+
+["release"]
+
+["release"."publisher"]
+"kind" = "directory"
+"path" = "release-site"
+"public_url" = "https://downloads.example.com/rake-starter"
+
+
+["release"."required"]
+"aarch64-apple-darwin" = ["zip", "dmg"]
+"x86_64-pc-windows-msvc" = ["velopack"]
+"x86_64-unknown-linux-gnu" = ["appimage", "deb", "rpm", "arch"]
+
+
+["release"."signing_keys"]
+
+["release"."signing_keys"."velopack"]
+"kind" = "environment"
+"variable" = "RAKE_STARTER_VELOPACK_SEED"
+
+
+["release"."signing_keys"."appimage"]
+"kind" = "environment"
+"variable" = "RAKE_STARTER_APPIMAGE_SEED"
+
+
+
+
+["program"]
+"type" = "cargo"

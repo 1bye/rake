@@ -1,0 +1,8 @@
+# Migrated from examples/inspector/Cargo.toml
+"schema_version" = 1
+"name" = "Rake Inspector"
+"identifier" = "dev.rake.inspector"
+"minimum_system_version" = "13.0"
+
+["program"]
+"type" = "cargo"

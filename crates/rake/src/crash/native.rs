@@ -1,7 +1,7 @@
 //! Native panic hook, private spool and claimed delivery.
 
 use std::backtrace::Backtrace;
-use std::fmt::{self, Write as _};
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -14,9 +14,7 @@ use crate::storage::file::{check_directory, check_file, private_options};
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static NEXT_RECORD: AtomicU64 = AtomicU64::new(0);
-const PRIVATE_MESSAGE: &str = "Rust panic (payload omitted for privacy)";
-const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
-const MAX_BACKTRACE_BYTES: usize = 32 * 1024;
+use super::record::*;
 
 impl CrashConfig {
     /// Opens/creates a private directory without installing a hook or delivering records.
@@ -30,20 +28,7 @@ impl CrashConfig {
     /// non-private Unix permissions, or filesystem failures. IDs accept 1–128 ASCII
     /// letters, digits, dots, underscores and hyphens, excluding `.` and `..`.
     pub fn open(self, application_id: &str) -> io::Result<CrashReporter> {
-        if application_id.is_empty()
-            || application_id.len() > 128
-            || matches!(application_id, "." | "..")
-            || !application_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-            || !(1024..=1024 * 1024).contains(&self.limits.record_bytes)
-            || !(1..=128).contains(&self.limits.records)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid crash ID or limits",
-            ));
-        }
+        self.validate(application_id)?;
 
         let directory = match self.directory {
             Some(directory) => directory,
@@ -169,6 +154,7 @@ impl CrashReporter {
             Err(std::fs::TryLockError::Error(error)) => return Err(error),
         }
 
+        let _delivery_lock = FileLock(&lock);
         let mut delivered = 0;
 
         for path in self.records()? {
@@ -184,6 +170,7 @@ impl CrashReporter {
                 continue;
             }
 
+            let _record_lock = FileLock(&file);
             let claimed = path.with_extension("claimed");
 
             if path != claimed {
@@ -280,46 +267,7 @@ impl CrashReporter {
 
     fn write(&self, mut record: CrashRecord) -> io::Result<()> {
         check_directory(&self.directory)?;
-        let bytes = loop {
-            let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
-
-            if bytes.len() <= self.limits.record_bytes {
-                break bytes;
-            }
-
-            record.truncated = true;
-
-            if let Some(tail) = record.diagnostics.as_mut()
-                && !tail.is_empty()
-            {
-                tail.remove(0);
-            } else if record.message != PRIVATE_MESSAGE && !record.message.is_empty() {
-                record
-                    .message
-                    .truncate(record.message.floor_char_boundary(record.message.len() / 2));
-            } else if !record.backtrace.is_empty() {
-                record.backtrace.truncate(
-                    record
-                        .backtrace
-                        .floor_char_boundary(record.backtrace.len() / 2),
-                );
-            } else if let Some(location) = record.location.as_mut()
-                && !location.is_empty()
-            {
-                location.truncate(location.floor_char_boundary(location.len() / 2));
-            } else if !record.app_version.is_empty() {
-                record.app_version.truncate(
-                    record
-                        .app_version
-                        .floor_char_boundary(record.app_version.len() / 2),
-                );
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "crash metadata exceeds budget",
-                ));
-            }
-        };
+        let bytes = encode(&mut record, self.limits.record_bytes)?;
 
         let temporary = Temporary(self.directory.join(format!(".{}.tmp", record.id)));
         let mut file = private_options()
@@ -384,6 +332,7 @@ impl CrashReporter {
                 Err(std::fs::TryLockError::Error(error)) => return Err(error),
             }
 
+            let retention_lock = FileLock(&lock);
             let pending = self.directory.join("retention.pending");
 
             match fs::remove_file(&pending) {
@@ -408,6 +357,8 @@ impl CrashReporter {
                     continue;
                 }
 
+                let _record_lock = FileLock(&file);
+
                 match fs::remove_file(path) {
                     Ok(()) => excess -= 1,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -415,12 +366,23 @@ impl CrashReporter {
                 }
             }
 
+            drop(retention_lock);
             drop(lock);
 
             if !pending.try_exists()? {
                 return Ok(());
             }
         }
+    }
+}
+
+// Closing alone leaves flock held by a descriptor inherited across fork until exec.
+// Explicit unlock also releases those references, including when a sink unwinds.
+struct FileLock<'a>(&'a fs::File);
+
+impl Drop for FileLock<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
     }
 }
 
@@ -445,63 +407,6 @@ impl Drop for Temporary {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
-}
-
-struct TraceText {
-    text: String,
-    truncated: bool,
-}
-
-impl fmt::Write for TraceText {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        let available = MAX_BACKTRACE_BYTES.saturating_sub(self.text.len());
-        let part = prefix(text, available);
-        self.text.push_str(part);
-        self.truncated |= part.len() < text.len();
-
-        Ok(())
-    }
-}
-
-fn panic_message(payload: &(dyn std::any::Any + Send), include: bool) -> (String, bool) {
-    let message = include
-        .then(|| {
-            payload
-                .downcast_ref::<&'static str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        })
-        .flatten();
-
-    match message {
-        Some(message) => (
-            prefix(message, MAX_PANIC_MESSAGE_BYTES).into(),
-            message.len() > MAX_PANIC_MESSAGE_BYTES,
-        ),
-        None => (PRIVATE_MESSAGE.into(), false),
-    }
-}
-
-fn prefix(text: &str, bytes: usize) -> &str {
-    &text[..text.floor_char_boundary(bytes.min(text.len()))]
-}
-
-fn source_path(path: &str) -> String {
-    let absolute = path.starts_with(['/', '\\']) || path.as_bytes().get(1) == Some(&b':');
-
-    if !absolute {
-        return path.into();
-    }
-
-    let normalized = path.replace('\\', "/");
-
-    if let Some((parent, source)) = normalized.rsplit_once("/src/")
-        && let Some(crate_name) = parent.rsplit('/').next().filter(|name| !name.is_empty())
-    {
-        return format!("{crate_name}/src/{source}");
-    }
-
-    normalized.rsplit('/').next().unwrap_or("unknown").into()
 }
 
 fn data_root() -> io::Result<PathBuf> {

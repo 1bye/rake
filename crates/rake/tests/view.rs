@@ -1106,3 +1106,50 @@ fn conditional_negative_classes_build_real_gpui_styles() {
         format!("{:?}", expected.style())
     );
 }
+
+#[test]
+fn lint_style_class_fix_preserves_real_gpui_style_and_attribute_evaluation_order() {
+    let calls = RefCell::new(Vec::new());
+    let mut before = rake::view! {
+        <div
+            aria-label={
+                {
+                    calls.borrow_mut().push("before-label");
+                    "Label"
+                }
+            }
+            style={|s| s.flex().p_4().px_2().p_0().gap_4()}
+            aria-description={
+                {
+                    calls.borrow_mut().push("after-label");
+                    "Description"
+                }
+            }
+        />
+    };
+    let before_calls = calls.replace(Vec::new());
+    let mut after = rake::view! {
+        <div
+            aria-label={
+                {
+                    calls.borrow_mut().push("before-label");
+                    "Label"
+                }
+            }
+            class="flex p-4 px-2 p-0 gap-4"
+            aria-description={
+                {
+                    calls.borrow_mut().push("after-label");
+                    "Description"
+                }
+            }
+        />
+    };
+
+    assert_eq!(before_calls, ["before-label", "after-label"]);
+    assert_eq!(*calls.borrow(), before_calls);
+    assert_eq!(
+        format!("{:?}", before.style()),
+        format!("{:?}", after.style())
+    );
+}
