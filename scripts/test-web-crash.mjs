@@ -71,7 +71,8 @@ try {
       if (path === '/') { response.writeHead(200, {'Content-Type':'text/html'}).end(bootstrap); return; }
       if (path === '/adapter.js') { response.writeHead(200, {'Content-Type':'text/javascript'}).end(await readFile(join(root, 'crates/rake/src/crash/browser.js'))); return; }
       assert(!path.split('/').includes('..'));
-      response.writeHead(200, {'Content-Type':path.endsWith('.wasm')?'application/wasm':'text/javascript'}).end(await readFile(join(temporary, path)));
+      const data = await readFile(join(temporary, path));
+      response.writeHead(200, {'Content-Type':path.endsWith('.wasm')?'application/wasm':'text/javascript'}).end(data);
     } catch (_) { response.writeHead(404).end(); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
