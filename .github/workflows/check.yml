@@ -24,6 +24,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Keep dependency caches small; CI assertions do not require full debug symbols.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -32,11 +38,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: gate
-          cache-targets: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: python3 scripts/check-gpui-pins.py
       - run: cargo fmt --all --check
       # These suites take seconds and need neither a Rust build nor a browser.
@@ -66,6 +67,9 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
           shared-key: portable
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Portable API lints
@@ -95,6 +99,10 @@ jobs:
       - name: Wasm artifact builds
         run: cargo build -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector --lib --target wasm32-unknown-unknown --locked
 
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python3 scripts/cache-budget.py --targets
+
   desktop:
     name: desktop (${{ matrix.os }})
     needs: gate
@@ -109,9 +117,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-      CARGO_INCREMENTAL: "0"
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@v7
@@ -122,6 +127,9 @@ jobs:
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
           shared-key: desktop-${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GPUI Linux development and software Vulkan libraries
@@ -214,6 +222,10 @@ jobs:
           --features rake-app/gpui-fast,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools
           -- -D warnings
 
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python scripts/cache-budget.py --targets
+
   native:
     if: github.event_name != 'schedule'
     needs: gate
@@ -226,6 +238,9 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
           shared-key: native
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The formatter CLI depends on the distribution bundler; keep its build off the gate.
@@ -262,6 +277,10 @@ jobs:
         run: cargo test -p rake-app --no-default-features --test platform --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
       - run: cargo test -p rake-app-cli --features scaffold-tests --test new_build --locked
 
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python3 scripts/cache-budget.py --targets
+
   extended:
     if: github.event_name != 'pull_request'
     needs: gate
@@ -275,8 +294,12 @@ jobs:
       - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
           shared-key: extended
-          # Keep the pinned Dylint binaries and driver builds between main runs.
+          cache-targets: false
+          # Keep binaries/drivers, not a duplicate stable + nightly target tree.
           cache-directories: ~/.dylint_drivers
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install spacing tools
@@ -318,3 +341,6 @@ jobs:
           python3 scripts/test-inspector.py
       - run: node scripts/test-web-loading.mjs
       - run: node scripts/test-web-crash.mjs
+      - name: Estimate tools and download cache size
+        if: ${{ always() }}
+        run: python3 scripts/cache-budget.py --drivers
