@@ -34,6 +34,10 @@ so later phases can reuse them without porting deployment or serving now.
 - Python's version remains a diagnostic. Rust probes `python3 --version`;
   absent/broken Python produces an error object in `python` instead of preventing
   the command from starting. Neither build nor doctor requires an interpreter.
+- Intentional fix beyond Python parity: exact manifest selection canonicalizes
+  both the requested path and Cargo's reported manifest path, falling back to each
+  raw path if canonicalization fails. Symlink spellings such as macOS /var or
+  /tmp now select the intended package in multi-member workspaces.
 - OS errors and malformed JSON/TOML use Rust library diagnostics rather than
   emulating Python exception text. Unusual integer syntax/values outside i64
   use Rust argument parsing. Ordinary validated flags retain the old messages.
@@ -53,6 +57,7 @@ so later phases can reuse them without porting deployment or serving now.
 | test-bundle: native build layout | real_desktop_build_does_not_execute_python |
 | test-bundle: input validation | build_rejects_unowned_output_overlap_and_symlink_markers; web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches |
 | test-bundle: invalid target options | parser_preserves_errors_flags_and_doctor_validation_order |
+| Symlinked workspace manifest selection (intentional fix) | symlinked_manifest_selects_exact_workspace_package |
 | Artifact discovery/error paths | web_build_reports_missing_artifacts_and_ambiguous_packages |
 | Metadata bounds/process errors | project_build::processes::tests (3 tests) |
 
@@ -60,7 +65,7 @@ Existing scripts/tests are retained. Rust CLI tests use shell tool doubles for W
 and a real Cargo console application for desktop; they require no Python, Node,
 GPU or wasm-bindgen installation.
 
-## Verification (Linux devbox, Rust 1.98.0)
+## Initial verification at 9940552 (Linux devbox, Rust 1.98.0)
 
 All Cargo invocations used `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0`.
 

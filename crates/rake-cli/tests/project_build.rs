@@ -597,3 +597,41 @@ fn real_desktop_build_does_not_execute_python() {
             .is_file()
     );
 }
+
+#[test]
+fn symlinked_manifest_selects_exact_workspace_package() {
+    let fixture = Fixture::new();
+    fixture.metadata(json!({}), 2);
+    let alias = fixture._directory.path().join("linked-app");
+    symlink(fixture.root.canonicalize().unwrap(), &alias).unwrap();
+    let manifest = alias.join("Cargo.toml");
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+
+    // Cargo can report the symlink spelling or its resolved path.
+    for reported in [
+        manifest.clone(),
+        fixture.root.join("Cargo.toml").canonicalize().unwrap(),
+    ] {
+        metadata["packages"][0]["manifest_path"] = json!(reported);
+        fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
+
+        let result = success(&fixture.build(&["--manifest-path", manifest.to_str().unwrap()]));
+        assert_eq!(result["artifact"], json!(fixture.output()));
+    }
+
+    // Synthetic/unavailable paths retain the raw comparison as a fallback.
+    let missing = fixture.root.join("unavailable/Cargo.toml");
+    metadata["packages"][0]["manifest_path"] = json!(missing);
+    fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
+    error(
+        &fixture.build(&[
+            "--manifest-path",
+            missing.to_str().unwrap(),
+            "--bin",
+            "absent",
+        ]),
+        1,
+        "select one binary with --bin",
+    );
+}

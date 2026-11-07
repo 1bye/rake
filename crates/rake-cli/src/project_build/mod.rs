@@ -153,14 +153,18 @@ impl Project {
         if let Some(package) = &args.package {
             packages.retain(|item| item["name"] == *package);
         } else {
-            let manifest = resolve(&args.manifest)?;
+            let manifest = args
+                .manifest
+                .canonicalize()
+                .unwrap_or_else(|_| args.manifest.clone());
             let exact: Vec<_> = packages
                 .iter()
                 .copied()
                 .filter(|item| {
-                    item["manifest_path"]
-                        .as_str()
-                        .is_some_and(|path| Path::new(path) == manifest)
+                    item["manifest_path"].as_str().is_some_and(|path| {
+                        let path = Path::new(path);
+                        path.canonicalize().unwrap_or_else(|_| path.to_owned()) == manifest
+                    })
                 })
                 .collect();
             if !exact.is_empty() {
