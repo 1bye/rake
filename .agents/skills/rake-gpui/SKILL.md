@@ -11,6 +11,12 @@ After editing Rust or view! markup, run rake format, then rake lint.
 Use `rake lint --fix` for machine-safe edits and `rake format --check` in CI.
 A reasoned `// rake-lint: allow(ID) reason` suppresses a Rust finding;
 use `# rake-lint: allow(ID) reason` in Cargo.toml.
+For one intentional decision throughout a file, use a standalone
+`// rake-lint: allow-file(ID) reason` in the file header, before code
+(or `# rake-lint: allow-file(ID) reason` before TOML entries).
+The reason is required. File scope covers only that rule in that file;
+unused, duplicate or misplaced file directives report invalid-suppression.
+Use a line suppression for a local exception.
 Configure rust-analyzer with:
 
 ```toml
@@ -163,7 +169,7 @@ lint suppression needs a reason
 
 A reason documents why a rule does not apply here. A suppression without a reason is ignored, so the original diagnostic is still reported.
 
-What to write instead: append a nonempty reason after allow(<rule-id>)
+What to write instead: append a nonempty reason after allow(<rule-id>) or allow-file(<rule-id>)
 
 Before:
 
@@ -181,9 +187,9 @@ After:
 
 invalid lint suppression
 
-Suppressions must name one known, suppressible rule. Misspellings and malformed directives are ignored. Syntax errors and suppression diagnostics cannot themselves be suppressed inline.
+Suppressions must name one known, suppressible rule and have a reason. Misspellings and malformed directives are ignored. Use allow-file only as a standalone file-header comment for an intentional decision applying throughout that file. Unused file suppressions, including duplicates and those made redundant by allow levels, are reported here; remove them when no emitted finding needs the exception. Syntax errors and suppression diagnostics cannot themselves be suppressed.
 
-What to write instead: use // rake-lint: allow(<known-rule-id>) <reason>
+What to write instead: use a reasoned allow directive; put allow-file in the file header and remove unused file suppressions
 
 Before:
 

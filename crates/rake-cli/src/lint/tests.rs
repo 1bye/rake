@@ -824,3 +824,175 @@ fn context_changes_invalidate_fixes_even_when_the_attribute_is_unchanged() {
     assert!(fix::apply(root, &report).is_err());
     assert_eq!(fs::read_to_string(root.join("main.rs")).unwrap(), changed);
 }
+
+#[test]
+fn file_suppressions_cover_matching_findings_without_hiding_other_rules() {
+    let source = "//! Header docs\n/* header block */\n// rake-lint: allow-file(view-button-label) Mounted widgets supply action names.\nfn f() { rake::view! { <div><button/><button/><img src=\"x\"/></div> }; }";
+    let diagnostics = check_source(Path::new("main.rs"), source, &Levels::new());
+    assert_eq!(ids(&diagnostics), [IMAGE]);
+
+    let other_file = check_source(
+        Path::new("other.rs"),
+        "fn f() { rake::view! { <button/> }; }",
+        &Levels::new(),
+    );
+    assert_eq!(ids(&other_file), [BUTTON]);
+}
+
+#[test]
+fn file_suppressions_require_reasons_and_valid_header_placement() {
+    for directive in [
+        "// rake-lint: allow-file(view-button-label)",
+        "// rake-lint: allow-file(view-button-label)   ",
+    ] {
+        let source = format!("{directive}\nfn f() {{ rake::view! {{ <button/> }}; }}");
+        assert_eq!(
+            ids(&check_source(Path::new("main.rs"), &source, &Levels::new())),
+            [BUTTON, REASON]
+        );
+    }
+    for source in [
+        "// rake-lint: allow-file(unknown) Reason.\nfn f() {}",
+        "// rake-lint: allow-file(syntax-error) Reason.\nfn f() {}",
+        "// rake-lint: allow-file(invalid-suppression) Reason.\nfn f() {}",
+        "// rake-lint: allow-file(view-button-label Reason.\nfn f() {}",
+        "use std::fmt;\n// rake-lint: allow-file(view-button-label) Too late.\nfn f() {}",
+        "fn f() {} // rake-lint: allow-file(view-button-label) Trailing.",
+        "fn f() {\n// rake-lint: allow-file(view-button-label) Nested.\nrake::view! { <button/> }; }",
+    ] {
+        let diagnostics = check_source(Path::new("main.rs"), source, &Levels::new());
+        assert!(
+            diagnostics.iter().any(|d| d.rule_id == SUPPRESSION),
+            "{source}"
+        );
+        if source.contains("<button/>") {
+            assert!(diagnostics.iter().any(|d| d.rule_id == BUTTON));
+        }
+    }
+}
+
+#[test]
+fn file_suppressions_report_unused_and_duplicate_directives_at_their_comments() {
+    let source = "// rake-lint: allow-file(view-button-label) No buttons here.\nfn f() {}";
+    let diagnostics = check_source(Path::new("main.rs"), source, &Levels::new());
+    assert_eq!(ids(&diagnostics), [SUPPRESSION]);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("unused file suppression for view-button-label")
+    );
+    assert_eq!(diagnostics[0].span.start.line, 1);
+    assert_eq!(diagnostics[0].span.start.column, 1);
+    assert_eq!(
+        diagnostics[0].span.end.column,
+        source.lines().next().unwrap().chars().count() + 1
+    );
+
+    let source = "// rake-lint: allow-file(view-button-label) First reason.\n// rake-lint: allow-file(view-button-label) Redundant reason.\nfn f() { rake::view! { <button/> }; }";
+    let diagnostics = check_source(Path::new("main.rs"), source, &Levels::new());
+    assert_eq!(ids(&diagnostics), [SUPPRESSION]);
+    assert!(diagnostics[0].message.contains("unused file suppression"));
+    assert_eq!(diagnostics[0].span.start.line, 2);
+}
+
+#[test]
+fn file_suppression_usage_respects_effective_levels() {
+    let source = "// rake-lint: allow-file(view-button-label) Embedded widget.\nfn f() { rake::view! { <button/> }; }";
+    let levels = BTreeMap::from([(BUTTON.into(), Level::Allow)]);
+    let diagnostics = check_source(Path::new("main.rs"), source, &levels);
+    assert_eq!(ids(&diagnostics), [SUPPRESSION]);
+
+    let source = "// rake-lint: allow-file(view-button-label) No buttons.\nfn f() {}";
+    for level in [Level::Warn, Level::Deny] {
+        let diagnostics = check_source(
+            Path::new("main.rs"),
+            source,
+            &BTreeMap::from([(SUPPRESSION.into(), level)]),
+        );
+        assert_eq!(diagnostics[0].level, level);
+    }
+    assert!(
+        check_source(
+            Path::new("main.rs"),
+            source,
+            &BTreeMap::from([(SUPPRESSION.into(), Level::Allow)])
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn file_suppressions_ignore_strings_docs_and_nested_block_comments() {
+    for prefix in [
+        "//! Header docs\nconst S: &str = r#\"// rake-lint: allow-file(view-button-label) Fake.\"#;",
+        "const S: &str = \"// rake-lint: allow-file(view-button-label) Fake.\";",
+        "const S: &str = r#\"// rake-lint: allow-file(view-button-label) Fake.\"#;",
+        "/// rake-lint: allow-file(view-button-label) Fake.",
+        "//! rake-lint: allow-file(view-button-label) Fake.",
+        "/* outer /* // rake-lint: allow-file(view-button-label) Fake. */ */",
+    ] {
+        let source = format!("{prefix}\nfn f() {{ rake::view! {{ <button/> }}; }}");
+        assert_eq!(
+            ids(&check_source(Path::new("main.rs"), &source, &Levels::new())),
+            [BUTTON],
+            "{prefix}"
+        );
+    }
+}
+
+#[test]
+fn file_suppressions_support_toml_headers_with_the_same_usage_checks() {
+    let file = Path::new("Cargo.toml");
+    let source = "# rake-lint: allow-file(release-debug-assertions) Dedicated diagnostics artifact.\n[profile.release]\ndebug-assertions=true # keep\n";
+    let diagnostics = manifest::check(file, source).unwrap();
+    assert!(filter_diagnostics(file, source, &Levels::new(), diagnostics, true).is_empty());
+
+    let source = source.replace("=true", "=false");
+    let diagnostics = manifest::check(file, &source).unwrap();
+    let diagnostics = filter_diagnostics(file, &source, &Levels::new(), diagnostics, true);
+    assert_eq!(ids(&diagnostics), [SUPPRESSION]);
+    assert!(diagnostics[0].message.contains("unused file suppression"));
+
+    let source = "[profile.release]\n# rake-lint: allow-file(release-debug-assertions) Too late.\ndebug-assertions=true";
+    let diagnostics = manifest::check(file, source).unwrap();
+    assert_eq!(
+        ids(&filter_diagnostics(
+            file,
+            source,
+            &Levels::new(),
+            diagnostics,
+            true
+        )),
+        [catalogue::RELEASE, SUPPRESSION]
+    );
+}
+
+#[test]
+fn file_suppression_does_not_leak_to_other_files_in_a_themed_package() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.1.0'",
+    )
+    .unwrap();
+    fs::write(
+        root.join("theme.rs"),
+        "fn install() { rake::theme::install(cx, colors); }",
+    )
+    .unwrap();
+    let view = "fn view() { rake::view! { <div class=\"text-[10px]\"/> }; }";
+    fs::write(
+        root.join("allowed.rs"),
+        format!(
+            "// rake-lint: allow-file(view-theme-literal) Compact inspector typography.\n{view}"
+        ),
+    )
+    .unwrap();
+    fs::write(root.join("other.rs"), view).unwrap();
+
+    let report = check_project(root).unwrap();
+
+    assert_eq!(ids(&report.diagnostics), [catalogue::THEME]);
+    assert_eq!(report.diagnostics[0].file, "other.rs");
+}

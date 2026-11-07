@@ -355,3 +355,64 @@ fn fix_rejects_modes_that_do_not_check_a_project() {
         assert!(serde_json::from_slice::<serde_json::Value>(&output.stderr).unwrap()["error"]["message"].is_string());
     }
 }
+
+#[test]
+fn file_suppressions_control_json_exit_status_and_machine_fixes() {
+    let source = "// rake-lint: allow-file(view-button-label) Mounted widgets name their actions.\nfn main() { rake::view! { <div><button/><button/></div> }; }";
+    let output = run(
+        source,
+        "[package.metadata.rake.lint.levels]\nview-button-label='deny'",
+        &["--json"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+
+    let unused = run(
+        "// rake-lint: allow-file(view-button-label) No longer needed.\nfn main() {}",
+        "[package.metadata.rake.lint.levels]\ninvalid-suppression='deny'",
+        &["--json"],
+    );
+    assert_eq!(unused.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&unused.stdout).unwrap();
+    assert_eq!(report["diagnostics"][0]["rule_id"], "invalid-suppression");
+    assert!(
+        report["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unused file suppression")
+    );
+    assert_eq!(report["diagnostics"][0]["span"]["start"]["line"], 1);
+
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("Cargo.toml"),
+        "[package]\nname='lint-fix'\nversion='0.1.0'",
+    )
+    .unwrap();
+    let source = "// rake-lint: allow-file(view-style-class) Demonstrates fluent builders.\nfn main(){rake::view! { <div style={|s| s.flex()}/> };}\n";
+    fs::write(project.path().join("main.rs"), source).unwrap();
+    for _ in 0..2 {
+        let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+            .args(["lint", "--fix", "--json"])
+            .current_dir(project.path())
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["diagnostics"], serde_json::json!([]));
+        assert_eq!(
+            fs::read_to_string(project.path().join("main.rs")).unwrap(),
+            source
+        );
+    }
+}

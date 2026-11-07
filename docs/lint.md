@@ -183,6 +183,33 @@ Malformed directives and unknown IDs warn. All view rules and the release-profil
 suppressed inline; syntax errors and suppression diagnostics cannot hide each
 other. A reason is free text, not automatically judged for adequacy.
 
+For one deliberate decision that applies throughout a file, put a standalone
+file-level directive in the header, before the first line of code:
+
+```rust
+//! Inspector views.
+// rake-lint: allow-file(view-theme-literal) Inspector chrome intentionally uses fixed compact typography.
+
+use rake::prelude::*;
+```
+
+`allow-file` accepts the same rule IDs and requires a reason, just like `allow`.
+Blank lines and header comments may precede it. It suppresses every finding for
+that rule in this file, including nested modules; it never applies to another
+file or package. Use a line directive when the exception is local. In
+`Cargo.toml`, use `# rake-lint: allow-file(ID) reason` before any TOML entries.
+
+Missing reasons produce `suppression-reason` and do not suppress findings.
+Malformed IDs, unsuppressible rules, directives after code or trailing code,
+and unused file directives produce `invalid-suppression` at the directive's
+source span. A file directive is used only when it suppresses a finding whose
+effective level is not `allow`. Redundant duplicate file directives are unused;
+remove them rather than retain stale exceptions. These diagnostics use the same
+terminal/JSON output and configurable levels as invalid line suppressions.
+Ordinary line directives keep their existing behavior, including no unused check.
+Syntax errors and suppression diagnostics cannot be hidden by either scope.
+File-suppressed findings also receive no edits from `--fix`.
+
 ## Project levels
 
 Use the existing Rake metadata namespace in each package's `Cargo.toml`, alongside

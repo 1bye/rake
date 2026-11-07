@@ -483,24 +483,25 @@ fn filter_diagnostics(
     mut diagnostics: Vec<Diagnostic>,
     manifest: bool,
 ) -> Vec<Diagnostic> {
-    let suppressions = if manifest {
+    let mut suppressions = if manifest {
         suppression::parse_manifest(file, text, &mut diagnostics)
     } else {
         suppression::parse(file, text, &mut diagnostics)
     };
 
-    diagnostics.retain_mut(|diagnostic| {
+    let enabled = |diagnostic: &mut Diagnostic| {
         if let Some(level) = levels.get(diagnostic.rule_id) {
             diagnostic.level = *level;
         }
-
         diagnostic.level != Level::Allow
-            && !suppressions.iter().any(|suppression| {
-                catalogue::suppressible(diagnostic.rule_id)
-                    && suppression.id == diagnostic.rule_id
-                    && suppression.line == diagnostic.span.start.line
-            })
+    };
+    diagnostics.retain_mut(|diagnostic| {
+        enabled(diagnostic) && !suppressions.iter_mut().any(|s| s.suppresses(diagnostic))
     });
+    diagnostics.extend(suppressions.into_iter().filter_map(|suppression| {
+        let mut diagnostic = suppression.unused()?;
+        enabled(&mut diagnostic).then_some(diagnostic)
+    }));
 
     diagnostics
 }
