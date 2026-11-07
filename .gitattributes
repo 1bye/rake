@@ -1,0 +1,3 @@
+# Snapshot comparisons and signed fixtures depend on exact repository bytes.
+**/snapshots/** text eol=lf
+crates/rake-dist/tests/fixtures/sparkle/** -text
