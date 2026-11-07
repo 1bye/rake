@@ -154,6 +154,23 @@ fn main() {
     }
 
     if arguments.first().is_some_and(|command| command == "bundle")
+        && arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--target" && pair[1] == "web")
+        && (arguments.iter().any(|arg| arg == "--config")
+            || (!arguments.iter().any(|arg| arg == "--manifest-path")
+                && std::path::Path::new("Bundle.toml").exists()))
+    {
+        let message = "standalone Web bundling is not supported yet (RFC step 6); use explicit --manifest-path for the existing Web adapter";
+        if json {
+            eprintln!("{}", serde_json::json!({"error":{"message":message}}));
+        } else {
+            eprintln!("rake: {message}");
+        }
+        std::process::exit(1);
+    }
+
+    if arguments.first().is_some_and(|command| command == "bundle")
         && !arguments
             .windows(2)
             .any(|pair| pair[0] == "--target" && pair[1] == "web")

@@ -1,0 +1,8 @@
+# Migrated from examples/notes/Cargo.toml
+"schema_version" = 1
+"name" = "Fieldnotes"
+"identifier" = "dev.rake.fieldnotes"
+"minimum_system_version" = "13.0"
+
+["program"]
+"type" = "cargo"

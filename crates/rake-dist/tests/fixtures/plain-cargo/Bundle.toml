@@ -1,0 +1,15 @@
+schema_version = 1
+name = "Plain Cargo App"
+identifier = "dev.rake.plain-cargo"
+
+[program]
+type = "cargo"
+
+[macos]
+formats = ["app"]
+
+[windows]
+formats = ["zip"]
+
+[linux]
+formats = ["tar"]

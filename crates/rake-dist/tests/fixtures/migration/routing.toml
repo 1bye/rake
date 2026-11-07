@@ -1,0 +1,8 @@
+# Migrated from examples/routing/Cargo.toml
+"schema_version" = 1
+"name" = "Rake Routing"
+"identifier" = "com.example.rake.routing"
+"assets" = "assets"
+
+["program"]
+"type" = "cargo"

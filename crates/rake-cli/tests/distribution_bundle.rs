@@ -101,7 +101,9 @@ fn native_bundle_preserves_resources_and_refuses_unowned_output() {
             .arg(&output)
             .env(
                 "CARGO_TARGET_DIR",
-                repository.join("../target/distribution-tests"),
+                std::env::var_os("CARGO_TARGET_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| repository.join("../target/distribution-tests")),
             )
             .output()
             .unwrap()

@@ -1,0 +1,18 @@
+schema_version = 1
+name = "Native Viewer"
+identifier = "dev.rake.prebuilt-viewer"
+
+[program]
+type = "prebuilt"
+path = "bin/viewer{exe}"
+version = "1.0.0"
+# Supply the executable target with --target-triple.
+
+[macos]
+formats = ["app"]
+
+[windows]
+formats = ["zip"]
+
+[linux]
+formats = ["tar"]

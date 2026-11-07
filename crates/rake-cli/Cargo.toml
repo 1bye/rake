@@ -38,6 +38,7 @@ uuid = { version = "1", features = ["v4"] }
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
+dunce = "1"
 rake = { package = "rake-app", version = "=0.1.0-alpha.3", path = "../rake", default-features = false }
 
 [features]

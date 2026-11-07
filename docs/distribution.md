@@ -1,5 +1,10 @@
 # Desktop distribution
 
+Standalone `Bundle.toml` selection and planning are available for Cargo and
+prebuilt executables. Start with [standalone configuration](distribution-bundle-file.md)
+for the schema, precedence, path rules and current integration limits. Cargo
+package metadata remains the compatibility adapter described below.
+
 > Windows and Linux, signing, notarization and installers aren't qualified in this alpha.
 > See [what's supported](support.md).
 
