@@ -4,11 +4,10 @@ Real: child processes, exit status, logs and timeout cleanup. Doubles: app outpu
 Requires: Python only; this suite makes no GPU claims.
 """
 from pathlib import Path
+import runpy
 import sys
 import tempfile
 import unittest
-
-import runpy
 
 smoke = runpy.run_path(str(Path(__file__).with_name("desktop-smoke.py")))["smoke"]
 
@@ -30,8 +29,8 @@ class SmokeTests(unittest.TestCase):
             self.run_app('print("RAKE_DESKTOP_SMOKE_FRAME"); raise SystemExit(1)')
 
     def test_background_panic_even_with_clean_exit(self):
-        with self.assertRaises(AssertionError):
-            self.run_app('print("RAKE_DESKTOP_SMOKE_FRAME\\nthread panicked at render")')
+        with self.assertRaisesRegex(AssertionError, "panicked at"):
+            self.run_app('print("RAKE_DESKTOP_SMOKE_FRAME"); print("thread panicked at render")')
 
     def test_timeout(self):
         with self.assertRaisesRegex(AssertionError, "exceeded"):

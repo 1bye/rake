@@ -113,9 +113,6 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
       RUST_BACKTRACE: "1"
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -145,13 +142,19 @@ jobs:
       - name: Workspace tests (default native GPUI)
         if: ${{ !cancelled() }}
         run: cargo test --workspace --locked --no-fail-fast
+      - name: View tests without devtools or kit
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
+          --features rake-app/view-test-support,rake-view/view-test-support,rake-notes/view-test-support
+          --locked --no-fail-fast
       - name: Desktop feature lints
         if: ${{ !cancelled() }}
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
           -p rake-kit-example -p rake-ui -p rake-view -p rake-files
           -p rake-tray -p rake-autostart --all-targets --locked
-          --features rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools,rake-notes/view-test-support,rake-view/view-test-support
+          --features rake-desktop-example/native-smoke,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools,rake-notes/view-test-support,rake-view/view-test-support
           -- -D warnings
       - name: Desktop feature tests (devtools, kit, tray, updates)
         if: ${{ !cancelled() }}

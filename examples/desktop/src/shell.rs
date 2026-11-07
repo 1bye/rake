@@ -45,10 +45,14 @@ impl Render for Shell {
         #[cfg(feature = "native-smoke")]
         if !self.smoke_rendered && self.layout.navigator().current_tab().is_ok() {
             self.smoke_rendered = true;
-            // Scheduled during render: the current frame is presented before this runs.
-            _window.on_next_frame(|_, cx| {
-                println!("RAKE_DESKTOP_SMOKE_FRAME");
-                cx.quit();
+            // open_window can render before its first presentation. Force a platform
+            // frame, then acknowledge it on the following frame callback.
+            _window.on_next_frame(|window, _| {
+                window.refresh();
+                window.on_next_frame(|_, cx| {
+                    println!("RAKE_DESKTOP_SMOKE_FRAME");
+                    cx.quit();
+                });
             });
             _window.defer(cx, |window, _| window.refresh());
         }
