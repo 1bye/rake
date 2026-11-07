@@ -7,6 +7,8 @@ mod cdp;
 #[cfg(unix)]
 mod project;
 #[cfg(unix)]
+mod project_build;
+#[cfg(unix)]
 mod source;
 #[cfg(unix)]
 mod terminal;
@@ -153,6 +155,14 @@ fn main() {
         return;
     }
 
+    #[cfg(unix)]
+    if arguments
+        .first()
+        .is_some_and(|command| matches!(command.as_str(), "doctor" | "build"))
+    {
+        std::process::exit(project_build::run(&arguments[0], &arguments[1..]));
+    }
+
     if arguments.first().is_some_and(|command| command == "bundle")
         && arguments
             .windows(2)
@@ -202,12 +212,10 @@ fn main() {
         && arguments.get(1).is_some_and(|c| c == "pick")
     {
         terminal::run(arguments)
-    } else if arguments.first().is_some_and(|command| {
-        matches!(
-            command.as_str(),
-            "dev" | "build" | "bundle" | "doctor" | "inspect"
-        )
-    }) {
+    } else if arguments
+        .first()
+        .is_some_and(|command| matches!(command.as_str(), "dev" | "bundle" | "inspect"))
+    {
         project::run(arguments)
     } else {
         terminal::run(arguments)
