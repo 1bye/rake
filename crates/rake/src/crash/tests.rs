@@ -378,3 +378,29 @@ fn relative_source_paths_are_kept_and_absolute_build_roots_are_removed() {
         assert_eq!(source_path(input), expected, "source path {input}");
     }
 }
+
+#[test]
+fn scope_exit_unlocks_even_while_an_inherited_description_is_alive() {
+    let (_directory, reporter) = reporter(CrashLimits::default());
+    let path = reporter.directory.join("delivery.lock");
+    let file = private_options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .expect("lock file");
+    file.try_lock().expect("initial lock");
+    let guard = FileLock(&file);
+    // dup shares the open file description just like a descriptor inherited by fork.
+    let inherited = file.try_clone().expect("inherited description");
+    drop(guard);
+    drop(file);
+    let next = private_options()
+        .read(true)
+        .write(true)
+        .open(path)
+        .expect("reopen");
+    next.try_lock().expect("scope exit released inherited lock");
+    drop(inherited);
+}

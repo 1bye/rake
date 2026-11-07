@@ -92,9 +92,7 @@ pub struct App<R: Route = NoRoute> {
     new_window_options: Option<Rc<dyn Fn(crate::router::WindowId) -> WindowOptions>>,
     configuration_error: Option<AppError>,
     diagnostics: DiagnosticsConfig,
-    #[cfg(not(target_family = "wasm"))]
     crash_reports: crate::crash::startup::CrashReports,
-    #[cfg(not(target_family = "wasm"))]
     crash_version: Option<String>,
     root: Option<Root>,
     background: Option<Background>,
@@ -123,7 +121,7 @@ pub struct App<R: Route = NoRoute> {
 }
 
 impl App<NoRoute> {
-    /// Creates an application with bounded local native panic recording enabled.
+    /// Creates an application with bounded local panic recording enabled.
     ///
     /// No records are delivered or uploaded without an explicit sink. Default crash
     /// setup failures warn and continue. Use [`Self::without_crash_reports`] to opt
@@ -142,9 +140,7 @@ impl App<NoRoute> {
             new_window_options: None,
             configuration_error: None,
             diagnostics: DiagnosticsConfig::new(),
-            #[cfg(not(target_family = "wasm"))]
             crash_reports: crate::crash::startup::CrashReports::default(),
-            #[cfg(not(target_family = "wasm"))]
             crash_version: None,
             root: None,
             background: None,
@@ -213,9 +209,7 @@ impl App<NoRoute> {
             new_window_options: self.new_window_options,
             configuration_error,
             diagnostics: self.diagnostics,
-            #[cfg(not(target_family = "wasm"))]
             crash_reports: self.crash_reports,
-            #[cfg(not(target_family = "wasm"))]
             crash_version: self.crash_version,
             root: self.root,
             background: self.background,
@@ -294,15 +288,8 @@ impl<R: Route> App<R> {
         policy: Option<&'static str>,
         resources: &'static str,
     ) -> Self {
-        #[cfg(not(target_family = "wasm"))]
-        let app = {
-            let mut app = self;
-            app.crash_version = crate::crash::startup::version_from_policy(policy);
-
-            app
-        };
-        #[cfg(target_family = "wasm")]
-        let app = self;
+        let mut app = self;
+        app.crash_version = crate::crash::startup::version_from_policy(policy);
 
         #[cfg(feature = "updates")]
         {
@@ -537,9 +524,9 @@ impl<R: Route> App<R> {
         self
     }
 
-    /// Configures native recording and opts into waiting-record delivery before GPUI starts.
+    /// Configures recording and opts into waiting-record delivery before GPUI starts.
     ///
-    /// Native recording is on by default, with no sink and no uploads. This explicit
+    /// Recording is on by default, with no sink and no uploads. This explicit
     /// configuration replaces the defaults; directory or hook setup errors fail
     /// startup. A failed sink retains its record and startup continues. The sink
     /// runs synchronously, so UI consent needs a durable inbox. The last call to this
@@ -549,49 +536,28 @@ impl<R: Route> App<R> {
     /// while the app keeps running. Development runs also leave bounded records.
     /// Hooks installed later must chain to Rake's hook or recording stops.
     ///
-    /// Web stores nothing and does nothing; Web delivery is the follow-up from #16.
-    /// The existing Web console hook is unchanged.
+    /// Web uses localStorage and asynchronous Web Locks delivery on startup.
+    /// Delivery requires a secure context with Web Locks; otherwise records wait.
+    /// Native directory overrides are ignored on Web. The console hook remains enabled.
     #[must_use]
     pub fn crash_reports(
         self,
         config: crate::crash::CrashConfig,
         sink: impl crate::crash::CrashSink,
     ) -> Self {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let mut app = self;
-            app.crash_reports.configure(config, sink);
+        let mut app = self;
+        app.crash_reports.configure(config, sink);
 
-            app
-        }
-
-        #[cfg(target_family = "wasm")]
-        {
-            let _ = (config, sink);
-
-            self
-        }
+        app
     }
 
-    /// Disables Rake's native crash hook and directory setup for this application's launch.
-    ///
-    /// Use when the host owns panic reporting, such as a Sentry integration or its
-    /// own hook. This does not uninstall an already installed host/Rake hook. The
-    /// last call to this method or [`Self::crash_reports`] wins. Web is a no-op.
+    /// Disables Rake crash recording for this launch, leaving existing host hooks installed.
+    /// The last crash builder call wins. The Web console panic hook remains enabled.
     #[must_use]
-    pub fn without_crash_reports(self) -> Self {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let mut app = self;
-            app.crash_reports.disable();
+    pub fn without_crash_reports(mut self) -> Self {
+        self.crash_reports.disable();
 
-            app
-        }
-
-        #[cfg(target_family = "wasm")]
-        {
-            self
-        }
+        self
     }
 
     /// Registers the initial GPUI view factory, invoked once on the UI event loop.
@@ -908,7 +874,9 @@ impl<R: Route> App<R> {
 
         self.diagnostics.install()?;
 
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(target_family = "wasm")]
+        console_error_panic_hook::set_once();
+
         std::mem::take(&mut self.crash_reports)
             .initialize(
                 &self.id,
@@ -917,8 +885,6 @@ impl<R: Route> App<R> {
             )
             .map_err(AppError::Crash)?;
 
-        #[cfg(target_family = "wasm")]
-        console_error_panic_hook::set_once();
         #[cfg(target_family = "wasm")]
         let application = gpui_platform::single_threaded_web();
 
@@ -1131,9 +1097,8 @@ pub enum AppError {
     /// HTTP configuration could not construct standard services.
     #[error(transparent)]
     Http(#[from] crate::http::Error),
-    /// Native crash directory or process-wide hook setup failed.
-    #[cfg(not(target_family = "wasm"))]
-    #[error("native crash setup failed: {0}")]
+    /// Crash storage or panic hook setup failed.
+    #[error("crash setup failed: {0}")]
     Crash(#[source] std::io::Error),
     /// The host's diagnostics setup conflicts with automatic installation.
     #[error(transparent)]

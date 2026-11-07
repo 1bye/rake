@@ -118,3 +118,9 @@ required-features = ["native-components"]
 [[example]]
 name = "storage"
 required-features = ["devtools"]
+
+[[example]]
+name = "web-crash"
+path = "examples/web_crash.rs"
+crate-type = ["cdylib"]
+required-features = ["gpui"]

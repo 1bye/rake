@@ -1,4 +1,4 @@
-//! Covers: one shared native/Web App builder and Web's immediate sink release.
+//! Covers: one shared native/Web App builder and sink ownership.
 //! Real: App and crash public API; no hook installation or native launch.
 //! Doubles: sink whose callback must never run during configuration.
 //! Requires: gpui feature; wasm check compiles this test without running it.
@@ -34,7 +34,7 @@ fn shared_builder_accepts_crash_reports_without_launching() {
         Sink(dropped.clone()),
     );
 
-    assert_eq!(dropped.get(), usize::from(cfg!(target_family = "wasm")));
+    assert_eq!(dropped.get(), 0);
     drop(app);
     assert_eq!(dropped.get(), 1);
 }
@@ -54,7 +54,7 @@ fn crash_builder_last_call_wins_and_opt_out_releases_sink() {
         .without_crash_reports()
         .crash_reports(rake::crash_config!(), Sink(dropped.clone()));
 
-    assert_eq!(dropped.get(), usize::from(cfg!(target_family = "wasm")));
+    assert_eq!(dropped.get(), 0);
     drop(app);
     assert_eq!(dropped.get(), 1);
 }
