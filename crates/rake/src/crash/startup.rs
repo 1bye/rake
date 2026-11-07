@@ -54,8 +54,9 @@ impl CrashReports {
                 }
                 #[cfg(target_family = "wasm")]
                 wasm_bindgen_futures::spawn_local(async move {
-                    if reporter.deliver(sink).await.is_err() {
-                        tracing::warn!("crash delivery failed; waiting record retained");
+                    if let Err(error) = reporter.deliver(sink).await {
+                        // Web errors carry only fixed, privacy-safe category messages.
+                        tracing::warn!(%error, "crash delivery failed; waiting record retained");
                     }
                 });
             }

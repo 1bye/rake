@@ -43,7 +43,7 @@ mod browser {
                 attempted(&record.id);
                 assert!(!unwind, "sink panic");
                 if fail {
-                    return Err(std::io::Error::other("retry"));
+                    return Err(std::io::Error::other("PRIVATE_SINK_ERROR"));
                 }
                 accepted(&rake::serde_json::to_string(record)?);
                 Ok(())

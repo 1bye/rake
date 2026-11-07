@@ -103,6 +103,10 @@ try {
     assert.equal(pending[0].record.id, id, 'failing Rust sink retains original');
     assert.equal(pending[0].state, 'P');
     assert.equal(pending[0].attempts, 0, 'ordinary Err never consumes the interrupted-attempt budget');
+    const warnings = await evaluate(session, 'JSON.parse(fixture.warnings())');
+    assert(warnings.some(warning => warning.error === 'crash sink failed; waiting record retained'), 'sink failure has a distinct warning');
+    assert(!JSON.stringify(warnings).includes('storage or delivery unavailable'));
+    assert(!JSON.stringify(warnings).includes('PRIVATE_SINK_ERROR'), 'sink error content stays private');
     assert.equal((await evaluate(session, receipts)).length, 0);
     await close(session);
   }

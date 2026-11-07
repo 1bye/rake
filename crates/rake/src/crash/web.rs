@@ -167,9 +167,14 @@ impl CrashReporter {
         ))
         .await
         .map_err(storage_error)?;
-        if matches!(result.as_f64(), Some(-1.0 | -2.0)) {
-            return Err(storage_error(JsValue::UNDEFINED));
+        match result.as_f64() {
+            Some(-1.0) => Err(io::Error::other(
+                "crash sink failed; waiting record retained",
+            )),
+            Some(-2.0) => Err(io::Error::other(
+                "crash sink interrupted; waiting record retained",
+            )),
+            _ => Ok(()),
         }
-        Ok(())
     }
 }
