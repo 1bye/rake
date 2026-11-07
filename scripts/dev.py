@@ -22,7 +22,7 @@ import uuid
 import webbrowser
 
 from inspector import ProcessOutput
-from bundle import BundleConfig, base_path, copy_tree, distribution
+from bundle import BundleConfig, base_path, copy_tree, distribution, install_favicon
 
 MAX_BYTES = 1024 * 1024
 EXCLUDED = {".git", "target", "dist", "node_modules", ".rake", "__pycache__", ".DS_Store"}
@@ -246,6 +246,7 @@ class Project:
             (output / "index.html").write_text("<!doctype html><html><head><meta charset='utf-8'><title>Rake</title>"
                 "<style>html,body,canvas{margin:0;width:100%;height:100%;display:block}</style></head><body>"
                 f"<script type='module'>import init from '/pkg/{self.target['name']}.js';await init();</script></body></html>")
+        install_favicon(output)
         return output
 
 

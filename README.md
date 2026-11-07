@@ -1,3 +1,5 @@
+![Rake — GPUI framework at agentic era](docs/assets/rake-banner.gif)
+
 # Rake
 
 Rake is a framework for GPUI in the agentic era.

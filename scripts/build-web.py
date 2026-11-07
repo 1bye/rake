@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import tomllib
 
+from bundle import install_favicon
+
 project = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--example", choices=["foundation", "routing", "notes", "view", "inspector", "files"], default="foundation")
@@ -40,4 +42,5 @@ subprocess.run([
     binary, "--target", "web", "--out-dir", str(output / "pkg"),
     str(project / "target" / "wasm32-unknown-unknown" / "debug" / f"{package.replace('-', '_')}.wasm"),
 ], check=True)
+install_favicon(output)
 print(f"Built {output}; serve with python3 scripts/serve-web.py --example {output.name}")
