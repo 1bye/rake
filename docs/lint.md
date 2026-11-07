@@ -410,6 +410,12 @@ local Codex sessions supporting command hooks.
 }
 ```
 
+Claude Code treats the matcher as a regex, so `Edit|Write` also matches
+`MultiEdit` and `NotebookEdit`. The hook lints any tool with a string
+`tool_input.file_path`, including `MultiEdit`. `NotebookEdit` uses
+`notebook_path` and is silently ignored, as are unknown tools without usable
+file paths.
+
 Use a matching `rake` executable on the agent's PATH. The formats were checked
 against official documentation on 2026-11-07:
 
@@ -425,7 +431,9 @@ The hook resolves relative paths against the payload's `cwd`, falling back to
 its process directory when absent. It extracts Add/Update/Move headers from
 Codex textual patches and checks surviving Rust and Cargo.toml files, skipping
 deleted and non-Rust paths. Filenames are never interpolated into a shell.
-Unsupported payloads and lint failures produce a short manual-check note.
+Malformed JSON, a wrong event name, an unparseable Codex patch or a lint failure
+produces a short manual-check note. Recognised PostToolUse events without
+extractable paths emit nothing.
 
 Clean checks emit nothing. Findings produce exactly one JSON object:
 

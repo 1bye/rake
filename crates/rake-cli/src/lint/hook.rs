@@ -54,15 +54,6 @@ fn paths(event: &Event) -> Result<Vec<PathBuf>, &'static str> {
         return Err(invalid);
     }
     match event.tool_name.as_str() {
-        "Edit" | "Write" => {
-            let path = event
-                .tool_input
-                .get("file_path")
-                .and_then(Value::as_str)
-                .filter(|path| !path.trim().is_empty())
-                .ok_or(invalid)?;
-            Ok(vec![PathBuf::from(path)])
-        }
         "apply_patch" => {
             let patch = event
                 .tool_input
@@ -93,7 +84,14 @@ fn paths(event: &Event) -> Result<Vec<PathBuf>, &'static str> {
             }
             Ok(paths)
         }
-        _ => Err(invalid),
+        _ => {
+            let path = event
+                .tool_input
+                .get("file_path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty());
+            Ok(path.into_iter().map(PathBuf::from).collect())
+        }
     }
 }
 
@@ -101,6 +99,9 @@ fn collect(input: &str) -> Result<Option<String>, &'static str> {
     let event: Event =
         serde_json::from_str(input).map_err(|_| "received an unsupported hook payload")?;
     let candidates = paths(&event)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
     let cwd = match event.cwd {
         Some(path) if path.is_absolute() => path,
         path => std::env::current_dir()

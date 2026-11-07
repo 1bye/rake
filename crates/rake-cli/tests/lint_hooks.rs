@@ -83,6 +83,50 @@ fn claude_edit_and_write_resolve_payload_cwd_and_return_compact_findings() {
 }
 
 #[test]
+fn multiedit_and_future_tools_with_file_paths_get_linted() {
+    let project = project();
+    let root = project.path();
+    fs::write(
+        root.join("main.rs"),
+        "fn f() { rake::view! { <button/> }; }",
+    )
+    .unwrap();
+
+    for tool in ["MultiEdit", "FutureEdit"] {
+        let result = hook(
+            root,
+            Some(root),
+            tool,
+            serde_json::json!({"file_path": "main.rs"}),
+        );
+        assert!(context(&result).contains("main.rs:1:"));
+        assert!(context(&result).contains("view-button-label (warn):"));
+    }
+}
+
+#[test]
+fn notebook_and_unknown_tools_without_usable_file_paths_stay_silent() {
+    let project = project();
+    let root = project.path();
+    let missing_cwd = root.join("missing-directory");
+
+    for (tool, input) in [
+        (
+            "NotebookEdit",
+            serde_json::json!({"notebook_path": "notes.ipynb"}),
+        ),
+        ("FutureTool", serde_json::json!({})),
+        ("Bash", serde_json::json!({"command": "anything"})),
+        ("Edit", serde_json::json!({})),
+        ("Write", serde_json::json!({"file_path": 12})),
+        ("MultiEdit", serde_json::json!({"file_path": ""})),
+    ] {
+        let result = hook(root, Some(&missing_cwd), tool, input);
+        assert!(result.stdout.is_empty(), "{tool}: {result:?}");
+    }
+}
+
+#[test]
 fn codex_patch_handles_spaces_multiple_files_move_delete_and_duplicates() {
     let project = project();
     let root = project.path();
@@ -148,17 +192,23 @@ fn clean_non_rust_and_deleted_files_have_empty_stdout() {
 }
 
 #[test]
-fn malformed_unsupported_and_unreadable_payloads_return_advisory_context() {
+fn malformed_and_unreadable_payloads_return_advisory_context() {
     let project = project();
     let root = project.path();
     for input in [b"not json".as_slice(), b"{}", b"[]", b"\xff"] {
         let result = invoke(root, input);
         assert!(context(&result).contains("run rake lint manually"));
     }
+    let wrong_event = serde_json::json!({
+        "hook_event_name": "PreToolUse", "tool_name": "Edit",
+        "tool_input": {"file_path": "main.rs"},
+    });
+    assert!(
+        context(&invoke(root, wrong_event.to_string().as_bytes()))
+            .contains("run rake lint manually")
+    );
     for (tool, input) in [
-        ("Edit", serde_json::json!({})),
-        ("Write", serde_json::json!({"file_path": 12})),
-        ("Bash", serde_json::json!({"command": "anything"})),
+        ("apply_patch", serde_json::json!({})),
         (
             "apply_patch",
             serde_json::json!({"command": "unknown patch format"}),
