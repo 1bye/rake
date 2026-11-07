@@ -7425,18 +7425,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rake-inspector"
-version = "0.1.0"
-dependencies = [
- "futures",
- "rake-app",
- "serde",
- "serde_json",
- "url",
- "web-sys",
-]
-
-[[package]]
 name = "rake-kit-example"
 version = "0.1.0"
 dependencies = [

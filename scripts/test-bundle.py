@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/sc
 from bundle import BundleConfig, base_path, copy_tree
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "target/debug/rake"
+CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
 
 
 def run(command, **options):
@@ -180,6 +180,8 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
             self.assertIn("index.html", archive.namelist())
             self.assertIn("pkg/bundle_fixture_bg.wasm", archive.namelist())
             self.assertNotIn("site/index.html", archive.namelist())
+            self.assertFalse(any("inspector" in name or "embedded-devtools" in name for name in archive.namelist()),
+                "development frontends must not ship in a production Web archive")
         for path in [site / "index.html", site / "loader.js"]:
             self.assertNotIn("rake-dev-bridge", path.read_text())
             self.assertNotIn("/__rake/", path.read_text())

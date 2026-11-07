@@ -4,8 +4,8 @@ use crate::model::{MAX_BODY_BYTES, MAX_TITLE_BYTES};
 use crate::{CreateNote, EditNote, Library, Note, Notebook, Repository, SaveNotes};
 
 use rake::gpui::{
-    self, AnyView, Bounds, ClipboardItem, Context, Entity, Focusable, FontWeight, Task, Window,
-    WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
+    self, AnyView, Bounds, ClipboardItem, Context, Entity, Focusable, Task, Window, WindowBounds,
+    WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 
 use rake::prelude::*;
@@ -493,151 +493,6 @@ impl NotesView {
         }
     }
 
-    fn sidebar(&self, library: &Library, cx: &mut Context<Self>) -> impl IntoElement {
-        let all = library.notes.iter().filter(|note| !note.archived).count();
-
-        let pinned = library
-            .notes
-            .iter()
-            .filter(|note| note.pinned && !note.archived)
-            .count();
-
-        let archive = library.notes.iter().filter(|note| note.archived).count();
-
-        div()
-            .w(px(190.))
-            .h_full()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .bg(rgb(0xf0f1e9))
-            .border_r_1()
-            .border_color(rgb(LINE))
-            .p_5()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .mb_8()
-                    .child(
-                        div()
-                            .w_9()
-                            .h_9()
-                            .rounded_lg()
-                            .bg(rgb(GREEN))
-                            .text_color(rgb(0xffffff))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_size(px(24.))
-                            .child("f."),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(20.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Fieldnotes"),
-                    ),
-            )
-            .child(
-                div()
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(MUTED))
-                    .mb_3()
-                    .child("YOUR WORKSPACE"),
-            )
-            .children(
-                [
-                    (Collection::All, "All notes", all, "notes.all"),
-                    (Collection::Pinned, "Pinned", pinned, "notes.pinned"),
-                    (Collection::Archive, "Archive", archive, "notes.archive"),
-                ]
-                .into_iter()
-                .map(|(collection, label, count, id)| {
-                    let selected = collection == self.collection;
-
-                    div()
-                        .id(id)
-                        .role(gpui::accesskit::Role::Button)
-                        .aria_label(label)
-                        .tab_index(0)
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .px_3()
-                        .py_3()
-                        .mb_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .bg(rgb(if selected { 0xe0e6da } else { 0xf0f1e9 }))
-                        .text_color(rgb(if selected { GREEN } else { 0x70796b }))
-                        .child(label)
-                        .child(div().text_size(px(11.)).child(count.to_string()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.collection = collection;
-                            cx.notify();
-                        }))
-                        .inspect(id)
-                }),
-            )
-            .child(
-                div()
-                    .mt_5()
-                    .id("new-note")
-                    .role(gpui::accesskit::Role::Button)
-                    .aria_label("New note")
-                    .tab_index(0)
-                    .px_3()
-                    .py_3()
-                    .rounded_md()
-                    .bg(rgb(GREEN))
-                    .text_color(rgb(0xffffff))
-                    .cursor_pointer()
-                    .child("＋  New note")
-                    .on_click(cx.listener(Self::new_note_click))
-                    .inspect("notes.new"),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(rgb(MUTED))
-                    .line_height(px(22.))
-                    .child(if cfg!(target_os = "macos") {
-                        "⌘ N   New note\n⌘ F   Find a note\n⌘ S   Save now"
-                    } else {
-                        "Ctrl N   New note\nCtrl F   Find a note\nCtrl S   Save now"
-                    }),
-            )
-            .child(
-                div()
-                    .mt_5()
-                    .pt_4()
-                    .border_t_1()
-                    .border_color(rgb(LINE))
-                    .text_size(px(11.))
-                    .text_color(rgb(MUTED))
-                    .child("●  On this device"),
-            )
-            .child(
-                div()
-                    .id("about-notes")
-                    .mt_2()
-                    .text_size(px(11.))
-                    .text_color(rgb(GREEN))
-                    .cursor_pointer()
-                    .child("About & keyboard shortcuts")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.help = !this.help;
-                        cx.notify();
-                    }))
-                    .inspect("notes.help"),
-            )
-    }
-
     fn new_note_click(
         &mut self,
         _: &gpui::ClickEvent,
@@ -645,56 +500,6 @@ impl NotesView {
         cx: &mut Context<Self>,
     ) {
         self.new_note(window, cx);
-    }
-
-    fn list(&self, library: &Library, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.query.to_lowercase();
-
-        let mut notes: Vec<_> = library
-            .notes
-            .iter()
-            .filter(|note| match self.collection {
-                Collection::All => !note.archived,
-                Collection::Pinned => note.pinned && !note.archived,
-                Collection::Archive => note.archived,
-            })
-            .filter(|note| {
-                query.is_empty()
-                    || note.title.to_lowercase().contains(&query)
-                    || note.body.to_lowercase().contains(&query)
-            })
-            .collect();
-
-        notes.sort_by_key(|note| {
-            (
-                std::cmp::Reverse(note.modified_ms),
-                std::cmp::Reverse(note.id),
-            )
-        });
-        let count = notes.len();
-        let search = fill_input(Input::new(&self.search));
-
-        div().w(px(286.)).flex_shrink_0().h_full().flex().flex_col().bg(rgb(0xfafaf6)).border_r_1().border_color(rgb(LINE))
-            .child(div().p_5().pb_4().child(div().flex().items_center().justify_between().mb_4()
-                .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(match self.collection { Collection::All => "All notes", Collection::Pinned => "Pinned", Collection::Archive => "Archive" }))
-                .child(div().text_color(rgb(MUTED)).text_size(px(11.)).child(count.to_string())))
-                .child(div().h_9().px_3().py_1().rounded_md().bg(rgb(0xeeefe8)).flex().text_size(px(13.)).line_height(px(22.)).child(search).inspect("notes.search").focus_handle(&self.search.read(cx).focus_handle(cx))))
-            .child(div().id("note-list").flex_1().min_h_0().overflow_y_scroll().px_3().pb_3()
-                .when(notes.is_empty(), |list| list.child(div().p_4().mt_8().text_color(rgb(MUTED)).line_height(px(24.)).child(if query.is_empty() { "A little room for something new.\nCreate a note to get started." } else { "No notes found.\nTry a different word." })))
-                .children(notes.into_iter().map(|note| {
-                    let id = note.id; let selected = library.selected == Some(id);
-                    let preview: String = note.body.split_whitespace().take(18).collect::<Vec<_>>().join(" ");
-
-                    div().id(format!("note-{id}")).role(gpui::accesskit::Role::Button).aria_label(note.display_title().to_string()).tab_index(0).w_full().px_4().py_4().mb_2().rounded_lg().border_1()
-                        .border_color(rgb(if selected { 0xcdd6c3 } else { 0xfafaf6 })).bg(rgb(if selected { 0xffffff } else { 0xfafaf6 }))
-                        .cursor_pointer().child(div().flex().items_start().justify_between().gap_2().mb_2().child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(14.)).child(note.display_title().to_string())).when(note.pinned, |row| row.child(div().text_color(rgb(GREEN)).text_size(px(11.)).child("◆"))))
-                        .child(div().text_size(px(12.)).text_color(rgb(0x92968c)).line_height(px(19.)).child(if preview.is_empty() { "Your next thought starts here…".into() } else { preview }))
-                        .child(div().mt_3().text_size(px(10.)).text_color(rgb(MUTED)).child(format!("{}  ·  {} words", relative_date(note.modified_ms), note.word_count())))
-                        .on_click(cx.listener(move |this, _, window, cx| { let _ = this.notebook.select(id);
-
-                            this.sync(window, cx); cx.notify(); }))
-                        .inspect_with(|| format!("notes.note.{id}"))
-                })))
     }
 }
 
@@ -803,370 +608,610 @@ impl Render for NotesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync(window, cx);
         let library = self.notebook.library();
-
+        let search_focus = self.search.read(cx).focus_handle(cx);
+        let title_focus = self.title.read(cx).focus_handle(cx);
+        let body_focus = self.body.read(cx).focus_handle(cx);
         #[cfg(target_family = "wasm")]
         if let Some(accessibility) = &self.web_accessibility {
             accessibility.sync(window, library.is_some(), self.selected.is_some());
         }
-
-        let mut root = div()
-            .size_full()
-            .min_h_0()
-            .flex()
-            .font(gpui::Font {
-                fallbacks: cfg!(target_family = "wasm").then(|| {
-                    // shortcut: Cosmic selects emoji automatically until GPUI's explicit
-                    // family loader stops rejecting fonts without a Latin 'm' glyph.
-                    gpui::FontFallbacks::from_fonts(vec!["Noto Sans JP".into()])
-                }),
-                ..gpui::font("IBM Plex Sans")
-            })
-            .text_size(px(13.))
-            .text_color(rgb(INK))
-            .bg(rgb(0xfffefa))
-            .key_context("Fieldnotes")
-            .on_key_down(cx.listener(Self::key));
-
-        let Some(library) = library else {
-            let error = self.notebook.error();
-
-            return root
-                .flex_col()
-                .justify_center()
-                .items_center()
-                .gap_4()
-                .p_12()
-                .child(
-                    div()
-                        .text_size(px(32.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Fieldnotes"),
-                )
-                .child(
-                    div().text_color(rgb(MUTED)).max_w(px(500.)).child(
-                        error
-                            .clone()
-                            .unwrap_or_else(|| "Opening your workspace…".into()),
-                    ),
-                )
-                .when(error.is_some(), |root| {
-                    root.child(
-                        div()
-                            .id("retry-open")
-                            .px_4()
-                            .py_2()
-                            .rounded_md()
-                            .bg(rgb(GREEN))
-                            .text_color(rgb(0xffffff))
-                            .cursor_pointer()
-                            .child("Try again")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let notebook = this.notebook.clone();
-
-                                this._load = cx.spawn(async move |view, cx| {
-                                    let _ = notebook.load().await;
-                                    let _ = view.update(cx, |_, cx| cx.notify());
-                                });
-                            })),
-                    )
-                })
-                .child(
-                    div()
-                        .text_color(rgb(MUTED))
-                        .text_size(px(12.))
-                        .child("Your existing files will never be replaced by an empty library."),
-                )
-                .inspect("notes.startup");
-        };
-
-        let selected = library
-            .notes
-            .iter()
-            .find(|note| Some(note.id) == library.selected)
-            .cloned();
-
-        let dirty = self.notebook.is_dirty();
         let error = self.notebook.error();
         let notice = self.notebook.notice();
+        let dirty = self.notebook.is_dirty();
+        let query = self.query.to_lowercase();
+        let selected = library.as_ref().and_then(|library| {
+            library
+                .notes
+                .iter()
+                .find(|note| Some(note.id) == library.selected)
+        });
+        let mut notes: Vec<_> = library
+            .as_ref()
+            .into_iter()
+            .flat_map(|library| &library.notes)
+            .filter(|note| match self.collection {
+                Collection::All => !note.archived,
+                Collection::Pinned => note.pinned && !note.archived,
+                Collection::Archive => note.archived,
+            })
+            .filter(|note| {
+                query.is_empty()
+                    || note.title.to_lowercase().contains(&query)
+                    || note.body.to_lowercase().contains(&query)
+            })
+            .collect();
+        notes.sort_by_key(|note| {
+            (
+                std::cmp::Reverse(note.modified_ms),
+                std::cmp::Reverse(note.id),
+            )
+        });
+        let collections = [
+            (
+                Collection::All,
+                "All notes",
+                library.as_ref().map_or(0, |library| {
+                    library.notes.iter().filter(|note| !note.archived).count()
+                }),
+                "notes.all",
+            ),
+            (
+                Collection::Pinned,
+                "Pinned",
+                library.as_ref().map_or(0, |library| {
+                    library
+                        .notes
+                        .iter()
+                        .filter(|note| note.pinned && !note.archived)
+                        .count()
+                }),
+                "notes.pinned",
+            ),
+            (
+                Collection::Archive,
+                "Archive",
+                library.as_ref().map_or(0, |library| {
+                    library.notes.iter().filter(|note| note.archived).count()
+                }),
+                "notes.archive",
+            ),
+        ];
+        let font = gpui::Font {
+            fallbacks: cfg!(target_family = "wasm").then(|| {
+                // shortcut: Cosmic selects emoji automatically until GPUI's explicit
+                // family loader stops rejecting fonts without a Latin 'm' glyph.
+                gpui::FontFallbacks::from_fonts(vec!["Noto Sans JP".into()])
+            }),
+            ..gpui::font("IBM Plex Sans")
+        };
 
-        root = root
-            .child(self.sidebar(&library, cx))
-            .child(self.list(&library, cx));
-        let mut document = div().flex_1().min_w_0().h_full().flex().flex_col();
-
-        document = document.child(
-            div()
-                .h(px(68.))
-                .flex_shrink_0()
-                .px_8()
-                .flex()
-                .items_center()
-                .justify_between()
-                .border_b_1()
-                .border_color(rgb(LINE))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(rgb(MUTED))
-                        .child("PERSONAL  /  FIELDNOTES"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_4()
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(rgb(if error.is_some() { 0xb45d43 } else { GREEN }))
-                                .child(if error.is_some() {
-                                    "●  Save needs attention"
-                                } else if dirty {
-                                    "○  Saving…"
+        rake::view! {
+            <div
+                id={
+                    if library.is_some() {
+                        "notes.workspace"
+                    } else {
+                        "notes.startup"
+                    }
+                }
+                class="size-full min-h-0 flex flex-row text-[13px]"
+                style={
+                    |s|
+                        s.font(font)
+                            .text_color(rgb(INK))
+                            .bg(rgb(0xfffefa))
+                            .when(library.is_none(), |s|
+                                s.flex_col().justify_center().items_center().gap_4().p_12())
+                    }
+                key-context="Fieldnotes"
+                on:key-down={cx.listener(Self::key)}
+            >
+                if library.is_some() {
+                    <aside
+                        id="notes.sidebar"
+                        aria-label="Workspace"
+                        class="w-[190px] h-full shrink-0 flex flex-col border-r-1 p-5"
+                        style={|s| s.bg(rgb(0xf0f1e9)).border_color(rgb(LINE))}
+                    >
+                        <header class="flex flex-row items-center gap-3 mb-8">
+                            <div
+                                class="size-9 rounded-lg flex flex-row items-center justify-center text-[24px]"
+                                style={|s| s.bg(rgb(GREEN)).text_color(rgb(0xffffff))}
+                            >
+                                "f."
+                            </div>
+                            <h1 class="text-[20px] font-semibold">"Fieldnotes"</h1>
+                        </header>
+                        <div
+                            class="text-[10px] font-semibold mb-3"
+                            style={|s| s.text_color(rgb(MUTED))}
+                        >
+                            "YOUR WORKSPACE"
+                        </div>
+                        <nav
+                            id="notes.collections"
+                            aria-label="Note collections"
+                            class="flex flex-col"
+                        >
+                            for (collection, label, count, id) in collections {
+                                <button
+                                    id={id}
+                                    aria-label={label}
+                                    class="w-full flex flex-row items-center justify-between px-3 py-3 mb-1 rounded-md"
+                                    style={
+                                        |s|
+                                            s.bg(rgb(if collection == self.collection {
+                                                0xe0e6da
+                                            } else {
+                                                0xf0f1e9
+                                            }))
+                                            .text_color(rgb(
+                                                if collection == self.collection {
+                                                    GREEN
+                                                } else {
+                                                    0x70796b
+                                                }
+                                            ))
+                                        }
+                                    on:click={
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.collection = collection;
+                                            cx.notify();
+                                        })
+                                    }
+                                >
+                                    {label}
+                                    <span class="text-[11px]">{count.to_string()}</span>
+                                </button>
+                            }
+                        </nav>
+                        <button
+                            id="notes.new"
+                            aria-label="New note"
+                            class="mt-5 px-3 py-3 rounded-md"
+                            style={|s| s.bg(rgb(GREEN)).text_color(rgb(0xffffff))}
+                            on:click={cx.listener(Self::new_note_click)}
+                        >
+                            "＋  New note"
+                        </button>
+                        <div class="flex-1" />
+                        <p class="text-[11px] leading-[22px]" style={|s| s.text_color(rgb(MUTED))}>
+                            {
+                                if cfg!(target_os = "macos") {
+                                    "⌘ N   New note\n⌘ F   Find a note\n⌘ S   Save now"
                                 } else {
-                                    "●  Saved on this device"
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id("save-notes")
-                                .role(gpui::accesskit::Role::Button)
-                                .aria_label("Save now")
-                                .tab_index(0)
-                                .px_3()
-                                .py_2()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(rgb(LINE))
-                                .cursor_pointer()
-                                .child("Save now")
-                                .on_click(cx.listener(|this, _, _, _| {
-                                    this.dispatch(SaveNotes {
-                                        checkpoint_only: false,
+                                    "Ctrl N   New note\nCtrl F   Find a note\nCtrl S   Save now"
+                                }
+                            }
+                        </p>
+                        <footer
+                            class="mt-5 pt-4 border-t-1 text-[11px]"
+                            style={|s| s.border_color(rgb(LINE)).text_color(rgb(MUTED))}
+                        >
+                            "●  On this device"
+                            <button
+                                id="notes.help"
+                                class="mt-2 text-[11px]"
+                                aria-expanded={self.help}
+                                style={|s| s.text_color(rgb(GREEN))}
+                                on:click={
+                                    cx.listener(|this, _, _, cx| {
+                                        this.help = !this.help;
+                                        cx.notify();
                                     })
-                                }))
-                                .inspect("notes.save"),
-                        ),
-                ),
-        );
-
-        if let Some(error) = error {
-            document = document.child(
-                div()
-                    .px_8()
-                    .py_3()
-                    .bg(rgb(0xffefe4))
-                    .text_color(rgb(0x965639))
-                    .child(error)
-                    .inspect("notes.save-error"),
-            );
-        }
-
-        if self.title_limit_reached {
-            document = document.child(input_limit_notice(
-                "title-limit",
-                "notes.title-limit",
-                "The title is limited to 1,024 bytes.",
-            ));
-        }
-
-        if self.body_limit_reached {
-            document = document.child(input_limit_notice(
-                "body-limit",
-                "notes.body-limit",
-                "This note has reached its editing limit. Copy or export it before adding more.",
-            ));
-        }
-
-        if let Some(notice) = notice {
-            document = document.child(
-                div()
-                    .px_8()
-                    .py_3()
-                    .bg(rgb(0xeff3e9))
-                    .text_color(rgb(GREEN))
-                    .flex()
-                    .justify_between()
-                    .gap_3()
-                    .child(notice)
-                    .child(
-                        div()
-                            .id("dismiss-recovery")
-                            .cursor_pointer()
-                            .child("Dismiss")
-                            .on_click(cx.listener(|this, _, _, _| this.notebook.dismiss_notice())),
-                    )
-                    .inspect("notes.recovery"),
-            );
-        }
-
-        if self.help {
-            document = document.child(div().mx_8().mt_5().p_5().rounded_lg().bg(rgb(0xf0f1e9)).line_height(px(24.))
-                .child("A quiet place to think. Fieldnotes saves notes on this device, without an account. Edits get a recovery checkpoint, then an automatic save after a short pause. Use Save now before unplugging a drive or copying the library. Archive keeps notes until you restore them.")
-                .child(div().mt_2().text_color(rgb(GREEN)).child("Keyboard: Cmd/Ctrl N · new note   /   F · search   /   S · save   /   Z · undo")));
-        }
-
-        if let Some(note) = selected {
-            let id = note.id;
-
-            document =
-                document.child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .flex_col()
-                        .px(px(54.))
-                        .pt_10()
-                        .pb_5()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .mb_5()
-                                .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child(
-                                    format!(
-                                        "{}  ·  PERSONAL NOTE",
-                                        relative_date(note.modified_ms)
-                                    ),
-                                ))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap_4()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(GREEN))
-                                        .child(
-                                            div()
-                                                .id("pin-note")
-                                                .role(gpui::accesskit::Role::Button)
-                                                .aria_label(if note.pinned {
+                                }
+                            >
+                                "About & keyboard shortcuts"
+                            </button>
+                        </footer>
+                    </aside>
+                    <section
+                        id="notes.list"
+                        aria-label="Notes"
+                        class="w-[286px] h-full shrink-0 flex flex-col border-r-1"
+                        style={|s| s.bg(rgb(0xfafaf6)).border_color(rgb(LINE))}
+                    >
+                        <header class="p-5 pb-4">
+                            <div class="flex flex-row items-center justify-between mb-4">
+                                <h2 class="text-[22px] font-semibold">
+                                    {
+                                        match self.collection {
+                                            Collection::All => "All notes",
+                                            Collection::Pinned => "Pinned",
+                                            Collection::Archive => "Archive"
+                                        }
+                                    }
+                                </h2>
+                                <span class="text-[11px]" style={|s| s.text_color(rgb(MUTED))}>
+                                    {notes.len().to_string()}
+                                </span>
+                            </div>
+                            <div
+                                id="notes.search"
+                                focus={&search_focus}
+                                class="h-9 px-3 py-1 rounded-md flex text-[13px] leading-[22px]"
+                                style={|s| s.bg(rgb(0xeeefe8))}
+                            >
+                                {fill_input(Input::new(&self.search))}
+                            </div>
+                        </header>
+                        <div id="notes.entries" class="flex-1 min-h-0 overflow-y-scroll px-3 pb-3">
+                            if notes.is_empty() {
+                                <p
+                                    class="p-4 mt-8 leading-[24px]"
+                                    style={|s| s.text_color(rgb(MUTED))}
+                                >
+                                    {
+                                        if query.is_empty() {
+                                            "A little room for something new.\nCreate a note to get started."
+                                        } else {
+                                            "No notes found.\nTry a different word."
+                                        }
+                                    }
+                                </p>
+                            }
+                            for note in notes {
+                                <button
+                                    id={format!("notes.note.{}", note.id)}
+                                    aria-label={note.display_title().to_string()}
+                                    class="w-full shrink-0 flex flex-col items-start px-4 py-4 mb-2 rounded-lg border-1"
+                                    style={
+                                        |s|
+                                            s.border_color(rgb(
+                                                if library.as_ref().is_some_and(|library|
+                                                    library.selected == Some(note.id)) {
+                                                    0xcdd6c3
+                                                } else {
+                                                    0xfafaf6
+                                                }
+                                            ))
+                                            .bg(rgb(
+                                                if library.as_ref().is_some_and(|library|
+                                                    library.selected == Some(note.id)) {
+                                                    0xffffff
+                                                } else {
+                                                    0xfafaf6
+                                                }
+                                            ))
+                                        }
+                                    on:click={
+                                        {
+                                            let id = note.id;
+                                            cx.listener(move |this, _, window, cx| {
+                                                let _ = this.notebook.select(id);
+                                                this.sync(window, cx);
+                                                cx.notify();
+                                            })
+                                        }
+                                    }
+                                >
+                                    <div
+                                        class="w-full flex flex-row items-start justify-between gap-2 mb-2"
+                                    >
+                                        <div class="font-semibold text-[14px]">
+                                            {note.display_title().to_string()}
+                                        </div>
+                                        if note.pinned {
+                                            <span
+                                                class="text-[11px]"
+                                                style={|s| s.text_color(rgb(GREEN))}
+                                            >
+                                                "◆"
+                                            </span>
+                                        }
+                                    </div>
+                                    <p
+                                        class="text-[12px] leading-[19px]"
+                                        style={|s| s.text_color(rgb(0x92968c))}
+                                    >
+                                        {
+                                            {
+                                                let preview = note
+                                                    .body
+                                                    .split_whitespace()
+                                                    .take(18)
+                                                    .collect::<Vec<_>>()
+                                                    .join(" ");
+                                                if preview.is_empty() {
+                                                    "Your next thought starts here…".into()
+                                                } else {
+                                                    preview
+                                                }
+                                            }
+                                        }
+                                    </p>
+                                    <span
+                                        class="mt-3 text-[10px]"
+                                        style={|s| s.text_color(rgb(MUTED))}
+                                    >
+                                        {
+                                            format!(
+                                                "{}  ·  {} words",
+                                                relative_date(note.modified_ms),
+                                                note.word_count()
+                                            )
+                                        }
+                                    </span>
+                                </button>
+                            }
+                        </div>
+                    </section>
+                    <main id="notes.document" class="flex-1 min-w-0 h-full flex flex-col">
+                        <header
+                            id="notes.document-header"
+                            class="h-[68px] shrink-0 px-8 flex flex-row items-center justify-between border-b-1"
+                            style={|s| s.border_color(rgb(LINE))}
+                        >
+                            <span class="text-[11px]" style={|s| s.text_color(rgb(MUTED))}>
+                                "PERSONAL  /  FIELDNOTES"
+                            </span>
+                            <div class="flex flex-row items-center gap-4">
+                                <span
+                                    class="text-[11px]"
+                                    style={
+                                        |s|
+                                            s.text_color(rgb(if error.is_some() {
+                                                0xb45d43
+                                            } else {
+                                                GREEN
+                                            }))
+                                        }
+                                >
+                                    {
+                                        if error.is_some() {
+                                            "●  Save needs attention"
+                                        } else if dirty {
+                                            "○  Saving…"
+                                        } else {
+                                            "●  Saved on this device"
+                                        }
+                                    }
+                                </span>
+                                <button
+                                    id="notes.save"
+                                    class="px-3 py-2 rounded-md border-1"
+                                    style={|s| s.border_color(rgb(LINE))}
+                                    on:click={
+                                        cx.listener(|this, _, _, _|
+                                            this.dispatch(SaveNotes {
+                                                checkpoint_only: false
+                                            }))
+                                    }
+                                >
+                                    "Save now"
+                                </button>
+                            </div>
+                        </header>
+                        if let Some(error) = &error {
+                            <div
+                                id="notes.save-error"
+                                role={gpui::accesskit::Role::Alert}
+                                class="px-8 py-3"
+                                style={|s| s.bg(rgb(0xffefe4)).text_color(rgb(0x965639))}
+                            >
+                                {error.clone()}
+                            </div>
+                        }
+                        if let Some(notice) = &notice {
+                            <div
+                                id="notes.recovery"
+                                class="px-8 py-3 flex flex-row justify-between gap-3"
+                                style={|s| s.bg(rgb(0xeff3e9)).text_color(rgb(GREEN))}
+                            >
+                                {notice.clone()}
+                                <button
+                                    id="notes.dismiss-recovery"
+                                    on:click={
+                                        cx.listener(|this, _, _, _| this.notebook.dismiss_notice())
+                                    }
+                                >
+                                    "Dismiss"
+                                </button>
+                            </div>
+                        }
+                        if self.title_limit_reached {
+                            {
+                                input_limit_notice(
+                                    "title-limit",
+                                    "notes.title-limit",
+                                    "The title is limited to 1,024 bytes."
+                                )
+                            }
+                        }
+                        if self.body_limit_reached {
+                            {
+                                input_limit_notice(
+                                    "body-limit",
+                                    "notes.body-limit",
+                                    "This note has reached its editing limit. Copy or export it before adding more."
+                                )
+                            }
+                        }
+                        if self.help {
+                            <section
+                                id="notes.about"
+                                class="mx-8 mt-5 p-5 rounded-lg leading-[24px]"
+                                style={|s| s.bg(rgb(0xf0f1e9))}
+                            >
+                                <p>
+                                    "A quiet place to think. Fieldnotes saves notes on this device, without an account. Edits get a recovery checkpoint, then an automatic save after a short pause. Use Save now before unplugging a drive or copying the library. Archive keeps notes until you restore them."
+                                </p>
+                                <p class="mt-2" style={|s| s.text_color(rgb(GREEN))}>
+                                    "Keyboard: Cmd/Ctrl N · new note   /   F · search   /   S · save   /   Z · undo"
+                                </p>
+                            </section>
+                        }
+                        if let Some(note) = selected {
+                            <article
+                                id="notes.document-content"
+                                class="flex-1 min-h-0 flex flex-col px-[54px] pt-10 pb-5"
+                            >
+                                <header class="flex flex-row items-center justify-between mb-5">
+                                    <span class="text-[11px]" style={|s| s.text_color(rgb(MUTED))}>
+                                        {
+                                            format!(
+                                                "{}  ·  PERSONAL NOTE",
+                                                relative_date(note.modified_ms)
+                                            )
+                                        }
+                                    </span>
+                                    <div
+                                        class="flex flex-row gap-4 text-[11px]"
+                                        style={|s| s.text_color(rgb(GREEN))}
+                                    >
+                                        <button
+                                            id="notes.pin"
+                                            aria-label={
+                                                if note.pinned {
                                                     "Unpin note"
                                                 } else {
                                                     "Pin note"
-                                                })
-                                                .tab_index(0)
-                                                .cursor_pointer()
-                                                .child(if note.pinned {
+                                                }
+                                            }
+                                            on:click={
+                                                {
+                                                    let id = note.id;
+                                                    cx.listener(move |this, _, _, _| {
+                                                        let _ = this.notebook.pin(id);
+                                                    })
+                                                }
+                                            }
+                                        >
+                                            {
+                                                if note.pinned {
                                                     "◆ Pinned"
                                                 } else {
                                                     "◇ Pin note"
-                                                })
-                                                .on_click(cx.listener(move |this, _, _, _| {
-                                                    let _ = this.notebook.pin(id);
-                                                }))
-                                                .inspect("notes.pin"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("archive-note")
-                                                .role(gpui::accesskit::Role::Button)
-                                                .aria_label(if note.archived {
+                                                }
+                                            }
+                                        </button>
+                                        <button
+                                            id="notes.archive-note"
+                                            aria-label={
+                                                if note.archived {
                                                     "Restore note"
                                                 } else {
                                                     "Archive note"
-                                                })
-                                                .tab_index(0)
-                                                .cursor_pointer()
-                                                .child(if note.archived {
-                                                    "Restore"
-                                                } else {
-                                                    "Archive"
-                                                })
-                                                .on_click(cx.listener(move |this, _, _, _| {
-                                                    let _ = this.notebook.archive(id);
-                                                }))
-                                                .inspect("notes.archive-note"),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .h(px(60.))
-                                .flex_shrink_0()
-                                .flex()
-                                .text_size(px(32.))
-                                .line_height(px(45.))
-                                .child(fill_input(Input::new(&self.title)))
-                                .inspect("notes.title")
-                                .focus_handle(&self.title.read(cx).focus_handle(cx)),
-                        )
-                        .child(div().w_12().h(px(2.)).mt_3().mb_7().bg(rgb(0xd6dece)))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .flex()
-                                .text_size(px(16.))
-                                .line_height(px(29.6))
-                                .child(fill_input(Textarea::new(&self.body)))
-                                .inspect("notes.body")
-                                .focus_handle(&self.body.read(cx).focus_handle(cx)),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .justify_between()
-                                .items_center()
-                                .pt_5()
-                                .border_t_1()
-                                .border_color(rgb(LINE))
-                                .text_size(px(11.))
-                                .text_color(rgb(MUTED))
-                                .child(format!(
-                                    "{} words   ·   {} characters",
-                                    note.word_count(),
-                                    note.body.chars().count()
-                                ))
-                                .child(
-                                    div()
-                                        .id("copy-note")
-                                        .role(gpui::accesskit::Role::Button)
-                                        .aria_label("Copy as Markdown")
-                                        .tab_index(0)
-                                        .cursor_pointer()
-                                        .text_color(rgb(GREEN))
-                                        .child(if self.copied {
-                                            "Copied ✓"
-                                        } else {
-                                            "Copy as Markdown ↗"
-                                        })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(library) = this.notebook.library()
-                                                && let Some(note) = library
-                                                    .notes
-                                                    .iter()
-                                                    .find(|note| Some(note.id) == library.selected)
-                                            {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    format!(
-                                                        "# {}\n\n{}\n",
-                                                        note.display_title(),
-                                                        note.body
-                                                    ),
-                                                ));
-                                                this.copied = true;
-                                                cx.notify();
+                                                }
                                             }
-                                        }))
-                                        .inspect("notes.copy"),
-                                ),
-                        ),
-                );
-        } else {
-            document = document.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(rgb(MUTED))
-                    .child("Choose a note, or start with something new."),
-            );
+                                            on:click={
+                                                {
+                                                    let id = note.id;
+                                                    cx.listener(move |this, _, _, _| {
+                                                        let _ = this.notebook.archive(id);
+                                                    })
+                                                }
+                                            }
+                                        >
+                                            {
+                                                if note.archived { "Restore" } else { "Archive" }
+                                            }
+                                        </button>
+                                    </div>
+                                </header>
+                                <div
+                                    id="notes.title"
+                                    focus={&title_focus}
+                                    class="h-[60px] shrink-0"
+                                >
+                                    {fill_input(Input::new(&self.title))}
+                                </div>
+                                <div
+                                    class="w-12 h-[2px] mt-3 mb-7"
+                                    style={|s| s.bg(rgb(0xd6dece))}
+                                />
+                                <div id="notes.body" focus={&body_focus} class="flex-1 min-h-0">
+                                    {fill_input(Textarea::new(&self.body))}
+                                </div>
+                                <footer
+                                    class="flex flex-row justify-between items-center pt-5 border-t-1 text-[11px]"
+                                    style={|s| s.border_color(rgb(LINE)).text_color(rgb(MUTED))}
+                                >
+                                    <span>
+                                        {
+                                            format!(
+                                                "{} words   ·   {} characters",
+                                                note.word_count(),
+                                                note.body.chars().count()
+                                            )
+                                        }
+                                    </span>
+                                    <button
+                                        id="notes.copy"
+                                        aria-label="Copy as Markdown"
+                                        style={|s| s.text_color(rgb(GREEN))}
+                                        on:click={
+                                            cx.listener(|this, _, _, cx| {
+                                                if let Some(library) = this.notebook.library()
+                                                    && let Some(note) =
+                                                        library.notes.iter().find(|note|
+                                                            Some(note.id) == library.selected)
+                                                {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(format!(
+                                                            "# {}\n\n{}\n",
+                                                            note.display_title(),
+                                                            note.body
+                                                        ))
+                                                    );
+                                                    this.copied = true;
+                                                    cx.notify();
+                                                }
+                                            })
+                                        }
+                                    >
+                                        {
+                                            if self.copied {
+                                                "Copied ✓"
+                                            } else {
+                                                "Copy as Markdown ↗"
+                                            }
+                                        }
+                                    </button>
+                                </footer>
+                            </article>
+                        } else {
+                            <div
+                                class="flex-1 flex flex-row items-center justify-center"
+                                style={|s| s.text_color(rgb(MUTED))}
+                            >
+                                "Choose a note, or start with something new."
+                            </div>
+                        }
+                    </main>
+                } else {
+                    <h1 class="text-[32px] font-semibold">"Fieldnotes"</h1>
+                    <p class="max-w-[500px]" style={|s| s.text_color(rgb(MUTED))}>
+                        {
+                            error
+                                .clone()
+                                .unwrap_or_else(|| "Opening your workspace…".into())
+                        }
+                    </p>
+                    if error.is_some() {
+                        <button
+                            id="notes.retry-open"
+                            class="px-4 py-2 rounded-md"
+                            style={|s| s.bg(rgb(GREEN)).text_color(rgb(0xffffff))}
+                            on:click={
+                                cx.listener(|this, _, _, cx| {
+                                    let notebook = this.notebook.clone();
+                                    this._load = cx.spawn(async move |view, cx| {
+                                        let _ = notebook.load().await;
+                                        let _ = view.update(cx, |_, cx| cx.notify());
+                                    });
+                                })
+                            }
+                        >
+                            "Try again"
+                        </button>
+                    }
+                    <p class="text-[12px]" style={|s| s.text_color(rgb(MUTED))}>
+                        "Your existing files will never be replaced by an empty library."
+                    </p>
+                }
+            </div>
         }
-
-        root.child(document).inspect("notes.workspace")
     }
 }
 

@@ -111,7 +111,7 @@ with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must
             self.post("reply", {"runtime_id": self.runtime, "ticket": delivery["ticket"], "result": result})
             self.assertEqual(future.result(timeout=10), result)
             # Exercise the compiled terminal HTTP adapter against the same broker.
-            cli = Path(__file__).resolve().parents[1] / "target/debug/rake"
+            cli = Path(os.environ.get("CARGO_TARGET_DIR", str(Path(__file__).resolve().parents[1] / "target"))) / "debug/rake"
             self.assertTrue(cli.is_file(), "build rake-cli before running broker checks")
             process = subprocess.Popen([str(cli), "ctl", "info", "--json"], env=dict(os.environ, RAKE_CONTROL_DIR=str(self.discovery)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             # Instance selection first validates the advertised runtime before the query.

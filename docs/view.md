@@ -684,8 +684,8 @@ cargo test -p rake-app --test view --test view_components --test view_paragraphs
 cargo test -p rake-app --features view-test-support --test view_state --locked
 cargo test -p rake-view --features view-test-support --lib --locked
 cargo test -p rake-app --doc --locked
-cargo check -p rake-view -p rake-inspector -p renamed-facade --all-targets --locked
-cargo check -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
+cargo check -p rake-view -p renamed-facade --all-targets --locked
+cargo check -p rake-view -p renamed-facade --lib --target wasm32-unknown-unknown --locked
 ```
 
 The example uses reusable `components::Card` and `components::Badge`. Card accepts typed header and footer slots and collects the counter controls and retained history into its body. Badge derives its label and appearance from typed properties. Paragraphs show nested bold and italic runs, colored dynamic text, Unicode, a two-line preview and a single-line ellipsis. Native and Web use the same render method.

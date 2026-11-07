@@ -1,8 +1,11 @@
 # Project toolchain port: phase 1
 
 `doctor` and the legacy one-shot `build` adapter run in Rust. Existing native
-distribution modes keep their dispatch. The embedded scripts are unchanged:
-`dev`, Web `bundle`, `inspect`, preview and serving still use them.
+distribution modes keep their dispatch. The embedded scripts continue to support
+`dev`, Web `bundle`, preview and serving. The native-review landing routes `inspect` through the existing Rust
+CDP adapter and replaces inspector.py with runtime_broker.py plus an owned
+Web DevTools companion. See [.agents/reports/land-native-review.md](../../.agents/reports/land-native-review.md)
+for the landing map and the native Web default-favicon follow-up.
 
 ## Implementation mapping
 
