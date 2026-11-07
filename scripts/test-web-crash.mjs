@@ -59,7 +59,7 @@ try {
   assert.equal(built.status, 0, 'build actual App fixture');
   const bindgen = process.env.WASM_BINDGEN ?? 'wasm-bindgen';
   const lock = await readFile(join(root, 'Cargo.lock'), 'utf8');
-  const expected = lock.match(/name = "wasm-bindgen"\\nversion = "([^"]+)"/)?.[1];
+  const expected = lock.split('name = "wasm-bindgen"')[1].split('"')[1];
   assert.equal(spawnSync(bindgen, ['--version'], {encoding: 'utf8'}).stdout?.trim(), 'wasm-bindgen ' + expected, 'matching wasm-bindgen required');
   const target = resolve(root, process.env.CARGO_TARGET_DIR ?? 'target');
   const generated = spawnSync(bindgen, ['--target', 'web', '--out-name', 'fixture', '--out-dir', temporary, join(target, 'wasm32-unknown-unknown/debug/examples/web_crash.wasm')], {stdio: 'inherit'});
@@ -125,6 +125,21 @@ try {
   session = await page();
   await eventually(() => evaluate(session, receipts + '.length === 1'));
   assert.equal((await evaluate(session, receipts))[0].id, boundedId);
+  await evaluate(session, 'localStorage.clear()');
+  await close(session);
+
+  // A Rust sink panic traps wasm but the host finally still restores its claim.
+  session = await page('automatic');
+  await panic(session);
+  const trappedId = (await evaluate(session, records))[0].record.id;
+  await close(session);
+  session = await page('unwind');
+  await eventually(() => evaluate(session, 'window.sinkAttempts === 1'));
+  pending = await evaluate(session, records);
+  assert(pending.some(r => r.record.id === trappedId && r.state === 'P'), 'trapping Rust sink retains original');
+  await close(session);
+  session = await page();
+  await eventually(() => evaluate(session, receipts + '.some(r => r.id === ' + JSON.stringify(trappedId) + ')'));
   await evaluate(session, 'localStorage.clear()');
   await close(session);
 
