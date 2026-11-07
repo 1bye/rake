@@ -194,9 +194,11 @@ fn explicit_output_is_invocation_relative_while_default_is_config_root_relative(
         );
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let expected = if explicit {
-            invocation.path().join("chosen")
+            dunce::canonicalize(invocation.path())
+                .unwrap()
+                .join("chosen")
         } else {
-            root.path().join("dist")
+            dunce::canonicalize(root.path()).unwrap().join("dist")
         };
         assert_eq!(PathBuf::from(value["output"].as_str().unwrap()), expected);
     }
