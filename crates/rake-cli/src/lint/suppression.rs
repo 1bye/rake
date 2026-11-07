@@ -27,7 +27,6 @@ pub(super) fn parse(
     }
 
     literals.sort_by_key(|range| range.start);
-    let mut output = Vec::new();
     let mut offset = 0;
     let bytes = text.as_bytes();
     let mut depth = 0;
@@ -58,8 +57,71 @@ pub(super) fn parse(
         }
     }
 
-    for (start, end) in &comments {
-        let comment = text[start + 2..*end].trim();
+    directives(file, text, diagnostics, &comments, "//")
+}
+
+pub(super) fn parse_manifest(
+    file: &Path,
+    text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<Suppression> {
+    // Use the installed TOML parser's literal spans, including quoted keys,
+    // multiline strings and arrays; never invent a second TOML string lexer.
+    fn table_ranges(table: &toml::de::DeTable<'_>, ranges: &mut Vec<std::ops::Range<usize>>) {
+        for (key, value) in table {
+            ranges.push(key.span());
+            value_ranges(value, ranges);
+        }
+    }
+    fn value_ranges(
+        value: &toml::Spanned<toml::de::DeValue<'_>>,
+        ranges: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        match value.get_ref() {
+            toml::de::DeValue::Table(table) => table_ranges(table, ranges),
+            toml::de::DeValue::Array(array) => {
+                for value in array.iter() {
+                    value_ranges(value, ranges);
+                }
+            }
+            _ => ranges.push(value.span()),
+        }
+    }
+    let Ok(table) = toml::de::DeTable::parse(text) else {
+        return Vec::new();
+    };
+    let mut ranges = Vec::new();
+    table_ranges(table.get_ref(), &mut ranges);
+    ranges.sort_by_key(|range| range.start);
+    let mut ranges = ranges.into_iter().peekable();
+    let mut offset = 0;
+    let mut comments = Vec::new();
+    while offset < text.len() {
+        if ranges.peek().is_some_and(|range| range.start <= offset) {
+            offset = offset.max(ranges.next().expect("peeked TOML literal").end);
+        } else if text.as_bytes()[offset] == b'#' {
+            let end = text[offset..]
+                .find('\n')
+                .map_or(text.len(), |end| offset + end);
+            comments.push((offset, end));
+            offset = end;
+        } else {
+            offset += 1;
+        }
+    }
+    directives(file, text, diagnostics, &comments, "#")
+}
+
+fn directives(
+    file: &Path,
+    text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    comments: &[(usize, usize)],
+    marker: &str,
+) -> Vec<Suppression> {
+    let mut output = Vec::new();
+    for (start, end) in comments {
+        let comment = text[start + marker.len()..*end].trim();
         let Some(directive) = comment.strip_prefix("rake-lint:") else {
             continue;
         };
@@ -108,7 +170,7 @@ pub(super) fn parse(
                 .find_map(|(index, content)| {
                     let content = content.trim();
 
-                    (!content.is_empty() && !content.starts_with("//")).then_some(index + 1)
+                    (!content.is_empty() && !content.starts_with(marker)).then_some(index + 1)
                 })
         } else {
             Some(line)

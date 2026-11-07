@@ -485,6 +485,7 @@ fn property(label: &str, value: impl Into<SharedString>, colors: Palette) -> imp
             style={|s| s.border_b_1().border_color(colors.line)}
         >
             <span style={|s| s.w(px(86.)).flex_shrink_0().text_color(colors.muted)}>{label}</span>
+            // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
             <span class="min-w-0" style={|s| s.font_family(CODE_FONT).text_size(px(11.))}>
                 {value}
             </span>
@@ -1136,6 +1137,7 @@ impl ElementsView {
                     <span class="w-[14px] shrink-0" />
                 }
                 <span
+                    // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                     class="flex flex-row h-full justify-start shrink-0 font-code text-[12px] whitespace-nowrap"
                     style={|s| s.line_height(px(tree::ROW_HEIGHT))}
                 >
@@ -1162,6 +1164,7 @@ impl ElementsView {
                             }
                             if flex {
                                 <span
+                                    // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                     class="px-1 ml-[6px] rounded-[3px] text-[10px] leading-[14px] bg-field text-muted"
                                 >
                                     "flex"
@@ -1223,6 +1226,7 @@ impl ElementsView {
                         <span class="w-[16px] shrink-0" />
                     }
                     <div
+                        // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                         class="flex flex-row min-w-0 flex-wrap gap-x-[6px] font-code text-[12px] leading-[20px]"
                     >
                         <span class="text-property">{format!("{}:", row.name)}</span>
@@ -1240,6 +1244,7 @@ impl ElementsView {
                 </div>
                 if expanded {
                     <div
+                        // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                         class="px-3 py-2 ml-[24px] max-h-[180px] overflow-scroll bg-bar font-code text-[11px] leading-[17px] text-muted"
                     >
                         {serde_json::to_string_pretty(row.raw).unwrap_or_default()}
@@ -1426,6 +1431,7 @@ impl Render for ElementsView {
                     tabindex={0}
                     focus={&self.tree_focus}
                     scroll={&self.tree_scroll}
+                    // rake-lint: allow(view-theme-literal) Transparent border reserves focus-ring geometry; the active color comes from the theme.
                     class="flex flex-col flex-1 min-h-0 overflow-scroll py-[5px] border-1 border-[#00000000]"
                     class:border-focus={tree_active}
                     on:key-down={cx.listener(Self::tree_key)}
@@ -1476,6 +1482,7 @@ impl Render for ElementsView {
                     id="breadcrumbs"
                     aria-label="Selected element ancestors"
                     scroll={&self.breadcrumb_scroll}
+                    // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                     class="flex flex-row items-center min-w-0 h-[24px] shrink-0 overflow-x-scroll border-t-1 border-line bg-bar font-code text-[10px]"
                 >
                     for (id, label) in &self.breadcrumbs {
@@ -1619,11 +1626,13 @@ impl Render for ElementsView {
                     class="flex flex-col flex-1 min-h-0 overflow-y-scroll"
                 >
                     if stale {
+                        // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                         <p class="px-3 py-1 text-[11px] text-warning bg-warning-surface">
                             "Previous capture · details frozen"
                         </p>
                     }
                     if let Some(error) = &model.lookup_error {
+                        // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                         <p class="px-3 py-1 text-[11px] text-property">{error.clone()}</p>
                     }
                     if let Some(element) = selected {
@@ -1634,6 +1643,7 @@ impl Render for ElementsView {
                                     class="flex flex-col gap-1 px-2 py-2 border-b-1 border-line"
                                 >
                                     <p>"Temporary base overrides"</p>
+                                    // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                     <p class="text-[10px] text-muted">
                                         "Interaction styles may override these values. Rust source is unchanged."
                                     </p>
@@ -1742,6 +1752,7 @@ impl Render for ElementsView {
                                 class="flex flex-col border-b-1 border-line pb-[6px]"
                             >
                                 <div
+                                    // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                                     class="flex flex-row items-center gap-2 px-2 min-h-[30px] font-code text-[11px]"
                                 >
                                     <span class="min-w-0 text-ink">
@@ -1792,6 +1803,7 @@ impl Render for ElementsView {
                                             row.group == group
                                                 && styles::matches(row, &self.style_query)) {
                                             <span
+                                                // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                                                 class="pl-[24px] pt-[3px] text-muted font-code text-[10px] leading-[19px]"
                                             >
                                                 {
@@ -1822,6 +1834,7 @@ impl Render for ElementsView {
                                                                     )
                                                             ) {
                                                             <span
+                                                                // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                                                 class="pl-[24px] text-[10px] text-muted"
                                                             >
                                                                 {layer.origin.label()}
@@ -1850,6 +1863,7 @@ impl Render for ElementsView {
                                 }
                                 <span class="px-2 font-code">"}"</span>
                             </div>
+                            // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                             <p class="px-3 py-2 text-[10px] text-muted">
                                 {
                                     if current_tab == "Computed" {
@@ -1868,6 +1882,7 @@ impl Render for ElementsView {
                                 }
                             </p>
                             if current_tab == "Computed" {
+                                // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                 <p class="px-3 py-2 text-[10px] text-muted">
                                     "Origins describe observed values. Interaction rules with equal values and individual Rust declaration locations are unavailable. Inherited text may pass through uninspected ancestors."
                                 </p>
@@ -1900,6 +1915,7 @@ impl Render for ElementsView {
                                             format!("{:.1} × {:.1}", layout.width, layout.height)
                                         }
                                     </div>
+                                    // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                     <span class="text-[10px] text-muted">
                                         "Measured before clipping"
                                     </span>
@@ -1936,6 +1952,7 @@ impl Render for ElementsView {
                                     </div>
                                 }
                                 for reason in &boxes.unavailable {
+                                    // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                     <p id={reason.clone()} class="px-3 py-1 text-[10px] text-muted">
                                         {reason.clone()}
                                     </p>
@@ -2035,20 +2052,22 @@ impl Render for ElementsView {
                                     "Accessibility metadata unavailable."
                                 </p>
                             }
+                            // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                             <p class="px-3 py-2 text-[10px] text-muted">
                                 "Tab order covers captured handles only; private tab groups and opaque nodes are unavailable. Names use explicit labels or captured text. Relationship-derived names and opaque descendants remain unavailable."
                             </p>
                         }
                         if current_tab == "Events" {
                             for (index, handler) in element.handlers.iter().enumerate() {
-                                // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                 <div
+                                    // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                     id={format!("handler-{index}")}
+                                    // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                                     class="flex flex-col px-3 py-2 border-b-1 border-line font-code text-[11px]"
                                 >
                                     <p>{format!("{} · {}", handler.name, handler.origin)}</p>
-                                    // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                     <button
+                                        // rake-lint: allow(view-loop-index-id) Handler slots address immutable capture metadata by index; source navigation uses the same slot.
                                         id={format!("open-handler-source-{index}")}
                                         aria-label={
                                             format!(
@@ -2089,6 +2108,7 @@ impl Render for ElementsView {
                                     "No handler declarations captured."
                                 </p>
                             }
+                            // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                             <p class="px-3 py-2 text-[10px] text-muted">
                                 "Macro bindings and explicitly registered metadata; private listeners and closure state are not enumerated. Inspection never invokes handlers."
                             </p>
@@ -2105,15 +2125,16 @@ impl Render for ElementsView {
                             if let Some(view) = &element.view {
                                 {property("Authored tag", view.tag.clone(), colors)}
                                 for (index, style) in view.style_sources.iter().enumerate() {
-                                    // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                     <div
+                                        // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                         id={format!("style-source-{index}")}
+                                        // rake-lint: allow(view-theme-literal) Inspector code rows use fixed text metrics to align source text and row heights.
                                         class="px-3 py-2 border-b-1 border-line font-code text-[11px]"
                                     >
                                         <p>{format!("{} · {}", style.scope, style.attribute)}</p>
                                         <p class="text-muted">{style.expression.clone()}</p>
-                                        // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                         <button
+                                            // rake-lint: allow(view-loop-index-id) Style slots address immutable authored-order capture metadata; source navigation uses the same slot.
                                             id={format!("open-style-source-{index}")}
                                             aria-label={
                                                 format!(
@@ -2150,6 +2171,7 @@ impl Render for ElementsView {
                                         </button>
                                     </div>
                                 }
+                                // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                 <p class="px-3 py-2 text-[10px] text-muted">
                                     "Style sources list authored declarations, including conditional branches. They do not imply that a branch is active or locate methods inside opaque style closures."
                                 </p>
@@ -2185,6 +2207,7 @@ impl Render for ElementsView {
                                     colors
                                 )
                             }
+                            // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                             <p class="px-3 py-2 text-[10px] text-muted">
                                 "Source identifies the inspection boundary."
                             </p>
@@ -2206,6 +2229,7 @@ impl Render for ElementsView {
         rake::view! {
             <div
                 id="inspector"
+                // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                 class="size-full flex flex-col min-h-0 relative bg-background text-ink text-[12px] leading-[20px]"
                 focus={&self.focus}
                 on:key-down={cx.listener(Self::key)}
@@ -2409,6 +2433,7 @@ impl Render for ElementsView {
                 </div>
                 if self.show_coverage {
                     <section
+                        // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                         class="px-3 py-2 shrink-0 border-t-1 border-line bg-bar text-[11px] text-muted"
                         aria-label="Inspection coverage"
                     >
@@ -2426,6 +2451,7 @@ impl Render for ElementsView {
                     </section>
                 }
                 <div
+                    // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                     class="flex flex-row items-center gap-2 px-2 h-[23px] shrink-0 bg-bar border-t-1 border-line text-[10px] text-muted"
                 >
                     <button
@@ -2559,6 +2585,7 @@ impl Render for ElementsView {
                                         instance.info.runtime_id
                                     )
                                 }
+                                // rake-lint: allow(view-theme-literal) Inspector chrome keeps compact typography and radii consistent across both palettes.
                                 class="px-3 py-2 justify-start text-[11px] hover:bg-hover"
                                 style={control}
                                 on:click={

@@ -1,6 +1,10 @@
 //! Stable, source-only project linting; never invokes Cargo or expands Rust macros.
 
 mod catalogue;
+mod design;
+mod fix;
+mod guide;
+mod manifest;
 mod source;
 mod suppression;
 
@@ -41,6 +45,24 @@ struct Diagnostic {
     message: String,
     explanation: &'static str,
     fix: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    machine_fix: Option<MachineFix>,
+    #[serde(skip)]
+    edit: Option<Edit>,
+}
+
+#[derive(Debug, Serialize)]
+struct MachineFix {
+    applicability: &'static str,
+    span: SourceSpan,
+    replacement: String,
+}
+
+#[derive(Debug)]
+struct Edit {
+    range: std::ops::Range<usize>,
+    original: String,
+    replacement: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,9 +71,30 @@ struct Report {
     diagnostics: Vec<Diagnostic>,
     files_checked: usize,
     denied: bool,
+    #[serde(skip)]
+    original_sources: BTreeMap<String, String>,
 }
 
 impl Diagnostic {
+    fn at_bytes(id: &'static str, file: &Path, text: &str, range: std::ops::Range<usize>) -> Self {
+        let mut diagnostic = Self::new(id, file, Span::call_site());
+        diagnostic.span = byte_span(text, range);
+        diagnostic
+    }
+
+    fn set_edit(&mut self, text: &str, range: std::ops::Range<usize>, replacement: String) {
+        self.machine_fix = Some(MachineFix {
+            applicability: "machine-applicable",
+            span: byte_span(text, range.clone()),
+            replacement: replacement.clone(),
+        });
+        self.edit = Some(Edit {
+            original: text[range.clone()].into(),
+            range,
+            replacement,
+        });
+    }
+
     fn new(id: &'static str, file: &Path, span: Span) -> Self {
         let rule = rule(id).expect("diagnostics use catalogue IDs");
         let position = |point: proc_macro2::LineColumn| Position {
@@ -74,13 +117,30 @@ impl Diagnostic {
             message: rule.message.into(),
             explanation: rule.explanation,
             fix: rule.fix,
+            machine_fix: None,
+            edit: None,
         }
+    }
+}
+
+fn byte_span(text: &str, range: std::ops::Range<usize>) -> SourceSpan {
+    let position = |offset| {
+        let prefix = &text[..offset];
+        Position {
+            line: prefix.bytes().filter(|byte| *byte == b'\n').count() + 1,
+            column: prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1,
+        }
+    };
+    SourceSpan {
+        start: position(range.start),
+        end: position(range.end),
     }
 }
 
 pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     let mut json = false;
     let mut guide = false;
+    let mut fix = false;
     let mut explain = None;
     let mut path = None;
     let mut args = arguments.iter();
@@ -89,10 +149,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
         match argument.as_str() {
             "--json" => json = true,
             "--guide" => guide = true,
+            "--fix" => fix = true,
             "--explain" => explain = Some(args.next().ok_or("--explain requires a rule ID")?),
             "--help" | "-h" => {
                 println!(
-                    "Usage: rake lint [PATH] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide [--json]"
+                    "Usage: rake lint [PATH] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide [--json]"
                 );
 
                 return Ok(false);
@@ -106,24 +167,26 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     }
 
     if guide {
-        if path.is_some() || explain.is_some() {
-            return Err("--guide cannot be combined with a project path or --explain".into());
+        if path.is_some() || explain.is_some() || fix {
+            return Err(
+                "--guide cannot be combined with a project path, --explain or --fix".into(),
+            );
         }
-        let guide = "After editing Rust or view! markup, run rake format, then rake lint.\nUse rake format --check in CI. Configure rust-analyzer with\n[rustfmt]\noverrideCommand = [\"rake\", \"format\", \"--stdin\"]\nSee docs/format.md for formatting rules and docs/lint.md for lint rules.";
+        let guide = guide::generate();
         if json {
             println!(
                 "{}",
                 serde_json::json!({"schema_version": 1, "guide": guide})
             );
         } else {
-            println!("{guide}");
+            print!("{guide}");
         }
         return Ok(false);
     }
 
     if let Some(id) = explain {
-        if path.is_some() {
-            return Err("--explain cannot be combined with a project path".into());
+        if path.is_some() || fix {
+            return Err("--explain cannot be combined with a project path or --fix".into());
         }
 
         let rule = rule(id).ok_or_else(|| format!("unknown lint rule: {id}"))?;
@@ -156,7 +219,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     }
 
     let root = path.unwrap_or(std::env::current_dir()?);
-    let report = check_project(&root)?;
+    let mut report = check_project(&root)?;
+    if fix {
+        fix::apply(&root, &report)?;
+        report = check_project(&root)?;
+    }
 
     if json {
         println!("{}", serde_json::to_string(&report)?);
@@ -216,11 +283,13 @@ fn render(diagnostic: &Diagnostic, source: &str) -> String {
     )
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Config {
     levels: Levels,
     exclude: Vec<PathBuf>,
+    #[serde(skip)]
+    package: PathBuf,
 }
 
 fn load_config(directory: &Path) -> Result<Config> {
@@ -236,6 +305,8 @@ fn load_config(directory: &Path) -> Result<Config> {
         .map(|value| value.try_into())
         .transpose()?
         .unwrap_or_default();
+
+    config.package = directory.to_owned();
 
     for id in config.levels.keys() {
         if rule(id).is_none() {
@@ -286,17 +357,50 @@ fn check_project(root: &Path) -> Result<Report> {
         diagnostics: Vec::new(),
         files_checked: 0,
         denied: false,
+        original_sources: BTreeMap::new(),
     };
 
+    let mut sources = Vec::new();
+    let mut manifests = BTreeMap::new();
     scan_directory(root, &Config::default(), &mut |path, config| {
-        let source = fs::read_to_string(path)?;
-        let relative = path.strip_prefix(root)?;
-        report
-            .diagnostics
-            .extend(check_source(relative, &source, &config.levels));
-        report.files_checked += 1;
+        manifests.insert(config.package.clone(), config.clone());
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            sources.push((path.to_owned(), fs::read_to_string(path)?, config.clone()));
+        }
         Ok(())
     })?;
+    let mut themed = std::collections::BTreeSet::new();
+    for (_, text, config) in &sources {
+        if source::installs_theme(text) {
+            themed.insert(config.package.clone());
+        }
+    }
+    for (path, text, config) in sources {
+        let relative = path.strip_prefix(root)?;
+        let diagnostics = source::check_themed(relative, &text, themed.contains(&config.package));
+        let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, false);
+        if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
+            report
+                .original_sources
+                .insert(diagnostic.file.clone(), text);
+        }
+        report.diagnostics.extend(diagnostics);
+        report.files_checked += 1;
+    }
+    // Empty packages and virtual workspace release profiles must also be checked.
+    for (directory, config) in manifests {
+        let path = directory.join("Cargo.toml");
+        let text = fs::read_to_string(&path)?;
+        let relative = path.strip_prefix(root)?;
+        let diagnostics = manifest::check(relative, &text)?;
+        let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, true);
+        if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
+            report
+                .original_sources
+                .insert(diagnostic.file.clone(), text);
+        }
+        report.diagnostics.extend(diagnostics);
+    }
     report.diagnostics.sort_by(|left, right| {
         (
             &left.file,
@@ -330,6 +434,9 @@ fn scan_directory(
     } else {
         inherited
     };
+    if directory.join("Cargo.toml").is_file() {
+        visit(&directory.join("Cargo.toml"), config)?;
+    }
     let mut entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
 
     entries.sort_by_key(|entry| entry.file_name());
@@ -364,9 +471,23 @@ fn scan_directory(
     Ok(())
 }
 
+#[cfg(test)]
 fn check_source(file: &Path, text: &str, levels: &Levels) -> Vec<Diagnostic> {
-    let mut diagnostics = source::check(file, text);
-    let suppressions = suppression::parse(file, text, &mut diagnostics);
+    filter_diagnostics(file, text, levels, source::check(file, text), false)
+}
+
+fn filter_diagnostics(
+    file: &Path,
+    text: &str,
+    levels: &Levels,
+    mut diagnostics: Vec<Diagnostic>,
+    manifest: bool,
+) -> Vec<Diagnostic> {
+    let suppressions = if manifest {
+        suppression::parse_manifest(file, text, &mut diagnostics)
+    } else {
+        suppression::parse(file, text, &mut diagnostics)
+    };
 
     diagnostics.retain_mut(|diagnostic| {
         if let Some(level) = levels.get(diagnostic.rule_id) {
@@ -388,7 +509,9 @@ fn check_source(file: &Path, text: &str, levels: &Levels) -> Vec<Diagnostic> {
 pub(crate) fn files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     scan_directory(root, &Config::default(), &mut |path, _| {
-        files.push(path.to_owned());
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path.to_owned());
+        }
         Ok(())
     })?;
     Ok(files)

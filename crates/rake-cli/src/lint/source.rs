@@ -11,11 +11,21 @@ use syn::visit::{self, Visit};
 use syn::{Expr, Pat, Token};
 
 use super::Diagnostic;
-use super::catalogue::{BUTTON, IMAGE, INDEX, SYNTAX};
+use super::catalogue::{BUTTON, IMAGE, INDEX, STYLE, SYNTAX, THEME};
+use super::design;
+pub(super) use super::design::installs_theme;
 
+#[cfg(test)]
 pub(super) fn check(file: &Path, text: &str) -> Vec<Diagnostic> {
+    check_themed(file, text, installs_theme(text))
+}
+
+pub(super) fn check_themed(file: &Path, text: &str, themed: bool) -> Vec<Diagnostic> {
     let mut checker = Checker {
         file,
+        text,
+        themed,
+        attributes: std::collections::BTreeMap::new(),
         diagnostics: Vec::new(),
     };
 
@@ -29,6 +39,9 @@ pub(super) fn check(file: &Path, text: &str) -> Vec<Diagnostic> {
 
 struct Checker<'src> {
     file: &'src Path,
+    text: &'src str,
+    themed: bool,
+    attributes: std::collections::BTreeMap<usize, std::ops::Range<usize>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -73,7 +86,60 @@ impl Checker<'_> {
             self.emit(IMAGE, element.tag.span());
         }
 
+        let builtin = element.tag.segments.len() == 1
+            && [
+                "div", "section", "span", "nav", "header", "footer", "main", "aside", "article",
+                "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "button", "img", "svg",
+                "hr", "strong", "em",
+            ]
+            .iter()
+            .any(|name| element.tag.is_ident(name));
         for attribute in &element.attributes {
+            if builtin && let AttributeValue::Expression(expression) = &attribute.value {
+                if attribute.name == "style" {
+                    if !has("class")
+                        && element
+                            .attributes
+                            .iter()
+                            .filter(|a| a.name == "style")
+                            .count()
+                            == 1
+                        && let Some(classes) = rake_view_syntax::style_classes(expression)
+                    {
+                        let mut diagnostic = Diagnostic::new(STYLE, self.file, attribute.span);
+                        if let Some(range) = self.attributes.get(&attribute.span.byte_range().start)
+                            && let Some(authored) = self.text.get(range.clone())
+                            && !authored.contains("//")
+                            && !authored.contains("/*")
+                        {
+                            diagnostic.set_edit(
+                                self.text,
+                                range.clone(),
+                                format!("class=\"{classes}\""),
+                            );
+                        }
+                        self.diagnostics.push(diagnostic);
+                    }
+                    if self.themed {
+                        for span in design::style_literals(expression) {
+                            self.emit(THEME, span);
+                        }
+                    }
+                }
+                if self.themed && attribute.name == "class" {
+                    for span in design::class_literals(expression) {
+                        self.emit(THEME, span);
+                    }
+                }
+                if self.themed
+                    && attribute
+                        .name
+                        .strip_prefix("class:")
+                        .is_some_and(design::literal_utility)
+                {
+                    self.emit(THEME, attribute.span);
+                }
+            }
             match &attribute.value {
                 AttributeValue::Expression(expression) => {
                     if attribute.name == "id" && index_id(expression, indices) {
@@ -157,7 +223,29 @@ impl Checker<'_> {
 
     fn view(&mut self, tokens: TokenStream) {
         match syn::parse2::<View>(tokens) {
-            Ok(view) => self.element(view.root(), &[]),
+            Ok(view) => {
+                fn attributes(
+                    layout: &rake_view_syntax::Layout,
+                    output: &mut std::collections::BTreeMap<usize, std::ops::Range<usize>>,
+                ) {
+                    if layout.kind == rake_view_syntax::LayoutKind::Attribute {
+                        output.insert(
+                            layout.start.byte_range().start,
+                            layout.start.byte_range().start..layout.end.byte_range().end,
+                        );
+                    }
+                    for child in &layout.children {
+                        attributes(child, output);
+                    }
+                }
+                match view.layout() {
+                    Ok(layout) => {
+                        attributes(layout, &mut self.attributes);
+                        self.element(view.root(), &[]);
+                    }
+                    Err(error) => self.parse_error(error),
+                }
+            }
             Err(error) => self.parse_error(error),
         }
     }

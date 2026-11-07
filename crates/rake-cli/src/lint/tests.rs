@@ -160,6 +160,7 @@ fn json_report_snapshot() {
         diagnostics,
         files_checked: 1,
         denied: true,
+        original_sources: BTreeMap::new(),
     };
     let json = serde_json::to_string_pretty(&report).unwrap();
 
@@ -446,4 +447,380 @@ fn json_paths_use_forward_slashes_for_native_path_components() {
     let json = serde_json::to_value(diagnostic).unwrap();
 
     assert_eq!(json["file"], "src/nested folder/日本語.rs");
+}
+
+// Syntax-tier additions keep semantic uncertainty diagnostic-only.
+#[test]
+fn style_rule_accepts_only_exact_pure_utilities() {
+    for closure in [
+        "|s| s.flex().gap_4().items_center()",
+        "|s| { s.p_4().w_full() }",
+        "|s| (s.rounded_md())",
+    ] {
+        let diagnostics = check(&format!(
+            "<div id=\"a\" style={{{closure}}} aria-label=\"b\"/>"
+        ));
+        assert_eq!(ids(&diagnostics), [catalogue::STYLE], "{closure}");
+        let edit = diagnostics[0].edit.as_ref().unwrap();
+        assert!(edit.replacement.starts_with("class=\""));
+        assert!(edit.original.starts_with("style="));
+        assert!(edit.original.ends_with('}'));
+    }
+    for markup in [
+        "<div style={|s| s.w(gpui::px(12.))}/>",
+        "<div style={|s| s.bg(color)}/>",
+        "<div style={|s| s.hover(|s| s.flex())}/>",
+        "<div style={|s| { side_effect(); s.flex() }}/>",
+        "<div style={move |s| s.flex()}/>",
+        "<div style={|mut s| s.flex()}/>",
+        "<div style={|s: Div| s.flex()}/>",
+        "<div style={|s| s.unknown()}/>",
+        "<div style={|s| other.flex()}/>",
+        "<div style={|s| s.flex::<T>()}/>",
+        "<div class=\"p-2\" style={|s| s.flex()}/>",
+        "<Widget style={|s| s.flex()}/>",
+    ] {
+        assert!(check(markup).is_empty(), "{markup}");
+    }
+}
+
+#[test]
+fn style_comments_are_kept_by_withholding_the_edit_and_suppression_works() {
+    let invalid = check("<div style={|s| s.flex()} style={|s| s.p_2()}/>");
+    assert_eq!(ids(&invalid), [SYNTAX]);
+    assert!(invalid.iter().all(|d| d.edit.is_none()));
+    let diagnostics = check("<div style={|s| s /* why flex */ .flex()}/>");
+    assert_eq!(ids(&diagnostics), [catalogue::STYLE]);
+    assert!(diagnostics[0].edit.is_none());
+    assert!(check("\n// rake-lint: allow(view-style-class) Demonstrates the builder API.\n<div style={|s| s.flex()}/>").is_empty());
+}
+
+#[test]
+fn theme_rule_is_package_evidence_scoped_and_checks_only_design_values() {
+    let prefix = "fn install(cx: &mut App) { rake::theme::install(cx, palette); }\n";
+    for markup in [
+        "<div class=\"bg-[#123456]\"/>",
+        "<div class=\"hover:text-[#112233] rounded-[4px]\"/>",
+        "<p class={if ready { \"text-[13px]\" } else { \"text-body\" }}>Hello</p>",
+        "<div class:bg-[#112233]={active}/>",
+        "<div style={|s| s.bg(gpui::rgb(0x112233))}/>",
+        "<div style={|s| s.text_size(px(13.)).rounded(rems(0.5))}/>",
+    ] {
+        let text = format!("{prefix}fn main() {{ rake::view! {{ {markup} }}; }}");
+        let diagnostics = check_source(Path::new("main.rs"), &text, &Levels::new());
+        assert!(!diagnostics.is_empty(), "{markup}");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.rule_id == catalogue::THEME && d.edit.is_none())
+        );
+        assert!(check(markup).is_empty(), "no theme: {markup}");
+    }
+    for markup in [
+        "<div class=\"bg-surface text-body rounded-control p-4 w-[100px]\"/>",
+        "<div style={|s| s.bg(colors.surface).text_size(theme.body)}/>",
+        "<div style={|s| s.w(px(100.))}/>",
+        "<div style={|s| other.text_size(px(13.))}/>",
+        "<Widget class=\"bg-[#123456]\"/>",
+        "<div class={if condition(\"bg-[#123456]\") { \"bg-surface\" } else { \"bg-ink\" }}/>",
+        "<div class:rounded-control={active}/>",
+    ] {
+        let text = format!("{prefix}fn main() {{ rake::view! {{ {markup} }}; }}");
+        assert!(
+            check_source(Path::new("main.rs"), &text, &Levels::new()).is_empty(),
+            "{markup}"
+        );
+    }
+    let text = format!(
+        "{prefix}fn main() {{ rake::view! {{\n// rake-lint: allow(view-theme-literal) Intentional palette swatch.\n<div class=\"bg-[#112233]\"/> }}; }}"
+    );
+    assert!(check_source(Path::new("main.rs"), &text, &Levels::new()).is_empty());
+}
+
+#[test]
+fn theme_evidence_ignores_lookalikes_strings_and_aliases() {
+    for text in [
+        "fn f() { rake::theme::install(cx, colors); }",
+        "fn f() { ::rake::theme::install(cx, colors); }",
+        "fn f() { rake::App::new(\"x\").routes(routes).theme(colors); }",
+    ] {
+        assert!(source::installs_theme(text), "{text}");
+    }
+    for text in [
+        "fn f() { other::theme::install(cx, colors); }",
+        "fn f() { other::App::new(\"x\").theme(colors); }",
+        "fn f() { app.theme(colors); }",
+        "const S: &str = \"rake::theme::install(cx, colors)\";",
+        "fn f() { theme::install(cx, colors); }",
+    ] {
+        assert!(!source::installs_theme(text), "{text}");
+    }
+}
+
+#[test]
+fn theme_evidence_crosses_source_files_but_not_package_boundaries() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.1.0'",
+    )
+    .unwrap();
+    fs::write(
+        root.join("install.rs"),
+        "fn install() { rake::theme::install(cx, colors); }",
+    )
+    .unwrap();
+    fs::write(
+        root.join("view.rs"),
+        "fn view() { rake::view! { <div class=\"bg-[#123456]\"/> }; }",
+    )
+    .unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    fs::write(
+        root.join("nested/Cargo.toml"),
+        "[package]\nname='nested'\nversion='0.1.0'",
+    )
+    .unwrap();
+    fs::write(
+        root.join("nested/view.rs"),
+        "fn view() { rake::view! { <div class=\"bg-[#123456]\"/> }; }",
+    )
+    .unwrap();
+
+    let report = check_project(root).unwrap();
+
+    assert_eq!(ids(&report.diagnostics), [catalogue::THEME]);
+    assert_eq!(report.diagnostics[0].file, "view.rs");
+}
+
+#[test]
+fn manifest_rule_handles_release_inheritance_and_explicit_overrides() {
+    let text = "[profile.dev]\ndebug-assertions = true\n[profile.release]\ndebug-assertions = true # retain this comment\n[profile.ship]\ninherits = 'release'\ndebug-assertions = true\n[profile.ship.package.foo]\ndebug-assertions = true\n[profile.ship.build-override]\ndebug-assertions = true\n[profile.other]\ninherits='dev'\ndebug-assertions=true\n";
+    let diagnostics = manifest::check(Path::new("Cargo.toml"), text).unwrap();
+    assert_eq!(ids(&diagnostics), [catalogue::RELEASE; 4]);
+    let mut fixed = text.to_owned();
+    let mut edits: Vec<_> = diagnostics
+        .iter()
+        .map(|d| d.edit.as_ref().unwrap())
+        .collect();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
+    for edit in edits {
+        assert_eq!(edit.original, "true");
+        fixed.replace_range(edit.range.clone(), &edit.replacement);
+    }
+    let before: toml::Value = toml::from_str(text).unwrap();
+    let after: toml::Value = toml::from_str(&fixed).unwrap();
+    assert_eq!(before["profile"]["dev"], after["profile"]["dev"]);
+    assert_eq!(before["profile"]["other"], after["profile"]["other"]);
+    assert!(fixed.contains("false # retain this comment"));
+    assert!(
+        manifest::check(Path::new("Cargo.toml"), &fixed)
+            .unwrap()
+            .is_empty()
+    );
+    for text in [
+        "[features]\ndevtools=['rake/devtools']\n[profile.release]\ndebug-assertions=false",
+        "[dependencies]\nrake={version='1', features=['devtools']}\n",
+        "[profile.dev]\ndebug-assertions=true",
+        "[profile.a]\ninherits='b'\ndebug-assertions=true\n[profile.b]\ninherits='a'",
+        "[profile.release]\nopt-level=3",
+    ] {
+        assert!(
+            manifest::check(Path::new("Cargo.toml"), text)
+                .unwrap()
+                .is_empty(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn manifest_suppressions_require_reasons_and_ignore_all_toml_string_forms() {
+    for directive in [
+        "# rake-lint: allow(release-debug-assertions) Dedicated diagnostics artifact.\ndebug-assertions=true",
+        "debug-assertions=true # rake-lint: allow(release-debug-assertions) Dedicated diagnostics artifact.",
+    ] {
+        let text = format!("[profile.release]\n{directive}\n");
+        let diagnostics = manifest::check(Path::new("Cargo.toml"), &text).unwrap();
+        assert!(
+            filter_diagnostics(
+                Path::new("Cargo.toml"),
+                &text,
+                &Levels::new(),
+                diagnostics,
+                true
+            )
+            .is_empty()
+        );
+    }
+    let text =
+        "[profile.release]\n# rake-lint: allow(release-debug-assertions)\ndebug-assertions=true\n";
+    let diagnostics = manifest::check(Path::new("Cargo.toml"), text).unwrap();
+    assert_eq!(
+        ids(&filter_diagnostics(
+            Path::new("Cargo.toml"),
+            text,
+            &Levels::new(),
+            diagnostics,
+            true
+        )),
+        [catalogue::RELEASE, REASON]
+    );
+    for value in [
+        "'# rake-lint: allow(release-debug-assertions) no'",
+        "\"# rake-lint: allow(release-debug-assertions) no\"",
+        "'''\n# rake-lint: allow(release-debug-assertions) no\n'''",
+        "\"\"\"\n# rake-lint: allow(release-debug-assertions) no\n\"\"\"",
+    ] {
+        let text = format!("[package]\nname={value}\n[profile.release]\ndebug-assertions=true");
+        let diagnostics = manifest::check(Path::new("Cargo.toml"), &text).unwrap();
+        assert_eq!(
+            ids(&filter_diagnostics(
+                Path::new("Cargo.toml"),
+                &text,
+                &Levels::new(),
+                diagnostics,
+                true
+            )),
+            [catalogue::RELEASE]
+        );
+    }
+}
+
+#[test]
+fn manifest_fixes_obey_levels_even_without_rust_files() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    let text =
+        "[package]\nname='app'\nversion='0.1.0'\n[profile.release]\ndebug-assertions=true # why\n";
+    fs::write(root.join("Cargo.toml"), text).unwrap();
+    let report = check_project(root).unwrap();
+    assert_eq!(report.files_checked, 0);
+    assert_eq!(ids(&report.diagnostics), [catalogue::RELEASE]);
+
+    fix::apply(root, &report).unwrap();
+    let fixed = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(fixed.contains("debug-assertions=false # why"));
+    let report = check_project(root).unwrap();
+    assert!(report.diagnostics.is_empty());
+    fix::apply(root, &report).unwrap();
+    assert_eq!(fs::read_to_string(root.join("Cargo.toml")).unwrap(), fixed);
+
+    fs::write(
+        root.join("Cargo.toml"),
+        format!("{text}\n[package.metadata.rake.lint.levels]\nrelease-debug-assertions='allow'"),
+    )
+    .unwrap();
+    assert!(check_project(root).unwrap().diagnostics.is_empty());
+}
+
+#[test]
+fn stale_fixes_do_not_overwrite_changed_sources() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("Cargo.toml"),
+        "[profile.release]\ndebug-assertions=true",
+    )
+    .unwrap();
+    let report = check_project(project.path()).unwrap();
+    let changed = "[profile.release]\ndebug-assertions=false # changed concurrently";
+    fs::write(project.path().join("Cargo.toml"), changed).unwrap();
+
+    assert!(fix::apply(project.path(), &report).is_err());
+    assert_eq!(
+        fs::read_to_string(project.path().join("Cargo.toml")).unwrap(),
+        changed
+    );
+}
+
+#[test]
+fn catalogue_artifacts_are_current() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert_eq!(
+        fs::read_to_string(root.join(".agents/skills/rake-gpui/SKILL.md")).unwrap(),
+        guide::generate(),
+        "regenerate with cargo run -p rake-app-cli -- lint --guide > .agents/skills/rake-gpui/SKILL.md"
+    );
+    let docs = fs::read_to_string(root.join("docs/lint.md")).unwrap();
+    let generated = docs
+        .split("<!-- lint-rules:begin -->\n")
+        .nth(1)
+        .unwrap()
+        .split("<!-- lint-rules:end -->")
+        .next()
+        .unwrap();
+    assert_eq!(
+        generated,
+        guide::rules(),
+        "update the generated rule table in docs/lint.md from guide::rules()"
+    );
+}
+
+#[test]
+fn syntax_errors_prevent_edits_in_the_same_file() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.1.0'",
+    )
+    .unwrap();
+    let source =
+        "fn f() { rake::view! { <div style={|s| s.flex()}/> }; rake::view! { <div id=123/> }; }";
+    fs::write(root.join("main.rs"), source).unwrap();
+
+    let report = check_project(root).unwrap();
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.rule_id == catalogue::STYLE && d.edit.is_some())
+    );
+    assert!(report.diagnostics.iter().any(|d| d.rule_id == SYNTAX));
+    fix::apply(root, &report).unwrap();
+    assert_eq!(fs::read_to_string(root.join("main.rs")).unwrap(), source);
+}
+
+#[test]
+fn every_style_fix_lowers_to_the_identical_ordered_method_chain() {
+    let source = "fn f() { rake::view! { <div aria-label=\"before\" style={|s| s.p_4().px_2().p_0().flex()} id=\"after\"/> }; }";
+    let diagnostics = check_source(Path::new("main.rs"), source, &Levels::new());
+    let edit = diagnostics[0].edit.as_ref().unwrap();
+    let mut fixed = source.to_owned();
+    fixed.replace_range(edit.range.clone(), &edit.replacement);
+    assert!(fixed.contains("aria-label=\"before\" class=\"p-4 px-2 p-0 flex\" id=\"after\""));
+
+    // Lower both views using the actual macro compiler. The only executable
+    // difference is identity closure application versus its verbatim method chain.
+    let original_view: rake_view_syntax::View =
+        syn::parse_str("<div style={|s| s.p_4().px_2().p_0().flex()}/>").unwrap();
+    let fixed_view: rake_view_syntax::View =
+        syn::parse_str("<div class=\"p-4 px-2 p-0 flex\"/>").unwrap();
+    let rake: proc_macro2::TokenStream = "::rake".parse().unwrap();
+    let original = original_view.expand_resilient(&rake).unwrap().to_string();
+    let fixed = fixed_view.expand_resilient(&rake).unwrap().to_string();
+    assert!(original.contains(". map (| s | s . p_4 () . px_2 () . p_0 () . flex ())"));
+    assert!(fixed.contains(". p_4 () . px_2 () . p_0 () . flex ()"));
+    syn::parse_str::<syn::Expr>(&original).unwrap();
+    syn::parse_str::<syn::Expr>(&fixed).unwrap();
+}
+
+#[test]
+fn context_changes_invalidate_fixes_even_when_the_attribute_is_unchanged() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='app'\nversion='0.1.0'",
+    )
+    .unwrap();
+    let original = "fn f() { rake::view! { <div style={|s| s.flex()}/> }; }";
+    fs::write(root.join("main.rs"), original).unwrap();
+    let report = check_project(root).unwrap();
+    let changed = original.replace("<div", "<Foo");
+    fs::write(root.join("main.rs"), &changed).unwrap();
+
+    assert!(fix::apply(root, &report).is_err());
+    assert_eq!(fs::read_to_string(root.join("main.rs")).unwrap(), changed);
 }
