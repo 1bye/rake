@@ -1,0 +1,53 @@
+usage: dev.py [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
+              [--package PACKAGE] [--bin BIN] [--features FEATURES]
+              [--release | --debug] [--web-dir WEB_DIR] [--output OUTPUT]
+              [--native-reloader NATIVE_RELOADER] [--restart-without-state]
+              [--port PORT] [--instance INSTANCE] [--cdp] [--preview]
+              [--elements] [--no-open] [--json] [--session SESSION]
+              [--base-path BASE_PATH] [--routing {path,hash}]
+              [--sign-identity SIGN_IDENTITY] [--entitlements ENTITLEMENTS]
+              {dev,build,bundle,doctor,inspect} [{status}]
+
+Rake project builds and the development supervisor (Python 3.11+, standard
+library).
+
+positional arguments:
+  {dev,build,bundle,doctor,inspect}
+  {status}
+
+options:
+  -h, --help            show this help message and exit
+  --target {desktop,web}
+  --manifest-path MANIFEST_PATH
+  --package PACKAGE, -p PACKAGE
+  --bin BIN
+  --features FEATURES
+  --release
+  --debug               Use a development profile, including for bundles
+  --web-dir WEB_DIR
+  --output OUTPUT
+  --native-reloader NATIVE_RELOADER
+                        External native backend; owns ABI/code retirement and
+                        exits zero only after successful replacement
+  --restart-without-state
+                        Explicitly allow restarting apps without a control
+                        endpoint
+  --port PORT
+  --instance INSTANCE   Initial inspector runtime UUID or application ID
+  --cdp                 Expose opted-in runtimes to stock Chrome DevTools
+  --preview             macOS 14+: stream the native window to a local browser
+                        with pointer input and element selection
+  --elements            Launch the Elements-only Rake Inspector; --target
+                        selects desktop or Web
+  --no-open
+  --json
+  --session SESSION
+  --base-path BASE_PATH
+                        Web bundle deployment prefix, such as /notes/
+  --routing {path,hash}
+                        Web bundle routing mode
+  --sign-identity SIGN_IDENTITY
+                        macOS bundle signing identity; default '-' uses ad-hoc
+                        signing
+  --entitlements ENTITLEMENTS
+                        macOS signing entitlements plist
