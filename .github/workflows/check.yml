@@ -148,6 +148,11 @@ jobs:
           cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
           --features rake-app/view-test-support,rake-view/view-test-support,rake-notes/view-test-support
           --locked --no-fail-fast
+      - name: Devtools view tests without kit
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app --features view-test-support,devtools
+          --lib --test view_state --test element_inspection --locked --no-fail-fast
       - name: Desktop feature lints
         if: ${{ !cancelled() }}
         run: >-
@@ -160,7 +165,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: >-
           cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
-          -p rake-foundation -p rake-routing -p rake-files -p rake-tray -p rake-autostart
+          -p rake-foundation -p rake-routing -p rake-files -p rake-tray -p rake-autostart -p rake-updates
           -p rake-client -p rake-http -p rake-protocol --locked --no-fail-fast
           --features rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-notes/view-test-support,rake-view/view-test-support
       - name: GPUI fast desktop lints
