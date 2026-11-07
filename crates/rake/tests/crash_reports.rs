@@ -50,11 +50,29 @@ fn crash_child() {
         .directory(&directory)
         .include_panic_message(operation.starts_with("message-"))
         .limits(CrashLimits {
-            records: 128,
+            records: if operation.starts_with("bounded-") {
+                4
+            } else {
+                128
+            },
             ..CrashLimits::default()
         })
         .open("test.crash")
         .expect("open reporter");
+    if operation == "hold-retention" {
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(directory.join("retention.lock"))
+            .expect("retention lock");
+        lock.try_lock().expect("own retention");
+        println!("READY");
+        io::stdout().flush().expect("ready flush");
+        io::stdin()
+            .read_exact(&mut [0])
+            .expect("parent kills owner");
+        panic!("owner should have been killed");
+    }
     if operation == "deliver" {
         println!("READY");
         io::stdout().flush().expect("ready flush");
@@ -88,7 +106,7 @@ fn crash_child() {
             .kind(),
         io::ErrorKind::AlreadyExists
     );
-    if operation == "threads" {
+    if operation == "threads" || operation == "bounded-threads" {
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(32));
         let threads: Vec<_> = (0..32)
             .map(|_| {
@@ -131,8 +149,8 @@ fn crash_child() {
     panic!("SECRET_USER_CONTENT");
 }
 
-fn consumer(directory: &Path) -> Child {
-    let mut child = command(directory, "deliver")
+fn ready_child(directory: &Path, operation: &str) -> Child {
+    let mut child = command(directory, operation)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -152,6 +170,10 @@ fn consumer(directory: &Path) -> Child {
         }
     }
     child
+}
+
+fn consumer(directory: &Path) -> Child {
+    ready_child(directory, "deliver")
 }
 
 fn finish(mut child: Child) {
@@ -321,4 +343,64 @@ fn a_caught_panic_is_recorded_even_when_the_process_continues() {
     let record: CrashRecord = serde_json::from_slice(&fs::read(&paths[0]).expect("record bytes"))
         .expect("valid panic record");
     assert_eq!(record.message, "Rust panic (payload omitted for privacy)");
+}
+
+#[test]
+fn concurrent_process_writers_leave_retention_bounded_without_a_final_prune() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let directory = temporary.path().join("crashes");
+    let children: Vec<_> = (0..4)
+        .map(|_| {
+            command(&directory, "bounded-threads")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn writers")
+        })
+        .collect();
+
+    for mut child in children {
+        assert!(child.wait().expect("writer exit").success());
+    }
+
+    let paths = records(&directory);
+    assert_eq!(paths.len(), 4);
+    for path in paths {
+        let _: CrashRecord =
+            serde_json::from_slice(&fs::read(path).expect("bytes")).expect("valid retained record");
+    }
+}
+
+#[test]
+fn killed_retention_owner_is_recovered_on_next_open_and_delivery() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let directory = temporary.path().join("crashes");
+    let mut owner = ready_child(&directory, "hold-retention");
+    let output = crash(&directory, "bounded-threads");
+    assert!(output.status.success());
+    assert_eq!(
+        records(&directory).len(),
+        32,
+        "busy owner never blocks writers"
+    );
+
+    owner.kill().expect("kill retention owner");
+    owner.wait().expect("reap owner");
+    let reporter = CrashConfig::new("recovery")
+        .directory(&directory)
+        .limits(CrashLimits {
+            records: 4,
+            ..CrashLimits::default()
+        })
+        .open("test.crash")
+        .expect("recover retention lock");
+
+    assert_eq!(records(&directory).len(), 4);
+    assert_eq!(
+        reporter
+            .deliver(&|_: &CrashRecord| Ok(()))
+            .expect("deliver"),
+        4
+    );
+    assert!(records(&directory).is_empty());
 }

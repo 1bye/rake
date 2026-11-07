@@ -404,3 +404,35 @@ fn scope_exit_unlocks_even_while_an_inherited_description_is_alive() {
     next.try_lock().expect("scope exit released inherited lock");
     drop(inherited);
 }
+
+#[test]
+fn retention_notification_survives_open_handles_and_concurrent_pruning() {
+    let (_directory, reporter) = reporter(CrashLimits {
+        records: 4,
+        ..CrashLimits::default()
+    });
+    let path = reporter.directory.join("retention.pending");
+    // Keep a writer's notification handle alive across the owner's clear/scan.
+    let pending = private_options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .expect("notification");
+
+    for round in 0..16 {
+        std::thread::scope(|scope| {
+            for writer in 0..8 {
+                let reporter = &reporter;
+                scope.spawn(move || {
+                    let mut record = reporter.record(None, None);
+                    record.id = format!("{round:04}-{writer:04}");
+                    reporter.write(record).expect("concurrent notification");
+                });
+            }
+        });
+        assert_eq!(reporter.records().expect("records").len(), 4);
+        assert_eq!(fs::metadata(&path).expect("stable notification").len(), 0);
+        assert_eq!(pending.metadata().expect("held notification").len(), 0);
+    }
+}

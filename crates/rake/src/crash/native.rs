@@ -288,7 +288,7 @@ impl CrashReporter {
             .truncate(false)
             .open(self.directory.join("retention.pending"))?;
         check_file(&marker)?;
-        drop(marker);
+        marker.set_len(1)?;
 
         self.prune()
     }
@@ -313,9 +313,18 @@ impl CrashReporter {
     }
 
     fn prune(&self) -> io::Result<()> {
-        // A writer marks pending AFTER commit, BEFORE trying the lock. The owner
-        // clears it BEFORE scanning and checks again AFTER unlock, so a contending
-        // writer cannot leave an unobserved commit when all writers have finished.
+        check_directory(&self.directory)?;
+        // Never unlink the shared notification: Windows rejects opens while an
+        // existing handle keeps a deleted file pending. Its length is a one-bit flag.
+        let pending = private_options()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.directory.join("retention.pending"))?;
+        check_file(&pending)?;
+
+        // Mark AFTER commit, clear BEFORE scanning, check AFTER unlock. A writer
+        // either appears in this scan, notifies this owner, or becomes the next owner.
         loop {
             check_directory(&self.directory)?;
             let lock = private_options()
@@ -333,13 +342,7 @@ impl CrashReporter {
             }
 
             let retention_lock = FileLock(&lock);
-            let pending = self.directory.join("retention.pending");
-
-            match fs::remove_file(&pending) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
+            pending.set_len(0)?;
 
             let paths = self.records()?;
             let mut excess = paths.len().saturating_sub(self.limits.records);
@@ -369,7 +372,7 @@ impl CrashReporter {
             drop(retention_lock);
             drop(lock);
 
-            if !pending.try_exists()? {
+            if pending.metadata()?.len() == 0 {
                 return Ok(());
             }
         }
