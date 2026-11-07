@@ -1,95 +1,195 @@
 name: Rake
 on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**/*.md'
+      - .agents/**
+  push:
+    branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**/*.md'
+      - .agents/**
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  # Only superseded PR runs are cancelled; main pushes each keep their own group.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  native-and-web:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gate
+          cache-targets: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: python3 scripts/check-gpui-pins.py
+      - run: cargo fmt --all --check
+      # These suites take seconds and need neither a Rust build nor a browser.
+      - run: python3 scripts/test-web-deployment.py
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Fast web script tests
+        run: |
+          node scripts/test-notes-storage.mjs
+          node scripts/test-platform.mjs
+          node scripts/test-web-runtime.mjs
+          node scripts/test-offline.mjs
+          node scripts/test-file-processing.mjs
+
+  portable:
+    if: github.event_name != 'schedule'
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: portable
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Portable API lints
+        run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
+      - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
+      - run: cargo check -p rake-macros --no-default-features --locked
+      - name: Headless example lints
+        run: cargo clippy -p rake-inspector -p rake-notes --no-default-features --all-targets --locked -- -D warnings
+      - name: Headless example tests
+        run: cargo test -p rake-inspector -p rake-notes --no-default-features --locked
+      - name: Portable Wasm libraries
+        run: cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
+      # Example packages enable updates on the facade, so retain the standalone default graph.
+      - run: cargo check -p rake-app --lib --target wasm32-unknown-unknown --locked
+      - name: Default Wasm lints
+        run: cargo clippy -p rake-app -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector -p renamed-facade -p rake-files --lib --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: Headless Wasm lints
+        run: |
+          cargo clippy -p rake-web-host-fixture --lib --target wasm32-unknown-unknown --locked -- -D warnings
+          cargo clippy -p rake-app --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: Wasm feature checks
+        run: |
+          cargo check -p rake-app --features tray --target wasm32-unknown-unknown --locked
+          cargo check -p rake-app --features native-components --lib --target wasm32-unknown-unknown --locked
+          cargo check -p rake-view -p renamed-facade --lib --features rake/devtools --target wasm32-unknown-unknown --locked
+          cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
+      - name: Wasm artifact builds
+        run: cargo build -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector --lib --target wasm32-unknown-unknown --locked
+
+  native:
+    if: github.event_name != 'schedule'
+    needs: gate
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: python3 scripts/check-gpui-pins.py
-      - run: cargo fmt --all --check
+        with:
+          shared-key: native
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The formatter CLI depends on the distribution bundler; keep its build off the gate.
       - run: cargo run -p rake-app-cli --locked -- format --check
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo test -p rake-ui --features test-support --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-app --features native-components --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
       - run: cargo test -p rake-native --doc --locked
       - run: cargo test -p rake-native --features native-tests --test appkit --locked
-      - run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
       - run: cargo test -p rake-tray --locked
+      - run: cargo test --workspace --locked --no-fail-fast
+      - run: cargo test -p rake-files --lib --locked
+      - run: cargo test -p rake-app --test platform --locked
       - run: cargo clippy -p rake-app --features tray --all-targets --locked -- -D warnings
       - run: cargo test -p rake-app --features tray,view-test-support --lib --locked
       - run: cargo check -p rake-app --features tray,gpui-fast --all-targets --locked
-      - run: cargo check -p rake-app --features tray --target wasm32-unknown-unknown --locked
       - run: cargo check -p renamed-facade --features tray --locked
-      - run: cargo test --workspace --locked --no-fail-fast
       - run: cargo test -p rake-app --features view-test-support --lib --test view_state --test actions --test inspection_compiled_out --locked
+      - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo test -p rake-app --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
       - run: cargo clippy -p rake-app --all-targets --features view-test-support,devtools --locked -- -D warnings
       - run: cargo test -p rake-ui --features kit --test semantic --locked
       - run: cargo test -p rake-app --features kit,view-test-support,devtools --lib --test view_state --locked
       - run: cargo clippy -p rake-kit-example --features kit,devtools --all-targets --locked -- -D warnings
       - run: cargo check -p renamed-facade --features devtools --locked
-      - run: cargo test -p rake-view --features view-test-support --lib --locked
-      - run: cargo check -p rake-app --lib --target wasm32-unknown-unknown --locked
       - run: cargo test -p rake-notes --features view-test-support --locked
-      - run: cargo check -p rake-app --no-default-features --locked
-      - run: cargo check -p rake-app --features native-components --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-macros --no-default-features --locked
-      - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
-      - run: cargo test -p rake-ui --features test-support --locked
       - run: cargo clippy -p rake-app --no-default-features --locked -- -D warnings
+      - name: Headless application tests
+        run: cargo test -p rake-app --no-default-features --test platform --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
       - run: cargo test -p rake-app-cli --features scaffold-tests --test new_build --locked
-      - run: cargo build -p rake-app-cli --locked
-      - name: Install matching Wasm bindings tool
-        run: |
-          python3 - <<'PY'
-          import subprocess, tomllib
-          from pathlib import Path
-          lock = tomllib.loads(Path("Cargo.lock").read_text())
-          version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
-          subprocess.run(["cargo", "install", "wasm-bindgen-cli", "--version", version, "--locked"], check=True)
-          PY
-      - run: python3 scripts/test-bundle.py
-      - run: python3 scripts/test-dev-bridge.py
-      - run: python3 scripts/test-supervisor.py
-      - run: python3 scripts/test-inspector.py
-      - uses: actions/setup-node@v4
+
+  extended:
+    if: github.event_name != 'pull_request'
+    needs: gate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
-          node-version: 22
-      - run: node scripts/test-web-loading.mjs
-      - run: node scripts/test-notes-storage.mjs
-      - run: node scripts/test-platform.mjs
-      - run: node scripts/test-web-runtime.mjs
-      - run: node scripts/test-offline.mjs
-      - run: node scripts/test-file-processing.mjs
-      - run: cargo test -p rake-files --lib --locked
-      - run: cargo clippy -p rake-files --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: python3 scripts/test-web-deployment.py
-      - run: cargo test -p rake-app --no-default-features --test platform --locked
-      - run: cargo test -p rake-app --test platform --locked
-      - run: cargo clippy -p rake-web-host-fixture --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo clippy -p rake-app --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo test -p rake-inspector --no-default-features --locked
-      - run: cargo clippy -p rake-inspector --no-default-features --all-targets --locked -- -D warnings
-      - run: cargo test -p rake-notes --no-default-features --locked
-      - run: cargo clippy -p rake-notes --no-default-features --all-targets --locked -- -D warnings
-      - run: cargo test -p rake-app --no-default-features --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
-      - run: cargo check -p rake-foundation -p rake-routing -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-view -p renamed-facade --lib --features rake/devtools --target wasm32-unknown-unknown --locked
-      - run: cargo clippy -p rake-app -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo build -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: extended
+          # Keep the pinned Dylint binaries and driver builds between main runs.
+          cache-directories: ~/.dylint_drivers
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install spacing tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-dylint@6.3.2,dylint-link@6.3.2
+        env:
+          # Used only if the prebuilt binary installer needs its source fallback.
+          RUSTUP_TOOLCHAIN: nightly-2026-08-20
+      - run: python3 scripts/check-spacing.py
       - run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
-      - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
-      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.3.2 --locked
-      - run: python3 scripts/check-spacing.py
+      - run: cargo build -p rake-app-cli --locked
+      - name: Read locked Wasm bindings version
+        id: wasm-bindgen
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          lock = tomllib.loads(Path("Cargo.lock").read_text())
+          version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\n")
+          PY
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen.outputs.version }}
+          fallback: none
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Native CLI and development script suites
+        run: |
+          python3 scripts/test-bundle.py
+          python3 scripts/test-dev-bridge.py
+          python3 scripts/test-supervisor.py
+          python3 scripts/test-inspector.py
+      - run: node scripts/test-web-loading.mjs
