@@ -71,6 +71,8 @@ jobs:
           cache-all-crates: false
           cache-workspace-crates: false
           shared-key: portable
+          # This parallel job is short; keep download hits without a second Wasm target tree.
+          cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Portable API lints
         run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
@@ -101,7 +103,7 @@ jobs:
 
       - name: Estimate dependency cache size
         if: ${{ always() }}
-        run: python3 scripts/cache-budget.py --targets
+        run: python3 scripts/cache-budget.py
 
   desktop:
     name: desktop (${{ matrix.os }})
@@ -131,6 +133,8 @@ jobs:
           cache-all-crates: false
           cache-workspace-crates: false
           shared-key: desktop-${{ matrix.os }}
+          # Reserve compiled-cache space for Windows and macOS; Linux keeps download hits.
+          cache-targets: ${{ runner.os == 'Windows' }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GPUI Linux development and software Vulkan libraries
         if: runner.os == 'Linux'
@@ -224,7 +228,7 @@ jobs:
 
       - name: Estimate dependency cache size
         if: ${{ always() }}
-        run: python scripts/cache-budget.py --targets
+        run: python scripts/cache-budget.py ${{ runner.os == 'Windows' && '--targets' || '' }}
 
   native:
     if: github.event_name != 'schedule'

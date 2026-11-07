@@ -23,6 +23,15 @@ def size(path):
 
 
 def dependency_targets(target, names):
+    names = set(names)
+    # Fingerprints record actual library names (gpui-pre builds libgpui, for example).
+    for directory in target.rglob(".fingerprint"):
+        for package in directory.iterdir():
+            if package.name.rsplit("-", 1)[0] not in names or not package.is_dir():
+                continue
+            for library in package.glob("lib-*"):
+                name = library.name.removeprefix("lib-").removesuffix(".json")
+                names.update((name, "lib" + name))
     total = 0
     for directory in target.rglob("*"):
         if directory.name not in {"deps", "build", ".fingerprint"} or not directory.is_dir():
