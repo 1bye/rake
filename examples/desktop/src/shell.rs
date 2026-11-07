@@ -47,11 +47,13 @@ impl Render for Shell {
             self.smoke_rendered = true;
             // open_window can render before its first presentation. Force a platform
             // frame, then acknowledge it on the following frame callback.
-            _window.on_next_frame(|window, _| {
+            let navigator = self.layout.navigator();
+
+            _window.on_next_frame(move |window, _| {
                 window.refresh();
-                window.on_next_frame(|_, cx| {
+                window.on_next_frame(move |_, _| {
                     println!("RAKE_DESKTOP_SMOKE_FRAME");
-                    cx.quit();
+                    drop(navigator.quit(QuitOptions::default()));
                 });
             });
             _window.defer(cx, |window, _| window.refresh());
