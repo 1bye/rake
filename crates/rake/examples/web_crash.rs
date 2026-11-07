@@ -7,10 +7,11 @@ mod browser {
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen(
-        inline_js = "export function accepted(raw) { const records = JSON.parse(localStorage.getItem('receipts') || '[]'); records.push(JSON.parse(raw)); localStorage.setItem('receipts', JSON.stringify(records)); }"
+        inline_js = "export function attempted() { window.sinkAttempts = (window.sinkAttempts || 0) + 1; } export function accepted(raw) { const records = JSON.parse(localStorage.getItem('receipts') || '[]'); records.push(JSON.parse(raw)); localStorage.setItem('receipts', JSON.stringify(records)); }"
     )]
     extern "C" {
         fn accepted(raw: &str);
+        fn attempted();
     }
 
     /// Starts the real background App with an automatic, disabled or explicit policy.
@@ -29,6 +30,7 @@ mod browser {
             let fail = mode == "fail";
             let unwind = mode == "unwind";
             app = app.crash_reports(config, move |record: &CrashRecord| {
+                attempted();
                 assert!(!unwind, "sink panic");
                 if fail {
                     return Err(std::io::Error::other("retry"));

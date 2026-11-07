@@ -95,6 +95,7 @@ try {
   await close(session);
 
   session = await page('fail');
+  await eventually(() => evaluate(session, 'window.sinkAttempts === 1'));
   await eventually(() => evaluate(session, records + '.every(r=>r.state==="P")'));
   assert.equal((await evaluate(session, records))[0].record.id, id, 'failing Rust sink retains original');
   assert.equal((await evaluate(session, receipts)).length, 0);
