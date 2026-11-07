@@ -574,6 +574,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                 PathBuf::from("rake/helpers").join(format!("{}{suffix}", helper.name))
             };
 
+            let relative = rake_dist_core::portable_relative_path(&relative)?;
             let destination = resource_stage.join(&relative);
             let source_root = recipes::root(helper.component.as_deref(), &prepared.roots, root)?;
 
@@ -654,6 +655,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
                     .join(&component.name)
                     .join(license);
 
+                let relative = rake_dist_core::portable_relative_path(&relative)?;
                 let destination = resource_stage.join(&relative);
 
                 files::copy(&files::confined(source_root, license)?, &destination)?;
@@ -672,6 +674,7 @@ pub fn execute_worker(request: &BundleRequest, job_parent: &Path) -> Result<Dist
             }
 
             let relative = PathBuf::from("rake/keys").join(format!("{provider}.pub"));
+            let relative = rake_dist_core::portable_relative_path(&relative)?;
             let destination = resource_stage.join(&relative);
 
             files::copy(&files::confined(root, path)?, &destination)?;
