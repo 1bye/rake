@@ -4,6 +4,7 @@
 #[cfg(target_family = "wasm")]
 mod browser {
     use rake::crash::{CrashLimits, CrashRecord};
+    use rake::gpui::AppContext as _;
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen(
@@ -42,7 +43,7 @@ mod browser {
         if mode == "disabled" {
             app = app.without_crash_reports();
         }
-        app.background(|_, _| {})
+        app.root(|_, _, cx| cx.new(|_| rake::gpui::Empty).into())
             .run()
             .map_err(|error| JsValue::from_str(&error.to_string()))
     }

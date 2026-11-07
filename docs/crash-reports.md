@@ -5,11 +5,11 @@ bounded local panic records to the app's data directory (native) or localStorage
 both development and packaged runs. It never uploads anything. Panic payloads are
 omitted by default, and the normal size/count/privacy limits below apply.
 
-With no crash builder calls, `App::run` opens the default crash directory and
+With no crash builder calls, `App::run` opens the default crash spool and
 installs the hook with the App's diagnostics collector before GPUI starts.
 There is no sink, delivery pass or acknowledgement deletion: records wait for a
 later run that configures a sink. Ordinary oldest-first retention still applies.
-Default directory/hook setup failures emit a warning and startup continues, including
+Default storage/hook setup failures emit a warning and startup continues, including
 when a host already installed a Rake hook. Constructing an App alone performs no I/O.
 
 The configuration, limits, record and sink types in `rake::crash` are available on
@@ -323,8 +323,8 @@ Run the real Chrome/Wasm app regression suite with:
 WASM_BINDGEN=/path/to/matching/wasm-bindgen node scripts/test-web-crash.mjs
 ```
 
-It uses the existing browser CDP harness and a background `App`, without opening
-a GPUI window or claiming GPU rendering coverage. It covers panic/reload delivery,
+It uses the existing browser CDP harness and a minimal `App` root. It makes no
+rendered UI or GPU correctness claim. It covers panic/reload delivery,
 competing tabs, failing Rust sinks, interrupted claims, privacy, UTF-8 JSON/count
 bounds, console output, opt-out, throwing callbacks, quota errors and missing locks.
 
