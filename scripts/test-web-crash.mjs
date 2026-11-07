@@ -58,8 +58,9 @@ try {
   const built = spawnSync('cargo', ['build', '-p', 'rake-app', '--example', 'web-crash', '--target', 'wasm32-unknown-unknown', '--locked'], {cwd: root, stdio: 'inherit'});
   assert.equal(built.status, 0, 'build actual App fixture');
   const bindgen = process.env.WASM_BINDGEN ?? 'wasm-bindgen';
-  const expected = spawnSync('python3', ['-c', 'import tomllib; print(next(p["version"] for p in tomllib.load(open("Cargo.lock", "rb"))["package"] if p["name"] == "wasm-bindgen"))'], {cwd: root, encoding: 'utf8'});
-  assert.equal(spawnSync(bindgen, ['--version'], {encoding: 'utf8'}).stdout?.trim(), 'wasm-bindgen ' + expected.stdout.trim(), 'matching wasm-bindgen required');
+  const lock = await readFile(join(root, 'Cargo.lock'), 'utf8');
+  const expected = lock.match(/name = "wasm-bindgen"\\nversion = "([^"]+)"/)?.[1];
+  assert.equal(spawnSync(bindgen, ['--version'], {encoding: 'utf8'}).stdout?.trim(), 'wasm-bindgen ' + expected, 'matching wasm-bindgen required');
   const target = resolve(root, process.env.CARGO_TARGET_DIR ?? 'target');
   const generated = spawnSync(bindgen, ['--target', 'web', '--out-name', 'fixture', '--out-dir', temporary, join(target, 'wasm32-unknown-unknown/debug/examples/web_crash.wasm')], {stdio: 'inherit'});
   assert.equal(generated.status, 0, 'generate bindings');

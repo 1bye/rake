@@ -56,6 +56,7 @@ export async function crash_deliver(prefix, bytes, count, report) {
     if (!lock) return 0;
     let delivered = 0;
     try {
+      prune(prefix, count);
       for (const key of keys(prefix)) {
         const stored = localStorage.getItem(key);
         if (stored === null) continue;
