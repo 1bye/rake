@@ -78,7 +78,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = 'http://127.0.0.1:' + server.address().port;
   const profile = join(temporary, 'profile');
-  processChrome = spawn(chrome, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'], {stdio:['ignore','ignore','pipe']});
+  processChrome = spawn(chrome, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'], {stdio:['ignore','ignore','pipe'], detached:process.platform !== 'win32'});
   processChrome.stderr.on('data', data => { stderr = (stderr + data).slice(-8000); });
   const port = await eventually(async () => { try { return (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; } catch (_) { return null; } });
   const browser = await (await fetch('http://127.0.0.1:' + port + '/json/version')).json();
@@ -209,9 +209,17 @@ try {
 } finally {
   cdp?.close(); socket?.close();
   if (processChrome) {
-    processChrome.kill('SIGTERM');
-    await Promise.race([new Promise(resolve => processChrome.once('exit', resolve)), delay(5000)]);
-    if (processChrome.exitCode === null) processChrome.kill('SIGKILL');
+    const stop = signal => {
+      if (process.platform === 'win32') { processChrome.kill(signal); return; }
+      // Chrome renderers can outlive its main process and retain the stderr pipe.
+      try { process.kill(-processChrome.pid, signal); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    };
+    stop('SIGTERM');
+    if (processChrome.exitCode === null && processChrome.signalCode === null) {
+      await Promise.race([new Promise(resolve => processChrome.once('exit', resolve)), delay(5000)]);
+    }
+    stop('SIGKILL');
+    processChrome.stderr.destroy();
   }
   if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   await rm(temporary, {recursive:true, force:true});
