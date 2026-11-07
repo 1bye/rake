@@ -144,9 +144,11 @@ impl CrashReporter {
             let Some(record) = record else {
                 return 2;
             };
+
             if sink.report(&record).is_err() {
                 return 3;
             }
+
             1
         }) as Box<dyn FnMut(String) -> u32>);
         let abandoned = Closure::wrap(Box::new(move |id: String| {
@@ -167,6 +169,7 @@ impl CrashReporter {
         ))
         .await
         .map_err(storage_error)?;
+
         match result.as_f64() {
             Some(-1.0) => Err(io::Error::other(
                 "crash sink failed; waiting record retained",

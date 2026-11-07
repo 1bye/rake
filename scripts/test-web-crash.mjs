@@ -193,7 +193,9 @@ try {
     'adapter.crash_write(p,"001",raw,1024,2);await navigator.locks.request(p+"spool",()=>{});' +
     'const trapped=await adapter.crash_deliver(p,1024,2,()=>{throw Error("sink")});' +
     'if(trapped!==-2||localStorage[p+"001"]!=="C1:"+raw)throw Error("throwing sink lost record");' +
+    'if(await adapter.crash_deliver(p,1024,2,()=>3)!==-1||localStorage[p+"001"]!=="P1:"+raw)throw Error("Err consumed/reset prior interruptions");' +
     'await adapter.crash_deliver(p,1024,2,()=>0);if(localStorage[p+"001"]!=="P1:"+raw)throw Error("future schema lost");' +
+    'for(const state of ["P","C"]){localStorage.setItem(p+"000",state+raw);await adapter.crash_deliver(p,1024,2,()=>0);if(localStorage[p+"000"]!=="P"+(state==="C"?1:0)+":"+raw)throw Error("legacy marker");localStorage.removeItem(p+"000");}' +
     'const original=Storage.prototype.setItem;Storage.prototype.setItem=()=>{throw Error("quota")};try{adapter.crash_write(p,"002",raw,1024,2)}finally{Storage.prototype.setItem=original}' +
     'const huge="🦀".repeat(300);adapter.crash_write(p,"003",huge,1024,2);if(localStorage[p+"003"])throw Error("encoded bytes");' +
     'await navigator.locks.request(p+"spool",async()=>{if(await adapter.crash_deliver(p,1024,2,()=>{throw Error("busy sink")}))throw Error("busy")});' +

@@ -7,11 +7,11 @@ mod browser {
     use rake::diagnostics::{Collector, DiagnosticsConfig};
     use rake::gpui::AppContext as _;
     use std::cell::RefCell;
+    use wasm_bindgen::prelude::*;
 
     thread_local! {
         static DIAGNOSTICS: RefCell<Option<Collector>> = const { RefCell::new(None) };
     }
-    use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen(
         inline_js = "export function attempted(id) { window.sinkAttempts = (window.sinkAttempts || 0) + 1; (window.sinkIds ||= []).push(id); } export function accepted(raw) { const records = JSON.parse(localStorage.getItem('receipts') || '[]'); records.push(JSON.parse(raw)); localStorage.setItem('receipts', JSON.stringify(records)); }"
@@ -21,7 +21,7 @@ mod browser {
         fn attempted(id: &str);
     }
 
-    /// Starts the real background App with an automatic, disabled or explicit policy.
+    /// Starts the real root App with an automatic, disabled or explicit policy.
     #[wasm_bindgen]
     pub fn start(mode: &str, include_message: bool, record_bytes: usize) -> Result<(), JsValue> {
         let config = rake::crash_config!()
