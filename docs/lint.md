@@ -8,6 +8,8 @@ expand Rust macros, or require GPUI/Linux GUI libraries.
 rake lint                         # current project or workspace directory
 rake lint examples/view           # another project directory
 rake lint --json
+rake lint --json src/main.rs        # one edited file
+rake lint --guide=agents          # compact AGENTS.md block
 rake lint --fix --json            # safe edits, followed by a fresh check
 rake lint --guide > .agents/skills/rake-gpui/SKILL.md
 rake lint --explain view-button-label
@@ -335,3 +337,115 @@ The deep/type-aware tier, broader loop data flow and workspace defaults remain
 follow-ups. Linting is not hooked into `rake dev` or DevTools.
 
 Run [rake format](format.md) after editing, then run `rake lint`.
+
+## Agent instructions in every session
+
+`rake lint --guide=agents` prints a compact block generated from the rule
+catalogue, between `<!-- rake-lint:begin -->` and `<!-- rake-lint:end -->`.
+Copy it once into an existing `AGENTS.md`, keeping your other instructions.
+Then refresh just the marked content with:
+
+```sh
+rake lint --guide=agents --update AGENTS.md
+```
+
+Refresh refuses missing, duplicated, reversed or inline markers. It preserves
+everything outside them and is idempotent, including CRLF files. Use
+`--guide=agents --json` for the existing JSON guide envelope. Internal parse and
+invalid-directive diagnostics are left out of the compact rules; actionable
+suppression guidance keeps its own line.
+
+`rake new` writes this block to `AGENTS.md`, a complete generated skill at
+`.agents/skills/rake-gpui/SKILL.md`, and a `CLAUDE.md` containing only
+`@AGENTS.md`. The import syntax is documented in the official
+[Claude Code memory reference](https://code.claude.com/docs/en/memory#import-additional-files).
+The catalogue drift test also checks this repository's AGENTS.md block and the
+scaffold templates. Edit the catalogue, regenerate the template with
+`rake lint --guide=agents > crates/rake-cli/templates/default/AGENTS.md`, refresh
+the root block, and regenerate the full guide before committing.
+
+## Fast checks after an edit
+
+```sh
+rake lint --json src/main.rs
+rake lint --json Cargo.toml
+```
+
+A single Rust file reports only its own findings, using its owning package's
+levels, exclusions and compile-fail fixture handling. Theme evidence comes from
+that package's discovered sources, stopping reads once evidence is found;
+nested packages and the rest of the workspace are not scanned. A manifest input
+checks only that manifest. File paths in JSON are relative to the owning package.
+`--fix` also works on a single file and leaves siblings untouched. Checking uses
+no Cargo build or external process; Rust fixes still use rustfmt.
+
+On devbox, checking the 2,656-line `examples/inspector/src/view.rs` with
+`target/debug/rake lint --json examples/inspector/src/view.rs` took **149.2 ms**
+median across 20 warm invocations (148.4–150.6 ms). This used Rust 1.98.0's
+unoptimized dev profile with debug info disabled, including process startup,
+package theme evidence and JSON output. This is a measurement, not a CI timing
+assertion.
+
+### Post-edit hooks
+
+The formats below were checked against the official documentation on 2026-11-07.
+They are optional configuration examples, not hooks enabled by this repository.
+Use a matching installed `rake` on PATH, Python 3, and copy
+[scripts/rake-lint-hook.py](../scripts/rake-lint-hook.py) into your project's
+`scripts/` directory. In a source checkout you can set `RAKE_LINT_BIN` to the
+absolute path of `target/debug/rake` instead. The shell examples target Linux/macOS.
+The Codex command assumes a Git checkout; otherwise use the adapter's absolute path.
+
+The adapter runs `rake lint --json <edited file>` for surviving Rust/manifest
+paths. It handles spaces, multiple patch paths, moves and deleted files without
+shell-interpolating filenames. It returns findings and operational failures as
+`PostToolUse` additional context, and is silent when clean. It does not edit
+files or block the already-completed edit. Its Codex adapter extracts Add/Update/
+Move headers from textual `apply_patch` commands; unsupported payload forms
+return a request to run lint manually.
+
+For Claude Code, add this to `.claude/settings.json`. Its
+[official hooks reference](https://code.claude.com/docs/en/hooks#posttooluse-input)
+defines Edit/Write's `file_path` input and
+[additional context output](https://code.claude.com/docs/en/hooks#posttooluse-decision-control):
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "Edit|Write",
+      "hooks": [{
+        "type": "command",
+        "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/rake-lint-hook.py\"",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+For local Codex sessions supporting command hooks, add this to `.codex/hooks.json`.
+The [official hooks reference](https://learn.chatgpt.com/docs/hooks#posttooluse)
+documents Edit/Write matcher aliases for `apply_patch`, its `tool_input.command`
+payload and model-visible `additionalContext`. Review and trust project hooks
+with `/hooks` as documented there.
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "Edit|Write",
+      "hooks": [{
+        "type": "command",
+        "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/rake-lint-hook.py\"",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+These match file tools, not arbitrary shell writes or edits made by other
+processes. Continue running the full project check before committing. Hook tests
+feed representative documented event payloads through the adapter and real CLI;
+they do not require a live agent session.

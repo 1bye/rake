@@ -57,11 +57,38 @@ fn embeds_templates_and_revision_without_invoking_tools() {
         "web/index.html",
         ".gitignore",
         "README.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".agents/skills/rake-gpui/SKILL.md",
     ] {
         let source = fs::read_to_string(project.join(file)).unwrap();
 
         assert!(!source.contains("{{"), "unexpanded template: {file}");
     }
+
+    assert_eq!(
+        fs::read_to_string(project.join("CLAUDE.md")).unwrap(),
+        "@AGENTS.md\n"
+    );
+    let generated = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["lint", "--guide=agents"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    assert_eq!(
+        fs::read(project.join("AGENTS.md")).unwrap(),
+        generated.stdout
+    );
+    let full = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["lint", "--guide"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert_eq!(
+        fs::read(project.join(".agents/skills/rake-gpui/SKILL.md")).unwrap(),
+        full.stdout
+    );
 
     assert!(
         fs::read_to_string(project.join("src/main.rs"))

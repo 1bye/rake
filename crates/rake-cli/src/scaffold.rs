@@ -13,6 +13,8 @@ PATH is the local crates/rake directory. REV must be a full Git commit hash.
 Without either option, use the matching crates.io release or the CLI checkout revision.";
 
 const FILES: &[(&str, &str)] = &[
+    ("AGENTS.md", include_str!("../templates/default/AGENTS.md")),
+    ("CLAUDE.md", include_str!("../templates/default/CLAUDE.md")),
     (
         "Cargo.toml",
         include_str!("../templates/default/Cargo.toml.template"),
@@ -186,7 +188,13 @@ fn install(directory: &Path, files: &[(&str, String)], git: Option<&Path>) -> Re
         Err(error) => return Err(error.into()),
     }
 
-    for name in ["src", "web"] {
+    for name in [
+        "src",
+        "web",
+        ".agents",
+        ".agents/skills",
+        ".agents/skills/rake-gpui",
+    ] {
         let path = directory.join(name);
 
         fs::create_dir(&path)?;
@@ -298,7 +306,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
 
     let placeholders = regex::Regex::new(r"\{\{(name|crate_name|application_id|dependency)\}\}")?;
 
-    let files: Vec<_> = FILES
+    let mut files: Vec<_> = FILES
         .iter()
         .map(|(path, content)| {
             let content = placeholders.replace_all(content, |capture: &regex::Captures<'_>| {
@@ -315,6 +323,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
             (*path, content.into_owned())
         })
         .collect();
+
+    files.push((
+        ".agents/skills/rake-gpui/SKILL.md",
+        crate::lint::agent_skill(),
+    ));
 
     let staging = if git {
         let staging = tempfile::Builder::new()
