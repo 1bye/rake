@@ -3,14 +3,24 @@
 //! Doubles: file receipt sink; GPUI is neither linked nor initialized.
 //! Requires: native host; each child has isolated app-data environment variables.
 
+#![cfg(not(target_family = "wasm"))]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use tracing_subscriber::prelude::*;
 
-use super::*;
+use rake::crash::{CrashConfig, CrashSink};
+use rake::diagnostics::Collector;
+use rake::{crash, crash_config, diagnostics};
+use std::io;
+
+// Exercise the exact private startup component without exporting test-only API.
+#[path = "../src/crash/startup.rs"]
+mod startup;
 use crate::crash::CrashRecord;
+use startup::{CrashReports, version_from_policy};
 
 const APP_ID: &str = "test.default-crash";
 
@@ -25,12 +35,7 @@ fn directory(root: &Path) -> PathBuf {
 
 fn run(root: &Path, scenario: &str) -> Output {
     Command::new(std::env::current_exe().expect("test executable"))
-        .args([
-            "--ignored",
-            "--exact",
-            "crash::startup::tests::startup_child",
-            "--nocapture",
-        ])
+        .args(["--ignored", "--exact", "startup_child", "--nocapture"])
         .env("RAKE_CRASH_STARTUP_ROOT", root)
         .env("RAKE_CRASH_STARTUP_SCENARIO", scenario)
         .env("XDG_DATA_HOME", root.join("data"))

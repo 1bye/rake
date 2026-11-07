@@ -76,6 +76,3 @@ pub(crate) fn version_from_policy(policy: Option<&str>) -> Option<String> {
         .map(|policy| policy.version)
         .filter(|version| !version.trim().is_empty())
 }
-
-#[cfg(all(test, not(target_family = "wasm")))]
-mod tests;

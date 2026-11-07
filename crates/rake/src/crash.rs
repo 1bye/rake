@@ -47,7 +47,7 @@ mod web;
 #[cfg(not(target_family = "wasm"))]
 pub use native::CrashReporter;
 
-#[cfg(any(feature = "gpui", test))]
+#[cfg(feature = "gpui")]
 pub(crate) mod startup;
 
 /// Creates crash configuration using the consuming crate's Cargo package version.
