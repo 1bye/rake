@@ -62,8 +62,9 @@ routing = "path"
 Native apps use Rake's static Vermilion icon when `icon` is omitted, including
 development apps launched with `rake dev`. Set `icon` to use your own design.
 
-Web builds use the same SVG as a default favicon, including development and
-deployment bundles. Declare a `<link rel="icon" href="...">` in your Web host
+Web development and deployment bundles use the same SVG as a default favicon.
+The native Rust `rake build --target web` path does not yet install this fallback;
+see the landing report for this follow-up. Declare a `<link rel="icon" href="...">` in your Web host
 document to override it; explicit empty favicons such as `href="data:,"` are also
 preserved. The generated `assets/rake-icon.svg` follows the deployment base path
 and offline asset layout.

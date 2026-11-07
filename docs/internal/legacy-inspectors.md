@@ -9,28 +9,10 @@ browser UI is authored with the `rake::view!` macro. It has its own
 runtime, typed connection service, routed entry and managed observation activity.
 It observes the target through the existing protocol-1 runtime control API.
 
-From the Rake workspace, build the CLI and attach to a development session:
-
-```sh
-cargo build -p rake-app-cli
-# A native application bundle, with a private loopback broker owned by this command:
-target/debug/rake inspect --elements --target desktop --session /tmp/rake-dev-EXAMPLE
-# The same view compiled to Wasm, hosted on a dedicated inspector origin:
-target/debug/rake inspect --elements --target web --session /tmp/rake-dev-EXAMPLE
-```
-
-Both accept `--instance UUID|APPLICATION_ID`, `--port`, `--no-open`, and `--json`.
-Without a session, discovery uses the normal private control directory. An
-ambiguous application ID requires choosing an exact runtime in the target menu.
-`--no-open` builds and serves without opening a window or browser. Terminating the
-command closes its broker and removes temporary artifacts. Closing the native
-Inspector window exits that Inspector and its broker; the target keeps running.
-
-This source preview requires the Rake workspace, Python 3.11+, the native GPUI
-build prerequisites, and the `wasm32-unknown-unknown` target for Web. Web also
-requires the `wasm-bindgen-cli` version recorded in `Cargo.lock`, as with other
-Rake Web builds. The CLI reports the required install command if it is missing.
-The multi-panel HTML DevTools frontend has been removed.
+The prototype is now excluded from the workspace and supported builds. Its source
+is retained for historical reference. `rake inspect --elements` is rejected;
+use `rake inspect --session PATH` or `rake dev --cdp` for Chrome DevTools.
+The behavior described below is historical and is not a supported launch path.
 
 ## Elements
 

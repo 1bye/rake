@@ -137,6 +137,7 @@ Verify the portable inspection contracts with:
 
 ```sh
 cargo test -p rake-app --no-default-features --test element_inspection
+node --test scripts/test-embedded-devtools.mjs
 ```
 
 The explicit display integration requires a macOS GUI session:

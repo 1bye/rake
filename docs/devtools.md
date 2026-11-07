@@ -1,9 +1,46 @@
 # Chrome DevTools
 
 Stock Chrome DevTools is Rake's graphical frontend, connected through a CDP adapter.
+The legacy HTML and GPUI inspectors are disabled and excluded from CLI bundles.
+`rake inspect --session PATH` attaches through CDP; `--elements` is deprecated.
 
 AI agents can use the [CDP agent client](cdp-agents.md) for native input, semantic
 snapshots, condition waits, screenshots and Rust source lookup.
+
+## Embedded Web DevTools
+
+```sh
+cargo build -p rake-app-cli --locked
+target/debug/rake dev --target web --package rake-notes --cdp
+```
+
+The supervisor opens the application with a small circle in the bottom-right
+corner. Click it to open Chrome DevTools beside the application; click it again
+to close the panel. The application takes the full viewport while closed. Drag
+the divider to resize the panes, or focus it and press Left/Right. The extra pane
+headers are omitted. Closing the panel disconnects its inspection session.
+
+Use `--no-open` to print the **Chrome DevTools toggle** URL without opening a
+browser. Node 22+ is required for Web `--cdp`. The official Chromium frontend,
+pinned by `FRONTEND_REVISION` in the helper, downloads on first open and is cached
+under the private session directory. Credentials and runtime data stay on loopback.
+The private WebSocket proxy connects only advertised runtimes, with the existing
+adapter's Host and Origin checks unchanged. The supervisor owns the companion
+process and stops it with the development session. Production bundles contain
+neither this shell nor the development button.
+
+For an existing session, run the helper directly:
+
+```sh
+node crates/rake-cli/scripts/embedded-devtools.mjs --session /tmp/rake-dev-EXAMPLE --app-url 'PRIVATE_LAUNCH_URL'
+```
+
+Open its printed URL. The standalone helper stops with Ctrl-C. This integration
+is experimental and uses the same CDP capabilities and limits documented below.
+Run `node --test scripts/test-embedded-devtools.mjs` for HTTP/WebSocket boundary
+checks; actual frontend behavior also requires Chrome verification.
+
+## Launch Chrome DevTools
 
 Build the CLI with `cargo build -p rake-app-cli`, then run:
 
