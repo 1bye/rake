@@ -170,6 +170,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             }
             "--manifest-path" => {
                 manifest_selected = true;
+
                 manifest = args
                     .next()
                     .ok_or("--manifest-path requires a value")?
@@ -210,6 +211,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     };
 
     let directory = std::env::current_dir()?;
+
     let source = rake_dist::select_bundle_file(
         &directory,
         config_path.as_deref(),
@@ -217,10 +219,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         package,
         binary.as_deref(),
     )?;
+
     if let Some(source) = source {
         if compatibility {
             return Err("--compat is only supported by the legacy metadata adapter".into());
         }
+
         if !arguments.iter().any(|arg| arg == "--platform")
             && let rake_dist::Program::Prebuilt {
                 target: declared, ..
@@ -229,7 +233,9 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         {
             platform = Platform::from_target(target)?;
         }
+
         let mut request = rake_dist::SourceBundleRequest::new(source, platform);
+
         request.target = target.map(str::to_owned);
         request.formats = formats;
         request.features = features;
@@ -238,10 +244,13 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         request.locked_components = locked_components;
         request.trust = trust;
         request.entitlements = entitlements;
+
         if output_selected {
             request.output = std::path::absolute(&output)?;
         }
+
         let resolved = rake_dist::plan_source(&request)?;
+
         if planning {
             if arguments.iter().any(|arg| arg == "--json") {
                 println!("{}", serde_json::to_string_pretty(&resolved)?);
@@ -255,12 +264,14 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
                     resolved.target,
                     resolved.program
                 );
+
                 for path in &resolved.shadowed_metadata {
                     println!(
                         "Shadowed Cargo metadata: {} [package.metadata.rake.bundle]",
                         path.display()
                     );
                 }
+
                 println!("{}", serde_json::to_string_pretty(&resolved.plan)?);
                 println!("Native validation: pending");
             }
@@ -271,8 +282,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
                     path.display()
                 );
             }
+
             let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let flag = cancelled.clone();
+
             ctrlc::set_handler(move || flag.store(true, std::sync::atomic::Ordering::Release))?;
             println!(
                 "{}",
@@ -283,6 +296,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
                 )?)?
             );
         }
+
         return Ok(true);
     }
 
@@ -324,11 +338,13 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
 
     if planning {
         let (root, workspace, name) = legacy_paths(&manifest, package)?;
+
         let planned_output = if compatibility && !output_selected {
             workspace.join("dist").join(name).join("desktop-bundle")
         } else {
             std::path::absolute(&output)?
         };
+
         println!(
             "{}",
             serde_json::to_string_pretty(
@@ -340,6 +356,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
     } else {
         if compatibility && !output_selected {
             let (_, workspace, name) = legacy_paths(&manifest, package)?;
+
             output = workspace.join("dist").join(name).join("desktop-bundle");
         }
 
@@ -415,10 +432,13 @@ fn legacy_paths(
         ])
         .arg(manifest)
         .output()?;
+
     if !output.status.success() {
         return Err("could not resolve legacy output root".into());
     }
+
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
     let selected = metadata["packages"]
         .as_array()
         .ok_or("Cargo packages missing")?
@@ -430,6 +450,7 @@ fn legacy_paths(
                 && package.is_none_or(|name| item["name"] == name)
         })
         .ok_or("Cargo package missing")?;
+
     let root = std::fs::canonicalize(
         std::path::Path::new(
             selected["manifest_path"]
@@ -439,14 +460,17 @@ fn legacy_paths(
         .parent()
         .ok_or("manifest parent missing")?,
     )?;
+
     let workspace = PathBuf::from(
         metadata["workspace_root"]
             .as_str()
             .ok_or("Cargo root missing")?,
     );
+
     let name = selected["name"]
         .as_str()
         .ok_or("Cargo package name missing")?
         .to_owned();
+
     Ok((root, workspace, name))
 }

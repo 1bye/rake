@@ -162,11 +162,13 @@ fn main() {
                 && std::path::Path::new("Bundle.toml").exists()))
     {
         let message = "standalone Web bundling is not supported yet (RFC step 6); use explicit --manifest-path for the existing Web adapter";
+
         if json {
             eprintln!("{}", serde_json::json!({"error":{"message":message}}));
         } else {
             eprintln!("rake: {message}");
         }
+
         std::process::exit(1);
     }
 

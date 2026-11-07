@@ -15,6 +15,7 @@ pub struct Accelerator {
     /// Command/Super modifier.
     pub super_key: bool,
 }
+
 impl Accelerator {
     /// Parses `Ctrl+Alt+Shift+Super+k`; modifiers are optional and unique.
     /// `Cmd` aliases `Super`, and `Option` aliases `Alt`.
@@ -23,11 +24,13 @@ impl Accelerator {
     pub fn parse(value: &str) -> Result<Self, Error> {
         let mut parts = value.split('+').collect::<Vec<_>>();
         let key = parts.pop().unwrap_or_default();
+
         if key.chars().count() != 1 || key.chars().any(char::is_control) {
             return Err(Error::InvalidInput(
                 "accelerator requires one printable key".into(),
             ));
         }
+
         let mut result = Self {
             key: key.to_lowercase(),
             control: false,
@@ -35,6 +38,7 @@ impl Accelerator {
             shift: false,
             super_key: false,
         };
+
         for part in parts {
             let flag = match part.to_ascii_lowercase().as_str() {
                 "ctrl" | "control" => &mut result.control,
@@ -47,11 +51,14 @@ impl Accelerator {
                     )));
                 }
             };
+
             if *flag {
                 return Err(Error::InvalidInput("duplicate accelerator modifier".into()));
             }
+
             *flag = true;
         }
+
         Ok(result)
     }
 }

@@ -66,6 +66,7 @@ impl Checker<'_> {
                 .iter()
                 .any(|attribute| attribute.name == name)
         };
+
         // Match the macro's literal-only auto-label condition. Mixed text/expressions
         // also need an explicit name because the macro cannot derive one.
         let literal_label = !element.children.is_empty()
@@ -94,6 +95,7 @@ impl Checker<'_> {
             ]
             .iter()
             .any(|name| element.tag.is_ident(name));
+
         for attribute in &element.attributes {
             if builtin && let AttributeValue::Expression(expression) = &attribute.value {
                 if attribute.name == "style" {
@@ -107,6 +109,7 @@ impl Checker<'_> {
                         && let Some(classes) = rake_view_syntax::style_classes(expression)
                     {
                         let mut diagnostic = Diagnostic::new(STYLE, self.file, attribute.span);
+
                         if let Some(range) = self.attributes.get(&attribute.span.byte_range().start)
                             && let Some(authored) = self.text.get(range.clone())
                             && !authored.contains("//")
@@ -118,19 +121,23 @@ impl Checker<'_> {
                                 format!("class=\"{classes}\""),
                             );
                         }
+
                         self.diagnostics.push(diagnostic);
                     }
+
                     if self.themed {
                         for span in design::style_literals(expression) {
                             self.emit(THEME, span);
                         }
                     }
                 }
+
                 if self.themed && attribute.name == "class" {
                     for span in design::class_literals(expression) {
                         self.emit(THEME, span);
                     }
                 }
+
                 if self.themed
                     && attribute
                         .name
@@ -140,6 +147,7 @@ impl Checker<'_> {
                     self.emit(THEME, attribute.span);
                 }
             }
+
             match &attribute.value {
                 AttributeValue::Expression(expression) => {
                     if attribute.name == "id" && index_id(expression, indices) {
@@ -234,10 +242,12 @@ impl Checker<'_> {
                             layout.start.byte_range().start..layout.end.byte_range().end,
                         );
                     }
+
                     for child in &layout.children {
                         attributes(child, output);
                     }
                 }
+
                 match view.layout() {
                     Ok(layout) => {
                         attributes(layout, &mut self.attributes);

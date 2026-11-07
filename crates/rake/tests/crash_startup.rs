@@ -19,6 +19,7 @@ use std::io;
 // Exercise the exact private startup component without exporting test-only API.
 #[path = "../src/crash/startup.rs"]
 mod startup;
+
 use crate::crash::CrashRecord;
 use startup::{CrashReports, version_from_policy};
 
@@ -27,6 +28,7 @@ const APP_ID: &str = "test.default-crash";
 fn directory(root: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
     let base = root.join("Library/Application Support");
+
     #[cfg(not(target_os = "macos"))]
     let base = root.join("data");
 
@@ -83,6 +85,7 @@ fn startup_child() {
     if scenario.contains("open-failure") {
         let path = directory(&root);
         let parent = path.parent().expect("app directory");
+
         fs::create_dir_all(parent.parent().expect("data root")).expect("data root");
         fs::write(parent, b"a file prevents creating the crash directory")
             .expect("block directory");
@@ -104,15 +107,19 @@ fn startup_child() {
         if scenario == "configure-last" {
             policy.disable();
         }
+
         let config = if scenario == "configure-last" || scenario == "disable-last" {
             crate::crash_config!().directory(root.join("explicit"))
         } else {
             crate::crash_config!()
         };
+
         let receipts = root.join("accepted");
+
         policy.configure(config, move |record: &CrashRecord| {
             fs::create_dir_all(&receipts)?;
             use std::io::Write;
+
             fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -124,6 +131,7 @@ fn startup_child() {
     if scenario == "disabled" || scenario == "disable-last" {
         policy.disable();
     }
+
     let version = if scenario == "default-version-panic" {
         version_from_policy(Some(
             r#"{"version":"consumer-2.3.4","package_version":"2.3.4+package"}"#,
@@ -131,21 +139,26 @@ fn startup_child() {
     } else {
         None
     };
+
     let result = tracing::subscriber::with_default(subscriber, || {
         policy.initialize(APP_ID, version.as_deref(), collector.clone())
     });
 
     if scenario.starts_with("explicit") && scenario.ends_with("failure") {
         assert!(result.is_err(), "explicit setup must fail startup");
+
         return;
     }
+
     if scenario == "explicit-hook-conflict" {
         assert_eq!(
             result.expect_err("explicit install failure").kind(),
             io::ErrorKind::AlreadyExists
         );
+
         return;
     }
+
     result.expect("startup continues");
 
     if scenario.starts_with("default")
@@ -160,6 +173,7 @@ fn startup_child() {
             "default setup failure must emit a warning"
         );
     }
+
     if scenario == "disabled" || scenario == "disable-last" {
         assert!(!directory(&root).exists());
         assert!(!root.join("explicit").exists());
@@ -170,6 +184,7 @@ fn startup_child() {
             .install(collector)
             .expect("opt-out installed no hook");
     }
+
     if scenario.ends_with("panic")
         || scenario == "configure-last"
         || scenario == "default-hook-conflict"
@@ -189,6 +204,7 @@ fn default_startup_records_without_a_sink_and_uses_available_consumer_version() 
 
         assert_eq!(output.status.code(), Some(101), "normal panic exit");
         let reports = records(&directory(root.path()));
+
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].app_version, version);
         assert_eq!(
@@ -215,8 +231,10 @@ fn default_setup_errors_warn_and_continue_but_explicit_setup_errors_fail() {
         "explicit-hook-conflict",
     ] {
         let root = tempfile::tempdir().expect("temporary root");
+
         assert_success(&run(root.path(), scenario));
     }
+
     let root = tempfile::tempdir().expect("temporary root");
     let output = run(root.path(), "default-hook-conflict");
 
@@ -236,6 +254,7 @@ fn default_setup_errors_warn_and_continue_but_explicit_setup_errors_fail() {
 #[test]
 fn last_builder_policy_call_wins() {
     let disabled = tempfile::tempdir().expect("temporary root");
+
     assert_success(&run(disabled.path(), "disable-last"));
     assert!(!directory(disabled.path()).exists());
     assert!(!disabled.path().join("explicit").exists());
@@ -245,6 +264,7 @@ fn last_builder_policy_call_wins() {
     assert_eq!(output.status.code(), Some(101));
     assert!(!directory(configured.path()).exists());
     let reports = records(&configured.path().join("explicit"));
+
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].app_version, env!("CARGO_PKG_VERSION"));
 }
@@ -252,6 +272,7 @@ fn last_builder_policy_call_wins() {
 #[test]
 fn default_records_wait_until_a_later_launch_adds_a_sink_and_deliver_once() {
     let root = tempfile::tempdir().expect("temporary root");
+
     assert_eq!(run(root.path(), "default-panic").status.code(), Some(101));
     let pending = records(&directory(root.path())).remove(0).id;
 
@@ -279,6 +300,7 @@ fn version_capture_uses_existing_policy_and_missing_or_invalid_metadata_falls_ba
         version_from_policy(Some(r#"{"version":"2.3.4"}"#)).as_deref(),
         Some("2.3.4")
     );
+
     for policy in [
         None,
         Some("{}"),

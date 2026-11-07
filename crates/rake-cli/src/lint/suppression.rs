@@ -22,6 +22,7 @@ impl Suppression {
                 .is_none_or(|line| line == diagnostic.span.start.line)
         {
             self.unused = None;
+
             true
         } else {
             false
@@ -61,6 +62,7 @@ pub(super) fn parse(
             if !bytes[offset..].starts_with(b"//") && !bytes[offset..].starts_with(b"/*") {
                 first_code = first_code.min(offset);
             }
+
             offset = literal.next().expect("peeked literal").end;
             continue;
         }
@@ -82,6 +84,7 @@ pub(super) fn parse(
             if depth == 0 && !bytes[offset].is_ascii_whitespace() {
                 first_code = first_code.min(offset);
             }
+
             offset += 1;
         }
     }
@@ -102,6 +105,7 @@ pub(super) fn parse_manifest(
             value_ranges(value, ranges);
         }
     }
+
     fn value_ranges(
         value: &toml::Spanned<toml::de::DeValue<'_>>,
         ranges: &mut Vec<std::ops::Range<usize>>,
@@ -116,16 +120,20 @@ pub(super) fn parse_manifest(
             _ => ranges.push(value.span()),
         }
     }
+
     let Ok(table) = toml::de::DeTable::parse(text) else {
         return Vec::new();
     };
+
     let mut ranges = Vec::new();
+
     table_ranges(table.get_ref(), &mut ranges);
     ranges.sort_by_key(|range| range.start);
     let mut ranges = ranges.into_iter().peekable();
     let mut offset = 0;
     let mut comments = Vec::new();
     let mut first_code = text.len();
+
     while offset < text.len() {
         if ranges.peek().is_some_and(|range| range.start <= offset) {
             first_code = first_code.min(offset);
@@ -134,15 +142,18 @@ pub(super) fn parse_manifest(
             let end = text[offset..]
                 .find('\n')
                 .map_or(text.len(), |end| offset + end);
+
             comments.push((offset, end));
             offset = end;
         } else {
             if !text.as_bytes()[offset].is_ascii_whitespace() {
                 first_code = first_code.min(offset);
             }
+
             offset += 1;
         }
     }
+
     directives(file, text, diagnostics, &comments, "#", first_code)
 }
 
@@ -155,11 +166,14 @@ fn directives(
     first_code: usize,
 ) -> Vec<Suppression> {
     let mut output = Vec::new();
+
     for (start, end) in comments {
         let comment = text[start + marker.len()..*end].trim();
+
         let Some(directive) = comment.strip_prefix("rake-lint:") else {
             continue;
         };
+
         let prefix = &text[..*start];
         let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
         let line_start = prefix.rfind('\n').map_or(0, |offset| offset + 1);
@@ -171,10 +185,12 @@ fn directives(
         diagnostic.span.end.column = text[line_start..*end].chars().count() + 1;
 
         let directive = directive.trim();
+
         let parsed = directive
             .strip_prefix("allow-file(")
             .map(|rest| (true, rest))
             .or_else(|| directive.strip_prefix("allow(").map(|rest| (false, rest)));
+
         let Some((file_scope, (id, reason))) =
             parsed.and_then(|(scope, rest)| rest.split_once(')').map(|parts| (scope, parts)))
         else {
@@ -188,6 +204,7 @@ fn directives(
         }
 
         let standalone = text[line_start..*start].trim().is_empty();
+
         if file_scope && (!standalone || *start > first_code) {
             diagnostic
                 .message

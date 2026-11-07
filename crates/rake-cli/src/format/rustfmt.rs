@@ -27,11 +27,13 @@ impl Rustfmt {
                 .map(|name| directory.join(name))
                 .find(|path| path.is_file())
         });
+
         let value: toml::Value = if let Some(path) = &config {
             toml::from_str(&std::fs::read_to_string(path)?)?
         } else {
             toml::Value::Table(Default::default())
         };
+
         let number = |name, default| {
             value
                 .get(name)
@@ -39,37 +41,47 @@ impl Rustfmt {
                 .and_then(|n| usize::try_from(n).ok())
                 .unwrap_or(default)
         };
+
         let width = number("max_width", 100);
         let tab_spaces = number("tab_spaces", 4);
+
         if width == 0 || tab_spaces == 0 {
             return Err("rustfmt max_width and tab_spaces must be positive".into());
         }
+
         let mut edition = value
             .get("edition")
             .and_then(toml::Value::as_str)
             .map(str::to_owned);
+
         if edition.is_none() {
             for ancestor in directory.ancestors() {
                 let manifest = ancestor.join("Cargo.toml");
+
                 if !manifest.is_file() {
                     continue;
                 }
+
                 let manifest: toml::Value = toml::from_str(&std::fs::read_to_string(manifest)?)?;
+
                 let package = manifest
                     .get("package")
                     .and_then(|package| package.get("edition"))
                     .and_then(toml::Value::as_str);
+
                 let workspace = manifest
                     .get("workspace")
                     .and_then(|workspace| workspace.get("package"))
                     .and_then(|package| package.get("edition"))
                     .and_then(toml::Value::as_str);
+
                 if let Some(value) = package.or(workspace) {
                     edition = Some(value.to_owned());
                     break;
                 }
             }
         }
+
         Ok(Self {
             width,
             tab_spaces,
@@ -107,24 +119,30 @@ impl Rustfmt {
 
     pub fn run(&self, source: &str, width: usize) -> Result<String> {
         let mut command = Command::new("rustfmt");
+
         command.args(["--emit", "stdout", "--edition", &self.edition]);
+
         if let Some(path) = &self.config {
             command.arg("--config-path").arg(path);
         }
+
         command.arg("--config").arg(format!("max_width={width}"));
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+
         let mut stdin = child.stdin.take().ok_or("rustfmt stdin unavailable")?;
         // Drain pipes while writing large editor buffers, avoiding pipe-capacity deadlocks.
         let input = source.as_bytes().to_owned();
         let writer = std::thread::spawn(move || stdin.write_all(&input));
         let output = child.wait_with_output()?;
+
         writer
             .join()
             .map_err(|_| "rustfmt input writer panicked")??;
+
         if !output.status.success() {
             return Err(format!(
                 "rustfmt failed: {}",
@@ -132,6 +150,7 @@ impl Rustfmt {
             )
             .into());
         }
+
         Ok(super::source::preserve_views(
             source,
             &String::from_utf8(output.stdout)?,
@@ -140,11 +159,14 @@ impl Rustfmt {
 
     pub fn rust(&mut self, source: &str, indent: usize, header: bool) -> Result<String> {
         let key = (source.to_owned(), indent, header);
+
         if let Some(value) = self.cache.get(&key) {
             return Ok(value.clone());
         }
+
         let normalized = self.normalize(source);
         let input = normalized.as_str();
+
         let wrapped = if header {
             if source.trim_end().ends_with("=>") {
                 format!("fn __rake_format() {{ match __value {{ {input} {{}} }} }}")
@@ -154,6 +176,7 @@ impl Rustfmt {
         } else {
             format!("fn __rake_format() {{ let __value = {input}; }}")
         };
+
         // The wrapper contributes one indentation level; reserve the actual column
         // budget of the markup location without double-counting that level.
         let width = self
@@ -161,6 +184,7 @@ impl Rustfmt {
             .saturating_sub(indent)
             .saturating_add(self.tab_spaces)
             .max(1);
+
         // Establish standard Rust indentation before applying the narrower markup
         // budget. Rustfmt can leave an expression untouched when it cannot fit.
         let wrapped = if width < self.width {
@@ -168,16 +192,21 @@ impl Rustfmt {
         } else {
             wrapped
         };
+
         let formatted = self.run(&wrapped, width)?;
         let file = syn::parse_file(&formatted)?;
+
         let syn::Item::Fn(function) = &file.items[0] else {
             return Err("rustfmt wrapper missing".into());
         };
+
         let mut candidate = if header {
             let syn::Stmt::Expr(expression, _) = &function.block.stmts[0] else {
                 return Err("rustfmt header missing".into());
             };
+
             let start = offset(&formatted, expression.span().start());
+
             let end = match expression {
                 syn::Expr::If(value) => offset(
                     &formatted,
@@ -191,6 +220,7 @@ impl Rustfmt {
                     let start = offset(&formatted, arm.pat.span().start());
                     let end = offset(&formatted, arm.body.span().start());
                     let text = formatted[start..end].trim_end();
+
                     return Ok(self.finish_rust(source, text, indent));
                 }
                 syn::Expr::Match(value) => {
@@ -198,18 +228,22 @@ impl Rustfmt {
                 }
                 _ => return Ok(source.into()),
             };
+
             formatted[start..end].trim_end().to_owned()
         } else {
             let syn::Stmt::Local(local) = &function.block.stmts[0] else {
                 return Err("rustfmt expression missing".into());
             };
+
             let expression = &local
                 .init
                 .as_ref()
                 .ok_or("rustfmt initializer missing")?
                 .expr;
+
             formatted[span_range(&formatted, expression.span(), expression.span())].to_owned()
         };
+
         if !header
             && !candidate.contains('\n')
             && candidate.starts_with("{ ")
@@ -217,8 +251,11 @@ impl Rustfmt {
         {
             candidate = format!("{{{}}}", &candidate[2..candidate.len() - 2]);
         }
+
         let value = self.finish_rust(source, &candidate, indent);
+
         self.cache.insert(key, value.clone());
+
         Ok(value)
     }
 
@@ -226,22 +263,31 @@ impl Rustfmt {
         let Some(parts) = atoms(source) else {
             return source.into();
         };
+
         let mut previous = 0;
         let mut baseline = usize::MAX;
+
         for part in &parts {
             let gap = &source[previous..part.range.start];
+
             if let Some((_, tail)) = gap.rsplit_once('\n') {
                 baseline = baseline.min(self.columns(tail));
             }
+
             previous = part.range.end;
         }
+
         if baseline == usize::MAX {
             return source.into();
         }
+
         let mut output = String::new();
+
         previous = 0;
+
         for part in parts {
             let gap = &source[previous..part.range.start];
+
             if let Some((before, tail)) = gap.rsplit_once('\n') {
                 output.push_str(before);
                 output.push('\n');
@@ -251,9 +297,11 @@ impl Rustfmt {
             } else {
                 output.push_str(gap);
             }
+
             output.push_str(part.text);
             previous = part.range.end;
         }
+
         output
     }
 
@@ -263,21 +311,27 @@ impl Rustfmt {
         let Some(parts) = atoms(candidate) else {
             return source.into();
         };
+
         let mut adjusted = String::new();
         let mut previous = 0;
+
         for part in parts {
             let gap = &candidate[previous..part.range.start];
+
             if let Some((before, tail)) = gap.rsplit_once('\n') {
                 adjusted.push_str(before);
                 adjusted.push('\n');
                 let columns = self.columns(tail).saturating_sub(self.tab_spaces) + indent;
+
                 adjusted.push_str(&self.indent(columns));
             } else {
                 adjusted.push_str(gap);
             }
+
             adjusted.push_str(part.text);
             previous = part.range.end;
         }
+
         super::source::preserve_views(source, &project(source, &adjusted))
     }
 }

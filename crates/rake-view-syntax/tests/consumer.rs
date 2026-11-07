@@ -40,5 +40,6 @@ fn source_layout_retains_delimiters_and_rejects_recovered_syntax_errors() {
     assert_eq!(layout.children[2].kind, LayoutKind::Closing);
 
     let recovered: View = syn::parse_str("<div id=123/>").unwrap();
+
     assert!(recovered.layout().is_err());
 }

@@ -142,6 +142,7 @@ impl Schema {
     pub fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<(T, bool), StorageError> {
         let json: Value = serde_json::from_slice(bytes)?;
         let wrapped = json.get("$rake_schema").is_some();
+
         let (mut version, mut value) = if wrapped {
             let envelope: Envelope<Value> = serde_json::from_value(json)?;
 

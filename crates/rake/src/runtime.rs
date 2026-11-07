@@ -167,6 +167,7 @@ impl<R: Route> RuntimeContext<R> {
                 crate::tray::Feature::MultipleItems,
             ))
         }
+
         #[cfg(not(target_family = "wasm"))]
         {
             self.services
@@ -266,6 +267,7 @@ impl<R: Route> RuntimeContext<R> {
     pub fn show_main_window(&self, cx: &mut gpui::App) -> Result<(), crate::AppError> {
         self.client()
             .map_err(|error| crate::AppError::Window(error.to_string()))?;
+
         crate::show_main_window(cx)
     }
 

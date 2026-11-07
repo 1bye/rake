@@ -67,6 +67,7 @@ fn embeds_templates_and_revision_without_invoking_tools() {
     }
 
     let readme = fs::read_to_string(project.join("README.md")).unwrap();
+
     assert!(readme.contains("rake lint --hook"));
     assert!(readme.contains("Requires Rust 1.98.0, native development tools, and Python 3.11+."));
     assert!(!readme.contains("rake-lint-hook.py"));
@@ -79,6 +80,7 @@ fn embeds_templates_and_revision_without_invoking_tools() {
         .env("PATH", "")
         .output()
         .unwrap();
+
     assert!(generated.status.success());
     assert_eq!(
         fs::read(project.join("AGENTS.md")).unwrap(),
@@ -89,6 +91,7 @@ fn embeds_templates_and_revision_without_invoking_tools() {
         .env("PATH", "")
         .output()
         .unwrap();
+
     assert_eq!(
         fs::read(project.join(".agents/skills/rake-gpui/SKILL.md")).unwrap(),
         full.stdout
@@ -217,11 +220,13 @@ fn failed_git_init_leaves_no_project() {
 #[test]
 fn local_dependency_paths_preserve_quotes_and_template_like_text() {
     let directory = tempfile::tempdir().unwrap();
+
     let name = if cfg!(windows) {
         "Rake '{{dependency}}'"
     } else {
         "Rake \"{{dependency}}\""
     };
+
     let checkout = directory.path().join(name);
     let rake = checkout.join("crates/rake");
 

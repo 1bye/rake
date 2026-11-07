@@ -99,6 +99,7 @@ impl MenuItem {
     /// Selects the semantic kind.
     pub fn kind(mut self, kind: ItemKind) -> Self {
         self.kind = kind;
+
         self
     }
 }
@@ -117,9 +118,11 @@ impl Menu {
     pub fn new() -> Self {
         Self::default()
     }
+
     /// Appends a described item.
     pub fn item(mut self, item: MenuItem) -> Self {
         self.items.push(item);
+
         self
     }
 
@@ -154,6 +157,7 @@ impl Menu {
                 "multiple default items in one menu".into(),
             ));
         }
+
         for item in &self.items {
             if let Some(key) = item.access_key
                 && (key.is_control()
@@ -166,24 +170,30 @@ impl Menu {
                     "menu access key must occur in its label".into(),
                 ));
             }
+
             if let Some(accelerator) = &item.accelerator {
                 crate::Accelerator::parse(accelerator)?;
             }
+
             if let Some(mac) = &item.macos {
                 if let Some(text) = &mac.attributed_title {
                     text.validate()?;
                 }
+
                 if mac.attributed_title.is_some() && mac.subtitle.is_some() {
                     return Err(Error::InvalidInput(
                         "AppKit subtitles require a plain menu title".into(),
                     ));
                 }
+
                 if let Some(crate::macos::Badge::Text(value)) = &mac.badge {
                     crate::text(value, "badge", 1024)?;
                 }
+
                 if mac.indentation > 15 {
                     return Err(Error::InvalidInput("menu indentation exceeds 15".into()));
                 }
+
                 for text in [&mac.subtitle, &mac.tooltip].into_iter().flatten() {
                     crate::text(text, "menu native text", 16 * 1024)?;
                 }
@@ -198,9 +208,11 @@ impl Menu {
                     item.id
                 )));
             }
+
             if keys.len() > 1024 {
                 return Err(Error::InvalidInput("menu exceeds 1024 items".into()));
             }
+
             if let Some(key) = item.access_key
                 && (key.is_control()
                     || !item
@@ -212,6 +224,7 @@ impl Menu {
                     "menu access key must occur in its label".into(),
                 ));
             }
+
             if let Some(accelerator) = &item.accelerator {
                 crate::text(accelerator, "accelerator", 128)?;
             }
@@ -221,6 +234,7 @@ impl Menu {
                 ItemKind::Radio { group, selected } => {
                     crate::identifier(group)?;
                     let count = radios.entry(group.clone()).or_default();
+
                     *count += usize::from(*selected);
 
                     if *count > 1 {
@@ -242,9 +256,11 @@ impl Menu {
             if item.id == id {
                 return Some(item);
             }
+
             if let ItemKind::Submenu(menu) = &item.kind {
                 return menu.find(id);
             }
+
             None
         })
     }

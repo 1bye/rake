@@ -8,6 +8,7 @@
 #[test]
 fn view_diagnostics() {
     let tests = trybuild::TestCases::new();
+
     tests.compile_fail("tests/ui/view/*.rs");
     // Kit adds Hsla conversions, so rustc's implementation help differs.
     #[cfg(feature = "kit")]

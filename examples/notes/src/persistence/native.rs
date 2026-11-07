@@ -243,11 +243,13 @@ fn atomic(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), StorageError
 #[cfg(target_os = "windows")]
 fn replace_windows(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
+
     use windows_sys::Win32::Storage::FileSystem::{
         MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     };
 
     let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+
     let destination: Vec<u16> = destination
         .as_os_str()
         .encode_wide()

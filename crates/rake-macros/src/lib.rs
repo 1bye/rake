@@ -9,6 +9,7 @@ use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 
 mod command;
 mod route;
+
 #[cfg(feature = "view")]
 use rake_view_syntax as view;
 

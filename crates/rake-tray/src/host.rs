@@ -1,6 +1,7 @@
 //! Weak control references and generation-checked application resource ownership.
 
 use crate::{Capabilities, Error, Event, EventKind, Image, Menu, Request, Tray, backend};
+
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
@@ -81,6 +82,7 @@ impl Ingress {
         if queue.2 {
             return;
         }
+
         if queue.0.len() == 256 {
             event.kind = EventKind::Overflow;
             queue.1.get_or_insert(event);
@@ -94,6 +96,7 @@ impl Ingress {
 
     fn close(&self) {
         let mut queue = self.queue.lock().expect("tray ingress mutex poisoned");
+
         queue.2 = true;
         queue.0.clear();
         queue.1 = None;
@@ -111,6 +114,7 @@ impl Ingress {
                 if queue.2 {
                     return Err(Error::Stopped);
                 }
+
                 if let Some(event) = queue.1.take().or_else(|| queue.0.pop_front()) {
                     return Ok(event);
                 }
@@ -201,7 +205,9 @@ impl Host {
     pub fn with_creation_failure(application: &str, error: Error) -> Result<Self, Error> {
         crate::identifier(application)?;
         let host = Self::unregistered(application);
+
         host.registry.borrow_mut().creation_failure = Some(error);
+
         Ok(host)
     }
 
@@ -218,8 +224,10 @@ impl Host {
     /// periodically. Receipts can also drive their shared operation directly.
     pub fn drive(&self) -> Request<()> {
         let operations = self.registry.borrow().operations.clone();
+
         Box::pin(async move {
             operations.drive().await;
+
             Ok(())
         })
     }
@@ -229,8 +237,10 @@ impl Host {
     /// Individual failures are reported by their receipts and OperationFailed events.
     pub fn flush(&self) -> Request<()> {
         let operations = self.registry.borrow().operations.clone();
+
         Box::pin(async move {
             operations.flush().await;
+
             Ok(())
         })
     }
@@ -239,6 +249,7 @@ impl Host {
     pub fn shutdown(&self) -> Request<()> {
         let items = {
             let mut registry = self.registry.borrow_mut();
+
             registry.alive = false;
             registry.ingress.close();
             registry.operations.close();
@@ -254,14 +265,18 @@ impl Host {
             .into_iter()
             .map(|item| item.shutdown())
             .collect::<Vec<_>>();
+
         let operations = self.registry.borrow().operations.clone();
+
         Box::pin(async move {
             let drain = operations.drive();
             let cleanup = futures::future::join_all(cleanup);
             let (_, results) = futures::future::join(drain, cleanup).await;
+
             for result in results {
                 result?;
             }
+
             Ok(())
         })
     }
@@ -307,15 +322,19 @@ impl Collection {
             Ok(registry) => registry,
             Err(error) => return crate::ready(Err(error)),
         };
+
         let registry = registry.borrow();
+
         let sink = Sink {
             id: id.into(),
             generation,
             ingress: registry.ingress.clone(),
             menu_revision: None,
         };
+
         registry.operations.submit(Box::pin(async move {
             let result = future.await;
+
             if let Err(error) = &result {
                 sink.send(
                     EventKind::OperationFailed(error.to_string()),
@@ -323,6 +342,7 @@ impl Collection {
                     crate::Input::default(),
                 );
             }
+
             result
         }))
     }
@@ -337,6 +357,7 @@ impl Collection {
     /// Reports a stopped owner or absent/removed item.
     pub fn get(&self, id: &str) -> Result<Handle, Error> {
         let registry = self.registry()?;
+
         let generation = registry
             .borrow()
             .entries
@@ -357,6 +378,7 @@ impl Collection {
     /// Reports a stopped owner.
     pub fn items(&self) -> Result<Vec<Handle>, Error> {
         let registry = self.registry()?;
+
         let keys = registry
             .borrow()
             .entries
@@ -375,6 +397,7 @@ impl Collection {
             backend::validate(&spec)?;
             let registry = self.registry()?;
             let mut state = registry.borrow_mut();
+
             state.operations.capacity()?;
 
             if state.entries.contains_key(&spec.id) {
@@ -386,24 +409,29 @@ impl Collection {
                 .checked_add(1)
                 .ok_or_else(|| Error::InvalidInput("registration generation exhausted".into()))?;
             let generation = state.generation;
+
             let sink = Sink {
                 id: spec.id.clone(),
                 generation,
                 ingress: state.ingress.clone(),
                 menu_revision: None,
             };
+
             let handle = Handle {
                 collection: self.clone(),
                 id: spec.id.clone(),
                 generation,
             };
+
             #[cfg(not(feature = "test-support"))]
             let native = backend::create(&state.application, &spec, sink);
+
             #[cfg(feature = "test-support")]
             let native = match &state.creation_failure {
                 Some(error) => crate::ready(Err(error.clone())),
                 None => backend::create(&state.application, &spec, sink),
             };
+
             let status = State {
                 id: spec.id.clone(),
                 generation,
@@ -412,6 +440,7 @@ impl Collection {
                 registration: Registration::Creating,
                 requested_visible: spec.visible,
             };
+
             state.entries.insert(
                 spec.id.clone(),
                 Entry {
@@ -428,6 +457,7 @@ impl Collection {
             Ok(value) => value,
             Err(error) => return crate::ready(Err(error)),
         };
+
         let guard = Pending {
             handle: handle.clone(),
             committed: false,
@@ -436,20 +466,27 @@ impl Collection {
         let collection = self.clone();
         let id = handle.id.clone();
         let generation = handle.generation;
+
         let work = Box::pin(async move {
             let mut guard = guard;
             let native = Rc::new(native.await?);
+
             if let Err(error) = handle.with(|entry| {
                 entry.state.registration = native.registration();
                 entry.native = Some(native.clone());
+
                 Ok(())
             }) {
                 native.shutdown().await?;
+
                 return Err(error);
             }
+
             guard.committed = true;
+
             Ok(handle)
         });
+
         collection.submit(&id, generation, work)
     }
 
@@ -463,6 +500,7 @@ impl Collection {
             let event = ingress.next().await?;
             let registry = self.registry()?;
             let mut registry = registry.borrow_mut();
+
             if matches!(
                 event.kind,
                 EventKind::Removed | EventKind::OperationFailed(_)
@@ -474,8 +512,10 @@ impl Collection {
                 {
                     return Ok(event);
                 }
+
                 continue;
             }
+
             let Some(entry) = registry
                 .entries
                 .get_mut(&event.id)
@@ -500,6 +540,7 @@ impl Collection {
             {
                 continue;
             }
+
             if let EventKind::HostChanged(online) = event.kind {
                 entry.state.registration = if online {
                     Registration::Registered
@@ -543,6 +584,7 @@ impl Handle {
     fn with<T>(&self, f: impl FnOnce(&mut Entry) -> Result<T, Error>) -> Result<T, Error> {
         let registry = self.collection.registry()?;
         let mut registry = registry.borrow_mut();
+
         let entry = registry
             .entries
             .get_mut(&self.id)
@@ -560,6 +602,7 @@ impl Handle {
             if let Some(native) = &entry.native {
                 entry.state.registration = native.registration();
             }
+
             Ok(entry.state.clone())
         })
     }
@@ -577,6 +620,7 @@ impl Handle {
     #[cfg(all(feature = "native-tests", target_os = "macos"))]
     pub fn probe_menu_selection(&self, index: usize) -> Result<(), Error> {
         let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+
         native.probe_menu_selection(index)
     }
 
@@ -587,8 +631,10 @@ impl Handle {
         #[cfg(target_os = "macos")]
         {
             let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+
             Ok(native.metrics())
         }
+
         #[cfg(not(target_os = "macos"))]
         {
             Err(Error::Unsupported(crate::Feature::ItemLength))
@@ -600,6 +646,7 @@ impl Handle {
     /// Reports unsupported programmatic display, stopped/removed items or native failure.
     pub fn show_menu(&self) -> Result<(), Error> {
         let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+
         native.show_menu()
     }
 
@@ -609,9 +656,11 @@ impl Handle {
             .collection
             .registry()
             .and_then(|registry| registry.borrow().operations.capacity());
+
         if let Err(error) = admission {
             return crate::ready(Err(error));
         }
+
         let prepared = self.with(|entry| {
             if spec.id != self.id {
                 return Err(Error::InvalidInput("updates cannot rename an item".into()));
@@ -619,31 +668,42 @@ impl Handle {
 
             spec.validate()?;
             backend::validate(&spec)?;
+
             if spec.interaction != entry.spec.interaction { return Err(Error::InvalidInput("primary interaction is fixed for a registration; recreate the item to change it".into())); }
+
             if spec.windows.as_ref().and_then(|w| w.guid) != entry.spec.windows.as_ref().and_then(|w| w.guid) { return Err(Error::InvalidInput("Windows GUID is fixed for a registration".into())); }
+
             if spec.linux.as_ref().is_some_and(|l| l.sandboxed) != entry.spec.linux.as_ref().is_some_and(|l| l.sandboxed) {
                 return Err(Error::InvalidInput("SNI bus-name policy is fixed for a registration".into()));
             }
+
             let native = entry.native.clone().ok_or(Error::HostUnavailable)?;
+
             let revision = entry
                 .state
                 .requested_revision
                 .checked_add(1)
                 .ok_or_else(|| Error::InvalidInput("tray revision exhausted".into()))?;
+
             let apply = native.apply(revision, &spec);
+
             entry.state.requested_revision = revision;
             entry.state.requested_visible = spec.visible;
             entry.spec = spec;
 
             Ok((revision, apply))
         });
+
         let (revision, apply) = match prepared {
             Ok(value) => value,
             Err(error) => return crate::ready(Err(error)),
         };
+
         let handle = self.clone();
+
         if let Ok(registry) = self.collection.registry() {
             let registry = registry.borrow();
+
             if registry
                 .entries
                 .get(&self.id)
@@ -662,6 +722,7 @@ impl Handle {
 
         let work = Box::pin(async move {
             apply.await?;
+
             handle.with(|entry| {
                 entry.state.applied_revision = entry.state.applied_revision.max(revision);
 
@@ -671,6 +732,7 @@ impl Handle {
                 })
             })
         });
+
         self.collection.submit(&self.id, self.generation, work)
     }
 
@@ -678,6 +740,7 @@ impl Handle {
         match self.with(|entry| Ok(entry.spec.clone())) {
             Ok(mut spec) => {
                 f(&mut spec);
+
                 self.update(spec)
             }
             Err(error) => crate::ready(Err(error)),
@@ -688,18 +751,22 @@ impl Handle {
     pub fn set_icon(&self, image: Image) -> Request<Applied> {
         self.change(|s| s.image = Some(image))
     }
+
     /// Replaces plain tooltip text.
     pub fn set_tooltip(&self, tooltip: &str) -> Request<Applied> {
         self.change(|s| s.tooltip = tooltip.into())
     }
+
     /// Replaces the native menu description.
     pub fn set_menu(&self, menu: Menu) -> Request<Applied> {
         self.change(|s| s.menu = Some(menu))
     }
+
     /// Requests presentation; user shell policy can still hide the item.
     pub fn show(&self) -> Request<Applied> {
         self.change(|s| s.visible = true)
     }
+
     /// Requests hiding and stops item-owned transient presentation.
     pub fn hide(&self) -> Request<Applied> {
         self.change(|s| s.visible = false)
@@ -712,6 +779,7 @@ impl Handle {
         if let Err(error) = balloon.validate() {
             return crate::ready(Err(error));
         }
+
         #[cfg(target_os = "windows")]
         {
             match self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable)) {
@@ -719,6 +787,7 @@ impl Handle {
                 Err(error) => crate::ready(Err(error)),
             }
         }
+
         #[cfg(not(target_os = "windows"))]
         {
             crate::ready(Err(Error::Unsupported(crate::Feature::LegacyBalloon)))
@@ -730,6 +799,7 @@ impl Handle {
     /// Reports a removed item, stopped host or native query failure.
     pub fn anchor(&self) -> Result<Option<crate::Anchor>, Error> {
         let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+
         native.anchor()
     }
 
@@ -740,11 +810,14 @@ impl Handle {
         #[cfg(target_os = "macos")]
         {
             let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+
             native.set_popup_highlight(highlighted)
         }
+
         #[cfg(not(target_os = "macos"))]
         {
             let _ = highlighted;
+
             Err(Error::Unsupported(crate::Feature::Popup))
         }
     }
@@ -754,6 +827,7 @@ impl Handle {
     /// Reports native failure, removal or shutdown. None means no reliable anchor.
     pub fn popup_anchor(&self) -> Result<Option<crate::PopupAnchor>, Error> {
         let native = self.with(|entry| entry.native.clone().ok_or(Error::HostUnavailable))?;
+
         native.popup_anchor()
     }
 
@@ -764,6 +838,7 @@ impl Handle {
             Ok(value) => value,
             Err(error) => return crate::ready(Err(error)),
         };
+
         let native = {
             let mut registry = registry.borrow_mut();
 
@@ -783,6 +858,7 @@ impl Handle {
                 anchor: None,
                 input: crate::Input::default(),
             });
+
             registry
                 .entries
                 .remove(&self.id)
@@ -807,6 +883,7 @@ pub(crate) fn probe_sink(id: &str) -> Sink {
         menu_revision: None,
     }
 }
+
 #[cfg(all(feature = "sni-tests", unix))]
 pub(crate) async fn probe_next(sink: &Sink) -> Result<Event, Error> {
     sink.ingress.next().await
@@ -838,6 +915,7 @@ mod tests {
     fn reserve(host: &Host, generation: u64) -> Sink {
         let mut registry = host.registry.borrow_mut();
         let spec = Tray::new("main");
+
         registry.entries.insert(
             "main".into(),
             Entry {
@@ -865,9 +943,11 @@ mod tests {
     #[test]
     fn weak_handles_do_not_extend_owner_lifetime() {
         let host = host();
+
         reserve(&host, 1);
         let collection = host.collection();
         let handle = collection.get("main").expect("reserved item exists");
+
         drop(host);
         assert!(matches!(handle.state(), Err(Error::Stopped)));
         assert!(matches!(collection.items(), Err(Error::Stopped)));
@@ -879,8 +959,10 @@ mod tests {
         let old_sink = reserve(&host, 1);
         let collection = host.collection();
         let old = collection.get("main").expect("first registration exists");
+
         futures::executor::block_on(old.remove()).expect("remove first registration");
         let new_sink = reserve(&host, 2);
+
         futures::executor::block_on(old.remove()).expect("old removal is harmless");
         assert_eq!(
             collection
@@ -894,6 +976,7 @@ mod tests {
         old_sink.send(EventKind::Activate, None, crate::Input::default());
         new_sink.send(EventKind::SecondaryActivate, None, crate::Input::default());
         let event = futures::executor::block_on(collection.next_event()).expect("current event");
+
         assert_eq!(event.kind, EventKind::SecondaryActivate);
         assert_eq!(event.generation, 2);
     }
@@ -901,12 +984,15 @@ mod tests {
     #[test]
     fn cancelled_creation_releases_only_its_own_reservation() {
         let host = host();
+
         reserve(&host, 1);
         let collection = host.collection();
+
         let pending = Pending {
             handle: collection.get("main").expect("pending reservation"),
             committed: false,
         };
+
         reserve(&host, 2);
         drop(pending);
         assert_eq!(collection.items().expect("owner is live").len(), 1);
@@ -922,6 +1008,7 @@ mod tests {
         }
 
         let collection = host.collection();
+
         assert_eq!(
             futures::executor::block_on(collection.next_event())
                 .expect("overflow event")
@@ -939,12 +1026,15 @@ mod tests {
     fn old_menu_projection_cannot_dispatch_a_rebound_item() {
         let host = host();
         let sink = reserve(&host, 1);
+
         {
             let mut registry = host.registry.borrow_mut();
+
             let entry = registry
                 .entries
                 .get_mut("main")
                 .expect("registration exists");
+
             entry.spec =
                 Tray::new("main").menu(Menu::new().item(crate::MenuItem::new("open", "Open")));
             entry.state.applied_revision = 1;
@@ -962,6 +1052,7 @@ mod tests {
         );
         let event = futures::executor::block_on(host.collection().next_event())
             .expect("current projection selection");
+
         assert_eq!(event.menu_revision, Some(1));
     }
 }

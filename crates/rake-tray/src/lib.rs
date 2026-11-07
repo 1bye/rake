@@ -23,10 +23,12 @@ pub use accelerator::Accelerator;
 pub use animation::Animation;
 pub use capability::{Backend, Capabilities, Feature, Support};
 pub use composition::Corner;
+
 pub use event::{
     Anchor, BalloonEvent, Button, CoordinateSpace, Event, EventKind, Input, Modifiers, Point,
     PointerAction, Rect,
 };
+
 pub use host::{Applied, Collection, Handle, Host, Registration, State};
 pub use image::{Image, ImageRepresentation, Rendering};
 pub use menu::{CheckState, ItemKind, Menu, MenuItem};

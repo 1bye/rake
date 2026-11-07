@@ -9,6 +9,7 @@ pub use source::{
     BundleSource, Program, ResolvedProgram, SourceBundleRequest, SourceOrigin, SourcePlan,
     bundle_file_schema, load_bundle_file, plan_source, select_bundle_file,
 };
+
 mod compatibility;
 mod components;
 

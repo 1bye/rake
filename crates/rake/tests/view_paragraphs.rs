@@ -297,9 +297,11 @@ fn unquoted_button_text_gets_an_accessible_label_and_quoted_spacing_stays_exact(
     let button = rake::view! {
         <button>Save changes</button>
     };
+
     let heading = rake::view! {
         <h2>"  exact   spacing  "</h2>
     };
+
     let mut button_info = gpui::accesskit::Node::new(button.a11y_role().unwrap());
     let mut heading_info = gpui::accesskit::Node::new(heading.a11y_role().unwrap());
 

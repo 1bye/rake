@@ -150,6 +150,7 @@ fn deploy(
 
     for path in paths {
         let path = dunce::canonicalize(path)?;
+
         let relative = path
             .strip_prefix(&resource_stage)
             .map_err(|_| Error::Execution("DLL deployment escaped stage".into()))?;

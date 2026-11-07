@@ -20,8 +20,10 @@ use crate::runtime::Runtime;
 use crate::services::Services;
 
 use super::ClosePolicy;
+
 #[cfg(not(target_family = "wasm"))]
 mod window;
+
 #[cfg(not(target_family = "wasm"))]
 pub(super) use window::{install_main_window, show_main_window};
 
