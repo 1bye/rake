@@ -1097,9 +1097,8 @@ pub enum AppError {
     /// HTTP configuration could not construct standard services.
     #[error(transparent)]
     Http(#[from] crate::http::Error),
-    /// Native crash directory or process-wide hook setup failed.
-    #[cfg(not(target_family = "wasm"))]
-    #[error("native crash setup failed: {0}")]
+    /// Crash storage or panic hook setup failed.
+    #[error("crash setup failed: {0}")]
     Crash(#[source] std::io::Error),
     /// The host's diagnostics setup conflicts with automatic installation.
     #[error(transparent)]
