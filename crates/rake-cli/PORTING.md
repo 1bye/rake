@@ -108,6 +108,20 @@ distribution builds on their existing adapter. Strengthen the real portable buil
 test with assets, owned rebuild and unowned-output refusal; add an all-host Windows
 layout/manifest regression. Replacement Windows CI is pending.
 
+At 67049f9 the Windows test reached native staging and correctly rejected the
+fixture's missing rake-build integration. Keep that existing production guard.
+Use real rake-build/build.rs and rake-resources dependencies in the fixture on
+every host, and make its installed executable read the packaged asset from an
+unrelated working directory. Preserve the fresh-lockfile, output ownership,
+rebuild, archive/manifest and asset assertions. Windows installed builds retain
+the native packager's existing rake-build requirement; explicit build --native
+remains the raw Cargo executable adapter.
+
+Fixture-correction repeat: Mac and Linux each passed all **3** portable CLI tests,
+all-target Clippy and Cargo fmt; Mac rake format passed. At 67049f9, gate,
+portable, Ubuntu desktop and macOS native passed again. Windows CI must still
+confirm the corrected fixture with real build-script resource integration.
+
 Follow-up validation: Mac full CLI repeat **354 passed, 0 failed, 2 existing
 ignored**, portable build tests **3**, compatibility tests **2**; Linux portable
 tests **3** and compatibility tests **2**. Both machines passed all-target CLI

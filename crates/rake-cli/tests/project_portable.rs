@@ -27,17 +27,30 @@ fn console_build_works_with_spaces_and_without_unix_transport() {
         .prefix("rake portable ")
         .tempdir()
         .unwrap();
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+
     fs::create_dir(root.path().join("src")).unwrap();
     fs::write(
         root.path().join("Cargo.toml"),
-        "[package]\nname='portable-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n[package.metadata.rake.bundle]\nidentifier='dev.rake.portable'\nassets='assets'\n",
+        format!(
+            "[package]\nname='portable-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n[package.metadata.rake.bundle]\nidentifier='dev.rake.portable'\nassets='assets'\n[dependencies]\nrake-resources={{path={:?}}}\n[build-dependencies]\nrake-build={{path={:?}}}\n",
+            crates.join("rake-resources"),
+            crates.join("rake-build"),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("build.rs"),
+        "fn main(){rake_build::build().unwrap();}",
     )
     .unwrap();
     fs::create_dir(root.path().join("assets")).unwrap();
     fs::write(root.path().join("assets/message.txt"), "installed asset").unwrap();
     fs::write(
         root.path().join("src/main.rs"),
-        "fn main(){println!(\"portable works\");}",
+        r#"fn main(){let resources=rake_resources::resources!().unwrap();let path=resources.path("assets/message.txt").unwrap();println!("portable works:{}",std::fs::read_to_string(path).unwrap());}"#,
     )
     .unwrap();
 
@@ -61,13 +74,14 @@ fn console_build_works_with_spaces_and_without_unix_transport() {
 
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     let run = Command::new(result["artifact"].as_str().unwrap())
+        .current_dir(root.path().join("src"))
         .output()
         .unwrap();
 
     assert!(run.status.success());
     assert_eq!(
         String::from_utf8(run.stdout).unwrap().replace("\r\n", "\n"),
-        "portable works\n"
+        "portable works:installed asset\n"
     );
     assert!(root.path().join("Cargo.lock").is_file());
 
