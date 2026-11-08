@@ -34,7 +34,8 @@ def main(v):
     env.update(CARGO_TARGET_DIR=str(evidence/'target'),CARGO_BUILD_JOBS='3',BLAZE_STATS='1')
     env.update(v.environment)
     if v.mode=='pinned':
-        env['BLAZE_ARCHIVE']=str(Path(v.archive).resolve())
+        if v.archive:env['BLAZE_ARCHIVE']=str(Path(v.archive).resolve())
+        else:env.pop('BLAZE_ARCHIVE',None)
         tools=evidence/'path-bin';tools.mkdir(exist_ok=True)
         for name in ['cargo','rustc','rustdoc','rustup']:
             found=shutil.which(name,path=env['PATH'])
@@ -149,7 +150,7 @@ def main(v):
                 summary[kind]={k:statistics.median(r[k] for r in rs) for k in ['save_to_apply_ms','save_to_redraw_ms','publication_to_apply_ms'] if all(r[k] is not None for r in rs)}
                 times=[r['timelines_us'][-1] for r in rs if r['timelines_us']]
                 summary[kind]['timeline_us']={k:statistics.median(t[k] for t in times) for k in times[0]} if times else {}
-            result=dict(startup_seconds=startup,command=cmd,mode=v.mode,no_blaze_on_path=v.mode=='pinned',initial_rake_home_absent=v.clean_install,first_edit=rows[0],summary=summary,evidence=str(evidence))
+            result=dict(startup_seconds=startup,command=cmd,mode=v.mode,no_blaze_on_path=v.mode=='pinned',archive_override=env.get('BLAZE_ARCHIVE'),pin_url=pin['url'],initial_rake_home_absent=v.clean_install,first_edit=rows[0],summary=summary,evidence=str(evidence))
             (evidence/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result),flush=True)
             if v.mode=='pinned':
                 doctor=subprocess.run([v.cli,'doctor','--json'],cwd=root,env=env,capture_output=True,text=True,check=True);(evidence/'doctor.json').write_text(doctor.stdout);assert json.loads(doctor.stdout)['live']['ready']

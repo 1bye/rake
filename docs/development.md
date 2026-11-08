@@ -196,9 +196,10 @@ rake dev --live --bin rake-view
 rake doctor --json
 ```
 
-This is currently **Apple Silicon macOS only**. The fork repository/release is
-not public yet. Until the owner publishes the pinned bytes, use the locally
-prepared archive:
+This is currently **Apple Silicon macOS only**. The pinned
+[`v0.20261030.1-rake.1` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.1)
+is published; ordinary live mode downloads it automatically. To use a copy of
+that exact published archive offline:
 
 ```sh
 BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
@@ -228,7 +229,7 @@ app running. Static initializers may reset the edited static. See
 Plain `rake dev` remains Cargo-based and needs no Blaze installation. The older
 `--compiler blaze` laboratory option remains available separately.
 
-### Local fork maintenance and first publication
+### Fork maintenance
 
 The fork is prepared in `~/Documents/GitHub/blaze-rake-fork`; its `RAKE_FORK.md`
 describes the verified upstream base (`v0.20261030.1`, `6560553`), the seven
@@ -236,13 +237,11 @@ engine fixes, eight separately preserved earlier lab fixes, matching toolchain
 macro server and Apple Silicon release recipe. Its infrastructure workflows are
 archived; only explicit fork release workflows remain active.
 
-Owner-only public steps remain: create `1bye/blaze` as a GitHub fork of
-`indexable-inc/blaze`, push the reviewed fork branch,
-cut the first `v0.20261030.1-rake.1` prerelease, then confirm/update the pin URL
-and SHA-256 against the exact published archive. Publishing the already-tested
-local archive preserves its checksum; a CI rebuild may produce different bytes
-and needs a new pin. Rake's new branch also needs a separate push/review approval.
-No public step is performed by local preparation.
+The first fork release is published. Its GitHub-built archive differs from the
+local build, so the pin records the published archive's checksum. For future
+releases, verify the actual public bytes before updating the pin. Local rebuilds
+can have different checksums. Fork and Rake changes still need separate owner
+approval before pushing or publishing; local maintenance does neither.
 
 Allow roughly 2–4 hours per compatible upstream bump, and a day or more for
 compiler/Cranelift/proc-macro ABI changes. The release branch now retains
