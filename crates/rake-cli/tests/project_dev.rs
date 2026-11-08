@@ -110,7 +110,9 @@ fi
         if no_open {
             command.arg("--no-open");
         }
+
         let started = SystemTime::now();
+
         let child = command
             .args(extra)
             .stdout(events)
@@ -189,10 +191,12 @@ impl Drop for Running {
                 "supervisor fixture errors: {}",
                 fs::read_to_string(self.control.join("errors")).unwrap_or_default()
             );
+
             if let Ok(status) = fs::read_to_string(self.session.join("status.json")) {
                 eprintln!("supervisor fixture status: {status}");
             }
         }
+
         // SAFETY: the fixture owns this child, including during assertion unwinding.
         unsafe {
             libc::kill(self.child.id() as i32, libc::SIGTERM);
@@ -212,7 +216,9 @@ fn remove_early_session(pid: u32, started: SystemTime) {
         if !entry.file_name().to_string_lossy().starts_with("rake-dev-") {
             continue;
         }
+
         let marker = entry.path().join("status.json");
+
         if !marker
             .metadata()
             .and_then(|metadata| metadata.modified())
@@ -220,9 +226,11 @@ fn remove_early_session(pid: u32, started: SystemTime) {
         {
             continue;
         }
+
         let value = fs::read(&marker)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+
         if value.is_some_and(|value| value["pid"] == pid) {
             fs::remove_dir_all(entry.path()).unwrap();
         }
@@ -572,6 +580,7 @@ impl Fixture {
         self.web();
         // Retain the desktop package/metadata and native build adapter.
         let desktop = Fixture::new();
+
         fs::copy(
             desktop.root.join("metadata.json"),
             self.root.join("metadata.json"),
@@ -579,6 +588,7 @@ impl Fixture {
         .unwrap();
         let mut metadata: Value =
             serde_json::from_slice(&fs::read(self.root.join("metadata.json")).unwrap()).unwrap();
+
         metadata["workspace_root"] = json!(self.root);
         metadata["packages"][0]["manifest_path"] = json!(self.root.join("Cargo.toml"));
         fs::write(self.root.join("metadata.json"), metadata.to_string()).unwrap();
@@ -619,6 +629,7 @@ fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_fai
         .unwrap()
         .parse()
         .unwrap();
+
     assert!(alive(node_pid) && alive(cdp_pid));
     let events = fs::read_to_string(running.control.join("events")).unwrap();
     let ready: Value = events
@@ -652,6 +663,7 @@ fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_fai
         1
     );
     let node_args = fs::read_to_string(running.control.join("node-args")).unwrap();
+
     let helpers = PathBuf::from(node_args.lines().next().unwrap())
         .parent()
         .unwrap()
@@ -715,12 +727,15 @@ fn preview_listener_shutdown_cancels_partial_readers_without_python() {
 fn preview_compiler_failure_is_fatal_and_no_cdp_needs_no_node() {
     for bad in [false, true] {
         let fixture = Fixture::new();
+
         fixture.preview();
         fs::remove_file(fixture.tools.join("node")).unwrap();
         if bad {
             fixture.tool("xcrun", "exit 7");
         }
+
         let mut running = fixture.start(&["--preview", "--port", "0"]);
+
         if bad {
             assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
             assert!(
@@ -833,6 +848,7 @@ fn web_companion_exit_is_fatal_and_invalid_readiness_blocks_publication() {
 #[cfg(target_os = "macos")]
 fn preview_session_compiles_helper_before_server_and_marks_app_environment() {
     let fixture = Fixture::new();
+
     fixture.preview();
     let mut running = fixture.start(&["--preview", "--cdp", "--port", "0"]);
     running.phase("watching");
@@ -854,24 +870,30 @@ fn preview_session_compiles_helper_before_server_and_marks_app_environment() {
 #[test]
 fn web_serves_without_python_or_node_and_reports_occupied_listener() {
     let fixture = Fixture::new();
+
     fixture.web();
     fs::remove_file(fixture.tools.join("python3")).unwrap();
     fs::remove_file(fixture.tools.join("node")).unwrap();
     let mut running = fixture.start(&["--target=web", "--port=0"]);
+
     assert_eq!(running.phase("watching")["published"], 1);
     assert!(!running.control.join("server-pid").exists());
     let events = fs::read_to_string(running.control.join("events")).unwrap();
+
     let ready: Value = events
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|value| value["event"] == "web_listening")
         .unwrap();
+
     let url = url::Url::parse(ready["url"].as_str().unwrap()).unwrap();
     let address = format!("127.0.0.1:{}", url.port().unwrap());
     let mut stream = std::net::TcpStream::connect(&address).unwrap();
+
     use std::io::{Read, Write};
     write!(stream, "GET / HTTP/1.0\r\nHost: {address}\r\n\r\n").unwrap();
     let mut response = String::new();
+
     stream.read_to_string(&mut response).unwrap();
     assert!(response.starts_with("HTTP/1.0 200"), "{response}");
     assert!(response.contains("/__rake/bootstrap.js?build=1"));
@@ -881,6 +903,7 @@ fn web_serves_without_python_or_node_and_reports_occupied_listener() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port().to_string();
     let started = SystemTime::now();
+
     let child = Command::new(env!("CARGO_BIN_EXE_rake"))
         .current_dir(&fixture.root)
         .env("PATH", &fixture.tools)
@@ -897,11 +920,14 @@ fn web_serves_without_python_or_node_and_reports_occupied_listener() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
+
     let pid = child.id();
     let result = child.wait_with_output().unwrap();
+
     remove_early_session(pid, started);
     assert_eq!(result.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&result.stderr).unwrap();
+
     assert!(
         error["error"]["message"]
             .as_str()
