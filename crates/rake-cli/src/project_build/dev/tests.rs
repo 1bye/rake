@@ -18,6 +18,7 @@ fn project(root: &Path) -> Project {
     Project {
         package: json!({"name":"fixture", "features":{}, "dependencies":[]}),
         root: root.to_owned(),
+        target_directory: root.join("target"),
         target: "fixture".into(),
         watch_roots: vec![root.to_owned(), root.join("src")],
         web_dir: root.join("web"),
@@ -536,4 +537,295 @@ fn checkpoint_files_preserve_utf8_byte_bounds() {
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
     );
+}
+
+#[test]
+fn blaze_arguments_are_optional_and_reject_web_preview_and_other_commands() {
+    use super::super::args::{self, Compiler};
+    let parse = |args: &[&str]| {
+        args::parse(
+            "dev",
+            &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(parse(&[]).unwrap().unwrap().compiler, Compiler::Cargo);
+    assert_eq!(
+        parse(&["--compiler", "blaze"]).unwrap().unwrap().compiler,
+        Compiler::Blaze
+    );
+    for arguments in [
+        vec!["--compiler=blaze", "--target=web"],
+        vec!["--preview", "--compiler=blaze"],
+    ] {
+        let arguments: Vec<_> = arguments.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            args::parse("dev", &arguments).err().unwrap(),
+            "--compiler blaze requires desktop without --preview"
+        );
+    }
+    assert!(args::parse("build", &["--compiler=blaze".into()]).is_err());
+    assert_eq!(
+        parse(&["--compiler=blaze", "--native-reloader=/tmp/backend"])
+            .err()
+            .unwrap(),
+        "--compiler blaze cannot be combined with --native-reloader"
+    );
+    assert!(!args::web_target(&["--preview".into()]));
+    assert!(args::web_target(&["--target=web".into()]));
+}
+
+fn macho(path: &Path, uuid: u8) {
+    let mut bytes = vec![0u8; 56];
+    bytes[..4].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe]);
+    bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
+    bytes[20..24].copy_from_slice(&24u32.to_le_bytes());
+    bytes[32..36].copy_from_slice(&0x1bu32.to_le_bytes());
+    bytes[36..40].copy_from_slice(&24u32.to_le_bytes());
+    bytes[40..56].fill(uuid);
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn blaze_watched_artifact_uses_uuid_and_rejects_ambiguity_and_truncated_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path();
+    fs::create_dir_all(target.join("debug")).unwrap();
+    fs::create_dir_all(target.join("blaze/whole/a")).unwrap();
+    macho(&target.join("debug/app"), 1);
+    macho(&target.join("blaze/whole/a/app"), 1);
+    assert_eq!(
+        blaze::artifact(target, "debug", "app").unwrap(),
+        target.join("blaze/whole/a/app")
+    );
+    fs::create_dir_all(target.join("blaze/whole/b")).unwrap();
+    macho(&target.join("blaze/whole/b/app"), 1);
+    assert!(blaze::artifact(target, "debug", "app").is_err());
+    fs::write(target.join("debug/app"), [0xcf, 0xfa, 0xed, 0xfe]).unwrap();
+    assert!(blaze::identity(&target.join("debug/app")).is_err());
+}
+
+#[test]
+fn blaze_daemon_wire_escapes_source_and_rejects_failed_truncated_and_oversized_replies() {
+    for reply in [
+        b"ok\n".to_vec(),
+        b"error\tbad\\nsource\n".to_vec(),
+        b"ok".to_vec(),
+        vec![b'x'; MAX_BYTES + 1],
+    ] {
+        let dir = tempfile::Builder::new()
+            .prefix("blaze-wire-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let success = reply == b"ok\n";
+        let thread = thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(&connection).read_line(&mut request).unwrap();
+            assert_eq!(
+                request,
+                "edit\t/workspace/main.rs\tfn main() {\\n\\tprintln!(\"a\\\\b\");\\n}\n"
+            );
+            let _ = connection.write_all(&reply);
+        });
+        let cancelled = AtomicBool::new(false);
+        let processes = Processes::new(&cancelled);
+        let result = blaze::edit(
+            &socket,
+            Path::new("/workspace/main.rs"),
+            "fn main() {\n\tprintln!(\"a\\b\");\n}",
+            &processes,
+        );
+        assert_eq!(result.is_ok(), success);
+        thread.join().unwrap();
+    }
+}
+
+#[test]
+fn blaze_runtime_outcomes_and_uuid_choose_patch_rebuild_or_checkpointed_restart_without_replay() {
+    use blaze::{BuildKind, Decision, Live};
+    let mut live = Live {
+        identity: Some("uuid:first".into()),
+        ..Live::default()
+    };
+    assert_eq!(
+        live.decision("uuid:first", BuildKind::Edit),
+        Decision::Patch
+    );
+    assert_eq!(
+        live.decision("uuid:other", BuildKind::Edit),
+        Decision::Restart
+    );
+    let restart =
+        json!({"sequence":1,"kind":"live_restart_requested","fields":{"reason":"room used up"}});
+    assert!(live.observe(&restart));
+    assert!(!live.observe(&restart));
+    assert_eq!(
+        live.decision("uuid:first", BuildKind::Edit),
+        Decision::Rebuild
+    );
+    assert_eq!(
+        live.decision("uuid:first", BuildKind::Full),
+        Decision::Restart
+    );
+    assert!(live.observe(
+        &json!({"sequence":2,"kind":"live_patch_declined","fields":{"reason":"declined"}})
+    ));
+    assert!(
+        live.observe(&json!({"sequence":3,"kind":"live_patch_applied","fields":{"sequence":100}}))
+    );
+    assert!(live.restart.is_none());
+    assert!(live.declined.is_none());
+    assert_eq!(
+        live.decision("uuid:first", BuildKind::Edit),
+        Decision::Patch
+    );
+}
+
+#[test]
+fn blaze_stat_watcher_detects_atomic_saves_and_deletions() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = project(dir.path());
+    let source = dir.path().join("main.rs");
+    fs::write(&source, "one").unwrap();
+    let first = fingerprint::stamps(&project, None).unwrap();
+    fs::write(dir.path().join("replacement"), "two").unwrap();
+    fs::rename(dir.path().join("replacement"), &source).unwrap();
+    let second = fingerprint::stamps(&project, None).unwrap();
+    assert_ne!(first, second);
+    fs::remove_file(source).unwrap();
+    assert_ne!(second, fingerprint::stamps(&project, None).unwrap());
+}
+
+#[test]
+fn blaze_environment_keeps_explicit_memory_limits_and_feature_aliases() {
+    use std::ffi::OsString;
+    let env =
+        blaze::environment([(OsString::from("BLAZE_MEMORY_MAX"), OsString::from("8G"))].into());
+    assert_eq!(
+        env.get(std::ffi::OsStr::new("BLAZE_MEMORY_MAX")).unwrap(),
+        "8G"
+    );
+    assert_eq!(
+        env.get(std::ffi::OsStr::new("BLAZE_PROC_MACRO_SERVER"))
+            .unwrap(),
+        "0"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut project = project(dir.path());
+    project.package["dependencies"] = json!([{"name":"rake-app","rename":"framework","kind":null}]);
+    let args = Args {
+        dev: true,
+        compiler: super::super::Compiler::Blaze,
+        ..Args::default()
+    };
+    assert_eq!(
+        project.build_features(&args).as_deref(),
+        Some("framework/devtools,framework/live")
+    );
+}
+
+#[test]
+fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("builds-root")).unwrap();
+    let args = Args {
+        compiler: super::super::Compiler::Blaze,
+        ..Args::default()
+    };
+    let cancelled = AtomicBool::new(false);
+    let runtime = Runtime::new(replies);
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root.path()),
+        root.path().join("builds-root"),
+        &cancelled,
+    )
+    .unwrap();
+    supervisor.app = Some(
+        Processes::new(&cancelled)
+            .start(Command::new("/bin/sleep").arg("300"))
+            .unwrap(),
+    );
+    let mut advertisement = runtime.instance.clone();
+    advertisement["pid"] = json!(supervisor.app.as_ref().unwrap().0.id());
+    write_marker(&supervisor.control.join("app.json"), &advertisement).unwrap();
+    supervisor.live.as_mut().unwrap().full_boundary = true;
+    supervisor.prepare_live_boundary().unwrap();
+    cancelled.store(true, Ordering::Release);
+    supervisor.finish_live_boundary(false).unwrap();
+    let calls = runtime.calls.lock().unwrap();
+    let prepare = calls
+        .iter()
+        .find(|v| v["message"]["value"]["type"] == "prepare_reload")
+        .unwrap();
+    let finish = calls
+        .iter()
+        .find(|v| v["message"]["value"]["type"] == "finish_reload")
+        .unwrap();
+    assert_eq!(
+        prepare["message"]["value"]["request"]["mechanism"],
+        "native_code_replacement"
+    );
+    assert_eq!(
+        prepare["message"]["value"]["request"]["id"],
+        finish["message"]["value"]["id"]
+    );
+    assert_eq!(finish["message"]["value"]["applied"], false);
+}
+
+#[test]
+fn blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("session");
+    fs::create_dir(&session).unwrap();
+    let artifact = root.path().join("app");
+    fs::write(&artifact, "#!/bin/sh\nexec /bin/sleep 300\n").unwrap();
+    fs::set_permissions(&artifact, fs::Permissions::from_mode(0o755)).unwrap();
+    let args = Args {
+        compiler: super::super::Compiler::Blaze,
+        ..Args::default()
+    };
+    let cancelled = AtomicBool::new(false);
+    let runtime = Runtime::new(replies);
+    let mut supervisor = Supervisor::new(&args, project(root.path()), session, &cancelled).unwrap();
+    supervisor.launch(&artifact).unwrap();
+    let pid = supervisor.app.as_ref().unwrap().0.id();
+    let mut advertisement = runtime.instance.clone();
+    advertisement["pid"] = json!(pid);
+    write_marker(&supervisor.control.join("app.json"), &advertisement).unwrap();
+    let live = supervisor.live.as_mut().unwrap();
+    live.restart = Some("the room the program set aside for edits is used up".into());
+    live.kind = blaze::BuildKind::Edit;
+    supervisor.publish(2, &artifact).unwrap();
+    assert!(supervisor.live.as_ref().unwrap().needs_build);
+    assert_eq!(supervisor.app.as_ref().unwrap().0.id(), pid);
+    assert!(
+        supervisor
+            .app
+            .as_mut()
+            .unwrap()
+            .0
+            .try_wait()
+            .unwrap()
+            .is_none()
+    );
+    supervisor.live.as_mut().unwrap().kind = blaze::BuildKind::Full;
+    supervisor.publish(3, &artifact).unwrap();
+    assert_ne!(supervisor.app.as_ref().unwrap().0.id(), pid);
+    assert_eq!(read_json(&supervisor.checkpoint).unwrap()["draft"], "é漢字");
+    supervisor.finish().unwrap();
+}
+
+#[test]
+fn blaze_metadata_signature_changes_for_manifests_not_body_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let project = project(root.path());
+    fs::write(root.path().join("Cargo.toml"), "manifest").unwrap();
+    let initial = blaze::configuration(&project).unwrap();
+    fs::write(root.path().join("helper.rs"), "one").unwrap();
+    assert_eq!(blaze::configuration(&project).unwrap(), initial);
+    fs::write(root.path().join("Cargo.toml"), "different").unwrap();
+    assert_ne!(blaze::configuration(&project).unwrap(), initial);
 }

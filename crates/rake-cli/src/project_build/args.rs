@@ -3,12 +3,20 @@
 use super::{PathBuf, resolve};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Compiler {
+    #[default]
+    Cargo,
+    Blaze,
+}
+
 #[derive(Clone, Default)]
 pub(super) struct Args {
     pub(super) dev: bool,
     pub(super) bundle: bool,
     pub(super) base_path: Option<String>,
     pub(super) routing: Option<String>,
+    pub(super) compiler: Compiler,
     pub(super) cdp: bool,
     pub(super) preview: bool,
     pub(super) no_open: bool,
@@ -30,6 +38,7 @@ pub(super) struct Args {
 
 const OPTIONS: &[(&str, bool)] = &[
     ("--target", true),
+    ("--compiler", true),
     ("--manifest-path", true),
     ("--package", true),
     ("--bin", true),
@@ -246,6 +255,24 @@ pub(super) fn parse(
     }
 
     let web = values.get("--target").is_some_and(|value| value == "web");
+    let compiler = match values.get("--compiler").map(String::as_str) {
+        None | Some("cargo") => Compiler::Cargo,
+        Some("blaze") => Compiler::Blaze,
+        Some(value) => {
+            return Err(format!(
+                "argument --compiler: invalid choice: '{value}' (choose from cargo, blaze)"
+            ));
+        }
+    };
+    if values.contains_key("--compiler") && command != "dev" {
+        return Err("--compiler applies to dev".into());
+    }
+    if compiler == Compiler::Blaze && (web || values.contains_key("--preview")) {
+        return Err("--compiler blaze requires desktop without --preview".into());
+    }
+    if compiler == Compiler::Blaze && values.contains_key("--native-reloader") {
+        return Err("--compiler blaze cannot be combined with --native-reloader".into());
+    }
 
     for (flag, message) in [
         (
@@ -354,6 +381,7 @@ pub(super) fn parse(
         bundle: command == "bundle",
         base_path: values.remove("--base-path"),
         routing: values.remove("--routing"),
+        compiler,
         cdp: values.contains_key("--cdp"),
         preview: values.contains_key("--preview"),
         no_open: values.contains_key("--no-open"),

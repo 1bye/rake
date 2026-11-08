@@ -1,4 +1,4 @@
-usage: rake [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
+usage: rake [-h] [--target {desktop,web}] [--compiler {cargo,blaze}] [--manifest-path MANIFEST_PATH]
               [--package PACKAGE] [--bin BIN] [--features FEATURES]
               [--release | --debug] [--web-dir WEB_DIR] [--output OUTPUT]
               [--native-reloader NATIVE_RELOADER] [--restart-without-state]
@@ -17,6 +17,8 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --target {desktop,web}
+  --compiler {cargo,blaze}
+                        Desktop compiler; Blaze excludes Web and preview
   --manifest-path MANIFEST_PATH
   --package, -p PACKAGE
   --bin BIN

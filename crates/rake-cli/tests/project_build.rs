@@ -183,6 +183,12 @@ fn doctor_matches_required_targets_and_optional_tools_without_python() {
             result["installed_targets"],
             "host-target\nwasm32-unknown-unknown"
         );
+        assert!(
+            result["blaze"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("optional")
+        );
         assert!(result["node"]["error"].is_string());
         assert!(result.get("python").is_none());
     }

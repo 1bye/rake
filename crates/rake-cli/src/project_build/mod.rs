@@ -22,7 +22,7 @@ mod web;
 #[cfg(windows)]
 mod windows;
 
-use args::Args;
+use args::{Args, Compiler};
 use processes::{Capture, Processes};
 use serde_json::{Value, json};
 
@@ -115,6 +115,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         installed_targets: Value,
         wasm_bindgen: Value,
         node: Value,
+        blaze: Value,
     }
     let probe = |program: &str, arguments: &[&str]| {
         let mut command = Command::new(program);
@@ -128,6 +129,10 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
     };
 
     let checks = Checks {
+        blaze: match probe("blaze", &["--version"]) {
+            Value::String(version) => json!({"note":version}),
+            _ => json!({"note":"optional: Blaze not found; Cargo remains the default compiler"}),
+        },
         rust: probe("rustc", &["--version"]),
         cargo: probe("cargo", &["--version"]),
         installed_targets: probe("rustup", &["target", "list", "--installed"]),
@@ -156,6 +161,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
     Ok(if ready { 0 } else { 1 })
 }
 
+#[derive(Clone)]
 struct Project {
     package: Value,
     target: String,
@@ -164,6 +170,7 @@ struct Project {
     assets: Option<PathBuf>,
     bindgen: Option<PathBuf>,
     watch_roots: Vec<PathBuf>,
+    target_directory: PathBuf,
 }
 
 impl Project {
@@ -350,6 +357,10 @@ impl Project {
         };
 
         Ok(Self {
+            target_directory: metadata["target_directory"]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| root.join("target")),
             watch_roots,
             package: package.clone(),
             target,
@@ -364,21 +375,23 @@ impl Project {
         let mut features: Vec<String> = args.features.iter().cloned().collect();
 
         if args.dev {
-            if self.package["features"].get("devtools").is_some() {
-                features.push("devtools".into());
-            } else if let Some(dependencies) = self.package["dependencies"].as_array() {
-                for dependency in dependencies {
-                    if dependency["kind"].is_null()
-                        && ["rake-app", "rak", "rake"]
-                            .iter()
-                            .any(|name| dependency["name"] == *name)
-                    {
-                        let name = dependency["rename"]
-                            .as_str()
-                            .or_else(|| dependency["name"].as_str());
-
-                        if let Some(name) = name {
-                            features.push(format!("{name}/devtools"));
+            for feature in ["devtools"]
+                .into_iter()
+                .chain((args.compiler == Compiler::Blaze).then_some("live"))
+            {
+                if self.package["features"].get(feature).is_some() {
+                    features.push(feature.into());
+                } else if let Some(dependencies) = self.package["dependencies"].as_array() {
+                    for dependency in dependencies {
+                        if dependency["kind"].is_null()
+                            && ["rake-app", "rak", "rake"]
+                                .iter()
+                                .any(|name| dependency["name"] == *name)
+                            && let Some(name) = dependency["rename"]
+                                .as_str()
+                                .or_else(|| dependency["name"].as_str())
+                        {
+                            features.push(format!("{name}/{feature}"));
                         }
                     }
                 }

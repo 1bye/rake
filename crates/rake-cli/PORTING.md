@@ -994,3 +994,73 @@ All Cargo invocations used `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
 
 No macOS GUI/GPUI, native-preview, real wasm-bindgen/browser, or Windows run.
 No packages/toolchains installed. Devbox free disk remained above 36 GB.
+
+## Optional Blaze native supervisor
+
+`rake dev --compiler blaze` is implemented in the existing Rust desktop owner.
+Cargo remains the default. Web and preview dispatch and their embedded Python
+supervisor are unchanged; Blaze requests in either mode are rejected by the
+Rust argument parser before metadata or tool execution. No tests need Blaze.
+The optional runtime is enabled only in explicit Blaze development builds.
+
+| Earlier Python Blaze behavior | Rust owner |
+|---|---|
+| `blaze_environment`, feature selection | `dev/blaze.rs::environment`, `Project::build_features` |
+| `executable_identity`, `blaze_artifact` | `dev/blaze.rs::identity`, `artifact` |
+| `blaze_edit`, `update_blaze`, full builds | `dev/blaze.rs::edit`, `update`, `build` |
+| Stat watcher, metadata reuse | `dev/fingerprint.rs::stamps`, `blaze::configuration`, the existing owned build worker |
+| `poll_live_events`, patch/restart policy | `blaze::Live::observe`, `decision`, `Supervisor::publish` |
+| Patch-room rebuild followed by checkpointed restart | `Decision::Rebuild`, forced full worker build, existing `Supervisor::prepare` |
+| Full boundary prepare/abort | `Supervisor::prepare_live_boundary`, `finish_live_boundary`; runtime finishes an applied patch |
+| Build diagnostics and doctor note | `Processes::run_output`, `project_build::doctor` |
+
+The daemon protocol retains escaping, bounded replies and error fallback.
+Socket I/O checks the existing cancellation/stopping flags, rather than blocking
+shutdown for the Python socket's sixty-second timeout. Build output continues
+through owned process groups. Body patches use app events and executable UUIDs;
+CLI prose never chooses patch versus restart. Same-UUID room exhaustion still
+requires a full build before checkpointed restart. A newer Applied event clears
+an earlier restart/decline, and diagnostic cursors prevent replay.
+
+### Blaze test mapping
+
+The Python `BlazeSupervisorTests` from `51cba04` map as follows; names below are
+in `project_build::dev::tests` unless qualified.
+
+| Python case | Rust coverage |
+|---|---|
+| Watched artifact UUID/ambiguity | `blaze_watched_artifact_uses_uuid_and_rejects_ambiguity_and_truncated_tables` |
+| Build binary/features/sandbox | `project_dev::blaze_direct_edits_fall_back_for_structured_errors_and_keep_the_old_process` |
+| Runtime outcome/UUID policy; diagnostic cursor | `blaze_runtime_outcomes_and_uuid_choose_patch_rebuild_or_checkpointed_restart_without_replay` |
+| Other tool JSON events | Existing Cargo/native supervisor and process-output tests remain unchanged |
+| Explicit memory limit/defaults | `blaze_environment_keeps_explicit_memory_limits_and_feature_aliases` |
+| Metadata reuse/invalidation | `blaze_metadata_signature_changes_for_manifests_not_body_edits` |
+| Full-boundary failed-build abort | `blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation` |
+| Structured error before timing tail | `project_dev::blaze_direct_edits_fall_back_for_structured_errors_and_keep_the_old_process` |
+| Wire escaping/failed/truncated responses | `blaze_daemon_wire_escapes_source_and_rejects_failed_truncated_and_oversized_replies` |
+| Direct edit/error fallback | `project_dev::blaze_direct_edits_fall_back_for_structured_errors_and_keep_the_old_process` |
+| Atomic save/deletion | `blaze_stat_watcher_detects_atomic_saves_and_deletions` |
+| Room restart builds first | `blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_restart` |
+| Web rejection | `blaze_arguments_are_optional_and_reject_web_preview_and_other_commands` (also covers preview) |
+
+### Differences and verification limits
+
+Blaze rejects `--native-reloader`: mixing the two replacement owners would
+bypass the required checkpointed restart. Plain Cargo's backend behavior is
+unchanged. The stat watcher retains the prototype's mtime/size/inode limitation. Native
+desktop supervision has no Python dependency. The Python Blaze prototype was
+not applied to Web/preview, which intentionally cannot select this compiler.
+Temporary Python `RAKE_LIVE_PROFILE` instrumentation was not ported: the normal
+JSON supervisor events, runtime apply timestamps and worker logs remain the
+recording interfaces. The socket deadline now includes sending and receiving,
+and cancellation is cooperative throughout. These changes do not alter engine
+code, sandbox policies or the fixed macro server selection.
+
+The four rebased live-runtime tests, fake daemon integration and native
+supervisor tests pass. Strict CLI Clippy passes. Full verification is recorded
+in `.agents/reports/blaze-live-integration.md`. Real current-main acceptance is
+blocked before launch by Blaze refusing
+`zune_jpeg::color_convert::neon64::ycbcr_to_rgb_baseline_no_clamp`, through the
+unsupported LLVM intrinsic `aarch64.neon.sqshrun.v4i16`. No engine/dependency
+workaround was applied; the earlier Python timing numbers do not validate the
+Rust port's current-main latency.
