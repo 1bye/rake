@@ -389,8 +389,8 @@ jobs:
           cargo +nightly-2026-08-20 install --locked dylint-link --version 6.3.2
       - name: Verify spacing tools
         run: |
-          cargo dylint --version
-          dylint-link --version
+          cargo +nightly-2026-08-20 dylint --version
+          test -x ~/.cargo/bin/dylint-link
       - run: python3 scripts/check-spacing.py
       - run: cargo doc --workspace --no-deps --locked
         env:
