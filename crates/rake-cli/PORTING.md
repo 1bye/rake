@@ -141,6 +141,21 @@ those suites to preserve the requested 40 GB free-space floor. The live checkout
 is untouched apart from fetch/worktree registration. No merge, main push,
 force-push, rebase, amend, issue comment or label.
 
+### Follow-up: accepted connection mode
+
+The phase-5 native WebSocket regression exposed macOS inheriting O_NONBLOCK from
+our nonblocking listener. Explicitly restore blocking mode on accepted worker
+sockets before timed HTTP reads; preview proxying still selects its existing
+nonblocking forwarding mode. The new regression splits both headers and JSON
+across a bounded read timeout and requires successful authenticated completion.
+The phase-5 WebSocket case failed on the Mac before this change and passed after
+it. A real Mac CLI check splitting authenticated headers and JSON also passed.
+Devbox, Rust 1.98.0 with umask 022: full CLI **317 passed, 2 ignored**,
+all-target Clippy `-D warnings`, Cargo fmt, rake format and rake lint passed.
+The added Rust segmented-request regression is included in that full run.
+Latest CI is recorded in the PR body. This fix is a
+new commit on the phase-4 branch; pushed history is preserved.
+
 ### Remaining phases
 
 - Phase 5: port `preview.py`/`preview_socket.py` and retire the compatibility server;

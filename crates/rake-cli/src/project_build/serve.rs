@@ -251,6 +251,8 @@ fn handle(
     config: &Config,
     stopping: &AtomicBool,
 ) -> Result<()> {
+    // macOS accept inherits the listener's O_NONBLOCK; each worker uses blocking I/O.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
     let request = match request(&mut stream) {
@@ -981,5 +983,69 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.0 403"), "{response}");
         assert!(response.contains("development bridge authentication failed"));
+    }
+    #[test]
+    fn control_requests_wait_for_segmented_headers_and_json_bodies() {
+        let root = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let broker = Arc::new(
+            super::super::broker::Broker::new(super::super::broker::Options {
+                url: format!("http://{address}"),
+                directory: root.path().join("control"),
+                development: None,
+                output: None,
+                allow_native: false,
+                cdp_url: None,
+                source_root: root.path().into(),
+                cli: "/unused".into(),
+            })
+            .unwrap(),
+        );
+        let token = broker.token().to_owned();
+        let _server = Server::start(
+            listener,
+            Config {
+                directory: root.path().into(),
+                development: None,
+                builds: None,
+                control_only: true,
+                backend: None,
+                broker: Some(broker),
+            },
+        )
+        .unwrap();
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        write!(stream, "POST /__rake/development HTTP/1.1\r\n").unwrap();
+        let pending = stream.read(&mut [0]);
+        assert!(
+            pending.is_err_and(|error| matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )),
+            "partial headers must remain pending"
+        );
+        write!(stream,"Host: {address}\r\nX-Rake-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{").unwrap();
+        let pending = stream.read(&mut [0]);
+        assert!(
+            pending.is_err_and(|error| matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )),
+            "partial JSON must remain pending"
+        );
+        stream.write_all(b"}").unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+        let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body["published"], 0);
+        assert_eq!(body["runtimes"], serde_json::json!({}));
     }
 }
