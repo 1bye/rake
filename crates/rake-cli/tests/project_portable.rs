@@ -10,12 +10,14 @@ fn doctor_has_no_python_dependency_or_diagnostic_field() {
         .args(["doctor", "--json"])
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let checks: Value = serde_json::from_slice(&output.stdout).unwrap();
+
     assert!(checks["rust"].is_string());
     assert!(checks["cargo"].is_string());
     assert!(checks.get("python").is_none());
@@ -27,6 +29,7 @@ fn console_build_works_with_spaces_and_without_unix_transport() {
         .prefix("rake portable ")
         .tempdir()
         .unwrap();
+
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap();
@@ -73,6 +76,7 @@ fn console_build_works_with_spaces_and_without_unix_transport() {
     );
 
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+
     let run = Command::new(result["artifact"].as_str().unwrap())
         .current_dir(root.path().join("src"))
         .output()
@@ -147,7 +151,9 @@ fn web_bundle_uses_portable_pipes_loader_discovery_urls_and_zip_names() {
         .prefix("rake web portable ")
         .tempdir()
         .unwrap();
+
     let path = root.path();
+
     fs::create_dir(path.join("tools")).unwrap();
     fs::create_dir(path.join("web")).unwrap();
     fs::write(path.join("Cargo.toml"), "fixture").unwrap();
@@ -166,6 +172,7 @@ fn web_bundle_uses_portable_pipes_loader_discovery_urls_and_zip_names() {
         "manifest_path":path.join("Cargo.toml"),"features":{},"dependencies":[],
         "targets":[{"name":"fixture","kind":["cdylib"],"crate_types":["cdylib"]}],
         "metadata":{"rake":{"bundle":{"identifier":"dev.rake.portable","web":{"offline":true,"base_path":"/tools/"}}}}});
+
     fs::write(path.join("metadata.json"), json!({"workspace_root":path,"workspace_members":["portable-web-fixture"],"packages":[package]}).to_string()).unwrap();
     fs::write(path.join("artifact.json"), json!({"reason":"compiler-artifact","package_id":"portable-web-fixture","target":{"name":"fixture"},"filenames":[path.join("input.wasm")]}).to_string()).unwrap();
     fs::write(
@@ -197,6 +204,7 @@ fn main() {
     .unwrap();
     let suffix = std::env::consts::EXE_SUFFIX;
     let cargo = path.join("tools").join(format!("cargo{suffix}"));
+
     assert!(
         Command::new("rustc")
             .arg("--edition=2024")
@@ -213,6 +221,7 @@ fn main() {
     )
     .unwrap();
     let mut paths = vec![path.join("tools")];
+
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .current_dir(path)
@@ -221,28 +230,36 @@ fn main() {
         .args(["bundle", "--target", "web", "--debug", "--json"])
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+
     let manifest: Value =
         serde_json::from_slice(&fs::read(result["manifest"].as_str().unwrap()).unwrap()).unwrap();
+
     assert_eq!(manifest["deployment"]["base_path"], "/tools/");
     assert_eq!(manifest["deployment"]["offline"], true);
     let site = std::path::Path::new(result["artifact"].as_str().unwrap());
     let worker = fs::read_to_string(site.join("rake-service-worker.js")).unwrap();
+
     assert!(worker.contains("/pkg/fixture_bg.wasm"));
     assert!(!worker.contains("%5C"));
     let mut archive =
         zip::ZipArchive::new(fs::File::open(result["archive"].as_str().unwrap()).unwrap()).unwrap();
+
     let mut loader = false;
+
     for index in 0..archive.len() {
         let entry = archive.by_index(index).unwrap();
+
         assert!(!entry.name().unwrap().contains('\\'));
         loader |= entry.name().unwrap().ends_with("/pkg/fixture.js");
     }
+
     assert!(loader);
     assert!(
         manifest["files"]
@@ -251,6 +268,7 @@ fn main() {
             .iter()
             .all(|file| !file["path"].as_str().unwrap().contains('\\'))
     );
+
     #[cfg(windows)]
     {
         fs::copy(&cargo, path.join("tools/node.exe")).unwrap();
@@ -261,6 +279,7 @@ fn main() {
             .args(["agent", "--help"])
             .output()
             .unwrap();
+
         assert!(
             output.status.success(),
             "{}",
@@ -271,6 +290,7 @@ fn main() {
             "agent fixture"
         );
         let script = fs::read_to_string(path.join("agent-script-path")).unwrap();
+
         assert!(
             !std::path::Path::new(&script).exists(),
             "client resource must be removed after exit"

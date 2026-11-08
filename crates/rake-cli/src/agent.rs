@@ -12,6 +12,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<(), Box<dyn std::error::Error
             include_str!("../scripts/rake-agent.mjs"),
             "\nawait cliMain(process.argv.slice(1));"
         );
+
         // exec preserves signal/exit ownership without leaving a Node child.
         std::process::Command::new("node")
             .args(["--input-type=module", "--eval", script, "--"])
@@ -25,6 +26,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<(), Box<dyn std::error::Error
         // entry point adds its filename to argv, hence slice(2) rather than (1).
         let directory = tempfile::Builder::new().prefix("rake-agent-").tempdir()?;
         let script = directory.path().join("agent.mjs");
+
         std::fs::write(
             &script,
             concat!(
@@ -33,8 +35,10 @@ pub(super) fn run(mut args: Vec<String>) -> Result<(), Box<dyn std::error::Error
             ),
         )?;
         let mut command = std::process::Command::new("node");
+
         command.arg(&script).args(args);
         let result = crate::project_build::run_client(&mut command);
+
         drop(directory);
 
         match result {

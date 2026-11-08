@@ -6,6 +6,7 @@
 #![cfg(unix)]
 
 use serde_json::{Value, json};
+
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
@@ -24,6 +25,7 @@ impl Fixture {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("app");
         let tools = directory.path().join("tools");
+
         fs::create_dir_all(root.join("web")).unwrap();
         fs::create_dir_all(root.join("assets/nested")).unwrap();
         fs::create_dir(&tools).unwrap();
@@ -44,6 +46,7 @@ impl Fixture {
             root,
             tools,
         };
+
         fixture.metadata(json!({"assets":"assets"}), 1);
         fixture.tool(
             "cargo",
@@ -68,6 +71,7 @@ printf 'export default async function init() {}' > "$4/fixture.js""#,
         );
         fixture.tool("rustc", "printf 'rustc fixture\n'");
         fixture.tool("rustup", "printf 'host-target\nwasm32-unknown-unknown\n'");
+
         fixture
     }
 
@@ -79,16 +83,20 @@ printf 'export default async function init() {}' > "$4/fixture.js""#,
             "targets":[{"name":"fixture","kind":["cdylib"],"crate_types":["cdylib"]}],
             "features":{},"dependencies":[],"source":null
         });
+
         let mut packages = vec![package];
         let mut members = vec!["fixture-id"];
+
         if count == 2 {
             let mut other = packages[0].clone();
+
             other["id"] = json!("other-id");
             other["name"] = json!("other");
             other["manifest_path"] = json!(self.root.join("other/Cargo.toml"));
             packages.push(other);
             members.push("other-id");
         }
+
         fs::write(
             self.root.join("metadata.json"),
             json!({
@@ -105,6 +113,7 @@ printf 'export default async function init() {}' > "$4/fixture.js""#,
 
     fn tool(&self, name: &str, source: &str) {
         let path = self.tools.join(name);
+
         fs::write(&path, format!("#!/bin/sh\n{source}\n")).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -121,7 +130,9 @@ printf 'export default async function init() {}' > "$4/fixture.js""#,
 
     fn build(&self, args: &[&str]) -> Output {
         let mut command = vec!["build", "--target", "web", "--json"];
+
         command.extend_from_slice(args);
+
         self.run(&command)
     }
 
@@ -137,14 +148,17 @@ fn success(output: &Output) -> Value {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
 fn error(output: &Output, code: i32, expected: &str) {
     assert_eq!(output.status.code(), Some(code), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
+
     let value: Value =
         serde_json::from_str(stderr.lines().last().unwrap_or_default()).expect(&stderr);
+
     assert!(
         value["error"]["message"]
             .as_str()
@@ -157,11 +171,13 @@ fn error(output: &Output, code: i32, expected: &str) {
 #[test]
 fn doctor_matches_required_targets_and_optional_tools_without_python() {
     let fixture = Fixture::new();
+
     for args in [
         vec!["doctor", "--json"],
         vec!["doctor", "--target", "web", "--json"],
     ] {
         let result = success(&fixture.run(&args));
+
         assert_eq!(result["rust"], "rustc fixture");
         assert_eq!(
             result["installed_targets"],
@@ -170,9 +186,11 @@ fn doctor_matches_required_targets_and_optional_tools_without_python() {
         assert!(result["node"]["error"].is_string());
         assert!(result.get("python").is_none());
     }
+
     fs::remove_file(fixture.tools.join("wasm-bindgen")).unwrap();
     assert!(fixture.run(&["doctor", "--json"]).status.success());
     let web = fixture.run(&["doctor", "--target", "web", "--json"]);
+
     assert_eq!(web.status.code(), Some(1));
     assert!(
         serde_json::from_slice::<Value>(&web.stdout).unwrap()["wasm_bindgen"]["error"].is_string()
@@ -185,6 +203,7 @@ fn doctor_matches_required_targets_and_optional_tools_without_python() {
     );
     fixture.tool("rustc", "printf 'failure' >&2; exit 3");
     let result = fixture.run(&["doctor", "--json"]);
+
     assert_eq!(result.status.code(), Some(1));
     assert!(
         serde_json::from_slice::<Value>(&result.stdout).unwrap()["rust"]["error"]
@@ -199,6 +218,7 @@ fn web_build_selects_artifact_copies_assets_and_preserves_explicit_features() {
     let fixture = Fixture::new();
     let result = fixture.build(&["--release", "--features", "theme,extra"]);
     let artifact = success(&result);
+
     assert_eq!(artifact["artifact"], json!(fixture.output()));
     assert_eq!(
         fs::read(fixture.output().join("pkg/fixture_bg.wasm")).unwrap(),
@@ -235,6 +255,7 @@ fn web_build_selects_artifact_copies_assets_and_preserves_explicit_features() {
         0o600
     );
     let args = fs::read_to_string(fixture.root.join("build-args")).unwrap();
+
     assert!(args.contains("--locked\n--message-format=json-render-diagnostics\n"));
     assert!(
         args.contains(
@@ -248,6 +269,7 @@ fn web_build_selects_artifact_copies_assets_and_preserves_explicit_features() {
 #[test]
 fn web_build_keeps_authored_index_and_rolls_back_failed_replacements() {
     let fixture = Fixture::new();
+
     fs::write(fixture.root.join("web/index.html"), "<html>authored</html>").unwrap();
     success(&fixture.build(&[]));
     assert_eq!(
@@ -257,6 +279,7 @@ fn web_build_keeps_authored_index_and_rolls_back_failed_replacements() {
     fs::write(fixture.root.join("input.wasm"), "replacement").unwrap();
     fs::write(fixture.root.join("fail"), "").unwrap();
     let failed = fixture.build(&[]);
+
     assert_eq!(failed.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&failed.stderr).contains("cargo exited 7"));
     assert_eq!(
@@ -284,6 +307,7 @@ fn web_build_keeps_authored_index_and_rolls_back_failed_replacements() {
 fn build_rejects_unowned_output_overlap_and_symlink_markers() {
     let fixture = Fixture::new();
     let output = fixture.root.join("unrelated");
+
     fs::create_dir(&output).unwrap();
     fs::write(output.join("keep"), "user data").unwrap();
     error(
@@ -295,6 +319,7 @@ fn build_rejects_unowned_output_overlap_and_symlink_markers() {
         fs::read_to_string(output.join("keep")).unwrap(),
         "user data"
     );
+
     for path in [
         fixture.root.join("assets/child"),
         fixture.root.join("assets"),
@@ -307,7 +332,9 @@ fn build_rejects_unowned_output_overlap_and_symlink_markers() {
             "overlap",
         );
     }
+
     let link = fixture.root.join("output-link");
+
     symlink(&output, &link).unwrap();
     error(
         &fixture.build(&["--output", link.to_str().unwrap()]),
@@ -331,6 +358,7 @@ fn build_rejects_unowned_output_overlap_and_symlink_markers() {
 #[test]
 fn web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches() {
     let fixture = Fixture::new();
+
     symlink(
         fixture.root.join("input.wasm"),
         fixture.root.join("web/link"),
@@ -340,6 +368,7 @@ fn web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches() {
     fs::remove_file(fixture.root.join("web/link")).unwrap();
     let socket_path = fixture.root.join("web/socket");
     let socket = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
     error(&fixture.build(&[]), 1, "not a link or special file");
     drop(socket);
     fs::remove_file(socket_path).unwrap();
@@ -374,6 +403,7 @@ fn web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches() {
 #[test]
 fn web_build_reports_missing_artifacts_and_ambiguous_packages() {
     let fixture = Fixture::new();
+
     fs::write(fixture.root.join("artifacts.json"), "").unwrap();
     error(
         &fixture.build(&[]),
@@ -403,6 +433,7 @@ fn web_build_reports_missing_artifacts_and_ambiguous_packages() {
 #[test]
 fn parser_preserves_errors_flags_and_doctor_validation_order() {
     let fixture = Fixture::new();
+
     for (args, expected) in [
         (vec!["build", "--preview", "--json"], "--preview requires"),
         (
@@ -431,6 +462,7 @@ fn parser_preserves_errors_flags_and_doctor_validation_order() {
     ] {
         error(&fixture.run(&args), 2, expected);
     }
+
     success(&fixture.run(&[
         "doctor",
         "--port",
@@ -456,6 +488,7 @@ fn parser_preserves_errors_flags_and_doctor_validation_order() {
 #[test]
 fn first_lock_resolution_and_subsequent_metadata_stay_locked() {
     let fixture = Fixture::new();
+
     fs::copy(
         fixture.root.join("Cargo.lock"),
         fixture.root.join("seed.lock"),
@@ -477,12 +510,14 @@ fi"#,
     success(&fixture.build(&[]));
     let commands = fs::read_to_string(fixture.root.join("metadata-args")).unwrap();
     let commands: Vec<_> = commands.lines().collect();
+
     assert_eq!(commands.len(), 2);
     assert!(commands[0].contains("--no-deps"));
     assert!(!commands[1].contains("--locked"));
 
     success(&fixture.build(&[]));
     let commands = fs::read_to_string(fixture.root.join("metadata-args")).unwrap();
+
     assert!(commands.lines().last().unwrap().contains("--locked"));
 }
 
@@ -490,6 +525,7 @@ fi"#,
 fn cancellation_returns_zero_cleans_descendants_and_keeps_published_output() {
     use std::time::{Duration, Instant};
     let fixture = Fixture::new();
+
     success(&fixture.build(&[]));
     fixture.tool(
         "cargo",
@@ -505,7 +541,9 @@ wait"#,
         .args(["build", "--target", "web", "--json"])
         .spawn()
         .unwrap();
+
     let deadline = Instant::now() + Duration::from_secs(10);
+
     let pid: i32 = loop {
         if let Some(pid) = fs::read_to_string(fixture.root.join("descendant"))
             .ok()
@@ -513,19 +551,23 @@ wait"#,
         {
             break pid;
         }
+
         if Instant::now() >= deadline {
             child.kill().unwrap();
             child.wait().unwrap();
             panic!("build never started Cargo");
         }
+
         std::thread::sleep(Duration::from_millis(10));
     };
+
     // SAFETY: signal only the CLI child owned by this test.
     assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
+
         if Instant::now() >= deadline {
             child.kill().unwrap();
             child.wait().unwrap();
@@ -535,15 +577,19 @@ wait"#,
             }
             panic!("build failed to stop after SIGTERM");
         }
+
         std::thread::sleep(Duration::from_millis(10));
     };
+
     assert!(status.success());
     // A killed orphan can remain a zombie until init reaps it.
     let state = Command::new("ps")
         .args(["-o", "stat=", "-p", &pid.to_string()])
         .output()
         .unwrap();
+
     let state = String::from_utf8_lossy(&state.stdout);
+
     assert!(
         state.trim().is_empty() || state.trim().starts_with('Z'),
         "descendant still running: {state}"
@@ -558,6 +604,7 @@ wait"#,
 fn real_desktop_build_does_not_execute_python() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
+
     fs::create_dir(root.join("src")).unwrap();
     fs::create_dir(root.join("tools")).unwrap();
     fs::write(
@@ -571,6 +618,7 @@ fn real_desktop_build_does_not_execute_python() {
     )
     .unwrap();
     let python = root.join("tools/python3");
+
     fs::write(
         &python,
         "#!/bin/sh\nprintf called > \"$FIXTURE/python-called\"\nexit 99\n",
@@ -578,8 +626,10 @@ fn real_desktop_build_does_not_execute_python() {
     .unwrap();
     fs::set_permissions(python, fs::Permissions::from_mode(0o755)).unwrap();
     let mut paths = vec![root.join("tools")];
+
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let path = std::env::join_paths(paths).unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .current_dir(&root)
         .env("PATH", path)
@@ -589,9 +639,11 @@ fn real_desktop_build_does_not_execute_python() {
         .args(["build", "--debug", "--json"])
         .output()
         .unwrap();
+
     let result = success(&output);
     let executable = result["artifact"].as_str().unwrap();
     let run = Command::new(executable).output().unwrap();
+
     assert!(run.status.success());
     assert_eq!(String::from_utf8(run.stdout).unwrap(), "native works\n");
     assert!(!root.join("python-called").exists());
@@ -605,10 +657,13 @@ fn real_desktop_build_does_not_execute_python() {
 #[test]
 fn symlinked_manifest_selects_exact_workspace_package() {
     let fixture = Fixture::new();
+
     fixture.metadata(json!({}), 2);
     let alias = fixture._directory.path().join("linked-app");
+
     symlink(fixture.root.canonicalize().unwrap(), &alias).unwrap();
     let manifest = alias.join("Cargo.toml");
+
     let mut metadata: Value =
         serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
 
@@ -621,11 +676,13 @@ fn symlinked_manifest_selects_exact_workspace_package() {
         fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
 
         let result = success(&fixture.build(&["--manifest-path", manifest.to_str().unwrap()]));
+
         assert_eq!(result["artifact"], json!(fixture.output()));
     }
 
     // Synthetic/unavailable paths retain the raw comparison as a fallback.
     let missing = fixture.root.join("unavailable/Cargo.toml");
+
     metadata["packages"][0]["manifest_path"] = json!(missing);
     fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
     error(
@@ -643,18 +700,23 @@ fn symlinked_manifest_selects_exact_workspace_package() {
 #[test]
 fn help_and_argument_errors_use_rake_program_name() {
     let fixture = Fixture::new();
+
     for command in ["doctor", "build"] {
         let help = fixture.run(&[command, "--target", "web", "--help"]);
+
         assert!(help.status.success());
         assert!(help.stderr.is_empty());
         let text = String::from_utf8(help.stdout).unwrap();
+
         assert!(text.starts_with("usage: rake ["), "{text}");
         assert!(!text.contains("dev.py"), "{text}");
 
         let output = fixture.run(&[command, "--target", "web", "--unknown"]);
+
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
         let usage = text.split("\n\n").next().unwrap();
+
         assert_eq!(
             String::from_utf8(output.stderr).unwrap(),
             format!("{usage}\nrake: error: unrecognized arguments: --unknown\n"),
@@ -667,9 +729,11 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
     let fixture = Fixture::new();
     let index = fixture.root.join("web/index.html");
     let document = "<!-- <head><link rel='icon'> --><html><head><script>const x = '<link rel=icon>';</script></head></html>";
+
     fs::write(&index, document).unwrap();
     success(&fixture.build(&[]));
     let link = "<link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/rake-icon.svg\">";
+
     assert_eq!(
         fs::read_to_string(fixture.output().join("index.html")).unwrap(),
         document.replacen("<head><script>", &format!("<head>{link}<script>"), 1)
@@ -678,6 +742,7 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
         fs::read(fixture.output().join("assets/rake-icon.svg")).unwrap(),
         include_bytes!("../scripts/default-icon.svg")
     );
+
     for authored in [
         "<link rel='icon' href='custom.svg'>",
         "<LINK REL='shortcut ICON' HREF='custom.ico'>",
@@ -686,6 +751,7 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
         "<link rel='&#105;con' href='custom.svg'>",
     ] {
         let document = format!("<html><head>{authored}</head></html>");
+
         fs::write(&index, &document).unwrap();
         success(&fixture.build(&[]));
         assert_eq!(
@@ -694,6 +760,7 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
         );
         assert!(!fixture.output().join("assets/rake-icon.svg").exists());
     }
+
     fs::write(&index, "<html lang='en'><body>implicit head</body></html>").unwrap();
     success(&fixture.build(&[]));
     assert!(
@@ -709,6 +776,7 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
     success(&fixture.build(&[]));
     fs::write(fixture.root.join("assets/rake-icon.svg"), "app owned").unwrap();
     let before = fs::read(fixture.output().join("index.html")).unwrap();
+
     error(&fixture.build(&[]), 1, "exists");
     assert_eq!(
         fs::read(fixture.output().join("index.html")).unwrap(),
@@ -727,15 +795,19 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
 fn web_bundle_preserves_manifest_archive_offline_payload_and_rollback() {
     use std::io::Read;
     let fixture = Fixture::new();
+
     fixture.metadata(json!({"assets":"assets","name":"Fixture","identifier":"dev.fixture.web","web":{"base_path":"/tools/","offline":true}}),1);
     let output = fixture.root.join("dist/fixture/web-bundle");
     let result = success(&fixture.run(&["bundle", "--target=web", "--json"]));
+
     assert_eq!(result["profile"], "release");
     assert_eq!(result["signing"], "not_applicable");
     assert_eq!(result["artifact"], json!(output.join("site")));
     let manifest: Value =
         serde_json::from_slice(&fs::read(output.join("bundle.json")).unwrap()).unwrap();
+
     let build = manifest["deployment"]["build"].as_str().unwrap();
+
     assert!(
         output
             .join(format!("site/rake-builds/{build}/pkg/fixture.js"))
@@ -750,20 +822,26 @@ fn web_bundle_preserves_manifest_archive_offline_payload_and_rollback() {
     let mut archive =
         zip::ZipArchive::new(fs::File::open(output.join("fixture-1.0.0-web.zip")).unwrap())
             .unwrap();
+
     for entry in manifest["files"].as_array().unwrap() {
         let relative = entry["path"].as_str().unwrap();
         let source = fs::read(output.join(relative)).unwrap();
+
         assert_eq!(entry["bytes"], source.len());
         let mut content = Vec::new();
+
         let mut entry = archive
             .by_name(relative.strip_prefix("site/").unwrap())
             .unwrap();
+
         entry.read_to_end(&mut content).unwrap();
         assert_eq!(content, source);
         assert_eq!(entry.unix_mode().unwrap() & 0o777, 0o644);
         assert!(entry.last_modified().unwrap().year() >= 2026);
     }
+
     let kept = fs::read(output.join("bundle.json")).unwrap();
+
     fs::write(fixture.root.join("fail"), "fail").unwrap();
     error(
         &fixture.run(&["bundle", "--target", "web", "--json"]),
@@ -783,9 +861,11 @@ fn web_bundle_preserves_manifest_archive_offline_payload_and_rollback() {
         "hash",
         "--json",
     ]));
+
     assert_eq!(result["profile"], "debug");
     let manifest: Value =
         serde_json::from_slice(&fs::read(output.join("bundle.json")).unwrap()).unwrap();
+
     assert_eq!(manifest["deployment"]["base_path"], "/override/");
     assert_eq!(manifest["deployment"]["routing"], "hash");
 }

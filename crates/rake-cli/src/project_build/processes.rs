@@ -1,6 +1,7 @@
 //! Bounded tool output and owned process trees, including compiler descendants.
 
 use super::Result;
+
 use std::{
     io::{Read, Write},
     process::{Child, Command, ExitStatus, Stdio},
@@ -19,6 +20,7 @@ use std::{
     },
     time::Instant,
 };
+
 #[cfg(windows)]
 mod windows;
 
@@ -51,12 +53,14 @@ impl<'a> Processes<'a> {
     #[cfg(unix)]
     pub(super) fn with_stopping(mut self, stopping: &'a AtomicBool) -> Self {
         self.stopping = Some(stopping);
+
         self
     }
 
     #[cfg(unix)]
     pub(super) fn with_output(mut self, sink: &'a OutputSink<'a>) -> Self {
         self.output_sink = Some(sink);
+
         self
     }
 
@@ -66,6 +70,7 @@ impl<'a> Processes<'a> {
         {
             Ok(ProcessGroup(command.process_group(0).spawn()?))
         }
+
         #[cfg(windows)]
         {
             windows::spawn(command)
@@ -74,6 +79,7 @@ impl<'a> Processes<'a> {
 
     pub(super) fn capture(&self, command: &mut Command, mode: Capture) -> Result<String> {
         let mut bytes = Vec::new();
+
         let status = self.execute(
             command,
             matches!(mode, Capture::Diagnostic),
@@ -81,10 +87,13 @@ impl<'a> Processes<'a> {
                 if bytes.len() + chunk.len() > METADATA_LIMIT {
                     return Err("tool metadata exceeds 32 MiB".into());
                 }
+
                 bytes.extend_from_slice(chunk);
+
                 Ok(())
             },
         )?;
+
         if !status.success() {
             return Err(if !matches!(mode, Capture::Metadata) {
                 format!(
@@ -111,13 +120,16 @@ impl<'a> Processes<'a> {
     ) -> Result<()> {
         let mut pending = Vec::new();
         let mut tail = Vec::new();
+
         let mut line = |bytes: &[u8], pid| -> Result<()> {
             let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
             let message = serde_json::from_str::<serde_json::Value>(&text).ok();
+
             let printed = match message {
                 Some(message) if message.is_object() => {
                     if message["reason"] == "compiler-artifact" {
                         artifact(message);
+
                         None
                     } else if message["reason"] == "compiler-message" {
                         Some(
@@ -132,25 +144,32 @@ impl<'a> Processes<'a> {
                 }
                 _ => Some(text),
             };
+
             if let Some(text) = printed {
                 if let Some(sink) = self.output_sink {
                     sink(&text, pid, "build");
                 }
+
                 if !text.is_empty() {
                     std::io::stderr().write_all(text.as_bytes())?;
                     std::io::stderr().flush()?;
                     tail.push(last_chars(&text, 4000));
+
                     if tail.len() > 8 {
                         tail.remove(0);
                     }
                 }
             }
+
             Ok(())
         };
+
         let mut output_pid = 0;
+
         let status = self.execute(command, true, |chunk, pid| {
             output_pid = pid;
             pending.extend_from_slice(chunk);
+
             while let Some(end) = pending
                 .iter()
                 .take(MAX_BYTES)
@@ -161,11 +180,14 @@ impl<'a> Processes<'a> {
                 line(&pending[..end], pid)?;
                 pending.drain(..end);
             }
+
             Ok(())
         })?;
+
         if !pending.is_empty() {
             line(&pending, output_pid)?;
         }
+
         if !status.success() {
             return Err(format!(
                 "{} exited {}\n{}",
@@ -199,6 +221,7 @@ impl<'a> Processes<'a> {
     ) -> Result<ExitStatus> {
         self.check_cancelled()?;
         let (mut reader, stdout, stderr) = output_pipe(merge_stderr)?;
+
         command.stdout(stdout);
         command.stderr(stderr.unwrap_or_else(Stdio::inherit));
         let mut group = self.start(command).map_err(|error| {
@@ -215,10 +238,13 @@ impl<'a> Processes<'a> {
                 format!("{}: {error}", command.get_program().to_string_lossy())
             }
         })?;
+
         command.stdout(Stdio::null()).stderr(Stdio::inherit());
         let (sender, receiver) = mpsc::sync_channel(4);
+
         let thread = std::thread::spawn(move || {
             let mut buffer = [0; 8192];
+
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
@@ -229,28 +255,35 @@ impl<'a> Processes<'a> {
                     }
                     Err(error) => {
                         let _ = sender.send(Err(error));
+
                         break;
                     }
                 }
             }
         });
+
         let result = (|| {
             loop {
                 self.check_cancelled()?;
+
                 match receiver.recv_timeout(Duration::from_millis(25)) {
                     Ok(chunk) => consume(&chunk?, group.0.id())?,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
             }
+
             loop {
                 self.check_cancelled()?;
+
                 if let Some(status) = group.0.try_wait()? {
                     return Ok(status);
                 }
+
                 std::thread::sleep(Duration::from_millis(25));
             }
         })();
+
         // Stop descendants before joining a reader which may still hold their pipe.
         drop(group);
         drop(receiver);
@@ -281,10 +314,12 @@ fn exit_code(status: ExitStatus) -> i32 {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
+
         status
             .code()
             .unwrap_or_else(|| -status.signal().unwrap_or(1))
     }
+
     #[cfg(windows)]
     {
         status.code().unwrap_or(1)
@@ -298,20 +333,24 @@ impl Drop for ProcessGroup {
         #[cfg(unix)]
         {
             let pid = self.0.id() as i32;
+
             // SAFETY: a negative child PID addresses the process group created above.
             unsafe {
                 libc::kill(-pid, libc::SIGTERM);
             }
             let deadline = Instant::now() + Duration::from_secs(3);
+
             while self.0.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(25));
             }
+
             // SAFETY: also reap descendants left behind after the group leader exited.
             unsafe {
                 libc::kill(-pid, libc::SIGKILL);
             }
             let _ = self.0.wait();
         }
+
         #[cfg(windows)]
         {
             self.1.terminate();
@@ -336,8 +375,10 @@ fn output_pipe(merge: bool) -> std::io::Result<(std::fs::File, Stdio, Option<Std
 
 pub(super) fn which(program: &str) -> Option<std::path::PathBuf> {
     let paths = std::env::var_os("PATH")?;
+
     #[cfg(unix)]
     let names = [std::ffi::OsString::from(program)];
+
     #[cfg(windows)]
     let names = {
         let mut names = vec![std::ffi::OsString::from(program)];
@@ -364,8 +405,10 @@ pub(super) fn which(program: &str) -> Option<std::path::PathBuf> {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
+
                     metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
                 }
+
                 #[cfg(windows)]
                 {
                     metadata.is_file()
@@ -385,6 +428,7 @@ mod tests {
     fn metadata_is_bounded_before_parsing() {
         let cancelled = AtomicBool::new(false);
         let processes = Processes::new(&cancelled);
+
         let error = processes
             .capture(
                 Command::new("/bin/dd").args(["if=/dev/zero", "bs=1048576", "count=33"]),
@@ -399,12 +443,14 @@ mod tests {
     fn failed_metadata_and_diagnostic_probes_keep_their_error_contracts() {
         let cancelled = AtomicBool::new(false);
         let processes = Processes::new(&cancelled);
+
         let error = processes
             .capture(
                 Command::new("/bin/sh").args(["-c", "exit 7"]),
                 Capture::Metadata,
             )
             .unwrap_err();
+
         assert_eq!(error.to_string(), "/bin/sh metadata command failed");
 
         let error = processes
@@ -413,6 +459,7 @@ mod tests {
                 Capture::Diagnostic,
             )
             .unwrap_err();
+
         assert_eq!(
             error.to_string(),
             "Command '['/bin/sh', '-c', 'exit 7']' returned non-zero exit status 7."
@@ -424,9 +471,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let tool = root.path().join("tool");
+
         std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o600)).unwrap();
         let cancelled = AtomicBool::new(false);
+
         let error = Processes::new(&cancelled)
             .capture(
                 Command::new("./tool").current_dir(root.path()),
@@ -442,6 +491,7 @@ mod tests {
     fn cancelled_work_never_starts_a_tool() {
         let cancelled = AtomicBool::new(true);
         let processes = Processes::new(&cancelled);
+
         let error = processes
             .capture(&mut Command::new("/nonexistent-tool"), Capture::Metadata)
             .unwrap_err();
