@@ -1,8 +1,9 @@
-//! Owns native desktop sessions, asynchronous builds, app replacement and retained discovery records.
-//! Web and preview sessions remain entirely on dev.py; no Python is needed on this path.
+//! Owns desktop/Web sessions, asynchronous builds, publication and retained discovery records.
+//! Serving and preview remain owned helper processes until their later porting phases.
 
 mod fingerprint;
 mod output;
+mod services;
 mod transport;
 
 use super::{
@@ -71,6 +72,11 @@ struct Supervisor<'a> {
     status: Value,
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
+    server: Option<ProcessGroup>,
+    embedded: Option<ProcessGroup>,
+    helpers: Option<tempfile::TempDir>,
+    launch_url: Option<String>,
+    openers: Vec<ProcessGroup>,
     output: SharedOutput,
     readers: Vec<JoinHandle<std::result::Result<(), String>>>,
     cancelled: &'a AtomicBool,
@@ -86,9 +92,9 @@ impl<'a> Supervisor<'a> {
         let control = session.join("control");
         fs::DirBuilder::new().mode(0o700).create(&control)?;
         fs::create_dir(session.join("builds"))?;
-        let status = json!({"protocol":1, "pid":std::process::id(), "target":"desktop", "package":project.package["name"],
+        let status = json!({"protocol":1, "pid":std::process::id(), "target":if args.web {"web"} else {"desktop"}, "package":project.package["name"],
             "phase":"starting", "published":0, "build":0, "error":null,
-            "mechanism":if args.native_reloader.is_some() {"native_code_replacement"} else {"native_restart"}});
+            "mechanism":if args.web {"web_page_reload"} else if args.native_reloader.is_some() {"native_code_replacement"} else {"native_restart"}});
         let mut supervisor = Self {
             args,
             project,
@@ -98,6 +104,11 @@ impl<'a> Supervisor<'a> {
             status,
             app: None,
             cdp: None,
+            server: None,
+            embedded: None,
+            helpers: None,
+            launch_url: None,
+            openers: Vec::new(),
             output: ProcessOutput::new(),
             readers: Vec::new(),
             cancelled,
@@ -139,70 +150,6 @@ impl<'a> Supervisor<'a> {
         self.event(event, &format!("rake: {phase}{error}"))
     }
 
-    fn start_cdp(&mut self) -> Result<()> {
-        if !self.args.cdp {
-            return Ok(());
-        }
-        let executable = std::env::var_os("RAKE_CLI")
-            .map(PathBuf::from)
-            .unwrap_or(std::env::current_exe()?);
-        let mut command = Command::new(executable);
-        command
-            .args(["cdp", "--session"])
-            .arg(&self.session)
-            .args(["--no-open", "--json"])
-            .env("RAKE_CONTROL_DIR", &self.control)
-            .env(
-                "RAKE_SOURCE_ROOT",
-                std::env::var_os("RAKE_SOURCE_ROOT")
-                    .unwrap_or_else(|| self.project.root.as_os_str().to_owned()),
-            )
-            .stdout(Stdio::piped());
-        self.cdp = Some(Processes::new(self.cancelled).start(&mut command)?);
-        let cdp = self.cdp.as_mut().ok_or("CDP adapter could not start")?;
-        let mut pipe = cdp.0.stdout.take().ok_or("CDP stdout missing")?;
-        let mut bytes = Vec::new();
-        // Poll the pipe so a child which never publishes readiness remains cancellable.
-        use std::os::fd::AsRawFd;
-        loop {
-            Processes::new(self.cancelled).check_cancelled()?;
-            let mut descriptor = libc::pollfd {
-                fd: pipe.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            // SAFETY: descriptor points to one live pipe for the duration of poll.
-            let ready = unsafe { libc::poll(&mut descriptor, 1, 25) };
-            if ready < 0 {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            if ready == 0 {
-                continue;
-            }
-            let mut byte = [0];
-            if pipe.read(&mut byte)? == 0 {
-                return Err("CDP adapter could not start".into());
-            }
-            bytes.push(byte[0]);
-            if bytes.len() > MAX_BYTES {
-                return Err("CDP readiness exceeds the control frame limit".into());
-            }
-            if byte[0] == b'\n' {
-                break;
-            }
-        }
-        let ready: Value = serde_json::from_slice(&bytes)?;
-        if ready["event"] != "cdp_listening" {
-            return Err("CDP adapter could not start".into());
-        }
-        let url = string(&ready, "url")?;
-        write_marker(&self.session.join("cdp.json"), &json!({"url":url}))?;
-        self.event(
-            ready.clone(),
-            &format!("Chrome DevTools discovery: {url}/json/list"),
-        )
-    }
-
     fn instance(&self) -> Option<Value> {
         let pid = self.app.as_ref()?.0.id();
         fs::read_dir(&self.control)
@@ -223,6 +170,9 @@ impl<'a> Supervisor<'a> {
             .stderr(Stdio::piped());
         if std::env::var_os("RUST_BACKTRACE").is_none() {
             command.env("RUST_BACKTRACE", "1");
+        }
+        if self.args.preview {
+            command.env("RAKE_DEV_PREVIEW", "1");
         }
         if self.checkpoint.exists() {
             command.env("RAKE_RELOAD_CHECKPOINT", &self.checkpoint);
@@ -355,6 +305,13 @@ impl<'a> Supervisor<'a> {
     }
 
     fn publish(&mut self, number: u64, artifact: &Path) -> Result<()> {
+        if self.args.web {
+            self.record(
+                "watching",
+                json!({"published":number, "directory":artifact, "error":null}),
+            )?;
+            return self.start_embedded();
+        }
         if let Some(app) = &mut self.app
             && app.0.try_wait()?.is_none()
         {
@@ -469,9 +426,11 @@ impl<'a> Supervisor<'a> {
     }
 
     fn run(&mut self) -> Result<()> {
-        self.event(json!({"event":"session", "session":self.session, "mechanism":self.status["mechanism"]}),
+        if !self.args.web {
+            self.event(json!({"event":"session", "session":self.session, "mechanism":self.status["mechanism"]}),
             &format!("Session: {}; reload mechanism: {}", self.session.display(), self.status["mechanism"].as_str().unwrap_or_default()))?;
-        self.start_cdp()?;
+        }
+        self.start_server()?;
         let stopping = AtomicBool::new(false);
         thread::scope(|scope| {
             let mut worker = None;
@@ -491,6 +450,7 @@ impl<'a> Supervisor<'a> {
                 let mut output_revision = None;
                 loop {
                     Processes::new(self.cancelled).check_cancelled()?;
+                    self.observe_services()?;
                     let output = self
                         .output
                         .lock()
@@ -567,8 +527,17 @@ impl<'a> Supervisor<'a> {
                         let cancelled = self.cancelled;
                         let stopping = &stopping;
                         let output = self.session.join("builds").join(number.to_string());
+                        let process_output = self.output.clone();
                         worker = Some(scope.spawn(move || {
-                            let processes = Processes::new(cancelled).with_stopping(stopping);
+                            let sink = |text: &str, pid, stream: &str| {
+                                process_output
+                                    .lock()
+                                    .expect("process output lock poisoned")
+                                    .append(text, pid, stream, None, false);
+                            };
+                            let processes = Processes::new(cancelled)
+                                .with_stopping(stopping)
+                                .with_output(&sink);
                             let (project, result) = match Project::load(args, &processes) {
                                 Ok(project) => {
                                     let result = project
@@ -599,6 +568,10 @@ impl<'a> Supervisor<'a> {
     fn finish(&mut self) -> Result<()> {
         drop(self.app.take());
         drop(self.cdp.take());
+        drop(self.server.take());
+        drop(self.embedded.take());
+        self.openers.clear();
+        drop(self.helpers.take());
         for reader in self.readers.drain(..) {
             let _ = reader.join();
         }

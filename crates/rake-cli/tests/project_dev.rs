@@ -86,6 +86,10 @@ fi
     }
 
     fn start(&self, extra: &[&str]) -> Running {
+        self.start_options(extra, true)
+    }
+
+    fn start_options(&self, extra: &[&str], no_open: bool) -> Running {
         let control = self.directory.path().join("control");
         fs::create_dir_all(&control).unwrap();
         fs::copy(
@@ -95,13 +99,18 @@ fi
         .unwrap();
         let events = fs::File::create(control.join("events")).unwrap();
         let errors = fs::File::create(control.join("errors")).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_rake"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rake"));
+        command
             .current_dir(&self.root)
             .env("PATH", &self.tools)
             .env("FIXTURE", &self.root)
             .env("CONTROL", &control)
             .env("RAKE_CLI", self.tools.join("rake-double"))
-            .args(["dev", "--json", "--no-open"])
+            .args(["dev", "--json"]);
+        if no_open {
+            command.arg("--no-open");
+        }
+        let child = command
             .args(extra)
             .stdout(events)
             .stderr(errors)
@@ -113,12 +122,22 @@ fi
             control,
         };
         running.session = wait(|| {
+            // Web readiness can still be pending when the test cancels or kills the server.
+            if let Ok(args) = fs::read_to_string(running.control.join("server-args")) {
+                let mut args = args.lines();
+                while let Some(argument) = args.next() {
+                    if argument == "--development-state" {
+                        return Some(PathBuf::from(args.next()?).parent()?.to_path_buf());
+                    }
+                }
+            }
             fs::read_to_string(running.control.join("events"))
                 .ok()?
                 .lines()
                 .find_map(|line| {
                     let value: Value = serde_json::from_str(line).ok()?;
-                    (value["event"] == "session")
+                    value["session"]
+                        .is_string()
                         .then(|| PathBuf::from(value["session"].as_str().unwrap()))
                 })
         });
@@ -446,5 +465,344 @@ if [ "$count" -gt 2 ]; then /bin/cat "$FIXTURE/../extended-metadata.json"; else 
         let status = running.status();
         (status["phase"] == "reload_blocked" && status["build"] == 3).then_some(())
     });
+    running.stop(libc::SIGTERM);
+}
+
+impl Fixture {
+    fn web(&self) {
+        let mut metadata: Value =
+            serde_json::from_slice(&fs::read(self.root.join("metadata.json")).unwrap()).unwrap();
+        metadata["packages"][0]["targets"] = json!([
+            {"name":"fixture", "kind":["cdylib"], "crate_types":["cdylib"]}
+        ]);
+        fs::write(self.root.join("metadata.json"), metadata.to_string()).unwrap();
+        fs::write(
+            self.root.join("Cargo.lock"),
+            "[[package]]\nname='wasm-bindgen'\nversion='0.2.100'\n",
+        )
+        .unwrap();
+        fs::write(self.root.join("input.wasm"), "wasm fixture").unwrap();
+        self.tool("cargo", r#"
+if [ "$1" = metadata ]; then /bin/cat "$FIXTURE/metadata.json"; exit; fi
+printf '%s\n' "$@" > "$CONTROL/build-args"
+printf 'web build diagnostic\n' >&2
+if [ -f "$FIXTURE/fail" ]; then exit 7; fi
+if [ -f "$FIXTURE/hold" ]; then
+    printf '%s' "$$" > "$CONTROL/build-pid"
+    while [ -f "$FIXTURE/hold" ]; do /bin/sleep .05; done
+fi
+printf '{"reason":"compiler-artifact","package_id":"fixture","target":{"name":"fixture"},"filenames":["%s/input.wasm"]}\n' "$FIXTURE"
+"#);
+        self.tool(
+            "wasm-bindgen",
+            r#"
+if [ "$1" = --version ]; then printf 'wasm-bindgen 0.2.100\n'; exit; fi
+/bin/mkdir -p "$4"
+/bin/cp "$5" "$4/fixture_bg.wasm"
+printf 'export default async function init() {}' > "$4/fixture.js"
+"#,
+        );
+        self.tool(
+            "python3",
+            r#"
+if [ "$1" = -m ]; then
+    printf '%s\n' "$@" >> "$CONTROL/browser-args"
+    exit 0
+fi
+printf '%s' "$$" > "$CONTROL/server-pid"
+printf '%s\n' "$@" > "$CONTROL/server-args"
+if [ -f "$CONTROL/server-bad" ]; then printf 'wrong readiness\n'; exit; fi
+if [ ! -f "$CONTROL/server-hold" ]; then
+    printf 'Serving notes at http://127.0.0.1:9876/#__rake_control=fixture-token\n'
+fi
+exec /bin/sleep 300
+"#,
+        );
+        self.tool("node", r#"
+if [ "$1" = --version ]; then printf 'v26.0.0\n'; exit; fi
+printf '%s' "$$" > "$CONTROL/node-pid"
+printf '%s\n' "$@" >> "$CONTROL/node-args"
+if [ -f "$CONTROL/node-bad" ]; then printf '{"event":"wrong"}\n'; else
+printf '{"event":"embedded_devtools_listening","url":"http://127.0.0.1:9876/embedded-devtools-fixture.html"}\n'; fi
+exec /bin/sleep 300
+"#);
+    }
+}
+
+#[test]
+fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_failure() {
+    let fixture = Fixture::new();
+    fixture.web();
+    let mut running = fixture.start(&["--target=web", "--port=0", "--cdp"]);
+    wait(|| running.status()["devtools_url"].as_str().map(str::to_owned));
+    let first = running.phase("watching");
+    assert_eq!(first["target"], "web");
+    assert_eq!(first["mechanism"], "web_page_reload");
+    assert_eq!(first["published"], 1);
+    let server_pid: u32 = fs::read_to_string(running.control.join("server-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let node_pid: u32 = fs::read_to_string(running.control.join("node-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let cdp_pid: u32 = fs::read_to_string(running.control.join("cdp-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(alive(server_pid) && alive(node_pid) && alive(cdp_pid));
+    let args = fs::read_to_string(running.control.join("server-args")).unwrap();
+    for flag in [
+        "--control",
+        "--development-state",
+        "--build-root",
+        "--process-output",
+        "--cdp-url",
+        "\n0\n",
+    ] {
+        assert!(args.contains(flag), "{args}");
+    }
+    assert!(!args.contains("--control-only"));
+    assert!(
+        fs::read_to_string(running.control.join("node-args"))
+            .unwrap()
+            .contains("http://127.0.0.1:9876/#__rake_control=fixture-token")
+    );
+    fs::write(fixture.root.join("fail"), "fail").unwrap();
+    assert_eq!(running.phase("build_failed")["published"], 1);
+    assert!(
+        Path::new(first["directory"].as_str().unwrap())
+            .join("index.html")
+            .is_file()
+    );
+    fs::remove_file(fixture.root.join("fail")).unwrap();
+    wait(|| {
+        let status = running.status();
+        (status["phase"] == "watching" && status["published"].as_u64()? > 1).then_some(())
+    });
+    assert_eq!(
+        fs::read_to_string(running.control.join("node-args"))
+            .unwrap()
+            .lines()
+            .filter(|line| line.ends_with("embedded-devtools.mjs"))
+            .count(),
+        1
+    );
+    let helpers = PathBuf::from(args.lines().next().unwrap())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    running.stop(libc::SIGTERM);
+    assert!(!alive(server_pid) && !alive(node_pid) && !alive(cdp_pid));
+    assert!(
+        !helpers.exists(),
+        "extracted helpers must have session ownership"
+    );
+    let output: Value =
+        serde_json::from_slice(&fs::read(running.session.join("output.json")).unwrap()).unwrap();
+    assert!(
+        output["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["stream"] == "build"
+                && record["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("web build diagnostic"))),
+        "{output}"
+    );
+}
+
+#[test]
+fn web_server_readiness_is_cancellable_and_exit_is_fatal() {
+    for hold in [true, false] {
+        let fixture = Fixture::new();
+        fixture.web();
+        fs::create_dir(fixture.directory.path().join("control")).unwrap();
+        fs::write(fixture.directory.path().join("control/server-hold"), "hold").unwrap();
+        let mut running = fixture.start(&["--target", "web", "--port", "0"]);
+        let pid: u32 = wait(|| {
+            fs::read_to_string(running.control.join("server-pid"))
+                .ok()?
+                .parse()
+                .ok()
+        });
+        if hold {
+            running.stop(libc::SIGINT);
+        } else {
+            // SAFETY: this fixture owns the service being killed.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
+            assert_eq!(running.status()["phase"], "stopped");
+        }
+        assert!(!alive(pid));
+    }
+}
+
+#[test]
+fn web_server_invalid_readiness_fails_and_no_cdp_needs_no_node() {
+    for bad in [false, true] {
+        let fixture = Fixture::new();
+        fixture.web();
+        fs::remove_file(fixture.tools.join("node")).unwrap();
+        fs::create_dir(fixture.directory.path().join("control")).unwrap();
+        if bad {
+            fs::write(fixture.directory.path().join("control/server-bad"), "bad").unwrap();
+        }
+        let mut running = fixture.start(&["--target", "web", "--port", "0"]);
+        if bad {
+            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
+            assert!(
+                fs::read_to_string(running.control.join("errors"))
+                    .unwrap()
+                    .contains("development server could not start")
+            );
+        } else {
+            assert_eq!(running.phase("watching")["published"], 1);
+            assert!(!running.control.join("cdp-pid").exists());
+            running.stop(libc::SIGTERM);
+        }
+    }
+}
+
+#[test]
+fn web_cdp_rejects_missing_old_invalid_or_failing_node_before_loading_project() {
+    let fixture = Fixture::new();
+    for source in [
+        None,
+        Some("printf 'v21.9.0\\n'"),
+        Some("printf 'invalid\\n'"),
+        Some("printf 'v26.0.0\\n'; exit 7"),
+    ] {
+        if let Some(source) = source {
+            fixture.tool("node", source);
+        } else {
+            let _ = fs::remove_file(fixture.tools.join("node"));
+        }
+        let result = Command::new(env!("CARGO_BIN_EXE_rake"))
+            .env("PATH", &fixture.tools)
+            .current_dir(fixture.directory.path())
+            .args(["dev", "--target=web", "--cdp", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2), "{result:?}");
+        let error: Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(
+            error["error"]["message"],
+            "Web Chrome DevTools requires Node 22 or later"
+        );
+    }
+}
+
+#[test]
+fn browser_opening_uses_webbrowser_selection_and_cdp_opens_only_the_companion() {
+    for cdp in [false, true] {
+        let fixture = Fixture::new();
+        fixture.web();
+        let args = if cdp {
+            vec!["--target=web", "--port=0", "--cdp"]
+        } else {
+            vec!["--target=web", "--port=0"]
+        };
+        let mut running = fixture.start_options(&args, false);
+        running.phase("watching");
+        let args = wait(|| fs::read_to_string(running.control.join("browser-args")).ok());
+        assert_eq!(
+            args.lines().take(2).collect::<Vec<_>>(),
+            ["-m", "webbrowser"]
+        );
+        assert_eq!(args.lines().count(), 3, "open exactly one browser URL");
+        assert_eq!(args.contains("embedded-devtools-fixture.html"), cdp);
+        running.stop(libc::SIGTERM);
+    }
+}
+
+#[test]
+fn web_companion_exit_is_fatal_and_invalid_readiness_blocks_publication() {
+    for bad in [false, true] {
+        let fixture = Fixture::new();
+        fixture.web();
+        fs::create_dir(fixture.directory.path().join("control")).unwrap();
+        if bad {
+            fs::write(fixture.directory.path().join("control/node-bad"), "bad").unwrap();
+        }
+        let mut running = fixture.start(&["--target", "web", "--port", "0", "--cdp"]);
+        let pid: u32 = wait(|| {
+            fs::read_to_string(running.control.join("node-pid"))
+                .ok()?
+                .parse()
+                .ok()
+        });
+        if bad {
+            assert!(
+                running.phase("reload_blocked")["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("embedded Chrome DevTools could not start")
+            );
+            running.stop(libc::SIGTERM);
+        } else {
+            wait(|| running.status()["devtools_url"].as_str().map(str::to_owned));
+            // SAFETY: this fixture owns the service being killed.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
+            assert!(
+                fs::read_to_string(running.control.join("errors"))
+                    .unwrap()
+                    .contains("embedded Chrome DevTools companion exited")
+            );
+        }
+        assert!(!alive(pid));
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn preview_session_compiles_helper_before_server_and_marks_app_environment() {
+    let fixture = Fixture::new();
+    fixture.web();
+    // Retain the desktop package/metadata and native build adapter.
+    let desktop = Fixture::new();
+    fs::copy(
+        desktop.root.join("metadata.json"),
+        fixture.root.join("metadata.json"),
+    )
+    .unwrap();
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+    metadata["workspace_root"] = json!(fixture.root);
+    metadata["packages"][0]["manifest_path"] = json!(fixture.root.join("Cargo.toml"));
+    fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
+    fixture.tool("cargo", "/bin/cat \"$FIXTURE/metadata.json\"");
+    fixture.tool(
+        "xcrun",
+        r#"
+printf '%s\n' "$@" > "$CONTROL/swift-args"
+while [ "$1" != -o ]; do shift; done
+printf 'capture fixture' > "$2"
+"#,
+    );
+    fixture
+        .app("printf '%s' \"$RAKE_DEV_PREVIEW\" > \"$CONTROL/preview-env\"\nexec /bin/sleep 300");
+    let mut running = fixture.start(&["--preview", "--cdp", "--port", "0"]);
+    running.phase("watching");
+    assert_eq!(
+        wait(|| fs::read_to_string(running.control.join("preview-env")).ok()),
+        "1"
+    );
+    let args = fs::read_to_string(running.control.join("server-args")).unwrap();
+    assert!(args.contains("--control-only") && args.contains("--preview-helper"));
+    assert!(running.session.join("preview-capture").is_file());
+    assert!(
+        fs::read_to_string(running.control.join("swift-args"))
+            .unwrap()
+            .contains("-module-cache-path")
+    );
+    assert!(!running.control.join("node-pid").exists());
     running.stop(libc::SIGTERM);
 }

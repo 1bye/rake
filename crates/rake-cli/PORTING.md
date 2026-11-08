@@ -1,6 +1,94 @@
 # Project toolchain port
 
-## Phase 2: native desktop supervisor slice
+## Phase 2: Web and preview session supervision
+
+Refs #42. All `rake dev` sessions now use the existing Rust supervisor in
+`src/project_build/dev/`; there is no Web/preview supervisor dispatch to `dev.py`.
+The one-shot Web bundle still uses the embedded adapter. Serving, runtime broker,
+browser bridge and preview transports remain unchanged Python helpers until
+phases 3–5. No Python helper or existing coverage is deleted in this phase.
+
+### Implementation and test mapping
+
+| Python contract | Rust owner / coverage |
+| --- | --- |
+| Web/preview arguments, default ports, Node 22 validation | `args.rs`; `dev_features_and_options_use_the_shared_native_supervisor`, `web_cdp_rejects_missing_old_invalid_or_failing_node_before_loading_project` |
+| `Supervisor.start_server`, owned CDP, waiting document, Swift compilation, server environment/readiness | `dev/services.rs`; `web_server_readiness_is_cancellable_and_exit_is_fatal`, `web_server_invalid_readiness_fails_and_no_cdp_needs_no_node`, `preview_session_compiles_helper_before_server_and_marks_app_environment` |
+| Web publication and one Node companion after the first successful build | Shared `Supervisor::publish` plus `services::start_embedded`; `web_publication_owns_server_and_single_companion_and_retains_old_build_on_failure` |
+| Server/companion failure observation and process-group cleanup | Shared `Supervisor::run`/`finish`, `services::observe_services`; `web_companion_exit_is_fatal_and_invalid_readiness_blocks_publication` |
+| Preview application environment and retained checkpoint/restart coordination | Shared native `launch`/`prepare`/`publish`, with `RAKE_DEV_PREVIEW=1`; existing stateful restart/Busy/restore tests retained |
+| Browser selection and delayed Web/CDP opening | Owned `python3 -m webbrowser` preserving platform and `BROWSER` selection; `browser_opening_uses_webbrowser_selection_and_cdp_opens_only_the_companion` |
+| CDP/Web/Node readiness framing | Shared cancellable poll reader; `readiness_accepts_unterminated_last_line_and_rejects_empty_or_oversized_frames` |
+| Embedded resources | Shared `project::extract`; session-owned temporary directory removed after children stop |
+
+The existing debounce, fingerprints, metadata refresh, build worker, supersession,
+publication retry, checkpoint preparation, native replacement and output ownership
+are extended rather than duplicated. Web status keeps `web_page_reload`, immutable
+numbered directories, `published`, `directory`, `devtools_url` and the same events.
+The bridge continues coordinating browser reloads and decisions with that private
+status file. Native preview compiles the same Swift helper, starts the same
+control-only origin and keeps the same HTTP/WebSocket protocols. Build diagnostics
+now enter the shared output ring on every dev target, matching Python (the earlier
+Rust desktop slice only captured app/reloader output).
+
+### Differences and retained boundaries
+
+- Preserve the prior Rust naming, canonical-manifest selection and library-error
+  wording differences documented below. JSON key order, random names, PIDs,
+  assigned ports and elapsed times differ naturally; field names/types do not.
+- All three readiness pipes are cancellable, handle interrupted polls and accept
+  a final unterminated line. Bound each readiness line to the existing 1 MiB
+  control-frame limit; the old Python Web/Node reads had no size bound.
+- The session now owns/removes its extracted helper directory on normal shutdown
+  and errors. Retained session status/output/checkpoints/builds remain available.
+- Python still runs serving/broker/bridge/preview and browser selection; only
+  session supervision has moved. No new dependency or toolchain installation.
+- The Unix gate remains pending phase 6. No Windows support claim in this phase.
+
+### Verification: macOS (Rust 1.98.0, Python 3.14.4, Node 26.10.0)
+
+Shared `CARGO_TARGET_DIR=/tmp/rake-port-target`, dev/test debug information disabled.
+Python 3.14 was first on PATH for the final full run and script suites.
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p rake-app-cli --no-fail-fast` | **296 passed, 2 existing ignored**, no failures (203 unit + 93 integration) |
+| `cargo test -p rake-app-cli --test project_dev` | **14 passed**, including seven new Web/preview/browser lifecycle cases |
+| Clippy all CLI targets, locked, `-D warnings` | Passed |
+| `cargo fmt --all --check`, changed-file `rake format --check` | Passed |
+| `rake lint` | Passed: 707 Rust files, 14 existing diagnostics, 0 denied |
+| `test-supervisor.py` | **14 passed** against the Rust CLI; original Python internal tests retained |
+| `test-dev-bridge.py`, `test-runtime-broker.py`, `test-preview.py` | **4 / 9 / 18 passed** |
+| `test-web-deployment.py`, Node `test-embedded-devtools.mjs` | **10 / 1 passed** |
+| `test-bundle.py` | **6 passed, 1 failed**: matching wasm-bindgen 0.2.129 absent |
+| `test-web-loading.mjs`, `test-web-crash.mjs` | Both built their real Wasm fixture, then failed the matching wasm-bindgen assertion; no browser/module execution claim |
+| `test-preview-native.py` | Passed all assertions on the real GPUI fixture; no StaleGeneration on this run |
+| Real `rake dev -p rake-notes --preview --cdp` | Swift compile, server/CDP readiness, authenticated preview-state native window, live and saved `test-notes-view.py` (**104 nodes**), SIGTERM exit 0 and stopped/clean discovery records passed |
+| Python differential | **19 exact argument/status JSON and exit-code cases**; Web/CDP/real Node companion lifecycle matched normalized events, final status/output, all five generated file contents, immutable HTTP assets, failed build retention, recovery and SIGTERM |
+
+The new Web lifecycle regression failed against the pre-port CLI before the
+implementation. Initial full Cargo validation accidentally used system Python 3.9
+and failed the unchanged distribution fixture's `hashlib.file_digest`; rerunning
+with Python 3.14 first passed the full suite. A readiness-cancellation test fixture
+initially waited for the readiness it intended to interrupt; its discovery now
+also reads the double's server arguments. Assertions were not weakened.
+
+Linux/devbox was not used. Windows/Linux desktop CI results belong in the PR body.
+No packages or toolchains installed. Mac free disk remained above 50 GB (68 GiB
+at the end of native verification). The live checkout was only fetched and used
+to register the worktree. Keep the worktree for review fixes; remove the shared
+target and verification scratch/logs at handoff.
+
+### Remaining work
+
+- Phase 3: Rust Web serving, deployment/bundling/offline payloads and Web bundle adapter.
+- Phase 4: Rust runtime broker and development bridge.
+- Phase 5: Rust preview transport and control; retain useful Swift/JS/CSS/HTML assets.
+- Phase 6: remove embedded Python/extraction and prerequisite docs; resolve platform gates.
+- Existing intermittent native preview StaleGeneration remains an independently
+  known gap even though this native-preview run passed.
+
+## Phase 2: native desktop supervisor slice (historical)
 
 Refs #42. Desktop `rake dev` without `--preview` now runs in Rust, including
 `--cdp`, `--native-reloader`, `--restart-without-state`, and

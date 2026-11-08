@@ -382,7 +382,7 @@ fn restore_failure_is_reported_and_clears_after_runtime_recovery() {
 }
 
 #[test]
-fn dev_features_and_dispatch_keep_web_and_preview_sessions_wholly_on_python() {
+fn dev_features_and_options_use_the_shared_native_supervisor() {
     let mut project = project(Path::new("/unused"));
     project.package = json!({"features":{}, "dependencies":[{"name":"rake-app","rename":"framework","kind":null}]});
     let mut args = Args {
@@ -401,27 +401,35 @@ fn dev_features_and_dispatch_keep_web_and_preview_sessions_wholly_on_python() {
     );
     args.dev = false;
     assert_eq!(project.build_features(&args).as_deref(), Some("theme"));
-    for (arguments, expected) in [
-        (vec![], true),
-        (vec!["--cdp"], true),
-        (vec!["status", "--session", "/session"], true),
-        (vec!["--target", "web"], false),
-        (vec!["--t=web"], false),
-        (vec!["--preview"], false),
-        (vec!["--pre"], false),
-        (vec!["--features=--preview"], true),
-        (vec!["--target=web", "--target=desktop"], true),
+    for (arguments, web, preview) in [
+        (vec![], false, false),
+        (vec!["--cdp"], false, false),
+        (vec!["status", "--session", "/session"], false, false),
+        (vec!["--target", "web"], true, false),
+        (vec!["--t=web"], true, false),
+        (vec!["--features=--preview"], false, false),
+        (vec!["--target=web", "--target=desktop"], false, false),
     ] {
-        assert_eq!(
-            super::super::native_dev(
-                &arguments
-                    .iter()
-                    .map(|argument| (*argument).to_owned())
-                    .collect::<Vec<_>>()
-            ),
-            expected,
-            "{arguments:?}"
-        );
+        let args = super::super::args::parse(
+            "dev",
+            &arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(args.web, web, "{arguments:?}");
+        assert_eq!(args.preview, preview, "{arguments:?}");
+        assert_eq!(args.port, if web { 8081 } else { 0 });
+    }
+    for flag in ["--preview", "--pre"] {
+        let args = super::super::args::parse("dev", &[flag.to_owned()]);
+        if cfg!(target_os = "macos") {
+            assert!(args.unwrap().unwrap().preview);
+        } else {
+            assert!(args.is_err());
+        }
     }
 }
 

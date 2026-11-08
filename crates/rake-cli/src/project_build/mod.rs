@@ -1,5 +1,5 @@
 //! Native adapters for the legacy project doctor and one-shot build commands.
-//! Native desktop dev shares these builders; Web/preview dev and serving use Python.
+//! Desktop/Web dev shares these builders; serving and preview retain owned Python helpers.
 
 mod args;
 mod dev;
@@ -531,9 +531,4 @@ fn ascii_json(text: &str) -> String {
     }
 
     output
-}
-
-/// Keep Web and preview sessions wholly on the embedded supervisor until their port.
-pub(crate) fn native_dev(arguments: &[String]) -> bool {
-    args::native_dev(arguments)
 }

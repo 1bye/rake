@@ -156,10 +156,10 @@ fn main() {
     }
 
     #[cfg(unix)]
-    if arguments.first().is_some_and(|command| {
-        matches!(command.as_str(), "doctor" | "build")
-            || (command == "dev" && project_build::native_dev(&arguments[1..]))
-    }) {
+    if arguments
+        .first()
+        .is_some_and(|command| matches!(command.as_str(), "doctor" | "build" | "dev"))
+    {
         std::process::exit(project_build::run(&arguments[0], &arguments[1..]));
     }
 
