@@ -7192,6 +7192,7 @@ dependencies = [
 name = "rake-app-cli"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "async-io",
  "base64 0.22.1",
  "ctrlc",
  "dunce",
@@ -7206,12 +7207,14 @@ dependencies = [
  "rake-client",
  "rake-diagnostics",
  "rake-dist",
+ "rake-http",
  "rake-protocol",
  "rake-view-syntax",
  "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "subtle",
  "syn 2.0.119",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",

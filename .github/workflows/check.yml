@@ -1,7 +1,7 @@
 name: Rake
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/port-phase4-broker, codex/port-phase5-preview]
     paths-ignore:
       - docs/**
       - '**/*.md'

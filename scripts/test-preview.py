@@ -273,17 +273,10 @@ class PreviewTests(unittest.TestCase):
     def test_preview_http_requires_token_and_same_origin(self):
         with tempfile.TemporaryDirectory(prefix="rake-preview-http-", dir="/tmp") as temporary:
             root = Path(temporary)
-            state = root / "state.json"
-            state.write_text('{}')
-            process = subprocess.Popen([sys.executable, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")),
-                "--control", "--inspector-only", "--port", "0", "--development-state", str(state),
-                "--build-root", str(root), "--preview-helper", "/unused"],
-                env={**os.environ, "RAKE_CONTROL_DIR": str(root / "control")}, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True)
+            from broker_test_server import BrokerServer
+            server=BrokerServer(root,native=True,preview=True)
             try:
-                launch = urllib.parse.urlsplit(process.stdout.readline().split()[-1])
-                url = f"http://{launch.netloc}"
-                token = launch.fragment.removeprefix("__rake_control=")
+                url,token=server.url,server.token
                 for credential, origin in (("wrong", url), (token, "https://foreign.invalid")):
                     request = urllib.request.Request(url + "/__rake/preview_state", b'{}',
                         {"Content-Type": "application/json", "X-Rake-Token": credential, "Origin": origin})
@@ -306,10 +299,7 @@ class PreviewTests(unittest.TestCase):
                         if asset.endswith('.js'):
                             self.assertIn('text/javascript', response.headers['Content-Type'])
             finally:
-                process.terminate()
-                process.wait(timeout=5)
-                process.stdout.close()
-                process.stderr.close()
+                server.close()
 
 
 if __name__ == "__main__":

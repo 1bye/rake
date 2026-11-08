@@ -1,4 +1,4 @@
-//! Bounded loopback Web serving. Retained broker/preview requests use the owned compatibility backend.
+//! Bounded loopback Web serving with native broker and preview transports.
 
 use super::{Result, bundle::insert};
 use serde_json::Value;
@@ -13,7 +13,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 pub(super) struct Config {
@@ -21,10 +21,13 @@ pub(super) struct Config {
     pub(super) development: Option<PathBuf>,
     pub(super) builds: Option<PathBuf>,
     pub(super) control_only: bool,
-    pub(super) backend: Option<SocketAddr>,
+    pub(super) preview: Option<Arc<super::preview::Preview>>,
+    pub(super) broker: Option<Arc<super::broker::Broker>>,
 }
 
 pub(super) struct Server {
+    preview: Option<Arc<super::preview::Preview>>,
+    broker: Option<Arc<super::broker::Broker>>,
     stopping: Arc<AtomicBool>,
     connections: Arc<Mutex<HashMap<u64, TcpStream>>>,
     worker: Option<JoinHandle<std::result::Result<(), String>>>,
@@ -32,10 +35,16 @@ pub(super) struct Server {
 
 impl Server {
     pub(super) fn start(listener: TcpListener, config: Config) -> Result<Self> {
+        if config.preview.is_some() && config.broker.is_none() {
+            return Err("native preview requires a broker".into());
+        }
+
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
         let stopping = Arc::new(AtomicBool::new(false));
         let connections = Arc::new(Mutex::new(HashMap::new()));
+        let broker = config.broker.clone();
+        let preview = config.preview.clone();
         let stopped = stopping.clone();
         let sockets = connections.clone();
         let worker = thread::spawn(move || {
@@ -56,7 +65,8 @@ impl Server {
                         Ok((stream, _)) => {
                             let mut sockets_guard =
                                 sockets.lock().expect("Web connection lock poisoned");
-                            if sockets_guard.len() >= 64 {
+
+                            if stopped.load(Ordering::Acquire) || sockets_guard.len() >= 64 {
                                 continue;
                             }
                             next += 1;
@@ -65,9 +75,9 @@ impl Server {
                                 .insert(id, stream.try_clone().map_err(|error| error.to_string())?);
                             drop(sockets_guard);
                             let sockets = &sockets;
-                            let stopped = &stopped;
                             workers.push(Some(scope.spawn(move || {
-                                let _ = handle(stream, address, config, stopped);
+                                let _ = handle(stream, address, config);
+
                                 sockets
                                     .lock()
                                     .expect("Web connection lock poisoned")
@@ -84,6 +94,8 @@ impl Server {
             })
         });
         Ok(Self {
+            preview,
+            broker,
             stopping,
             connections,
             worker: Some(worker),
@@ -105,6 +117,15 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
+
+        if let Some(broker) = &self.broker {
+            broker.close();
+        }
+
+        if let Some(preview) = &self.preview {
+            preview.close();
+        }
+
         for stream in self
             .connections
             .lock()
@@ -119,13 +140,13 @@ impl Drop for Server {
     }
 }
 
-struct Request {
+pub(super) struct Request {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
 }
 impl Request {
-    fn header(&self, name: &str) -> &str {
+    pub(super) fn header(&self, name: &str) -> &str {
         self.headers
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
@@ -144,7 +165,9 @@ fn request(stream: &mut TcpStream) -> Result<Request> {
             return Err("Web request headers exceed 64 KiB".into());
         }
     }
-    let text = String::from_utf8(bytes)?;
+
+    // HTTP fields use ISO-8859-1, including invalid/non-ASCII authentication tokens.
+    let text: String = bytes.into_iter().map(char::from).collect();
     let mut lines = text.split("\r\n");
     let mut first = lines
         .next()
@@ -237,19 +260,18 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
     Some(active)
 }
 
-fn handle(
-    mut stream: TcpStream,
-    address: SocketAddr,
-    config: &Config,
-    stopping: &AtomicBool,
-) -> Result<()> {
+fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result<()> {
+    // macOS accept inherits the listener's O_NONBLOCK; each worker uses blocking I/O.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
     let request = match request(&mut stream) {
         Ok(request) => request,
         Err(_) => return Ok(()),
     };
-    let control = config.backend.is_some();
+
+    let control = config.broker.is_some();
+
     let valid_host = [address.to_string(), format!("localhost:{}", address.port())]
         .iter()
         .any(|host| host == request.header("Host"));
@@ -266,15 +288,24 @@ fn handle(
         );
     }
     let route = request.path.split('?').next().unwrap_or_default();
-    if (request.method == "POST"
-        || (route.starts_with("/__rake/")
-            && !route.starts_with("/__rake/build/")
-            && route != "/__rake/bootstrap.js"))
-        && let Some(backend) = config.backend
-    {
-        return proxy(stream, request, backend, stopping);
-    }
     if request.method == "POST" {
+        if let Some(broker) = &config.broker {
+            let expected = format!("http://{}", request.header("Host"));
+
+            if (!request.header("Origin").is_empty() && request.header("Origin") != expected)
+                || !broker.authenticate(request.header("X-Rake-Token"))
+            {
+                return error(
+                    &mut stream,
+                    &request,
+                    403,
+                    "development bridge authentication failed",
+                );
+            }
+
+            return control_request(&mut stream, &request, broker, config.preview.as_deref());
+        }
+
         return error(
             &mut stream,
             &request,
@@ -290,6 +321,52 @@ fn handle(
             &format!("Unsupported method ('{}')", request.method),
         );
     }
+
+    if let Some(preview) = &config.preview {
+        if request.method == "GET" && request.path == "/__rake/preview_control" {
+            return match preview.control(
+                &mut stream,
+                &request,
+                config
+                    .broker
+                    .as_ref()
+                    .expect("preview requires broker")
+                    .token(),
+            ) {
+                Ok(()) => Ok(()),
+                Err(failure) => error(&mut stream, &request, failure.status, &failure.to_string()),
+            };
+        }
+
+        let asset = match route {
+            "/__rake/preview" => Some((
+                include_bytes!("../../scripts/preview.html").as_slice(),
+                "text/html; charset=utf-8",
+            )),
+            "/__rake/preview.js" => Some((
+                include_bytes!("../../scripts/preview.js").as_slice(),
+                "text/javascript; charset=utf-8",
+            )),
+            "/__rake/preview-stream.js" => Some((
+                include_bytes!("../../scripts/preview-stream.js").as_slice(),
+                "text/javascript; charset=utf-8",
+            )),
+            "/__rake/preview-annotations.js" => Some((
+                include_bytes!("../../scripts/preview-annotations.js").as_slice(),
+                "text/javascript; charset=utf-8",
+            )),
+            "/__rake/preview.css" => Some((
+                include_bytes!("../../scripts/preview.css").as_slice(),
+                "text/css; charset=utf-8",
+            )),
+            _ => None,
+        };
+
+        if let Some((bytes, mime)) = asset {
+            return respond(&mut stream,&request,200,mime,bytes,&[("Cache-Control","no-store".into()),("X-Content-Type-Options","nosniff".into()),("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'".into())]);
+        }
+    }
+
     if route.starts_with("/__rake/inspector") || route.starts_with("/__rake/elements") {
         return error(
             &mut stream,
@@ -439,91 +516,106 @@ fn handle(
     Ok(())
 }
 
-fn proxy(
-    mut client: TcpStream,
-    request: Request,
-    address: SocketAddr,
-    stopping: &AtomicBool,
+fn control_request(
+    stream: &mut TcpStream,
+    request: &Request,
+    broker: &super::broker::Broker,
+    preview: Option<&super::preview::Preview>,
 ) -> Result<()> {
-    let expected = format!("http://{}", request.header("Host"));
-    if !request.header("Origin").is_empty() && request.header("Origin") != expected {
-        return error(
-            &mut client,
-            &request,
-            403,
-            "development bridge authentication failed",
-        );
-    }
-    let mut backend = TcpStream::connect_timeout(&address, Duration::from_secs(2))?;
-    let mut frame = format!("{} {} HTTP/1.1\r\n", request.method, request.path).into_bytes();
-    for (name, value) in &request.headers {
-        let value = if name.eq_ignore_ascii_case("Host") {
-            address.to_string()
-        } else if name.eq_ignore_ascii_case("Origin") {
-            format!("http://{address}")
-        } else {
-            value.clone()
-        };
-        frame.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
-    }
-    frame.extend_from_slice(b"\r\n");
-    // Control requests are bounded JSON frames; deliver their body with the headers
-    // so an early backend authentication error cannot race a later body write.
-    if request.method == "POST"
-        && let Ok(length) = request.header("Content-Length").parse::<usize>()
-        && length <= 1024 * 1024
-    {
-        let end = frame.len();
-        frame.resize(end + length, 0);
-        client.read_exact(&mut frame[end..])?;
-    }
-    backend.write_all(&frame)?;
-    let mut inbound = client.try_clone()?;
-    let mut outbound = backend.try_clone()?;
-    let finished = AtomicBool::new(false);
-    thread::scope(|scope| {
-        let finished = &finished;
-        let worker = scope.spawn(move || {
-            let _ = transfer(&mut inbound, &mut outbound, stopping, finished);
-        });
-        let result = transfer(&mut backend, &mut client, stopping, finished);
-        finished.store(true, Ordering::Release);
-        let _ = backend.shutdown(Shutdown::Both);
-        let _ = client.shutdown(Shutdown::Both);
-        let _ = worker.join();
-        result
-    })
-}
+    use super::broker::{Error, MAX_BYTES};
+    let mut consumed = false;
+    let mut video = None;
 
-fn transfer(
-    source: &mut TcpStream,
-    destination: &mut TcpStream,
-    stopping: &AtomicBool,
-    finished: &AtomicBool,
-) -> Result<()> {
-    source.set_read_timeout(Some(Duration::from_millis(200)))?;
-    destination.set_write_timeout(Some(Duration::from_secs(15)))?;
-    let mut buffer = [0; 8192];
-    let mut last = Instant::now();
-    while !stopping.load(Ordering::Acquire)
-        && !finished.load(Ordering::Acquire)
-        && last.elapsed() < Duration::from_secs(15)
-    {
-        match source.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => {
-                destination.write_all(&buffer[..count])?;
-                last = Instant::now();
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                ) => {}
-            Err(error) => return Err(error.into()),
+    let result = (|| -> std::result::Result<Vec<u8>, Error> {
+        let length = request
+            .header("Content-Length")
+            .parse::<usize>()
+            .ok()
+            .filter(|length| *length <= MAX_BYTES - 1024);
+
+        if length.is_none() || request.header("Content-Type") != "application/json" {
+            return Err(Error::new(413, "invalid or oversized JSON frame"));
+        }
+
+        let mut bytes = vec![0; length.expect("validated length")];
+
+        stream.read_exact(&mut bytes)?;
+        consumed = true;
+        let body: Value = serde_json::from_slice(&bytes)?;
+
+        if !body.is_object() {
+            return Err(Error::new(400, "expected JSON object"));
+        }
+
+        let action = request
+            .path
+            .strip_prefix("/__rake/")
+            .ok_or_else(|| Error::new(404, "unknown development endpoint"))?;
+
+        if action == "preview_video" && preview.is_some() {
+            video = Some(body);
+
+            return Ok(Vec::new());
+        }
+
+        let result = if action.starts_with("preview")
+            && let Some(preview) = preview
+        {
+            preview.handle(action, &body)?
+        } else {
+            broker.handle(action, &body)?
+        };
+
+        let encoded = serde_json::to_vec(&result)?;
+
+        if encoded.len() > MAX_BYTES {
+            return Err(Error::new(413, "development response too large"));
+        }
+
+        Ok(encoded)
+    })();
+
+    if let Some(body) = video {
+        return match preview.expect("validated preview").video(stream, &body) {
+            Ok(()) => Ok(()),
+            Err(failure) => error(
+                stream,
+                &Request {
+                    method: request.method.clone(),
+                    path: request.path.clone(),
+                    headers: Vec::new(),
+                },
+                failure.status,
+                &failure.to_string(),
+            ),
+        };
+    }
+
+    match result {
+        Ok(encoded) => respond(
+            stream,
+            request,
+            200,
+            "application/json",
+            &encoded,
+            &[("Cache-Control", "no-store".into())],
+        ),
+        // The body was already consumed, so do not drain it again on an error.
+        Err(failure) => {
+            let consumed_request = Request {
+                method: request.method.clone(),
+                path: request.path.clone(),
+                headers: Vec::new(),
+            };
+
+            error(
+                stream,
+                if consumed { &consumed_request } else { request },
+                failure.status,
+                &failure.to_string(),
+            )
         }
     }
-    Ok(())
 }
 
 fn reason(status: u16) -> &'static str {
@@ -531,7 +623,13 @@ fn reason(status: u16) -> &'static str {
         200 => "OK",
         301 => "Moved Permanently",
         304 => "Not Modified",
+        400 => "Bad Request",
         403 => "Forbidden",
+        413 => "Request Entity Too Large",
+        429 => "Too Many Requests",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
         404 => "Not Found",
         410 => "Gone",
         501 => "Not Implemented",
@@ -652,6 +750,7 @@ mod tests {
     //! Real: native server, HTTP sockets and filesystem. Doubles: build/state files.
     //! Requires: loopback sockets.
     use super::*;
+    use std::time::Instant;
 
     fn get(address: SocketAddr, method: &str, path: &str, headers: &str) -> (u16, String, Vec<u8>) {
         let mut stream = TcpStream::connect(address).unwrap();
@@ -677,6 +776,23 @@ mod tests {
             reply[end..].to_vec(),
         )
     }
+
+    fn test_broker(root: &Path, address: SocketAddr) -> Arc<super::super::broker::Broker> {
+        Arc::new(
+            super::super::broker::Broker::new(super::super::broker::Options {
+                url: format!("http://{address}"),
+                directory: root.join("control"),
+                development: None,
+                output: None,
+                allow_native: false,
+                cdp_url: None,
+                source_root: root.into(),
+                cli: "/unused".into(),
+            })
+            .unwrap(),
+        )
+    }
+
     #[test]
     fn static_serving_keeps_mime_head_cache_redirects_and_html_fallback() {
         let temp = tempfile::tempdir().unwrap();
@@ -697,7 +813,8 @@ mod tests {
                 development: None,
                 builds: None,
                 control_only: false,
-                backend: None,
+                preview: None,
+                broker: None,
             },
         )
         .unwrap();
@@ -783,7 +900,8 @@ mod tests {
             development: Some(status),
             builds: Some(builds.clone()),
             control_only: false,
-            backend: None,
+            preview: None,
+            broker: None,
         };
         assert_eq!(
             translated(
@@ -843,7 +961,8 @@ mod tests {
                 development: None,
                 builds: None,
                 control_only: false,
-                backend: Some("127.0.0.1:9".parse().unwrap()),
+                preview: None,
+                broker: Some(test_broker(temp.path(), address)),
             },
         )
         .unwrap();
@@ -870,7 +989,8 @@ mod tests {
                 development: None,
                 builds: None,
                 control_only: false,
-                backend: Some("127.0.0.1:9".parse().unwrap()),
+                preview: None,
+                broker: Some(test_broker(temp.path(), address)),
             },
         )
         .unwrap();
@@ -883,5 +1003,246 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.0 403"), "{response}");
         assert!(response.contains("development bridge authentication failed"));
+    }
+
+    #[test]
+    fn native_preview_assets_authentication_control_replies_and_shutdown() {
+        struct Inspector;
+
+        impl super::super::preview::Inspector for Inspector {
+            fn handle(
+                &self,
+                action: &str,
+                _body: &Value,
+            ) -> std::result::Result<Value, super::super::broker::Error> {
+                Ok(if action == "development" {
+                    serde_json::json!({"app_running":false})
+                } else {
+                    serde_json::json!([])
+                })
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let broker = test_broker(temp.path(), address);
+        let token = broker.token().to_owned();
+
+        let preview = Arc::new(super::super::preview::Preview::new(
+            Arc::new(Inspector),
+            "/unused".into(),
+        ));
+
+        let server = Server::start(
+            listener,
+            Config {
+                directory: temp.path().into(),
+                development: None,
+                builds: None,
+                control_only: true,
+                broker: Some(broker),
+                preview: Some(preview),
+            },
+        )
+        .unwrap();
+
+        for asset in [
+            "preview",
+            "preview.js",
+            "preview.css",
+            "preview-stream.js",
+            "preview-annotations.js",
+        ] {
+            let (status, headers, bytes) = get(address, "GET", &format!("/__rake/{asset}"), "");
+
+            assert_eq!(status, 200);
+            assert!(headers.contains("frame-ancestors 'none'"));
+            assert!(headers.contains("nosniff"));
+            assert!(!String::from_utf8(bytes).unwrap().contains(&token));
+            assert_eq!(get(address, "PUT", &format!("/__rake/{asset}"), "").0, 501);
+        }
+
+        assert_eq!(get(address, "GET", "/__rake/preview_control", "").0, 403);
+
+        for protocol in [
+            "rake-preview-v1, rake-token.bad",
+            "rake-preview-v1, rake-token.é",
+        ] {
+            assert_eq!(
+                get(
+                    address,
+                    "GET",
+                    "/__rake/preview_control",
+                    &format!("Origin: http://{address}\r\nSec-WebSocket-Protocol: {protocol}\r\n")
+                )
+                .0,
+                403
+            );
+        }
+
+        assert_eq!(
+            get(
+                address,
+                "POST",
+                "/__rake/preview_state",
+                "Content-Length: 0\r\nX-Rake-Token: bad\r\n"
+            )
+            .0,
+            403
+        );
+        let mut stream = TcpStream::connect(address).unwrap();
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write!(stream,"GET /__rake/preview_control HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: AAECAwQFBgcICQoLDA0ODw==\r\nSec-WebSocket-Protocol: rake-preview-v1, rake-token.{token}\r\n\r\n").unwrap();
+        let mut headers = Vec::new();
+
+        while !headers.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+
+            stream.read_exact(&mut byte).unwrap();
+            headers.push(byte[0]);
+        }
+
+        assert!(headers.starts_with(b"HTTP/1.0 101"));
+        fn frame(stream: &mut TcpStream) -> Value {
+            let mut header = [0; 2];
+
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 0x81);
+            let size = match header[1] {
+                126 => {
+                    let mut b = [0; 2];
+
+                    stream.read_exact(&mut b).unwrap();
+
+                    u16::from_be_bytes(b) as usize
+                }
+                size => size as usize,
+            };
+
+            let mut body = vec![0; size];
+
+            stream.read_exact(&mut body).unwrap();
+
+            serde_json::from_slice(&body).unwrap()
+        }
+        let state = frame(&mut stream);
+
+        assert_eq!(state["type"], "state");
+        assert!(
+            state["value"]["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("Waiting for the native")
+        );
+        let body = br#"{"id":1,"action":"preview_restart"}"#;
+        let mask = [1, 2, 3, 4];
+        let mut request = vec![0x81, 0x80 | body.len() as u8];
+
+        request.extend_from_slice(&mask);
+        request.extend(
+            body.iter()
+                .enumerate()
+                .map(|(index, byte)| byte ^ mask[index % 4]),
+        );
+        stream.write_all(&request).unwrap();
+
+        loop {
+            let value = frame(&mut stream);
+
+            if value["type"] == "reply" {
+                assert_eq!(value["id"], 1);
+                assert!(value["value"].is_null());
+                break;
+            }
+        }
+
+        drop(server);
+        let mut remaining = Vec::new();
+        let result = stream.read_to_end(&mut remaining);
+
+        assert!(
+            result.is_ok()
+                || result.is_err_and(|error| matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ))
+        );
+    }
+
+    #[test]
+    fn control_requests_wait_for_segmented_headers_and_json_bodies() {
+        let root = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let broker = Arc::new(
+            super::super::broker::Broker::new(super::super::broker::Options {
+                url: format!("http://{address}"),
+                directory: root.path().join("control"),
+                development: None,
+                output: None,
+                allow_native: false,
+                cdp_url: None,
+                source_root: root.path().into(),
+                cli: "/unused".into(),
+            })
+            .unwrap(),
+        );
+
+        let token = broker.token().to_owned();
+
+        let _server = Server::start(
+            listener,
+            Config {
+                directory: root.path().into(),
+                development: None,
+                builds: None,
+                control_only: true,
+                preview: None,
+                broker: Some(broker),
+            },
+        )
+        .unwrap();
+
+        let mut stream = TcpStream::connect(address).unwrap();
+
+        stream
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        write!(stream, "POST /__rake/development HTTP/1.1\r\n").unwrap();
+        let pending = stream.read(&mut [0]);
+
+        assert!(
+            pending.is_err_and(|error| matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )),
+            "partial headers must remain pending"
+        );
+        write!(stream,"Host: {address}\r\nX-Rake-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{").unwrap();
+        let pending = stream.read(&mut [0]);
+
+        assert!(
+            pending.is_err_and(|error| matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )),
+            "partial JSON must remain pending"
+        );
+        stream.write_all(b"}").unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut response = String::new();
+
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+        let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+
+        assert_eq!(body["published"], 0);
+        assert_eq!(body["runtimes"], serde_json::json!({}));
     }
 }
