@@ -41,7 +41,8 @@ jobs:
       - run: python3 scripts/check-gpui-pins.py
       - run: cargo fmt --all --check
       # These suites take seconds and need neither a Rust build nor a browser.
-      - run: python3 scripts/test-web-deployment.py
+      # Deployment contracts moved from deleted Python internals to Rust unit tests
+      # in the workspace suites on Linux, Windows and macOS below.
       - run: python3 scripts/test-desktop-smoke.py
       - uses: actions/setup-node@v7
         with:

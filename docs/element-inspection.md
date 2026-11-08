@@ -239,7 +239,7 @@ Source opening queries the exact capture's construction site and invokes the sys
 - Clients supply element IDs, never paths or commands. No source contents are served or captured.
 - The default editor may open only the file. Line and column come back as metadata, because file associations have no portable jump convention.
 - Compiler-remapped or missing source paths fail explicitly.
-- Standalone Python hosts must set `RAKE_CLI` to the built CLI. `rake dev` configures it automatically.
+- `rake dev` configures the native inspection broker and its CLI source opener automatically.
 
 For Web inspection, keep the application in a visible tab/window while using
 DevTools (separate windows worked in Chrome 156). A hidden or suspended application

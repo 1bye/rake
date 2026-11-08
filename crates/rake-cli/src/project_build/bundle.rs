@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -160,11 +159,18 @@ fn zip_time(modified: std::time::SystemTime) -> Result<zip::DateTime> {
         .as_secs()
         .try_into()?;
     let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+    #[cfg(unix)]
     // SAFETY: both pointers reference live correctly sized objects; success initializes local.
-    if unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) }.is_null() {
+    let valid = !unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) }.is_null();
+    #[cfg(windows)]
+    // SAFETY: the CRT initializes the correctly sized output tm on success.
+    let valid = unsafe { libc::localtime_s(local.as_mut_ptr(), &seconds) } == 0;
+
+    if !valid {
         return Err("ZIP timestamp is out of range".into());
     }
-    // SAFETY: localtime_r succeeded and initialized the complete tm above.
+
+    // SAFETY: the platform localtime conversion succeeded and initialized tm.
     let local = unsafe { local.assume_init() };
     Ok(zip::DateTime::from_date_and_time(
         (local.tm_year + 1900).try_into()?,
@@ -183,7 +189,7 @@ pub(super) fn distribution(
     output: &Path,
 ) -> Result<PathBuf> {
     fs::create_dir_all(output)?;
-    fs::set_permissions(output, fs::Permissions::from_mode(0o755))?;
+    super::permissions::set(output, 0o755)?;
     let site = output.join("site");
     project.build(args, processes, &site)?;
     let deployment = deployment(project, args, &site)?;
@@ -198,11 +204,11 @@ pub(super) fn distribution(
     for path in &payload {
         processes.check_cancelled()?;
         zip.start_file(
-            path.strip_prefix(&site)?.to_string_lossy(),
+            super::relative_name(path.strip_prefix(&site)?),
             zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
                 .last_modified_time(zip_time(fs::metadata(path)?.modified()?)?)
-                .unix_permissions(fs::metadata(path)?.permissions().mode()),
+                .unix_permissions(super::permissions::archive_mode(path)?),
         )?;
         std::io::copy(&mut fs::File::open(path)?, &mut zip)?;
     }
@@ -227,7 +233,7 @@ pub(super) fn distribution(
             "# Install site/ contents below /srv/www{base}; include the server's standard MIME types.\n{redirect}# Retain previous rake-builds/ directories while old tabs may still request their assets.\nlocation {base}rake-builds/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'public, max-age=31536000, immutable'; }}\nlocation {base}pkg/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\nlocation {base}assets/ {{ root /srv/www; try_files $uri =404; add_header Cache-Control 'no-cache'; }}\nlocation {base} {{ root /srv/www; index index.html; {fallback} add_header Cache-Control 'no-cache'; }}\n"
         ),
     )?;
-    let files: Vec<_> = payload.iter().map(|path| Ok(json!({"path":path.strip_prefix(output)?.to_string_lossy(),"bytes":fs::metadata(path)?.len(),"sha256":hash(path)?}))).collect::<Result<_>>()?;
+    let files: Vec<_> = payload.iter().map(|path| Ok(json!({"path":super::relative_name(path.strip_prefix(output)?),"bytes":fs::metadata(path)?.len(),"sha256":hash(path)?}))).collect::<Result<_>>()?;
     let config = &project.package["metadata"]["rake"]["bundle"];
     let checksum = hash(&archive)?;
     let manifest = json!({"protocol":1,"package":project.package["name"],"application_id":deployment["application_id"],"name":config.get("name").unwrap_or(&project.package["name"]),"version":project.package["version"],"target":"web","platform":"web","architecture":"wasm32","profile":if args.release {"release"} else {"debug"},"signing":"not_applicable","notarized":false,"artifact":"site","deployment":deployment,"archive":{"path":name,"bytes":fs::metadata(&archive)?.len(),"sha256":checksum},"files":files});
@@ -281,6 +287,7 @@ mod tests {
             web_dir: site.into(),
             assets: None,
             bindgen: None,
+            #[cfg(unix)]
             watch_roots: vec![],
         }
     }

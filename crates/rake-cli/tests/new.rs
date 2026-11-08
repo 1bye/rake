@@ -69,7 +69,7 @@ fn embeds_templates_and_revision_without_invoking_tools() {
     let readme = fs::read_to_string(project.join("README.md")).unwrap();
 
     assert!(readme.contains("rake lint --hook"));
-    assert!(readme.contains("Requires Rust 1.98.0, native development tools, and Python 3.11+."));
+    assert!(readme.contains("Requires Rust 1.98.0 and native development tools."));
     assert!(!readme.contains("rake-lint-hook.py"));
     assert_eq!(
         fs::read_to_string(project.join("CLAUDE.md")).unwrap(),

@@ -21,7 +21,7 @@ pub(crate) fn handles(command: &str, args: &[String]) -> bool {
     }
 
     (command == "doctor" && args.iter().any(|arg| arg == "--distribution"))
-        || (command == "build" && (cfg!(windows) || crate::distribution::handles(args)))
+        || (command == "build" && crate::distribution::handles(args))
 }
 
 pub(crate) fn run(command: &str, args: &[String]) -> Result<()> {

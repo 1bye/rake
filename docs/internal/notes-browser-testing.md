@@ -8,7 +8,7 @@ the Safari and Firefox procedures interrupt the whole test browser.
 
 ```sh
 cargo run -p rake-app-cli -- build --target web --package rake-notes --output /tmp/fieldnotes-web-check
-python3 crates/rake-cli/scripts/serve-web.py --example notes --directory /tmp/fieldnotes-web-check --control --port 0
+rake dev -p rake-notes --target web --no-open --port 0
 ```
 
 Open the server's private launch URL in each browser under test. The app must

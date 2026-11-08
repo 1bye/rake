@@ -138,7 +138,7 @@ cargo test -p rake-app --no-default-features --features devtools --lib native_pr
 cargo test -p rake-app --test inspection_compiled_out --offline
 ```
 
-Python tests cover routing, bounded input, stale references, source metadata and
+The script suites run mapped Rust contract tests and real HTTP assertions for routing, bounded input, stale references, source metadata and
 helper cleanup using explicit doubles. They do not establish native GPU/capture
 or browser behavior.
 

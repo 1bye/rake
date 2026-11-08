@@ -72,12 +72,10 @@ struct Supervisor<'a> {
     status: Value,
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
-    server: Option<ProcessGroup>,
     http: Option<super::serve::Server>,
     embedded: Option<ProcessGroup>,
     helpers: Option<tempfile::TempDir>,
     launch_url: Option<String>,
-    openers: Vec<ProcessGroup>,
     output: SharedOutput,
     readers: Vec<JoinHandle<std::result::Result<(), String>>>,
     cancelled: &'a AtomicBool,
@@ -105,12 +103,10 @@ impl<'a> Supervisor<'a> {
             status,
             app: None,
             cdp: None,
-            server: None,
             http: None,
             embedded: None,
             helpers: None,
             launch_url: None,
-            openers: Vec::new(),
             output: ProcessOutput::new(),
             readers: Vec::new(),
             cancelled,
@@ -571,9 +567,7 @@ impl<'a> Supervisor<'a> {
         drop(self.app.take());
         drop(self.cdp.take());
         drop(self.http.take());
-        drop(self.server.take());
         drop(self.embedded.take());
-        self.openers.clear();
         drop(self.helpers.take());
         for reader in self.readers.drain(..) {
             let _ = reader.join();

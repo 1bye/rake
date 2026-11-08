@@ -74,7 +74,7 @@ For the browser:
 
 ```sh
 python3 scripts/build-web.py --example routing
-python3 crates/rake-cli/scripts/serve-web.py --example routing --port 8081 --control
+rake dev -p rake-routing --target web --port 8081
 # Open the private launch URL printed by the server, then use rake instances / rake ctl.
 ```
 

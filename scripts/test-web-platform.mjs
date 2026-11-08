@@ -14,34 +14,23 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const temporary = await mkdtemp(join(tmpdir(), 'rake-web-host-'));
 const chrome = process.env.CHROME_BIN ?? (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'google-chrome');
 const environment = {...process.env, CARGO_PROFILE_DEV_DEBUG: '0', CARGO_INCREMENTAL: '0'};
-const built = spawnSync('cargo', ['build', '-p', 'rake-web-host-fixture', '--lib', '--target', 'wasm32-unknown-unknown', '--locked'], {cwd: root, env: environment, stdio: 'inherit'});
-assert.equal(built.status, 0, 'build the actual Rust browser fixture');
-const bindgen = process.env.WASM_BINDGEN ?? 'wasm-bindgen';
-const expected = spawnSync('python3', ['-c', 'import tomllib; print(next(p["version"] for p in tomllib.load(open("Cargo.lock", "rb"))["package"] if p["name"] == "wasm-bindgen"))'], {cwd: root, encoding: 'utf8'});
-const tooling = spawnSync(bindgen, ['--version'], {encoding: 'utf8'});
-assert.equal(tooling.stdout?.trim(), `wasm-bindgen ${expected.stdout.trim()}`, 'install the matching wasm-bindgen-cli or set WASM_BINDGEN');
-const bindings = spawnSync(bindgen, ['--target', 'web', '--out-dir', join(temporary, 'bindings'), join(root, 'target/wasm32-unknown-unknown/debug/rake_web_host_fixture.wasm')], {stdio: 'inherit'});
-assert.equal(bindings.status, 0, 'generate fixture bindings');
 const bootstrap = `
-import sys, json, shutil
+import sys, json, subprocess, os
 from pathlib import Path
-from types import SimpleNamespace
-sys.path.insert(0, str(Path(sys.argv[1]) / 'crates/rake-cli/scripts'))
-from bundle import BundleConfig, web_deployment
 root, work = Path(sys.argv[1]), Path(sys.argv[2])
+cli = Path(os.environ.get('RAKE_CLI', str(Path(os.environ.get('CARGO_TARGET_DIR', str(root / 'target'))) / 'debug/rake')))
 for label in ['old', 'new']:
-    site = work / label
+    site = work / (label + '-source')
     site.mkdir()
-    shutil.copytree(work / 'bindings', site / 'pkg')
     (site / 'platform.js').write_text((root / 'crates/rake/src/platform/browser.js').read_text())
     (site / 'runtime.js').write_text((root / 'crates/rake/src/web/browser.js').read_text())
     (site / 'count.worker.js').write_text('self.onmessage=e=>self.postMessage(JSON.stringify({length:JSON.parse(e.data).text.length,build:' + json.dumps(label) + '}));')
     (site / 'never.worker.js').write_text('self.onmessage=()=>{};')
     (site / 'index.html').write_text('<html><head></head><body><button id="pick">Pick file</button><script type="module">import * as platform from "./platform.js"; import * as runtime from "./runtime.js"; import * as fixture from "./pkg/rake_web_host_fixture.js"; await fixture.default();fixture.start();window.fixture=fixture;window.platform=platform;window.runtime=runtime;window.workersStarted=0;window.workersTerminated=0;window.Worker=class extends window.Worker {constructor(...args){super(...args);window.workersStarted++;}terminate(){window.workersTerminated++;super.terminate();}};window.build=' + json.dumps(label) + ';document.querySelector("#pick").onclick=async()=>{try{const f=await platform.pick_file();window.picked=f?{name:f.name,text:new TextDecoder().decode(await platform.read_file(f,100))}:null;}catch(e){window.pickError=e.message;}};window.ready=true;</script></body></html>')
-    package = {'name':'host-fixture','version':'1.0.0','metadata':{'rake':{'bundle':{'identifier':'dev.rake.host-test','web':{'base_path':'/tools/','offline':True}}}}}
-    web_deployment(SimpleNamespace(package=package,bundle=BundleConfig(package,site),args=SimpleNamespace(base_path=None,routing=None)),site)
+    subprocess.run([str(cli), 'bundle', '--target', 'web', '--manifest-path', str(root / 'tests/web-platform/Cargo.toml'), '--web-dir', str(site), '--output', str(work / label), '--json'], cwd=root, check=True)
+
 `;
-const generated = spawnSync('python3', ['-c', bootstrap, root, temporary], {encoding: 'utf8'});
+const generated = spawnSync('python3', ['-c', bootstrap, root, temporary], {encoding: 'utf8', env: environment});
 assert.equal(generated.status, 0, generated.stderr);
 let current = 'old';
 let serverOffline = false;
@@ -54,9 +43,9 @@ const server = createServer(async (request, response) => {
     let data;
     let path;
     for (const build of [current, current === 'old' ? 'new' : 'old']) {
-      try { path = join(temporary, build, relative || 'index.html'); data = await readFile(path); break; } catch (_) { /* Immutable old build fallback. */ }
+      try { path = join(temporary, build, 'site', relative || 'index.html'); data = await readFile(path); break; } catch (_) { /* Immutable old build fallback. */ }
     }
-    if (!data && !relative.includes('.')) { path = join(temporary, current, 'index.html'); data = await readFile(path); }
+    if (!data && !relative.includes('.')) { path = join(temporary, current, 'site', 'index.html'); data = await readFile(path); }
     if (!data) { response.writeHead(404).end(); return; }
     response.writeHead(200, {'Content-Type': path.endsWith('.js') ? 'text/javascript' : path.endsWith('.wasm') ? 'application/wasm' : path.endsWith('.json') ? 'application/json' : 'text/html', 'Cache-Control': 'no-store'}).end(data);
   } catch (error) { response.writeHead(500).end(String(error)); }

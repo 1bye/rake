@@ -2,13 +2,22 @@
 //! The native HTTP origin owns application assets, the broker and preview transports.
 
 mod args;
+#[cfg(unix)]
 mod broker;
+#[cfg(any(unix, test))]
+mod browser;
 mod bundle;
+#[cfg(unix)]
 mod dev;
 mod favicon;
 mod offline;
+mod permissions;
+#[cfg(unix)]
 mod preview;
 mod processes;
+#[cfg(unix)]
+mod resources;
+#[cfg(unix)]
 mod serve;
 mod web;
 
@@ -26,6 +35,28 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// Keep an inherited-console client and its descendants owned on Windows.
+#[cfg(windows)]
+pub(crate) fn run_client(command: &mut Command) -> Result<i32> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancelled);
+    ctrlc::set_handler(move || flag.store(true, Ordering::Release))?;
+    let mut child = Processes::new(&cancelled).start(command)?;
+
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            // Dropping the owned Job also stops a client which ignores Ctrl-C.
+            return Ok(130);
+        }
+
+        if let Some(status) = child.0.try_wait()? {
+            return Ok(status.code().unwrap_or(1));
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
 
 pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
     let args = match args::parse(command, arguments) {
@@ -45,7 +76,10 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
             if command == "doctor" {
                 doctor(&args, &processes)
             } else if command == "dev" {
-                dev::run(&args, &cancelled).map(|()| 0)
+                #[cfg(unix)]
+                { dev::run(&args, &cancelled).map(|()| 0) }
+                #[cfg(windows)]
+                { Err("development supervision requires Unix private local IPC; doctor, build and bundle are supported on Windows".into()) }
             } else {
                 build(&args, &processes).map(|()| 0)
             }
@@ -76,7 +110,6 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         installed_targets: Value,
         wasm_bindgen: Value,
         node: Value,
-        python: Value,
     }
     let probe = |program: &str, arguments: &[&str]| {
         let mut command = Command::new(program);
@@ -92,11 +125,6 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         installed_targets: probe("rustup", &["target", "list", "--installed"]),
         wasm_bindgen: probe("wasm-bindgen", &["--version"]),
         node: probe("node", &["--version"]),
-        // Python remains an optional diagnostic while later phases still use it.
-        python: match probe("python3", &["--version"]) {
-            Value::String(version) => json!(version.split_whitespace().nth(1).unwrap_or(&version)),
-            error => error,
-        },
     };
     let ready = checks.rust.is_string()
         && checks.cargo.is_string()
@@ -125,6 +153,7 @@ struct Project {
     web_dir: PathBuf,
     assets: Option<PathBuf>,
     bindgen: Option<PathBuf>,
+    #[cfg(unix)]
     watch_roots: Vec<PathBuf>,
 }
 
@@ -258,22 +287,28 @@ impl Project {
             None
         };
 
-        let mut watch_roots = vec![root.clone()];
-        for package in metadata["packages"]
-            .as_array()
-            .ok_or("Cargo packages missing")?
-        {
-            if package["source"].is_null() {
-                let path = Path::new(string(package, "manifest_path")?);
-                if let Some(directory) = path.parent() {
-                    watch_roots.push(directory.to_owned());
+        #[cfg(unix)]
+        let watch_roots = {
+            let mut watch_roots = vec![root.clone()];
+            for package in metadata["packages"]
+                .as_array()
+                .ok_or("Cargo packages missing")?
+            {
+                if package["source"].is_null() {
+                    let path = Path::new(string(package, "manifest_path")?);
+                    if let Some(directory) = path.parent() {
+                        watch_roots.push(directory.to_owned());
+                    }
                 }
             }
-        }
-        watch_roots.sort();
-        watch_roots.dedup();
+            watch_roots.sort();
+            watch_roots.dedup();
+
+            watch_roots
+        };
 
         Ok(Self {
+            #[cfg(unix)]
             watch_roots,
             package: package.clone(),
             target,
@@ -553,4 +588,11 @@ fn ascii_json(text: &str) -> String {
 
 pub(crate) fn web_target(arguments: &[String]) -> bool {
     args::web_target(arguments)
+}
+
+fn relative_name(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }

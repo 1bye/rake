@@ -7,7 +7,7 @@ rake dev
 rake dev --target web
 ```
 
-Requires Rust 1.98.0, native development tools, and Python 3.11+. For Web, use a
+Requires Rust 1.98.0 and native development tools. For Web, use a
 WebGPU browser and a `wasm-bindgen-cli` matching the version in `Cargo.lock`.
 The Web builder prints the installation command if it is missing. The first
 `rake dev` or `rake build` resolves dependencies and creates `Cargo.lock`; commit
@@ -37,3 +37,6 @@ After edits, run `rake format` then `rake lint`. Agent instructions live in
 
 Optional PostToolUse feedback can run `rake lint --hook`. It reads the edit
 payload from stdin and returns compact findings without blocking the edit.
+
+On Windows, use `rake build` and `rake bundle`; development supervision and
+native local inspection currently require Unix.

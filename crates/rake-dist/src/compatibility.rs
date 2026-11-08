@@ -223,13 +223,24 @@ pub(crate) fn write(
         .find(|artifact| matches!(artifact.format, crate::Format::Zip | crate::Format::Tar))
         .ok_or_else(|| Error::Execution("compatibility output requires ZIP or tar".into()))?;
 
-    let artifact = if plan.platform() == Platform::Macos {
-        PathBuf::from("application").join(format!(
-            "{}.app",
-            plan.config().name.as_deref().unwrap_or(plan.name())
-        ))
-    } else {
-        PathBuf::from("application/bin").join(binary)
+    let (platform, artifact) = match plan.platform() {
+        Platform::Macos => (
+            "darwin",
+            PathBuf::from("application").join(format!(
+                "{}.app",
+                plan.config().name.as_deref().unwrap_or(plan.name())
+            )),
+        ),
+        Platform::Windows => (
+            "windows",
+            PathBuf::from("application").join(format!("{binary}.exe")),
+        ),
+        Platform::Linux => ("linux", PathBuf::from("application/bin").join(binary)),
+        _ => {
+            return Err(Error::Execution(
+                "unsupported compatibility platform".into(),
+            ));
+        }
     };
 
     if !result.join(&artifact).exists() {
@@ -270,7 +281,7 @@ pub(crate) fn write(
 
     files::write_json(
         &result.join("bundle.json"),
-        &serde_json::json!({"protocol":1,"package":package,"application_id":plan.identifier(),"name":plan.config().name.as_deref().unwrap_or(plan.name()),"version":plan.version(),"target":"desktop","platform":if plan.platform()==Platform::Macos{"darwin"}else{"linux"},"architecture":architecture,"profile":if release{"release"}else{"debug"},"signing":signing,"notarized":archive.trust.notarized,"artifact":artifact,"deployment":null,"archive":{"path":archive.path,"bytes":fs::metadata(result.join(&archive.path))?.len(),"sha256":archive.sha256},"files":inventory}),
+        &serde_json::json!({"protocol":1,"package":package,"application_id":plan.identifier(),"name":plan.config().name.as_deref().unwrap_or(plan.name()),"version":plan.version(),"target":"desktop","platform":platform,"architecture":architecture,"profile":if release{"release"}else{"debug"},"signing":signing,"notarized":archive.trust.notarized,"artifact":artifact,"deployment":null,"archive":{"path":archive.path,"bytes":fs::metadata(result.join(&archive.path))?.len(),"sha256":archive.sha256},"files":inventory}),
     )?;
     files::write_json(
         &result.join(".rake-build.json"),
@@ -287,6 +298,55 @@ pub(crate) fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_compatibility_reports_installed_executable_assets_and_zip() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::Config {
+            identifier: Some("dev.rake.fixture".into()),
+            ..Default::default()
+        };
+
+        config.windows.formats = vec![crate::Format::Zip];
+
+        let plan = config.plan("app", "1.2.3", Platform::Windows).unwrap();
+
+        fs::create_dir_all(root.path().join("application/assets")).unwrap();
+        fs::create_dir(root.path().join("0")).unwrap();
+        fs::write(root.path().join("application/app.exe"), b"executable").unwrap();
+        fs::write(root.path().join("application/assets/message.txt"), b"asset").unwrap();
+        fs::write(root.path().join("0/app.zip"), b"archive").unwrap();
+
+        let archive: Artifact = serde_json::from_value(serde_json::json!({
+            "path":"0/app.zip", "format":"zip", "sha256":"archive-hash", "package_version":"1.2.3"
+        }))
+        .unwrap();
+
+        write(
+            &plan,
+            "app",
+            "app",
+            root.path(),
+            &[archive],
+            false,
+            "x86_64-pc-windows-msvc",
+        )
+        .unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.path().join("bundle.json")).unwrap()).unwrap();
+
+        assert_eq!(manifest["platform"], "windows");
+        assert_eq!(manifest["architecture"], "x86_64");
+        assert_eq!(manifest["profile"], "debug");
+        assert_eq!(
+            root.path().join(manifest["artifact"].as_str().unwrap()),
+            root.path().join("application/app.exe")
+        );
+        assert_eq!(manifest["archive"]["path"], "0/app.zip");
+        assert_eq!(manifest["files"].as_array().unwrap().len(), 2);
+        assert!(owns(root.path(), "app"));
+    }
 
     #[test]
     fn legacy_ownership_requires_the_exact_package_and_bundle_command() {

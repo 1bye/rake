@@ -291,7 +291,7 @@ fixture has separately passed slice checks and Apple Silicon execution.
 `distribution.json` records artifact hashes, native versions, components and trust
 evidence. Legacy macOS/Linux bundle JSON, archives and unpacked layouts are
 preserved by the Rust coordinator. Native Python assembly/signing has been retired;
-the Python Web pipeline and development supervisor remain, with native builds
+the Web pipeline and development supervisor also run in Rust, with native builds
 from that supervisor delegated to Rust. Existing Web bundle tests still pass.
 
 `resources.spawn_helper("ffmpeg", ["-version"])?` returns an owned `rake::resources::HelperProcess`. Its drop or cancel path terminates and reaps the native process group or Windows Job, including inherited descendants. Keep this owner with the registered application task.

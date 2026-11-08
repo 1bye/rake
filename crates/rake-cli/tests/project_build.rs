@@ -168,7 +168,7 @@ fn doctor_matches_required_targets_and_optional_tools_without_python() {
             "host-target\nwasm32-unknown-unknown"
         );
         assert!(result["node"]["error"].is_string());
-        assert!(result["python"]["error"].is_string());
+        assert!(result.get("python").is_none());
     }
     fs::remove_file(fixture.tools.join("wasm-bindgen")).unwrap();
     assert!(fixture.run(&["doctor", "--json"]).status.success());
@@ -405,6 +405,10 @@ fn parser_preserves_errors_flags_and_doctor_validation_order() {
     let fixture = Fixture::new();
     for (args, expected) in [
         (vec!["build", "--preview", "--json"], "--preview requires"),
+        (
+            vec!["dev", "--target", "web", "--preview", "--json"],
+            "--preview requires",
+        ),
         (vec!["build", "--cdp", "--json"], "--cdp applies"),
         (vec!["build", "--elements", "--json"], "--elements applies"),
         (vec!["build", "--port", "65536", "--json"], "port must be"),

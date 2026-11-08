@@ -1,12 +1,8 @@
 //! Terminal adapter for the shared development control protocol.
 
-#[cfg(unix)]
 mod agent;
 #[cfg(unix)]
 mod cdp;
-#[cfg(unix)]
-mod project;
-#[cfg(unix)]
 mod project_build;
 #[cfg(unix)]
 mod source;
@@ -155,7 +151,6 @@ fn main() {
         return;
     }
 
-    #[cfg(unix)]
     if arguments
         .first()
         .is_some_and(|command| matches!(command.as_str(), "doctor" | "build" | "dev"))
@@ -163,14 +158,8 @@ fn main() {
         std::process::exit(project_build::run(&arguments[0], &arguments[1..]));
     }
 
-    #[cfg(unix)]
     let web_bundle = arguments.first().is_some_and(|command| command == "bundle")
         && project_build::web_target(&arguments[1..]);
-    #[cfg(not(unix))]
-    let web_bundle = arguments.first().is_some_and(|command| command == "bundle")
-        && arguments
-            .windows(2)
-            .any(|pair| pair[0] == "--target" && pair[1] == "web");
 
     if web_bundle
         && (arguments.iter().any(|arg| arg == "--config")
@@ -188,7 +177,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    #[cfg(unix)]
     if web_bundle {
         std::process::exit(project_build::run("bundle", &arguments[1..]));
     }
@@ -212,10 +200,23 @@ fn main() {
         }
     }
 
+    if arguments.first().is_some_and(|command| command == "agent") {
+        if let Err(error) = agent::run(arguments) {
+            if json {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"error":{"message":error.to_string()}})
+                );
+            } else {
+                eprintln!("rake: {error}");
+            }
+            std::process::exit(1);
+        }
+        return;
+    }
+
     #[cfg(unix)]
-    let result = if arguments.first().is_some_and(|command| command == "agent") {
-        agent::run(arguments)
-    } else if arguments.first().is_some_and(|command| command == "cdp") {
+    let result = if arguments.first().is_some_and(|command| command == "cdp") {
         cdp::run(arguments)
     } else if arguments.first().is_some_and(|c| c == "inspect")
         && arguments.get(1).is_some_and(|c| c == "pick")
@@ -223,11 +224,6 @@ fn main() {
         terminal::run(arguments)
     } else if arguments.first().is_some_and(|c| c == "inspect") {
         cdp::run(arguments)
-    } else if arguments
-        .first()
-        .is_some_and(|command| matches!(command.as_str(), "dev" | "bundle"))
-    {
-        project::run(arguments)
     } else {
         terminal::run(arguments)
     };

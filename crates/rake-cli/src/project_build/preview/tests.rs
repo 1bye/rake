@@ -469,12 +469,7 @@ fn disconnect_during_video_headers_releases_encoder() {
 }
 
 #[test]
-#[ignore = "manual comparison with retained Python helpers; requires Python 3.11+"]
-fn python_preview_differential() {
-    use std::{
-        io::Write,
-        process::{Command, Stdio},
-    };
+fn preview_matches_python_reference_corpus() {
     let fixtures = json!({"window":window(),"root":{"id":"root","view":{"tag":"Editor"},"source":{"file":"src/editor.rs","line":4}},"button":{"id":"button","parent":"root","view":{"tag":"button"},"source":{"file":"src/button.rs","line":7}},"leaf":{"id":"leaf","parent":"button","view":{"tag":"Text"},"text":"Save"}});
 
     let mut cases = vec![
@@ -557,57 +552,12 @@ fn python_preview_differential() {
             .push(json!({"result":result,"requests":inspector.requests.lock().unwrap().clone()}));
     }
 
-    let script = r#"
-import sys,json,time
-sys.path.insert(0,sys.argv[1])
-from preview import Preview
-from dev_bridge import BridgeError
-payload=json.load(sys.stdin);f=payload['fixtures'];out=[]
-class Inspector:
-    def __init__(self): self.requests=[]
-    def handle(self,action,body):
-        self.requests.append(body['request']);query=body['request']['message']['value'];kind=query['type']
-        value=([f['window']] if kind=='preview' else f['leaf'] if kind=='preview_element' else f['button'] if kind=='inspect_element' else {'operation_id':9} if kind=='preview_input' else {'snapshot':{'capture':'current','elements':[f['root'],f['button'],f['leaf']]},'next':None})
-        return {'Ok':{'value':value}}
-for action,body in payload['cases']:
-    inspector=Inspector();preview=Preview(inspector,'/unused')
-    preview.references.append(('frame','runtime',f['window'],time.monotonic()))
-    try: result={'Ok':preview.handle(action,body)}
-    except BridgeError as error: result={'Err':{'status':error.status,'message':str(error)}}
-    finally: preview.close()
-    out.append({'result':result,'requests':inspector.requests})
-print(json.dumps(out))
-"#;
-
-    let mut child = Command::new("python3")
-        .arg("-c")
-        .arg(script)
-        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts"))
-        .env("PYTHONDONTWRITEBYTECODE", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&serde_json::to_vec(&json!({"fixtures":fixtures,"cases":cases})).unwrap())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let actual: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    // Captured from the retained Python reference and compared before its deletion.
+    let actual: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/preview-python-reference.json"
+    ))
+    .unwrap();
 
     assert_eq!(actual, expected);
-    eprintln!(
-        "{} exact preview result/request-envelope differential cases passed",
-        cases.len()
-    );
+    assert_eq!(cases.len(), 30);
 }

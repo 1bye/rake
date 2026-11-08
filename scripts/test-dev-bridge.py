@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Exercise authentication and real browser/terminal HTTP broker exchanges."""
-
+"""CLI contracts after embedded Python removal; internal cases map to native Rust tests.
+See crates/rake-cli/PORTING.md. HTTP/native fixtures continue running against the Rust CLI.
+"""
 import concurrent.futures
+import io
 import json
 import os
 from pathlib import Path
-import selectors
+import shutil
 import signal
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
-import urllib.request
 import urllib.parse
+import urllib.request
 import uuid
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-
-from dev_bridge import BridgeError, DevBridge
-
+from rust_contract_tests import rust_contract
+ROOT = Path(__file__).resolve().parents[1]
+CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
 
 class BrokerHTTP(unittest.TestCase):
     def setUp(self):
@@ -113,7 +117,15 @@ class BrokerHTTP(unittest.TestCase):
             connection.sendall((f"POST /__rake/connect HTTP/1.0\r\nHost: {parsed.netloc}\r\n"
                 f"Content-Type: application/json\r\nX-Rake-Token: {self.config['token']}\r\n"
                 f"Content-Length: {1024 * 1024 - 1023}\r\n\r\n").encode())
-            self.assertTrue(connection.recv(1024).startswith(b"HTTP/1.0 413"))
+            status = bytearray()
+            while not status.endswith(b"\r\n"):
+                chunk = connection.recv(1)
+                if not chunk:
+                    break
+                status.extend(chunk)
+                self.assertLessEqual(len(status), 4096)
+            self.assertTrue(status.endswith(b"\r\n"), status)
+            self.assertTrue(status.startswith(b"HTTP/1.0 413"), status)
         for build in [True,-1,2**53+1,"1",None]:
             with self.assertRaises(urllib.error.HTTPError) as error:
                 self.post("connect", {"application_id":"test","info":self.info,"build_id":build})
@@ -121,34 +133,13 @@ class BrokerHTTP(unittest.TestCase):
             error.exception.close()
 
 
-class PreviewAuthentication(unittest.TestCase):
+class NativeInternalContracts(unittest.TestCase):
     def test_non_ascii_preview_token_is_rejected(self):
-        from types import SimpleNamespace
-        from preview_socket import Socket
-        handler = SimpleNamespace(headers={
-            "Host": "127.0.0.1:9000", "Origin": "http://127.0.0.1:9000",
-            "Sec-WebSocket-Protocol": "rake-preview-v1, rake-token.é",
-        })
-        with self.assertRaises(BridgeError) as error:
-            Socket.upgrade(handler, "expected")
-        self.assertEqual(error.exception.status, 403)
+        rust_contract(self, ['native_preview_assets_authentication_control_replies_and_shutdown'], 'bin:rake')
 
-
-class BrokerBounds(unittest.TestCase):
     def test_capacity_and_expired_browser_discovery(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bridge = DevBridge("http://127.0.0.1:9000", directory)
-            runtime = str(uuid.uuid4())
-            bridge.handle("connect", {"application_id": "test", "info": {"protocol": 1, "runtime_id": runtime, "platform": "web"}})
-            bridge.tickets = {str(i): {"runtime": runtime, "created": __import__("time").monotonic(), "result": None} for i in range(32)}
-            with self.assertRaises(BridgeError) as error:
-                bridge.handle("client", {"runtime_id": runtime, "request": {"runtime_id": runtime, "protocol": 1}})
-            self.assertEqual(error.exception.status, 429)
-            bridge.instances[runtime]["seen"] -= 31
-            with self.assertRaises(BridgeError):
-                bridge.handle("poll", {"runtime_id": runtime})
-            self.assertFalse((Path(directory) / f"{runtime}.json").exists())
-            bridge.close()
+        rust_contract(self, ['capacity_expired_leases_and_tickets_keep_timeout_delivery_semantics'], 'bin:rake')
+
 
 
 if __name__ == "__main__":
