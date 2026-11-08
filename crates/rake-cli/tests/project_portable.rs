@@ -30,41 +30,99 @@ fn console_build_works_with_spaces_and_without_unix_transport() {
     fs::create_dir(root.path().join("src")).unwrap();
     fs::write(
         root.path().join("Cargo.toml"),
-        "[package]\nname='portable-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+        "[package]\nname='portable-fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n[package.metadata.rake.bundle]\nidentifier='dev.rake.portable'\nassets='assets'\n",
     )
     .unwrap();
+    fs::create_dir(root.path().join("assets")).unwrap();
+    fs::write(root.path().join("assets/message.txt"), "installed asset").unwrap();
     fs::write(
         root.path().join("src/main.rs"),
         "fn main(){println!(\"portable works\");}",
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
-        .current_dir(root.path())
-        .env_remove("CARGO_TARGET_DIR")
-        .env("CARGO_PROFILE_DEV_DEBUG", "0")
-        .args(["build", "--debug", "--json"])
-        .output()
-        .unwrap();
+    let build = || {
+        Command::new(env!("CARGO_BIN_EXE_rake"))
+            .current_dir(root.path())
+            .env_remove("CARGO_TARGET_DIR")
+            .env("CARGO_PROFILE_DEV_DEBUG", "0")
+            .args(["build", "--debug", "--json"])
+            .output()
+            .unwrap()
+    };
+
+    let output = build();
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     let run = Command::new(result["artifact"].as_str().unwrap())
         .output()
         .unwrap();
+
     assert!(run.status.success());
     assert_eq!(
         String::from_utf8(run.stdout).unwrap().replace("\r\n", "\n"),
         "portable works\n"
     );
     assert!(root.path().join("Cargo.lock").is_file());
+
+    let installed = root.path().join("dist/portable-fixture/desktop");
+    let marker = installed.join(".rake-build.json");
+
+    assert!(marker.is_file());
+
+    let assets = if cfg!(target_os = "macos") {
+        "application/portable-fixture.app/Contents/Resources/assets"
+    } else if cfg!(windows) {
+        "application/assets"
+    } else {
+        "application/share/dev.rake.portable/assets"
+    };
+
+    assert_eq!(
+        fs::read_to_string(installed.join(assets).join("message.txt")).unwrap(),
+        "installed asset"
+    );
+
+    #[cfg(windows)]
+    {
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(installed.join("bundle.json")).unwrap()).unwrap();
+
+        assert_eq!(manifest["platform"], "windows");
+        assert_eq!(
+            installed.join(manifest["artifact"].as_str().unwrap()),
+            std::path::Path::new(result["artifact"].as_str().unwrap())
+        );
+        assert!(
+            installed
+                .join(manifest["archive"]["path"].as_str().unwrap())
+                .is_file()
+        );
+    }
+
+    let rebuilt = build();
+
     assert!(
-        root.path()
-            .join("dist/portable-fixture/desktop/.rake-build.json")
-            .is_file()
+        rebuilt.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rebuilt.stderr)
+    );
+
+    fs::remove_file(marker).unwrap();
+
+    let refused = build();
+
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("not owned"));
+    assert_eq!(
+        fs::read_to_string(installed.join(assets).join("message.txt")).unwrap(),
+        "installed asset"
     );
 }
 

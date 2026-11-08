@@ -527,11 +527,11 @@ fn execute_job(
         && (plan.packages().len() != 1
             || !matches!(
                 (plan.platform(), plan.packages()[0].format()),
-                (Platform::Macos, Format::Zip) | (Platform::Linux, Format::Tar)
+                (Platform::Macos | Platform::Windows, Format::Zip) | (Platform::Linux, Format::Tar)
             ))
     {
         return Err(Error::Execution(
-            "legacy compatibility requires one macOS ZIP or Linux tar format".into(),
+            "legacy compatibility requires one macOS/Windows ZIP or Linux tar format".into(),
         ));
     }
 
@@ -1207,6 +1207,10 @@ fn execute_job(
 
             for (source, relative) in &resources {
                 files::copy(Path::new(source), &payload.join(relative))?;
+            }
+
+            if request.compatibility {
+                files::copy(&payload, &result_dir.join("application"))?;
             }
 
             windows_package(

@@ -97,7 +97,24 @@ Devbox: Rust 1.98.0 / Python 3.12.3, umask 022, debug info and incremental off:
 passed. Supervisor **13 passed / 1 skipped**: only Node syntax checking skips
 because Node is not installed. No Node/GPUI dependencies or other tools installed.
 
-Windows and Linux desktop CI: pending this draft’s publication. A Windows-only
+Initial phase-6 CI at a562114: gate, portable, Linux desktop and macOS native
+passed; Windows desktop failed the fresh console-build regression. Its old
+Windows-only dispatch forced the raw --locked adapter, bypassing first-lockfile
+creation. Remove that shortcut and extend the existing installed-layout adapter
+to Windows ZIP: preserve the executable, assets and installation descriptor in
+application/, report the .exe and Windows manifest identity, and reuse native
+resource/manifest staging without downloading an installer. Keep explicit native
+distribution builds on their existing adapter. Strengthen the real portable build
+test with assets, owned rebuild and unowned-output refusal; add an all-host Windows
+layout/manifest regression. Replacement Windows CI is pending.
+
+Follow-up validation: Mac full CLI repeat **354 passed, 0 failed, 2 existing
+ignored**, portable build tests **3**, compatibility tests **2**; Linux portable
+tests **3** and compatibility tests **2**. Both machines passed all-target CLI
+and distribution Clippy. Mac Cargo/rake format and lint passed (725 files,
+14 existing diagnostics, 0 denied).
+
+A Windows-only
 Job test exercises real descendants and metadata bounds; portable CLI tests
 exercise doctor, a real console build with spaces, Web bundling with compiled
 Rust tool doubles, portable URLs/ZIP names and Windows agent module cleanup.
