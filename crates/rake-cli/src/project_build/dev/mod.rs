@@ -1,5 +1,5 @@
 //! Owns desktop/Web sessions, asynchronous builds, publication and retained discovery records.
-//! Serving and preview remain owned helper processes until their later porting phases.
+//! The session owns its native HTTP broker, preview helper process and optional CDP companion.
 
 mod fingerprint;
 mod output;

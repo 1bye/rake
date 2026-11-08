@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.error
 
 from dev_bridge import BridgeError, DevBridge, MAX_BYTES
-from runtime_broker import RuntimeBroker
+from runtime_broker import NoRedirect, RuntimeBroker
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import TCPServer
@@ -39,8 +39,38 @@ if args.cdp_url and not args.control:
     parser.error("--cdp-url requires --control")
 if args.control_only and not args.control:
     parser.error("--inspector-only requires --control")
-bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
-inspector = RuntimeBroker(bridge, args.process_output, allow_native=args.control_only, cdp_url=args.cdp_url) if bridge else None
+# During phase 4 only preview transport stays here; the native origin owns all broker state.
+class NativeBroker:
+    def __init__(self, url, token):
+        self.url, self.token, self.bridge = url, token, self
+
+    def handle(self, action, body):
+        request = urllib.request.Request(self.url + "/__rake/" + action, json.dumps(body).encode(),
+            {"Content-Type": "application/json", "X-Rake-Token": self.token})
+        try:
+            with urllib.request.build_opener(NoRedirect).open(request, timeout=12) as response:
+                data = response.read(MAX_BYTES + 1)
+            if len(data) > MAX_BYTES:
+                raise BridgeError(413, "development response too large")
+            return json.loads(data)
+        except urllib.error.HTTPError as error:
+            raise BridgeError(error.code, str(error)) from error
+
+    def development(self):
+        return self.handle("development", {})
+
+    def instances(self):
+        return self.handle("inspect_instances", {})
+
+    def close(self):
+        pass
+
+
+if os.environ.get("RAKE_NATIVE_BROKER_URL"):
+    bridge = inspector = NativeBroker(os.environ["RAKE_NATIVE_BROKER_URL"], os.environ["RAKE_NATIVE_BROKER_TOKEN"])
+else:
+    bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
+    inspector = RuntimeBroker(bridge, args.process_output, allow_native=args.control_only, cdp_url=args.cdp_url) if bridge else None
 preview = None
 if args.preview_helper:
     from preview import Preview
@@ -294,7 +324,8 @@ class BoundedServer(ThreadingHTTPServer):
 server = BoundedServer(("127.0.0.1", args.port), partial(AppHandler, directory=str(directory)))
 args.port = server.server_port
 if bridge:
-    bridge.url = os.environ.get("RAKE_PUBLIC_BRIDGE_URL") or f"http://127.0.0.1:{args.port}"
+    if not isinstance(bridge, NativeBroker):
+        bridge.url = os.environ.get("RAKE_PUBLIC_BRIDGE_URL") or f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
     launch_url += f"{'/__rake/preview' if preview else '/'}#__rake_control={bridge.token}"
