@@ -98,11 +98,14 @@ impl Supervisor<'_> {
                 .with_output(&sink)
                 .run_output(&mut command, |_| {})?;
         }
+        let listener = std::net::TcpListener::bind(("127.0.0.1", self.args.port))?;
+        let origin = format!("http://{}", listener.local_addr()?);
         let mut command = self.service_command("python3");
+        command.env("RAKE_PUBLIC_BRIDGE_URL", &origin);
         command
             .arg(helpers.join("serve-web.py"))
             .args(["--control", "--port"])
-            .arg(self.args.port.to_string())
+            .arg("0")
             .arg("--directory")
             .arg(&waiting)
             .arg("--development-state")
@@ -133,6 +136,39 @@ impl Supervisor<'_> {
             .map(|(_, url)| url.trim())
             .ok_or("development server could not start")?
             .to_owned();
+        let backend = url::Url::parse(&url)?;
+        let address = format!(
+            "{}:{}",
+            backend.host_str().ok_or("server host missing")?,
+            backend.port().ok_or("server port missing")?
+        )
+        .parse()?;
+        self.http = Some(crate::project_build::serve::Server::start(
+            listener,
+            crate::project_build::serve::Config {
+                directory: waiting,
+                development: Some(self.session.join("status.json")),
+                builds: Some(self.session.join("builds")),
+                control_only: !self.args.web,
+                backend: Some(address),
+            },
+        )?);
+        let line = line.replace(
+            &format!(
+                "http://{}:{}",
+                backend.host_str().ok_or("server host missing")?,
+                backend.port().ok_or("server port missing")?
+            ),
+            &origin,
+        );
+        let url = format!(
+            "{origin}{}{}",
+            backend.path(),
+            backend
+                .fragment()
+                .map(|fragment| format!("#{fragment}"))
+                .unwrap_or_default()
+        );
         self.launch_url = Some(url.clone());
         self.event(json!({"event":if self.args.preview {"preview_listening"} else if self.args.web {"web_listening"} else {"control_listening"}, "url":url, "session":self.session}),
             &format!("{}\nSession: {}", line.trim(), self.session.display()))?;
@@ -198,6 +234,9 @@ impl Supervisor<'_> {
     }
 
     pub(super) fn observe_services(&mut self) -> Result<()> {
+        if let Some(http) = &self.http {
+            http.check()?;
+        }
         for (group, message) in [
             (&mut self.server, "development Web server exited"),
             (

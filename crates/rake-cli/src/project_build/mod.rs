@@ -1,10 +1,13 @@
-//! Native adapters for the legacy project doctor and one-shot build commands.
-//! Desktop/Web dev shares these builders; serving and preview retain owned Python helpers.
+//! Native project builds, Web deployment and development supervision.
+//! Broker and preview requests retain an owned Python compatibility backend during the port.
 
 mod args;
+mod bundle;
 mod dev;
 mod favicon;
+mod offline;
 mod processes;
+mod serve;
 mod web;
 
 use args::Args;
@@ -357,11 +360,17 @@ fn build(args: &Args, processes: &Processes<'_>) -> Result<()> {
     let project = Project::load(args, processes)?;
     let target = if args.web { "web" } else { "desktop" };
     let name = string(&project.package, "name")?;
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| project.root.join("dist").join(name).join(target));
-    let marker = json!({"package":name,"target":target});
+    let output = args.output.clone().unwrap_or_else(|| {
+        project
+            .root
+            .join("dist")
+            .join(name)
+            .join(if args.bundle { "web-bundle" } else { target })
+    });
+    let mut marker = json!({"package":name,"target":target});
+    if args.bundle {
+        marker["command"] = json!("bundle");
+    }
     let inputs = project
         .assets
         .iter()
@@ -390,7 +399,11 @@ fn build(args: &Args, processes: &Processes<'_>) -> Result<()> {
         .prefix(".rake-build-")
         .tempdir_in(parent)?;
     fs::remove_dir(staging.path())?;
-    let staged_artifact = project.build(args, processes, staging.path())?;
+    let staged_artifact = if args.bundle {
+        bundle::distribution(&project, args, processes, staging.path())?
+    } else {
+        project.build(args, processes, staging.path())?
+    };
     processes.check_cancelled()?;
     write_marker(&staging.path().join(".rake-build.json"), &marker)?;
     let relative = staged_artifact.strip_prefix(staging.path())?;
@@ -417,6 +430,9 @@ fn build(args: &Args, processes: &Processes<'_>) -> Result<()> {
         return Err(error.into());
     }
     let _ = fs::remove_dir_all(&backup);
+    if args.bundle {
+        return bundle::report(&output, &artifact, args.json);
+    }
     if args.json {
         println!(
             "{{\"artifact\": {}}}",
@@ -531,4 +547,8 @@ fn ascii_json(text: &str) -> String {
     }
 
     output
+}
+
+pub(crate) fn web_target(arguments: &[String]) -> bool {
+    args::web_target(arguments)
 }

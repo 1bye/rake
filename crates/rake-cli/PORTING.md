@@ -1,6 +1,124 @@
 # Project toolchain port
 
-## Phase 2: Web and preview session supervision
+## Phase 3: Web serving, bundles and offline payloads
+
+Refs #42. Based on `codex/port-phase2-web` at
+`7e333854742b09aa25e80d3de5219b67de715cf2`. The Web bundle adapter now runs in Rust,
+including release/debug selection, explicit deployment overrides, staging/rollback,
+ZIP packaging, deployment/version metadata, immutable offline payloads, checksums
+and nginx guidance. It reuses phase 1's builder, input validation and favicon logic.
+A fixture with only Cargo/wasm-bindgen tool doubles on PATH verifies Web bundles
+without Python. Native distribution dispatch remains with the existing coordinator.
+Attached/abbreviated target options and the final target selection reach the Web
+adapter through the shared option inventory; standalone Web configs retain their
+explicit unsupported-operation diagnostic.
+
+### Serving and staged control boundary
+
+`dev/services.rs` binds the native loopback listener on the requested port. Rust
+owns static assets, MIME types, HEAD/cache checks, directory redirects/listings,
+HTML app-shell fallback, bootstrap injection, immutable numbered build paths,
+Referer-based absolute-import selection and traversal confinement. The bootstrap
+is retained byte-for-byte as `scripts/web-bootstrap.js`, embedded as JavaScript.
+
+The retained Python helper binds a separate ephemeral loopback port and handles
+only requests forwarded for the phase-4 broker/bridge and phase-5 preview. The
+native router checks the public Host/Origin before forwarding; it rewrites them
+to the private backend authority and forwards bounded JSON bodies and the full
+HTTP/WebSocket response stream. An internal `RAKE_PUBLIC_BRIDGE_URL` override
+keeps browser advertisements on the public native origin. Private tokens,
+endpoints, session fields and browser protocols are unchanged. Every request,
+listener, connection and helper remains owned by the existing supervisor. Both
+server layers bound concurrency to 64; shutdown closes retained sockets and joins
+owned workers. The original helper stays embedded until phases 4–6 retire its
+remaining responsibilities; this phase does not claim to remove Python serving
+of preview resources or broker responses.
+
+### Implementation and coverage mapping
+
+| Original | Rust owner / new coverage |
+| --- | --- |
+| `bundle.web_deployment`, `distribution`, `sha256` | `bundle.rs`; CLI `web_bundle_preserves_manifest_archive_offline_payload_and_rollback` checks defaults/overrides, release/debug, ZIP member bytes/modes/timestamps, manifests and rollback |
+| `web_offline.prepare`, service-worker template | `offline.rs`, unchanged embedded `web-service-worker.js`; `offline_builds_pin_assets_and_keep_router_root_separate`, `online_bundles_have_version_checks_without_changing_asset_layout` |
+| Production reserved names and managed namespace rewriting | `generated_names_and_development_metadata_cannot_collide_with_inputs`, `deployment_overrides_rewrite_only_managed_namespaces_and_skip_bindings` |
+| `AppHandler.translate_path` | `serve.rs`; `immutable_builds_survive_publication_and_referer_pins_absolute_imports`, including explicit default ports, foreign Referers, traversal and escaping symlinks |
+| `send_head`, GET/HEAD, app-shell fallback, cache/redirect/listing | `static_serving_keeps_mime_head_cache_redirects_and_html_fallback` |
+| Bounded listener and shutdown | `shutdown_releases_partial_request_readers_and_checks_control_host` |
+| Early HTTP authentication errors with request bodies | `rejected_post_bodies_preserve_the_http_error_instead_of_resetting_the_connection`; differential foreign-Origin rejection |
+
+All original scripts remain. No internal Python coverage was silently removed or
+weakened. Rust deployment tests additionally map the original deployment suite's
+offline identity/layout, online version checks, generated-name collisions and
+namespace behavior; phase-1 config validation tests remain in place.
+
+### Differences and dependencies
+
+- Build IDs remain deterministic 64-character SHA-256 identities. The implementation
+  salt is now `offline.rs` instead of `web_offline.py`; IDs and the corresponding
+  immutable paths change across this implementation version. Differential checks
+  normalize only those IDs and JSON object-key order. Service-worker semantics,
+  cache prefix, asset quoting, version fields and registration text are preserved.
+- ZIP compression is performed by the locked Rust ZIP implementation rather than
+  Python/zlib. Archive bytes/checksums can differ; member contents, relative names,
+  local file timestamps, Unix modes, manifest sizes and SHA-256 checksums are verified.
+- The native static HTTP response identifies its server as `rake`; generated JSON
+  object ordering and OS/library error wording follow the existing Rust differences.
+  Request headers are bounded to 64 KiB. The bridge/preview HTTP/WebSocket protocols
+  stay with their existing helpers until their native port phases.
+- Add direct dependencies on already locked `zip` (same deflate-only feature choice
+  as rake-dist), `percent-encoding` and `mime_guess` for their existing archive/URL/MIME
+  implementations. Add the small `httpdate` crate for HTTP date parsing/formatting
+  and conditional caching, including legacy HTTP date syntax. No package/toolchain
+  installs; Cargo dependency resolution is recorded in Cargo.lock.
+- Unix gate and Python prerequisite docs remain for phase 6. Swift and browser assets
+  remain resources; no preview capture implementation is removed.
+
+### Verification: macOS, Rust 1.98.0 / Python 3.14.4 / Node 26.10.0
+
+Shared `/tmp/rake-port-target`, dev/test debug information disabled, Python 3.14
+first on PATH. Linux/devbox not used.
+
+| Check | Result |
+| --- | --- |
+| Full `cargo test -p rake-app-cli --no-fail-fast` | **305 passed, 2 existing ignored, 0 failed**: 211 unit + 94 integration |
+| CLI all-target Clippy, locked, `-D warnings` | Passed |
+| `cargo fmt --all --check`, changed-file `rake format --check` | Passed |
+| `rake lint` | Passed: 710 Rust files, 14 existing diagnostics, 0 denied |
+| Supervisor / bridge / broker / preview / Web deployment / embedded DevTools suites | **14 / 4 / 9 / 18 / 10 / 1 passed** |
+| Bundle suite | **6 passed, 1 failed**: missing matching wasm-bindgen 0.2.129 |
+| Web loading / Web crash suites | Built their real Wasm fixtures, then both failed the matching-loader prerequisite; no module/browser execution claim |
+| Native preview suite | Passed click/scroll/source/blur/stale-reference assertions on the unchanged real GPUI fixture |
+| Real Rust-supervised notes preview/CDP session | Authenticated preview-state and RFC6455 upgrade/state frame through the native router, live and saved notes hierarchy (**100 nodes**), SIGTERM exit 0 and clean stopped discovery records passed |
+| Bundle differential against Python | **4 cases passed**: online/offline × path/hash routing. All normalized site file contents, nginx bytes and manifest contract fields matched; ZIP member contents, modes, timestamps, file sizes and all recorded SHA-256 checksums independently verified |
+| Web lifecycle differential against Python | Normalized events, status/output and all five initial build files matched, with actual HTTP immutable assets, failed build retention/recovery and SIGTERM. Browser connect advertised the public origin; authenticated poll/reload_result and foreign-Origin 403 rejection passed |
+
+An initial post-shutdown test tried a new TCP connection to an ephemeral address;
+a parallel test could reuse that address. It now verifies closure of an established
+owned partial-request connection, retaining the shutdown assertion. The expanded
+HTTP differential caught a real unread-POST-body reset before the 403 reached the
+client; a new regression and bounded body handling fix it. An initial notes check
+ran before the window drew and reported Hidden; explicitly revealing the notebook
+and waiting for its hierarchy let the unchanged live/saved assertions pass.
+
+Phase-2 CI at `7e33385`: Linux desktop and portable passed. macOS native failed in
+the untouched rake-dist release test
+`provider_key_changes_require_explicit_channel_reenrollment` at `release.rs:1945`;
+no green full-workspace claim or baseline reproduction is made. Windows desktop
+and this phase's CI status are recorded in the final PR bodies.
+
+Free Mac disk stayed above 50 GB; completed Wasm artifacts and inactive incremental
+caches were reclaimed before the floor. Keep both worktrees for review fixes and
+remove the shared target/logs at handoff. The live checkout stayed read-only apart
+from fetch/worktree registration.
+
+### Remaining work
+
+- Phase 4: replace the compatibility backend's runtime broker and dev bridge in Rust.
+- Phase 5: replace preview control/capture transport orchestration; retain sensible Swift/JS/CSS/HTML assets.
+- Phase 6: delete all embedded Python and extraction, remove prerequisite documentation,
+  and resolve the Unix gate/Windows scope. Browser selection still uses webbrowser.
+
+## Phase 2: Web and preview session supervision (historical)
 
 Refs #42. All `rake dev` sessions now use the existing Rust supervisor in
 `src/project_build/dev/`; there is no Web/preview supervisor dispatch to `dev.py`.

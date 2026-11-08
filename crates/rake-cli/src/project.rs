@@ -1,4 +1,4 @@
-//! Bundled build/watch supervisor, sharing the repository's standard-library Web tooling.
+//! Retained embedded compatibility resources for the staged broker and preview ports.
 
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::process::CommandExt;

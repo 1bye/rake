@@ -2,6 +2,7 @@
 """Serve a built example on loopback, with app-shell rewrites for path routing."""
 
 import argparse
+import os
 import io
 import json
 import secrets
@@ -293,7 +294,7 @@ class BoundedServer(ThreadingHTTPServer):
 server = BoundedServer(("127.0.0.1", args.port), partial(AppHandler, directory=str(directory)))
 args.port = server.server_port
 if bridge:
-    bridge.url = f"http://127.0.0.1:{args.port}"
+    bridge.url = os.environ.get("RAKE_PUBLIC_BRIDGE_URL") or f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
     launch_url += f"{'/__rake/preview' if preview else '/'}#__rake_control={bridge.token}"
