@@ -564,10 +564,16 @@ fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_fai
         assert!(args.contains(flag), "{args}");
     }
     assert!(!args.contains("--control-only"));
+    let events = fs::read_to_string(running.control.join("events")).unwrap();
+    let ready: Value = events
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|value| value["event"] == "web_listening")
+        .unwrap();
     assert!(
         fs::read_to_string(running.control.join("node-args"))
             .unwrap()
-            .contains("http://127.0.0.1:9876/#__rake_control=fixture-token")
+            .contains(ready["url"].as_str().unwrap())
     );
     fs::write(fixture.root.join("fail"), "fail").unwrap();
     assert_eq!(running.phase("build_failed")["published"], 1);

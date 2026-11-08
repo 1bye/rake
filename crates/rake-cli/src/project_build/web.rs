@@ -1,4 +1,4 @@
-//! Web build inputs and Wasm generation; deployment and serving remain in Python.
+//! Web build inputs and Wasm generation shared by native builds, bundles and dev sessions.
 
 use super::{Args, Processes, Project, Result, string};
 use serde_json::Value;

@@ -163,10 +163,16 @@ fn main() {
         std::process::exit(project_build::run(&arguments[0], &arguments[1..]));
     }
 
-    if arguments.first().is_some_and(|command| command == "bundle")
+    #[cfg(unix)]
+    let web_bundle = arguments.first().is_some_and(|command| command == "bundle")
+        && project_build::web_target(&arguments[1..]);
+    #[cfg(not(unix))]
+    let web_bundle = arguments.first().is_some_and(|command| command == "bundle")
         && arguments
             .windows(2)
-            .any(|pair| pair[0] == "--target" && pair[1] == "web")
+            .any(|pair| pair[0] == "--target" && pair[1] == "web");
+
+    if web_bundle
         && (arguments.iter().any(|arg| arg == "--config")
             || (!arguments.iter().any(|arg| arg == "--manifest-path")
                 && std::path::Path::new("Bundle.toml").exists()))
@@ -182,11 +188,12 @@ fn main() {
         std::process::exit(1);
     }
 
-    if arguments.first().is_some_and(|command| command == "bundle")
-        && !arguments
-            .windows(2)
-            .any(|pair| pair[0] == "--target" && pair[1] == "web")
-    {
+    #[cfg(unix)]
+    if web_bundle {
+        std::process::exit(project_build::run("bundle", &arguments[1..]));
+    }
+
+    if arguments.first().is_some_and(|command| command == "bundle") && !web_bundle {
         match distribution::run(&arguments[1..]) {
             Ok(true) => return,
             Ok(false) => {}

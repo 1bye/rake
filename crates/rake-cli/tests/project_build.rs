@@ -718,3 +718,70 @@ fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
         "Web document requires an html or head element",
     );
 }
+
+#[test]
+fn web_bundle_preserves_manifest_archive_offline_payload_and_rollback() {
+    use std::io::Read;
+    let fixture = Fixture::new();
+    fixture.metadata(json!({"assets":"assets","name":"Fixture","identifier":"dev.fixture.web","web":{"base_path":"/tools/","offline":true}}),1);
+    let output = fixture.root.join("dist/fixture/web-bundle");
+    let result = success(&fixture.run(&["bundle", "--target=web", "--json"]));
+    assert_eq!(result["profile"], "release");
+    assert_eq!(result["signing"], "not_applicable");
+    assert_eq!(result["artifact"], json!(output.join("site")));
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(output.join("bundle.json")).unwrap()).unwrap();
+    let build = manifest["deployment"]["build"].as_str().unwrap();
+    assert!(
+        output
+            .join(format!("site/rake-builds/{build}/pkg/fixture.js"))
+            .is_file()
+    );
+    assert_eq!(manifest["deployment"]["base_path"], "/tools/");
+    assert!(
+        fs::read_to_string(fixture.root.join("build-args"))
+            .unwrap()
+            .contains("--release")
+    );
+    let mut archive =
+        zip::ZipArchive::new(fs::File::open(output.join("fixture-1.0.0-web.zip")).unwrap())
+            .unwrap();
+    for entry in manifest["files"].as_array().unwrap() {
+        let relative = entry["path"].as_str().unwrap();
+        let source = fs::read(output.join(relative)).unwrap();
+        assert_eq!(entry["bytes"], source.len());
+        let mut content = Vec::new();
+        let mut entry = archive
+            .by_name(relative.strip_prefix("site/").unwrap())
+            .unwrap();
+        entry.read_to_end(&mut content).unwrap();
+        assert_eq!(content, source);
+        assert_eq!(entry.unix_mode().unwrap() & 0o777, 0o644);
+        assert!(entry.last_modified().unwrap().year() >= 2026);
+    }
+    let kept = fs::read(output.join("bundle.json")).unwrap();
+    fs::write(fixture.root.join("fail"), "fail").unwrap();
+    error(
+        &fixture.run(&["bundle", "--target", "web", "--json"]),
+        1,
+        "cargo exited 7",
+    );
+    assert_eq!(fs::read(output.join("bundle.json")).unwrap(), kept);
+    fs::remove_file(fixture.root.join("fail")).unwrap();
+    let result = success(&fixture.run(&[
+        "bundle",
+        "--target",
+        "web",
+        "--debug",
+        "--base-path",
+        "/override/",
+        "--routing",
+        "hash",
+        "--json",
+    ]));
+    assert_eq!(result["profile"], "debug");
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(output.join("bundle.json")).unwrap()).unwrap();
+    assert_eq!(manifest["deployment"]["base_path"], "/override/");
+    assert_eq!(manifest["deployment"]["routing"], "hash");
+}

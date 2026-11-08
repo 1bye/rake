@@ -73,6 +73,7 @@ struct Supervisor<'a> {
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
     server: Option<ProcessGroup>,
+    http: Option<super::serve::Server>,
     embedded: Option<ProcessGroup>,
     helpers: Option<tempfile::TempDir>,
     launch_url: Option<String>,
@@ -105,6 +106,7 @@ impl<'a> Supervisor<'a> {
             app: None,
             cdp: None,
             server: None,
+            http: None,
             embedded: None,
             helpers: None,
             launch_url: None,
@@ -568,6 +570,7 @@ impl<'a> Supervisor<'a> {
     fn finish(&mut self) -> Result<()> {
         drop(self.app.take());
         drop(self.cdp.take());
+        drop(self.http.take());
         drop(self.server.take());
         drop(self.embedded.take());
         self.openers.clear();

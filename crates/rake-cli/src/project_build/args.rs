@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 #[derive(Clone, Default)]
 pub(super) struct Args {
     pub(super) dev: bool,
+    pub(super) bundle: bool,
+    pub(super) base_path: Option<String>,
+    pub(super) routing: Option<String>,
     pub(super) cdp: bool,
     pub(super) preview: bool,
     pub(super) no_open: bool,
@@ -264,7 +267,9 @@ pub(super) fn parse(
                 .into(),
         );
     }
-    if values.contains_key("--base-path") || values.contains_key("--routing") {
+    if (values.contains_key("--base-path") || values.contains_key("--routing"))
+        && !(command == "bundle" && web)
+    {
         return Err("--base-path/--routing require bundle --target web".into());
     }
     if values.contains_key("--sign-identity") || values.contains_key("--entitlements") {
@@ -301,6 +306,9 @@ pub(super) fn parse(
 
     Ok(Some(Args {
         dev: command == "dev",
+        bundle: command == "bundle",
+        base_path: values.remove("--base-path"),
+        routing: values.remove("--routing"),
         cdp: values.contains_key("--cdp"),
         preview: values.contains_key("--preview"),
         no_open: values.contains_key("--no-open"),
@@ -321,7 +329,7 @@ pub(super) fn parse(
         features: values
             .remove("--features")
             .filter(|value| !value.is_empty()),
-        release: profile == Some("--release"),
+        release: profile.map_or(command == "bundle", |profile| profile == "--release"),
         web_dir: values.get("--web-dir").map(PathBuf::from),
         output,
         json: values.contains_key("--json"),
@@ -339,4 +347,47 @@ pub(super) fn report_error(arguments: &[String], error: &str) {
             help.split("\n\n").next().unwrap_or_default()
         );
     }
+}
+
+/// Inspect target selection without parsing twice, consuming values of the shared option inventory.
+pub(super) fn web_target(arguments: &[String]) -> bool {
+    let mut web = false;
+    let mut index = 0;
+    while let Some(argument) = arguments.get(index) {
+        index += 1;
+        if argument == "--" {
+            break;
+        }
+        let (name, attached) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(name, value)| {
+                (name, Some(value))
+            });
+        let exact = OPTIONS.iter().find(|(option, _)| *option == name);
+        let matches: Vec<_> = OPTIONS
+            .iter()
+            .filter(|(option, _)| name.starts_with("--") && option.starts_with(name))
+            .collect();
+        let option = exact.or_else(|| {
+            if matches.len() == 1 {
+                Some(matches[0])
+            } else {
+                None
+            }
+        });
+        let Some(&(option, takes_value)) = option else {
+            continue;
+        };
+        let value = if takes_value && attached.is_none() {
+            let value = arguments.get(index).map(String::as_str);
+            index += 1;
+            value
+        } else {
+            attached
+        };
+        if option == "--target" {
+            web = value == Some("web");
+        }
+    }
+    web
 }
