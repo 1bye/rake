@@ -278,6 +278,19 @@ impl<'a> Supervisor<'a> {
     }
 
     fn prepare(&mut self, instance: &Value, artifact: &Path) -> Result<bool> {
+        if self.live.is_some() && !self.args.restart_without_state {
+            let snapshot = self.query(instance, json!({"type":"snapshot"}))?;
+            let has_entries = snapshot["tabs"].as_array().is_some_and(|tabs| {
+                tabs.iter().any(|tab| {
+                    tab["entries"]
+                        .as_array()
+                        .is_some_and(|entries| !entries.is_empty())
+                })
+            });
+            if !has_entries {
+                return Err("Blaze restart blocked: standalone root state is not checkpointed; use checkpointed routed state, or explicitly opt into losing state with --restart-without-state".into());
+            }
+        }
         let mechanism = if self.args.native_reloader.is_some() {
             "native_code_replacement"
         } else {
@@ -486,7 +499,12 @@ impl<'a> Supervisor<'a> {
 
                 let error = error.to_string();
                 let busy = error.contains("\"Busy\"");
-
+                if !busy && let Some(live) = &mut self.live {
+                    // Await another edit/outcome instead of exhausting request keys
+                    // by retrying a permanent checkpoint failure on every poll.
+                    live.restart = None;
+                    live.published = live.sequence;
+                }
                 self.record(
                     if busy {
                         "reload_waiting"

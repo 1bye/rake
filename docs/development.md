@@ -211,6 +211,24 @@ is an explicit developer override; it requires the patched
 Doctor reports the pinned installation's platform, version, checksum and server
 readiness without installing anything.
 
+For an app outside this workspace, expose Rake's live dependency feature in the
+app manifest and refresh the lockfile before the first live build:
+
+```toml
+[features]
+live = ["rake/live"]
+```
+
+```sh
+cargo metadata --format-version 1 > /dev/null
+rake dev --live --bin your-app
+```
+
+Use your dependency alias in place of `rake` if it is renamed. This pins the
+optional `blaze-live` Git dependency that Blaze requires in `Cargo.lock`.
+Passing only an ad hoc `rake/live` flag did not persist that pin in the tested
+Cargo version. The repository's workspace examples already have it pinned.
+
 Live mode enables the app's existing Rake `live` feature, which automatically
 enables `pathfinder_simd/pf-no-simd` on macOS. It sets the hybrid macro options
 `BLAZE_PROC_MACRO_WASM=0`, `BLAZE_PROC_MACRO_SERVER=0`,
@@ -223,9 +241,20 @@ versioned compiler. The pinned Rust toolchain may download on the first build.
 The supervisor sends ordinary saves directly to the daemon. The app polls on
 its UI thread every 16 ms and redraws after a patch, including occluded windows.
 Layout changes or patch-area exhaustion use the existing checkpointed restart;
-apps must register the state they want restored. Compile errors leave the old
+apps must register the state they want restored. Configure the app with
+`.control(rake::control::ControlConfig::FromEnvironment)` so the supervisor can
+observe outcomes and coordinate a restart. The endpoint is enabled only in the
+development environment. Dirty routed entries without an `on_reload` checkpoint
+block restart; standalone root fields and service data are not automatically serialized. Blaze
+restarts without any routed entries are blocked by default, preserving the old
+process. `--restart-without-state` explicitly allows losing that in-memory state. Compile errors leave the old
 app running. Static initializers may reset the edited static. See
 `.agents/reports/blaze-live-integration.md` for the measured limitations.
+The broader app trial is in `.agents/reports/blaze-live-app-trial.md`: the Fast
+GPU-surface backend currently aborts under the pinned engine, and unregistered
+view fields or service data do not survive routed restarts. Live mode launches
+the compiler executable directly, without Cargo dev's application bundle;
+bundle-relative resources and installation/update metadata can therefore differ.
 Plain `rake dev` remains Cargo-based and needs no Blaze installation. The older
 `--compiler blaze` laboratory option remains available separately.
 

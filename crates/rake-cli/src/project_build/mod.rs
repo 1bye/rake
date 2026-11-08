@@ -267,10 +267,10 @@ impl Project {
             .ok_or("package directory missing")?;
 
         let assets = web::bundle_assets(package, directory, !args.web)?;
-
-        let targets: Vec<_> = package["targets"]
+        let available_targets = package["targets"]
             .as_array()
-            .ok_or("Cargo targets missing")?
+            .ok_or("Cargo targets missing")?;
+        let targets: Vec<_> = available_targets
             .iter()
             .filter(|target| {
                 let kinds = if args.web {
@@ -289,7 +289,32 @@ impl Project {
                     .is_none_or(|name| target["name"] == *name)
             })
             .collect();
+        if targets.is_empty() && !args.web {
+            let binaries: Vec<_> = available_targets
+                .iter()
+                .filter(|target| {
+                    target["kind"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+                })
+                .filter_map(|target| target["name"].as_str())
+                .collect();
+            let name = string(package, "name")?;
 
+            if binaries.is_empty() {
+                return Err(format!(
+                    "package '{name}' has no native binary target; add src/main.rs or [[bin]] to use rake dev (including --live); a cdylib alone is not a native app"
+                )
+                .into());
+            }
+
+            return Err(format!(
+                "package '{name}' has no binary named '{}'; available binaries: {}",
+                args.binary.as_deref().unwrap_or_default(),
+                binaries.join(", ")
+            )
+            .into());
+        }
         if targets.len() != 1 {
             return Err("select one binary with --bin, or a single cdylib for Web".into());
         }

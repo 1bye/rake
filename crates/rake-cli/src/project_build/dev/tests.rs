@@ -180,6 +180,7 @@ fn native_transport_retry_keeps_the_same_request_identity() {
 
 fn replies(value: &Value, _: usize) -> Option<Value> {
     Some(match value["type"].as_str().unwrap() {
+        "snapshot" => json!({"tabs":[{"entries":[{"id":1}]}]}),
         "reload" => json!({"phase":"ready"}),
         "operations" => json!([]),
         "checkpoint" => json!({"generation":7,"draft":"é漢字"}),
@@ -878,5 +879,123 @@ fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
         ),
     ] {
         assert_eq!(env[key], value, "{key}");
+    }
+}
+
+#[test]
+fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
+    for busy in [false, true] {
+        let runtime = Runtime::new(move |value, _| match value["type"].as_str().unwrap() {
+            "diagnostics" => Some(json!({"records":[]})),
+            "snapshot" => Some(json!({"tabs":[{"entries":[{"id":1}]}]})),
+            "reload" => Some(json!({"phase":"idle"})),
+            "operations" if busy => Some(json!([["op-1", "Running"]])),
+            "operations" => Some(json!([])),
+            // A disconnected prepare request exercises the permanent-error path.
+            "prepare_reload" => None,
+            _ => Some(Value::Null),
+        });
+        let root = runtime.directory.path();
+        let artifact = root.join("artifact");
+        fs::write(&artifact, "fixture executable").unwrap();
+        let args = Args {
+            dev: true,
+            json: true,
+            compiler: super::super::Compiler::Blaze,
+            ..Args::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let session = root.join("session");
+        fs::create_dir(&session).unwrap();
+        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        supervisor.app = Some(
+            Processes::new(&cancelled)
+                .start(Command::new("/bin/sleep").arg("300"))
+                .unwrap(),
+        );
+        let pid = supervisor.app.as_ref().unwrap().0.id();
+        let mut instance = runtime.instance.clone();
+        instance["pid"] = json!(pid);
+        write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
+        let live = supervisor.live.as_mut().unwrap();
+        live.identity = Some(blaze::identity(&artifact).unwrap());
+        live.restart = Some("view layout changed".into());
+        live.sequence = 7;
+        live.published = 6;
+
+        assert_eq!(supervisor.publication(2, &artifact).unwrap(), !busy);
+        assert_eq!(
+            supervisor.live.as_ref().unwrap().published,
+            if busy { 6 } else { 7 }
+        );
+        assert_eq!(supervisor.live.as_ref().unwrap().restart.is_some(), busy);
+        assert_eq!(supervisor.app.as_ref().unwrap().0.id(), pid);
+        assert_eq!(
+            supervisor.status["phase"],
+            if busy {
+                "reload_waiting"
+            } else {
+                "reload_blocked"
+            }
+        );
+
+        if !busy {
+            // A later edit's distinct outcome must still be allowed to request restart.
+            let live = supervisor.live.as_mut().unwrap();
+            assert!(live.observe(&json!({"sequence":1,"kind":"live_restart_requested","fields":{"reason":"new edit"}})));
+            assert!(live.restart.is_some());
+            assert!(supervisor.publication(3, &artifact).unwrap());
+            assert!(supervisor.live.as_ref().unwrap().restart.is_none());
+        }
+    }
+}
+
+#[test]
+fn blaze_blocks_uncheckpointed_root_restart_without_changing_cargo_or_explicit_opt_in() {
+    use super::super::Compiler;
+    for (compiler, restart_without_state, blocked) in [
+        (Compiler::Blaze, false, true),
+        (Compiler::Blaze, true, false),
+        (Compiler::Cargo, false, false),
+    ] {
+        let runtime = Runtime::new(|value, index| {
+            if value["type"] == "snapshot" {
+                Some(json!({"tabs":[]}))
+            } else {
+                replies(value, index)
+            }
+        });
+        let root = runtime.directory.path();
+        let args = Args {
+            dev: true,
+            json: true,
+            compiler,
+            restart_without_state,
+            ..Args::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let session = root.join("session");
+        fs::create_dir(&session).unwrap();
+        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let result = supervisor.prepare(&runtime.instance, &root.join("artifact"));
+        if blocked {
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains("standalone root state is not checkpointed"),
+                "{error}"
+            );
+            assert!(error.contains("--restart-without-state"), "{error}");
+            assert!(
+                !runtime
+                    .calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|call| call["message"]["value"]["type"] == "prepare_reload")
+            );
+        } else {
+            assert!(!result.unwrap());
+            assert!(supervisor.checkpoint.exists());
+        }
     }
 }
