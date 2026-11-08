@@ -141,6 +141,17 @@ those suites to preserve the requested 40 GB free-space floor. The live checkout
 is untouched apart from fetch/worktree registration. No merge, main push,
 force-push, rebase, amend, issue comment or label.
 
+### Follow-up: spacing discovered by dispatched CI
+
+Phase-5 manual CI passed gate, portable, Windows desktop, Ubuntu desktop and
+macOS native, but extended reached the spacing checker and failed. Tool
+installation succeeded; this is distinct from the installation problem in #51.
+Apply the 283 reported blank-line insertions owned by phase 4 on its own branch;
+no non-whitespace Rust change. Mac: broker tests **14 passed**, Cargo fmt and
+whitespace/diff checks passed. Carry this commit forward without rewriting any
+pushed history. Older spacing warnings outside phases 4/5 remain a reported
+baseline failure, with phase-5 findings recorded in its PR.
+
 ### Follow-up: accepted connection mode
 
 The phase-5 native WebSocket regression exposed macOS inheriting O_NONBLOCK from

@@ -59,6 +59,7 @@ impl Server {
                         Ok((stream, _)) => {
                             let mut sockets_guard =
                                 sockets.lock().expect("Web connection lock poisoned");
+
                             if stopped.load(Ordering::Acquire) || sockets_guard.len() >= 64 {
                                 continue;
                             }
@@ -109,6 +110,7 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
+
         if let Some(broker) = &self.broker {
             broker.close();
         }
@@ -151,6 +153,7 @@ fn request(stream: &mut TcpStream) -> Result<Request> {
             return Err("Web request headers exceed 64 KiB".into());
         }
     }
+
     // HTTP fields use ISO-8859-1, including invalid/non-ASCII authentication tokens.
     let text: String = bytes.into_iter().map(char::from).collect();
     let mut lines = text.split("\r\n");
@@ -279,6 +282,7 @@ fn handle(
     if request.method == "POST" {
         if let Some(broker) = &config.broker {
             let expected = format!("http://{}", request.header("Host"));
+
             if (!request.header("Origin").is_empty() && request.header("Origin") != expected)
                 || !broker.authenticate(request.header("X-Rake-Token"))
             {
@@ -300,6 +304,7 @@ fn handle(
         if let Some(backend) = config.backend {
             return proxy(stream, request, backend, stopping);
         }
+
         return error(
             &mut stream,
             &request,
@@ -482,25 +487,32 @@ fn control_request(
             .parse::<usize>()
             .ok()
             .filter(|length| *length <= MAX_BYTES - 1024);
+
         if length.is_none() || request.header("Content-Type") != "application/json" {
             return Err(Error::new(413, "invalid or oversized JSON frame"));
         }
+
         let mut bytes = vec![0; length.expect("validated length")];
+
         stream.read_exact(&mut bytes)?;
         consumed = true;
         let body: Value = serde_json::from_slice(&bytes)?;
+
         if !body.is_object() {
             return Err(Error::new(400, "expected JSON object"));
         }
+
         let action = request
             .path
             .strip_prefix("/__rake/")
             .ok_or_else(|| Error::new(404, "unknown development endpoint"))?;
         let result = broker.handle(action, &body)?;
         let encoded = serde_json::to_vec(&result)?;
+
         if encoded.len() > MAX_BYTES {
             return Err(Error::new(413, "development response too large"));
         }
+
         Ok(encoded)
     })();
     match result {
@@ -519,6 +531,7 @@ fn control_request(
                 path: request.path.clone(),
                 headers: Vec::new(),
             };
+
             error(
                 stream,
                 if consumed { &consumed_request } else { request },
@@ -989,6 +1002,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+
         let broker = Arc::new(
             super::super::broker::Broker::new(super::super::broker::Options {
                 url: format!("http://{address}"),
@@ -1002,7 +1016,9 @@ mod tests {
             })
             .unwrap(),
         );
+
         let token = broker.token().to_owned();
+
         let _server = Server::start(
             listener,
             Config {
@@ -1015,12 +1031,15 @@ mod tests {
             },
         )
         .unwrap();
+
         let mut stream = TcpStream::connect(address).unwrap();
+
         stream
             .set_read_timeout(Some(Duration::from_millis(200)))
             .unwrap();
         write!(stream, "POST /__rake/development HTTP/1.1\r\n").unwrap();
         let pending = stream.read(&mut [0]);
+
         assert!(
             pending.is_err_and(|error| matches!(
                 error.kind(),
@@ -1030,6 +1049,7 @@ mod tests {
         );
         write!(stream,"Host: {address}\r\nX-Rake-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{").unwrap();
         let pending = stream.read(&mut [0]);
+
         assert!(
             pending.is_err_and(|error| matches!(
                 error.kind(),
@@ -1042,9 +1062,11 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         let mut response = String::new();
+
         stream.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.0 200"), "{response}");
         let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+
         assert_eq!(body["published"], 0);
         assert_eq!(body["runtimes"], serde_json::json!({}));
     }

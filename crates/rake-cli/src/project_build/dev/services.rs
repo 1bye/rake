@@ -100,6 +100,7 @@ impl Supervisor<'_> {
         }
         let listener = std::net::TcpListener::bind(("127.0.0.1", self.args.port))?;
         let origin = format!("http://{}", listener.local_addr()?);
+
         let broker = std::sync::Arc::new(crate::project_build::broker::Broker::new(
             crate::project_build::broker::Options {
                 url: origin.clone(),
@@ -163,6 +164,7 @@ impl Supervisor<'_> {
             },
             broker.token()
         );
+
         self.http = Some(crate::project_build::serve::Server::start(
             listener,
             crate::project_build::serve::Config {
@@ -175,6 +177,7 @@ impl Supervisor<'_> {
             },
         )?);
         let line = format!("Serving routing at {url}");
+
         self.launch_url = Some(url.clone());
         self.event(json!({"event":if self.args.preview {"preview_listening"} else if self.args.web {"web_listening"} else {"control_listening"}, "url":url, "session":self.session}),
             &format!("{}\nSession: {}", line.trim(), self.session.display()))?;
