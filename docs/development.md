@@ -77,7 +77,11 @@ Routed and standalone root apps opt in with `ControlConfig::FromEnvironment`. Na
 
 `App::root` keeps its `Services` mount signature. `App::root_with` receives a weak `RuntimeContext` with the managed command, task, quit and update-restart boundary.
 
-Standalone roots have no router navigation or checkpointed workspace, so their reload is a fresh root replacement. The supervisor first ensures the old host reaches the managed runtime boundary. If that can't be coordinated, the old app stays usable, and `--restart-without-state` explicitly allows a restart without restored state.
+Standalone roots have no checkpointed workspace: a restart creates a fresh root.
+By default the supervisor restarts and reports that state was not preserved.
+`--require-state` (or `RAKE_REQUIRE_STATE=1`) instead keeps the old process alive
+when state cannot be preserved. An unavailable/busy runtime boundary still waits
+or reports its error; the supervisor does not discard an in-flight operation.
 
 `App::background(...)` is native-only and starts the managed runtime without an
 initial window; browser hosts reject it. Standalone window close uses
@@ -244,11 +248,21 @@ Layout changes or patch-area exhaustion use the existing checkpointed restart;
 apps must register the state they want restored. Configure the app with
 `.control(rake::control::ControlConfig::FromEnvironment)` so the supervisor can
 observe outcomes and coordinate a restart. The endpoint is enabled only in the
-development environment. Dirty routed entries without an `on_reload` checkpoint
-block restart; standalone root fields and service data are not automatically serialized. Blaze
-restarts without any routed entries are blocked by default, preserving the old
-process. `--restart-without-state` explicitly allows losing that in-memory state. Compile errors leave the old
-app running. Static initializers may reset the edited static. See
+development environment. On a layout change, the default is to restart: registered
+entry checkpoints restore, and entries without a checkpoint reset. Standalone
+roots restart fresh. Before restarting, the CLI names the reset entries (route
+name and entry ID); the replacement shows the same non-interactive status for
+six seconds without taking focus. Fully checkpointed restarts show no warning.
+Use `--require-state` or `RAKE_REQUIRE_STATE=1` to block missing-checkpoint
+restarts and keep the old process and state. This replaces
+`--restart-without-state`; omit the new flag and unset `RAKE_REQUIRE_STATE` for
+the permissive default. The pinned Blaze engine latches a type-change restart
+request for the lifetime of the running process. In strict mode, later saves
+are still handled, but reverting the field does not resume body patches: they
+can continue requesting a restart. Preserve or save the old state before
+restarting the session; the supervisor does not bypass Blaze's layout guard.
+Busy work is retried; permanent failures wait for another edit. Compile errors
+leave the old app running. Static initializers may reset the edited static. See
 `.agents/reports/blaze-live-integration.md` for the measured limitations.
 The broader app trial is in `.agents/reports/blaze-live-app-trial.md`: the Fast
 GPU-surface backend currently aborts under the pinned engine, and unregistered
@@ -257,6 +271,43 @@ the compiler executable directly, without Cargo dev's application bundle;
 bundle-relative resources and installation/update metadata can therefore differ.
 Plain `rake dev` remains Cargo-based and needs no Blaze installation. The older
 `--compiler blaze` laboratory option remains available separately.
+
+### Registering restart state
+
+A restart restores **only registered checkpoint data**. Other view fields and
+service state reset, even when restoration reports success. Rake cannot detect
+fields omitted from a registered checkpoint (including counters like Kit's).
+Capture every value you need to retain; recreate handles, tasks and services.
+
+For a routed view, define owned state:
+
+```rust
+#[rake::data]
+struct Draft { edits: u32 }
+
+impl rake::reload::ReloadState for Draft {
+    const SCHEMA: &'static str = "my-app.draft";
+    const VERSION: u32 = 1;
+}
+```
+
+Inside `RouteViews::mount`, decode it and register a provider before returning
+the view (imports omitted; see `examples/routing/src/lib.rs` for the full mount):
+
+```rust
+let entry = page.entry();
+let restored = entry.reload_state::<Draft>()
+    .map_err(|error| MountError(error.to_string()))?;
+let edits = Rc::new(Cell::new(restored.map_or(0, |state| state.edits)));
+let captured = edits.clone();
+entry.on_reload(move || Draft { edits: captured.get() }.checkpoint())
+    .map_err(|error| MountError(error.to_string()))?;
+// Store `edits` in the view; do not create a second independent counter.
+```
+
+Explicit provider/serialization errors still fail capture. Partial restart only
+relaxes a missing provider; it does not bypass quiescence, size limits, schema
+validation or a failed restore.
 
 ### Fork maintenance
 

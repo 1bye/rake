@@ -23,7 +23,7 @@ pub(super) struct Args {
     pub(super) preview: bool,
     pub(super) no_open: bool,
     pub(super) port: u16,
-    pub(super) restart_without_state: bool,
+    pub(super) require_state: bool,
     pub(super) status: bool,
     pub(super) session: Option<PathBuf>,
     pub(super) web: bool,
@@ -51,7 +51,7 @@ const OPTIONS: &[(&str, bool)] = &[
     ("--web-dir", true),
     ("--output", true),
     ("--native-reloader", true),
-    ("--restart-without-state", false),
+    ("--require-state", false),
     ("--port", true),
     ("--instance", true),
     ("--cdp", false),
@@ -399,7 +399,8 @@ pub(super) fn parse(
             .get("--port")
             .and_then(|port| port.trim().parse().ok())
             .unwrap_or(if command == "dev" && web { 8081 } else { 0 }),
-        restart_without_state: values.contains_key("--restart-without-state"),
+        require_state: values.contains_key("--require-state")
+            || std::env::var("RAKE_REQUIRE_STATE").as_deref() == Ok("1"),
         status: positional.is_some(),
         session: values.get("--session").map(PathBuf::from),
         web,

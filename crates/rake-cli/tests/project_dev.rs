@@ -95,6 +95,15 @@ fi
     }
 
     fn start_options(&self, extra: &[&str], no_open: bool) -> Running {
+        self.start_environment(extra, no_open, None)
+    }
+
+    fn start_environment(
+        &self,
+        extra: &[&str],
+        no_open: bool,
+        require_state: Option<&str>,
+    ) -> Running {
         let control = self.directory.path().join("control");
 
         fs::create_dir_all(&control).unwrap();
@@ -116,7 +125,10 @@ fi
             .env("RAKE_CLI", self.tools.join("rake-double"))
             .env("BLAZE_HOME", self.directory.path())
             .args(["dev", "--json"]);
-
+        command.env_remove("RAKE_REQUIRE_STATE");
+        if let Some(value) = require_state {
+            command.env("RAKE_REQUIRE_STATE", value);
+        }
         if no_open {
             command.arg("--no-open");
         }
@@ -276,7 +288,7 @@ fn alive(pid: u32) -> bool {
 #[test]
 fn watches_publishes_keeps_old_app_on_failure_restarts_and_survives_crash() {
     let fixture = Fixture::new();
-    let mut running = fixture.start(&["--restart-without-state", "--features", "theme"]);
+    let mut running = fixture.start(&["--features", "theme"]);
     let first = running.phase("watching");
     let pid = first["runtime_pid"].as_u64().unwrap() as u32;
 
@@ -390,9 +402,9 @@ fn watches_publishes_keeps_old_app_on_failure_restarts_and_survives_crash() {
 }
 
 #[test]
-fn blocks_restart_without_opt_in_and_owns_cdp() {
+fn strict_mode_blocks_restart_without_endpoint_and_owns_cdp() {
     let fixture = Fixture::new();
-    let mut running = fixture.start(&["--cdp"]);
+    let mut running = fixture.start(&["--cdp", "--require-state"]);
     let first = running.phase("watching");
 
     let cdp_pid: u32 = fs::read_to_string(running.control.join("cdp-pid"))
@@ -410,7 +422,7 @@ fn blocks_restart_without_opt_in_and_owns_cdp() {
         running.phase("reload_blocked")["error"]
             .as_str()
             .unwrap()
-            .contains("--restart-without-state")
+            .contains("--require-state")
     );
     assert!(alive(first["runtime_pid"].as_u64().unwrap() as u32));
     running.stop(libc::SIGTERM);
@@ -554,8 +566,8 @@ count=$((count + 1))
 printf '%s' "$count" > "$CONTROL/metadata-count"
 if [ "$count" -gt 2 ]; then /bin/cat "$FIXTURE/../extended-metadata.json"; else /bin/cat "$FIXTURE/metadata.json"; fi
 "#);
-    let mut running = fixture.start(&[]);
-
+    // Keep the blocked-publication assertion under the opt-in strict policy.
+    let mut running = fixture.start(&["--require-state"]);
     assert_eq!(running.phase("watching")["published"], 2);
     assert!(!running.session.join("builds/1").exists());
     fs::write(external.join("Cargo.toml"), "updated dependency").unwrap();
@@ -1113,4 +1125,24 @@ fi
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 3);
     assert!(requests[0].ends_with("direct source\\n\n"));
+}
+
+#[test]
+fn require_state_environment_blocks_then_accepts_a_later_edit() {
+    let fixture = Fixture::new();
+    let mut running = fixture.start_environment(&[], true, Some("1"));
+    let pid = running.phase("watching")["runtime_pid"].as_u64().unwrap() as u32;
+    fs::write(fixture.root.join("src/main.rs"), "second").unwrap();
+    let first = running.phase("reload_blocked");
+    assert!(first["error"].as_str().unwrap().contains("--require-state"));
+    assert!(alive(pid));
+    fs::write(fixture.root.join("src/main.rs"), "third").unwrap();
+    let next = wait(|| {
+        let status = running.status();
+        (status["phase"] == "reload_blocked"
+            && status["build"].as_u64()? > first["build"].as_u64()?)
+        .then_some(status)
+    });
+    assert_eq!(next["runtime_pid"], pid);
+    running.stop(libc::SIGTERM);
 }

@@ -118,3 +118,66 @@ The affected CLI suites pass: **229 unit tests (2 ignored), 16 project-build tes
 No engine/fork intrinsic patch was necessary: no unsupported intrinsic was reached with the requested published bundle and existing `pf-no-simd`. The fork remained unchanged, so fork commit is **N/A** for every finding. All eight protected binary hashes match the baseline (the old pinned installation is preserved separately). The original checkout HEAD and recorded dirty status also match. Fork HEAD remains `6625a86d591c106f92eba1dd62de8dd972c22baf`, branch `rake-patches`, clean. The release, toolchain and protected original binaries were not modified; nothing was pushed or posted.
 
 **Verdict:** suitable for a narrowly documented experimental opt-in with these local safety/diagnostic fixes, not a claim that every Rake app supports state-preserving field edits. Docs must retain Apple Silicon/pinned-bundle restrictions, required bin/control endpoint, explicit checkpoint registration (including service data), root restart blocking/override, external app live-feature/lock prerequisite, unbundled resource/update differences and the unsupported Fast-backend example. Notes and the dependency fixture demonstrate use beyond View. GPU-surface and Inspector remain explicit exclusions. The historical router remount is not reproduced by this run, but its original cause remains unknown. Latencies are qualified by uncontrolled window placement and host load.
+
+
+## Default restart policy follow-up (2026-11-08)
+
+Branch `codex/blaze-restart-default` starts at `815390af`. This section supersedes
+that trial's root-blocking/`--restart-without-state` policy. With the unchanged
+published `v0.20261030.1-rake.1` bundle, missing checkpoints now permit restart by
+default. Available entry checkpoints restore; missing entries reset and are named
+in one CLI line and the same six-second, non-interactive in-app status. Fully
+checkpointed restarts have no state-loss warning. `--require-state` or
+`RAKE_REQUIRE_STATE=1` opts into the previous blocking policy. Busy-only retries,
+permanent failure consumption and stale-Applied handling remain in place. Strict
+state checks now happen before an unnecessary daemon relink, with the probe's
+reload boundary aborted so the old app resumes.
+
+One real field-change trial per case, save → replacement PID available through
+the control endpoint (blocking latency for strict mode; these are not medians or
+save-to-frame timings):
+
+| App / mode | Time | PID | Result |
+|---|---:|---|---|
+| Files / default | 4.764 s | 91141 → 91198 | Unsaved 17-byte document resets; exact requested CLI and UI notice names `Toolkit`. |
+| Desktop / default | 3.568 s | 97308 → 1112 | Dirty Home resets from 1 to 0; CLI and UI name `Home (entry-2)`; route checkpoint restores. |
+| Notes / default | 4.655 s | 6523 → 6604 | Unsaved note title/body restored from checkpoint, disk library absent before restart; no warning. |
+| Files / `--require-state` | 1.418 s to block | 74171 → 74171 | Same root-block diagnostic, 17-byte unsaved document retained; no relink or restart. |
+
+Screenshots and inspection trees verify both notices and their automatic removal
+without input. A UI unit test verifies rendering, dismissal and retained keyboard
+focus. A two-entry runtime test restores registered count 42 while resetting the
+unregistered entry, preserving entry identities and leaving the old app untouched.
+Explicit provider/serialization errors continue to fail capture.
+
+**Strict-mode engine limit:** the subsequent save was received and compiled, and
+the permanent-failure status did not wedge the supervisor. However, reverting the
+field and changing text still produced `Restart`, not `Applied`, within a 60 s
+observation. Read-only inspection of `crates/blaze-engine/src/live.rs:55–59` and
+`:110–123` shows `TYPES` latches the type-change timestamp; every running process
+older than that timestamp continues receiving Restart. No clearing path or safe
+rollback request was found. The second trial blocked before any daemon relink and
+reproduced this, ruling out relinking as the sole cause. Later live-patch recovery
+on that same PID is therefore **not confirmed** with the published bundle. The
+engine/layout guard was not changed or bypassed.
+
+Only registered checkpoint data restores. Kit-style fields omitted from the
+checkpoint can silently reset even when restoration succeeds; automatic capture
+was not added. [Development docs](../../docs/development.md#registering-restart-state)
+show how to register owned state and describe strict mode's engine limitation.
+
+Evidence, fixture sources, CLI JSONL, screenshots, test logs and integrity hashes:
+[blaze-restart-policy-evidence](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-restart-policy-evidence/).
+Temporary example edits were restored. The original checkout's HEAD/dirty status,
+fork HEAD/branch/status and all eight protected binary hashes match the baseline.
+Nothing was pushed or posted; the engine, fork and toolchain were unchanged.
+
+Final regression: `cargo test --workspace --locked` passed **940 tests**
+(4 ignored, 144 suites including doctests), including **231 CLI unit
+tests**, **16 project-build** and **16 project-dev** integration tests. The explicit
+live/view-test-support/devtools runtime run passed **9 tests**;
+`scripts/test-supervisor.py` passed **14 tests**. Rake format and lint completed;
+CLI/protocol have no diagnostics, core reports only 14 existing, non-denied
+warnings in unchanged tests. An earlier workspace attempt hit the existing CDP
+concurrent-client WebSocket-close race; its isolated recheck and subsequent full
+workspace runs passed, with no CDP change. The final full run exited zero.

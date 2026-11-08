@@ -1,7 +1,7 @@
 usage: rake [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
               [--package PACKAGE] [--bin BIN] [--features FEATURES]
               [--release | --debug] [--web-dir WEB_DIR] [--output OUTPUT]
-              [--native-reloader NATIVE_RELOADER] [--restart-without-state]
+              [--native-reloader NATIVE_RELOADER] [--require-state]
               [--port PORT] [--instance INSTANCE] [--cdp] [--preview]
               [--elements] [--no-open] [--json] [--session SESSION]
               [--base-path BASE_PATH] [--routing {path,hash}]
@@ -28,9 +28,9 @@ options:
   --native-reloader NATIVE_RELOADER
                         External native backend; owns ABI/code retirement and
                         exits zero only after successful replacement
-  --restart-without-state
-                        Explicitly allow restarting apps without a control
-                        endpoint
+  --require-state
+                        Block native restarts that cannot preserve registered state
+                        (also RAKE_REQUIRE_STATE=1)
   --port PORT
   --instance INSTANCE   Initial inspector runtime UUID or application ID
   --cdp                 Expose opted-in runtimes to stock Chrome DevTools

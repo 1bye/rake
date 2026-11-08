@@ -99,6 +99,7 @@ struct Supervisor<'a> {
     session: PathBuf,
     control: PathBuf,
     checkpoint: PathBuf,
+    restart_notice: Option<String>,
     status: Value,
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
@@ -137,6 +138,7 @@ impl<'a> Supervisor<'a> {
             args,
             project,
             checkpoint: session.join("checkpoint.json"),
+            restart_notice: None,
             session,
             control,
             status,
@@ -233,7 +235,13 @@ impl<'a> Supervisor<'a> {
         if self.checkpoint.exists() {
             command.env("RAKE_RELOAD_CHECKPOINT", &self.checkpoint);
         }
-
+        command.env_remove("RAKE_LIVE_RESTART_NOTICE");
+        if let Some(notice) = self.restart_notice.take() {
+            command.env("RAKE_LIVE_RESTART_NOTICE", &notice);
+            self.status["restart_notice"] = json!(notice);
+        } else {
+            self.status["restart_notice"] = Value::Null;
+        }
         let mut app = Processes::new(self.cancelled).start(&mut command)?;
         let pid = app.0.id();
 
@@ -278,7 +286,12 @@ impl<'a> Supervisor<'a> {
     }
 
     fn prepare(&mut self, instance: &Value, artifact: &Path) -> Result<bool> {
-        if self.live.is_some() && !self.args.restart_without_state {
+        self.prepare_restart(instance, artifact, false)
+    }
+
+    fn prepare_restart(&mut self, instance: &Value, artifact: &Path, probe: bool) -> Result<bool> {
+        self.restart_notice = None;
+        if self.live.is_some() && self.args.require_state {
             let snapshot = self.query(instance, json!({"type":"snapshot"}))?;
             let has_entries = snapshot["tabs"].as_array().is_some_and(|tabs| {
                 tabs.iter().any(|tab| {
@@ -288,7 +301,7 @@ impl<'a> Supervisor<'a> {
                 })
             });
             if !has_entries {
-                return Err("Blaze restart blocked: standalone root state is not checkpointed; use checkpointed routed state, or explicitly opt into losing state with --restart-without-state".into());
+                return Err("Blaze restart blocked: standalone root state is not checkpointed; use checkpointed routed state, or omit --require-state to allow state loss".into());
             }
         }
         let mechanism = if self.args.native_reloader.is_some() {
@@ -322,11 +335,36 @@ impl<'a> Supervisor<'a> {
 
             let checkpoint = self.query(
                 instance,
-                json!({"type":"checkpoint", "application_id":instance["application_id"]}),
+                json!({"type":if self.args.require_state || self.args.native_reloader.is_some() {"checkpoint"} else {"partial_checkpoint"}, "application_id":instance["application_id"]}),
             )?;
-
+            if probe {
+                return Ok(false);
+            }
             write_marker(&self.checkpoint, &checkpoint)?;
-
+            if self.args.native_reloader.is_none() {
+                let entries: Vec<_> = checkpoint["tabs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|tab| tab["entries"].as_array().into_iter().flatten())
+                    .collect();
+                let reset: Vec<_> = entries
+                    .iter()
+                    .filter(|entry| entry["state"].is_null())
+                    .map(|entry| {
+                        let route = entry["destination"]["route"].as_str().unwrap_or("entry");
+                        let mut chars = route.chars();
+                        let name = chars
+                            .next()
+                            .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                            .unwrap_or_default();
+                        format!("{name} (entry-{})", entry["id"])
+                    })
+                    .collect();
+                if entries.is_empty() || !reset.is_empty() {
+                    self.restart_notice = Some(self.state_loss_notice(&reset));
+                }
+            }
             if let Some(reloader) = &self.args.native_reloader {
                 self.record("replacing_native_code", json!({}))?;
                 let mut command = Command::new(reloader);
@@ -373,10 +411,9 @@ impl<'a> Supervisor<'a> {
 
             Ok(false)
         })();
-
-        if result.is_err() {
-            // An interrupted preparation still needs its matching abort to release quiescence.
-            let _ = exchange(
+        if result.is_err() || probe {
+            // A strict preflight must also resume the old app before compilation.
+            let aborted = exchange(
                 instance,
                 "command",
                 json!({"type":"finish_reload", "id":boundary,"applied":false}),
@@ -384,6 +421,9 @@ impl<'a> Supervisor<'a> {
                 Some(&format!("{boundary}/abort")),
                 &AtomicBool::new(false),
             );
+            if result.is_ok() {
+                aborted?;
+            }
         }
 
         result
@@ -421,8 +461,16 @@ impl<'a> Supervisor<'a> {
                         return self.record("watching", json!({"published":number,"error":error,"mechanism":"blaze_live_patch","outcome":outcome,"executable_uuid":identity}));
                     }
                     blaze::Decision::Rebuild => {
-                        live.needs_build = true;
                         let reason = live.restart.clone();
+                        if self.args.require_state {
+                            let instance = self.instance().ok_or(
+                                "strict restart requires the app's development control endpoint",
+                            )?;
+                            // Reject missing state before spending time relinking. The
+                            // running process stays alive to receive later outcomes.
+                            self.prepare_restart(&instance, artifact, true)?;
+                        }
+                        self.live.as_mut().ok_or("live state missing")?.needs_build = true;
                         return self.record("rebuild_required", json!({"reason":reason}));
                     }
                     blaze::Decision::Restart => {
@@ -459,10 +507,17 @@ impl<'a> Supervisor<'a> {
                         return self.record("watching", json!({"published":number, "error":null}));
                     }
                 }
-            } else if !self.args.restart_without_state {
-                return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or explicitly use --restart-without-state".into());
+            } else if self.args.require_state || self.args.native_reloader.is_some() {
+                return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or omit --require-state to allow state loss".into());
             } else {
-                self.record("restarting_without_state", json!({}))?;
+                remove_file(&self.checkpoint)?;
+                self.restart_notice = Some(self.state_loss_notice(&[]));
+            }
+            if let Some(notice) = &self.restart_notice {
+                self.event(
+                    json!({"event":"restarted", "message":notice, "state_preserved":false}),
+                    notice,
+                )?;
             }
 
             let old_pid = self.app.as_ref().ok_or("app missing")?.0.id();
@@ -487,6 +542,32 @@ impl<'a> Supervisor<'a> {
         self.launch(artifact)?;
 
         self.record("watching", json!({"published":number, "error":null}))
+    }
+
+    fn state_loss_notice(&self, reset: &[String]) -> String {
+        let reason = self.live.as_ref().and_then(|live| live.restart.as_deref());
+        let change = reason
+            .and_then(|reason| reason.split("definition of `").nth(1))
+            .and_then(|item| item.split('`').next())
+            .map(|item| {
+                format!(
+                    "field change in {}",
+                    item.strip_prefix("struct ").unwrap_or(item)
+                )
+            })
+            .unwrap_or_else(|| "source change".into());
+        let state = if reset.is_empty() {
+            "app state was not preserved (no checkpoint registered)".into()
+        } else {
+            format!(
+                "app state was not preserved for {}; registered checkpoints restored",
+                reset.join(", ")
+            )
+        };
+        format!("restarted {}: {change}; {state}", self.project.target)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn publication(&mut self, number: u64, artifact: &Path) -> Result<bool> {

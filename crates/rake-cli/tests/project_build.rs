@@ -485,7 +485,7 @@ fn parser_preserves_errors_flags_and_doctor_validation_order() {
         "--target=web",
         "--manifest-path=Cargo.toml",
         "--no-open",
-        "--restart-without-state",
+        "--require-state",
         "--instance=x",
         "--session=x",
         "--debug",

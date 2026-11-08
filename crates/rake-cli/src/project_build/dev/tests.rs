@@ -128,7 +128,12 @@ impl Runtime {
                         };
 
                         if let Some(response) = reply(&request["message"]["value"], index) {
-                            let _ = writeln!(connection, "{}", json!({"Ok":{"value":response}}));
+                            let reply = if let Some(error) = response.get("$error") {
+                                json!({"Err":error})
+                            } else {
+                                json!({"Ok":{"value":response}})
+                            };
+                            let _ = writeln!(connection, "{}", reply);
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -183,7 +188,7 @@ fn replies(value: &Value, _: usize) -> Option<Value> {
         "snapshot" => json!({"tabs":[{"entries":[{"id":1}]}]}),
         "reload" => json!({"phase":"ready"}),
         "operations" => json!([]),
-        "checkpoint" => json!({"generation":7,"draft":"é漢字"}),
+        "checkpoint" | "partial_checkpoint" => json!({"generation":7,"draft":"é漢字"}),
         _ => Value::Null,
     })
 }
@@ -951,11 +956,11 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
 }
 
 #[test]
-fn blaze_blocks_uncheckpointed_root_restart_without_changing_cargo_or_explicit_opt_in() {
+fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
     use super::super::Compiler;
-    for (compiler, restart_without_state, blocked) in [
-        (Compiler::Blaze, false, true),
-        (Compiler::Blaze, true, false),
+    for (compiler, require_state, blocked) in [
+        (Compiler::Blaze, false, false),
+        (Compiler::Blaze, true, true),
         (Compiler::Cargo, false, false),
     ] {
         let runtime = Runtime::new(|value, index| {
@@ -970,7 +975,7 @@ fn blaze_blocks_uncheckpointed_root_restart_without_changing_cargo_or_explicit_o
             dev: true,
             json: true,
             compiler,
-            restart_without_state,
+            require_state,
             ..Args::default()
         };
         let cancelled = AtomicBool::new(false);
@@ -984,7 +989,7 @@ fn blaze_blocks_uncheckpointed_root_restart_without_changing_cargo_or_explicit_o
                 error.contains("standalone root state is not checkpointed"),
                 "{error}"
             );
-            assert!(error.contains("--restart-without-state"), "{error}");
+            assert!(error.contains("--require-state"), "{error}");
             assert!(
                 !runtime
                     .calls
@@ -997,5 +1002,151 @@ fn blaze_blocks_uncheckpointed_root_restart_without_changing_cargo_or_explicit_o
             assert!(!result.unwrap());
             assert!(supervisor.checkpoint.exists());
         }
+    }
+}
+
+#[test]
+fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
+    for case in ["root", "partial", "full"] {
+        let checkpoint = if case == "root" {
+            json!({"generation":1,"tabs":[]})
+        } else {
+            json!({"generation":1,"tabs":[{"entries":[
+                {"id":2,"destination":{"route":"home"},"state":if case=="partial" {Value::Null} else {json!({"schema":"home","data":{"count":7}})}},
+                {"id":4,"destination":{"route":"other"},"state":{"schema":"other","data":{"count":42}}}
+            ]}]})
+        };
+        let captured = checkpoint.clone();
+        let runtime = Runtime::new(move |value, index| {
+            if value["type"] == "partial_checkpoint" {
+                Some(captured.clone())
+            } else {
+                replies(value, index)
+            }
+        });
+        let root = runtime.directory.path();
+        let artifact = root.join("artifact");
+        fs::write(&artifact, "#!/bin/sh\nprintf '%s' \"$RAKE_LIVE_RESTART_NOTICE\" > notice.txt\nexec /bin/sleep 300\n").unwrap();
+        fs::set_permissions(&artifact, fs::Permissions::from_mode(0o755)).unwrap();
+        let args = Args {
+            dev: true,
+            json: true,
+            compiler: Compiler::Blaze,
+            ..Args::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let session = root.join("session");
+        fs::create_dir(&session).unwrap();
+        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        supervisor.app = Some(
+            Processes::new(&cancelled)
+                .start(Command::new("/bin/sleep").arg("300"))
+                .unwrap(),
+        );
+        let old_pid = supervisor.app.as_ref().unwrap().0.id();
+        let mut instance = runtime.instance.clone();
+        instance["pid"] = json!(old_pid);
+        write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
+        supervisor.live.as_mut().unwrap().restart = Some(
+            "the edit changes the definition of `struct Toolkit`, which has old values".into(),
+        );
+        supervisor.publish(2, &artifact).unwrap();
+        let pid = supervisor.app.as_ref().unwrap().0.id();
+        assert_ne!(pid, old_pid);
+        assert_eq!(read_json(&supervisor.checkpoint).unwrap(), checkpoint);
+        let message: String = if case == "full" {
+            "".into()
+        } else if case == "root" {
+            "restarted fixture: field change in Toolkit; app state was not preserved (no checkpoint registered)".into()
+        } else {
+            "restarted fixture: field change in Toolkit; app state was not preserved for Home (entry-2); registered checkpoints restored".into()
+        };
+        if case == "full" {
+            assert!(supervisor.status["restart_notice"].is_null());
+        } else {
+            assert_eq!(supervisor.status["restart_notice"], message);
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !root.join("notice.txt").exists() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            fs::read_to_string(root.join("notice.txt")).unwrap(),
+            message
+        );
+        supervisor.finish().unwrap();
+    }
+}
+
+#[test]
+fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
+    for case in ["root", "missing", "full"] {
+        let runtime = Runtime::new(move |value, index| {
+            if value["type"] == "snapshot" && case == "root" {
+                Some(json!({"tabs":[]}))
+            } else if value["type"] == "checkpoint" && case == "missing" {
+                Some(json!({"$error":{"Reload":{"MissingState":2}}}))
+            } else {
+                replies(value, index)
+            }
+        });
+        let root = runtime.directory.path();
+        let artifact = root.join("artifact");
+        fs::write(&artifact, "old executable").unwrap();
+        let args = Args {
+            dev: true,
+            json: true,
+            compiler: Compiler::Blaze,
+            require_state: true,
+            ..Args::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let session = root.join("session");
+        fs::create_dir(&session).unwrap();
+        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        supervisor.app = Some(
+            Processes::new(&cancelled)
+                .start(Command::new("/bin/sleep").arg("300"))
+                .unwrap(),
+        );
+        let pid = supervisor.app.as_ref().unwrap().0.id();
+        let mut instance = runtime.instance.clone();
+        instance["pid"] = json!(pid);
+        write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
+        let live = supervisor.live.as_mut().unwrap();
+        live.identity = Some(blaze::identity(&artifact).unwrap());
+        live.kind = blaze::BuildKind::Edit;
+        live.restart = Some("field change".into());
+        assert!(supervisor.publication(2, &artifact).unwrap());
+        assert_eq!(supervisor.app.as_ref().unwrap().0.id(), pid);
+        assert_eq!(
+            supervisor.live.as_ref().unwrap().needs_build,
+            case == "full"
+        );
+        assert!(
+            !supervisor.checkpoint.exists(),
+            "a probe must not replace the recovery checkpoint"
+        );
+        if case == "full" {
+            assert_eq!(supervisor.status["phase"], "rebuild_required");
+        } else {
+            assert_eq!(supervisor.status["phase"], "reload_blocked");
+            assert!(supervisor.live.as_ref().unwrap().restart.is_none());
+        }
+        if case == "missing" {
+            assert_eq!(
+                supervisor.status["error"],
+                "{\"Reload\":{\"MissingState\":2}}"
+            );
+        }
+        let calls = runtime.calls.lock().unwrap();
+        let aborted = calls.iter().any(|call| {
+            call["message"]["value"]["type"] == "finish_reload"
+                && call["message"]["value"]["applied"] == false
+        });
+        assert_eq!(aborted, case != "root");
+        drop(calls);
+        supervisor.finish().unwrap();
     }
 }

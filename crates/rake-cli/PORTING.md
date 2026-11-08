@@ -760,7 +760,7 @@ target and verification scratch/logs at handoff.
 ## Phase 2: native desktop supervisor slice (historical)
 
 Refs #42. Desktop `rake dev` without `--preview` now runs in Rust, including
-`--cdp`, `--native-reloader`, `--restart-without-state`, and
+`--cdp`, `--native-reloader`, `--require-state`, and
 `rake dev status --session PATH`. This is a complete desktop slice, rather than
 claiming the whole phase-2 supervisor migration is finished.
 

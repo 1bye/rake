@@ -324,6 +324,17 @@ pub(crate) fn install(collector: Collector, cx: &mut App, reload_owner: Option<R
         return;
     }
 
+    if let Ok(message) = std::env::var("RAKE_LIVE_RESTART_NOTICE") {
+        show_restart_notice(message.clone(), cx);
+        collector.record(
+            "warn",
+            TARGET,
+            "live_restart_notice",
+            Vec::new(),
+            BTreeMap::from([("message".into(), Value::from(message))]),
+        );
+    }
+
     let boundary = boundary_from_environment();
     if boundary == Boundary::Full && reload_owner.is_none() {
         record_start_declined(
@@ -381,16 +392,71 @@ fn poll_app(cx: &mut App) {
         cx.global::<LiveDriver>().record(event);
 
         if applied {
-            cx.refresh_windows();
-
-            #[cfg(target_os = "macos")]
-            for handle in cx.windows() {
-                let _ = handle.update(cx, |_, window, cx| {
-                    crate::application::request_frame(window, cx);
-                });
-            }
+            refresh_windows(cx);
         }
     }
+}
+
+#[cfg(all(feature = "live", not(target_family = "wasm")))]
+fn refresh_windows(cx: &mut App) {
+    cx.refresh_windows();
+    #[cfg(target_os = "macos")]
+    for handle in cx.windows() {
+        let _ = handle.update(cx, |_, window, cx| {
+            crate::application::request_frame(window, cx);
+        });
+    }
+}
+
+#[cfg(all(feature = "live", not(target_family = "wasm")))]
+struct RestartNotice {
+    message: Option<String>,
+    _dismiss: Task<()>,
+}
+
+#[cfg(all(feature = "live", not(target_family = "wasm")))]
+impl Global for RestartNotice {}
+
+#[cfg(all(feature = "live", not(target_family = "wasm")))]
+fn show_restart_notice(message: String, cx: &mut App) {
+    let dismiss = cx.spawn(async move |cx| {
+        cx.background_executor().timer(Duration::from_secs(6)).await;
+        cx.update(|cx| {
+            cx.global_mut::<RestartNotice>().message = None;
+            refresh_windows(cx);
+        });
+    });
+    cx.set_global(RestartNotice {
+        message: Some(message),
+        _dismiss: dismiss,
+    });
+    refresh_windows(cx);
+}
+
+#[cfg(all(feature = "live", not(target_family = "wasm")))]
+pub(crate) fn status_notice(cx: &App) -> Option<gpui::AnyElement> {
+    use gpui::{IntoElement as _, ParentElement as _, Styled as _};
+    let message = cx.try_global::<RestartNotice>()?.message.clone()?;
+    let colors = crate::theme::try_current::<crate::theme::Semantic>()
+        .map(|theme| *theme)
+        .unwrap_or_else(crate::theme::Semantic::dark);
+    Some(
+        gpui::div()
+            .absolute()
+            .bottom_2()
+            .left_2()
+            .right_2()
+            .p_3()
+            .border_1()
+            .rounded_md()
+            .bg(colors.surface)
+            .text_color(colors.surface_foreground)
+            .border_color(colors.border)
+            .child(crate::view! {
+                <p id="rake-live-status" role={gpui::Role::Status}>{message}</p>
+            })
+            .into_any_element(),
+    )
 }
 
 #[cfg(test)]
@@ -416,6 +482,52 @@ mod tests {
             self.polls += 1;
             self.outcomes.pop_front()
         }
+    }
+
+    #[cfg(all(
+        feature = "live",
+        feature = "view-test-support",
+        not(target_family = "wasm")
+    ))]
+    #[test]
+    fn restart_status_dismisses_itself_without_changing_keyboard_focus() {
+        use gpui::{InteractiveElement as _, ParentElement as _};
+        struct NoticeView {
+            focus: gpui::FocusHandle,
+        }
+        impl gpui::Render for NoticeView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+                    .track_focus(&self.focus)
+                    .children(status_notice(cx))
+            }
+        }
+        let mut app = gpui::TestAppContext::single();
+        let (_, context) = app.add_window_view(|window, cx| {
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            NoticeView { focus }
+        });
+        let focus = context.update(|window, cx| {
+            let focus = window.focused(cx).expect("test focus");
+            show_restart_notice("restarted fixture: state was not preserved".into(), cx);
+            assert!(focus.is_focused(window));
+            assert!(status_notice(cx).is_some());
+            window.draw(cx).clear(cx);
+            assert!(focus.is_focused(window));
+            focus
+        });
+        context.run_until_parked();
+        context.executor().advance_clock(Duration::from_secs(6));
+        context.run_until_parked();
+        context.update(|window, cx| {
+            assert!(status_notice(cx).is_none());
+            assert!(focus.is_focused(window));
+        });
     }
 
     #[test]

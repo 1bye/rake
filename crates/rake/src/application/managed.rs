@@ -297,6 +297,17 @@ impl Render for ManagedRoot {
                 .into_any_element();
         }
 
+        if let Some(notice) = crate::reload::host::status_notice(cx) {
+            return div()
+                .size_full()
+                .relative()
+                .child(crate::inspection::inspect(self.content.clone()).semantic_id("rake.root"))
+                .child(notice)
+                .inspect("rake.live.host")
+                .root(inspection, snapshot.revision, crate::router::WindowId(1))
+                .into_any_element();
+        }
+
         crate::inspection::inspect(self.content.clone())
             .semantic_id("rake.root")
             .root(inspection, snapshot.revision, crate::router::WindowId(1))

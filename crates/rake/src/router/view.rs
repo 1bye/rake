@@ -1233,6 +1233,8 @@ impl<R: Route> Render for Workspace<R> {
                     .child(content)
                     .inspect("rake.content"),
             )
+            .relative()
+            .children(crate::reload::host::status_notice(cx))
             .inspect("rake.workspace")
             .root(
                 crate::__rake_inspection!(
