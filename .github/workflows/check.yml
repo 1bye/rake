@@ -402,8 +402,7 @@ jobs:
       - run: python3 scripts/check-spacing.py
 
   extended:
-    # Temporary: validate the full job for #51 before restoring the PR exclusion.
-    if: github.event_name != 'pull_request' || github.head_ref == 'codex/spacing-51'
+    if: github.event_name != 'pull_request'
     needs: gate
     runs-on: macos-latest
     steps:
