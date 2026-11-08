@@ -46,6 +46,16 @@ pub(super) fn mount(
     cx: &mut gpui::App,
 ) -> Result<AnyView, crate::router::MountError> {
     let runtime = prepare(&services, &config, window, cx);
+
+    #[cfg(all(feature = "live", not(target_family = "wasm")))]
+    crate::reload::live::install(
+        services.diagnostics(),
+        cx,
+        Some(crate::reload::live::ReloadOwner::from_router(
+            runtime.router.clone(),
+        )),
+    );
+
     let context = runtime.context();
     let content = content(context, window, cx)?;
 

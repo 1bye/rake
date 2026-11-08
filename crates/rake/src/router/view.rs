@@ -646,6 +646,15 @@ impl<R: Route> Workspace<R> {
             cx,
         );
 
+        #[cfg(all(feature = "live", not(target_family = "wasm")))]
+        crate::reload::live::install(
+            layout_services.diagnostics(),
+            cx,
+            Some(crate::reload::live::ReloadOwner::from_router(
+                router.clone(),
+            )),
+        );
+
         #[cfg(not(target_family = "wasm"))]
         let native = Rc::new(NativeWindows {
             app: cx.to_async(),
@@ -1339,6 +1348,15 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                                 });
                             }
                         };
+
+                        #[cfg(feature = "live")]
+                        crate::reload::live::install(
+                            services.diagnostics(),
+                            cx,
+                            Some(crate::reload::live::ReloadOwner::from_router(
+                                router.clone(),
+                            )),
+                        );
 
                         let view = cx.new(|_| Workspace {
                             chrome,

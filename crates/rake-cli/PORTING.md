@@ -998,9 +998,9 @@ No packages/toolchains installed. Devbox free disk remained above 36 GB.
 ## Optional Blaze native supervisor
 
 `rake dev --compiler blaze` is implemented in the existing Rust desktop owner.
-Cargo remains the default. Web and preview dispatch and their embedded Python
-supervisor are unchanged; Blaze requests in either mode are rejected by the
-Rust argument parser before metadata or tool execution. No tests need Blaze.
+Cargo remains the default. Main's Rust Web and preview supervision is preserved;
+Blaze requests in either mode are rejected by the Rust argument parser before
+metadata or tool execution. CI tests require no Blaze installation.
 The optional runtime is enabled only in explicit Blaze development builds.
 
 | Earlier Python Blaze behavior | Rust owner |
@@ -1056,11 +1056,17 @@ recording interfaces. The socket deadline now includes sending and receiving,
 and cancellation is cooperative throughout. These changes do not alter engine
 code, sandbox policies or the fixed macro server selection.
 
-The four rebased live-runtime tests, fake daemon integration and native
-supervisor tests pass. Strict CLI Clippy passes. Full verification is recorded
-in `.agents/reports/blaze-live-integration.md`. Real current-main acceptance is
-blocked before launch by Blaze refusing
-`zune_jpeg::color_convert::neon64::ycbcr_to_rgb_baseline_no_clamp`, through the
-unsupported LLVM intrinsic `aarch64.neon.sqshrun.v4i16`. No engine/dependency
-workaround was applied; the earlier Python timing numbers do not validate the
-Rust port's current-main latency.
+The app-owned live driver polls on the UI thread every 16 ms, independent of
+frames or windows. Applied patches refresh all windows; on macOS, Rake also
+requests an occluded native frame after the current App update finishes. The
+same native-frame helper serves injected development input. Closing all windows
+does not drop the timer; reopening uses the existing driver.
+
+Five live-runtime tests include a fake outcome source driven by the real GPUI
+test timer with no windows or frames, plus cancellation when its owner drops.
+Fake daemon integration and native supervisor tests require no engine. Current
+verification and real Mac measurements are recorded in
+`.agents/reports/blaze-live-integration.md`, including the unchanged external
+NEON-patched engine, input-free latency, and checkpointed patch-area restart.
+The earlier unpatched engine's JPEG intrinsic refusal is historical; no engine
+or dependency patch is carried in this Rake branch.
