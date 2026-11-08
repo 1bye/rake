@@ -3,7 +3,7 @@
 ## Phase 5: native local preview
 
 Refs #42. Base: `codex/port-phase4-broker` at
-`709aaf528e5efbfc0a1ce2463317810de5d290bd` ([phase 4](https://github.com/1bye/rake/pull/52)).
+`e0ea92fe086987b9b5efc32440238f0cbbcaf8a0` ([phase 4](https://github.com/1bye/rake/pull/52)).
 Phase 4 and its accepted-socket follow-up passed gate, portable, Windows desktop,
 Ubuntu desktop and macOS native; extended was skipped.
 
@@ -113,7 +113,17 @@ No Node or GPUI system dependencies were installed on devbox. Its default umask
 Interpret new helper doubles with the installed shell to avoid Linux ETXTBSY
 from concurrent forks retaining writer descriptors; real Swift launch is direct.
 
-Phase-5 CI is pending publication. Phase 6 removes retained Python/extraction,
+Phase-5 dispatched CI at `59f5dec` passed gate, portable, Windows desktop,
+Ubuntu desktop and macOS native. Extended installed spacing tools successfully,
+then failed `scripts/check-spacing.py`; this is distinct from #51's install error.
+The captured diagnostics identify 283 phase-4-owned and 420 phase-5-owned
+blank-line locations plus 863 locations attributed to pre-phase-4 code. Fix the
+port-owned locations on their phase branches, carry the lower fix forward by
+cherry-pick, and keep the earlier baseline warnings visible. These Rust changes
+insert blank lines only (`git diff --ignore-blank-lines` is empty). Mac preview
+unit tests, Cargo fmt, all-target Clippy and diff checks pass; Dylint itself is
+verified in dispatched CI because additional local installs are not authorized.
+Fresh CI is pending on the follow-up heads. Phase 6 removes retained Python/extraction,
 updates prerequisite docs and browser opening, and resolves Windows boundaries.
 
 ## Phase 4: native runtime broker and development bridge

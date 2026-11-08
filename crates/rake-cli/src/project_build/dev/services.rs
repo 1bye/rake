@@ -117,12 +117,14 @@ impl Supervisor<'_> {
                     .unwrap_or(std::env::current_exe()?),
             },
         )?);
+
         let preview = preview_helper.map(|helper| {
             std::sync::Arc::new(crate::project_build::preview::Preview::new(
                 broker.clone(),
                 helper,
             ))
         });
+
         let url = format!(
             "{origin}{}#__rake_control={}",
             if self.args.preview {

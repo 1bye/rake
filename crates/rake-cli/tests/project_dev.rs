@@ -694,9 +694,11 @@ fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_fai
 fn preview_listener_shutdown_cancels_partial_readers_without_python() {
     use std::io::{Read, Write};
     let fixture = Fixture::new();
+
     fixture.preview();
     fs::remove_file(fixture.tools.join("python3")).unwrap();
     let mut running = fixture.start(&["--preview", "--port", "0"]);
+
     running.phase("watching");
     assert!(!running.control.join("server-pid").exists());
     let event: Value = fs::read_to_string(running.control.join("events"))
@@ -705,14 +707,17 @@ fn preview_listener_shutdown_cancels_partial_readers_without_python() {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|event| event["event"] == "preview_listening")
         .unwrap();
+
     let url = url::Url::parse(event["url"].as_str().unwrap()).unwrap();
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", url.port().unwrap())).unwrap();
+
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     write!(stream, "GET /__rake/preview HTTP/1.1\r\n").unwrap();
     running.stop(libc::SIGTERM);
     let reply = stream.read(&mut [0]);
+
     assert!(
         matches!(reply, Ok(0))
             || reply.is_err_and(|error| matches!(
