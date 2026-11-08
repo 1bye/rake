@@ -116,44 +116,12 @@ impl Supervisor<'_> {
                     .unwrap_or(std::env::current_exe()?),
             },
         )?);
-        let mut backend = None;
-        if let Some(helper) = &preview_helper {
-            let mut command = self.service_command("python3");
-            command
-                .env("RAKE_NATIVE_BROKER_URL", &origin)
-                .env("RAKE_NATIVE_BROKER_TOKEN", broker.token());
-            command
-                .arg(helpers.join("serve-web.py"))
-                .args(["--control", "--port", "0", "--control-only", "--directory"])
-                .arg(&waiting)
-                .arg("--development-state")
-                .arg(self.session.join("status.json"))
-                .arg("--build-root")
-                .arg(self.session.join("builds"))
-                .arg("--preview-helper")
-                .arg(helper)
-                .stdout(Stdio::piped());
-            self.server = Some(Processes::new(self.cancelled).start(&mut command)?);
-            let line = readiness(
-                stdout(&mut self.server)?,
-                self.cancelled,
-                "development server could not start",
-            )?;
-            let url = line
-                .strip_prefix("Serving ")
-                .and_then(|line| line.split_once(" at "))
-                .map(|(_, url)| url.trim())
-                .ok_or("development server could not start")?;
-            let parsed = url::Url::parse(url)?;
-            backend = Some(
-                format!(
-                    "{}:{}",
-                    parsed.host_str().ok_or("server host missing")?,
-                    parsed.port().ok_or("server port missing")?
-                )
-                .parse()?,
-            );
-        }
+        let preview = preview_helper.map(|helper| {
+            std::sync::Arc::new(crate::project_build::preview::Preview::new(
+                broker.clone(),
+                helper,
+            ))
+        });
         let url = format!(
             "{origin}{}#__rake_control={}",
             if self.args.preview {
@@ -170,7 +138,7 @@ impl Supervisor<'_> {
                 development: Some(self.session.join("status.json")),
                 builds: Some(self.session.join("builds")),
                 control_only: !self.args.web,
-                backend,
+                preview,
                 broker: Some(broker),
             },
         )?);

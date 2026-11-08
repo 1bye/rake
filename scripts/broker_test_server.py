@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BrokerServer:
-    def __init__(self, directory, native=False):
+    def __init__(self, directory, native=False, preview=False):
         self.session = None
         self.log = (directory / "server.log").open("w+")
         env = dict(os.environ)
@@ -28,6 +28,10 @@ class BrokerServer:
                     "--control", "--port", "0", "--directory", str(directory)]
             if native:
                 args.append("--control-only")
+            if preview:
+                state=directory / "state.json"
+                state.write_text("{}")
+                args += ["--development-state",str(state),"--build-root",str(directory),"--preview-helper","/unused"]
             # Preserve the no-reverse-DNS assertion on the Python reference too.
             bootstrap = """import runpy,sys
 from pathlib import Path
@@ -60,8 +64,6 @@ with patch('socket.getfqdn',side_effect=AssertionError('loopback readiness must 
             tool("cargo", 'if [ "$1" = metadata ]; then /bin/cat "$BROKER_FIXTURE/metadata.json"; else exit 7; fi')
             tool("wasm-bindgen", "printf 'wasm-bindgen 0.2.100\\n'")
             tool("xcrun", 'while [ "$1" != -o ]; do shift; done\nprintf fixture > "$2"')
-            # Only the retained phase-5 preview backend needs Python.
-            (tools / "python3").symlink_to(sys.executable)
             env.update(PATH=str(tools) + os.pathsep + env.get("PATH", ""), BROKER_FIXTURE=str(fixture))
             cli = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
             args = [str(cli), "dev", "--manifest-path", str(fixture / "Cargo.toml"), "--no-open", "--json", "--port", "0"]

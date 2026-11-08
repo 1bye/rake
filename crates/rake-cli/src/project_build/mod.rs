@@ -1,5 +1,5 @@
 //! Native project builds, Web deployment and development supervision.
-//! The native HTTP origin owns broker/bridge requests; preview transport retains its Python backend.
+//! The native HTTP origin owns application assets, the broker and preview transports.
 
 mod args;
 mod broker;
@@ -7,6 +7,7 @@ mod bundle;
 mod dev;
 mod favicon;
 mod offline;
+mod preview;
 mod processes;
 mod serve;
 mod web;
