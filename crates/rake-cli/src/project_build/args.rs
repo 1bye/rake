@@ -17,6 +17,8 @@ pub(super) struct Args {
     pub(super) base_path: Option<String>,
     pub(super) routing: Option<String>,
     pub(super) compiler: Compiler,
+    pub(super) live: bool,
+    pub(super) blaze_binary: Option<PathBuf>,
     pub(super) cdp: bool,
     pub(super) preview: bool,
     pub(super) no_open: bool,
@@ -39,6 +41,7 @@ pub(super) struct Args {
 const OPTIONS: &[(&str, bool)] = &[
     ("--target", true),
     ("--compiler", true),
+    ("--live", false),
     ("--manifest-path", true),
     ("--package", true),
     ("--bin", true),
@@ -255,7 +258,12 @@ pub(super) fn parse(
     }
 
     let web = values.get("--target").is_some_and(|value| value == "web");
+    let live = values.contains_key("--live");
+    if live && (command != "dev" || values.get("--compiler").is_some_and(|v| v != "blaze")) {
+        return Err("--live applies to dev and cannot be combined with --compiler cargo".into());
+    }
     let compiler = match values.get("--compiler").map(String::as_str) {
+        None if live => Compiler::Blaze,
         None | Some("cargo") => Compiler::Cargo,
         Some("blaze") => Compiler::Blaze,
         Some(value) => {
@@ -382,6 +390,8 @@ pub(super) fn parse(
         base_path: values.remove("--base-path"),
         routing: values.remove("--routing"),
         compiler,
+        live,
+        blaze_binary: None,
         cdp: values.contains_key("--cdp"),
         preview: values.contains_key("--preview"),
         no_open: values.contains_key("--no-open"),

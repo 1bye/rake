@@ -120,7 +120,7 @@ impl<'a> Processes<'a> {
         let mut tail: Vec<String> = Vec::new();
         let blaze = std::path::Path::new(command.get_program())
             .file_name()
-            .is_some_and(|name| name == "blaze");
+            .is_some_and(|name| name == "blaze" || name == "blaze-engine");
         let mut structured_error = None;
         let mut diagnostic_tail = None;
         let mut line = |bytes: &[u8], pid| -> Result<()> {

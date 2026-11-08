@@ -176,3 +176,74 @@ A successful build asks each connected browser runtime to prepare through the sa
 A failed checkpoint or storage operation aborts and leaves the old app running. Restoration failures keep the original checkpoint for a later build or explicit restart. The page shows build and reload failures and reconnects to the broker independently of app diagnostics. Static production builds have no bridge or reload polling.
 
 Standalone `App::root` and `App::root_with` pages can also expose inspection through the authenticated Web bridge. Their reload is a full-page replacement with fresh local state, with no router checkpoint, so select the new runtime explicitly in an attached inspector. Controlled Wasm module swapping isn't implemented.
+
+
+## Experimental pinned native live reload (Apple Silicon)
+
+Use a CLI built from this branch. From the workspace root, a local invocation is
+`cargo run -p rake-app-cli -- dev --live --manifest-path examples/view/Cargo.toml --bin rake-view`.
+
+`rake dev --live` uses the Rake-patched Blaze compiler, independently of a `blaze`
+on `PATH`. It invokes the pinned engine directly, so a workspace's Blaze version
+pin cannot redirect live mode to another compiler. The first run downloads the exact archive in
+`crates/rake-cli/blaze-pin.toml`, checks its SHA-256 before extracting it, and
+installs it in `~/.rake/blaze/<version>/`. Later starts recheck the saved archive
+and installed files. A wrong checksum or damaged install is an error.
+
+```sh
+cd examples/view
+rake dev --live --bin rake-view
+rake doctor --json
+```
+
+This is currently **Apple Silicon macOS only**. The fork repository/release is
+not public yet. Until the owner publishes the pinned bytes, use the locally
+prepared archive:
+
+```sh
+BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261028.0-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
+```
+
+`BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
+is an explicit developer override; it requires the patched
+`rust-analyzer-proc-macro-srv` beside that executable and bypasses the release pin.
+Doctor reports the pinned installation's platform, version, checksum and server
+readiness without installing anything.
+
+Live mode enables the app's existing Rake `live` feature, which automatically
+enables `pathfinder_simd/pf-no-simd` on macOS. It sets the hybrid macro options
+`BLAZE_PROC_MACRO_WASM=0`, `BLAZE_PROC_MACRO_SERVER=0`,
+`LIBLZMA_NO_PKG_CONFIG=1`, sandboxing, and the 64 MiB Rust stack. The compiler
+build command always selects `--bin`; libraries such as an app's `cdylib` are
+not built for this mode. The packaged fixed macro server is selected explicitly;
+no toolchain binary is replaced. Runtime/store directories live beside the
+versioned compiler. The pinned Rust toolchain may download on the first build.
+
+The supervisor sends ordinary saves directly to the daemon. The app polls on
+its UI thread every 16 ms and redraws after a patch, including occluded windows.
+Layout changes or patch-area exhaustion use the existing checkpointed restart;
+apps must register the state they want restored. Compile errors leave the old
+app running. Static initializers may reset the edited static. See
+`.agents/reports/blaze-live-integration.md` for the measured limitations.
+Plain `rake dev` remains Cargo-based and needs no Blaze installation. The older
+`--compiler blaze` laboratory option remains available separately.
+
+### Local fork maintenance and first publication
+
+The fork is prepared in `~/Documents/GitHub/blaze-rake-fork`; its `RAKE_FORK.md`
+describes the base snapshot, seven patch commits, same-revision toolchain macro
+server and Apple Silicon release recipe. Its infrastructure workflows are
+archived; only explicit fork release workflows remain active.
+
+Owner-only public steps remain: create `1bye/blaze`, push the reviewed fork,
+cut the first `v0.20261028.0-rake.1` prerelease, then confirm/update the pin URL
+and SHA-256 against the exact published archive. Publishing the already-tested
+local archive preserves its checksum; a CI rebuild may produce different bytes
+and needs a new pin. Rake's new branch also needs a separate push/review approval.
+No public step is performed by local preparation.
+
+Allow roughly 2–4 hours per compatible upstream bump, and a day or more for
+compiler/Cranelift/proc-macro ABI changes. The first bump also needs upstream
+ancestry reconstruction: the tested base is a recovered local root snapshot,
+not a verifiable upstream commit. Upgrades must rerun installation, real text
+and helper reload acceptance, and relevant compiler differential tests.

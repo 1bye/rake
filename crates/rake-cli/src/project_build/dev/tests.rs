@@ -829,3 +829,54 @@ fn blaze_metadata_signature_changes_for_manifests_not_body_edits() {
     fs::write(root.path().join("Cargo.toml"), "different").unwrap();
     assert_ne!(blaze::configuration(&project).unwrap(), initial);
 }
+
+#[test]
+fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
+    use super::super::args::{self, Compiler};
+    let plain = args::parse("dev", &[]).unwrap().unwrap();
+    assert_eq!(plain.compiler, Compiler::Cargo);
+    assert!(!plain.live);
+    assert!(plain.blaze_binary.is_none());
+    let mut live = args::parse("dev", &["--live".into()]).unwrap().unwrap();
+    assert_eq!(live.compiler, Compiler::Blaze);
+    assert!(live.live);
+    for args in [
+        vec!["--live", "--target=web"],
+        vec!["--live", "--preview"],
+        vec!["--live", "--compiler=cargo"],
+    ] {
+        assert!(
+            args::parse(
+                "dev",
+                &args.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            )
+            .is_err()
+        );
+    }
+    assert!(args::parse("build", &["--live".into()]).is_err());
+    live.blaze_binary = Some(std::path::PathBuf::from("/private/pinned/blaze"));
+    let mut command = std::process::Command::new(live.blaze_binary.as_ref().unwrap());
+    blaze::configure(&mut command, &live);
+    assert_eq!(command.get_program(), "/private/pinned/blaze");
+    let env: std::collections::BTreeMap<_, _> = command
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().to_string(),
+                v.unwrap().to_string_lossy().to_string(),
+            )
+        })
+        .collect();
+    for (key, value) in [
+        ("BLAZE_PROC_MACRO_WASM", "0"),
+        ("BLAZE_PROC_MACRO_SERVER", "0"),
+        ("LIBLZMA_NO_PKG_CONFIG", "1"),
+        ("RUST_MIN_STACK", "67108864"),
+        (
+            "BLAZE_TOOLCHAIN_PROC_MACRO_SERVER",
+            "/private/pinned/rust-analyzer-proc-macro-srv",
+        ),
+    ] {
+        assert_eq!(env[key], value, "{key}");
+    }
+}

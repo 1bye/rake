@@ -207,7 +207,7 @@ impl<'a> Supervisor<'a> {
     fn launch(&mut self, artifact: &Path) -> Result<()> {
         let mut command = Command::new(artifact);
         if self.live.is_some() {
-            blaze::configure(&mut command);
+            blaze::configure(&mut command, self.args);
             self.live = Some(blaze::Live {
                 full_boundary: self.live.as_ref().is_some_and(|live| live.full_boundary),
                 identity: Some(blaze::identity(artifact)?),

@@ -1,0 +1,6 @@
+# Local archive pin; 1bye/blaze and this URL do not exist until the owner publishes.
+repo = "1bye/blaze"
+version = "0.20261028.0-rake.1"
+url = "https://github.com/1bye/blaze/releases/download/v0.20261028.0-rake.1/blaze-v0.20261028.0-rake.1-aarch64-apple-darwin.tar.gz"
+sha256 = "a7675a36d6c60b1787ea1e2ca13007ec51d7276875b080a7107d3c9b421c9801"
+target = "aarch64-apple-darwin"

@@ -5,6 +5,7 @@ mod args;
 #[cfg(any(unix, windows))]
 mod broker;
 mod browser;
+mod blaze_install;
 mod bundle;
 #[cfg(any(unix, windows))]
 mod dev;
@@ -62,7 +63,7 @@ pub(crate) fn run_client(command: &mut Command) -> Result<i32> {
 }
 
 pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
-    let args = match args::parse(command, arguments) {
+    let mut args = match args::parse(command, arguments) {
         Ok(Some(args)) => args,
         Ok(None) => return 0,
         Err(error) => {
@@ -78,6 +79,9 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
     let result = ctrlc::set_handler(move || flag.store(true, Ordering::Release))
         .map_err(Into::into)
         .and_then(|()| {
+            if args.live {
+                args.blaze_binary = Some(blaze_install::ensure()?);
+            }
             let processes = Processes::new(&cancelled);
 
             if command == "doctor" {
@@ -116,6 +120,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         wasm_bindgen: Value,
         node: Value,
         blaze: Value,
+        live: Value,
     }
     let probe = |program: &str, arguments: &[&str]| {
         let mut command = Command::new(program);
@@ -129,6 +134,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
     };
 
     let checks = Checks {
+        live: blaze_install::readiness(),
         blaze: match probe("blaze", &["--version"]) {
             Value::String(version) => json!({"note":version}),
             _ => json!({"note":"optional: Blaze not found; Cargo remains the default compiler"}),

@@ -116,11 +116,27 @@ pub(super) fn environment(mut env: BTreeMap<OsString, OsString>) -> BTreeMap<OsS
     env
 }
 
-pub(super) fn configure(command: &mut Command) {
+pub(super) fn configure(command: &mut Command, args: &Args) {
     command.envs(environment(std::env::vars_os().collect()));
+    if let Some(binary) = args.blaze_binary.as_ref()
+        && let Some(dir) = binary.parent()
+    {
+        command.env(
+            "BLAZE_TOOLCHAIN_PROC_MACRO_SERVER",
+            dir.join("rust-analyzer-proc-macro-srv"),
+        );
+        command.env("BLAZE_HOME", dir.join("runtime"));
+        command.env("BLAZE_CACHE", dir.join("store"));
+        command.env("RUST_MIN_STACK", "67108864");
+    }
 }
 
-fn socket() -> Result<PathBuf> {
+fn socket(args: &Args) -> Result<PathBuf> {
+    if let Some(binary) = args.blaze_binary.as_ref()
+        && let Some(dir) = binary.parent()
+    {
+        return Ok(dir.join("runtime/daemon.sock"));
+    }
     let home = std::env::var_os("BLAZE_HOME")
         .map(PathBuf::from)
         .or_else(|| {
@@ -321,8 +337,24 @@ pub(super) fn configuration(project: &Project) -> Result<[u8; 32]> {
     Ok(digest.finalize().into())
 }
 
+fn compiler_command(args: &Args) -> Result<Command> {
+    if args.live {
+        let binary = args
+            .blaze_binary
+            .as_ref()
+            .ok_or("the pinned live compiler was not initialized")?;
+        // The thin `blaze` launcher can honor a workspace pin to another release.
+        // Enter this exact engine directly so --live cannot fetch/run another Blaze.
+        let mut command = Command::new(binary.with_file_name("blaze-engine"));
+        command.arg("cargo");
+        Ok(command)
+    } else {
+        Ok(Command::new("blaze"))
+    }
+}
+
 pub(super) fn build(project: &Project, args: &Args, processes: &Processes<'_>) -> Result<PathBuf> {
-    let mut command = Command::new("blaze");
+    let mut command = compiler_command(args)?;
     command
         .args(["build", "--locked", "--events=json", "--manifest-path"])
         .arg(string(&project.package, "manifest_path")?)
@@ -338,7 +370,7 @@ pub(super) fn build(project: &Project, args: &Args, processes: &Processes<'_>) -
     if let Some(features) = project.build_features(args) {
         command.arg("--features").arg(features);
     }
-    configure(&mut command);
+    configure(&mut command, args);
     processes.run_output(&mut command, |_| {})?;
     artifact(
         &project.target_directory,
@@ -360,7 +392,7 @@ pub(super) fn update(
             .all(|path| path.extension().is_some_and(|ext| ext == "rs") && path.is_file())
     {
         let result = (|| {
-            let socket = socket()?;
+            let socket = socket(args)?;
             for path in paths {
                 edit(&socket, path, &fs::read_to_string(path)?, processes)?;
             }
@@ -493,4 +525,50 @@ pub(super) fn stamp_identity(stamps: &super::fingerprint::Stamps) -> [u8; 32] {
         digest.update(stamp.3.to_le_bytes());
     }
     digest.finalize().into()
+}
+
+#[cfg(test)]
+mod pinned_socket_tests {
+    use super::*;
+    #[test]
+    fn pinned_edits_use_the_same_home_as_the_build_and_app() {
+        let args = Args {
+            blaze_binary: Some(PathBuf::from("/pinned/blaze")),
+            ..Args::default()
+        };
+        let mut command = Command::new("/app");
+        configure(&mut command, &args);
+        let home = command
+            .get_envs()
+            .find(|(key, _)| *key == "BLAZE_HOME")
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(
+            socket(&args).unwrap(),
+            PathBuf::from(home).join("daemon.sock")
+        );
+    }
+}
+
+#[cfg(test)]
+mod pinned_command_tests {
+    use super::*;
+    #[test]
+    fn live_bypasses_the_workspace_version_redirector_and_never_uses_path() {
+        let mut args = Args {
+            live: true,
+            ..Args::default()
+        };
+        assert!(compiler_command(&args).is_err());
+        args.blaze_binary = Some(PathBuf::from("/pinned/blaze"));
+        let command = compiler_command(&args).unwrap();
+        assert_eq!(command.get_program(), "/pinned/blaze-engine");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new("cargo")]
+        );
+        args.live = false;
+        assert_eq!(compiler_command(&args).unwrap().get_program(), "blaze");
+    }
 }

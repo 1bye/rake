@@ -28,6 +28,8 @@ base64 = "0.22.1"
 regex = "1"
 shlex = "2"
 sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 zip = { version = "9.1", default-features = false, features = ["deflate"] }
 percent-encoding = "2"
 mime_guess = "2"
