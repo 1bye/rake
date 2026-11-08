@@ -1,7 +1,8 @@
 //! Native project builds, Web deployment and development supervision.
-//! Broker and preview requests retain an owned Python compatibility backend during the port.
+//! The native HTTP origin owns broker/bridge requests; preview transport retains its Python backend.
 
 mod args;
+mod broker;
 mod bundle;
 mod dev;
 mod favicon;

@@ -100,49 +100,69 @@ impl Supervisor<'_> {
         }
         let listener = std::net::TcpListener::bind(("127.0.0.1", self.args.port))?;
         let origin = format!("http://{}", listener.local_addr()?);
-        let mut command = self.service_command("python3");
-        command.env("RAKE_PUBLIC_BRIDGE_URL", &origin);
-        command
-            .arg(helpers.join("serve-web.py"))
-            .args(["--control", "--port"])
-            .arg("0")
-            .arg("--directory")
-            .arg(&waiting)
-            .arg("--development-state")
-            .arg(self.session.join("status.json"))
-            .arg("--build-root")
-            .arg(self.session.join("builds"))
-            .arg("--process-output")
-            .arg(self.session.join("output.json"));
-        if !self.args.web {
-            command.arg("--control-only");
-        }
+        let broker = std::sync::Arc::new(crate::project_build::broker::Broker::new(
+            crate::project_build::broker::Options {
+                url: origin.clone(),
+                directory: self.control.clone(),
+                development: Some(self.session.join("status.json")),
+                output: Some(self.session.join("output.json")),
+                allow_native: !self.args.web,
+                cdp_url,
+                source_root: std::env::var_os("RAKE_SOURCE_ROOT")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.project.root.clone()),
+                cli: std::env::var_os("RAKE_CLI")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_exe()?),
+            },
+        )?);
+        let mut backend = None;
         if let Some(helper) = &preview_helper {
-            command.arg("--preview-helper").arg(helper);
+            let mut command = self.service_command("python3");
+            command
+                .env("RAKE_NATIVE_BROKER_URL", &origin)
+                .env("RAKE_NATIVE_BROKER_TOKEN", broker.token());
+            command
+                .arg(helpers.join("serve-web.py"))
+                .args(["--control", "--port", "0", "--control-only", "--directory"])
+                .arg(&waiting)
+                .arg("--development-state")
+                .arg(self.session.join("status.json"))
+                .arg("--build-root")
+                .arg(self.session.join("builds"))
+                .arg("--preview-helper")
+                .arg(helper)
+                .stdout(Stdio::piped());
+            self.server = Some(Processes::new(self.cancelled).start(&mut command)?);
+            let line = readiness(
+                stdout(&mut self.server)?,
+                self.cancelled,
+                "development server could not start",
+            )?;
+            let url = line
+                .strip_prefix("Serving ")
+                .and_then(|line| line.split_once(" at "))
+                .map(|(_, url)| url.trim())
+                .ok_or("development server could not start")?;
+            let parsed = url::Url::parse(url)?;
+            backend = Some(
+                format!(
+                    "{}:{}",
+                    parsed.host_str().ok_or("server host missing")?,
+                    parsed.port().ok_or("server port missing")?
+                )
+                .parse()?,
+            );
         }
-        if let Some(url) = cdp_url {
-            command.arg("--cdp-url").arg(url);
-        }
-        command.stdout(Stdio::piped());
-        self.server = Some(Processes::new(self.cancelled).start(&mut command)?);
-        let line = readiness(
-            stdout(&mut self.server)?,
-            self.cancelled,
-            "development server could not start",
-        )?;
-        let url = line
-            .strip_prefix("Serving ")
-            .and_then(|line| line.split_once(" at "))
-            .map(|(_, url)| url.trim())
-            .ok_or("development server could not start")?
-            .to_owned();
-        let backend = url::Url::parse(&url)?;
-        let address = format!(
-            "{}:{}",
-            backend.host_str().ok_or("server host missing")?,
-            backend.port().ok_or("server port missing")?
-        )
-        .parse()?;
+        let url = format!(
+            "{origin}{}#__rake_control={}",
+            if self.args.preview {
+                "/__rake/preview"
+            } else {
+                "/"
+            },
+            broker.token()
+        );
         self.http = Some(crate::project_build::serve::Server::start(
             listener,
             crate::project_build::serve::Config {
@@ -150,25 +170,11 @@ impl Supervisor<'_> {
                 development: Some(self.session.join("status.json")),
                 builds: Some(self.session.join("builds")),
                 control_only: !self.args.web,
-                backend: Some(address),
+                backend,
+                broker: Some(broker),
             },
         )?);
-        let line = line.replace(
-            &format!(
-                "http://{}:{}",
-                backend.host_str().ok_or("server host missing")?,
-                backend.port().ok_or("server port missing")?
-            ),
-            &origin,
-        );
-        let url = format!(
-            "{origin}{}{}",
-            backend.path(),
-            backend
-                .fragment()
-                .map(|fragment| format!("#{fragment}"))
-                .unwrap_or_default()
-        );
+        let line = format!("Serving routing at {url}");
         self.launch_url = Some(url.clone());
         self.event(json!({"event":if self.args.preview {"preview_listening"} else if self.args.web {"web_listening"} else {"control_listening"}, "url":url, "session":self.session}),
             &format!("{}\nSession: {}", line.trim(), self.session.display()))?;

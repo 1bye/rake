@@ -31,22 +31,14 @@ class InspectorHTTP(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="rake-inspector-", dir="/tmp")
         self.root = Path(self.temporary.name)
-        self.control = self.root / "control"
-        self.control.mkdir(mode=0o700)
-        self.server = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py"), "--control-only", "--control", "--port", "0"],
-            env={**os.environ, "RAKE_CONTROL_DIR": str(self.control)}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        launch = urllib.parse.urlsplit(self.server.stdout.readline().strip().split()[-1])
-        self.url = f"http://{launch.netloc}"
-        self.token = launch.fragment.removeprefix("__rake_control=")
+        from broker_test_server import BrokerServer
+        self.server = BrokerServer(self.root, native=True)
+        self.control = self.server.control
+        self.url = self.server.url
+        self.token = self.server.token
 
     def tearDown(self):
-        self.server.terminate()
-        try:
-            self.server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.server.kill()
-            self.server.wait(timeout=5)
-        self.server.stdout.close()
+        self.server.close()
         self.temporary.cleanup()
 
     def post(self, path, body, token=None):

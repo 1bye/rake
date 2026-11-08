@@ -1,4 +1,4 @@
-//! Bounded loopback Web serving. Retained broker/preview requests use the owned compatibility backend.
+//! Bounded loopback Web serving with a native broker and retained preview transport.
 
 use super::{Result, bundle::insert};
 use serde_json::Value;
@@ -22,9 +22,11 @@ pub(super) struct Config {
     pub(super) builds: Option<PathBuf>,
     pub(super) control_only: bool,
     pub(super) backend: Option<SocketAddr>,
+    pub(super) broker: Option<Arc<super::broker::Broker>>,
 }
 
 pub(super) struct Server {
+    broker: Option<Arc<super::broker::Broker>>,
     stopping: Arc<AtomicBool>,
     connections: Arc<Mutex<HashMap<u64, TcpStream>>>,
     worker: Option<JoinHandle<std::result::Result<(), String>>>,
@@ -36,6 +38,7 @@ impl Server {
         let address = listener.local_addr()?;
         let stopping = Arc::new(AtomicBool::new(false));
         let connections = Arc::new(Mutex::new(HashMap::new()));
+        let broker = config.broker.clone();
         let stopped = stopping.clone();
         let sockets = connections.clone();
         let worker = thread::spawn(move || {
@@ -56,7 +59,7 @@ impl Server {
                         Ok((stream, _)) => {
                             let mut sockets_guard =
                                 sockets.lock().expect("Web connection lock poisoned");
-                            if sockets_guard.len() >= 64 {
+                            if stopped.load(Ordering::Acquire) || sockets_guard.len() >= 64 {
                                 continue;
                             }
                             next += 1;
@@ -84,6 +87,7 @@ impl Server {
             })
         });
         Ok(Self {
+            broker,
             stopping,
             connections,
             worker: Some(worker),
@@ -105,6 +109,9 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
+        if let Some(broker) = &self.broker {
+            broker.close();
+        }
         for stream in self
             .connections
             .lock()
@@ -144,7 +151,8 @@ fn request(stream: &mut TcpStream) -> Result<Request> {
             return Err("Web request headers exceed 64 KiB".into());
         }
     }
-    let text = String::from_utf8(bytes)?;
+    // HTTP fields use ISO-8859-1, including invalid/non-ASCII authentication tokens.
+    let text: String = bytes.into_iter().map(char::from).collect();
     let mut lines = text.split("\r\n");
     let mut first = lines
         .next()
@@ -249,7 +257,7 @@ fn handle(
         Ok(request) => request,
         Err(_) => return Ok(()),
     };
-    let control = config.backend.is_some();
+    let control = config.broker.is_some() || config.backend.is_some();
     let valid_host = [address.to_string(), format!("localhost:{}", address.port())]
         .iter()
         .any(|host| host == request.header("Host"));
@@ -266,21 +274,41 @@ fn handle(
         );
     }
     let route = request.path.split('?').next().unwrap_or_default();
-    if (request.method == "POST"
-        || (route.starts_with("/__rake/")
-            && !route.starts_with("/__rake/build/")
-            && route != "/__rake/bootstrap.js"))
-        && let Some(backend) = config.backend
-    {
-        return proxy(stream, request, backend, stopping);
-    }
     if request.method == "POST" {
+        if let Some(broker) = &config.broker {
+            let expected = format!("http://{}", request.header("Host"));
+            if (!request.header("Origin").is_empty() && request.header("Origin") != expected)
+                || !broker.authenticate(request.header("X-Rake-Token"))
+            {
+                return error(
+                    &mut stream,
+                    &request,
+                    403,
+                    "development bridge authentication failed",
+                );
+            }
+            // Preview remains a separately owned transport until phase 5.
+            if request.path.starts_with("/__rake/preview")
+                && let Some(backend) = config.backend
+            {
+                return proxy(stream, request, backend, stopping);
+            }
+            return control_request(&mut stream, &request, broker);
+        }
+        if let Some(backend) = config.backend {
+            return proxy(stream, request, backend, stopping);
+        }
         return error(
             &mut stream,
             &request,
             403,
             "development bridge authentication failed",
         );
+    }
+    if route.starts_with("/__rake/preview")
+        && let Some(backend) = config.backend
+    {
+        return proxy(stream, request, backend, stopping);
     }
     if !["GET", "HEAD"].contains(&request.method.as_str()) {
         return error(
@@ -439,6 +467,66 @@ fn handle(
     Ok(())
 }
 
+fn control_request(
+    stream: &mut TcpStream,
+    request: &Request,
+    broker: &super::broker::Broker,
+) -> Result<()> {
+    use super::broker::{Error, MAX_BYTES};
+    let mut consumed = false;
+    let result = (|| -> std::result::Result<Vec<u8>, Error> {
+        let length = request
+            .header("Content-Length")
+            .parse::<usize>()
+            .ok()
+            .filter(|length| *length <= MAX_BYTES - 1024);
+        if length.is_none() || request.header("Content-Type") != "application/json" {
+            return Err(Error::new(413, "invalid or oversized JSON frame"));
+        }
+        let mut bytes = vec![0; length.expect("validated length")];
+        stream.read_exact(&mut bytes)?;
+        consumed = true;
+        let body: Value = serde_json::from_slice(&bytes)?;
+        if !body.is_object() {
+            return Err(Error::new(400, "expected JSON object"));
+        }
+        let action = request
+            .path
+            .strip_prefix("/__rake/")
+            .ok_or_else(|| Error::new(404, "unknown development endpoint"))?;
+        let result = broker.handle(action, &body)?;
+        let encoded = serde_json::to_vec(&result)?;
+        if encoded.len() > MAX_BYTES {
+            return Err(Error::new(413, "development response too large"));
+        }
+        Ok(encoded)
+    })();
+    match result {
+        Ok(encoded) => respond(
+            stream,
+            request,
+            200,
+            "application/json",
+            &encoded,
+            &[("Cache-Control", "no-store".into())],
+        ),
+        // The body was already consumed, so do not drain it again on an error.
+        Err(failure) => {
+            let consumed_request = Request {
+                method: request.method.clone(),
+                path: request.path.clone(),
+                headers: Vec::new(),
+            };
+            error(
+                stream,
+                if consumed { &consumed_request } else { request },
+                failure.status,
+                &failure.to_string(),
+            )
+        }
+    }
+}
+
 fn proxy(
     mut client: TcpStream,
     request: Request,
@@ -531,7 +619,13 @@ fn reason(status: u16) -> &'static str {
         200 => "OK",
         301 => "Moved Permanently",
         304 => "Not Modified",
+        400 => "Bad Request",
         403 => "Forbidden",
+        413 => "Request Entity Too Large",
+        429 => "Too Many Requests",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
         404 => "Not Found",
         410 => "Gone",
         501 => "Not Implemented",
@@ -698,6 +792,7 @@ mod tests {
                 builds: None,
                 control_only: false,
                 backend: None,
+                broker: None,
             },
         )
         .unwrap();
@@ -784,6 +879,7 @@ mod tests {
             builds: Some(builds.clone()),
             control_only: false,
             backend: None,
+            broker: None,
         };
         assert_eq!(
             translated(
@@ -844,6 +940,7 @@ mod tests {
                 builds: None,
                 control_only: false,
                 backend: Some("127.0.0.1:9".parse().unwrap()),
+                broker: None,
             },
         )
         .unwrap();
@@ -871,6 +968,7 @@ mod tests {
                 builds: None,
                 control_only: false,
                 backend: Some("127.0.0.1:9".parse().unwrap()),
+                broker: None,
             },
         )
         .unwrap();
