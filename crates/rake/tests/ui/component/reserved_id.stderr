@@ -1,0 +1,5 @@
+error: use a plain prop name; `id` is reserved for component identity
+ --> tests/ui/component/reserved_id.rs:2:34
+  |
+2 | fn Invalid(cx: &mut rake::Scope, id: String) -> impl rake::gpui::IntoElement {
+  |                                  ^^

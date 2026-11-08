@@ -378,6 +378,45 @@ impl Capture {
 #[derive(Default)]
 struct ActiveCapture(Option<Capture>);
 
+#[cfg(feature = "experimental-components")]
+pub(crate) fn component_hooks(
+    cx: &mut App,
+    kind: &str,
+    hooks: Vec<super::HookMetadata>,
+    truncated: bool,
+) {
+    let Some(capture) = cx
+        .try_global::<ActiveCapture>()
+        .and_then(|active| active.0.as_ref())
+    else {
+        return;
+    };
+    let Some(parent) = capture.parents.last().and_then(Option::as_ref) else {
+        return;
+    };
+    let Some(index) = capture
+        .snapshot
+        .elements
+        .iter()
+        .rposition(|element| &element.id == parent && element.kind == kind)
+    else {
+        return;
+    };
+    let bytes = super::budget::size(&hooks, 16 * 1024);
+    let capture = cx.global_mut::<ActiveCapture>().0.as_mut().unwrap();
+
+    if bytes > 16 * 1024 || capture.bytes + bytes > super::MAX_CAPTURE_BYTES {
+        capture.snapshot.elements[index].metadata_truncated = true;
+        return;
+    }
+
+    if let Some(view) = &mut capture.snapshot.elements[index].view {
+        view.hooks = hooks;
+        capture.bytes += bytes;
+        capture.snapshot.elements[index].metadata_truncated |= truncated;
+    }
+}
+
 impl gpui::Global for ActiveCapture {}
 
 #[derive(Default)]

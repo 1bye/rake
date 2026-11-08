@@ -8,7 +8,18 @@ use syn::parse::{Parse, ParseStream};
 use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 
 mod command;
+#[cfg(feature = "components")]
+mod component;
 mod route;
+
+#[doc = "Generates an experimental stateful function component and its typed props."]
+#[cfg(feature = "components")]
+#[proc_macro_attribute]
+pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
+    component::expand(args.into(), parse_macro_input!(input as ItemFn))
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
 #[cfg(feature = "view")]
 use rake_view_syntax as view;
 

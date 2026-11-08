@@ -655,6 +655,9 @@ impl Dom {
 
         if let Some(view) = &element.view {
             result.push(json!({"name":"rakeStyleSources","value":{"type":"string","value":serde_json::to_string_pretty(&view.style_sources).unwrap_or_default()},"configurable":false,"enumerable":true}));
+            if !view.hooks.is_empty() {
+                result.push(json!({"name":"rakeHooks","value":{"type":"string","value":serde_json::to_string_pretty(&view.hooks).unwrap_or_default()},"configurable":false,"enumerable":true}));
+            }
         }
 
         if let Some(a11y) = &element.accessibility {
@@ -2066,6 +2069,36 @@ mod tests {
             dom.source(&json!({"nodeId":id,"target":{"kind":"boundary","file":"/secret.rs"}}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn function_component_hooks_are_available_as_cdp_properties() {
+        let mut snapshot = capture("hooks");
+        snapshot.elements[0].view = Some(
+            serde_json::from_value(json!({
+                "tag": "Counter", "style_sources": [],
+                "hooks": [{"slot": 0, "kind": "state", "value_type": "i32", "value": 7}]
+            }))
+            .unwrap(),
+        );
+        let mut dom = Dom::default();
+        dom.update(snapshot).unwrap();
+        let document = dom.document(&json!({"depth": -1})).unwrap();
+        let object = dom
+            .resolve_node(&json!({"nodeId": document["children"][0]["nodeId"]}))
+            .unwrap();
+        let properties = dom
+            .node_properties(object["object"]["objectId"].as_str().unwrap())
+            .unwrap();
+        let property = properties["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|property| property["name"] == "rakeHooks")
+            .unwrap();
+        let hooks: Value =
+            serde_json::from_str(property["value"]["value"].as_str().unwrap()).unwrap();
+        assert_eq!(hooks[0]["value"], 7);
     }
 
     #[test]

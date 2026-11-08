@@ -58,6 +58,14 @@ macro_rules! early_startup {
 
 pub mod control;
 
+#[doc = "Experimental function components with component-owned hooks."]
+#[cfg(feature = "experimental-components")]
+pub mod component;
+#[cfg(feature = "experimental-components")]
+pub use component::Scope;
+#[cfg(feature = "experimental-components")]
+pub use rake_macros::component;
+
 pub mod crash;
 
 #[cfg(all(feature = "devtools-memory", unix))]
@@ -316,6 +324,8 @@ pub use tracing::{debug, error, info, trace, warn};
 
 /// Common application and service imports.
 pub mod prelude {
+    #[cfg(feature = "experimental-components")]
+    pub use crate::component::{ComponentError, Resource, Scope, State, StateRef};
     pub use crate::control::{
         ApplicationCommand, CommandContext, CommandDescriptor, CommandError, Commands,
         ControlConfig, ExecutionCapability, RuntimeClient,

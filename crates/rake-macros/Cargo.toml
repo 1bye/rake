@@ -16,6 +16,7 @@ workspace = true
 
 [features]
 view = ["dep:rake-view-syntax"]
+components = []
 
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }

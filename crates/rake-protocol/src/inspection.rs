@@ -155,6 +155,22 @@ pub struct ViewMetadata {
     pub tag: String,
     /// Authored style attributes in source order, including paragraph inline attributes.
     pub style_sources: Vec<StyleSource>,
+    #[doc = "Experimental component hook slots, captured only with devtools enabled."]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<HookMetadata>,
+}
+
+#[doc = "Bounded inspection of one component-owned hook; opaque values need no Debug implementation."]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HookMetadata {
+    #[doc = "Zero-based position in the component's hook call order."]
+    pub slot: usize,
+    #[doc = "Hook category, such as state, memo, or effect."]
+    pub kind: String,
+    #[doc = "Rust storage type; not a stable wire type identifier."]
+    pub value_type: String,
+    #[doc = "A bounded preview for supported scalar and string values; otherwise absent."]
+    pub value: Option<Value>,
 }
 
 /// GPUI's current visual style sampled during paint, including inherited text.

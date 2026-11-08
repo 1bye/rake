@@ -6,6 +6,39 @@
 use framework::gpui;
 use framework::prelude::*;
 
+#[cfg(feature = "experimental-components")]
+#[framework::component]
+fn FunctionCounter(cx: &mut framework::Scope, start: i32) -> impl gpui::IntoElement {
+    let (value, setter) = cx.use_state(|| start);
+
+    framework::view! {
+        <button
+            id="increment"
+            aria-label={value.to_string()}
+            on:click={
+                move |_, _, cx| {
+                    let _ = setter.update(cx, |value| *value += 1);
+                }
+            }
+        >
+            {value.to_string()}
+        </button>
+    }
+}
+
+#[doc = "Function components expand through the renamed dependency on native and Wasm targets."]
+#[cfg(feature = "experimental-components")]
+pub fn function_component_markup() -> impl gpui::IntoElement {
+    let defaults = FunctionCounter {
+        id: "defaults",
+        start: 0,
+    };
+
+    framework::view! {
+        <FunctionCounter id="counter" {..defaults} />
+    }
+}
+
 #[derive(gpui::IntoElement)]
 struct ComponentPanel {
     id: gpui::ElementId,
