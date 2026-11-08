@@ -267,6 +267,16 @@ those suites to preserve the requested 40 GB free-space floor. The live checkout
 is untouched apart from fetch/worktree registration. No merge, main push,
 force-push, rebase, amend, issue comment or label.
 
+### Follow-up: CI for stacked base branches
+
+Allow existing pull-request CI on the phase-4 and phase-5 base branch names as
+well as main. Keep jobs, assertions, permissions and extended's existing event
+condition unchanged. The manual phase-5 run at `1a9fb99` verified that all 703
+port-owned spacing locations are fixed; extended retains 863 earlier-code
+locations and zero attributed to this port. Its branch-dispatched status was not
+reported on the stacked PR dashboard, so use normal PR events for subsequent
+stack checks rather than repeated manual dispatches.
+
 ### Follow-up: spacing discovered by dispatched CI
 
 Phase-5 manual CI passed gate, portable, Windows desktop, Ubuntu desktop and
