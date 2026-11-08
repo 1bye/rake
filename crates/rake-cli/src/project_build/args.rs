@@ -7,6 +7,9 @@ use std::collections::BTreeMap;
 pub(super) struct Args {
     pub(super) dev: bool,
     pub(super) cdp: bool,
+    pub(super) preview: bool,
+    pub(super) no_open: bool,
+    pub(super) port: u16,
     pub(super) restart_without_state: bool,
     pub(super) status: bool,
     pub(super) session: Option<PathBuf>,
@@ -224,7 +227,30 @@ pub(super) fn parse(
             },
         ),
     ] {
-        if values.contains_key(flag) && !(command == "dev" && flag == "--cdp") {
+        if flag == "--elements" && command == "dev" && web && values.contains_key("--cdp") {
+            let version = std::process::Command::new("node").arg("--version").output();
+            let valid = version
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|version| {
+                    version
+                        .trim()
+                        .trim_start_matches('v')
+                        .split('.')
+                        .next()?
+                        .parse::<u64>()
+                        .ok()
+                })
+                .is_some_and(|major| major >= 22);
+            if !valid {
+                return Err("Web Chrome DevTools requires Node 22 or later".into());
+            }
+        }
+        if values.contains_key(flag)
+            && !(command == "dev"
+                && (flag == "--cdp" || (flag == "--preview" && !web && cfg!(target_os = "macos"))))
+        {
             return Err(message.into());
         }
     }
@@ -276,6 +302,12 @@ pub(super) fn parse(
     Ok(Some(Args {
         dev: command == "dev",
         cdp: values.contains_key("--cdp"),
+        preview: values.contains_key("--preview"),
+        no_open: values.contains_key("--no-open"),
+        port: values
+            .get("--port")
+            .and_then(|port| port.trim().parse().ok())
+            .unwrap_or(if command == "dev" && web { 8081 } else { 0 }),
         restart_without_state: values.contains_key("--restart-without-state"),
         status: positional.is_some(),
         session: values.get("--session").map(PathBuf::from),
@@ -307,45 +339,4 @@ pub(super) fn report_error(arguments: &[String], error: &str) {
             help.split("\n\n").next().unwrap_or_default()
         );
     }
-}
-
-pub(super) fn native_dev(arguments: &[String]) -> bool {
-    let mut web = false;
-    let mut index = 0;
-    while let Some(argument) = arguments.get(index) {
-        index += 1;
-        if argument == "--" {
-            break;
-        }
-        let (name, attached) = argument
-            .split_once('=')
-            .map_or((argument.as_str(), None), |(name, value)| {
-                (name, Some(value))
-            });
-        let matching: Vec<_> = OPTIONS
-            .iter()
-            .filter(|(option, _)| {
-                *option == name || (name.starts_with("--") && option.starts_with(name))
-            })
-            .collect();
-        if matching.len() != 1 {
-            continue;
-        }
-        let (option, takes_value) = *matching[0];
-        let value = if takes_value && attached.is_none() {
-            let value = arguments.get(index).map(String::as_str);
-            index += 1;
-            value
-        } else {
-            attached
-        };
-        if option == "--preview" {
-            return false;
-        }
-        if option == "--target" {
-            web = value == Some("web");
-        }
-    }
-
-    !web
 }
