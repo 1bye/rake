@@ -1,7 +1,7 @@
 name: Rake
 on:
   pull_request:
-    branches: [main, codex/port-phase4-broker, codex/port-phase5-preview]
+    branches: [main]
     paths-ignore:
       - docs/**
       - '**/*.md'
@@ -137,6 +137,20 @@ jobs:
           # Reserve compiled-cache space for Windows and macOS; Linux keeps download hits.
           cache-targets: ${{ runner.os == 'Windows' }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # tauri-bundler 2.10.4: dirs::cache_dir()/tauri (no local_tools_directory).
+      - name: Cache Windows bundler tools
+        if: runner.os == 'Windows'
+        id: bundler-tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/tauri/WixTools314
+            ~/AppData/Local/tauri/NSIS
+          key: windows-tauri-bundler-2.10.4-v1
+      - name: Prepare Windows bundler tools
+        if: runner.os == 'Windows' && steps.bundler-tools.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: .github/workflows/prepare-bundler-tools.ps1
       - name: Install GPUI Linux development and software Vulkan libraries
         if: runner.os == 'Linux'
         run: |
@@ -286,6 +300,58 @@ jobs:
         if: ${{ always() }}
         run: python3 scripts/cache-budget.py --targets
 
+  web-e2e:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-ci
+          shared-key: web-e2e
+          cache-all-crates: false
+          cache-workspace-crates: false
+          cache-targets: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Read locked Wasm bindings version
+        id: wasm-bindgen
+        run: |
+          python3 - <<'PYTHON'
+          import os, tomllib
+          from pathlib import Path
+          lock = tomllib.loads(Path("Cargo.lock").read_text())
+          version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\n")
+          PYTHON
+      - name: Cache Wasm bindings CLI
+        id: wasm-cli
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/wasm-bindgen*
+          key: wasm-bindgen-${{ runner.os }}-${{ runner.arch }}-${{ steps.wasm-bindgen.outputs.version }}-v1
+      - name: Install matching Wasm bindings CLI
+        if: steps.wasm-cli.outputs.cache-hit != 'true'
+        run: cargo install --locked wasm-bindgen-cli --version '${{ steps.wasm-bindgen.outputs.version }}'
+      - run: cargo build -p rake-app-cli --locked
+      - name: Bundle E2E
+        run: python3 scripts/test-bundle.py
+      - name: Web loading E2E
+        run: node scripts/test-web-loading.mjs
+      - name: Web crash E2E
+        run: node scripts/test-web-crash.mjs
+
   extended:
     if: github.event_name != 'pull_request'
     needs: gate
@@ -307,13 +373,33 @@ jobs:
           # Keep binaries/drivers, not a duplicate stable + nightly target tree.
           cache-directories: ~/.dylint_drivers
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install spacing tools
-        uses: taiki-e/install-action@v2
+      - name: Cache spacing tools
+        id: spacing-tools
+        uses: actions/cache/restore@v5
         with:
-          tool: cargo-dylint@6.3.2,dylint-link@6.3.2
-        env:
-          # Used only if the prebuilt binary installer needs its source fallback.
-          RUSTUP_TOOLCHAIN: nightly-2026-08-20
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-${{ runner.os }}-${{ runner.arch }}-6.3.2-nightly-2026-08-20-v1
+      # Avoid install-action's cargo-binstall bootstrap and its release download.
+      - name: Install spacing tools
+        if: steps.spacing-tools.outputs.cache-hit != 'true'
+        run: |
+          cargo +nightly-2026-08-20 install --locked cargo-dylint --version 6.3.2
+          cargo +nightly-2026-08-20 install --locked dylint-link --version 6.3.2
+      - name: Verify spacing tools
+        run: |
+          cargo +nightly-2026-08-20 dylint --version
+          test -x ~/.cargo/bin/dylint-link
+      # Preserve a verified install even when a later lint reports source violations.
+      - name: Save spacing tools
+        if: steps.spacing-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: ${{ steps.spacing-tools.outputs.cache-primary-key }}
       - run: python3 scripts/check-spacing.py
       - run: cargo doc --workspace --no-deps --locked
         env:
@@ -345,8 +431,6 @@ jobs:
           python3 scripts/test-supervisor.py
           python3 scripts/test-runtime-broker.py
           node --test scripts/test-embedded-devtools.mjs
-      - run: node scripts/test-web-loading.mjs
-      - run: node scripts/test-web-crash.mjs
       - name: Estimate tools and download cache size
         if: ${{ always() }}
         run: python3 scripts/cache-budget.py --drivers
