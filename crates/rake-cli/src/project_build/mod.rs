@@ -1,7 +1,9 @@
 //! Native adapters for the legacy project doctor and one-shot build commands.
-//! Dev, Web bundling, inspection and serving continue to use the embedded scripts.
+//! Native desktop dev shares these builders; Web/preview dev and serving use Python.
 
 mod args;
+mod dev;
+mod favicon;
 mod processes;
 mod web;
 
@@ -37,6 +39,8 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
             let processes = Processes::new(&cancelled);
             if command == "doctor" {
                 doctor(&args, &processes)
+            } else if command == "dev" {
+                dev::run(&args, &cancelled).map(|()| 0)
             } else {
                 build(&args, &processes).map(|()| 0)
             }
@@ -116,6 +120,7 @@ struct Project {
     web_dir: PathBuf,
     assets: Option<PathBuf>,
     bindgen: Option<PathBuf>,
+    watch_roots: Vec<PathBuf>,
 }
 
 impl Project {
@@ -248,7 +253,23 @@ impl Project {
             None
         };
 
+        let mut watch_roots = vec![root.clone()];
+        for package in metadata["packages"]
+            .as_array()
+            .ok_or("Cargo packages missing")?
+        {
+            if package["source"].is_null() {
+                let path = Path::new(string(package, "manifest_path")?);
+                if let Some(directory) = path.parent() {
+                    watch_roots.push(directory.to_owned());
+                }
+            }
+        }
+        watch_roots.sort();
+        watch_roots.dedup();
+
         Ok(Self {
+            watch_roots,
             package: package.clone(),
             target,
             root,
@@ -258,12 +279,45 @@ impl Project {
         })
     }
 
+    fn build_features(&self, args: &Args) -> Option<String> {
+        let mut features: Vec<String> = args.features.iter().cloned().collect();
+        if args.dev {
+            if self.package["features"].get("devtools").is_some() {
+                features.push("devtools".into());
+            } else if let Some(dependencies) = self.package["dependencies"].as_array() {
+                for dependency in dependencies {
+                    if dependency["kind"].is_null()
+                        && ["rake-app", "rak", "rake"]
+                            .iter()
+                            .any(|name| dependency["name"] == *name)
+                    {
+                        let name = dependency["rename"]
+                            .as_str()
+                            .or_else(|| dependency["name"].as_str());
+                        if let Some(name) = name {
+                            features.push(format!("{name}/devtools"));
+                        }
+                    }
+                }
+            }
+        }
+
+        (!features.is_empty()).then(|| features.join(","))
+    }
+
     fn build(&self, args: &Args, processes: &Processes<'_>, output: &Path) -> Result<PathBuf> {
         if args.web {
             return web::build(self, args, processes, output);
         }
 
-        let mut command = Command::new(std::env::current_exe()?);
+        let executable = if args.dev {
+            std::env::var_os("RAKE_CLI")
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_exe()?)
+        } else {
+            std::env::current_exe()?
+        };
+        let mut command = Command::new(executable);
         command
             .args([
                 "bundle",
@@ -280,7 +334,7 @@ impl Project {
             .arg("--output")
             .arg(output)
             .arg(if args.release { "--release" } else { "--debug" });
-        if let Some(features) = &args.features {
+        if let Some(features) = self.build_features(args) {
             command.arg("--features").arg(features);
         }
         let result: Value =
@@ -477,4 +531,9 @@ fn ascii_json(text: &str) -> String {
     }
 
     output
+}
+
+/// Keep Web and preview sessions wholly on the embedded supervisor until their port.
+pub(crate) fn native_dev(arguments: &[String]) -> bool {
+    args::native_dev(arguments)
 }

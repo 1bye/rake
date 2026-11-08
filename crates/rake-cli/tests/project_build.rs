@@ -252,7 +252,7 @@ fn web_build_keeps_authored_index_and_rolls_back_failed_replacements() {
     success(&fixture.build(&[]));
     assert_eq!(
         fs::read_to_string(fixture.output().join("index.html")).unwrap(),
-        "<html>authored</html>"
+        "<html><link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/rake-icon.svg\">authored</html>"
     );
     fs::write(fixture.root.join("input.wasm"), "replacement").unwrap();
     fs::write(fixture.root.join("fail"), "").unwrap();
@@ -656,4 +656,65 @@ fn help_and_argument_errors_use_rake_program_name() {
             format!("{usage}\nrake: error: unrecognized arguments: --unknown\n"),
         );
     }
+}
+
+#[test]
+fn web_default_favicon_preserves_authored_links_and_rejects_asset_collisions() {
+    let fixture = Fixture::new();
+    let index = fixture.root.join("web/index.html");
+    let document = "<!-- <head><link rel='icon'> --><html><head><script>const x = '<link rel=icon>';</script></head></html>";
+    fs::write(&index, document).unwrap();
+    success(&fixture.build(&[]));
+    let link = "<link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/rake-icon.svg\">";
+    assert_eq!(
+        fs::read_to_string(fixture.output().join("index.html")).unwrap(),
+        document.replacen("<head><script>", &format!("<head>{link}<script>"), 1)
+    );
+    assert_eq!(
+        fs::read(fixture.output().join("assets/rake-icon.svg")).unwrap(),
+        include_bytes!("../scripts/default-icon.svg")
+    );
+    for authored in [
+        "<link rel='icon' href='custom.svg'>",
+        "<LINK REL='shortcut ICON' HREF='custom.ico'>",
+        "<link rel=icon href='data:,'>",
+        "<link href='custom.png' rel='alternate icon'/>",
+        "<link rel='&#105;con' href='custom.svg'>",
+    ] {
+        let document = format!("<html><head>{authored}</head></html>");
+        fs::write(&index, &document).unwrap();
+        success(&fixture.build(&[]));
+        assert_eq!(
+            fs::read_to_string(fixture.output().join("index.html")).unwrap(),
+            document
+        );
+        assert!(!fixture.output().join("assets/rake-icon.svg").exists());
+    }
+    fs::write(&index, "<html lang='en'><body>implicit head</body></html>").unwrap();
+    success(&fixture.build(&[]));
+    assert!(
+        fs::read_to_string(fixture.output().join("index.html"))
+            .unwrap()
+            .contains(&format!("<html lang='en'>{link}"))
+    );
+    fs::write(
+        fixture.root.join("assets/rake-icon.svg"),
+        include_bytes!("../scripts/default-icon.svg"),
+    )
+    .unwrap();
+    success(&fixture.build(&[]));
+    fs::write(fixture.root.join("assets/rake-icon.svg"), "app owned").unwrap();
+    let before = fs::read(fixture.output().join("index.html")).unwrap();
+    error(&fixture.build(&[]), 1, "exists");
+    assert_eq!(
+        fs::read(fixture.output().join("index.html")).unwrap(),
+        before
+    );
+    fs::remove_file(fixture.root.join("assets/rake-icon.svg")).unwrap();
+    fs::write(&index, "fragment only").unwrap();
+    error(
+        &fixture.build(&[]),
+        1,
+        "Web document requires an html or head element",
+    );
 }

@@ -3,8 +3,13 @@
 use super::{PathBuf, resolve};
 use std::collections::BTreeMap;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Args {
+    pub(super) dev: bool,
+    pub(super) cdp: bool,
+    pub(super) restart_without_state: bool,
+    pub(super) status: bool,
+    pub(super) session: Option<PathBuf>,
     pub(super) web: bool,
     pub(super) manifest: PathBuf,
     pub(super) package: Option<String>,
@@ -70,7 +75,7 @@ pub(super) fn parse(
             ));
         }
         if !argument.starts_with('-') {
-            if positional.is_some() || index != 1 {
+            if positional.is_some() {
                 unknown.push(argument.clone());
                 continue;
             }
@@ -118,7 +123,14 @@ pub(super) fn parse(
             continue;
         };
         if option == "--help" {
-            print!("{}", include_str!("help.txt"));
+            print!(
+                "{}",
+                if command == "dev" {
+                    include_str!("dev/help.txt")
+                } else {
+                    include_str!("help.txt")
+                }
+            );
             return Ok(None);
         }
         let value = if takes_value {
@@ -153,13 +165,23 @@ pub(super) fn parse(
             profile = Some(option);
         }
         if option == "--target" && !["desktop", "web"].contains(&value.as_str()) {
+            let choices = if command == "dev" {
+                "desktop, web"
+            } else {
+                "'desktop', 'web'"
+            };
             return Err(format!(
-                "argument --target: invalid choice: '{value}' (choose from 'desktop', 'web')"
+                "argument --target: invalid choice: '{value}' (choose from {choices})"
             ));
         }
         if option == "--routing" && !["path", "hash"].contains(&value.as_str()) {
+            let choices = if command == "dev" {
+                "path, hash"
+            } else {
+                "'path', 'hash'"
+            };
             return Err(format!(
-                "argument --routing: invalid choice: '{value}' (choose from 'path', 'hash')"
+                "argument --routing: invalid choice: '{value}' (choose from {choices})"
             ));
         }
         if option == "--base-path" {
@@ -174,8 +196,13 @@ pub(super) fn parse(
     if let Some(status) = &positional
         && status != "status"
     {
+        let choices = if command == "dev" {
+            "status"
+        } else {
+            "'status'"
+        };
         return Err(format!(
-            "argument status: invalid choice: '{status}' (choose from 'status')"
+            "argument status: invalid choice: '{status}' (choose from {choices})"
         ));
     }
     if !unknown.is_empty() {
@@ -188,11 +215,28 @@ pub(super) fn parse(
             "--preview requires rake dev --target desktop on macOS 14 or later",
         ),
         ("--cdp", "--cdp applies to dev"),
-        ("--elements", "--elements applies to inspect"),
+        (
+            "--elements",
+            if command == "dev" {
+                "The Rake inspector is deprecated; use Chrome DevTools with --cdp"
+            } else {
+                "--elements applies to inspect"
+            },
+        ),
     ] {
-        if values.contains_key(flag) {
+        if values.contains_key(flag) && !(command == "dev" && flag == "--cdp") {
             return Err(message.into());
         }
+    }
+    if command == "dev"
+        && values
+            .get("--package")
+            .is_some_and(|name| name == "rake-inspector")
+    {
+        return Err(
+            "The Rake inspector is deprecated and cannot be built or bundled; use Chrome DevTools"
+                .into(),
+        );
     }
     if values.contains_key("--base-path") || values.contains_key("--routing") {
         return Err("--base-path/--routing require bundle --target web".into());
@@ -200,10 +244,10 @@ pub(super) fn parse(
     if values.contains_key("--sign-identity") || values.contains_key("--entitlements") {
         return Err("--sign-identity/--entitlements require a macOS desktop bundle".into());
     }
-    if positional.is_some() {
+    if positional.is_some() && (command != "dev" || !values.contains_key("--session")) {
         return Err("use rake dev status --session PATH".into());
     }
-    if command != "doctor" {
+    if command != "doctor" && positional.is_none() {
         if let Some(port) = values.get("--port") {
             let port: i64 = port.trim().parse().map_err(|_| "port must be 0–65535")?;
             if !(0..=65535).contains(&port) {
@@ -214,7 +258,7 @@ pub(super) fn parse(
             return Err("--native-reloader applies to desktop only".into());
         }
     }
-    let output = if command != "doctor" {
+    let output = if command != "doctor" && positional.is_none() {
         values
             .get("--output")
             .map(|value| {
@@ -230,6 +274,11 @@ pub(super) fn parse(
     };
 
     Ok(Some(Args {
+        dev: command == "dev",
+        cdp: values.contains_key("--cdp"),
+        restart_without_state: values.contains_key("--restart-without-state"),
+        status: positional.is_some(),
+        session: values.get("--session").map(PathBuf::from),
         web,
         manifest: values
             .get("--manifest-path")
@@ -258,4 +307,45 @@ pub(super) fn report_error(arguments: &[String], error: &str) {
             help.split("\n\n").next().unwrap_or_default()
         );
     }
+}
+
+pub(super) fn native_dev(arguments: &[String]) -> bool {
+    let mut web = false;
+    let mut index = 0;
+    while let Some(argument) = arguments.get(index) {
+        index += 1;
+        if argument == "--" {
+            break;
+        }
+        let (name, attached) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(name, value)| {
+                (name, Some(value))
+            });
+        let matching: Vec<_> = OPTIONS
+            .iter()
+            .filter(|(option, _)| {
+                *option == name || (name.starts_with("--") && option.starts_with(name))
+            })
+            .collect();
+        if matching.len() != 1 {
+            continue;
+        }
+        let (option, takes_value) = *matching[0];
+        let value = if takes_value && attached.is_none() {
+            let value = arguments.get(index).map(String::as_str);
+            index += 1;
+            value
+        } else {
+            attached
+        };
+        if option == "--preview" {
+            return false;
+        }
+        if option == "--target" {
+            web = value == Some("web");
+        }
+    }
+
+    !web
 }

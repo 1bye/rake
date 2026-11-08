@@ -274,5 +274,7 @@ pub(super) fn build(
         )?;
     }
 
+    super::favicon::install(output)?;
+
     Ok(output.to_owned())
 }

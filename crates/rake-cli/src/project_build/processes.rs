@@ -24,24 +24,51 @@ pub(super) enum Capture {
     Diagnostic,
 }
 
+type OutputSink<'a> = dyn Fn(&str, u32, &str) + Sync + 'a;
+
 pub(super) struct Processes<'a> {
     cancelled: &'a AtomicBool,
+    stopping: Option<&'a AtomicBool>,
+    output_sink: Option<&'a OutputSink<'a>>,
 }
 
 impl<'a> Processes<'a> {
     pub(super) fn new(cancelled: &'a AtomicBool) -> Self {
-        Self { cancelled }
+        Self {
+            cancelled,
+            stopping: None,
+            output_sink: None,
+        }
+    }
+
+    pub(super) fn with_stopping(mut self, stopping: &'a AtomicBool) -> Self {
+        self.stopping = Some(stopping);
+        self
+    }
+
+    pub(super) fn with_output(mut self, sink: &'a OutputSink<'a>) -> Self {
+        self.output_sink = Some(sink);
+        self
+    }
+
+    pub(super) fn start(&self, command: &mut Command) -> Result<ProcessGroup> {
+        self.check_cancelled()?;
+        Ok(ProcessGroup(command.process_group(0).spawn()?))
     }
 
     pub(super) fn capture(&self, command: &mut Command, mode: Capture) -> Result<String> {
         let mut bytes = Vec::new();
-        let status = self.execute(command, matches!(mode, Capture::Diagnostic), |chunk| {
-            if bytes.len() + chunk.len() > METADATA_LIMIT {
-                return Err("tool metadata exceeds 32 MiB".into());
-            }
-            bytes.extend_from_slice(chunk);
-            Ok(())
-        })?;
+        let status = self.execute(
+            command,
+            matches!(mode, Capture::Diagnostic),
+            |chunk, _pid| {
+                if bytes.len() + chunk.len() > METADATA_LIMIT {
+                    return Err("tool metadata exceeds 32 MiB".into());
+                }
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            },
+        )?;
         if !status.success() {
             return Err(if !matches!(mode, Capture::Metadata) {
                 format!(
@@ -68,7 +95,7 @@ impl<'a> Processes<'a> {
     ) -> Result<()> {
         let mut pending = Vec::new();
         let mut tail = Vec::new();
-        let mut line = |bytes: &[u8]| -> Result<()> {
+        let mut line = |bytes: &[u8], pid| -> Result<()> {
             let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
             let message = serde_json::from_str::<serde_json::Value>(&text).ok();
             let printed = match message {
@@ -77,10 +104,12 @@ impl<'a> Processes<'a> {
                         artifact(message);
                         None
                     } else if message["reason"] == "compiler-message" {
-                        message["message"]["rendered"]
-                            .as_str()
-                            .filter(|text| !text.is_empty())
-                            .map(str::to_owned)
+                        Some(
+                            message["message"]["rendered"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_owned(),
+                        )
                     } else {
                         None
                     }
@@ -88,16 +117,23 @@ impl<'a> Processes<'a> {
                 _ => Some(text),
             };
             if let Some(text) = printed {
-                std::io::stderr().write_all(text.as_bytes())?;
-                std::io::stderr().flush()?;
-                tail.push(last_chars(&text, 4000));
-                if tail.len() > 8 {
-                    tail.remove(0);
+                if let Some(sink) = self.output_sink {
+                    sink(&text, pid, "build");
+                }
+                if !text.is_empty() {
+                    std::io::stderr().write_all(text.as_bytes())?;
+                    std::io::stderr().flush()?;
+                    tail.push(last_chars(&text, 4000));
+                    if tail.len() > 8 {
+                        tail.remove(0);
+                    }
                 }
             }
             Ok(())
         };
-        let status = self.execute(command, true, |chunk| {
+        let mut output_pid = 0;
+        let status = self.execute(command, true, |chunk, pid| {
+            output_pid = pid;
             pending.extend_from_slice(chunk);
             while let Some(end) = pending
                 .iter()
@@ -106,13 +142,13 @@ impl<'a> Processes<'a> {
                 .map(|index| index + 1)
                 .or((pending.len() >= MAX_BYTES).then_some(MAX_BYTES))
             {
-                line(&pending[..end])?;
+                line(&pending[..end], pid)?;
                 pending.drain(..end);
             }
             Ok(())
         })?;
         if !pending.is_empty() {
-            line(&pending)?;
+            line(&pending, output_pid)?;
         }
         if !status.success() {
             return Err(format!(
@@ -128,7 +164,11 @@ impl<'a> Processes<'a> {
     }
 
     pub(super) fn check_cancelled(&self) -> Result<()> {
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancelled.load(Ordering::Acquire)
+            || self
+                .stopping
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
             return Err("build interrupted".into());
         }
 
@@ -139,7 +179,7 @@ impl<'a> Processes<'a> {
         &self,
         command: &mut Command,
         merge_stderr: bool,
-        mut consume: impl FnMut(&[u8]) -> Result<()>,
+        mut consume: impl FnMut(&[u8], u32) -> Result<()>,
     ) -> Result<ExitStatus> {
         self.check_cancelled()?;
         let (mut reader, writer) = UnixStream::pair()?;
@@ -184,19 +224,15 @@ impl<'a> Processes<'a> {
         });
         let result = (|| {
             loop {
-                if self.cancelled.load(Ordering::Acquire) {
-                    return Err("build interrupted".into());
-                }
+                self.check_cancelled()?;
                 match receiver.recv_timeout(Duration::from_millis(25)) {
-                    Ok(chunk) => consume(&chunk?)?,
+                    Ok(chunk) => consume(&chunk?, group.0.id())?,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
             }
             loop {
-                if self.cancelled.load(Ordering::Acquire) {
-                    return Err("build interrupted".into());
-                }
+                self.check_cancelled()?;
                 if let Some(status) = group.0.try_wait()? {
                     return Ok(status);
                 }
@@ -236,7 +272,7 @@ fn exit_code(status: ExitStatus) -> i32 {
         .unwrap_or_else(|| -status.signal().unwrap_or(1))
 }
 
-struct ProcessGroup(Child);
+pub(super) struct ProcessGroup(pub(super) Child);
 
 impl Drop for ProcessGroup {
     fn drop(&mut self) {
