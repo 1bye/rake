@@ -691,44 +691,52 @@ fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_fai
 
 #[test]
 #[cfg(target_os = "macos")]
-fn preview_backend_readiness_is_cancellable_and_exit_is_fatal() {
-    for hold in [true, false] {
-        let fixture = Fixture::new();
-        fixture.preview();
-        fs::create_dir(fixture.directory.path().join("control")).unwrap();
-        fs::write(fixture.directory.path().join("control/server-hold"), "hold").unwrap();
-        let mut running = fixture.start(&["--preview", "--port", "0"]);
-        let pid: u32 = wait(|| {
-            fs::read_to_string(running.control.join("server-pid"))
-                .ok()?
-                .parse()
-                .ok()
-        });
-        if hold {
-            running.stop(libc::SIGINT);
-        } else {
-            // SAFETY: this fixture owns the service being killed.
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
-            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
-            assert_eq!(running.status()["phase"], "stopped");
-        }
-        assert!(!alive(pid));
-    }
+fn preview_listener_shutdown_cancels_partial_readers_without_python() {
+    use std::io::{Read, Write};
+    let fixture = Fixture::new();
+
+    fixture.preview();
+    fs::remove_file(fixture.tools.join("python3")).unwrap();
+    let mut running = fixture.start(&["--preview", "--port", "0"]);
+
+    running.phase("watching");
+    assert!(!running.control.join("server-pid").exists());
+    let event: Value = fs::read_to_string(running.control.join("events"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| event["event"] == "preview_listening")
+        .unwrap();
+
+    let url = url::Url::parse(event["url"].as_str().unwrap()).unwrap();
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", url.port().unwrap())).unwrap();
+
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write!(stream, "GET /__rake/preview HTTP/1.1\r\n").unwrap();
+    running.stop(libc::SIGTERM);
+    let reply = stream.read(&mut [0]);
+
+    assert!(
+        matches!(reply, Ok(0))
+            || reply.is_err_and(|error| matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ))
+    );
 }
 
 #[test]
 #[cfg(target_os = "macos")]
-fn preview_backend_invalid_readiness_fails_and_no_cdp_needs_no_node() {
+fn preview_compiler_failure_is_fatal_and_no_cdp_needs_no_node() {
     for bad in [false, true] {
         let fixture = Fixture::new();
 
         fixture.preview();
         fs::remove_file(fixture.tools.join("node")).unwrap();
-        fs::create_dir(fixture.directory.path().join("control")).unwrap();
         if bad {
-            fs::write(fixture.directory.path().join("control/server-bad"), "bad").unwrap();
+            fixture.tool("xcrun", "exit 7");
         }
 
         let mut running = fixture.start(&["--preview", "--port", "0"]);
@@ -738,7 +746,7 @@ fn preview_backend_invalid_readiness_fails_and_no_cdp_needs_no_node() {
             assert!(
                 fs::read_to_string(running.control.join("errors"))
                     .unwrap()
-                    .contains("development server could not start")
+                    .contains("xcrun exited 7")
             );
         } else {
             assert_eq!(running.phase("watching")["published"], 1);
@@ -853,8 +861,7 @@ fn preview_session_compiles_helper_before_server_and_marks_app_environment() {
         wait(|| fs::read_to_string(running.control.join("preview-env")).ok()),
         "1"
     );
-    let args = fs::read_to_string(running.control.join("server-args")).unwrap();
-    assert!(args.contains("--control-only") && args.contains("--preview-helper"));
+    assert!(!running.control.join("server-pid").exists());
     assert!(running.session.join("preview-capture").is_file());
     assert!(
         fs::read_to_string(running.control.join("swift-args"))

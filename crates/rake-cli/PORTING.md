@@ -1,5 +1,131 @@
 # Project toolchain port
 
+## Phase 5: native local preview
+
+Refs #42. Base: `codex/port-phase4-broker` at
+`e0ea92fe086987b9b5efc32440238f0cbbcaf8a0` ([phase 4](https://github.com/1bye/rake/pull/52)).
+Phase 4 and its accepted-socket follow-up passed gate, portable, Windows desktop,
+Ubuntu desktop and macOS native; extended was skipped.
+
+### Implementation and protocol
+
+`project_build/preview/` owns expiring capture references, exact-generation
+selection/hover/grab, bounded annotation paging, native video fanout, capture
+process lifetime and authenticated RFC 6455 controls. `serve.rs` handles preview
+POSTs, assets and WebSockets natively; `dev/services.rs` compiles the unchanged
+Swift helper and constructs preview. No Python serving backend or proxy starts.
+Remove the intermediate phase-4 NativeBroker callback; standalone retained Python
+helpers remain available for reference comparisons until phase 6.
+
+Preserve both codecs, epoch/window identity, 64 references with five-second expiry,
+finite content coordinates, ties-to-even viewport geometry, exact generations,
+non-retrying inputs with null keys, 33 annotation targets, 32 pages/8192 offset
+and 1.5-second lookup budget. Preserve masked, unfragmented text controls,
+origin/subprotocol token authentication, 16 KiB input, 256 KiB output and 250 ms
+metadata updates. Video retains 120 packets / 8 MiB, 2 MiB payload / 4096-byte
+metadata bounds, configuration replay and keyframe recovery after gaps or age
+above 150 ms. Reserve viewers before headers and release encoders after the last
+viewer, including header disconnects. Capture close retains the two-second grace
+before terminating its owned process group.
+
+**Swift capture and preview JS/CSS/HTML remain embedded non-Python resources.**
+Python extraction and browser selection remain for phase 6; the Unix gate is
+unchanged. No preview feature is dropped. Preserve the existing HTTP/1.0 101
+WebSocket response and earlier native JSON ordering/UTF-8 escaping/Server-header
+differences. Drain helper stderr continuously, retaining only 4096 diagnostic
+bytes, rather than risking a full pipe before reading it on exit.
+
+### Coverage mapping
+
+Existing Python internal tests remain present. The HTTP case in test-preview.py
+now uses the real Rust CLI by default; `RAKE_TEST_PYTHON_BROKER=1` selects the
+reference. Removed Python-backend readiness/fatal-exit cases become native
+listener shutdown and capture-compiler failure tests. Existing CDP/Node readiness
+coverage remains; no assertion is silently removed or weakened.
+
+| Python contract | Native coverage |
+| --- | --- |
+| exact selection/source/window | `selection_keeps_source_and_exact_window_without_mutation` |
+| text promotion, source ancestry and copy text | `grab_promotes_text_and_collects_pinned_ancestors_and_descendant_text` |
+| lightweight hover / changed capture | `hover_is_lightweight_and_expired_context_never_uses_another_capture` |
+| stable/exact annotation targets | `annotation_resolution_follows_stable_ids_and_keeps_exact_targets_scoped` |
+| pinned pages and window generations | `annotation_resolution_pins_pages_and_rejects_other_window_generations` |
+| nonadvancing pages / hidden layouts | `annotation_resolution_rejects_nonadvancing_pages_and_masks_hidden_targets` |
+| invalid targets / expired references | `invalid_annotation_targets_and_expired_references_never_reach_runtime` |
+| one-shot click / fractional scroll | `click_is_submitted_once_without_retry_key_and_fractional_scroll_keeps_geometry` |
+| invalid positions / input bounds | `invalid_expired_or_foreign_positions_never_reach_runtime`, `scroll_is_bounded_and_unsupported_input_is_rejected` |
+| helper/reference cleanup | `closing_capture_reaps_its_helper_and_releases_waiting_viewers`, `preview_state_bounds_references_and_changes_epoch_only_for_window_geometry` |
+| packet bounds/truncation | `truncated_and_oversized_capture_frames_fail_explicitly`, `capture_queue_bounds_both_packet_count_and_retained_bytes` |
+| joining at a keyframe / header disconnect | `video_join_starts_at_keyframe_and_releases_viewer_on_disconnect`, `disconnect_during_video_headers_releases_encoder` |
+| WebSocket framing/limits | `masked_text_and_control_frames_reject_fragments_unmasked_and_oversized_input`, `outbound_frames_use_all_length_encodings_and_keep_the_response_bound` |
+| HTTP auth/assets/control/shutdown | `serve::tests::native_preview_assets_authentication_control_replies_and_shutdown` |
+| preview flags | existing `project_build` argument and `dev::tests` parser coverage |
+
+### Verification
+
+Mac: Rust 1.98.0, Python 3.14.4 first on PATH, Node 26.4.0; shared
+`/tmp/rake-port-target`, dev/test debug info disabled and incremental off.
+
+- Full `cargo test -p rake-app-cli --locked --no-fail-fast`: **340 passed,
+  0 failed, 3 ignored** (245 unit and 95 integration). Two ignores predate this
+  port; the new manual Python comparison separately passed all **30 exact
+  result/request-envelope cases** with Python 3.14.
+- All-target Clippy `--locked -- -D warnings`, Cargo fmt and changed-file
+  rake format checks passed. `rake lint`: **721 files, 14 existing diagnostics,
+  0 denied**. `git diff --check` passed.
+- Supervisor **14**, dev bridge **5**, runtime broker **9**, preview **18**,
+  Web deployment **10**, embedded DevTools **1**: all passed.
+- Python-reference preview: **18 passed**. The original Python internal assertions
+  also remain in the default script suites; earlier phase-4 broker comparisons
+  retain their recorded results below.
+- With authorized temporary wasm-bindgen 0.2.129: bundle **7 passed**, real
+  Fieldnotes loading passed, Chrome 156 crash suite passed **17 scenarios**.
+- Native preview passed repeated clicks, bidirectional fractional scrolling,
+  Rust-source selection, blur/opaque toggling and stale-reference rejection.
+  No StaleGeneration occurred on this run; the previously known intermittent
+  race remains recorded, without evidence that this port causes it.
+- Live Web `rake dev -p rake-notes --target web --no-open --json`: built,
+  published, fetched immutable/bootstrap-injected page and native development
+  state; SIGTERM exit 0, stopped record and owned session cleanup.
+- Live desktop `--preview --cdp --no-open --json`: built/published, fetched page,
+  native preview state, actual JPEG frame, authenticated WebSocket state, CDP
+  discovery and agent snapshot; notes-view live/saved each **100 nodes**.
+  SIGTERM exit 0 and stopped record; use an isolated Fieldnotes data directory.
+
+Earlier Mac runs exposed inherited O_NONBLOCK (fixed and regression-tested in
+phase 4) and a new fixture setting a timeout after RST (move timeout setup before
+RST, without weakening cleanup assertions). The first final supervisor attempt
+timed out while concurrent checks held the shared Cargo target; its serial repeat
+passed all 14 unchanged cases. The initial live-video probe rejected a valid
+keepalive before the image; the corrected probe waited for JPEG and passed.
+Temporary installation build outputs were removed immediately after installation.
+The user subsequently removed the 40 GB disk floor; no unrelated files/processes
+were cleaned or stopped.
+
+Devbox, Rust 1.98.0 / Python 3.12.3, umask 022, debug info and incremental off:
+full CLI **336 passed, 0 failed, 3 ignored**; focused preview **18 passed** and
+manual Python differential **30 passed**. Clippy, Cargo fmt, rake format and lint
+passed (721 files, 14 existing diagnostics, 0 denied). Bridge **5**, reference
+preview/broker **18 / 9**, deployment **10** passed. Supervisor: **12 passed,
+1 skipped, 1 error** because Node is absent; its real CLI lifecycle case passed.
+No Node or GPUI system dependencies were installed on devbox. Its default umask
+002 exposes an unchanged archive mode assertion; the full repeat passed with 022.
+Interpret new helper doubles with the installed shell to avoid Linux ETXTBSY
+from concurrent forks retaining writer descriptors; real Swift launch is direct.
+
+Phase-5 dispatched CI at `59f5dec` passed gate, portable, Windows desktop,
+Ubuntu desktop and macOS native. Extended installed spacing tools successfully,
+then failed `scripts/check-spacing.py`; this is distinct from #51's install error.
+The captured diagnostics identify 283 phase-4-owned and 420 phase-5-owned
+blank-line locations plus 863 locations attributed to pre-phase-4 code. Fix the
+port-owned locations on their phase branches, carry the lower fix forward by
+cherry-pick, and keep the earlier baseline warnings visible. These Rust changes
+insert blank lines only (`git diff --ignore-blank-lines` is empty). Mac preview
+unit tests, Cargo fmt, all-target Clippy and diff checks pass; Dylint itself is
+verified in dispatched CI because additional local installs are not authorized.
+Fresh CI is pending on the follow-up heads. Phase 6 removes retained Python/extraction,
+updates prerequisite docs and browser opening, and resolves Windows boundaries.
+
 ## Phase 4: native runtime broker and development bridge
 
 Refs #42. Base: main at `85f13c8`. `project_build/broker/` owns browser leases,
