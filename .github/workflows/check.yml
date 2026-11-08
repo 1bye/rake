@@ -352,8 +352,7 @@ jobs:
         run: node scripts/test-web-crash.mjs
 
   extended:
-    # Temporary: exercise the installer on this PR before restoring the non-PR gate.
-    if: github.event_name != 'pull_request' || github.head_ref == 'codex/ci-fix-51'
+    if: github.event_name != 'pull_request'
     needs: gate
     runs-on: macos-latest
     steps:
@@ -375,7 +374,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Cache spacing tools
         id: spacing-tools
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/bin/cargo-dylint
@@ -391,6 +390,15 @@ jobs:
         run: |
           cargo +nightly-2026-08-20 dylint --version
           test -x ~/.cargo/bin/dylint-link
+      # Preserve a verified install even when a later lint reports source violations.
+      - name: Save spacing tools
+        if: steps.spacing-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: ${{ steps.spacing-tools.outputs.cache-primary-key }}
       - run: python3 scripts/check-spacing.py
       - run: cargo doc --workspace --no-deps --locked
         env:
