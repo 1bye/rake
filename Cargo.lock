@@ -800,6 +800,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "blaze-live"
+version = "0.1.0"
+source = "git+https://github.com/indexable-inc/blaze?rev=6560553cc09f00d8d96edc24d85a5e441352ab7c#6560553cc09f00d8d96edc24d85a5e441352ab7c"
+
+[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7142,6 +7147,7 @@ dependencies = [
  "anyhow",
  "async-io",
  "backtrace",
+ "blaze-live",
  "block2 0.6.2",
  "blocking",
  "console_error_panic_hook",
@@ -7160,6 +7166,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
  "objc2-user-notifications",
+ "pathfinder_simd",
  "rake-autostart",
  "rake-client",
  "rake-diagnostics",
