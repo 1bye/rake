@@ -41,9 +41,65 @@ pub(super) fn commands(browser: Option<&OsStr>, url: &str) -> Vec<Command> {
     commands
 }
 
+/// Starts a browser opener that the session does not own.
+///
+/// Openers such as `xdg-open`, or a browser named by `BROWSER`, may become the user's
+/// browser process. Like Python's `webbrowser`, a session never terminates them: the opener
+/// runs in its own process group, outside the supervisor's groups and the terminal's
+/// foreground group, and a detached thread only reaps it.
+#[cfg(unix)]
+pub(super) fn launch(command: &mut Command) -> std::io::Result<u32> {
+    use std::{os::unix::process::CommandExt, process::Stdio};
+
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
+    Ok(pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn launched_openers_run_outside_session_process_groups() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("browser.pid");
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(format!(
+            "sleep 30 & echo $! > '{}'; exit 0",
+            marker.display()
+        ));
+        let opener = launch(&mut command).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let browser = loop {
+            if let Some(pid) = std::fs::read_to_string(&marker)
+                .ok()
+                .and_then(|text| text.trim().parse::<i32>().ok())
+            {
+                break pid;
+            }
+            assert!(std::time::Instant::now() < deadline, "opener did not start");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+
+        // SAFETY: getpgid and kill only inspect or signal the test's own child processes.
+        unsafe {
+            assert_eq!(libc::getpgid(browser), opener as i32);
+            assert_ne!(libc::getpgid(browser), libc::getpgid(0));
+            libc::kill(browser, libc::SIGKILL);
+        }
+    }
 
     #[test]
     fn browser_commands_preserve_quoted_arguments_and_substitute_urls_without_a_shell() {

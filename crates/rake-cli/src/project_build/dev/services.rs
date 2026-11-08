@@ -201,12 +201,13 @@ impl Supervisor<'_> {
     }
 
     fn open_browser(&mut self, url: &str) {
+        if Processes::new(self.cancelled).check_cancelled().is_err() {
+            return;
+        }
         for mut command in
             super::super::browser::commands(std::env::var_os("BROWSER").as_deref(), url)
         {
-            command.stdout(Stdio::null()).stderr(Stdio::null());
-            if let Ok(group) = Processes::new(self.cancelled).start(&mut command) {
-                self.openers.push(group);
+            if super::super::browser::launch(&mut command).is_ok() {
                 break;
             }
         }

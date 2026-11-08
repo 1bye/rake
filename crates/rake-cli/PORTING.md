@@ -16,7 +16,10 @@ services; serve preview assets/bootstrap directly from embedded bytes. **Swift
 capture, preview HTML/JS/CSS and other non-Python resources remain embedded.**
 Remove the unused Python-server supervisor field. Browser candidates honor quoted
 BROWSER commands and %s, then use open, xdg-open or cmd /c start. No shell is used
-for BROWSER commands unless explicitly requested by the command itself.
+for BROWSER commands unless explicitly requested by the command itself. As with
+Python's webbrowser, the session does not own openers: each runs in its own
+process group and is only reaped, so stopping `rake dev` never terminates a
+browser that xdg-open or a BROWSER command started.
 
 Drop doctor’s `python` field: no built-in runtime still needs it. Preserve the
 other diagnostic fields and their order, optional Node, Web readiness and exit
