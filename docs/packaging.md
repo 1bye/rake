@@ -22,7 +22,7 @@ Bundles default to the **release** profile, and `--debug` is for local packaging
 
 Defaults write `dist/PACKAGE/desktop-bundle` or `dist/PACKAGE/web-bundle`, separate from build outputs at `dist/PACKAGE/desktop|web`.
 
-Web and the development supervisor need Python 3.11+, while native bundle assembly runs in Rust. Web also needs the wasm32 target and a `wasm-bindgen` CLI exactly matching `Cargo.lock`.
+Builds, bundles and the development supervisor run in Rust without Python. Web also needs the wasm32 target and a `wasm-bindgen` CLI exactly matching `Cargo.lock`.
 
 Each output contains the unpacked artifact, archive, `bundle.json` with versions,
 target, profile, signing/deployment status and file hashes, plus `SHA256SUMS` for

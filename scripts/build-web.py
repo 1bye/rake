@@ -1,49 +1,21 @@
 #!/usr/bin/env python3
-"""Build the shared example and generate its browser loader with matching wasm-bindgen."""
-
-from pathlib import Path
+"""Build an example through the Rust CLI with matching wasm-bindgen tooling."""
 import argparse
-import shutil
+import os
+from pathlib import Path
 import subprocess
-import sys
-import tomllib
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-from bundle import install_favicon
 
 project = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--example", choices=["foundation", "routing", "notes", "view", "files"], default="foundation")
 parser.add_argument("--hash", action="store_true", help="Build the routing example with fragment URLs")
 args = parser.parse_args()
-
 if args.hash and args.example != "routing":
     parser.error("--hash applies to the routing example")
 
-package = f"rake-{args.example}"
-subprocess.run([
-    "cargo", "build", "--locked", "-p", package, "--lib",
-    "--target", "wasm32-unknown-unknown",
-    *(["--features", "hash-routing"] if args.hash else []),
-], cwd=project, check=True)
-lock = tomllib.loads((project / "Cargo.lock").read_text())
-version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
-binary = shutil.which("wasm-bindgen")
-
-if not binary:
-    raise SystemExit(f"Install loader tooling: cargo install wasm-bindgen-cli --version {version} --locked")
-
-actual = subprocess.check_output([binary, "--version"], text=True).strip()
-
-if actual != f"wasm-bindgen {version}":
-    raise SystemExit(f"Expected wasm-bindgen {version}, found {actual}")
-
+cli = Path(os.environ.get("RAKE_CLI", str(Path(os.environ.get("CARGO_TARGET_DIR", str(project / "target"))) / "debug/rake")))
 output = project / "dist" / (args.example + ("-hash" if args.hash else ""))
-shutil.copytree(project / "examples" / args.example / "web", output, dirs_exist_ok=True)
-shutil.copyfile(project / "crates/rake-cli/scripts/rake-web-font-licenses.txt", output / "rake-web-font-licenses.txt")
-subprocess.run([
-    binary, "--target", "web", "--out-dir", str(output / "pkg"),
-    str(project / "target" / "wasm32-unknown-unknown" / "debug" / f"{package.replace('-', '_')}.wasm"),
-], check=True)
-install_favicon(output)
-print(f"Built {output}; serve with python3 crates/rake-cli/scripts/serve-web.py --example {output.name}")
+subprocess.run([str(cli), "build", "--target", "web", "--manifest-path",
+    str(project / "examples" / args.example / "Cargo.toml"), "--output", str(output),
+    *(["--features", "hash-routing"] if args.hash else [])], cwd=project, check=True)
+print(f"Built {output}; serve with python3 -m http.server --directory {output} 8080, or use rake dev for inspection")

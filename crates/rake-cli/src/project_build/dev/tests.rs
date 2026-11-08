@@ -455,3 +455,21 @@ fn build_output_keeps_empty_rendered_records_and_omits_artifact_json() {
             .all(|record| record["stream"] == "build" && record["pid"].as_u64().unwrap() > 0)
     );
 }
+
+#[test]
+fn checkpoint_files_preserve_utf8_byte_bounds() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("checkpoint.json");
+    let value = json!({"draft":"é漢字".repeat(20000)});
+    write_marker(&path, &value).unwrap();
+
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+        value
+    );
+    assert!(fs::metadata(&path).unwrap().len() < 200000);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}

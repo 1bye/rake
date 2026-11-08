@@ -104,6 +104,7 @@ fi
             .current_dir(&self.root)
             .env("PATH", &self.tools)
             .env("FIXTURE", &self.root)
+            .env("BROWSER", "fixture-browser --test %s")
             .env("CONTROL", &control)
             .env("RAKE_CLI", self.tools.join("rake-double"))
             .args(["dev", "--json"]);
@@ -549,19 +550,11 @@ printf 'export default async function init() {}' > "$4/fixture.js"
         );
         self.tool(
             "python3",
-            r#"
-if [ "$1" = -m ]; then
-    printf '%s\n' "$@" >> "$CONTROL/browser-args"
-    exit 0
-fi
-printf '%s' "$$" > "$CONTROL/server-pid"
-printf '%s\n' "$@" > "$CONTROL/server-args"
-if [ -f "$CONTROL/server-bad" ]; then printf 'wrong readiness\n'; exit; fi
-if [ ! -f "$CONTROL/server-hold" ]; then
-    printf 'Serving notes at http://127.0.0.1:9876/#__rake_control=fixture-token\n'
-fi
-exec /bin/sleep 300
-"#,
+            "printf forbidden > \"$CONTROL/python-called\"; exit 99",
+        );
+        self.tool(
+            "fixture-browser",
+            "printf '%s\\n' \"$@\" >> \"$CONTROL/browser-args\"",
         );
         self.tool("node", r#"
 if [ "$1" = --version ]; then printf 'v26.0.0\n'; exit; fi
@@ -786,7 +779,7 @@ fn web_cdp_rejects_missing_old_invalid_or_failing_node_before_loading_project() 
 }
 
 #[test]
-fn browser_opening_uses_webbrowser_selection_and_cdp_opens_only_the_companion() {
+fn browser_opening_honors_browser_and_cdp_opens_only_the_companion() {
     for cdp in [false, true] {
         let fixture = Fixture::new();
         fixture.web();
@@ -798,11 +791,8 @@ fn browser_opening_uses_webbrowser_selection_and_cdp_opens_only_the_companion() 
         let mut running = fixture.start_options(&args, false);
         running.phase("watching");
         let args = wait(|| fs::read_to_string(running.control.join("browser-args")).ok());
-        assert_eq!(
-            args.lines().take(2).collect::<Vec<_>>(),
-            ["-m", "webbrowser"]
-        );
-        assert_eq!(args.lines().count(), 3, "open exactly one browser URL");
+        assert_eq!(args.lines().take(1).collect::<Vec<_>>(), ["--test"]);
+        assert_eq!(args.lines().count(), 2, "open exactly one browser URL");
         assert_eq!(args.contains("embedded-devtools-fixture.html"), cdp);
         running.stop(libc::SIGTERM);
     }

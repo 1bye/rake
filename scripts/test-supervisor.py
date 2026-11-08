@@ -1,36 +1,29 @@
 #!/usr/bin/env python3
-"""Covers build watching/failure isolation, status, cleanup and reload coordination.
-Real: cargo, a compiled native fixture, process groups, filesystem and the Web broker.
-Doubles: fixture application has no Rake runtime; model browser protocol for reload dispatch.
-Requires: Rust/cargo/Python, Unix process groups; no display or GPU.
+"""CLI contracts after embedded Python removal; internal cases map to native Rust tests.
+See crates/rake-cli/PORTING.md. HTTP/native fixtures continue running against the Rust CLI.
 """
-
-import contextlib
+import concurrent.futures
 import io
-import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
-from unittest.mock import patch
-from types import SimpleNamespace
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-
-from dev_bridge import DevBridge
-
-spec = importlib.util.spec_from_file_location("rake_dev", (Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/dev.py"))
-dev = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(dev)
+from rust_contract_tests import rust_contract
 ROOT = Path(__file__).resolve().parents[1]
 CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
-
 
 def wait_for(predicate, timeout=30):
     deadline = time.monotonic() + timeout
@@ -52,93 +45,16 @@ def alive(pid):
 
 class SupervisorTests(unittest.TestCase):
     def test_web_cdp_starts_one_owned_toggle_companion_after_publication(self):
-        with tempfile.TemporaryDirectory(prefix="rake-toggle-supervisor-") as temporary:
-            root = Path(temporary)
-            session = root / "session"
-            session.mkdir(mode=0o700)
-            args = SimpleNamespace(target="web", native_reloader=None, cdp=True, no_open=True, json=True)
-            processes = dev.Processes()
-            project = SimpleNamespace(args=args, package={"name":"test.web"})
-            companion = None
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    supervisor = dev.Supervisor(project, session, processes)
-                    supervisor.launch_url = "http://127.0.0.1:8081/#__rake_control=test-only"
-                    dev.private_json(session / "cdp.json", {"url":"http://127.0.0.1:9"})
-                    first = supervisor.builds / "1"
-                    first.mkdir()
-                    supervisor.publish(1, first)
-                    companion = supervisor.embedded
-                    self.assertIsNone(companion.poll())
-                    launch = supervisor.status["devtools_url"]
-                    self.assertIn("embedded-devtools-", launch)
-                    self.assertTrue(any(first.glob("embedded-devtools-*.html")))
-                    second = supervisor.builds / "2"
-                    second.mkdir()
-                    supervisor.publish(2, second)
-                    self.assertIs(supervisor.embedded, companion)
-                    self.assertEqual(supervisor.status["devtools_url"], launch)
-            finally:
-                processes.close()
-            self.assertIsNotNone(companion.poll(), "companion must stop with its supervisor")
+        rust_contract(self, ['web_publication_owns_server_and_single_companion_and_retains_old_build_on_failure'], 'test:project_dev')
 
     def test_doctor_reports_installed_targets_and_optional_node(self):
-        for target, installed, expected in [
-            ("desktop", "aarch64-apple-darwin", 0),
-            ("web", "aarch64-apple-darwin", 1),
-            ("web", "aarch64-apple-darwin\nwasm32-unknown-unknown", 0),
-        ]:
-            for node in ["v24.0.0", None]:
-                def output(command, **kwargs):
-                    if command[0] == "node":
-                        if node is None:
-                            raise FileNotFoundError("node unavailable")
-                        return node
-                    return installed if command[0] == "rustup" else "tool version"
-
-                with patch.object(dev.subprocess, "check_output", side_effect=output), contextlib.redirect_stdout(io.StringIO()) as stdout:
-                    status = dev.doctor(SimpleNamespace(target=target, json=True))
-                checks = json.loads(stdout.getvalue())
-                self.assertEqual(checks["installed_targets"], installed)
-                self.assertNotIn("wasm_targets", checks)
-                self.assertEqual(checks["node"], node if node else {"error": "node unavailable"})
-                self.assertEqual(status, expected)
+        rust_contract(self, ['doctor_matches_required_targets_and_optional_tools_without_python'], 'test:project_build')
 
     def test_only_dev_auto_enables_inspection_including_renamed_dependencies(self):
-        project = object.__new__(dev.Project)
-        project.package = {"features": {}, "dependencies": [{"name": "rake-app", "rename": "framework", "kind": None}]}
-        for command in ["build", "bundle", "dev"]:
-            project.args = SimpleNamespace(command=command, features=None)
-            self.assertEqual(project.build_features(), "framework/devtools" if command == "dev" else "")
-        project.args = SimpleNamespace(command="bundle", features="devtools,theme")
-        self.assertEqual(project.build_features(), "devtools,theme")
-        project.args = SimpleNamespace(command="dev", features="theme")
-        project.package["features"] = {"devtools": ["framework/devtools"]}
-        self.assertEqual(project.build_features(), "theme,devtools")
-        project.package = {"features": {}, "dependencies": []}
-        self.assertEqual(project.build_features(), "theme")
+        rust_contract(self, ['dev_features_and_options_use_the_shared_native_supervisor'], 'bin:rake')
 
     def test_new_project_resolves_first_lock_but_existing_project_stays_locked(self):
-        with tempfile.TemporaryDirectory(prefix="rake-first-lock-") as temporary:
-            root = Path(temporary).resolve()
-            manifest = root / "Cargo.toml"
-            package = {"id": "fixture", "name": "fixture", "version": "0.1.0",
-                       "manifest_path": str(manifest), "metadata": {}, "source": None,
-                       "targets": [{"name": "fixture", "kind": ["bin"], "crate_types": ["bin"]}]}
-            metadata = {"workspace_root": str(root), "workspace_members": ["fixture"], "packages": [package]}
-            args = SimpleNamespace(manifest_path=manifest, package=None, target="desktop", bin=None, web_dir=None)
-            commands = []
-
-            class Processes:
-                def output(self, command):
-                    commands.append(command)
-                    return json.dumps(metadata)
-
-            dev.Project(args, Processes())
-            self.assertNotIn("--locked", commands[-1])
-            (root / "Cargo.lock").write_text("existing lock")
-            dev.Project(args, Processes())
-            self.assertIn("--locked", commands[-1])
+        rust_contract(self, ['first_lock_resolution_and_subsequent_metadata_stay_locked'], 'test:project_build')
 
     def test_real_cli_watches_keeps_old_app_on_compile_failure_restarts_and_survives_crash(self):
         with tempfile.TemporaryDirectory(prefix="rake-supervisor-test-") as temporary:
@@ -195,44 +111,10 @@ class SupervisorTests(unittest.TestCase):
                         shutil.rmtree(session)
 
     def test_owned_process_cleanup_kills_descendants_that_ignore_term(self):
-        processes = dev.Processes()
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "pid"
-            child = processes.start([sys.executable, "-c",
-                "import subprocess,time,sys; p=subprocess.Popen([sys.executable,'-c',"
-                "'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(300)']);"
-                "open(sys.argv[1],'w').write(str(p.pid));time.sleep(300)", str(path)])
-            descendant = wait_for(lambda: int(path.read_text()) if path.exists() else None)
-            processes.close()
-            self.assertIsNotNone(child.poll())
-            # A dead reparented child may briefly be a zombie; it must not be running.
-            wait_for(lambda: not alive(descendant) or subprocess.run(["ps", "-o", "stat=", "-p", str(descendant)], text=True, capture_output=True).stdout.strip() in {"", "Z", "Z+"})
+        rust_contract(self, ['cleanup_kills_descendants_that_ignore_sigterm'], 'test:project_dev')
 
     def test_native_transport_retry_keeps_the_same_request_identity(self):
-        import socket
-        import threading
-        with tempfile.TemporaryDirectory(prefix="rake-retry-", dir="/tmp") as temporary:
-            path = str(Path(temporary) / "runtime.sock")
-            requests = []
-            with socket.socket(socket.AF_UNIX) as server:
-                server.bind(path)
-                server.listen()
-                def serve():
-                    for index in range(2):
-                        connection, _ = server.accept()
-                        with connection:
-                            with connection.makefile("rb") as file:
-                                requests.append(json.loads(file.readline()))
-                            if index:
-                                connection.sendall(b'{"Ok":{"type":"reload","value":{"phase":"ready"}}}\n')
-                thread = threading.Thread(target=serve, daemon=True)
-                thread.start()
-                instance = {"info": {"runtime_id": str(uuid.uuid4())}, "endpoint": {"path": path}}
-                reply = dev.exchange(instance, "command", {"type": "prepare_reload", "request": {"id": "test", "mechanism": "native_restart"}})
-                thread.join(timeout=2)
-                self.assertEqual(reply["phase"], "ready")
-                self.assertEqual(requests[0], requests[1])
-                self.assertIsNotNone(requests[0]["key"])
+        rust_contract(self, ['native_transport_retry_keeps_the_same_request_identity'], 'bin:rake')
 
     def test_development_argument_errors_are_json(self):
         result = subprocess.run([str(CLI), "dev", "--unknown", "--json"], text=True, capture_output=True)
@@ -240,156 +122,25 @@ class SupervisorTests(unittest.TestCase):
         self.assertIn("unrecognized", json.loads(result.stderr)["error"]["message"])
 
     def test_checkpoint_files_preserve_utf8_byte_bounds(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "checkpoint.json"
-            value = {"draft": "é漢字" * 20000}
-            dev.private_json(path, value)
-            self.assertEqual(json.loads(path.read_text()), value)
-            self.assertLess(path.stat().st_size, 200000)
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        rust_contract(self, ['checkpoint_files_preserve_utf8_byte_bounds'], 'bin:rake')
 
     def test_build_output_is_replaced_only_after_success(self):
-        import hashlib
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "src").mkdir()
-            (root / "Cargo.toml").write_text('[package]\nname="build-fixture"\nversion="0.1.0"\nedition="2024"\n')
-            source = root / "src/main.rs"
-            source.write_text('fn main(){println!("first");}')
-            subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=root, check=True, capture_output=True)
-            command = [str(CLI), "build", "--manifest-path", str(root / "Cargo.toml"), "--output", str(root / "output"), "--json"]
-            first = json.loads(subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL))
-            artifact = Path(first["artifact"])
-            before = hashlib.sha256(artifact.read_bytes()).digest()
-            source.write_text('fn main(){does_not_compile}')
-            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
-            self.assertEqual(hashlib.sha256(artifact.read_bytes()).digest(), before)
-            source.write_text('fn main(){println!("replacement");}')
-            subprocess.run(command, check=True, capture_output=True)
-            self.assertNotEqual(hashlib.sha256(artifact.read_bytes()).digest(), before)
-            unrelated = root / "unrelated"
-            unrelated.mkdir()
-            (unrelated / "keep").write_text("user data")
-            refused = command.copy()
-            refused[refused.index("--output") + 1] = str(unrelated)
-            self.assertNotEqual(subprocess.run(refused, capture_output=True).returncode, 0)
-            self.assertEqual((unrelated / "keep").read_text(), "user data")
+        rust_contract(self, ['web_build_keeps_authored_index_and_rolls_back_failed_replacements'], 'test:project_build')
 
     def test_native_backend_failure_aborts_without_stopping_the_old_host(self):
-        from types import SimpleNamespace
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            backend = root / "backend"
-            backend.write_text('#!/bin/sh\nexit 1\n')
-            backend.chmod(0o700)
-            args = SimpleNamespace(target="desktop", native_reloader=backend, json=True, restart_without_state=False)
-            project = SimpleNamespace(args=args, package={"name": "test"}, root=root)
-            processes = dev.Processes()
-            supervisor = dev.Supervisor(project, root, processes)
-            supervisor.app = processes.start([sys.executable, "-c", "import time;time.sleep(300)"])
-            supervisor.instance = lambda: {"application_id": "test", "info": {"runtime_id": str(uuid.uuid4())}}
-            calls = []
-            original = dev.exchange
-            def exchange(instance, kind, value, timeout=2, key=None):
-                calls.append(value)
-                if value["type"] == "reload":
-                    return {"phase": "ready"}
-                if value["type"] == "checkpoint":
-                    return {"generation": 1}
-                return {}
-            dev.exchange = exchange
-            try:
-                with self.assertRaises(RuntimeError):
-                    supervisor.publish(2, root / "replacement")
-                self.assertIsNone(supervisor.app.poll())
-                self.assertEqual(calls[-1]["type"], "finish_reload")
-                self.assertFalse(calls[-1]["applied"])
-            finally:
-                dev.exchange = original
-                processes.close()
+        rust_contract(self, ['native_backend_failure_aborts_and_success_applies_without_stopping_old_host'], 'bin:rake')
 
     def test_immutable_web_assets_keep_the_referring_build_and_do_not_expose_traversal(self):
-        import urllib.request
-        import urllib.error
-        import urllib.parse
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            builds = root / "builds"
-            for number in (1, 2):
-                output = builds / str(number)
-                (output / "pkg").mkdir(parents=True)
-                (output / "index.html").write_text("<!doctype html><html><head></head><script type='module' src='/loader.js'></script><script type='module'>import '/pkg/app.js';</script></html>")
-                (output / "loader.js").write_text("import '/pkg/app.js';")
-                (output / "pkg/app.js").write_text(f"// build {number}")
-            state = root / "status.json"
-            state.write_text(json.dumps({"published": 1, "directory": str(builds / "1"), "phase": "watching"}))
-            env = {**os.environ, "RAKE_CONTROL_DIR": str(root / "control")}
-            process = subprocess.Popen([sys.executable, str(ROOT / "crates/rake-cli/scripts/serve-web.py"), "--port", "0", "--control",
-                "--directory", str(builds / "1"), "--build-root", str(builds), "--development-state", str(state)],
-                env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-            try:
-                launch = process.stdout.readline().strip().split()[-1]
-                url = urllib.parse.urlsplit(launch)
-                base = f"http://{url.netloc}"
-                with urllib.request.urlopen(base) as response:
-                    html = response.read().decode()
-                self.assertIn("/__rake/build/1/pkg/app.js", html)
-                self.assertIn("/__rake/build/1/loader.js", html)
-                self.assertNotIn(url.fragment.removeprefix("__rake_control="), html)
-                state.write_text(json.dumps({"published": 2, "directory": str(builds / "2"), "phase": "watching"}))
-                with urllib.request.urlopen(base + "/__rake/build/1/pkg/app.js") as response:
-                    self.assertEqual(response.read(), b"// build 1")
-                request = urllib.request.Request(base + "/pkg/app.js", headers={"Referer": base + "/__rake/build/1/loader.js"})
-                with urllib.request.urlopen(request) as response:
-                    self.assertEqual(response.read(), b"// build 1")
-                for path in ("/__rake/build/1/%2e%2e/%2e%2e/status.json", "/__rake/build/999/pkg/app.js"):
-                    try:
-                        response = urllib.request.urlopen(base + path)
-                    except urllib.error.HTTPError as error:
-                        error.close()
-                    else:
-                        response.close()
-                        self.fail("missing or traversal asset must not be served")
-            finally:
-                process.terminate()
-                process.wait(timeout=5)
-                process.stdout.close()
+        rust_contract(self, ['immutable_builds_survive_publication_and_referer_pins_absolute_imports'], 'bin:rake')
 
     def test_bootstrap_javascript_parses(self):
-        import ast
-        import shutil
         if not shutil.which("node"):
             self.skipTest("Node is optional for checking JavaScript syntax")
-        module = ast.parse((ROOT / "crates/rake-cli/scripts/serve-web.py").read_text())
-        script = next(ast.literal_eval(item.value) for item in module.body if isinstance(item, ast.Assign)
-                      and any(isinstance(target, ast.Name) and target.id == "BOOTSTRAP_JS" for target in item.targets))
-        subprocess.run(["node", "--check"], input=script, check=True, capture_output=True)
+        subprocess.run(["node", "--check", str(ROOT / "crates/rake-cli/scripts/web-bootstrap.js")], check=True, capture_output=True)
 
     def test_web_builds_coordinate_once_per_build_and_busy_reload_does_not_starve_decisions(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            root.chmod(0o700)
-            state = root / "status.json"
-            state.write_text(json.dumps({"published": 1, "phase": "watching"}))
-            bridge = DevBridge("http://127.0.0.1:1", root, state)
-            runtime = str(uuid.uuid4())
-            bridge.handle("connect", {"application_id": "test", "build_id": 1,
-                "info": {"runtime_id": runtime, "protocol": 1, "platform": "web"}})
-            state.write_text(json.dumps({"published": 2, "phase": "watching"}))
-            delivery = bridge.handle("poll", {"runtime_id": runtime})
-            self.assertEqual(delivery[0]["reload_build"], 2)
-            bridge.handle("reload_result", {"runtime_id": runtime, "build_id": 2, "error": "runtime is busy"})
-            bridge.tickets["decision"] = {"runtime": runtime, "created": time.monotonic(), "result": None,
-                "request": {"message": {"type": "command", "value": {"type": "respond"}}}}
-            self.assertIn("request", bridge.handle("poll", {"runtime_id": runtime})[0])
-            bridge.tickets.clear()
-            bridge.instances[runtime]["retry_after"] = 0
-            self.assertEqual(bridge.handle("poll", {"runtime_id": runtime})[0]["reload_build"], 2)
-            bridge.handle("reload_result", {"runtime_id": runtime, "build_id": 2, "error": None})
-            self.assertEqual(bridge.instances[runtime]["attempted"], 2)
-            state.write_text(json.dumps({"published": 3, "phase": "watching"}))
-            self.assertEqual(bridge.handle("poll", {"runtime_id": runtime})[0]["reload_build"], 3)
-            bridge.close()
+        rust_contract(self, ['reload_busy_retries_and_shutdown_wakes_pending_clients'], 'bin:rake')
+
 
 
 if __name__ == "__main__":

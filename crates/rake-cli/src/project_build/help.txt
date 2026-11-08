@@ -8,8 +8,7 @@ usage: rake [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
               [--sign-identity SIGN_IDENTITY] [--entitlements ENTITLEMENTS]
               {dev,build,bundle,doctor,inspect} [{status}]
 
-Rake project builds and the development supervisor (Python 3.11+, standard
-library).
+Rake project builds and the native development supervisor.
 
 positional arguments:
   {dev,build,bundle,doctor,inspect}

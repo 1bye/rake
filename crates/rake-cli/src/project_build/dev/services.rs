@@ -62,7 +62,7 @@ impl Supervisor<'_> {
             .prefix("rake-tools-")
             .permissions(fs::Permissions::from_mode(0o700))
             .tempdir()?;
-        crate::project::extract(helpers.path())?;
+        super::super::resources::extract(helpers.path())?;
         self.helpers = Some(helpers);
         let helpers = self
             .helpers
@@ -201,14 +201,14 @@ impl Supervisor<'_> {
     }
 
     fn open_browser(&mut self, url: &str) {
-        // Retain webbrowser's platform/BROWSER selection while these sessions require Python.
-        let mut command = Command::new("python3");
-        command
-            .args(["-m", "webbrowser", url])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if let Ok(group) = Processes::new(self.cancelled).start(&mut command) {
-            self.openers.push(group);
+        for mut command in
+            super::super::browser::commands(std::env::var_os("BROWSER").as_deref(), url)
+        {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            if let Ok(group) = Processes::new(self.cancelled).start(&mut command) {
+                self.openers.push(group);
+                break;
+            }
         }
     }
 
@@ -216,13 +216,10 @@ impl Supervisor<'_> {
         if let Some(http) = &self.http {
             http.check()?;
         }
-        for (group, message) in [
-            (&mut self.server, "development Web server exited"),
-            (
-                &mut self.embedded,
-                "embedded Chrome DevTools companion exited",
-            ),
-        ] {
+        for (group, message) in [(
+            &mut self.embedded,
+            "embedded Chrome DevTools companion exited",
+        )] {
             if let Some(group) = group
                 && group.0.try_wait()?.is_some()
             {

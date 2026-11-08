@@ -72,7 +72,6 @@ struct Supervisor<'a> {
     status: Value,
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
-    server: Option<ProcessGroup>,
     http: Option<super::serve::Server>,
     embedded: Option<ProcessGroup>,
     helpers: Option<tempfile::TempDir>,
@@ -105,7 +104,6 @@ impl<'a> Supervisor<'a> {
             status,
             app: None,
             cdp: None,
-            server: None,
             http: None,
             embedded: None,
             helpers: None,
@@ -571,7 +569,6 @@ impl<'a> Supervisor<'a> {
         drop(self.app.take());
         drop(self.cdp.take());
         drop(self.http.take());
-        drop(self.server.take());
         drop(self.embedded.take());
         self.openers.clear();
         drop(self.helpers.take());

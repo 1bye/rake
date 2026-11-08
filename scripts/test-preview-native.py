@@ -13,10 +13,7 @@ import sys
 import tempfile
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-
-from dev_bridge import DevBridge
-from runtime_broker import RuntimeBroker
+from native_test_client import NativeInspector
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,7 +55,7 @@ def main():
                             continue
                 manifest = eventually(discovery)
                 runtime = manifest["info"]["runtime_id"]
-                inspector = RuntimeBroker(DevBridge("http://127.0.0.1:0", directory=control), allow_native=True)
+                inspector = NativeInspector(control)
                 def request(value, command=False):
                     return inspector.handle("inspect", {"request": {"protocol": 1, "runtime_id": runtime,
                         "key": None, "message": {"type": "command" if command else "query", "value": value}}})

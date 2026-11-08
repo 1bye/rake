@@ -4,7 +4,6 @@ use super::{Args, Processes, Project, Result, string};
 use serde_json::Value;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -166,7 +165,7 @@ fn input(value: Option<&Value>, directory: &Path, is_directory: bool) -> Result<
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination)?;
-    fs::set_permissions(destination, fs::Permissions::from_mode(0o755))?;
+    super::permissions::set(destination, 0o755)?;
     let mut entries = fs::read_dir(source)?.collect::<std::io::Result<Vec<_>>>()?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
@@ -191,7 +190,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
             copy_tree(&source, &target)?;
         } else {
             fs::copy(&source, &target)?;
-            fs::set_permissions(target, fs::Permissions::from_mode(0o644))?;
+            super::permissions::set(&target, 0o644)?;
         }
     }
 
@@ -277,4 +276,76 @@ pub(super) fn build(
     super::favicon::install(output)?;
 
     Ok(output.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn web_metadata_rejects_nonboolean_offline_and_accepts_native_sections() {
+        let root = tempfile::tempdir().unwrap();
+        let mut package = json!({"name":"example","version":"1.0.0","metadata":{"rake":{"bundle":{
+            "schema_version":1,"web":{"offline":true},"windows":{"manifest":"windows.manifest.xml"},
+            "macos":{"formats":["dmg"]},"linux":{"formats":["deb"]},"resources":[],"updates":{"enabled":false}
+        }}}});
+        assert!(
+            bundle_assets(&package, root.path(), false)
+                .unwrap()
+                .is_none()
+        );
+        package["metadata"]["rake"]["bundle"]["web"]["offline"] = json!("yes");
+        assert!(
+            bundle_assets(&package, root.path(), false)
+                .unwrap_err()
+                .to_string()
+                .contains("boolean")
+        );
+    }
+
+    #[test]
+    fn explicit_bundle_inputs_preserve_original_validation_cases() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            bundle_assets(
+                &json!({"name":"fixture","version":"1.0.0","metadata":null}),
+                root.path(),
+                false
+            )
+            .unwrap()
+            .is_none()
+        );
+        for invalid in [
+            "", "notes/", "/notes", "//notes/", "/a/../", "/a/./", "/a//b/", "/a%2fb/", "/a?b/",
+            "/漢/",
+        ] {
+            assert!(valid_base(&json!(invalid)).is_err(), "{invalid}");
+        }
+        for config in [
+            json!({"identifier":"not an id"}),
+            json!({"name":"../escape"}),
+            json!({"assets":"../"}),
+            json!({"typo":true}),
+            json!({"web":{"routing":"wrong"}}),
+        ] {
+            assert!(bundle_assets(&json!({"name":"fixture","version":"1.0.0","metadata":{"rake":{"bundle":config}}}),root.path(),false).is_err());
+        }
+        let source = root.path().join("assets");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("file"), "one").unwrap();
+        copy_tree(&source, &root.path().join("copy")).unwrap();
+        assert!(copy_tree(&source, &root.path().join("copy")).is_err());
+        #[cfg(unix)]
+        {
+            use std::{ffi::CString, os::unix::fs::symlink};
+            symlink("/etc/passwd", source.join("link")).unwrap();
+            assert!(copy_tree(&source, &root.path().join("copy2")).is_err());
+            fs::remove_file(source.join("link")).unwrap();
+            let path = CString::new(source.join("pipe").as_os_str().as_encoded_bytes()).unwrap();
+            // SAFETY: path is a live NUL-terminated fixture path; create only this FIFO.
+            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+            assert!(copy_tree(&source, &root.path().join("copy3")).is_err());
+        }
+    }
 }

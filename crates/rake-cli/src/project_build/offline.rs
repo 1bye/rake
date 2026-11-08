@@ -30,7 +30,7 @@ pub(super) fn prepare(site: &Path, metadata: &mut Value, offline: bool) -> Resul
         digest.update(template.as_bytes());
     }
     for path in files(site)? {
-        digest.update(path.strip_prefix(site)?.to_string_lossy().as_bytes());
+        digest.update(super::relative_name(path.strip_prefix(site)?).as_bytes());
         digest.update(b"\0");
         digest.update(Sha256::digest(fs::read(path)?));
     }
@@ -93,10 +93,8 @@ pub(super) fn prepare(site: &Path, metadata: &mut Value, offline: bool) -> Resul
         let assets: Vec<_> = files(&destination)?
             .iter()
             .map(|path| {
-                let path = path
-                    .strip_prefix(site)
-                    .expect("payload is inside site")
-                    .to_string_lossy();
+                let path =
+                    super::relative_name(path.strip_prefix(site).expect("payload is inside site"));
                 // urllib.quote(safe="/"): retain RFC 3986 unreserved characters and separators.
                 let encoded = path
                     .bytes()

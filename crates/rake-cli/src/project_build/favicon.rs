@@ -105,3 +105,98 @@ fn scan(document: &str) -> (bool, Option<usize>) {
 
     (tokenizer.sink.icon, insertion)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Translated from the five test-web-deployment.py favicon contracts.
+    use super::*;
+
+    #[test]
+    fn default_icon_is_shared_and_installation_is_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let original =
+            "<!doctype html><html><head><title>App</title></head><body>app</body></html>";
+        let index = root.path().join("index.html");
+        fs::write(&index, original).unwrap();
+        install(root.path()).unwrap();
+        let installed = fs::read_to_string(&index).unwrap();
+        let link = "<link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/rake-icon.svg\">";
+        assert_eq!(installed.replace(link, ""), original);
+        assert_eq!(
+            fs::read(root.path().join("assets/rake-icon.svg")).unwrap(),
+            include_bytes!("../../../rake-build/assets/default-icon.svg")
+        );
+        install(root.path()).unwrap();
+        assert_eq!(fs::read_to_string(&index).unwrap(), installed);
+        fs::write(&index, original).unwrap();
+        install(root.path()).unwrap();
+        assert_eq!(fs::read_to_string(&index).unwrap(), installed);
+    }
+
+    #[test]
+    fn authored_favicons_including_empty_icons_are_preserved() {
+        for link in [
+            "<link rel=\"icon\" href=\"./custom.svg\">",
+            "<LINK REL='shortcut ICON' HREF='custom.ico'>",
+            "<link rel=icon href=\"data:,\">",
+            "<link href=\"custom.png\" rel=\"icon alternate\"/>",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let original = format!("<html><head>{link}</head><body></body></html>");
+            fs::write(root.path().join("index.html"), &original).unwrap();
+            install(root.path()).unwrap();
+            assert_eq!(
+                fs::read_to_string(root.path().join("index.html")).unwrap(),
+                original
+            );
+            assert!(!root.path().join("assets").exists());
+        }
+    }
+
+    #[test]
+    fn comments_and_script_strings_do_not_count_as_favicon_links() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("index.html"), "<!-- <head><link rel=\"icon\" href=\"comment.svg\"> --><html>\n<head><script>const example = '<link rel=\"icon\" href=\"script.svg\">';</script></head></html>").unwrap();
+        install(root.path()).unwrap();
+        assert!(
+            fs::read_to_string(root.path().join("index.html"))
+                .unwrap()
+                .contains("<head><link rel=\"icon\" type=\"image/svg+xml\"")
+        );
+        assert!(root.path().join("assets/rake-icon.svg").is_file());
+    }
+
+    #[test]
+    fn implicit_head_is_supported() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("index.html"),
+            "<html lang=\"en\"><meta charset=\"utf-8\"><body>App</body></html>",
+        )
+        .unwrap();
+        install(root.path()).unwrap();
+        assert!(
+            fs::read_to_string(root.path().join("index.html"))
+                .unwrap()
+                .contains("<html lang=\"en\"><link rel=\"icon\"")
+        );
+    }
+
+    #[test]
+    fn generated_icon_does_not_overwrite_an_application_file() {
+        let root = tempfile::tempdir().unwrap();
+        let original = "<html><head></head></html>";
+        fs::write(root.path().join("index.html"), original).unwrap();
+        fs::create_dir(root.path().join("assets")).unwrap();
+        fs::write(root.path().join("assets/rake-icon.svg"), "app-owned").unwrap();
+        assert!(install(root.path()).is_err());
+        assert_eq!(
+            fs::read_to_string(root.path().join("index.html")).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("assets/rake-icon.svg")).unwrap(),
+            "app-owned"
+        );
+    }
+}

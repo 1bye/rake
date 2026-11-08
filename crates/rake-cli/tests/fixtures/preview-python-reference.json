@@ -1,0 +1,628 @@
+[
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "point": {
+              "generation": "current",
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_element"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "id": "leaf",
+        "parent": "button",
+        "text": "Save",
+        "view": {
+          "tag": "Text"
+        }
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "point": {
+              "generation": "current",
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_element"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      },
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "id": "button",
+            "type": "inspect_element"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "element": {
+          "content_mask": null,
+          "id": "button",
+          "kind": null,
+          "layout": null,
+          "metadata_truncated": null,
+          "parent": "root",
+          "semantic_id": null,
+          "source": {
+            "file": "src/button.rs",
+            "line": 7
+          },
+          "stable_id": null,
+          "text": null,
+          "view": {
+            "tag": "button"
+          }
+        },
+        "generation": "current"
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "point": {
+              "generation": "current",
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_element"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      },
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "id": "button",
+            "type": "inspect_element"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      },
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "generation": "current",
+            "offset": 0,
+            "type": "inspect_tree_page"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "element": {
+          "content_mask": null,
+          "grab": {
+            "frames": [
+              {
+                "name": "button",
+                "source": {
+                  "file": "src/button.rs",
+                  "line": 7
+                }
+              },
+              {
+                "name": "Editor",
+                "source": {
+                  "file": "src/editor.rs",
+                  "line": 4
+                }
+              }
+            ],
+            "text": "Save",
+            "truncated": false
+          },
+          "id": "button",
+          "kind": null,
+          "layout": null,
+          "metadata_truncated": null,
+          "parent": "root",
+          "semantic_id": null,
+          "source": {
+            "file": "src/button.rs",
+            "line": 7
+          },
+          "stable_id": null,
+          "text": null,
+          "view": {
+            "tag": "button"
+          }
+        },
+        "generation": "current"
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Ok": null
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Unknown preview endpoint",
+        "status": 404
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Expected preview object",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "command",
+          "value": {
+            "input": {
+              "type": "click"
+            },
+            "point": {
+              "generation": "current",
+              "geometry": [
+                38400,
+                27392,
+                0,
+                1792,
+                38400,
+                25600
+              ],
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_input"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "operation_id": 9
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "command",
+          "value": {
+            "input": {
+              "type": "move"
+            },
+            "point": {
+              "generation": "current",
+              "geometry": [
+                38400,
+                27392,
+                0,
+                1792,
+                38400,
+                25600
+              ],
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_input"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "operation_id": 9
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "command",
+          "value": {
+            "input": {
+              "dx": -2,
+              "dy": 2000,
+              "type": "scroll"
+            },
+            "point": {
+              "generation": "current",
+              "geometry": [
+                38400,
+                27392,
+                0,
+                1792,
+                38400,
+                25600
+              ],
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_input"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "operation_id": 9
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "command",
+          "value": {
+            "input": {
+              "dx": 1,
+              "dy": -31,
+              "phase": "moved",
+              "type": "wheel"
+            },
+            "point": {
+              "generation": "current",
+              "geometry": [
+                38400,
+                27392,
+                0,
+                1792,
+                38400,
+                25600
+              ],
+              "native_id": 42,
+              "window": "window-1",
+              "x": 100,
+              "y": 80
+            },
+            "type": "preview_input"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "operation_id": 9
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Unsupported preview input",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid or oversized scroll delta",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid or oversized scroll delta",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid or oversized scroll delta",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid scroll phase",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Preview reference expired",
+        "status": 409
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Finite content coordinates required",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Position is outside GPUI content",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Position is outside GPUI content",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Finite content coordinates required",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "generation": null,
+            "offset": 0,
+            "type": "inspect_tree_page"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      },
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "type": "preview"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "elements": [
+          {
+            "content_mask": null,
+            "id": "button",
+            "layout": null,
+            "stable_id": null
+          }
+        ],
+        "generation": "current"
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "generation": null,
+            "offset": 0,
+            "type": "inspect_tree_page"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      },
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "type": "preview"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "elements": [
+          null
+        ],
+        "generation": "current"
+      }
+    }
+  },
+  {
+    "requests": [
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "generation": null,
+            "offset": 0,
+            "type": "inspect_tree_page"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      },
+      {
+        "key": null,
+        "message": {
+          "type": "query",
+          "value": {
+            "type": "preview"
+          }
+        },
+        "protocol": 1,
+        "runtime_id": "runtime"
+      }
+    ],
+    "result": {
+      "Ok": {
+        "elements": [
+          null
+        ],
+        "generation": "current"
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Expected up to 33 annotation targets",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Expected up to 33 annotation targets",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid annotation target",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid annotation identity",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid annotation identity",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Invalid annotation identity",
+        "status": 400
+      }
+    }
+  },
+  {
+    "requests": [],
+    "result": {
+      "Err": {
+        "message": "Expected up to 33 annotation targets",
+        "status": 400
+      }
+    }
+  }
+]
