@@ -144,7 +144,12 @@ impl<T: 'static, E: Error + 'static> Loader<T, E> {
             released: false,
         });
 
-        let observe = cx.observe(&model, |_, _, cx| cx.notify());
+        let owner = cx.weak_entity();
+        let observe = App::observe(cx, &model, move |_, cx| {
+            if let Some(owner) = owner.upgrade() {
+                cx.notify(owner.entity_id());
+            }
+        });
 
         let release = cx.on_release({
             let weak = model.downgrade();

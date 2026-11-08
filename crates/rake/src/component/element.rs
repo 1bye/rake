@@ -1,9 +1,9 @@
-use std::any::Any;
-use std::marker::PhantomData;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::gpui::{
     AnyElement, App, AppContext, Bounds, Element, ElementId, Entity, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Pixels, StyleRefinement, Window,
+    InspectorElementId, IntoElement, LayoutId, Pixels, StyleRefinement, WeakEntity, Window,
 };
 
 use super::{FunctionComponent, Hooks, Instance, Registry, flush_effects};
@@ -17,13 +17,12 @@ pub struct ComponentElement<P: FunctionComponent> {
 
 struct Mounted<P> {
     entity: Entity<Instance>,
-    marker: PhantomData<fn() -> P>,
+    props: Rc<RefCell<P>>,
 }
 
-#[doc(hidden)]
-pub struct ComponentLayout {
-    owner: Entity<Instance>,
-    child: AnyElement,
+pub(super) struct ComponentBody {
+    pub child: AnyElement,
+    pub owner: WeakEntity<Instance>,
 }
 
 impl<P: FunctionComponent> ComponentElement<P> {
@@ -52,7 +51,7 @@ impl<P: FunctionComponent> IntoElement for ComponentElement<P> {
 }
 
 impl<P: FunctionComponent> Element for ComponentElement<P> {
-    type RequestLayoutState = ComponentLayout;
+    type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
@@ -77,44 +76,34 @@ impl<P: FunctionComponent> Element for ComponentElement<P> {
         let (entity, changed) =
             window.with_element_state::<Mounted<P>, _>(id.unwrap(), |mounted, _| {
                 if let Some(mounted) = mounted {
-                    let changed = mounted.entity.update(cx, |instance, _| {
-                        let previous = (instance.props.as_mut() as &mut dyn Any)
-                            .downcast_mut::<P>()
-                            .unwrap();
-                        let changed = !props.equivalent(previous);
-                        *previous = props;
-                        changed
-                    });
+                    let changed = !props.equivalent(&mounted.props.borrow());
+                    if changed {
+                        mounted.entity.update(cx, |_, _| {
+                            *mounted.props.borrow_mut() = props;
+                        });
+                    }
                     ((mounted.entity.clone(), changed), mounted)
                 } else {
                     let registry = cx.default_global::<Registry>().clone();
-                    let entity = cx.new(|cx| Instance {
-                        props: Box::new(props),
-                        hooks: Hooks::default(),
-                        registration: registry.register(cx.weak_entity()),
+                    let props = Rc::new(RefCell::new(props));
+                    let entity = cx.new(|cx| {
+                        let hooks = Rc::new(RefCell::new(Hooks::default()));
+                        Instance {
+                            props: props.clone(),
+                            registration: registry.register(cx.weak_entity(), &hooks),
+                            hooks,
+                        }
                     });
-                    (
-                        (entity.clone(), false),
-                        Mounted {
-                            entity,
-                            marker: PhantomData,
-                        },
-                    )
+                    ((entity.clone(), false), Mounted { entity, props })
                 }
             });
         let mut child = match self.cache_style.take().filter(|_| !changed) {
-            Some(style) => entity.clone().cached(style).into_any_element(),
-            None => entity.clone().into_any_element(),
+            Some(style) => entity.cached(style).into_any_element(),
+            None => entity.into_any_element(),
         };
         let layout = child.request_layout(window, cx);
 
-        (
-            layout,
-            ComponentLayout {
-                owner: entity,
-                child,
-            },
-        )
+        (layout, child)
     }
 
     fn prepaint(
@@ -122,23 +111,11 @@ impl<P: FunctionComponent> Element for ComponentElement<P> {
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
+        child: &mut AnyElement,
         window: &mut Window,
         cx: &mut App,
     ) {
-        #[cfg(feature = "devtools")]
-        {
-            let hooks = &state.owner.read(cx).hooks;
-            let (metadata, truncated) = super::inspection::capture(hooks);
-            crate::inspection::component_hooks(
-                cx,
-                std::any::type_name::<Self>(),
-                metadata,
-                truncated,
-            );
-        }
-
-        state.child.prepaint(window, cx);
+        child.prepaint(window, cx);
     }
 
     fn paint(
@@ -146,16 +123,82 @@ impl<P: FunctionComponent> Element for ComponentElement<P> {
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
-        ComponentLayout { owner, child }: &mut Self::RequestLayoutState,
+        child: &mut AnyElement,
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
     ) {
         child.paint(window, cx);
-        let hooks = &owner.read(cx).hooks;
+    }
+}
+
+impl IntoElement for ComponentBody {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for ComponentBody {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        #[cfg(feature = "devtools")]
+        {
+            let owner = self.owner.upgrade().unwrap();
+            let instance = owner.read(cx);
+            let (metadata, truncated) = super::inspection::capture(&instance.hooks.borrow());
+            crate::inspection::component_hooks(cx, instance.props.type_name(), metadata, truncated);
+        }
+
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+        let owner = self.owner.upgrade().unwrap();
+        let hooks = owner.read(cx).hooks.clone();
+        let mut hooks = hooks.borrow_mut();
 
         if hooks.pending_effects && !hooks.effect_queued {
-            owner.update(cx, |instance, _| instance.hooks.effect_queued = true);
+            hooks.effect_queued = true;
             let owner = owner.downgrade();
             cx.defer(move |cx| flush_effects(owner, cx));
         }

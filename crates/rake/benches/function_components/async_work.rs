@@ -203,7 +203,7 @@ impl Render for Host {
                     }
                     parent.child(self.plain[id].clone())
                 }
-                Variant::Hooks => parent.child(HookAsync {
+                Variant::Hooks | Variant::Memo => parent.child(HookAsync {
                     id: ("async", id),
                     runtime: self.runtime.clone(),
                     pending: self.pending,
@@ -298,7 +298,7 @@ pub(super) fn measure(variant: Variant, pending: bool, samples: usize) {
     println!(
         "{}",
         json!({
-            "backend": "TestAppContext", "variant": format!("{variant:?}"),
+            "renderer": "gpui-fast 0.1.13", "backend": "TestAppContext", "variant": format!("{variant:?}"),
             "scenario": if pending { "effect_resource_cancel" } else { "effect_resource_async" },
             "instances": 100, "samples": samples,
             "p50_us": frame_p50, "p95_us": frame_p95,

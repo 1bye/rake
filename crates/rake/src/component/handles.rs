@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use slotmap::{DefaultKey, SlotMap};
 
@@ -19,7 +19,12 @@ pub(super) struct Registry(Rc<RefCell<Arena>>);
 
 struct Arena {
     id: u64,
-    entries: SlotMap<DefaultKey, WeakEntity<Instance>>,
+    entries: SlotMap<DefaultKey, Entry>,
+}
+
+struct Entry {
+    owner: WeakEntity<Instance>,
+    hooks: Weak<RefCell<Hooks>>,
 }
 
 impl Global for Registry {}
@@ -43,9 +48,16 @@ impl Default for Registry {
 }
 
 impl Registry {
-    pub(super) fn register(&self, owner: WeakEntity<Instance>) -> Registration {
+    pub(super) fn register(
+        &self,
+        owner: WeakEntity<Instance>,
+        hooks: &Rc<RefCell<Hooks>>,
+    ) -> Registration {
         let mut arena = self.0.borrow_mut();
-        let key = arena.entries.insert(owner);
+        let key = arena.entries.insert(Entry {
+            owner,
+            hooks: Rc::downgrade(hooks),
+        });
 
         Registration {
             registry: self.clone(),
@@ -91,7 +103,7 @@ impl Handle {
         }
     }
 
-    fn owner(&self, cx: &App) -> Result<Entity<Instance>, ComponentError> {
+    fn resolve(&self, cx: &App) -> Result<(Entity<Instance>, Rc<RefCell<Hooks>>), ComponentError> {
         let registry = cx
             .try_global::<Registry>()
             .ok_or(ComponentError::Disposed)?;
@@ -103,7 +115,7 @@ impl Handle {
         arena
             .entries
             .get(self.key)
-            .and_then(WeakEntity::upgrade)
+            .and_then(|entry| Some((entry.owner.upgrade()?, entry.hooks.upgrade()?)))
             .ok_or(ComponentError::Disposed)
     }
 
@@ -113,10 +125,12 @@ impl Handle {
         notify: bool,
         update: impl FnOnce(&mut T, &mut App) -> R,
     ) -> Result<R, ComponentError> {
-        let owner = self.owner(cx)?;
-        owner.update(cx, |instance, cx| {
-            instance.hooks.update(self.slot, cx, notify, update)
-        })
+        let (owner, hooks) = self.resolve(cx)?;
+        let result = hooks.borrow_mut().update(self.slot, cx, update)?;
+        if notify {
+            cx.notify(owner.entity_id());
+        }
+        Ok(result)
     }
 }
 
@@ -124,8 +138,7 @@ impl Hooks {
     fn update<T: 'static, R>(
         &mut self,
         slot: u32,
-        cx: &mut Context<Instance>,
-        notify: bool,
+        cx: &mut App,
         update: impl FnOnce(&mut T, &mut App) -> R,
     ) -> Result<R, ComponentError> {
         let value = self
@@ -136,10 +149,6 @@ impl Hooks {
             .downcast_mut::<T>()
             .ok_or(ComponentError::TypeChanged)?;
         let result = update(value, cx);
-
-        if notify {
-            cx.notify();
-        }
 
         Ok(result)
     }
@@ -205,7 +214,11 @@ impl ComponentContext for Scope<'_, '_> {
             return self.with_component_app(|cx| handle.update(cx, notify, update));
         }
 
-        self.hooks.update(handle.slot, self.cx, notify, update)
+        let result = self.hooks.update(handle.slot, self.cx, update)?;
+        if notify {
+            self.cx.notify();
+        }
+        Ok(result)
     }
 }
 

@@ -62,6 +62,7 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 enum Variant {
     Plain,
     Hooks,
+    Memo,
     Raw,
 }
 
@@ -100,6 +101,12 @@ struct Probe {
     writer: RefCell<Writer>,
 }
 
+impl PartialEq for Probe {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
 fn row(value: i32) -> impl IntoElement {
     gpui::div()
         .w(gpui::px(48.))
@@ -121,6 +128,15 @@ impl Render for Plain {
 
 #[rake::component]
 fn HookRow(cx: &mut Scope, hooks: usize, probe: Rc<Probe>) -> impl IntoElement {
+    hook_row(cx, hooks, probe)
+}
+
+#[rake::component(memo)]
+fn MemoRow(cx: &mut Scope, hooks: usize, probe: Rc<Probe>) -> impl IntoElement {
+    hook_row(cx, hooks, probe)
+}
+
+fn hook_row(cx: &mut Scope, hooks: usize, probe: Rc<Probe>) -> impl IntoElement {
     let mut sum = 0;
 
     for index in 0..hooks {
@@ -199,14 +215,6 @@ impl Host {
                     self.append();
                 }
             }
-            "leaf" => {
-                self.rows[0].probe.writer.borrow().increment(cx);
-            }
-            "all" => {
-                for row in &self.rows {
-                    row.probe.writer.borrow().increment(cx);
-                }
-            }
             "reorder" => {
                 self.rows.reverse();
                 self.rows.pop();
@@ -216,10 +224,20 @@ impl Host {
             _ => panic!("unknown scenario"),
         }
 
-        if !matches!(scenario, "leaf" | "all") {
-            cx.notify();
-        }
+        cx.notify();
     }
+}
+
+fn change_values(scenario: &str, probes: &[Rc<Probe>], cx: &mut gpui::App) -> bool {
+    let count = match scenario {
+        "leaf" => 1,
+        "all" => probes.len(),
+        _ => return false,
+    };
+    for probe in &probes[..count] {
+        assert!(probe.writer.borrow().increment(cx));
+    }
+    true
 }
 
 impl Render for Host {
@@ -238,6 +256,11 @@ impl Render for Host {
                     parent.child(view.clone())
                 }
                 Variant::Hooks => parent.child(HookRow {
+                    id: ("row", item.id),
+                    hooks: self.hooks,
+                    probe: item.probe.clone(),
+                }),
+                Variant::Memo => parent.child(MemoRow {
                     id: ("row", item.id),
                     hooks: self.hooks,
                     probe: item.probe.clone(),
@@ -287,9 +310,11 @@ fn measure(variant: Variant, count: usize, hooks: usize, scenario: &str, samples
     for iteration in 0..samples + 5 {
         let before = ALLOCATIONS.load(Ordering::Relaxed);
         let start = Instant::now();
-        window
-            .update(&mut cx, |host, _, cx| host.change(scenario, count, cx))
-            .unwrap();
+        if !cx.update(|cx| change_values(scenario, &probes, cx)) {
+            window
+                .update(&mut cx, |host, _, cx| host.change(scenario, count, cx))
+                .unwrap();
+        }
         draw(&mut cx, window);
         let elapsed = start.elapsed().as_secs_f64() * 1e6;
         let allocated = ALLOCATIONS.load(Ordering::Relaxed) - before;
@@ -321,7 +346,7 @@ fn measure(variant: Variant, count: usize, hooks: usize, scenario: &str, samples
     println!(
         "{}",
         json!({
-            "backend": "TestAppContext", "variant": format!("{variant:?}"), "scenario": scenario,
+            "renderer": "gpui-fast 0.1.13", "backend": "TestAppContext", "variant": format!("{variant:?}"), "scenario": scenario,
             "instances": count, "hooks": hooks, "samples": samples,
             "p50_us": p50, "p95_us": p95,
             "allocations_per_sample": allocations as f64 / samples as f64,
@@ -347,6 +372,7 @@ impl Render for Native {
         let scenario = self.scenario;
         let instances = host.rows.len();
         let hooks = host.hooks;
+        let probes: Vec<_> = host.rows.iter().map(|row| row.probe.clone()).collect();
         let started = Instant::now();
         let measurement = gpui::canvas(
             |_, _, _| (),
@@ -365,7 +391,7 @@ impl Render for Native {
                     println!(
                         "{}",
                         json!({
-                            "backend": "native", "variant": format!("{variant:?}"),
+                            "renderer": "gpui-fast 0.1.13", "backend": "native", "variant": format!("{variant:?}"),
                             "scenario": scenario, "instances": instances, "hooks": hooks,
                             "samples": times.len(), "p50_us": p50, "p95_us": p95
                         })
@@ -373,7 +399,9 @@ impl Render for Native {
                     cx.quit();
                 } else {
                     window.on_next_frame(move |_, cx| {
-                        let _ = owner.update(cx, |host, cx| host.change(scenario, instances, cx));
+                        if !change_values(scenario, &probes, cx) {
+                            let _ = owner.update(cx, |host, cx| host.change(scenario, instances, cx));
+                        }
                     });
                     window.request_animation_frame();
                 }
@@ -394,19 +422,23 @@ impl Render for Native {
 fn main() {
     let args: Vec<_> = std::env::args().filter(|arg| arg != "--bench").collect();
 
-    if let Some(index) = args.iter().position(|arg| arg == "--native") {
+    if let Some(index) = args
+        .iter()
+        .position(|arg| arg == "--native" || arg == "--headless")
+    {
         let variant = match args.get(index + 1).map(String::as_str) {
             Some("plain") => Variant::Plain,
             Some("hooks") => Variant::Hooks,
+            Some("memo") => Variant::Memo,
             Some("raw") => Variant::Raw,
-            _ => panic!("--native requires plain, hooks, or raw"),
+            _ => panic!("a benchmark case requires plain, hooks, memo, or raw"),
         };
         let requested = args.get(index + 2).map(String::as_str).unwrap_or("all");
         let scenario = SCENARIOS
             .into_iter()
             .chain(["hooks"])
             .find(|scenario| *scenario == requested)
-            .expect("unknown native scenario");
+            .expect("unknown benchmark scenario");
         let instances = args
             .get(index + 3)
             .map(|value| value.parse().unwrap())
@@ -416,6 +448,12 @@ fn main() {
             .map(|value| value.parse().unwrap())
             .unwrap_or(1);
         assert!(instances > 0 && hooks > 0);
+
+        if args[index] == "--headless" {
+            measure(variant, instances, hooks, scenario, 31);
+            return;
+        }
+
         gpui_platform::application().run(move |cx| {
             cx.open_window(gpui::WindowOptions::default(), move |_, cx| {
                 cx.new(|cx| {
@@ -447,7 +485,7 @@ fn main() {
     };
     let samples = if quick { 7 } else { 31 };
 
-    for variant in [Variant::Plain, Variant::Hooks, Variant::Raw] {
+    for variant in [Variant::Plain, Variant::Hooks, Variant::Memo, Variant::Raw] {
         for &count in sizes {
             for scenario in SCENARIOS {
                 measure(variant, count, 1, scenario, samples);
@@ -458,7 +496,9 @@ fn main() {
             measure(variant, 100, hooks, "hooks", samples);
         }
 
-        async_work::measure(variant, false, samples);
-        async_work::measure(variant, true, samples);
+        if !matches!(variant, Variant::Memo) {
+            async_work::measure(variant, false, samples);
+            async_work::measure(variant, true, samples);
+        }
     }
 }

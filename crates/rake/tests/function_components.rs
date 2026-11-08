@@ -10,15 +10,20 @@ use rake::gpui::{self, Context, IntoElement, Render, SharedString, Window, prelu
 #[path = "function_components/hooks.rs"]
 mod hooks;
 
+#[path = "function_components/rendering.rs"]
+mod rendering;
+
 #[derive(Default)]
 struct Probe {
     value: Cell<i32>,
     setter: Cell<Option<State<i32>>>,
+    renders: Cell<usize>,
 }
 
 #[rake::component]
 fn Counter(cx: &mut Scope, label: SharedString, start: i32, probe: Rc<Probe>) -> impl IntoElement {
     let (count, setter) = cx.use_state(|| start);
+    probe.renders.set(probe.renders.get() + 1);
     probe.value.set(count);
     probe.setter.replace(Some(setter));
 
@@ -91,6 +96,7 @@ fn fixture() -> (
     Vec<Rc<Probe>>,
 ) {
     let mut cx = gpui::TestAppContext::single();
+    cx.update(rake_ui::init);
     let probes: Vec<_> = (0..3).map(|_| Rc::new(Probe::default())).collect();
     let window = cx.add_window(|_, _| Host {
         keys: vec![0, 1],
@@ -223,13 +229,17 @@ fn raw_source_location_state_collides_before_render_once_root_ids_are_in_scope()
 }
 
 #[test]
-fn gpui_uncached_parent_is_rendered_even_for_a_leaf_notification() {
+fn state_updates_skip_the_parent_and_unchanged_siblings() {
     let (mut cx, window, probes) = fixture();
     let before = window.read_with(&cx, |host, _| host.renders.get()).unwrap();
+    let children = [probes[0].renders.get(), probes[1].renders.get()];
     cx.update(|cx| probes[0].setter.get().unwrap().set(cx, 1).unwrap());
     draw(&mut cx, window);
     let after = window.read_with(&cx, |host, _| host.renders.get()).unwrap();
-    assert!(after > before);
+    assert_eq!(after, before);
+    assert_eq!(probes[0].renders.get(), children[0] + 1);
+    assert_eq!(probes[1].renders.get(), children[1]);
+    assert_eq!(probes[0].value.get(), 1);
 }
 
 #[test]

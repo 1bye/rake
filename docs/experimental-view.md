@@ -4,7 +4,9 @@ The stable markup reference is [View syntax](view.md). Function components are
 available with `rake-app`'s opt-in `experimental-components` feature. This is a
 source-checkout prototype for [issue #27](https://github.com/1bye/rake/issues/27);
 the published alpha does not yet include it. Enable the feature on your local
-Rake dependency. It is not enabled by default.
+Rake dependency. It is not enabled by default. This feature selects the pinned
+`gpui-fast` backend for native and WASM builds. Use `rake::gpui` for GPUI types
+so your components and application share the same backend.
 
 ```rust
 use rake::{Scope, gpui::{IntoElement, SharedString}};
@@ -131,28 +133,24 @@ rendered tree reset on remount. GPUI cached subtrees retain their element state.
 Keeping a route/page entity alive alone does not preserve removed function
 components; put persistent tab data in that entity.
 
-A setter notifies only its owning entity. **Pinned GPUI still runs uncached
-ancestor and sibling render functions during the resulting window draw.** The
-issue's stronger requirement of isolated function execution is not fulfilled
-by targeted notification alone.
+A setter updates its component's hook storage and notifies that component.
+The retained renderer reuses unchanged ancestors and siblings automatically,
+including content-sized components. Layout changes still propagate: growing a
+child, changing inherited styles, or resizing the window can require rebuilding
+surrounding layout.
 
-`#[rake::component(memo)]` compares incoming props using `PartialEq`. Actual
-subtree reuse requires GPUI's explicit, definite-size cache layout:
+`#[rake::component(memo)]` compares incoming props using `PartialEq` and reuses
+an unchanged component when its parent renders again. It needs no explicit
+width or height. State and observed context changes still redraw it. Without
+`memo`, a parent render runs the component again with the latest props, as in
+React. Use memoization for expensive children whose props usually stay equal.
 
-```rust
-use rake::gpui::prelude::*;
-
-let style = rake::gpui::div().w(rake::gpui::px(160.)).h(rake::gpui::px(40.))
-    .style().clone();
-let child = MemoCounter { id: "cached", start: 0 }
-    .into_element()
-    .cached(style);
-```
-
-Guessing a content-sized component's dimensions can change layout, so caching is
-explicit. Equal props permit reuse; state/global updates invalidate the component
-cache, and changed props render immediately. A normal content-sized `view!`
-component remains uncached even with `memo`.
+The optional `.into_element().cached(style)` API remains available for explicit,
+definite-size GPUI caching. Automatic retention does not guess or freeze a
+component's dimensions. Tests cover independent siblings, intrinsic-size memo
+components, layout reflow, after-paint effects, and disposal of virtualized rows.
+A uniform list's measurement row remains mounted even when outside the viewport;
+other removed rows release their hooks and reset on remount.
 
 ## Inspection and verification
 
@@ -166,12 +164,18 @@ nor serialization. CDP exposes this information as `rakeHooks`.
 cargo test -p rake-app --features experimental-components,view-test-support --test function_components
 cargo test -p rake-app --features experimental-components,view-test-support,devtools --lib component::
 cargo bench -p rake-app --features experimental-components,view-test-support --bench function_components
+cargo bench -p rake-app --features experimental-components,view-test-support --bench function_components -- --headless hooks parent 1000 1
 cargo bench -p rake-app --features experimental-components,view-test-support --bench function_components -- --native hooks
 ```
 
-The native benchmark also accepts `plain` and `raw`, followed by optional
+The native benchmark also accepts `plain`, `memo`, and `raw`, followed by optional
 `scenario instances hooks` arguments, for example `--native hooks mount 10000 1`.
 Scenarios are `mount`, `parent`, `leaf`, `all`, `reorder`, `cycle`, and `hooks`.
+`--headless` accepts the same arguments and runs one case with 31 measured
+samples. Use separate processes and alternate the variant order for comparisons;
+the quick suite alone is not a performance acceptance result. All four variants
+use the same renderer, recorded in each result. `hooks` preserves ordinary prop
+rendering; `memo` measures equal-prop reuse comparable to retained plain entities.
 Headless measurements cover
 CPU render/layout/paint, allocations, retained process memory, and lifetime
 checks; they do not measure GPU presentation. Async scenarios report frame times
@@ -180,13 +184,19 @@ and separate whole mount/settle/unmount cycle times.
 Try the interactive counters, including reorder and remount behavior:
 
 ```sh
-cargo run -p rake-app --features experimental-components,gpui_platform/runtime_shaders --example components
+cargo run -p rake-app --features experimental-components,gpui_fast_platform/runtime_shaders --example components
 ```
 
 The [benchmark report](../.agents/reports/react-function-components.md) records
 measurements and remaining merge gates. Stable hook positions avoid
 source-line keys, but do not establish Blaze compatibility or preserve arbitrary
 Rust values across process restarts. Real Blaze edits require separate proof.
+
+The manual [function-component workflow](../.github/workflows/function-components.yml)
+enables the feature on macOS and Linux, runs consumer tests and lifetime checks,
+and checks native, WASM, renamed-dependency, and feature-disabled builds. Its
+Linux window smoke test uses Xvfb and Mesa Vulkan drivers; it does not
+establish physical-display or hardware-GPU performance.
 
 ## Formatting
 

@@ -247,7 +247,23 @@ fn automatic_boundaries_capture_styles_sources_and_rendered_text() {
         ["class", "style"]
     );
     assert!(sources[0].expression.contains("self.selected"));
-    assert_eq!(sources[0].source.line, source.line);
+    let fixture = include_str!("tests.rs");
+    assert_eq!(
+        fixture
+            .lines()
+            .nth(source.line as usize - 1)
+            .unwrap()
+            .trim(),
+        "<div"
+    );
+    assert!(
+        fixture
+            .lines()
+            .nth(sources[0].source.line as usize - 1)
+            .unwrap()
+            .trim()
+            .starts_with("class={")
+    );
     assert!(sources[1].source.line > sources[0].source.line);
     assert_eq!(sources[1].source.file, file!());
     let paragraph = named(&snapshot, "paragraph");

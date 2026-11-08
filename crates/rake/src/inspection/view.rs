@@ -467,6 +467,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if self.root.is_none()
+            && cx
+                .try_global::<LayoutHost>()
+                .is_none_or(|host| host.0.is_none())
+        {
+            let (layout, state) = self.inner.request_layout(id, inspector_id, window, cx);
+            return (layout, (state, None));
+        }
         // A window-wide Root plugin also captures presentation overlays. A
         // nested route/root using the same store contributes to that capture.
         if let Some((store, _, host)) = &self.root
@@ -641,6 +649,16 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        if self.root.is_none()
+            && cx
+                .try_global::<ActiveCapture>()
+                .is_none_or(|capture| capture.0.is_none())
+        {
+            let state = self
+                .inner
+                .prepaint(id, inspector_id, bounds, &mut state.0, window, cx);
+            return (state, None, None, None);
+        }
         if cx.try_global::<ActiveCapture>().is_none() {
             cx.set_global(ActiveCapture::default());
         }

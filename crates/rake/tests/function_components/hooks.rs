@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use rake::component::{Resource, Scope, State, StateRef};
+use rake::component::{FunctionComponent, Resource, Scope, State, StateRef};
 use rake::gpui::{self, Context, IntoElement, Render, Window, prelude::*};
 use rake::prelude::{
     Collector, HttpClient, HttpConfig, RouterConfig, Runtime, ServiceRegistry, Services,
@@ -281,37 +281,82 @@ fn MemoChild(
     gpui::div().child(count.to_string())
 }
 
+fn cached<P: FunctionComponent>(props: P) -> gpui::AnyElement {
+    let style = gpui::div()
+        .w(gpui::px(100.))
+        .h(gpui::px(40.))
+        .style()
+        .clone();
+    rake::component::ComponentElement::new(props)
+        .cached(style)
+        .into_any_element()
+}
+
 #[test]
-fn memo_components_with_explicit_layout_reuse_gpui_cached_subtrees() {
+fn memo_components_skip_equal_props_with_intrinsic_or_explicit_layout() {
+    for explicit in [false, true] {
+        let mut cx = gpui::TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let setter = Rc::new(Cell::new(None));
+        let window = mount(
+            &mut cx,
+            MemoChild {
+                id: "memo",
+                input: 1,
+                renders: renders.clone(),
+                setter: setter.clone(),
+            },
+        );
+        change(&mut cx, window, |host| {
+            if explicit {
+                host.render = cached;
+            }
+        });
+        let before = renders.get();
+        refresh(&mut cx, window);
+        assert_eq!(renders.get(), before);
+        cx.update(|cx| setter.get().unwrap().set(cx, 5).unwrap());
+        draw(&mut cx, window);
+        assert!(renders.get() > before);
+        let before = renders.get();
+        change(&mut cx, window, |host| host.props.input = 2);
+        assert!(renders.get() > before);
+    }
+}
+
+#[test]
+fn cached_siblings_skip_rendering_when_only_one_component_changes() {
     let mut cx = gpui::TestAppContext::single();
-    let renders = Rc::new(Cell::new(0));
-    let setter = Rc::new(Cell::new(None));
-    let window = mount(
-        &mut cx,
-        MemoChild {
-            id: "memo",
-            input: 1,
-            renders: renders.clone(),
-            setter: setter.clone(),
-        },
-    );
-    change(&mut cx, window, |host| {
-        host.render = |props| {
-            let style = gpui::div()
-                .w(gpui::px(100.))
-                .h(gpui::px(40.))
-                .style()
-                .clone();
-            props.into_element().cached(style).into_any_element()
-        };
+    let renders = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
+    let setters = [Rc::new(Cell::new(None)), Rc::new(Cell::new(None))];
+    let window = cx.add_window(|_, _| Host {
+        props: [0, 1].map(|index| MemoChild {
+            id: ("counter", index),
+            input: 0,
+            renders: renders[index].clone(),
+            setter: setters[index].clone(),
+        }),
+        render: |props| gpui::div().children(props.map(cached)).into_any_element(),
+        visible: true,
+        _driver: None,
     });
-    let before = renders.get();
-    refresh(&mut cx, window);
-    assert_eq!(renders.get(), before);
-    cx.update(|cx| setter.get().unwrap().set(cx, 5).unwrap());
     draw(&mut cx, window);
-    assert!(renders.get() > before);
-    let before = renders.get();
-    change(&mut cx, window, |host| host.props.input = 2);
-    assert!(renders.get() > before);
+    let before = renders.each_ref().map(|count| count.get());
+
+    cx.update(|cx| setters[0].get().unwrap().set(cx, 7).unwrap());
+    draw(&mut cx, window);
+    assert_eq!(renders[0].get(), before[0] + 1);
+    assert_eq!(renders[1].get(), before[1]);
+    assert_eq!(
+        cx.update(|cx| setters[0].get().unwrap().read(cx, |n| *n)),
+        Ok(7)
+    );
+    assert_eq!(
+        cx.update(|cx| setters[1].get().unwrap().read(cx, |n| *n)),
+        Ok(0)
+    );
+
+    refresh(&mut cx, window);
+    assert_eq!(renders[0].get(), before[0] + 1);
+    assert_eq!(renders[1].get(), before[1]);
 }

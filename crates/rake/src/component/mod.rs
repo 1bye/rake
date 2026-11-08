@@ -1,4 +1,5 @@
 use std::any::{Any, type_name};
+use std::cell::RefCell;
 use std::error::Error;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
@@ -33,17 +34,24 @@ pub trait FunctionComponent: Clone + 'static {
 
 trait Props: Any {
     fn render(&self, cx: &mut Scope<'_, '_>) -> AnyElement;
+    #[cfg(feature = "devtools")]
+    fn type_name(&self) -> &'static str;
 }
 
-impl<P: FunctionComponent> Props for P {
+impl<P: FunctionComponent> Props for RefCell<P> {
     fn render(&self, cx: &mut Scope<'_, '_>) -> AnyElement {
-        self.render_component(cx)
+        self.borrow().render_component(cx)
+    }
+
+    #[cfg(feature = "devtools")]
+    fn type_name(&self) -> &'static str {
+        type_name::<ComponentElement<P>>()
     }
 }
 
 struct Instance {
-    props: Box<dyn Props>,
-    hooks: Hooks,
+    props: Rc<dyn Props>,
+    hooks: Rc<RefCell<Hooks>>,
     registration: Registration,
 }
 
@@ -53,22 +61,26 @@ impl Render for Instance {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl crate::gpui::IntoElement {
-        self.hooks.cursor = 0;
+        let mut hooks = self.hooks.borrow_mut();
+        hooks.cursor = 0;
         let element = self.props.render(&mut Scope {
-            hooks: &mut self.hooks,
+            hooks: &mut hooks,
             owner: self.registration.handle(),
             window,
             cx,
         });
 
         assert_eq!(
-            self.hooks.cursor,
-            self.hooks.slots.len(),
+            hooks.cursor,
+            hooks.slots.len(),
             "component hook count changed: call hooks unconditionally in the same order"
         );
-        self.hooks.mounted = true;
+        hooks.mounted = true;
 
-        element
+        element::ComponentBody {
+            child: element,
+            owner: cx.weak_entity(),
+        }
     }
 }
 
@@ -104,7 +116,7 @@ struct Slot {
     kind: Kind,
     type_name: &'static str,
     value: Box<dyn Any>,
-    effect: Option<Effect>,
+    effect: Option<Box<Effect>>,
 }
 
 #[derive(Default)]
@@ -203,7 +215,7 @@ impl Scope<'_, '_> {
             *previous = Some(dependencies);
             let state = self.hooks.slots[index]
                 .effect
-                .get_or_insert_with(Effect::default);
+                .get_or_insert_with(Default::default);
             state.revision = state
                 .revision
                 .checked_add(1)
@@ -215,9 +227,16 @@ impl Scope<'_, '_> {
 
     #[doc = "Reads a GPUI global and subscribes this component to its changes. The global must already be installed."]
     pub fn use_context<G: Global + Clone>(&mut self) -> G {
-        self.hooks.next(Kind::Context, || ContextSlot::<G> {
-            _subscription: self.cx.observe_global::<G>(|_, cx| cx.notify()),
-            _type: std::marker::PhantomData,
+        self.hooks.next(Kind::Context, || {
+            let owner = self.cx.weak_entity();
+            ContextSlot::<G> {
+                _subscription: App::observe_global::<G>(self.cx, move |cx| {
+                    if let Some(owner) = owner.upgrade() {
+                        cx.notify(owner.entity_id());
+                    }
+                }),
+                _type: std::marker::PhantomData,
+            }
         });
 
         self.cx.global::<G>().clone()
@@ -316,11 +335,16 @@ struct ResourceSlot<T: 'static, E: Error + 'static> {
 }
 
 fn flush_effects(owner: crate::gpui::WeakEntity<Instance>, cx: &mut App) {
-    let Ok(pending) = owner.update(cx, |instance, _| {
-        instance.hooks.effect_queued = false;
-        instance.hooks.pending_effects = false;
-        instance
-            .hooks
+    let Some(instance) = owner.upgrade() else {
+        return;
+    };
+    let hooks = instance.read(cx).hooks.clone();
+    drop(instance);
+    let pending: Vec<_> = {
+        let mut hooks = hooks.borrow_mut();
+        hooks.effect_queued = false;
+        hooks.pending_effects = false;
+        hooks
             .slots
             .iter_mut()
             .enumerate()
@@ -333,9 +357,7 @@ fn flush_effects(owner: crate::gpui::WeakEntity<Instance>, cx: &mut App) {
                     effect.cleanup.take(),
                 ))
             })
-            .collect::<Vec<_>>()
-    }) else {
-        return;
+            .collect()
     };
 
     for (index, revision, effect, cleanup) in pending {
@@ -348,17 +370,16 @@ fn flush_effects(owner: crate::gpui::WeakEntity<Instance>, cx: &mut App) {
         }
 
         let mut cleanup = effect(cx);
-        let _ = owner.update(cx, |instance, _| {
-            if let Some(effect) = instance
-                .hooks
+        if owner.upgrade().is_some()
+            && let Some(effect) = hooks
+                .borrow_mut()
                 .slots
                 .get_mut(index)
                 .and_then(|slot| slot.effect.as_mut())
-                && effect.revision == revision
-            {
-                effect.cleanup = cleanup.take();
-            }
-        });
+            && effect.revision == revision
+        {
+            effect.cleanup = cleanup.take();
+        }
 
         if let Some(cleanup) = cleanup {
             cleanup();
