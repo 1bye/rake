@@ -80,7 +80,7 @@ All 81 state-workload cases completed in real GPUI windows with 60 CPU frame sam
 
 Timing starts at the native root render and ends in a final paint callback. It excludes the preceding mutation callback and GPU submission/presentation. Large trees paint only the visible portion of the window. These numbers are not directly interchangeable with headless mutation-plus-draw times. Native allocation/subscription counts and native async workloads have not been measured.
 
-Selected results in microseconds, p50 / p95; every case is in [native JSONL](react-function-components-native.jsonl).
+Selected results in microseconds, p50 / p95:
 
 | Scenario | Instances | Hooks | Plain | Function | Raw keyed | B/A p50 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
