@@ -1,97 +1,132 @@
-# Pinned Rake Blaze — local preparation
+# Pinned Blaze — verified upstream history and measured bundle
 
-The final archive installs from `BLAZE_ARCHIVE` into a clean `~/.rake`, with no Blaze on `PATH`. `rake dev --live` builds and runs the GPUI example, and both a `view!` text edit and an ordinary helper edit apply live with the same PID and counter state. All public steps remain unperformed.
+The local fork now descends from **upstream `v0.20261030.1` (`6560553cc09f00d8d96edc24d85a5e441352ab7c`)**. The rebuilt **`0.20261030.1-rake.1`** bundle installs into a clean Rake home with no Blaze on PATH, builds GPUI, and preserves PID and counter state through twelve measured live edits. Nothing was created, pushed, released or posted on GitHub.
 
-## Local repositories and provenance
+## Upstream provenance
 
-- Fork: `/Users/yuriihulyk/Documents/GitHub/blaze-rake-fork`, branch `rake-patches`.
-- Rake: `/Users/yuriihulyk/Documents/GitHub/rake-worktrees/blaze-pinned-live`, branch `codex/blaze-pinned-live-20261108`, from PR #53's `ee0ec974b82b08a9cab83dd7f3d96cc8e3a70476`.
-- The original `~/Documents/GitHub/rake`, the previous engine source and its binaries/toolchain are not modified.
+A fresh `--no-checkout` clone of `https://github.com/indexable-inc/blaze` is at `~/Documents/GitHub/blaze-upstream-reference-20261108`, used only as a reference. All requested tags (`v0.20261027.0`, `v0.20261028.0` through `.14`) were compared, then the search was widened: 749 first-parent/tag candidates and 2,271 reachable main ancestors dated October 26 through November 2. Diff sizes use `--no-renames`, upstream candidate → recovered snapshot `2007d7c`.
 
-**Provenance limit:** `2007d7c8c849fd5a7858d5816e08764d9042c87c` is the recovered lab's root snapshot, not a verifiable upstream commit. The PR #53 build records identify exactly that source and the retained lab diff. Original upstream ancestry is unavailable. WASI realpath and vendored `span_join` were already present in the snapshot; their separate commits preserve them and add regression/packaging support. The remaining five commits import the tested lab changes. This must not be described as seven clean backports on a known upstream Git ancestor.
+| Candidate | Changed files | Added lines | Deleted lines |
+|---|---:|---:|---:|
+| **`v0.20261030.1` / `6560553`** | **30** | **862** | **58** |
+| `5cf29cd` | 31 | 879 | 58 |
+| `v0.20261030.0` / `de410cf` | 32 | 957 | 75 |
+| `dd5a5cf` | 35 | 1,132 | 83 |
+| `v0.20261028.14` / `c83e0cd` | 621 | 217,166 | 45,054 |
+| `v0.20261028.0` / `500900a` | 5,904 | 2,793,609 | 456,271 |
+| `v0.20261027.0` / `5d4f78f` | 10,685 | 3,286,934 | 1,264,917 |
 
-Seven patch commits plus release preparation:
+[All requested tag metrics](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/tag-comparison.json), [ancestor ranking](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/all-ancestor-ranking.json), [closest candidates](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/closest-candidates.json), [30-file residual diff](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/snapshot-vs-chosen.diff).
 
-- `0f6141f` fix(wasi): preserve confined realpath probes
-- `3471b38` fix(macros): select the patched native span server
-- `e7bfce0` fix(codegen): give std its own symbol namespace
-- `a49e6fc` fix(attrs): resolve module paths in symbol names
-- `7b3fa17` fix(toolchain): give macros canonical Cargo paths
-- `284b90d` fix(probes): use real rustc in hybrid host mode
-- `fd7924b` fix(neon): lower the GPUI dependency intrinsics
-- `6a209f7` build: prepare pinned Apple Silicon fork releases
-- `0641b76` build: link stock-toolchain macro servers
+**WASI realpath and cross-file `span_join` are lab changes at this base.** Upstream `6560553` has the unconditional EINVAL readlink stub and the `assert_eq!(first.anchor.file_id, second.anchor.file_id)` assertion. The recovered root already contains their fixes.
 
-The std fix covers fresh/cached naming and changes its cache key **5 → 6**. Symbol attributes share the owning-module substitution. Native hybrid build-script probes keep sandboxing. The new explicit native-server path resolves aliases and rejects missing/non-file paths without panicking. The codegen, NEON, symbol attributes, host-probe and Cargo-path files match the tested lab bytes; [parity record](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/lab-patch-parity.json).
+The residual also contains eight earlier lab fixes beyond the seven-item list: configured job limits/NUM_JOBS keys; per-proc-macro Wasm graph roots; synchronous bounded Wasm preparation; Wasm inlining; MIR storage-conflict deltas; linker-used data/verbatim symbols; C ABI projected-field normalization; x86 AES keygen assist. The job-limit group includes a missing `profile: None` in a daemon test fixture. These are preserved explicitly as prerequisite commits. They are classified inherited snapshot deltas, not a reconstruction of each author; the x86 AES change is outside the Apple Silicon release target. No other unclassified snapshot source drift remains.
 
-## Release archive
+## Reconstructed fork
 
-- Version: **`0.20261028.0-rake.1`**.
-- Built source: **`6a209f79cf1a64d9f684bd59572961a9411c2f45`**.
-- Target: **`aarch64-apple-darwin`** only.
-- [Archive](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/release/blaze-v0.20261028.0-rake.1-aarch64-apple-darwin.tar.gz).
-- SHA-256: **`a7675a36d6c60b1787ea1e2ca13007ec51d7276875b080a7107d3c9b421c9801`**.
-- [Checksum file](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/release/SHA256SUMS), [build configuration](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/build.json), [final build log](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/build-verified.log).
+`~/Documents/GitHub/blaze-rake-fork`, branch `rake-patches`, head **`f00630273ec384b0679bf7bf0ae21a29dd17eb3a`**. `upstream` is indexable-inc/blaze. The old branch is retained locally as **`snapshot-archive`**, tip `0641b76574e18874f97ff2ea0747e102c002149a`. Its root `2007d7c` is not an ancestor of the release branch. The release branch has the same root ancestry as the real upstream base and can be pushed into an actual GitHub fork. Later upstream main has an additional merged root; that does not alter the base ancestry check.
 
-The fork head also includes build-only follow-up `0641b76`, which supplies the matching native-library search path when CI installs rustc-dev directly in the sysroot. The tested archive was built from `6a209f7`; compiled engine/server sources are unchanged by that follow-up. Its external-rustc-dev local build already used those link flags. Future workflow builds must use their own checksum.
+The seven requested fixes, native-server build and release recipe are separate commits, following the eight explicit prerequisites:
 
-The normal `blaze-v<V>-<target>/` archive root contains `blaze`, `blaze-engine`, `blaze-rustc`, licenses/README/changelog, the separate fixed `rust-analyzer-proc-macro-srv`, its matching `server-lib` libraries, `RAKE_BLAZE.json` and `share/blaze/library`. It uses the previously authorized pinned Cargo release bootstrap, matching the lab's optimized host compiler build, without LLVM tiers/PGO. It does not claim a self-hosted upstream distribution.
+```text
+ba5fbbe7f fix(build): honor configured job limits
+034f87148 fix(macros): root Wasm graphs at the selected macro
+a9decd896 fix(macros): bound Wasm preparation to its job slot
+0a842453d perf(macros): inline Wasm token helpers
+1e5131d46 perf(mir): record storage conflict deltas
+d7b1c6b46 fix(link): retain used data and verbatim symbols
+ee50e65d2 fix(abi): normalize projected aggregate fields
+8074bb540 fix(x86): lower AES keygen assist
+984cccbff fix(wasi): support confined package realpath
+435ff9b80 fix(macros): decline joins across source files
+99616c885 fix(codegen): give std its own symbol namespace
+1eca44c43 fix(attrs): resolve module paths in symbol names
+36e9c3b72 fix(toolchain): give macros canonical Cargo paths
+4f06a6337 fix(probes): use real rustc in hybrid host mode
+09711e19b fix(neon): lower the GPUI dependency intrinsics
+e95ec77c2 build(macros): bundle a matching fixed native server
+f00630273 build: prepare pinned Apple Silicon releases
+```
 
-The macro server comes from Rust **`16d1ffac17ad8b739e32483ac2e65fe7e1804977`**, matching `nightly-2026-10-27` and the toolchain pins. The build script checks those identities, applies the same cross-file guard to the native server source and signs the staged binaries after replacing build-machine rpaths with loader-relative ones. No toolchain server is overwritten. `harness/toolchain_bump.py` updates the upstream toolchain/vendor inputs; the fork additionally requires updating `rake/toolchain-server.json`, and refuses a mismatch. A developer-supplied local server source directory is an explicit trusted build input; the release workflow uses the pinned downloaded source archive and SHA.
+`git diff snapshot-archive HEAD -- crates vendor library harness` is empty. Reconstructed engine/compiler inputs match the previously tested stack byte for byte; the remaining whole-tree differences are the corrected provenance docs, upstream-base file and archive manifest's base value. [Ancestry proof](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/ancestry.json), [source parity](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/reconstructed-source-diff.json), [commit list](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/fork-commits.txt).
 
-The upstream installer copies only its known binaries and does not install this additional native-server/library layout. Rake therefore uses its own authenticated archive installer. All upstream workflows are archived under `.github/upstream-workflows`; only explicit fork `release.yaml` and `release-cut.yaml` remain active. They target Apple Silicon, use fork tags `v0.YYYYMMDD.N-rake.N`, and do not promote channels, publish crates or invoke Indexable infrastructure. These workflows are **prepared but not run**. GitHub's [runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) identifies the selected `macos-15` standard runner as arm64.
+`RAKE_FORK.md` now documents `git fetch upstream --tags` and `git rebase --onto <new-tag> "$(cat rake/upstream-base)" rake-patches`, updating the base/server pins and running acceptance before any new release. Only the two Apple Silicon fork release workflows remain active.
 
-## Rake behavior
+## Rebuilt archive and installation
 
-The pin is `crates/rake-cli/blaze-pin.toml`: `1bye/blaze` and its future release URL are placeholders; the SHA above already verifies the local bytes. Only `--live` selects this installation. Plain `rake dev` remains Cargo-based; legacy `--compiler blaze` remains the separate laboratory path.
+- Version: **`0.20261030.1-rake.1`**, target **`aarch64-apple-darwin`**.
+- Built commit: **`f00630273ec384b0679bf7bf0ae21a29dd17eb3a`**.
+- SHA-256: **`61688ec70ece2dd1e78193e27fdd58461584e9723e665f719fdab85f7478a0c6`**.
+- [Archive](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/release/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz), [checksums](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/release/SHA256SUMS), [build configuration](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/build.json), [build log](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/build.log).
 
-- Missing compiler: download HTTPS bytes or use `BLAZE_ARCHIVE`, check the pinned SHA before extraction, reject traversal/links/special files/duplicate files, bound archive size, and atomically install in `~/.rake/blaze/<version>/`.
-- Later launches: verify the saved archive and compare the installed manifest and every recorded file with it. Wrong checksums, damaged files and non-executable compiler/server files fail; no PATH fallback or silent replacement occurs.
-- `RAKE_BLAZE` is an explicit developer override requiring the patched server and companion engine/wrapper beside it; it bypasses the archive pin.
-- Live builds enter the exact `blaze-engine cargo build` entry directly, so the thin launcher's workspace version redirect cannot select another release. Build errors still use the structured Blaze decoder.
-- Both build/app environment and direct daemon edits use the version-specific private runtime directory. The explicit fixed-server path, hybrid flags, sandboxing, `LIBLZMA_NO_PKG_CONFIG=1`, 64 MiB stack and `--bin` are set by Rake. Existing memory limits are retained.
-- The app's existing Rake `live` feature automatically enables `pathfinder_simd/pf-no-simd` on macOS; no additional app manifest edit is needed.
-- Unsupported platforms receive an Apple Silicon macOS error before installation. Doctor reports the pin/platform/archive/file checks and server presence without downloading; missing optional live mode does not fail an otherwise-ready Cargo doctor.
+The standard archive root includes the three compiler binaries, 3,724 library source files, licenses, fixed native macro server, matching loader-relative server libraries and authenticated `RAKE_BLAZE.json`. Its base is the verified upstream commit. The server matches pinned Rust **`16d1ffac17ad8b739e32483ac2e65fe7e1804977` / `nightly-2026-10-27`**, with the cross-file None guard. This local build copies the explicitly trusted surviving server source; the prepared release workflow fetches and checksum-verifies the pinned source archive. No toolchain server is overwritten.
 
-[Development instructions](../../docs/development.md).
+The existing `~/.rake` was moved aside, the new version installed through `BLAZE_ARCHIVE`, and the previous version restored alongside it. The actual build had an empty Blaze store and Cargo target, with no Blaze on PATH. Cargo metadata tools remained available through private links. The matching Rust toolchain was reused through a private Rustup cache; this is not a download-time measurement. Compiler/server selection, sandboxing, native hybrid options, `--bin`, 64 MiB stack and automatic `pf-no-simd` remain as documented. The pin's intended future GitHub URL and checksum are updated.
 
-## Real acceptance
+The cold GPUI build finished in **197.21 s**: host build scripts/macros 57.6 s; second workspace load 18.6 s; name resolution 37.2 s; resolved-name storage 3.03 s; std 21.9 s; plus initial load, remaining application/check/link work. There were no macro-expansion failures or refused-function failures. The known malformed upstream `bad-toml` fixture diagnostic still appears without failing the build.
 
-The final run starts with `~/.rake` absent and no `blaze` executable on the child's PATH. It installs the exact archive above, builds the binary with the automatic live feature, displays the test-only text/helper and seeds the counter to **1**. One text edit and one helper edit produce `live_patch_applied` and completed inspected renders. Neither restarts the process; counter **1** remains. No preview input/redraw is sent during timing.
+## First edit and six-trial results
 
-| One trial immediately after the cold build | Save → app apply | Save → observed redraw |
+The **first edit after the clean cold build** was **1.512 s save → apply / 1.573 s save → inspected redraw**, with the same PID and counter state. It started occluded but became visible; it is reported separately and excluded from the occluded steady-state comparison. [First cold edit](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/pinned-trials/trials.json).
+
+The final measured run reused the warmed store, performed a separately recorded first edit and one warmup of each kind, then six `Live text trial 201..206` edits and six `Helper trial 201..206` edits. The first edit of that warm process was 1.418 s / 1.468 s. All twelve measured edits kept the same PID and **Count: 2**. Before/after native preview records are occluded for every trial. After each save the harness sends only diagnostics/tree queries: no injected input, redraw command or preview frame lease. Redraw is the first completed inspected render containing the marker, not physical scan-out.
+
+| Setup / edit | Save → apply median | Save → redraw median |
 |---|---:|---:|
-| `view!` text | **1.964 s** | **2.042 s** |
-| Helper | **0.717 s** | **0.766 s** |
+| **Pinned bundle: `view!` text** | **0.959 s** | **1.003 s** |
+| **Pinned bundle: helper** | **0.491 s** | **0.594 s** |
+| Unchanged lab control: text | 0.991 s | 1.035 s |
+| Unchanged lab control: helper | 0.493 s | 0.546 s |
+| PR #53 historical text | 0.830 s | 0.897 s |
+| PR #53 historical helper | 0.401 s | 0.621 s |
 
-These are individual first-edit observations, not warm medians or a replacement for PR #53's six-trial table. Redraw is the completed inspected render, not physical scan-out. Both trials keep PID **44726**. App patch application itself takes 852 µs / 614 µs.
+The two-display placement problem was diagnosed using native window bounds. The temporary fixture adds only startup bounds on the editor's display; its render/helper code and markers match PR #53. macOS reported the bundle window as **1510×996** and the lab window as **1536×996** despite the same requested 1536×996 bounds. This small geometry difference limits exact redraw equivalence with the historical reference; compiler phase comparisons use the identical source edits.
 
-Final cold compiler build: **173.93 s**; complete install/metadata/build startup: **213.50 s**. The exact Rust toolchain was cached outside the clean Rake home for this final run. After acceptance, that same verified toolchain was copied into the final version-specific runtime cache so future normal launches do not depend on the isolated test Rustup home. Normal-environment doctor also reports ready. An earlier complete clean run also proved automatic toolchain download (117 MB), then built in 186.16 s and applied both edits. Its measurements are preserved separately, since a compiler regression build was running then and it used the preceding test-only source revision.
+Owner-approved background work continued. On **10 logical CPUs**, recorded one-minute load ranged **8.36–14.08** during bundle trials and **19.93–26.83** during lab trials. These are sequential loaded runs, not a controlled idle-machine regression test. [Bundle trials](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/pinned-measured-trials/trials.json), [bundle result](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/pinned-measured-trials/result.json), [lab trials](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/lab-measured-trials/trials.json), [lab result](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/lab-measured-trials/result.json), [phase/load analysis](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/timing-analysis.json), [window placement](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/second-display-window-check.json).
 
-[Final result](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/real-live/result.json), [reload records](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/real-live/reloads.json), [doctor readiness](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/real-live/doctor.json), [supervisor log](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/real-live/supervisor.jsonl), [build output](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/real-live/supervisor.stderr), [acceptance configuration](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/acceptance.json). `scripts/test-blaze-live.py` is opt-in; it restores fixture source and stops only its owned app/daemon. No fixture changes are committed.
+## Where the time goes
 
-The first packaging attempt excluded every directory named `target`, accidentally removing `library/vendor/cc/.../src/target/apple.rs`. The clean app build caught it before compilation. The recipe now copies all library sources. [Preserved failure](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/acceptance-library-failure.log). A path-test assertion initially used an unavailable wrapper method; it was corrected to convert to `PathBuf`, and both fork regressions pass before the final archive build.
+All values below are six-trial medians in milliseconds. Source/roots/validation/construction/link are components of request → publication, not additional intervals to add to it. Medians of individual components need not sum to the median total.
 
-This run covers installation and two body patches. It does not repeat PR #53's complete edit/restart/64-edit matrix; those known experimental limitations remain.
+| Phase | Bundle text | Bundle helper | Lab text | Lab helper |
+|---|---:|---:|---:|---:|
+| Save → daemon request | 231.719 | 225.548 | 239.194 | 234.559 |
+| Daemon request → publication | 727.141 | 228.031 | 755.236 | 236.366 |
+| Source apply / expansion + outlines | 76.128 | 5.396 | 70.030 | 5.087 |
+| Roots | 53.911 | 48.279 | 56.984 | 51.014 |
+| Cached-code validation | 537.166 | 106.978 | 586.991 | 133.786 |
+| Other patch construction | 38.617 | 34.912 | 37.474 | 37.127 |
+| Link / publication | 1.087 | 1.252 | 0.883 | 1.038 |
+| Publication → applied event | 10.413 | 14.034 | 6.463 | 4.543 |
+| Runtime apply (inside delivery interval) | 0.686 | 0.683 | 0.646 | 0.619 |
+| Applied event → completed inspected render | 43.573 | 44.286 | 44.163 | 44.807 |
 
-## Verification and remaining public steps
+The bundle's text redraw is **106.619 ms** above the PR #53 reference. Its cached-code validation is **85.072 ms** higher (537.166 vs 452.094 ms), source apply about 16.8 ms higher and roots about 9.8 ms higher; delivery/render observation offsets some of that difference. Validation of compiled functions dominates; the patch's runtime application itself is below 1 ms.
 
-- **932 workspace tests passed, 4 ignored** (`cargo test --workspace --locked`), including all 7 new CLI tests.
-- **5 live-runtime tests passed**, with `live,view-test-support`.
-- **14 supervisor tests passed**.
-- **4 offline installer tests passed**: installation/file tampering, wrong archive SHA, authenticated manifest tampering, and path confinement. These run without network or Blaze.
-- **2 fork regressions passed**: WASI prefix/existence/read-set checks and explicit native-server path handling. Both use the pinned compiler; the WASI test's six-minute duration is compilation, with the selected test itself completing immediately.
-- Strict CLI Clippy (`--all-targets -- -D warnings`) passes. Rake formatting/linting is checked before the local commits.
-- The real archive acceptance and doctor checks above pass. Default Cargo lifecycle behavior is covered by the unchanged supervisor fixtures and workspace regression; no new plain-Cargo GUI benchmark is claimed.
+**There is no consistent bundle-specific slowdown in this comparison.** The same-edit unchanged lab control is slightly slower for text and essentially equal for helper application. Its validation phase is also above PR #53 (586.992 ms), whereas its native source-apply phase is slightly lower than the bundle's (70.031 vs 76.128 ms). This does not show a server-specific penalty large enough to explain the historical gap; source apply includes outlines and is not isolated proc-macro time. Cargo, rustc and rustdoc are byte-identical, and all 3,724 packaged library files equal the lab files: only their location differs. The evidence points to slower common frontend/cache bookkeeping in these loaded runs, rather than a demonstrated toolchain/library-content or bundled-server regression. CPU contention is a plausible contributor, not a separately isolated causal measurement; a small layout or server effect cannot be bounded from these sequential runs. [Toolchain identity](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/toolchain-comparison.json), [library identity](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/library-comparison.json).
 
-[Verification summary](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/verification-summary.json), [workspace output](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/workspace-tests.log), [fork unit results](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-fork-evidence/fork-unit-results.json).
+## Regression and integrity
 
-Owner-only public steps are next; none is executed here:
+- `cargo test --workspace --locked`: **932 passed, 4 ignored**. Rerun after isolating the fake-tool doctor's HOME.
+- Live runtime: **5 passed**; `scripts/test-supervisor.py`: **14 passed**.
+- Offline fake-archive installer/checksum tests: **4 passed**. Real installed-bundle doctor readiness also passed.
+- Strict CLI Clippy: passed.
+- Fork Wasm macro unit suite: **13 passed**, including confined probes and existence-sensitive expansion-cache invalidation; explicit-server path test: **1 passed**; NEON unit tests: **7 passed**.
+- Both acceptance Python scripts compile, and an offline guard check confirms existing benchmark evidence cannot be overwritten. `rake format` passed; `rake lint crates/rake-cli` checked 92 Rust files with **0 diagnostics / 0 denied**.
 
-1. Create `1bye/blaze` (the recovered history is a downstream snapshot, not a proven upstream fork ancestry).
-2. Review and push the local fork branch, including licenses, seven patch commits and release recipe. Choose its default branch explicitly; do not enable the archived upstream infrastructure workflows.
-3. Cut `v0.20261028.0-rake.1`. Upload the exact tested local archive to preserve its SHA, or run the prepared release workflow and use that build's actual checksum.
-4. Confirm/fill the pin's repository, public archive URL and SHA against the published bytes. A CI rebuild can differ; do not copy the local SHA blindly. Rerun offline/real archive acceptance if bytes change.
-5. Separately authorize/review any push of the new Rake branch. This task performs no push, PR update, repository creation, release or upstream post.
+The fake-tool integration fixture now sets HOME to its temporary directory and asserts live mode is not installed/ready there. Previously its doctor checked the real installed archive six times, making an offline fixture depend on user state; the baseline run took 481 s. This is a test-only isolation change, not a production doctor behavior change.
 
-For compatible upstream bumps, budget roughly **2–4 hours** to transplant patches, check same-revision server pins, build and run acceptance/differential checks. A Rust/proc-macro/Cranelift ABI change can take **one or more days**. The first bump has extra unbounded provenance work: recover the true upstream base and account for fixes already inside the recovered root. `RAKE_FORK.md` documents the manual upgrade sequence and the opt-in acceptance launcher; no automatic rebase onto an invented upstream ancestor is claimed.
+The harness preserves failed setup evidence: removing Cargo with PATH, incomplete occlusion on the wrong display, and the lab runtime's overlong Unix socket path. Those are not included as valid latency samples. The benchmark now checks socket path length before spawning a compiler. Its manual gate permits window verification before measurements.
+
+**All 22 protected binary/archive/manifest hashes are unchanged.** The original Rake checkout's HEAD and existing status are unchanged, and the example source is restored. Both benchmark supervisors/daemons stopped. [Integrity proof](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/integrity-after.json), [regression commands/results](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/regressions.json), [final workspace log](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/workspace-final.log), [Wasm test log](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/fork-wasm-all.log). CI release workflows and public downloads have not been executed. Earlier JPEG differential results were not repeated because reconstructed compiler sources are identical.
+
+## Owner's public steps — not performed
+
+1. Create **`1bye/blaze` as an actual GitHub fork of indexable-inc/blaze**.
+2. Push only the reviewed `rake-patches` branch, with its upstream ancestry. Keep `snapshot-archive` local unless deliberately publishing it. Select the patched branch for fork releases.
+3. Tag/cut **`v0.20261030.1-rake.1`**. Upload this exact tested archive plus checksums, or run the prepared Apple Silicon workflow and use that build's checksum.
+4. Verify the public download. The pin already contains the intended URL and this archive's SHA; change them if the published bytes/repository/version differ. Push/review the Rake branch separately after owner authorization.
+
+A compatible upstream bump is estimated at **2–4 hours**; a Cranelift, rust-analyzer or proc-macro ABI change can require **one or more days**. Review the eight inherited prerequisites as well as the seven requested fixes on each rebase. No first-bump ancestry reconstruction remains necessary.
+
+The local Rake follow-up commit contains this report, pin/docs updates, the comparison harness and test isolation. The exact local commit list is retained in [Rake commits](/Users/yuriihulyk/Documents/Codex/2026-11-08/blaze-upstream-base-evidence/rake-commits.txt) after committing. Nothing is pushed or posted.

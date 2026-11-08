@@ -122,6 +122,7 @@ printf 'export default async function init() {}' > "$4/fixture.js""#,
         Command::new(env!("CARGO_BIN_EXE_rake"))
             .current_dir(&self.root)
             .env("PATH", &self.tools)
+            .env("HOME", self._directory.path())
             .env("FIXTURE", &self.root)
             .args(args)
             .output()
@@ -179,6 +180,8 @@ fn doctor_matches_required_targets_and_optional_tools_without_python() {
         let result = success(&fixture.run(&args));
 
         assert_eq!(result["rust"], "rustc fixture");
+        assert_eq!(result["live"]["installed"], false);
+        assert_eq!(result["live"]["ready"], false);
         assert_eq!(
             result["installed_targets"],
             "host-target\nwasm32-unknown-unknown"

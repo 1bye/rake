@@ -201,7 +201,7 @@ not public yet. Until the owner publishes the pinned bytes, use the locally
 prepared archive:
 
 ```sh
-BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261028.0-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
+BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
 ```
 
 `BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
@@ -231,19 +231,22 @@ Plain `rake dev` remains Cargo-based and needs no Blaze installation. The older
 ### Local fork maintenance and first publication
 
 The fork is prepared in `~/Documents/GitHub/blaze-rake-fork`; its `RAKE_FORK.md`
-describes the base snapshot, seven patch commits, same-revision toolchain macro
-server and Apple Silicon release recipe. Its infrastructure workflows are
+describes the verified upstream base (`v0.20261030.1`, `6560553`), the seven
+engine fixes, eight separately preserved earlier lab fixes, matching toolchain
+macro server and Apple Silicon release recipe. Its infrastructure workflows are
 archived; only explicit fork release workflows remain active.
 
-Owner-only public steps remain: create `1bye/blaze`, push the reviewed fork,
-cut the first `v0.20261028.0-rake.1` prerelease, then confirm/update the pin URL
+Owner-only public steps remain: create `1bye/blaze` as a GitHub fork of
+`indexable-inc/blaze`, push the reviewed fork branch,
+cut the first `v0.20261030.1-rake.1` prerelease, then confirm/update the pin URL
 and SHA-256 against the exact published archive. Publishing the already-tested
 local archive preserves its checksum; a CI rebuild may produce different bytes
 and needs a new pin. Rake's new branch also needs a separate push/review approval.
 No public step is performed by local preparation.
 
 Allow roughly 2–4 hours per compatible upstream bump, and a day or more for
-compiler/Cranelift/proc-macro ABI changes. The first bump also needs upstream
-ancestry reconstruction: the tested base is a recovered local root snapshot,
-not a verifiable upstream commit. Upgrades must rerun installation, real text
-and helper reload acceptance, and relevant compiler differential tests.
+compiler/Cranelift/proc-macro ABI changes. The release branch now retains
+upstream history: rebase it onto the next upstream tag using `rake/upstream-base`,
+review every inherited fix, then rerun installation, six-trial text/helper reload
+acceptance, and relevant compiler differential tests. The recovered root remains
+only on the fork's local `snapshot-archive` branch.
