@@ -210,8 +210,10 @@ fn main() {
             } else {
                 eprintln!("rake: {error}");
             }
+
             std::process::exit(1);
         }
+
         return;
     }
 

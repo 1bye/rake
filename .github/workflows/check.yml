@@ -352,6 +352,55 @@ jobs:
       - name: Web crash E2E
         run: node scripts/test-web-crash.mjs
 
+  spacing:
+    needs: gate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: spacing
+          cache-targets: false
+          # Keep binaries/drivers, not a duplicate stable + nightly target tree.
+          cache-directories: ~/.dylint_drivers
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Cache spacing tools
+        id: spacing-tools
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-${{ runner.os }}-${{ runner.arch }}-6.3.2-nightly-2026-08-20-v1
+      # Avoid install-action's cargo-binstall bootstrap and its release download.
+      - name: Install spacing tools
+        if: steps.spacing-tools.outputs.cache-hit != 'true'
+        run: |
+          cargo +nightly-2026-08-20 install --locked cargo-dylint --version 6.3.2
+          cargo +nightly-2026-08-20 install --locked dylint-link --version 6.3.2
+      - name: Verify spacing tools
+        run: |
+          cargo +nightly-2026-08-20 dylint --version
+          test -x ~/.cargo/bin/dylint-link
+      # Preserve a verified install even when a later lint reports source violations.
+      - name: Save spacing tools
+        if: steps.spacing-tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: ${{ steps.spacing-tools.outputs.cache-primary-key }}
+      - run: python3 scripts/check-spacing.py
+
   extended:
     if: github.event_name != 'pull_request'
     needs: gate

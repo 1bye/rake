@@ -2,6 +2,7 @@
 
 use super::{Result, bundle::insert};
 use serde_json::Value;
+
 use std::{
     collections::HashMap,
     fs,
@@ -47,20 +48,24 @@ impl Server {
         let preview = config.preview.clone();
         let stopped = stopping.clone();
         let sockets = connections.clone();
+
         let worker = thread::spawn(move || {
             thread::scope(|scope| {
                 let config = &config;
                 let mut next = 0;
                 let mut workers = Vec::new();
+
                 while !stopped.load(Ordering::Acquire) {
                     workers.retain_mut(|worker: &mut Option<thread::ScopedJoinHandle<'_, ()>>| {
                         if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
                             let _ = worker.take().expect("finished worker exists").join();
+
                             false
                         } else {
                             true
                         }
                     });
+
                     match listener.accept() {
                         Ok((stream, _)) => {
                             let mut sockets_guard =
@@ -69,12 +74,15 @@ impl Server {
                             if stopped.load(Ordering::Acquire) || sockets_guard.len() >= 64 {
                                 continue;
                             }
+
                             next += 1;
                             let id = next;
+
                             sockets_guard
                                 .insert(id, stream.try_clone().map_err(|error| error.to_string())?);
                             drop(sockets_guard);
                             let sockets = &sockets;
+
                             workers.push(Some(scope.spawn(move || {
                                 let _ = handle(stream, address, config);
 
@@ -90,9 +98,11 @@ impl Server {
                         Err(error) => return Err(error.to_string()),
                     }
                 }
+
                 Ok(())
             })
         });
+
         Ok(Self {
             preview,
             broker,
@@ -110,6 +120,7 @@ impl Server {
         {
             return Err("development Web server exited".into());
         }
+
         Ok(())
     }
 }
@@ -134,6 +145,7 @@ impl Drop for Server {
         {
             let _ = stream.shutdown(Shutdown::Both);
         }
+
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -145,6 +157,7 @@ pub(super) struct Request {
     path: String,
     headers: Vec<(String, String)>,
 }
+
 impl Request {
     pub(super) fn header(&self, name: &str) -> &str {
         self.headers
@@ -157,10 +170,13 @@ impl Request {
 
 fn request(stream: &mut TcpStream) -> Result<Request> {
     let mut bytes = Vec::new();
+
     while !bytes.ends_with(b"\r\n\r\n") {
         let mut byte = [0];
+
         stream.read_exact(&mut byte)?;
         bytes.push(byte[0]);
+
         if bytes.len() > 64 * 1024 {
             return Err("Web request headers exceed 64 KiB".into());
         }
@@ -169,17 +185,22 @@ fn request(stream: &mut TcpStream) -> Result<Request> {
     // HTTP fields use ISO-8859-1, including invalid/non-ASCII authentication tokens.
     let text: String = bytes.into_iter().map(char::from).collect();
     let mut lines = text.split("\r\n");
+
     let mut first = lines
         .next()
         .ok_or("missing HTTP request")?
         .split_whitespace();
+
     let method = first.next().ok_or("missing HTTP method")?.to_owned();
     let path = first.next().ok_or("missing HTTP path")?.to_owned();
     let mut headers = Vec::new();
+
     for line in lines.filter(|line| !line.is_empty()) {
         let (name, value) = line.split_once(':').ok_or("invalid HTTP header")?;
+
         headers.push((name.to_owned(), value.trim().to_owned()));
     }
+
     Ok(Request {
         method,
         path,
@@ -200,10 +221,12 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
     let raw = request.path.split(['?', '#']).next()?;
     let decoded = percent_encoding::percent_decode_str(raw).decode_utf8_lossy();
     let prefix = "/__rake/build/";
+
     if let Some(builds) = &config.builds
         && let Some(relative) = decoded.strip_prefix(prefix)
     {
         let parts: Vec<_> = relative.split('/').collect();
+
         if parts
             .first()
             .is_none_or(|part| part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()))
@@ -211,20 +234,26 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
         {
             return None;
         }
+
         let candidate = builds.join(relative);
+
         if !super::resolve(&candidate)
             .ok()?
             .starts_with(fs::canonicalize(builds).ok()?)
         {
             return None;
         }
+
         return Some(candidate);
     }
+
     let development = state(config);
+
     let mut active = development["directory"]
         .as_str()
         .map(PathBuf::from)
         .unwrap_or_else(|| config.directory.clone());
+
     if let Some(builds) = &config.builds
         && let Ok(referer) = url::Url::parse(request.header("Referer"))
     {
@@ -233,18 +262,23 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
             .split_once("://")
             .map(|(_, tail)| tail.split(['/', '?', '#']).next().unwrap_or_default())
             .unwrap_or_default();
+
         let path = percent_encoding::percent_decode_str(referer.path()).decode_utf8_lossy();
+
         if host == request.header("Host")
             && let Some(relative) = path.strip_prefix(prefix)
         {
             let build = relative.split('/').next()?;
+
             if !build.is_empty() && build.bytes().all(|c| c.is_ascii_digit()) {
                 active = builds.join(build);
             }
         }
     }
+
     // SimpleHTTPRequestHandler normalizes dot segments and drops drive/path components.
     let mut parts = Vec::new();
+
     for part in decoded.split('/') {
         match part {
             "" | "." => {}
@@ -254,9 +288,11 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
             part => parts.push(part),
         }
     }
+
     for part in parts {
         active.push(part);
     }
+
     Some(active)
 }
 
@@ -275,6 +311,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
     let valid_host = [address.to_string(), format!("localhost:{}", address.port())]
         .iter()
         .any(|host| host == request.header("Host"));
+
     if control && !valid_host {
         return error(
             &mut stream,
@@ -287,7 +324,9 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             },
         );
     }
+
     let route = request.path.split('?').next().unwrap_or_default();
+
     if request.method == "POST" {
         if let Some(broker) = &config.broker {
             let expected = format!("http://{}", request.header("Host"));
@@ -313,6 +352,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             "development bridge authentication failed",
         );
     }
+
     if !["GET", "HEAD"].contains(&request.method.as_str()) {
         return error(
             &mut stream,
@@ -375,6 +415,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             "Rake Inspector is deprecated; use Chrome DevTools (--cdp)",
         );
     }
+
     if config.control_only {
         return error(
             &mut stream,
@@ -383,6 +424,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             "native control serves no application assets",
         );
     }
+
     if control && route == "/__rake/bootstrap.js" {
         return respond(
             &mut stream,
@@ -393,10 +435,13 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             &[("Cache-Control", "no-store".into())],
         );
     }
+
     let mut path = translated(config, &request);
+
     let shell_fallback = request.header("Accept").contains("text/html")
         && !request.path.starts_with("/__rake/")
         && path.as_ref().is_none_or(|path| !path.is_file());
+
     if shell_fallback {
         path = translated(
             config,
@@ -407,17 +452,22 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             },
         );
     }
+
     let Some(mut path) = path else {
         return error(&mut stream, &request, 404, "File not found");
     };
+
     if control && (route == "/" || route == "/index.html" || shell_fallback) {
         let development = state(config);
+
         let active = development["directory"]
             .as_str()
             .map(PathBuf::from)
             .unwrap_or_else(|| config.directory.clone());
+
         let build = development["published"].as_u64().unwrap_or(0);
         let mut document = fs::read_to_string(active.join("index.html"))?;
+
         if build > 0 {
             document = regex::Regex::new(r#"(['"])(?:/|\./)?pkg/"#)?
                 .replace_all(&document, |capture: &regex::Captures<'_>| {
@@ -435,20 +485,24 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
                 })
                 .into_owned();
         }
+
         let base = if build > 0 {
             format!("<base href=\"/__rake/build/{build}/\">")
         } else {
             String::new()
         };
+
         let query = if config.development.is_some() {
             format!("?build={build}")
         } else {
             String::new()
         };
+
         document = insert(
             &document,
             &format!("{base}<script src=\"/__rake/bootstrap.js{query}\"></script>"),
         )?;
+
         return respond(
             &mut stream,
             &request,
@@ -458,12 +512,14 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             &[("Cache-Control", "no-store".into())],
         );
     }
+
     if path.is_dir() {
         if !route.ends_with('/') {
             let location = match request.path.split_once('?') {
                 Some((path, query)) => format!("{path}/?{query}"),
                 None => format!("{}/", request.path),
             };
+
             return respond(
                 &mut stream,
                 &request,
@@ -473,6 +529,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
                 &[("Location", location)],
             );
         }
+
         if path.join("index.html").is_file() {
             path.push("index.html");
         } else if path.join("index.htm").is_file() {
@@ -481,11 +538,14 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             return listing(&mut stream, &request, &path);
         }
     }
+
     let Ok(mut file) = fs::File::open(&path) else {
         return error(&mut stream, &request, 404, "File not found");
     };
+
     let metadata = file.metadata()?;
     let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+
     if request.header("If-None-Match").is_empty()
         && let Ok(since) = httpdate::parse_http_date(request.header("If-Modified-Since"))
         && modified.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
@@ -493,6 +553,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
     {
         return respond(&mut stream, &request, 304, "text/plain", &[], &[]);
     }
+
     let mime = if path
         .extension()
         .is_some_and(|ext| ext == "js" || ext == "mjs")
@@ -503,6 +564,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             .first_or_octet_stream()
             .to_string()
     };
+
     headers(
         &mut stream,
         200,
@@ -510,9 +572,11 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
         metadata.len(),
         &[("Last-Modified", httpdate::fmt_http_date(modified))],
     )?;
+
     if request.method != "HEAD" {
         std::io::copy(&mut file, &mut stream)?;
     }
+
     Ok(())
 }
 
@@ -636,6 +700,7 @@ fn reason(status: u16) -> &'static str {
         _ => "Error",
     }
 }
+
 fn headers(
     stream: &mut TcpStream,
     status: u16,
@@ -649,12 +714,16 @@ fn headers(
         reason(status),
         httpdate::fmt_http_date(SystemTime::now())
     )?;
+
     for (name, value) in extra {
         write!(stream, "{name}: {value}\r\n")?;
     }
+
     write!(stream, "\r\n")?;
+
     Ok(())
 }
+
 fn respond(
     stream: &mut TcpStream,
     request: &Request,
@@ -664,11 +733,14 @@ fn respond(
     extra: &[(&str, String)],
 ) -> Result<()> {
     headers(stream, status, mime, body.len() as u64, extra)?;
+
     if request.method != "HEAD" {
         stream.write_all(body)?;
     }
+
     Ok(())
 }
+
 fn error(stream: &mut TcpStream, request: &Request, status: u16, message: &str) -> Result<()> {
     // Closing a socket with unread POST bytes can reset it before the error reaches the client.
     if let Ok(length) = request.header("Content-Length").parse::<u64>() {
@@ -686,10 +758,12 @@ fn error(stream: &mut TcpStream, request: &Request, status: u16, message: &str) 
         501 => "Server does not support this operation",
         _ => "",
     };
+
     let body = format!(
         "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: {status}</p>\n        <p>Message: {}.</p>\n        <p>Error code explanation: {status} - {explanation}.</p>\n    </body>\n</html>\n",
         escape_text(message)
     );
+
     respond(
         stream,
         request,
@@ -699,25 +773,32 @@ fn error(stream: &mut TcpStream, request: &Request, status: u16, message: &str) 
         &[("Connection", "close".into())],
     )
 }
+
 fn escape_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
+
 fn listing(stream: &mut TcpStream, request: &Request, path: &Path) -> Result<()> {
     let mut entries = fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
+
     entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
     let display = super::bundle::html(
         &percent_encoding::percent_decode_str(&request.path).decode_utf8_lossy(),
     );
+
     let mut body = format!(
         "<!DOCTYPE HTML>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Directory listing for {display}</title>\n</head>\n<body>\n<h1>Directory listing for {display}</h1>\n<hr>\n<ul>\n"
     );
+
     for entry in entries {
         let mut name = entry.file_name().to_string_lossy().into_owned();
+
         if entry.path().is_dir() {
             name.push('/');
         }
+
         let encoded = name
             .bytes()
             .map(|byte| {
@@ -728,12 +809,15 @@ fn listing(stream: &mut TcpStream, request: &Request, path: &Path) -> Result<()>
                 }
             })
             .collect::<String>();
+
         body.push_str(&format!(
             "<li><a href=\"{encoded}\">{}</a></li>\n",
             escape_text(&name)
         ));
     }
+
     body.push_str("</ul>\n<hr>\n</body>\n</html>\n");
+
     respond(
         stream,
         request,
@@ -754,6 +838,7 @@ mod tests {
 
     fn get(address: SocketAddr, method: &str, path: &str, headers: &str) -> (u16, String, Vec<u8>) {
         let mut stream = TcpStream::connect(address).unwrap();
+
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -763,13 +848,16 @@ mod tests {
         )
         .unwrap();
         let mut reply = Vec::new();
+
         stream.read_to_end(&mut reply).unwrap();
         let end = reply
             .windows(4)
             .position(|bytes| bytes == b"\r\n\r\n")
             .unwrap()
             + 4;
+
         let headers = String::from_utf8(reply[..end].to_vec()).unwrap();
+
         (
             headers.split_whitespace().nth(1).unwrap().parse().unwrap(),
             headers,
@@ -796,6 +884,7 @@ mod tests {
     #[test]
     fn static_serving_keeps_mime_head_cache_redirects_and_html_fallback() {
         let temp = tempfile::tempdir().unwrap();
+
         fs::write(
             temp.path().join("index.html"),
             "<html><head></head>shell</html>",
@@ -806,6 +895,7 @@ mod tests {
         fs::write(temp.path().join("folder/message.txt"), "message").unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+
         let server = Server::start(
             listener,
             Config {
@@ -818,17 +908,21 @@ mod tests {
             },
         )
         .unwrap();
+
         let (status, headers, body) = get(address, "GET", "/app.wasm", "");
+
         assert_eq!(status, 200);
         assert!(headers.contains("application/wasm"));
         assert_eq!(body, b"\0asm");
         let (_, headers, body) = get(address, "HEAD", "/app.wasm", "");
+
         assert!(headers.contains("Content-Length: 4"));
         assert!(body.is_empty());
         let modified = headers
             .lines()
             .find_map(|line| line.strip_prefix("Last-Modified: "))
             .unwrap();
+
         assert_eq!(
             get(
                 address,
@@ -845,6 +939,7 @@ mod tests {
             b"<html><head></head>shell</html>"
         );
         let (status, headers, _) = get(address, "GET", "/folder?query=1", "");
+
         assert_eq!(status, 301);
         assert!(headers.contains("Location: /folder/?query=1"));
         assert!(
@@ -854,12 +949,14 @@ mod tests {
         );
         // A new connect can hit another parallel test after ephemeral-port reuse.
         let mut pending = TcpStream::connect(address).unwrap();
+
         pending
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         write!(pending, "GET / HTTP/1.1\r\n").unwrap();
         drop(server);
         let result = pending.read(&mut [0]);
+
         assert!(
             matches!(result, Ok(0))
                 || result.as_ref().is_err_and(|error| matches!(
@@ -869,10 +966,12 @@ mod tests {
             "owned connection must close: {result:?}"
         );
     }
+
     #[test]
     fn immutable_builds_survive_publication_and_referer_pins_absolute_imports() {
         let temp = tempfile::tempdir().unwrap();
         let builds = temp.path().join("builds");
+
         for build in [1, 2] {
             fs::create_dir_all(builds.join(format!("{build}/pkg"))).unwrap();
             fs::write(
@@ -881,7 +980,9 @@ mod tests {
             )
             .unwrap();
         }
+
         let status = temp.path().join("status.json");
+
         fs::write(
             &status,
             serde_json::json!({"published":2,"directory":builds.join("2")}).to_string(),
@@ -895,6 +996,7 @@ mod tests {
                 ("Referer".into(), referer),
             ],
         };
+
         let config = Config {
             directory: temp.path().into(),
             development: Some(status),
@@ -903,6 +1005,7 @@ mod tests {
             preview: None,
             broker: None,
         };
+
         assert_eq!(
             translated(
                 &config,
@@ -949,11 +1052,13 @@ mod tests {
             .is_none()
         );
     }
+
     #[test]
     fn shutdown_releases_partial_request_readers_and_checks_control_host() {
         let temp = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+
         let server = Server::start(
             listener,
             Config {
@@ -966,22 +1071,29 @@ mod tests {
             },
         )
         .unwrap();
+
         let mut pending = TcpStream::connect(address).unwrap();
+
         write!(pending, "GET / HTTP/1.1\r\n").unwrap();
         let mut foreign = TcpStream::connect(address).unwrap();
+
         write!(foreign, "GET / HTTP/1.1\r\nHost: foreign\r\n\r\n").unwrap();
         let mut reply = String::new();
+
         foreign.read_to_string(&mut reply).unwrap();
         assert!(reply.starts_with("HTTP/1.0 403"));
         let started = Instant::now();
+
         drop(server);
         assert!(started.elapsed() < Duration::from_secs(2));
     }
+
     #[test]
     fn rejected_post_bodies_preserve_the_http_error_instead_of_resetting_the_connection() {
         let temp = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+
         let _server = Server::start(
             listener,
             Config {
@@ -994,12 +1106,15 @@ mod tests {
             },
         )
         .unwrap();
+
         let mut stream = TcpStream::connect(address).unwrap();
+
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
         write!(stream, "POST /__rake/development HTTP/1.1\r\nHost: {address}\r\nOrigin: http://foreign\r\nContent-Length: 2\r\n\r\n{{}}").unwrap();
         let mut response = String::new();
+
         stream.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.0 403"), "{response}");
         assert!(response.contains("development bridge authentication failed"));

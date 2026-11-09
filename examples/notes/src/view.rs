@@ -611,20 +611,24 @@ impl Render for NotesView {
         let search_focus = self.search.read(cx).focus_handle(cx);
         let title_focus = self.title.read(cx).focus_handle(cx);
         let body_focus = self.body.read(cx).focus_handle(cx);
+
         #[cfg(target_family = "wasm")]
         if let Some(accessibility) = &self.web_accessibility {
             accessibility.sync(window, library.is_some(), self.selected.is_some());
         }
+
         let error = self.notebook.error();
         let notice = self.notebook.notice();
         let dirty = self.notebook.is_dirty();
         let query = self.query.to_lowercase();
+
         let selected = library.as_ref().and_then(|library| {
             library
                 .notes
                 .iter()
                 .find(|note| Some(note.id) == library.selected)
         });
+
         let mut notes: Vec<_> = library
             .as_ref()
             .into_iter()
@@ -640,6 +644,7 @@ impl Render for NotesView {
                     || note.body.to_lowercase().contains(&query)
             })
             .collect();
+
         notes.sort_by_key(|note| {
             (
                 std::cmp::Reverse(note.modified_ms),
@@ -676,6 +681,7 @@ impl Render for NotesView {
                 "notes.archive",
             ),
         ];
+
         let font = gpui::Font {
             fallbacks: cfg!(target_family = "wasm").then(|| {
                 // shortcut: Cosmic selects emoji automatically until GPUI's explicit

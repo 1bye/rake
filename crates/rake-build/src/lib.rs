@@ -261,6 +261,7 @@ fn rasterize_svg(bytes: &[u8]) -> Result<image::RgbaImage, Box<dyn std::error::E
     let tree = resvg::usvg::Tree::from_data(bytes, &options)?;
 
     let mut pixels = resvg::tiny_skia::Pixmap::new(256, 256).ok_or("icon allocation failed")?;
+
     let scale = resvg::tiny_skia::Transform::from_scale(
         256.0 / tree.size().width(),
         256.0 / tree.size().height(),

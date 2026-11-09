@@ -302,6 +302,7 @@ mod tests {
     #[test]
     fn windows_compatibility_reports_installed_executable_assets_and_zip() {
         let root = tempfile::tempdir().unwrap();
+
         let mut config = crate::Config {
             identifier: Some("dev.rake.fixture".into()),
             ..Default::default()
