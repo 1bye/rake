@@ -661,6 +661,7 @@ esac
         "spans":[{"is_primary":true,"file_name":"main.rs","line_start":2,
         "line_end":2,"column_start":13,"column_end":19}]
     }});
+
     let messages =
         format!("{event}\n{event}\n{{\"reason\":\"build-finished\",\"success\":true}}\n");
 
@@ -686,6 +687,7 @@ esac
             .output()
             .unwrap()
     };
+
     let source = "// header\nfn main() { task(); rake::view! { <button/> }; }\n";
     let denied = invoke(source, "deny", true, "0");
     let report: serde_json::Value = serde_json::from_slice(&denied.stdout).unwrap();
@@ -715,6 +717,7 @@ esac
             true,
             "0",
         );
+
         let report: serde_json::Value = serde_json::from_slice(&suppressed.stdout).unwrap();
 
         assert!(suppressed.status.success());

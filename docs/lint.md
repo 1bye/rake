@@ -62,7 +62,7 @@ explicit setup step and a slower first deep check. Local verification also suppo
 installed cargo-dylint 6.2.0; CI pins 6.3.2. The library uses dylint_linting 6.2.0,
 matching the existing spacing library and nightly ABI.
 
-The CLI embeds the library sources from `crates/rake-cli/lints/rake-gpui/`, so an
+The CLI embeds a deterministic source archive generated from `crates/rake-cli/lints/rake-gpui/`, so an
 installed binary does not need this repository. Sources are materialized in a
 content-addressed directory under `CARGO_TARGET_DIR/rake-lints` (or the workspace's
 `target/rake-lints`). Cargo/Dylint cache the compiled library and checked targets.
@@ -105,6 +105,8 @@ To add a deep rule:
    enables shared suppression, configuration and compiler-code mapping.
 2. Add the late, type-aware check and lint registration to the bundled library.
    Resolve definitions and execution context; do not guess from variable names.
+   Run `python3 scripts/update-deep-library.py` after changing library sources,
+   configuration or its lockfile; `bundled_library_is_current` checks archive drift.
 3. Add firing markers (`//~ gpui_rule_name`) and unmarked negative cases to
    `lints/rake-gpui/ui/src/lib.rs`. `python3 scripts/test-deep-lints.py` compares
    every emitted deep diagnostic to those markers using the real pinned GPUI.

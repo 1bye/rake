@@ -1182,3 +1182,21 @@ fn single_file_lint_respects_exclusions_and_compile_fail_fixtures() {
         assert!(report.diagnostics.is_empty());
     }
 }
+
+#[test]
+fn deep_file_suppressions_defer_unused_checks_until_the_deep_tier_runs() {
+    let file = Path::new("src/main.rs");
+
+    let text =
+        "// rake-lint: allow-file(gpui-dropped-task) Cancellation fixture.\nfn main() { task(); }";
+
+    assert!(check_source(file, text, &Levels::new()).is_empty());
+    let unused = filter_diagnostics_with_deep(file, text, &Levels::new(), Vec::new(), false, true);
+
+    assert_eq!(ids(&unused), [SUPPRESSION]);
+    let start = text.find("task()").unwrap();
+    let finding = Diagnostic::at_bytes(catalogue::DROPPED_TASK, file, text, start..start + 6);
+    let used = filter_diagnostics_with_deep(file, text, &Levels::new(), vec![finding], false, true);
+
+    assert!(used.is_empty());
+}

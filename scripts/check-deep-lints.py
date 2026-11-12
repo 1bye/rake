@@ -6,8 +6,24 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
+metadata = json.loads(subprocess.check_output(
+    ["cargo", "metadata", "--no-deps", "--format-version=1", "--locked"],
+    cwd=root, text=True,
+))
+members = set(metadata["workspace_members"])
+member_manifests = {
+    Path(package["manifest_path"]).resolve()
+    for package in metadata["packages"] if package["id"] in members
+}
+standalone = []
+for manifest in sorted((root / "examples").glob("*/Cargo.toml")):
+    if manifest.resolve() in member_manifests:
+        print(f"{manifest.parent.relative_to(root)}: covered by workspace --all-targets", flush=True)
+    else:
+        standalone.append(manifest.parent)
+
 failed = False
-for path in [root, *sorted(manifest.parent for manifest in (root / "examples").glob("*/Cargo.toml"))]:
+for path in [root, *standalone]:
     result = subprocess.run(
         ["cargo", "run", "-p", "rake-app-cli", "--locked", "--", "lint",
          str(path), "--deep", "--json"],

@@ -20,6 +20,7 @@ struct Tile {
 impl RenderOnce for Tile {
     fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
         rake::view! {
+            // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
             <button id={self.id} style={|s| s.size(gpui::px(80.)).children(self.children)} />
         }
     }

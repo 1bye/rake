@@ -283,6 +283,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     }
 
     let path = path.unwrap_or(std::env::current_dir()?);
+
     let check = || {
         if deep {
             let root = path.canonicalize()?;
@@ -299,6 +300,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
             check_target(&path)
         }
     };
+
     let (root, mut report) = check()?;
 
     if fix {
@@ -471,6 +473,7 @@ fn check_project_with_deep(root: &Path, mut deep: Option<&mut deep::Findings>) -
 
     for (path, text, config) in sources {
         let relative = path.strip_prefix(root)?;
+
         let mut diagnostics =
             source::check_themed(relative, &text, themed.contains(&config.package));
 
@@ -503,6 +506,7 @@ fn check_project_with_deep(root: &Path, mut deep: Option<&mut deep::Findings>) -
         let text = fs::read_to_string(&path)?;
         let relative = path.strip_prefix(root)?;
         let diagnostics = manifest::check(relative, &text)?;
+
         let diagnostics = filter_diagnostics_with_deep(
             relative,
             &text,

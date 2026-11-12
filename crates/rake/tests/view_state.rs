@@ -188,6 +188,7 @@ impl Render for KeyedHost {
         rake::view! {
             <div>
                 for key in &self.keys {
+                    // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
                     <button id={("row", *key)} style={|s| s.size(gpui::px(80.))}>
                         {
                             state_probe(*key, self.observed.clone(), self.states_created.clone())

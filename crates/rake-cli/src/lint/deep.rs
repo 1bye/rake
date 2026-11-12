@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -12,27 +13,15 @@ use super::{Diagnostic, Position, Result, SourceSpan, catalogue};
 
 const NIGHTLY: &str = "nightly-2026-08-20";
 const INSTALL: &str = "rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt\ncargo +nightly-2026-08-20 install --locked cargo-dylint --version 6.3.2\ncargo +nightly-2026-08-20 install --locked dylint-link --version 6.3.2";
-const LIBRARY: &[(&str, &str)] = &[
-    (
-        "Cargo.toml",
-        include_str!("../../lints/rake-gpui/Cargo.toml"),
-    ),
-    (
-        "Cargo.lock",
-        include_str!("../../lints/rake-gpui/Cargo.lock"),
-    ),
-    (
-        "rust-toolchain.toml",
-        include_str!("../../lints/rake-gpui/rust-toolchain.toml"),
-    ),
-    (
-        ".cargo/config.toml",
-        include_str!("../../lints/rake-gpui/.cargo/config.toml"),
-    ),
-    (
-        "src/lib.rs",
-        include_str!("../../lints/rake-gpui/src/lib.rs"),
-    ),
+// Cargo excludes nested packages from published crates; embed a generated archive.
+const LIBRARY: &[u8] = include_bytes!("deep-library.zip");
+
+const FILES: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "src/lib.rs",
 ];
 
 pub(super) type Findings = BTreeMap<PathBuf, Vec<Diagnostic>>;
@@ -41,6 +30,7 @@ fn prerequisites() -> Result<()> {
     let nightly = Command::new("rustup")
         .args(["run", NIGHTLY, "rustc", "--version"])
         .output();
+
     let dylint = Command::new("cargo").args(["dylint", "--version"]).output();
 
     if !nightly.is_ok_and(|output| output.status.success())
@@ -58,29 +48,30 @@ fn prerequisites() -> Result<()> {
 // Bundle the source with the CLI so installed binaries need no Rake repository checkout.
 // A content-addressed directory avoids rebuilding an unchanged library on each run.
 fn library(root: &Path) -> Result<PathBuf> {
-    let mut hash = Sha256::new();
-
-    for (name, text) in LIBRARY {
-        hash.update(name.as_bytes());
-        hash.update(text.as_bytes());
-    }
+    let hash = Sha256::digest(LIBRARY);
 
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("target"));
+
     let target = if target.is_absolute() {
         target
     } else {
         std::env::current_dir()?.join(target)
     };
-    let directory = target
-        .join("rake-lints")
-        .join(format!("{:x}", hash.finalize()));
 
-    for (name, text) in LIBRARY {
+    let directory = target.join("rake-lints").join(format!("{:x}", hash));
+
+    let mut archive = zip::ZipArchive::new(Cursor::new(LIBRARY))?;
+
+    for name in FILES {
+        let mut text = Vec::new();
+
+        archive.by_name(name)?.read_to_end(&mut text)?;
+
         let path = directory.join(name);
 
-        if fs::read_to_string(&path).ok().as_deref() != Some(text) {
+        if fs::read(&path).ok().as_deref() != Some(&text) {
             fs::create_dir_all(path.parent().expect("bundled file has a parent"))?;
             fs::write(path, text)?;
         }
@@ -106,12 +97,14 @@ pub(super) fn collect(root: &Path) -> Result<Findings> {
     }
 
     let metadata: Value = serde_json::from_slice(&metadata.stdout)?;
+
     let workspace = Path::new(
         metadata["workspace_root"]
             .as_str()
             .ok_or("Cargo metadata omitted workspace_root")?,
     )
     .canonicalize()?;
+
     let library = library(&workspace)?;
     let mut command = Command::new("cargo");
 
@@ -175,7 +168,9 @@ fn decode(root: &Path, workspace: &Path, output: &str) -> Result<(Findings, bool
         let Some(code) = message["code"]["code"].as_str() else {
             continue;
         };
+
         let id = code.replace('_', "-");
+
         let Some(rule) = catalogue::rule(&id).filter(|rule| catalogue::is_deep(rule.id)) else {
             continue;
         };
@@ -189,19 +184,24 @@ fn decode(root: &Path, workspace: &Path, output: &str) -> Result<(Findings, bool
             let Some(file) = span["file_name"].as_str() else {
                 continue;
             };
+
             let path = Path::new(file);
+
             // Cargo emits workspace-relative paths, even for a selected member.
             let path = if path.is_absolute() {
                 path.to_owned()
             } else {
                 workspace.join(path)
             };
+
             let Ok(path) = path.canonicalize() else {
                 continue;
             };
+
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;
             };
+
             let position = |prefix: &str| -> Result<Position> {
                 Ok(Position {
                     line: span[format!("line_{prefix}")]
@@ -212,10 +212,12 @@ fn decode(root: &Path, workspace: &Path, output: &str) -> Result<(Findings, bool
                         .ok_or("Dylint span omitted column")? as usize,
                 })
             };
+
             let source_span = SourceSpan {
                 start: position("start")?,
                 end: position("end")?,
             };
+
             let key = (
                 path.clone(),
                 rule.id,
@@ -246,6 +248,30 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn bundled_library_is_current() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("lints/rake-gpui");
+        let mut archive = zip::ZipArchive::new(Cursor::new(LIBRARY)).unwrap();
+
+        assert_eq!(archive.len(), FILES.len());
+
+        for name in FILES {
+            let mut bundled = Vec::new();
+
+            archive
+                .by_name(name)
+                .unwrap()
+                .read_to_end(&mut bundled)
+                .unwrap();
+
+            assert_eq!(
+                bundled,
+                fs::read(root.join(name)).unwrap(),
+                "run python3 scripts/update-deep-library.py after editing {name}"
+            );
+        }
+    }
+
+    #[test]
     fn compiler_messages_keep_unicode_columns_and_deduplicate_targets() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
@@ -257,8 +283,10 @@ mod tests {
             "line_start":1,"line_end":1,"column_start":18,"column_end":24}]
         }})
         .to_string();
+
         let events =
             format!("{event}\n{event}\n{{\"reason\":\"build-finished\",\"success\":true}}\n");
+
         let (findings, built, errors) = decode(&root, &root, &events).unwrap();
         let diagnostics = &findings[&root.join("main.rs")];
 
