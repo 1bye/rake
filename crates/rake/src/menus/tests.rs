@@ -60,8 +60,19 @@ fn live_host_refreshes_before_first_poll_and_replaces_only_its_command_bindings(
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let commands = router.client().commands();
 
+    let invoked = Rc::new(Cell::new(0));
+    let calls = invoked.clone();
+
     commands
-        .register::<Probe, _, _>(|_, _| async { Ok(()) })
+        .register::<Probe, _, _>(move |_, _| {
+            let calls = calls.clone();
+
+            async move {
+                calls.set(calls.get() + 1);
+
+                Ok(())
+            }
+        })
         .unwrap();
     commands
         .set_presentation(
@@ -83,6 +94,12 @@ fn live_host_refreshes_before_first_poll_and_replaces_only_its_command_bindings(
 
     app.update(|cx| {
         install(router.client(), &services, cx).unwrap();
+        let bar = cx.get_menus().unwrap();
+        let gpui::OwnedMenuItem::Action { action, .. } = &bar[0].items[0] else {
+            panic!("command action")
+        };
+
+        cx.dispatch_action(action.as_ref());
         commands
             .set_state(
                 "menu.probe",
@@ -94,15 +111,32 @@ fn live_host_refreshes_before_first_poll_and_replaces_only_its_command_bindings(
             )
             .unwrap();
     });
+    let mut pool = LocalPool::new();
+    let driven = router.clone();
+
+    pool.spawner()
+        .spawn_local(async move {
+            driven.run().await.unwrap();
+        })
+        .unwrap();
+    pool.run_until_stalled();
+    assert_eq!(
+        invoked.get(),
+        1,
+        "installed menu action must execute the registered handler"
+    );
     app.run_until_parked();
     app.update(|cx| {
         let bar = cx.get_menus().unwrap();
 
         assert!(matches!(&bar[0].items[0], gpui::OwnedMenuItem::Action { name, disabled: true, checked: true, .. } if name == "Busy"));
+        let gpui::OwnedMenuItem::Action { action, .. } = &bar[0].items[0] else { panic!("command action") };
+
+        assert!(!cx.is_action_available(action.as_ref()), "macOS validation must keep disabled commands disabled");
         let bindings = cx.key_bindings();
         let bindings = bindings.borrow();
 
-        assert_eq!(bindings.bindings().filter(|binding| binding.action().as_any().is::<Invoke>()).count(), 1);
+        assert_eq!(bindings.bindings().filter(|binding| binding.action().as_any().is::<Unavailable>()).count(), 1);
     });
     menus
         .replace(vec![Menu::new("Empty", [])], Vec::new(), &commands)

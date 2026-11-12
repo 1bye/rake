@@ -274,12 +274,39 @@ impl Commands {
 
     /// Sets command presentation and wakes mounted menu hosts, including shortcut updates.
     /// # Errors
-    /// Returns `Unknown` for an unregistered stable ID.
+    /// Returns `Unknown` for an unregistered stable ID, or `Arguments` for an empty
+    /// shortcut (and, with GPUI enabled, invalid keystroke syntax).
     pub fn set_presentation(
         &self,
         id: &str,
         presentation: CommandPresentation,
     ) -> Result<(), CommandError> {
+        // Check identity before validating metadata so unknown IDs remain unambiguous.
+        self.presentation(id)?;
+
+        if let Some(shortcut) = &presentation.shortcut {
+            if shortcut.trim().is_empty() {
+                return Err(CommandError::Arguments(
+                    "command shortcut cannot be empty".into(),
+                ));
+            }
+
+            #[cfg(feature = "gpui")]
+            for stroke in shortcut.split_whitespace() {
+                let os = if cfg!(target_os = "macos") {
+                    gpui::OperatingSystem::Mac
+                } else if cfg!(target_os = "windows") {
+                    gpui::OperatingSystem::Windows
+                } else {
+                    gpui::OperatingSystem::Linux
+                };
+
+                gpui::Keystroke::parse_with_os(stroke, os).map_err(|error| {
+                    CommandError::Arguments(format!("invalid shortcut for {id}: {error}"))
+                })?;
+            }
+        }
+
         self.0
             .borrow_mut()
             .get_mut(id)

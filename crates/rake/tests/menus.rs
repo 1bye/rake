@@ -155,3 +155,23 @@ fn invalid_replacement_preserves_existing_menus_and_startup_reports_unknown_id()
         matches!(result, Err(rake::AppError::Command(CommandError::Unknown(id))) if id == "missing.command")
     );
 }
+
+#[test]
+fn invalid_shortcut_does_not_replace_command_presentation() {
+    let commands = rake::control::Commands::new();
+
+    commands
+        .register::<Add, _, _>(|args, _| async move { Ok(args.amount) })
+        .unwrap();
+    let original = commands.presentation("counter.add").unwrap();
+    let result = commands.set_presentation(
+        "counter.add",
+        CommandPresentation {
+            label: "Broken".into(),
+            shortcut: Some("invalidmodifier-a".into()),
+        },
+    );
+
+    assert!(matches!(result, Err(CommandError::Arguments(_))));
+    assert_eq!(commands.presentation("counter.add").unwrap(), original);
+}

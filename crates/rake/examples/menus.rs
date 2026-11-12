@@ -9,7 +9,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[command(id = "example.toggle", output = bool, capability = Headless)]
     struct Toggle;
 
+    #[rake::data(schema)]
+    #[derive(rake::Command)]
+    #[command(id = "example.perform", capability = Headless)]
+    struct Perform;
+
+    #[rake::data(schema)]
+    #[derive(rake::Command)]
+    #[command(id = "example.about", output = String, capability = Headless)]
+    struct About;
+
     let commands = Commands::new();
+
+    commands.register::<Perform, _, _>(|_, _| async {
+        rake::info!("Example command ran");
+
+        Ok(())
+    })?;
+    commands.register::<About, _, _>(|_, _| async {
+        let message = "Rake command menu example".to_owned();
+
+        rake::info!(%message);
+
+        Ok(message)
+    })?;
+    commands.set_presentation(
+        "example.perform",
+        CommandPresentation {
+            label: "Perform action".into(),
+            shortcut: None,
+        },
+    )?;
+    commands.set_presentation(
+        "example.about",
+        CommandPresentation {
+            label: "About menu example".into(),
+            shortcut: None,
+        },
+    )?;
+    commands.set_state(
+        "example.perform",
+        CommandState {
+            enabled: false,
+            ..Default::default()
+        },
+    )?;
 
     commands.register::<Toggle, _, _>(|_, context| async move {
         let commands = context
@@ -22,6 +66,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "example.toggle",
             CommandState {
                 checked,
+                ..Default::default()
+            },
+        )?;
+
+        commands.set_state(
+            "example.perform",
+            CommandState {
+                enabled: checked,
                 ..Default::default()
             },
         )?;
@@ -47,13 +99,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Menu::new(
             "Application",
             [
+                MenuItem::typed(About)?,
+                MenuItem::Separator,
                 MenuItem::Role(MenuRole::Services),
                 MenuItem::Separator,
                 MenuItem::Role(MenuRole::Hide),
                 MenuItem::Role(MenuRole::Quit),
             ],
         ),
-        Menu::new("Options", [toggle.clone()]),
+        Menu::new("Options", [toggle.clone(), MenuItem::typed(Perform)?]),
     ])
     .with_dock([toggle]);
 

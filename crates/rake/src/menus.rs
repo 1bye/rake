@@ -207,6 +207,12 @@ struct Invoke {
     arguments: Value,
 }
 
+// macOS revalidates actions independently of MenuItem::disabled. This action
+// deliberately has no listener, preserving both the disabled state and key equivalent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema, gpui::Action)]
+#[action(namespace = rake_menus)]
+struct Unavailable(Invoke);
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema, gpui::Action)]
 #[action(namespace = rake_menus)]
 struct Standard {
@@ -242,15 +248,18 @@ fn resolve_item(item: &MenuItem, commands: &Commands) -> Result<gpui::MenuItem, 
         MenuItem::Command { id, arguments } => {
             let (presentation, state) = commands.presentation(id)?;
 
-            gpui::MenuItem::action(
-                state.label.unwrap_or(presentation.label),
-                Invoke {
-                    id: id.clone(),
-                    arguments: arguments.clone(),
-                },
-            )
-            .checked(state.checked)
-            .disabled(!state.enabled)
+            let label = state.label.unwrap_or(presentation.label);
+            let action = Invoke {
+                id: id.clone(),
+                arguments: arguments.clone(),
+            };
+            let item = if state.enabled {
+                gpui::MenuItem::action(label, action)
+            } else {
+                gpui::MenuItem::action(label, Unavailable(action))
+            };
+
+            item.checked(state.checked).disabled(!state.enabled)
         }
     })
 }
@@ -357,22 +366,27 @@ fn bind_items(
     for item in items {
         match item {
             MenuItem::Command { id, arguments } if bound.insert(id.clone()) => {
-                if let Some(shortcut) = commands.presentation(id)?.0.shortcut {
+                let (presentation, state) = commands.presentation(id)?;
+
+                if let Some(shortcut) = presentation.shortcut {
+                    let action = Invoke {
+                        id: id.clone(),
+                        arguments: arguments.clone(),
+                    };
+                    let action: Box<dyn gpui::Action> = if state.enabled {
+                        Box::new(action)
+                    } else {
+                        Box::new(Unavailable(action))
+                    };
+
                     bindings.push(
-                        gpui::KeyBinding::load(
-                            &shortcut,
-                            Box::new(Invoke {
-                                id: id.clone(),
-                                arguments: arguments.clone(),
-                            }),
-                            None,
-                            false,
-                            None,
-                            cx,
-                        )
-                        .map_err(|error| {
-                            CommandError::Arguments(format!("invalid shortcut for {id}: {error}"))
-                        })?,
+                        gpui::KeyBinding::load(&shortcut, action, None, false, None, cx).map_err(
+                            |error| {
+                                CommandError::Arguments(format!(
+                                    "invalid shortcut for {id}: {error}"
+                                ))
+                            },
+                        )?,
                     );
                 }
             }
@@ -391,7 +405,10 @@ fn refresh(menus: &Menus, commands: &Commands, cx: &mut gpui::App) -> Result<(),
         .key_bindings()
         .borrow()
         .bindings()
-        .filter(|binding| !binding.action().as_any().is::<Invoke>())
+        .filter(|binding| {
+            !binding.action().as_any().is::<Invoke>()
+                && !binding.action().as_any().is::<Unavailable>()
+        })
         .cloned()
         .collect::<Vec<_>>();
     let mut bound = std::collections::BTreeSet::new();
