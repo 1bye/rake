@@ -97,6 +97,9 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
     let host = cx.global::<MainWindow>();
     let context = host.context.clone();
 
+    #[cfg(feature = "live")]
+    let diagnostics = context.services().diagnostics();
+
     let router = host
         .navigator
         .runtime()
@@ -127,6 +130,15 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
         };
 
         crate::window_state::native::observe(placement, window, cx);
+
+        #[cfg(feature = "live")]
+        crate::reload::live::install(
+            diagnostics,
+            cx,
+            Some(crate::reload::live::ReloadOwner::from_router(
+                router.clone(),
+            )),
+        );
 
         match policy {
             super::ClosePolicy::Quit => router.observe_host(window, cx),

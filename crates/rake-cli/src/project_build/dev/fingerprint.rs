@@ -4,7 +4,7 @@ use super::super::{Project, Result};
 use sha2::{Digest, Sha256};
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -25,7 +25,7 @@ pub(super) fn fingerprint(project: &Project, output: Option<&Path>) -> Result<[u
     let mut visited = HashSet::new();
 
     for root in &project.watch_roots {
-        walk(root, output, &mut visited, &mut digest)?;
+        walk(root, output, &mut visited, &mut digest, None)?;
     }
 
     Ok(digest.finalize().into())
@@ -36,6 +36,7 @@ fn walk(
     output: Option<&Path>,
     visited: &mut HashSet<PathBuf>,
     digest: &mut Sha256,
+    mut stamps: Option<&mut Stamps>,
 ) -> Result<()> {
     // os.walk ignores inaccessible or concurrently deleted directories.
     let Ok(entries) = fs::read_dir(root) else {
@@ -85,6 +86,34 @@ fn walk(
             }
         }
 
+        if let Some(stamps) = &mut stamps {
+            if let Ok(metadata) = path.metadata() {
+                #[cfg(unix)]
+                use std::os::unix::fs::MetadataExt;
+                #[cfg(windows)]
+                use std::os::windows::fs::MetadataExt;
+                #[cfg(unix)]
+                let stamp = (
+                    metadata.mtime(),
+                    metadata.mtime_nsec(),
+                    metadata.len(),
+                    metadata.ino(),
+                );
+
+                #[cfg(windows)]
+                let stamp = (
+                    metadata.last_write_time() as i64,
+                    0,
+                    metadata.file_size(),
+                    0,
+                );
+
+                stamps.insert(path, stamp);
+            }
+
+            continue;
+        }
+
         match fs::File::open(&path) {
             Ok(mut file) => {
                 let mut buffer = [0; 65536];
@@ -107,7 +136,7 @@ fn walk(
     }
 
     for directory in directories {
-        walk(&directory, output, visited, digest)?;
+        walk(&directory, output, visited, digest, stamps.as_deref_mut())?;
     }
 
     Ok(())
@@ -131,4 +160,18 @@ fn reparse(path: &Path) -> bool {
                 != 0
         })
     }
+}
+
+pub(super) type Stamps = BTreeMap<PathBuf, (i64, i64, u64, u64)>;
+
+pub(super) fn stamps(project: &Project, output: Option<&Path>) -> Result<Stamps> {
+    let mut digest = Sha256::new();
+    let mut visited = HashSet::new();
+    let mut stamps = Stamps::new();
+
+    for root in &project.watch_roots {
+        walk(root, output, &mut visited, &mut digest, Some(&mut stamps))?;
+    }
+
+    Ok(stamps)
 }

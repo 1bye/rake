@@ -117,11 +117,32 @@ impl<'a> Processes<'a> {
         mut artifact: impl FnMut(serde_json::Value),
     ) -> Result<()> {
         let mut pending = Vec::new();
-        let mut tail = Vec::new();
+        let mut tail: Vec<String> = Vec::new();
+
+        let blaze = std::path::Path::new(command.get_program())
+            .file_name()
+            .is_some_and(|name| name == "blaze" || name == "blaze-engine");
+
+        let mut structured_error = None;
+        let mut diagnostic_tail = None;
 
         let mut line = |bytes: &[u8], pid| -> Result<()> {
             let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
             let message = serde_json::from_str::<serde_json::Value>(&text).ok();
+
+            if blaze {
+                if let Some(finished) = message
+                    .as_ref()
+                    .and_then(|message| message["event"].get("Finished"))
+                    && finished["ok"] == false
+                {
+                    structured_error = finished["summary"]["error"].as_str().map(str::to_owned);
+                }
+
+                if text.starts_with("blaze time:") && diagnostic_tail.is_none() {
+                    diagnostic_tail = Some(last_chars(&tail.concat(), 8000));
+                }
+            }
 
             let printed = match message {
                 Some(message) if message.is_object() => {
@@ -191,7 +212,9 @@ impl<'a> Processes<'a> {
                 "{} exited {}\n{}",
                 command.get_program().to_string_lossy(),
                 exit_code(status),
-                last_chars(&tail.concat(), 8000)
+                structured_error
+                    .or(diagnostic_tail)
+                    .unwrap_or_else(|| last_chars(&tail.concat(), 8000))
             )
             .into());
         }

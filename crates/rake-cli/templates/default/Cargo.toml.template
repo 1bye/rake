@@ -8,6 +8,12 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+devtools = ["rake/devtools"]
+live = ["rake/live"]
+# Resolve both GPUI backends to compatible versions even when only one is built.
+gpui-fast = ["rake/gpui-fast"]
+
 [dependencies]
 rake = {{dependency}}
 

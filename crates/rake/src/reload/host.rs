@@ -138,3 +138,19 @@ pub(crate) fn store(checkpoint: &WorkspaceCheckpoint) -> Result<(), String> {
         .set_item(STORAGE_KEY, &bytes)
         .map_err(|error| format!("{error:?}"))
 }
+
+/// Transient live status shares the existing managed/routed reload presentation.
+#[cfg(feature = "gpui")]
+pub(crate) fn status_notice(cx: &gpui::App) -> Option<gpui::AnyElement> {
+    #[cfg(all(feature = "live", not(target_family = "wasm")))]
+    {
+        super::live::status_notice(cx)
+    }
+
+    #[cfg(any(not(feature = "live"), target_family = "wasm"))]
+    {
+        let _ = cx;
+
+        None
+    }
+}

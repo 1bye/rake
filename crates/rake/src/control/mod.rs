@@ -582,6 +582,9 @@ impl<R: Route> RuntimeClient<R> {
             Query::Checkpoint { application_id } => Ok(Reply::Checkpoint(
                 self.router.reload_checkpoint(&application_id)?,
             )),
+            Query::PartialCheckpoint { application_id } => Ok(Reply::Checkpoint(
+                self.router.reload_partial_checkpoint(&application_id)?,
+            )),
             Query::Info {} => Ok(Reply::Info(self.info())),
             Query::Schema {} => Ok(Reply::Data(json!({
                 "protocol": PROTOCOL_VERSION,

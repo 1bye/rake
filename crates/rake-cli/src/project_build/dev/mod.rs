@@ -1,13 +1,15 @@
 //! Owns desktop/Web sessions, asynchronous builds, publication and retained discovery records.
 //! The session owns its native HTTP broker, preview helper process and optional CDP companion.
 
+mod blaze;
 mod fingerprint;
 mod output;
 mod services;
 mod transport;
 
 use super::{
-    Args, Processes, Project, Result, json_line, processes::ProcessGroup, string, write_marker,
+    Args, Compiler, Processes, Project, Result, json_line, processes::ProcessGroup, string,
+    write_marker,
 };
 
 use fingerprint::fingerprint;
@@ -15,6 +17,7 @@ use output::{ProcessOutput, SharedOutput};
 use serde_json::{Value, json};
 
 use std::{
+    collections::BTreeSet,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -96,6 +99,7 @@ struct Supervisor<'a> {
     session: PathBuf,
     control: PathBuf,
     checkpoint: PathBuf,
+    restart_notice: Option<String>,
     status: Value,
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
@@ -106,6 +110,7 @@ struct Supervisor<'a> {
     output: SharedOutput,
     readers: Vec<JoinHandle<std::result::Result<(), String>>>,
     cancelled: &'a AtomicBool,
+    live: Option<blaze::Live>,
 }
 
 impl<'a> Supervisor<'a> {
@@ -124,12 +129,17 @@ impl<'a> Supervisor<'a> {
         fs::create_dir(session.join("builds"))?;
         let status = json!({"protocol":1, "pid":std::process::id(), "target":if args.web {"web"} else {"desktop"}, "package":project.package["name"],
             "phase":"starting", "published":0, "build":0, "error":null,
-            "mechanism":if args.web {"web_page_reload"} else if args.native_reloader.is_some() {"native_code_replacement"} else {"native_restart"}});
+            "mechanism":if args.web {"web_page_reload"} else if args.compiler == Compiler::Blaze {"blaze_live_patch"} else if args.native_reloader.is_some() {"native_code_replacement"} else {"native_restart"}});
 
         let mut supervisor = Self {
+            live: (args.compiler == Compiler::Blaze).then(|| blaze::Live {
+                full_boundary: std::env::var("RAKE_LIVE_BOUNDARY").as_deref() == Ok("full"),
+                ..blaze::Live::default()
+            }),
             args,
             project,
             checkpoint: session.join("checkpoint.json"),
+            restart_notice: None,
             session,
             control,
             status,
@@ -200,6 +210,16 @@ impl<'a> Supervisor<'a> {
     fn launch(&mut self, artifact: &Path) -> Result<()> {
         let mut command = Command::new(artifact);
 
+        if self.live.is_some() {
+            blaze::configure(&mut command, self.args);
+            self.live = Some(blaze::Live {
+                full_boundary: self.live.as_ref().is_some_and(|live| live.full_boundary),
+                identity: Some(blaze::identity(artifact)?),
+                artifact: Some(artifact.to_owned()),
+                ..blaze::Live::default()
+            });
+        }
+
         command
             .current_dir(&self.project.root)
             .env("RAKE_DEV_CONTROL", "1")
@@ -217,6 +237,15 @@ impl<'a> Supervisor<'a> {
 
         if self.checkpoint.exists() {
             command.env("RAKE_RELOAD_CHECKPOINT", &self.checkpoint);
+        }
+
+        command.env_remove("RAKE_LIVE_RESTART_NOTICE");
+
+        if let Some(notice) = self.restart_notice.take() {
+            command.env("RAKE_LIVE_RESTART_NOTICE", &notice);
+            self.status["restart_notice"] = json!(notice);
+        } else {
+            self.status["restart_notice"] = Value::Null;
         }
 
         let mut app = Processes::new(self.cancelled).start(&mut command)?;
@@ -249,7 +278,7 @@ impl<'a> Supervisor<'a> {
         ));
         self.app = Some(app);
 
-        self.record("running", json!({"runtime_pid":pid, "app_running":true, "mechanism":"native_restart", "error":null}))
+        self.record("running", json!({"runtime_pid":pid, "app_running":true, "mechanism":if self.live.is_some() {"blaze_live_patch"} else {"native_restart"}, "error":null}))
     }
 
     fn query(&self, instance: &Value, value: Value) -> Result<Value> {
@@ -264,6 +293,28 @@ impl<'a> Supervisor<'a> {
     }
 
     fn prepare(&mut self, instance: &Value, artifact: &Path) -> Result<bool> {
+        self.prepare_restart(instance, artifact, false)
+    }
+
+    fn prepare_restart(&mut self, instance: &Value, artifact: &Path, probe: bool) -> Result<bool> {
+        self.restart_notice = None;
+
+        if self.live.is_some() && self.args.require_state {
+            let snapshot = self.query(instance, json!({"type":"snapshot"}))?;
+
+            let has_entries = snapshot["tabs"].as_array().is_some_and(|tabs| {
+                tabs.iter().any(|tab| {
+                    tab["entries"]
+                        .as_array()
+                        .is_some_and(|entries| !entries.is_empty())
+                })
+            });
+
+            if !has_entries {
+                return Err("Blaze restart blocked: standalone root state is not checkpointed; use checkpointed routed state, or omit --require-state to allow state loss".into());
+            }
+        }
+
         let mechanism = if self.args.native_reloader.is_some() {
             "native_code_replacement"
         } else {
@@ -295,10 +346,43 @@ impl<'a> Supervisor<'a> {
 
             let checkpoint = self.query(
                 instance,
-                json!({"type":"checkpoint", "application_id":instance["application_id"]}),
+                json!({"type":if self.live.is_none() || self.args.require_state || self.args.native_reloader.is_some() {"checkpoint"} else {"partial_checkpoint"}, "application_id":instance["application_id"]}),
             )?;
 
+            if probe {
+                return Ok(false);
+            }
+
             write_marker(&self.checkpoint, &checkpoint)?;
+
+            if self.live.is_some() && self.args.native_reloader.is_none() {
+                let entries: Vec<_> = checkpoint["tabs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|tab| tab["entries"].as_array().into_iter().flatten())
+                    .collect();
+
+                let reset: Vec<_> = entries
+                    .iter()
+                    .filter(|entry| entry["state"].is_null())
+                    .map(|entry| {
+                        let route = entry["destination"]["route"].as_str().unwrap_or("entry");
+                        let mut chars = route.chars();
+
+                        let name = chars
+                            .next()
+                            .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                            .unwrap_or_default();
+
+                        format!("{name} (entry-{})", entry["id"])
+                    })
+                    .collect();
+
+                if entries.is_empty() || !reset.is_empty() {
+                    self.restart_notice = Some(self.state_loss_notice(&reset));
+                }
+            }
 
             if let Some(reloader) = &self.args.native_reloader {
                 self.record("replacing_native_code", json!({}))?;
@@ -347,9 +431,9 @@ impl<'a> Supervisor<'a> {
             Ok(false)
         })();
 
-        if result.is_err() {
-            // An interrupted preparation still needs its matching abort to release quiescence.
-            let _ = exchange(
+        if result.is_err() || probe {
+            // A strict preflight must also resume the old app before compilation.
+            let aborted = exchange(
                 instance,
                 "command",
                 json!({"type":"finish_reload", "id":boundary,"applied":false}),
@@ -357,6 +441,10 @@ impl<'a> Supervisor<'a> {
                 Some(&format!("{boundary}/abort")),
                 &AtomicBool::new(false),
             );
+
+            if result.is_ok() {
+                aborted?;
+            }
         }
 
         result
@@ -375,6 +463,59 @@ impl<'a> Supervisor<'a> {
         if let Some(app) = &mut self.app
             && app.0.try_wait()?.is_none()
         {
+            if self.live.is_some() {
+                self.poll_live_events()?;
+                let identity = blaze::identity(artifact)?;
+                let live = self.live.as_mut().ok_or("live state missing")?;
+
+                match live.decision(&identity, live.kind) {
+                    blaze::Decision::Patch => {
+                        let outcome = if live.declined.is_some() {
+                            "declined"
+                        } else if live.sequence > live.published {
+                            "applied"
+                        } else {
+                            "unchanged"
+                        };
+
+                        let error = live.declined.clone();
+
+                        live.artifact = Some(artifact.to_owned());
+                        live.published = live.sequence;
+
+                        return self.record("watching", json!({"published":number,"error":error,"mechanism":"blaze_live_patch","outcome":outcome,"executable_uuid":identity}));
+                    }
+                    blaze::Decision::Rebuild => {
+                        let reason = live.restart.clone();
+
+                        if self.args.require_state {
+                            let instance = self.instance().ok_or(
+                                "strict restart requires the app's development control endpoint",
+                            )?;
+
+                            // Reject missing state before spending time relinking. The
+                            // running process stays alive to receive later outcomes.
+                            self.prepare_restart(&instance, artifact, true)?;
+                        }
+
+                        self.live.as_mut().ok_or("live state missing")?.needs_build = true;
+
+                        return self.record("rebuild_required", json!({"reason":reason}));
+                    }
+                    blaze::Decision::Restart => {
+                        let reason = live
+                            .restart
+                            .clone()
+                            .unwrap_or_else(|| "executable LC_UUID changed".into());
+
+                        self.record(
+                            "live_relink",
+                            json!({"reason":reason,"executable_uuid":identity}),
+                        )?;
+                    }
+                }
+            }
+
             if let Some(instance) = self.instance() {
                 let reload = self.query(&instance, json!({"type":"reload"}))?;
 
@@ -397,10 +538,24 @@ impl<'a> Supervisor<'a> {
                         return self.record("watching", json!({"published":number, "error":null}));
                     }
                 }
-            } else if !self.args.restart_without_state {
-                return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or explicitly use --restart-without-state".into());
-            } else {
+            } else if self.live.is_none() {
+                if !self.args.restart_without_state {
+                    return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or explicitly use --restart-without-state".into());
+                }
+
                 self.record("restarting_without_state", json!({}))?;
+            } else if self.args.require_state || self.args.native_reloader.is_some() {
+                return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or omit --require-state to allow state loss".into());
+            } else {
+                remove_file(&self.checkpoint)?;
+                self.restart_notice = Some(self.state_loss_notice(&[]));
+            }
+
+            if let Some(notice) = &self.restart_notice {
+                self.event(
+                    json!({"event":"restarted", "message":notice, "state_preserved":false}),
+                    notice,
+                )?;
             }
 
             let old_pid = self.app.as_ref().ok_or("app missing")?.0.id();
@@ -427,6 +582,35 @@ impl<'a> Supervisor<'a> {
         self.record("watching", json!({"published":number, "error":null}))
     }
 
+    fn state_loss_notice(&self, reset: &[String]) -> String {
+        let reason = self.live.as_ref().and_then(|live| live.restart.as_deref());
+
+        let change = reason
+            .and_then(|reason| reason.split("definition of `").nth(1))
+            .and_then(|item| item.split('`').next())
+            .map(|item| {
+                format!(
+                    "field change in {}",
+                    item.strip_prefix("struct ").unwrap_or(item)
+                )
+            })
+            .unwrap_or_else(|| "source change".into());
+
+        let state = if reset.is_empty() {
+            "app state was not preserved (no checkpoint registered)".into()
+        } else {
+            format!(
+                "app state was not preserved for {}; registered checkpoints restored",
+                reset.join(", ")
+            )
+        };
+
+        format!("restarted {}: {change}; {state}", self.project.target)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn publication(&mut self, number: u64, artifact: &Path) -> Result<bool> {
         match self.publish(number, artifact) {
             Ok(()) => Ok(true),
@@ -437,6 +621,13 @@ impl<'a> Supervisor<'a> {
 
                 let error = error.to_string();
                 let busy = error.contains("\"Busy\"");
+
+                if !busy && let Some(live) = &mut self.live {
+                    // Await another edit/outcome instead of exhausting request keys
+                    // by retrying a permanent checkpoint failure on every poll.
+                    live.restart = None;
+                    live.published = live.sequence;
+                }
 
                 self.record(
                     if busy {
@@ -520,11 +711,22 @@ impl<'a> Supervisor<'a> {
                 Option<Project>,
                 std::result::Result<PathBuf, String>,
                 [u8; 32],
+                blaze::BuildKind,
             );
             let (sender, receiver) = mpsc::sync_channel::<BuildResult>(1);
 
             let result: Result<()> = (|| {
                 let mut previous = None;
+                let mut stamps = fingerprint::Stamps::new();
+                let mut changed_paths = BTreeSet::new();
+
+                let mut configuration = if self.live.is_some() {
+                    Some(blaze::configuration(&self.project)?)
+                } else {
+                    None
+                };
+
+                let mut last_build_ok = false;
                 let mut changed_at = Instant::now();
                 let mut built = None;
                 let mut number = 0;
@@ -546,7 +748,24 @@ impl<'a> Supervisor<'a> {
                         output_revision = output["revision"].as_u64();
                     }
 
-                    let current = fingerprint(&self.project, self.args.output.as_deref())?;
+                    if self.live.is_some() {
+                        let _ = self.poll_live_events();
+                        let next = fingerprint::stamps(&self.project, self.args.output.as_deref())?;
+
+                        changed_paths.extend(
+                            next.keys()
+                                .chain(stamps.keys())
+                                .filter(|path| next.get(*path) != stamps.get(*path))
+                                .cloned(),
+                        );
+                        stamps = next;
+                    }
+
+                    let current = if self.live.is_some() {
+                        blaze::stamp_identity(&stamps)
+                    } else {
+                        fingerprint(&self.project, self.args.output.as_deref())?
+                    };
 
                     if previous != Some(current) {
                         previous = Some(current);
@@ -554,7 +773,7 @@ impl<'a> Supervisor<'a> {
                         pending = None;
                     }
 
-                    if let Ok((project, result, started)) = receiver.try_recv() {
+                    if let Ok((project, result, started, kind)) = receiver.try_recv() {
                         if let Some(worker) = worker.take() {
                             let worker: thread::ScopedJoinHandle<'_, ()> = worker;
 
@@ -563,29 +782,62 @@ impl<'a> Supervisor<'a> {
 
                         if let Some(project) = project {
                             self.project = project;
+
+                            if self.live.is_some() {
+                                configuration = Some(blaze::configuration(&self.project)?);
+                            }
                         }
 
                         // Metadata can add local watch roots while the worker is building.
-                        let current = fingerprint(&self.project, self.args.output.as_deref())?;
+                        let current = if self.live.is_some() {
+                            blaze::stamp_identity(&fingerprint::stamps(
+                                &self.project,
+                                self.args.output.as_deref(),
+                            )?)
+                        } else {
+                            fingerprint(&self.project, self.args.output.as_deref())?
+                        };
 
                         if current != started {
                             let _ = fs::remove_dir_all(
                                 self.session.join("builds").join(number.to_string()),
                             );
 
+                            if let Err(error) = self.finish_live_boundary(false) {
+                                self.record("reload_blocked", json!({"error":error.to_string()}))?;
+                            }
+
                             self.record("build_superseded", json!({}))?;
                         } else {
                             match result {
                                 Err(error) => {
+                                    last_build_ok = false;
+                                    let _ = self.finish_live_boundary(false);
+
                                     self.record("build_failed", json!({"error":error}))?;
                                     let _ = fs::remove_dir_all(
                                         self.session.join("builds").join(number.to_string()),
                                     );
                                 }
                                 Ok(artifact) => {
-                                    if !self.publication(number, &artifact)? {
-                                        pending = Some((number, artifact));
-                                        retry_after = Instant::now() + Duration::from_secs(1);
+                                    last_build_ok = true;
+
+                                    if let Some(live) = &mut self.live {
+                                        live.kind = kind;
+                                    }
+
+                                    match self.finish_live_boundary(true) {
+                                        Err(error) => self.record(
+                                            "reload_blocked",
+                                            json!({"error":error.to_string()}),
+                                        )?,
+                                        Ok(()) => {
+                                            if !self.publication(number, &artifact)? {
+                                                pending = Some((number, artifact));
+                                                retry_after =
+                                                    Instant::now() + Duration::from_secs(1);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -611,13 +863,62 @@ impl<'a> Supervisor<'a> {
                         retry_after = Instant::now() + Duration::from_secs(1);
                     }
 
+                    let forced = self.live.as_ref().is_some_and(|live| live.needs_build);
+
                     if worker.is_none()
-                        && previous != built
-                        && changed_at.elapsed() >= Duration::from_millis(250)
+                        && (previous != built || forced)
+                        && (forced
+                            || changed_at.elapsed()
+                                >= Duration::from_millis(if self.live.is_some() {
+                                    20
+                                } else {
+                                    250
+                                }))
                     {
                         number += 1;
                         built = previous;
+                        last_build_ok = false;
+
+                        if let Some(live) = &mut self.live {
+                            live.needs_build = false;
+                        }
+
                         self.record("building", json!({"build":number, "error":null}))?;
+
+                        if let Err(error) = self.prepare_live_boundary() {
+                            let _ = self.finish_live_boundary(false);
+
+                            self.record("build_failed", json!({"error":error.to_string()}))?;
+                            continue;
+                        }
+
+                        let paths: Vec<_> =
+                            std::mem::take(&mut changed_paths).into_iter().collect();
+
+                        let cached = self.live.as_ref().map(|_| self.project.clone());
+
+                        let current_configuration = if self.live.is_some() {
+                            Some(blaze::configuration(&self.project)?)
+                        } else {
+                            None
+                        };
+
+                        let previous_artifact = if forced {
+                            None
+                        } else {
+                            self.live.as_ref().and_then(|live| live.artifact.clone())
+                        };
+
+                        let previous_artifact = if self
+                            .app
+                            .as_mut()
+                            .is_some_and(|app| app.0.try_wait().ok().flatten().is_none())
+                        {
+                            previous_artifact
+                        } else {
+                            None
+                        };
+
                         let sender = sender.clone();
                         let args = self.args;
                         let cancelled = self.cancelled;
@@ -637,10 +938,34 @@ impl<'a> Supervisor<'a> {
                                 .with_stopping(stopping)
                                 .with_output(&sink);
 
-                            let (project, result) = match Project::load(args, &processes) {
+                            let loaded = match cached {
+                                Some(project) if configuration == current_configuration => {
+                                    Ok(project)
+                                }
+                                _ => Project::load(args, &processes),
+                            };
+
+                            let mut kind = blaze::BuildKind::Full;
+
+                            let (project, result) = match loaded {
                                 Ok(project) => {
-                                    let result = project
-                                        .build(args, &processes, &output)
+                                    let result =
+                                        if args.compiler == Compiler::Blaze {
+                                            if let Some(previous) = previous_artifact {
+                                                blaze::update(
+                                                    &project, args, &processes, &paths, &previous,
+                                                )
+                                                .map(|(artifact, built)| {
+                                                    kind = built;
+
+                                                    artifact
+                                                })
+                                            } else {
+                                                blaze::build(&project, args, &processes)
+                                            }
+                                        } else {
+                                            project.build(args, &processes, &output)
+                                        }
                                         .map_err(|error| error.to_string());
 
                                     (Some(project), result)
@@ -648,12 +973,37 @@ impl<'a> Supervisor<'a> {
                                 Err(error) => (None, Err(error.to_string())),
                             };
 
-                            let _ = sender.send((project, result, current));
+                            let _ = sender.send((project, result, current, kind));
                         }));
                     }
 
+                    if self.live.is_some() && worker.is_none() && previous == built && last_build_ok
+                    {
+                        let _ = self.poll_live_events();
+
+                        if let Some(live) = &mut self.live {
+                            if live.restart.is_some() {
+                                let artifact = live.artifact.clone();
+
+                                if let Some(artifact) = artifact {
+                                    self.publication(number, &artifact)?;
+                                }
+                            } else if live.sequence > live.published {
+                                live.published = live.sequence;
+                                self.record(
+                                    "watching",
+                                    json!({"published":number,"outcome":"applied","error":null}),
+                                )?;
+                            }
+                        }
+                    }
+
                     self.observe_app()?;
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(if self.live.is_some() {
+                        50
+                    } else {
+                        100
+                    }));
                 }
             })();
 
@@ -671,6 +1021,8 @@ impl<'a> Supervisor<'a> {
     }
 
     fn finish(&mut self) -> Result<()> {
+        let _ = self.finish_live_boundary(false);
+
         drop(self.app.take());
         drop(self.cdp.take());
         drop(self.http.take());

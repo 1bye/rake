@@ -294,6 +294,7 @@ impl Render for Foundation {
 /// The same factory configures the native binary and browser Wasm export.
 pub fn application() -> App {
     App::new("com.example.rake.foundation")
+        .control(rake::control::ControlConfig::FromEnvironment)
         .http(HttpConfig::new().base_url("http://127.0.0.1:8080/"))
         .root_with(|runtime, _, cx| {
             cx.new(|cx| {

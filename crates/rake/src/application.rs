@@ -1344,6 +1344,43 @@ pub fn show_main_window(cx: &mut gpui::App) -> Result<(), AppError> {
     }
 }
 
+/// Requests a native frame even when macOS pauses an occluded window's display link.
+#[cfg(all(target_os = "macos", any(feature = "live", feature = "devtools")))]
+pub(crate) fn request_frame(window: &Window, cx: &gpui::App) {
+    use objc2_app_kit::NSView;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+
+    // SAFETY: GPUI owns this borrowed NSView, and this call runs on its UI thread.
+    let view = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+
+    if view.window().is_none_or(|native| {
+        native
+            .occlusionState()
+            .contains(objc2_app_kit::NSWindowOcclusionState::Visible)
+    }) {
+        return;
+    }
+
+    if let Some(layer) = view.layer() {
+        // GPUI pauses its display link when occluded. Run the layer delegate after
+        // this App update ends, since it re-enters GPUI to draw and present.
+        cx.foreground_executor()
+            .spawn(async move {
+                layer.setNeedsDisplay();
+                layer.displayIfNeeded();
+            })
+            .detach();
+    }
+}
+
 #[cfg(test)]
 mod configuration_tests {
     //! Covers: same-type route replacement retains the configured destination and guards.

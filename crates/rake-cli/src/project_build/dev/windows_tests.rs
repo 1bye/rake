@@ -146,6 +146,7 @@ fn project(root: &Path) -> Project {
     Project {
         package: json!({"name":"windows-fixture","features":{},"dependencies":[]}),
         root: root.into(),
+        target_directory: root.join("target"),
         target: "fixture".into(),
         watch_roots: vec![root.into()],
         web_dir: root.join("web"),
