@@ -557,10 +557,20 @@ fn build(args: &Args, processes: &Processes<'_>) -> Result<()> {
 
 fn write_marker(path: &Path, marker: &Value) -> Result<()> {
     use std::io::Write;
+    #[cfg(unix)]
     let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or("marker parent missing")?)?;
 
+    #[cfg(windows)]
+    let mut file = tempfile::Builder::new().make_in(
+        path.parent().ok_or("marker parent missing")?,
+        rake_client::private::create,
+    )?;
+
     file.write_all(&serde_json::to_vec(marker)?)?;
+    #[cfg(unix)]
     file.persist(path)?;
+    #[cfg(windows)]
+    rake_client::private::replace(file.as_file(), path)?;
 
     Ok(())
 }
@@ -678,4 +688,35 @@ fn relative_name(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[cfg(all(test, windows))]
+mod windows_private_tests {
+    use super::*;
+
+    #[test]
+    fn development_markers_remain_private_when_atomically_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.json");
+
+        for value in [
+            json!({"generation":1}),
+            json!({"generation":2,"text":"é漢字"}),
+        ] {
+            let previous = rake_client::private::open(&path).ok();
+
+            write_marker(&path, &value).unwrap();
+
+            if let Some(previous) = previous {
+                assert_eq!(
+                    serde_json::from_reader::<_, Value>(previous).unwrap(),
+                    json!({"generation":1})
+                );
+            }
+
+            let file = rake_client::private::open(&path).unwrap();
+
+            assert_eq!(serde_json::from_reader::<_, Value>(file).unwrap(), value);
+        }
+    }
 }

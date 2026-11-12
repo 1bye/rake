@@ -61,8 +61,10 @@ gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], o
 gpui_fast = { workspace = true, optional = true }
 gpui_fast_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(any(unix, windows))'.dependencies]
 rake-client.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 backtrace = { version = "0.3.76", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

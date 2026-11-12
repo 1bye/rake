@@ -76,16 +76,22 @@ fn remaining(timeout: Duration) -> std::io::Result<Duration> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod local;
+
+#[cfg(any(unix, windows))]
+pub mod private;
+
+#[cfg(windows)]
+pub mod pipe;
 
 /// A discovered runtime endpoint. Credentials are kept only in owner-readable files.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Endpoint {
-    /// Permission-restricted Unix socket.
+    /// Owner-only native endpoint: Unix socket or local Windows named pipe.
     Local {
-        /// Socket path.
+        /// Socket path or local named-pipe name.
         path: PathBuf,
     },
     /// Authenticated development broker, addressed by runtime ID.
@@ -175,12 +181,12 @@ pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Re
 
     let reply = match &instance.endpoint {
         Endpoint::Local { path } => {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             {
                 local::exchange(path, request, timeout)?
             }
 
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             {
                 let _ = path;
 
