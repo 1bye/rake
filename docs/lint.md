@@ -1,6 +1,6 @@
 # Source linting
 
-`rake lint` checks Rust sources using stable Rust, `syn`, and the same `view!`
+By default, `rake lint` checks Rust sources using stable Rust, `syn`, and the same `view!`
 parser used by `rake-macros`. It does not build the checked project, run Cargo,
 expand Rust macros, or require GPUI/Linux GUI libraries.
 
@@ -32,6 +32,101 @@ arguments, unreadable files, malformed configuration and unknown rule IDs also
 exit with status 1. Syntax errors are always denied so incomplete analysis cannot
 silently succeed.
 
+## Deep GPUI checks
+
+`rake lint --deep` adds type-aware checks to the same syntax report. It is opt-in:
+ordinary linting, `--fix`, guides and hooks retain their stable, build-free behavior.
+Deep checks build the selected package (or all members at a workspace root), with
+all targets and the default features for the host. They require a project directory;
+use ordinary linting for single-file feedback. Dependencies, disabled features,
+other target triples and unreachable macro branches are not a whole-program corpus.
+
+```sh
+rake lint --deep
+rake lint examples/view --deep --json
+rake lint --deep --fix       # syntax fixes, then both tiers run again
+```
+
+Install the tools explicitly before using the deep tier:
+
+```sh
+rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
+cargo +nightly-2026-08-20 install --locked cargo-dylint --version 6.3.2
+cargo +nightly-2026-08-20 install --locked dylint-link --version 6.3.2
+```
+
+Missing prerequisites and failed or incomplete Cargo builds exit nonzero and print
+these commands. Rake never installs tools automatically. This keeps the default
+workflow on stable and avoids unexpected toolchain downloads, at the cost of an
+explicit setup step and a slower first deep check. Local verification also supports
+installed cargo-dylint 6.2.0; CI pins 6.3.2. The library uses dylint_linting 6.2.0,
+matching the existing spacing library and nightly ABI.
+
+The CLI embeds a deterministic source archive generated from `crates/rake-cli/lints/rake-gpui/`, so an
+installed binary does not need this repository. Sources are materialized in a
+content-addressed directory under `CARGO_TARGET_DIR/rake-lints` (or the workspace's
+`target/rake-lints`). Cargo/Dylint cache the compiled library and checked targets.
+The library has its own workspace and lockfile; stable workspace builds exclude it.
+The spacing library selection is unchanged.
+
+Deep diagnostics use the existing schema version 1, catalogue IDs, Unicode columns,
+ordering, package levels, discovery exclusions, human explanations and exit policy.
+Warnings succeed; configured `deny` findings fail. Repeated compiler diagnostics
+from library and test targets are deduplicated by source range and ID. Cargo build
+errors are operational errors, not an empty successful report.
+
+Use the same reasoned `allow(ID)` and `allow-file(ID)` comments for deep rules.
+A default syntax-only run validates these directives but defers unused-file checks
+for deep IDs until a deep run. The CLI forces the four compiler lints to warn so
+Rust `#[allow]`, `#[deny]` and `RUSTFLAGS=-Dwarnings` cannot override the shared
+catalogue policy before comment suppressions run. Configure levels in Rake metadata;
+use reasoned comments for local exceptions. Raw `cargo dylint` runs retain rustc's
+attribute policy.
+
+The pinned `gpui-pre` 0.3.11 exposes the library crate `gpui`; its `Task` is
+`scheduler::executor::Task` from `gpui-pre-scheduler` 0.3.11, re-exported by GPUI.
+`gpui-base` 0.9.0 is a component layer, not the owner of those types. The checks
+resolve compiler definitions rather than source import spelling. `smol::block_on`
+resolves to `async_io::driver::block_on`, while futures uses `futures_executor`.
+These rules target the pinned GPUI APIs; a future GPUI backend/API migration must
+update the definition matching and UI fixtures together.
+
+The four catalogue entries describe conservative boundaries: discarded Task
+statements/wildcards, resolved Render/RenderOnce constructors, provable current or
+same-local entity updates, and blocking calls directly in render or registered GPUI
+listeners/action handlers. Registration accepts inline closures and function/method
+paths resolving to local definitions, including generic functions. A pre-pass
+collects those definitions before checking bodies, so definition/registration order
+does not matter. A function also called elsewhere is still checked because its
+registration establishes a UI-thread execution path. Nested closures, nested
+functions and async blocks do not inherit the registered function's UI context;
+separately registered callbacks inside them are checked in their own right.
+External functions, indirect function pointers, transitive helper calls, aliases of
+entity identity and arbitrary call flow remain opaque.
+
+Entity allocation remains specific to render bodies: allocation in an event handler
+is valid. Allocation inside iterator closures is not inferred to occur during
+render. `Iterator::map` is lazy; recognizing an adapter or callback alone does not
+prove that it is consumed during render. Following eager consumers such as
+`children(...)` would require a separate precise execution/consumption analysis.
+The missing-notify rule is deferred: state mutation alone does not prove that
+notification is required, and a helper may already notify.
+
+To add a deep rule:
+
+1. Add a stable `gpui-*` catalogue entry and include it in `is_deep`; this also
+   enables shared suppression, configuration and compiler-code mapping.
+2. Add the late, type-aware check and lint registration to the bundled library.
+   Resolve definitions and execution context; do not guess from variable names.
+   Run `python3 scripts/update-deep-library.py` after changing library sources,
+   configuration or its lockfile; `bundled_library_is_current` checks archive drift.
+3. Add firing markers (`//~ gpui_rule_name`) and unmarked negative cases to
+   `lints/rake-gpui/ui/src/lib.rs`. `python3 scripts/test-deep-lints.py` compares
+   every emitted deep diagnostic to those markers using the real pinned GPUI.
+4. Run `python3 scripts/check-deep-lints.py` for the workspace and every example.
+   Fix findings or add a local reasoned suppression. Regenerate the catalogue
+   artifacts with the commands below and run the CLI tests.
+
 ## Rules
 
 <!-- lint-rules:begin -->
@@ -43,6 +138,10 @@ silently succeed.
 | `view-button-label` | warn | button content has no automatic accessible label |
 | `view-image-alt` | deny | image is missing alt text |
 | `view-loop-index-id` | warn | loop item ID is derived from an enumerate index |
+| `gpui-dropped-task` | warn | GPUI task is immediately dropped (deep) |
+| `gpui-render-new` | warn | entity allocated during render (deep) |
+| `gpui-reentrant-update` | warn | entity updated inside its own update (deep) |
+| `gpui-ui-blocking` | warn | blocking operation on the UI thread (deep) |
 | `suppression-reason` | warn | lint suppression needs a reason |
 | `invalid-suppression` | warn | invalid lint suppression |
 | `syntax-error` | deny | source could not be parsed |
@@ -333,8 +432,7 @@ for every top-level example package, including nested packages through discovery
 and fails on any diagnostic, including warnings. Fix findings or add a local
 reasoned suppression; do not hide them with broad exclusions.
 
-The deep/type-aware tier, broader loop data flow and workspace defaults remain
-follow-ups. Linting is not hooked into `rake dev` or DevTools.
+Broader loop data flow and workspace defaults remain follow-ups. Linting is not hooked into `rake dev` or DevTools.
 
 Run [rake format](format.md) after editing, then run `rake lint`.
 

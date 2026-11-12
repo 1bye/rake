@@ -1,6 +1,7 @@
-//! Stable, source-only project linting; never invokes Cargo or expands Rust macros.
+//! Source linting with an opt-in, type-aware Dylint tier.
 
 mod catalogue;
+mod deep;
 mod design;
 mod fix;
 mod guide;
@@ -156,6 +157,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     let mut guide = None;
     let mut update = None;
     let mut fix = false;
+    let mut deep = false;
     let mut explain = None;
     let mut path = None;
     let mut args = arguments.iter();
@@ -173,10 +175,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
                 ))
             }
             "--fix" => fix = true,
+            "--deep" => deep = true,
             "--explain" => explain = Some(args.next().ok_or("--explain requires a rule ID")?),
             "--help" | "-h" => {
                 println!(
-                    "Usage: rake lint [PATH] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide[=agents] [--json]\n       rake lint --guide=agents --update AGENTS.md\n       rake lint --hook"
+                    "Usage: rake lint [PATH] [--deep] [--fix] [--json]\n       rake lint --explain <ID> [--json]\n       rake lint --guide[=agents] [--json]\n       rake lint --guide=agents --update AGENTS.md\n       rake lint --hook"
                 );
 
                 return Ok(false);
@@ -190,7 +193,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     }
 
     if let Some(agents) = guide {
-        if path.is_some() || explain.is_some() || fix {
+        if path.is_some() || explain.is_some() || fix || deep {
             return Err(
                 "--guide cannot be combined with a project path, --explain or --fix".into(),
             );
@@ -246,7 +249,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     }
 
     if let Some(id) = explain {
-        if path.is_some() || fix {
+        if path.is_some() || fix || deep {
             return Err("--explain cannot be combined with a project path or --fix".into());
         }
 
@@ -280,11 +283,29 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     }
 
     let path = path.unwrap_or(std::env::current_dir()?);
-    let (root, mut report) = check_target(&path)?;
+
+    let check = || {
+        if deep {
+            let root = path.canonicalize()?;
+
+            if !root.is_dir() || !root.join("Cargo.toml").is_file() {
+                return Err("--deep expects a project directory containing Cargo.toml".into());
+            }
+
+            let mut findings = deep::collect(&root)?;
+            let report = check_project_with_deep(&root, Some(&mut findings))?;
+
+            Ok((root, report))
+        } else {
+            check_target(&path)
+        }
+    };
+
+    let (root, mut report) = check()?;
 
     if fix {
         fix::apply(&root, &report)?;
-        report = check_target(&path)?.1;
+        report = check()?.1;
     }
 
     if json {
@@ -410,6 +431,10 @@ fn load_config(directory: &Path) -> Result<Config> {
 }
 
 fn check_project(root: &Path) -> Result<Report> {
+    check_project_with_deep(root, None)
+}
+
+fn check_project_with_deep(root: &Path, mut deep: Option<&mut deep::Findings>) -> Result<Report> {
     if !root.join("Cargo.toml").is_file() {
         return Err(format!(
             "{}: expected a project directory containing Cargo.toml",
@@ -448,8 +473,22 @@ fn check_project(root: &Path) -> Result<Report> {
 
     for (path, text, config) in sources {
         let relative = path.strip_prefix(root)?;
-        let diagnostics = source::check_themed(relative, &text, themed.contains(&config.package));
-        let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, false);
+
+        let mut diagnostics =
+            source::check_themed(relative, &text, themed.contains(&config.package));
+
+        if let Some(findings) = deep.as_mut() {
+            diagnostics.extend(findings.remove(&path).unwrap_or_default());
+        }
+
+        let diagnostics = filter_diagnostics_with_deep(
+            relative,
+            &text,
+            &config.levels,
+            diagnostics,
+            false,
+            deep.is_some(),
+        );
 
         if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
             report
@@ -467,7 +506,15 @@ fn check_project(root: &Path) -> Result<Report> {
         let text = fs::read_to_string(&path)?;
         let relative = path.strip_prefix(root)?;
         let diagnostics = manifest::check(relative, &text)?;
-        let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, true);
+
+        let diagnostics = filter_diagnostics_with_deep(
+            relative,
+            &text,
+            &config.levels,
+            diagnostics,
+            true,
+            deep.is_some(),
+        );
 
         if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
             report
@@ -551,8 +598,19 @@ fn filter_diagnostics(
     file: &Path,
     text: &str,
     levels: &Levels,
+    diagnostics: Vec<Diagnostic>,
+    manifest: bool,
+) -> Vec<Diagnostic> {
+    filter_diagnostics_with_deep(file, text, levels, diagnostics, manifest, false)
+}
+
+fn filter_diagnostics_with_deep(
+    file: &Path,
+    text: &str,
+    levels: &Levels,
     mut diagnostics: Vec<Diagnostic>,
     manifest: bool,
+    deep: bool,
 ) -> Vec<Diagnostic> {
     let mut suppressions = if manifest {
         suppression::parse_manifest(file, text, &mut diagnostics)
@@ -572,7 +630,7 @@ fn filter_diagnostics(
         enabled(diagnostic) && !suppressions.iter_mut().any(|s| s.suppresses(diagnostic))
     });
     diagnostics.extend(suppressions.into_iter().filter_map(|suppression| {
-        let mut diagnostic = suppression.unused()?;
+        let mut diagnostic = suppression.unused(deep)?;
 
         enabled(&mut diagnostic).then_some(diagnostic)
     }));

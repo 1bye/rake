@@ -411,6 +411,13 @@ jobs:
             ~/.cargo/bin/dylint-link
           key: ${{ steps.spacing-tools.outputs.cache-primary-key }}
       - run: python3 scripts/check-spacing.py
+      - name: Deep GPUI UI tests
+        run: |
+          cargo fmt --manifest-path crates/rake-cli/lints/rake-gpui/Cargo.toml --check
+          cargo fmt --manifest-path crates/rake-cli/lints/rake-gpui/ui/Cargo.toml --check
+          python3 scripts/test-deep-lints.py
+      - name: Deep workspace and example corpus
+        run: python3 scripts/check-deep-lints.py
 
   extended:
     if: github.event_name != 'pull_request'

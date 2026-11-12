@@ -29,7 +29,11 @@ impl Suppression {
         }
     }
 
-    pub(super) fn unused(self) -> Option<Diagnostic> {
+    pub(super) fn unused(self, deep: bool) -> Option<Diagnostic> {
+        if !deep && super::catalogue::is_deep(&self.id) {
+            return None;
+        }
+
         self.unused
     }
 }
