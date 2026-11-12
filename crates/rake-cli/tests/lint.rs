@@ -604,3 +604,144 @@ fn single_manifest_fix_preserves_comments_and_does_not_parse_rust_siblings() {
     );
     assert_eq!(fs::read_to_string(root.join("broken.rs")).unwrap(), "fn {");
 }
+
+#[test]
+fn deep_missing_tools_is_an_error_with_exact_install_commands() {
+    let output = run("fn main() {}", "", &["--deep", "--json"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8(output.stderr).unwrap();
+
+    for command in [
+        "rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt",
+        "cargo +nightly-2026-08-20 install --locked cargo-dylint --version 6.3.2",
+        "cargo +nightly-2026-08-20 install --locked dylint-link --version 6.3.2",
+    ] {
+        assert!(error.contains(command), "{error}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn deep_cli_merges_filters_and_sets_exit_status() {
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let bin = root.join("tools");
+
+    fs::create_dir(&bin).unwrap();
+    fs::write(bin.join("rustup"), "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(
+        bin.join("cargo"),
+        r##"#!/bin/sh
+case "$1:$2" in
+  dylint:--version) exit 0 ;;
+  metadata:*) /bin/cat "$DEEP_METADATA" ;;
+  dylint:*) /bin/cat "$DEEP_MESSAGES"; exit "$DEEP_EXIT" ;;
+  *) exit 91 ;;
+esac
+"##,
+    )
+    .unwrap();
+
+    for name in ["rustup", "cargo"] {
+        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fs::write(
+        root.join("metadata.json"),
+        json!({"workspace_root":root}).to_string(),
+    )
+    .unwrap();
+    let event = json!({"reason":"compiler-message","message":{
+        "level":"warning","code":{"code":"gpui_dropped_task"},
+        "spans":[{"is_primary":true,"file_name":"main.rs","line_start":2,
+        "line_end":2,"column_start":13,"column_end":19}]
+    }});
+    let messages =
+        format!("{event}\n{event}\n{{\"reason\":\"build-finished\",\"success\":true}}\n");
+
+    fs::write(root.join("messages.jsonl"), messages).unwrap();
+    let invoke = |source: &str, level: &str, json: bool, exit: &str| {
+        fs::write(root.join("main.rs"), source).unwrap();
+        fs::write(root.join("Cargo.toml"), format!("[package]\nname='deep'\nversion='0.0.0'\n[package.metadata.rake.lint.levels]\ngpui-dropped-task='{level}'\n")).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rake"));
+
+        command.args(["lint", "--deep"]);
+
+        if json {
+            command.arg("--json");
+        }
+
+        command
+            .current_dir(&root)
+            .env("PATH", &bin)
+            .env("CARGO_TARGET_DIR", root.join("target"))
+            .env("DEEP_METADATA", root.join("metadata.json"))
+            .env("DEEP_MESSAGES", root.join("messages.jsonl"))
+            .env("DEEP_EXIT", exit)
+            .output()
+            .unwrap()
+    };
+    let source = "// header\nfn main() { task(); rake::view! { <button/> }; }\n";
+    let denied = invoke(source, "deny", true, "0");
+    let report: serde_json::Value = serde_json::from_slice(&denied.stdout).unwrap();
+
+    assert_eq!(denied.status.code(), Some(1));
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 2);
+    assert_eq!(report["diagnostics"][0]["rule_id"], "gpui-dropped-task");
+    assert_eq!(report["diagnostics"][0]["level"], "deny");
+    assert_eq!(report["denied"], true);
+    let warning = invoke(source, "warn", false, "0");
+
+    assert!(warning.status.success());
+    assert!(
+        String::from_utf8(warning.stderr)
+            .unwrap()
+            .contains("warning[gpui-dropped-task]")
+    );
+
+    for directive in ["allow", "allow-file"] {
+        let suppressed = invoke(
+            &source.replace(
+                "// header",
+                &format!("// rake-lint: {directive}(gpui-dropped-task) Intentional cancellation."),
+            ),
+            "deny",
+            true,
+            "0",
+        );
+        let report: serde_json::Value = serde_json::from_slice(&suppressed.stdout).unwrap();
+
+        assert!(suppressed.status.success());
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+        assert_eq!(report["diagnostics"][0]["rule_id"], "view-button-label");
+    }
+
+    let missing_reason = invoke(
+        &source.replace("// header", "// rake-lint: allow(gpui-dropped-task)"),
+        "deny",
+        true,
+        "0",
+    );
+
+    assert_eq!(missing_reason.status.code(), Some(1));
+    let allowed = invoke(source, "allow", true, "0");
+    let report: serde_json::Value = serde_json::from_slice(&allowed.stdout).unwrap();
+
+    assert!(allowed.status.success());
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+    let failed = invoke(source, "warn", true, "1");
+
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(failed.stdout.is_empty());
+    assert!(
+        String::from_utf8(failed.stderr)
+            .unwrap()
+            .contains("did not complete Cargo verification")
+    );
+}

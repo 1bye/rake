@@ -37,6 +37,10 @@ pub(super) const RELEASE: &str = "release-debug-assertions";
 pub(super) const BUTTON: &str = "view-button-label";
 pub(super) const IMAGE: &str = "view-image-alt";
 pub(super) const INDEX: &str = "view-loop-index-id";
+pub(super) const DROPPED_TASK: &str = "gpui-dropped-task";
+pub(super) const RENDER_NEW: &str = "gpui-render-new";
+pub(super) const REENTRANT: &str = "gpui-reentrant-update";
+pub(super) const UI_BLOCKING: &str = "gpui-ui-blocking";
 pub(super) const REASON: &str = "suppression-reason";
 pub(super) const SUPPRESSION: &str = "invalid-suppression";
 pub(super) const SYNTAX: &str = "syntax-error";
@@ -111,6 +115,48 @@ pub(super) const RULES: &[Rule] = &[
         after: "for row in &rows { <div id={(\"row\", row.id)}/> }",
     },
     Rule {
+        id: DROPPED_TASK,
+        agent_summary: Some(
+            "Always retain or detach GPUI tasks, allocate entities before render, mutate borrowed state directly, and move blocking work off the UI thread (rake lint --deep).",
+        ),
+        level: Level::Warn,
+        message: "GPUI task is immediately dropped",
+        explanation: "Deep tier. Dropping GPUI's Task cancels its work. This rule resolves scheduler::Task, re-exported by gpui-pre 0.3.11, and reports discarded statement expressions and wildcard let bindings. Retained bindings, returned tasks and detached tasks are accepted. Borrowing a Task does not cancel it. This is not whole-program task lifetime analysis.",
+        fix: "store the task for its intended lifetime, or call .detach() for independent work",
+        before: "let _ = cx.spawn(async |_, _| { save().await });",
+        after: "cx.spawn(async |_, _| { save().await }).detach();",
+    },
+    Rule {
+        id: RENDER_NEW,
+        agent_summary: None,
+        level: Level::Warn,
+        message: "entity allocated during render",
+        explanation: "Deep tier. Creating an entity in GPUI Render::render or RenderOnce::render changes its identity each frame and loses retained state. The check resolves GPUI's trait and entity constructor; an unrelated method named render is accepted. Deferred closures and helper calls are not followed.",
+        fix: "create the entity during initialization and keep its handle in view state",
+        before: "fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement { let child = cx.new(|_| Child); div().child(child) }",
+        after: "// Initialize self.child = cx.new(|_| Child) before rendering.\nfn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement { div().child(self.child.clone()) }",
+    },
+    Rule {
+        id: REENTRANT,
+        agent_summary: None,
+        level: Level::Warn,
+        message: "entity updated inside its own update",
+        explanation: "Deep tier. GPUI mutably borrows an entity during update; updating it again panics. This conservative check recognizes cx.entity().update/update_in on a Context and nested updates of the same local entity binding in directly supplied update callbacks. Different entities and delayed closures are accepted. It does not infer identity from matching entity types, field names, aliases or arbitrary helpers.",
+        fix: "mutate the state supplied to the current callback and notify, or defer the update until the borrow ends",
+        before: "entity.update(cx, |_, cx| { entity.update(cx, |state, _| state.count += 1); });",
+        after: "entity.update(cx, |state, cx| { state.count += 1; cx.notify(); });",
+    },
+    Rule {
+        id: UI_BLOCKING,
+        agent_summary: None,
+        level: Level::Warn,
+        message: "blocking operation on the UI thread",
+        explanation: "Deep tier. Blocking freezes event processing and rendering. The check resolves std::fs calls, std::thread::sleep, smol::block_on (async_io) and futures::executor::block_on in GPUI render methods and closures directly registered with listener, on_action, on_click, mouse and key handlers. Imports and aliases resolve to the same definitions. Async blocks, nested unregistered closures and helpers are not followed. This deliberately misses uncertain thread ownership rather than diagnosing background work.",
+        fix: "perform blocking work on a background executor, then update the entity on the UI thread",
+        before: "cx.listener(|state, _: &ClickEvent, _, cx| { state.bytes = std::fs::read(\"data\").unwrap(); cx.notify(); })",
+        after: "// Read data using cx.background_executor().spawn(...), retain or detach the task, then update state and notify.",
+    },
+    Rule {
         id: REASON,
         agent_summary: Some(
             "Always explain suppressions; use allow-file only for a whole-file decision.",
@@ -149,5 +195,9 @@ pub(super) fn rule(id: &str) -> Option<&'static Rule> {
 }
 
 pub(super) fn suppressible(id: &str) -> bool {
-    matches!(id, BUTTON | IMAGE | INDEX | STYLE | THEME | RELEASE)
+    matches!(id, BUTTON | IMAGE | INDEX | STYLE | THEME | RELEASE) || is_deep(id)
+}
+
+pub(super) fn is_deep(id: &str) -> bool {
+    matches!(id, DROPPED_TASK | RENDER_NEW | REENTRANT | UI_BLOCKING)
 }

@@ -104,3 +104,38 @@ fn handler_boundaries(cx: &mut Context<View>) {
         let _ = cx.new(|_| View);
     });
 }
+
+fn direct_handlers(cx: &mut Context<View>) {
+    use std::fs::read as read_file;
+    use std::thread::sleep as pause;
+
+    let _ = div().on_action(|_: &gpui::NoAction, _, _| {
+        let _ = read_file("data"); //~ gpui_ui_blocking
+        pause(Duration::ZERO); //~ gpui_ui_blocking
+        futures::executor::block_on(async {}); //~ gpui_ui_blocking
+    });
+    let _ = cx.listener(|_, _: &(), _, _| {
+        read_file("data").ok(); //~ gpui_ui_blocking
+    });
+}
+
+impl Unrelated {
+    fn construct_in_unrelated_render(&self, cx: &mut Context<View>) {
+        let _ = cx.new(|_| View);
+    }
+}
+
+mod lookalike {
+    struct Task;
+
+    impl Task {
+        fn ready() -> Self {
+            Self
+        }
+    }
+
+    fn discarded() {
+        Task::ready();
+        let _ = Task::ready();
+    }
+}
