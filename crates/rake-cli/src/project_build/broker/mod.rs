@@ -456,13 +456,28 @@ fn owned_private(metadata: &fs::Metadata) -> bool {
 }
 
 fn private_read(path: &Path) -> Result<Value> {
+    #[cfg(unix)]
     let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
 
+    #[cfg(windows)]
+    let file = rake_client::private::open(path).map_err(|error| {
+        Error::new(
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                403
+            } else {
+                502
+            },
+            error.to_string(),
+        )
+    })?;
+
+    #[cfg(unix)]
     let metadata = file.metadata()?;
 
+    #[cfg(unix)]
     if !metadata.is_file() || !owned_private(&metadata) {
         return Err(Error::new(
             403,

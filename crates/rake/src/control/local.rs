@@ -1,19 +1,32 @@
-//! Unix-domain development transport. Private discovery directories and sockets
+//! Native development transport. Private discovery directories and endpoints
 //! restrict access to the current user. Owned protocol frames are decoded/encoded
 //! on the blocking pool; host dispatch and all UI state remain on the local thread.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
 use std::io::{self, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(unix)]
 use async_io::Async;
+
+#[cfg(unix)]
+type Listener = Async<UnixListener>;
+#[cfg(unix)]
+type Stream = Async<UnixStream>;
+
 use futures::future::{Either, select};
 use futures::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
+#[cfg(windows)]
+use rake_client::pipe::{Listener, Stream};
 
 use super::{HostClient, MAX_MESSAGE_BYTES, RuntimeClient, RuntimeInfo};
 use crate::router::Route;
@@ -24,7 +37,7 @@ pub use rake_client::local::{
 
 /// Owns a listener and its discovery files. Dropping it removes both files.
 pub struct LocalServer {
-    listener: Async<UnixListener>,
+    listener: Listener,
     socket: PathBuf,
     manifest: PathBuf,
 }
@@ -50,9 +63,20 @@ impl LocalServer {
     fn bind_info(info: RuntimeInfo, application_id: &str, path: &Path) -> io::Result<Self> {
         prepare_directory(path)?;
         let stem = info.runtime_id.to_string();
+
+        #[cfg(unix)]
         let socket = path.join(format!("{stem}.sock"));
+
+        #[cfg(windows)]
+        let socket = rake_client::pipe::path(&stem);
+
         let manifest = path.join(format!("{stem}.json"));
+
+        #[cfg(unix)]
         let listener = Async::<UnixListener>::bind(&socket)?;
+
+        #[cfg(windows)]
+        let listener = Listener::bind(&socket)?;
 
         let server = Self {
             listener,
@@ -60,6 +84,7 @@ impl LocalServer {
             manifest,
         };
 
+        #[cfg(unix)]
         fs::set_permissions(&server.socket, fs::Permissions::from_mode(0o600))?;
         let instance = Instance {
             application_id: application_id.into(),
@@ -70,11 +95,15 @@ impl LocalServer {
             },
         };
 
+        #[cfg(unix)]
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
             .mode(0o600)
             .open(&server.manifest)?;
+
+        #[cfg(windows)]
+        let mut file = rake_client::private::create(&server.manifest)?;
 
         serde_json::to_writer(&mut file, &instance)?;
         file.flush()?;
@@ -113,7 +142,8 @@ impl LocalServer {
         }
     }
 
-    async fn accept(&self) -> io::Result<Async<UnixStream>> {
+    #[cfg(unix)]
+    async fn accept(&self) -> io::Result<Stream> {
         loop {
             match self.listener.accept().await {
                 Ok((stream, _)) => return Ok(stream),
@@ -125,8 +155,14 @@ impl LocalServer {
             }
         }
     }
+
+    #[cfg(windows)]
+    async fn accept(&self) -> io::Result<Stream> {
+        self.listener.accept().await
+    }
 }
 
+#[cfg(unix)]
 fn recoverable_accept_error(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
@@ -141,7 +177,7 @@ fn recoverable_accept_error(error: &std::io::Error) -> bool {
 }
 
 // Framed input is bounded before allocating or decoding it.
-async fn serve_one(stream: Async<UnixStream>, client: HostClient) {
+async fn serve_one(stream: Stream, client: HostClient) {
     let work = async move {
         let mut reader = BufReader::new(stream);
         let mut bytes = Vec::new();
@@ -181,6 +217,15 @@ async fn serve_one(stream: Async<UnixStream>, client: HostClient) {
 
         bytes.push(b'\n');
         reader.get_mut().write_all(&bytes).await?;
+
+        #[cfg(windows)]
+        {
+            // Closing the server handle can discard unread pipe output. The client
+            // closes after reading its reply; retain this handle until then, within
+            // the same five-second deadline, without blocking FlushFileBuffers.
+            let mut end = [0];
+            let _ = futures::io::AsyncReadExt::read(reader.get_mut(), &mut end).await;
+        }
 
         Ok::<_, io::Error>(())
     };
@@ -224,6 +269,8 @@ fn encode_reply(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
 impl Drop for LocalServer {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.manifest);
+
+        #[cfg(unix)]
         let _ = fs::remove_file(&self.socket);
     }
 }
@@ -232,6 +279,7 @@ impl Drop for LocalServer {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn temporary_accept_errors_recover_but_bad_listeners_fail() {
         for code in [

@@ -35,7 +35,7 @@ pub(super) trait Host {
         crate::storage::devtools::Storage::new()
     }
 
-    #[cfg(any(unix, target_family = "wasm"))]
+    #[cfg(any(unix, windows, target_family = "wasm"))]
     fn begin_response(&self) -> Option<super::ResponseGuard> {
         None
     }
@@ -78,7 +78,7 @@ impl HostClient {
         }
     }
 
-    #[cfg(any(unix, target_family = "wasm"))]
+    #[cfg(any(unix, windows, target_family = "wasm"))]
     pub(super) fn begin_response(&self) -> Option<super::ResponseGuard> {
         self.0.begin_response()
     }
@@ -124,7 +124,7 @@ impl<R: Route> Host for RuntimeClient<R> {
         self.request(request)
     }
 
-    #[cfg(any(unix, target_family = "wasm"))]
+    #[cfg(any(unix, windows, target_family = "wasm"))]
     fn begin_response(&self) -> Option<super::ResponseGuard> {
         Some(self.begin_response())
     }
