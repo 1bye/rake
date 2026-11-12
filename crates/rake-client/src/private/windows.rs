@@ -417,7 +417,7 @@ pub fn replace(file: &File, path: &Path) -> io::Result<()> {
     let destination = wide(&std::path::absolute(path)?)?;
     let name = &destination[..destination.len() - 1];
     let offset = mem::offset_of!(FILE_RENAME_INFO, FileName);
-    let size = offset + mem::size_of_val(name);
+    let size = offset + mem::size_of_val(destination.as_slice());
     let mut buffer = vec![
         0usize;
         size.max(mem::size_of::<FILE_RENAME_INFO>())
@@ -427,15 +427,15 @@ pub fn replace(file: &File, path: &Path) -> io::Result<()> {
     // FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS (Windows 10+).
     // POSIX semantics preserve active readers of a replaced snapshot.
     // SAFETY: buffer has FILE_RENAME_INFO alignment and enough space for header/name;
-    // all fields and inline UTF-16 bytes are initialized within that allocation.
+    // all fields and inline UTF-16 bytes, including the terminator, fit that allocation.
     unsafe {
         (*info).Anonymous.Flags = 0x1 | 0x2;
         (*info).RootDirectory = ptr::null_mut();
         (*info).FileNameLength = mem::size_of_val(name) as u32;
         ptr::copy_nonoverlapping(
-            name.as_ptr(),
+            destination.as_ptr(),
             ptr::addr_of_mut!((*info).FileName).cast(),
-            name.len(),
+            destination.len(),
         );
     }
 
@@ -531,6 +531,34 @@ mod tests {
             open_source(&root, Path::new("output.json"))
                 .expect("open an in-root source through its canonical Windows path"),
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn private_renames_preserve_all_utf16_name_alignments() {
+        let root = std::env::temp_dir().join(format!(
+            "rake-rename-names-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        prepare_directory(&root).unwrap();
+
+        for length in 0..8 {
+            let path = root.join(format!("{}é-🦀.json", "x".repeat(length)));
+            write_atomic(&path, b"first").expect("publish varying-length filename");
+            let previous = open(&path).unwrap();
+            write_atomic(&path, b"second")
+                .expect("replace varying-length filename with an active reader");
+            assert_eq!(std::io::read_to_string(previous).unwrap(), "first");
+            assert_eq!(
+                std::io::read_to_string(open(&path).unwrap()).unwrap(),
+                "second"
+            );
+        }
+
         std::fs::remove_dir_all(root).unwrap();
     }
 
