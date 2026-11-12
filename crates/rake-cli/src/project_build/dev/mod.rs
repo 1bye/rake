@@ -346,7 +346,7 @@ impl<'a> Supervisor<'a> {
 
             let checkpoint = self.query(
                 instance,
-                json!({"type":if self.args.require_state || self.args.native_reloader.is_some() {"checkpoint"} else {"partial_checkpoint"}, "application_id":instance["application_id"]}),
+                json!({"type":if self.live.is_none() || self.args.require_state || self.args.native_reloader.is_some() {"checkpoint"} else {"partial_checkpoint"}, "application_id":instance["application_id"]}),
             )?;
 
             if probe {
@@ -355,7 +355,7 @@ impl<'a> Supervisor<'a> {
 
             write_marker(&self.checkpoint, &checkpoint)?;
 
-            if self.args.native_reloader.is_none() {
+            if self.live.is_some() && self.args.native_reloader.is_none() {
                 let entries: Vec<_> = checkpoint["tabs"]
                     .as_array()
                     .into_iter()
@@ -538,6 +538,12 @@ impl<'a> Supervisor<'a> {
                         return self.record("watching", json!({"published":number, "error":null}));
                     }
                 }
+            } else if self.live.is_none() {
+                if !self.args.restart_without_state {
+                    return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or explicitly use --restart-without-state".into());
+                }
+
+                self.record("restarting_without_state", json!({}))?;
             } else if self.args.require_state || self.args.native_reloader.is_some() {
                 return Err("live app has no development control endpoint; enable ControlConfig::FromEnvironment, or omit --require-state to allow state loss".into());
             } else {

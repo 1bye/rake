@@ -93,13 +93,22 @@ fn walk(
                 #[cfg(windows)]
                 use std::os::windows::fs::MetadataExt;
                 #[cfg(unix)]
-                let stamp = (metadata.mtime(), metadata.mtime_nsec(), metadata.len(), metadata.ino());
-                #[cfg(windows)]
-                let stamp = (metadata.last_write_time() as i64, 0, metadata.file_size(), 0);
-                stamps.insert(
-                    path,
-                    stamp,
+                let stamp = (
+                    metadata.mtime(),
+                    metadata.mtime_nsec(),
+                    metadata.len(),
+                    metadata.ino(),
                 );
+
+                #[cfg(windows)]
+                let stamp = (
+                    metadata.last_write_time() as i64,
+                    0,
+                    metadata.file_size(),
+                    0,
+                );
+
+                stamps.insert(path, stamp);
             }
 
             continue;

@@ -78,10 +78,12 @@ Routed and standalone root apps opt in with `ControlConfig::FromEnvironment`. Na
 `App::root` keeps its `Services` mount signature. `App::root_with` receives a weak `RuntimeContext` with the managed command, task, quit and update-restart boundary.
 
 Standalone roots have no checkpointed workspace: a restart creates a fresh root.
-By default the supervisor restarts and reports that state was not preserved.
+With Blaze, the supervisor restarts and reports that state was not preserved.
 `--require-state` (or `RAKE_REQUIRE_STATE=1`) instead keeps the old process alive
 when state cannot be preserved. An unavailable/busy runtime boundary still waits
 or reports its error; the supervisor does not discard an in-flight operation.
+Plain Cargo supervision retains its strict checkpoint capture and requires
+`--restart-without-state` to restart an app without a control endpoint.
 
 `App::background(...)` is native-only and starts the managed runtime without an
 initial window; browser hosts reject it. Standalone window close uses
@@ -254,9 +256,9 @@ roots restart fresh. Before restarting, the CLI names the reset entries (route
 name and entry ID); the replacement shows the same non-interactive status for
 six seconds without taking focus. Fully checkpointed restarts show no warning.
 Use `--require-state` or `RAKE_REQUIRE_STATE=1` to block missing-checkpoint
-restarts and keep the old process and state. This replaces
-`--restart-without-state`; omit the new flag and unset `RAKE_REQUIRE_STATE` for
-the permissive default. The pinned Blaze engine latches a type-change restart
+restarts and keep the old process and state in Blaze mode. Omit the flag and
+unset `RAKE_REQUIRE_STATE` for Blaze's permissive default. Cargo retains its
+existing `--restart-without-state` opt-in and strict checkpoint policy. The pinned Blaze engine latches a type-change restart
 request for the lifetime of the running process. In strict mode, later saves
 are still handled, but reverting the field does not resume body patches: they
 can continue requesting a restart. Preserve or save the old state before

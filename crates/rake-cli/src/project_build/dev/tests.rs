@@ -1233,3 +1233,57 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
         supervisor.finish().unwrap();
     }
 }
+
+#[test]
+fn cargo_keeps_strict_checkpoint_capture_with_or_without_stateless_opt_in() {
+    for restart_without_state in [false, true] {
+        let runtime = Runtime::new(|value, index| {
+            if value["type"] == "checkpoint" {
+                Some(json!({"$error":"MissingState"}))
+            } else {
+                replies(value, index)
+            }
+        });
+
+        let root = runtime.directory.path();
+
+        let args = Args {
+            dev: true,
+            json: true,
+            restart_without_state,
+            ..Args::default()
+        };
+
+        let cancelled = AtomicBool::new(false);
+        let session = root.join("session");
+
+        fs::create_dir(&session).unwrap();
+        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+
+        let error = supervisor
+            .prepare(&runtime.instance, &root.join("artifact"))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("MissingState"), "{error}");
+        assert!(supervisor.restart_notice.is_none());
+        assert!(!supervisor.checkpoint.exists());
+        let calls = runtime.calls.lock().unwrap();
+
+        assert!(
+            calls
+                .iter()
+                .any(|call| call["message"]["value"]["type"] == "checkpoint")
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call["message"]["value"]["type"] == "partial_checkpoint")
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call["message"]["value"]["type"] == "finish_reload"
+                    && call["message"]["value"]["applied"] == false)
+        );
+    }
+}

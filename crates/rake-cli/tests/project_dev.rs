@@ -290,7 +290,7 @@ fn alive(pid: u32) -> bool {
 #[test]
 fn watches_publishes_keeps_old_app_on_failure_restarts_and_survives_crash() {
     let fixture = Fixture::new();
-    let mut running = fixture.start(&["--features", "theme"]);
+    let mut running = fixture.start(&["--restart-without-state", "--features", "theme"]);
     let first = running.phase("watching");
     let pid = first["runtime_pid"].as_u64().unwrap() as u32;
 
@@ -406,7 +406,7 @@ fn watches_publishes_keeps_old_app_on_failure_restarts_and_survives_crash() {
 #[test]
 fn strict_mode_blocks_restart_without_endpoint_and_owns_cdp() {
     let fixture = Fixture::new();
-    let mut running = fixture.start(&["--cdp", "--require-state"]);
+    let mut running = fixture.start(&["--cdp"]);
     let first = running.phase("watching");
 
     let cdp_pid: u32 = fs::read_to_string(running.control.join("cdp-pid"))
@@ -424,7 +424,7 @@ fn strict_mode_blocks_restart_without_endpoint_and_owns_cdp() {
         running.phase("reload_blocked")["error"]
             .as_str()
             .unwrap()
-            .contains("--require-state")
+            .contains("--restart-without-state")
     );
     assert!(alive(first["runtime_pid"].as_u64().unwrap() as u32));
     running.stop(libc::SIGTERM);
@@ -568,8 +568,7 @@ count=$((count + 1))
 printf '%s' "$count" > "$CONTROL/metadata-count"
 if [ "$count" -gt 2 ]; then /bin/cat "$FIXTURE/../extended-metadata.json"; else /bin/cat "$FIXTURE/metadata.json"; fi
 "#);
-    // Keep the blocked-publication assertion under the opt-in strict policy.
-    let mut running = fixture.start(&["--require-state"]);
+    let mut running = fixture.start(&[]);
 
     assert_eq!(running.phase("watching")["published"], 2);
     assert!(!running.session.join("builds/1").exists());
@@ -1145,7 +1144,20 @@ fi
 #[test]
 fn require_state_environment_blocks_then_accepts_a_later_edit() {
     let fixture = Fixture::new();
-    let mut running = fixture.start_environment(&[], true, Some("1"));
+
+    fixture.tool(
+        "blaze",
+        r#"
+/bin/mkdir -p "$FIXTURE/target/debug" "$FIXTURE/target/blaze/whole/worker"
+artifact="$FIXTURE/target/blaze/whole/worker/fixture"
+/bin/cat "$CONTROL/app" > "$artifact"
+printf '\n# %s\n' "$(/bin/cat "$FIXTURE/src/main.rs")" >> "$artifact"
+/bin/chmod 755 "$artifact"
+/bin/cp "$artifact" "$FIXTURE/target/debug/fixture"
+"#,
+    );
+
+    let mut running = fixture.start_environment(&["--compiler", "blaze"], true, Some("1"));
     let pid = running.phase("watching")["runtime_pid"].as_u64().unwrap() as u32;
 
     fs::write(fixture.root.join("src/main.rs"), "second").unwrap();

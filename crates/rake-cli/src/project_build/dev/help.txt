@@ -1,7 +1,7 @@
 usage: rake [-h] [--target {desktop,web}] [--compiler {cargo,blaze}] [--live] [--manifest-path MANIFEST_PATH]
               [--package PACKAGE] [--bin BIN] [--features FEATURES]
               [--release | --debug] [--web-dir WEB_DIR] [--output OUTPUT]
-              [--native-reloader NATIVE_RELOADER] [--require-state]
+              [--native-reloader NATIVE_RELOADER] [--restart-without-state] [--require-state]
               [--port PORT] [--instance INSTANCE] [--cdp] [--preview]
               [--no-open] [--json] [--session SESSION] [--base-path BASE_PATH]
               [--routing {path,hash}] [--sign-identity SIGN_IDENTITY]
@@ -31,8 +31,10 @@ options:
   --native-reloader NATIVE_RELOADER
                         External native backend; owns ABI/code retirement and
                         exits zero only after successful replacement
+  --restart-without-state
+                        Cargo: explicitly allow restart without a control endpoint
   --require-state
-                        Block native restarts that cannot preserve registered state
+                        Blaze: block restarts that cannot preserve registered state
                         (also RAKE_REQUIRE_STATE=1)
   --port PORT
   --instance INSTANCE   Runtime UUID or application ID for CDP selection

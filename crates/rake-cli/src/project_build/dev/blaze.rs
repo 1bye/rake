@@ -9,13 +9,15 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     fs,
-    io::{Read, Write},
-    os::unix::net::UnixStream,
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::{io::Write, os::unix::net::UnixStream};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum BuildKind {
@@ -159,6 +161,7 @@ fn socket(args: &Args) -> Result<PathBuf> {
     Ok(home.join("daemon.sock"))
 }
 
+#[cfg(unix)]
 fn escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -167,6 +170,7 @@ fn escape(value: &str) -> String {
         .replace('\r', "\\r")
 }
 
+#[cfg(unix)]
 fn unescape(value: &str) -> String {
     let mut chars = value.chars();
     let mut output = String::new();
@@ -188,6 +192,7 @@ fn unescape(value: &str) -> String {
     output
 }
 
+#[cfg(unix)]
 pub(super) fn edit(
     socket: &Path,
     path: &Path,
@@ -258,6 +263,16 @@ pub(super) fn edit(
             return Ok(());
         }
     }
+}
+
+#[cfg(windows)]
+pub(super) fn edit(
+    _socket: &Path,
+    _path: &Path,
+    _text: &str,
+    _processes: &Processes<'_>,
+) -> Result<()> {
+    Err("Blaze live editing is available only on Apple Silicon macOS".into())
 }
 
 pub(super) fn identity(path: &Path) -> Result<String> {
@@ -654,7 +669,10 @@ mod pinned_command_tests {
         args.blaze_binary = Some(PathBuf::from("/pinned/blaze"));
         let command = compiler_command(&args).unwrap();
 
-        assert_eq!(command.get_program(), "/pinned/blaze-engine");
+        assert_eq!(
+            Path::new(command.get_program()),
+            Path::new("/pinned/blaze-engine")
+        );
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             vec![std::ffi::OsStr::new("cargo")]
