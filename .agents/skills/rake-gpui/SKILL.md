@@ -235,7 +235,7 @@ entity.update(cx, |state, cx| { state.count += 1; cx.notify(); });
 
 blocking operation on the UI thread
 
-Deep tier. Blocking freezes event processing and rendering. The check resolves std::fs calls, std::thread::sleep, smol::block_on (async_io) and futures::executor::block_on in GPUI render methods and closures directly registered with listener, on_action, on_click, mouse and key handlers. Imports and aliases resolve to the same definitions. Async blocks, nested unregistered closures and helpers are not followed. This deliberately misses uncertain thread ownership rather than diagnosing background work.
+Deep tier. Blocking freezes event processing and rendering. The check resolves std::fs calls, std::thread::sleep, smol::block_on (async_io) and futures::executor::block_on in GPUI render methods and callbacks directly registered with listener, on_action, on_click, mouse and key handlers. Callbacks may be inline closures or paths resolving to local functions/methods, including generic functions. A pre-pass makes registration order irrelevant, and a function registered for UI execution is checked even when also called elsewhere. Imports and aliases resolve to the same definitions. External functions, indirect function pointers, async blocks, nested unregistered closures and transitive helper calls are not followed. This deliberately misses uncertain thread ownership rather than diagnosing background work.
 
 What to write instead: perform blocking work on a background executor, then update the entity on the UI thread
 
