@@ -1,5 +1,5 @@
 repo = "1bye/blaze"
-version = "0.20261030.1-rake.1"
-url = "https://github.com/1bye/blaze/releases/download/v0.20261030.1-rake.1/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz"
-sha256 = "aec30a92722bed32f7dd5d101520ab5554149339a66ac670a352065865457e10"
+version = "0.20261030.1-rake.2"
+url = "https://github.com/1bye/blaze/releases/download/v0.20261030.1-rake.2/blaze-v0.20261030.1-rake.2-aarch64-apple-darwin.tar.gz"
+sha256 = "16036bfbadfb8b590ef38e88f36ebbd727b558e64d6a0fb1eafbace9c76c2026"
 target = "aarch64-apple-darwin"

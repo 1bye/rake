@@ -306,7 +306,7 @@ pub(super) fn ensure() -> Result<PathBuf> {
             "--proto-redir",
             "=https",
             "--max-time",
-            "180",
+            "600",
             "--max-filesize",
             "2147483648",
             "--retry",
@@ -353,7 +353,7 @@ mod tests {
     fn fixture(root: &Path) -> (Pin, PathBuf) {
         let mut pin = Pin {
             repo: "fixture/blaze".into(),
-            version: "0.20261028.0-rake.1".into(),
+            version: "0.20261030.1-rake.2".into(),
             target: "aarch64-apple-darwin".into(),
             url: "https://invalid.test/archive".into(),
             sha256: String::new(),
