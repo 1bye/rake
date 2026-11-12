@@ -91,6 +91,7 @@ pub mod tasks;
 #[cfg(feature = "tray")]
 pub mod tray;
 pub mod web;
+pub mod window_state;
 
 #[cfg(all(feature = "gpui", feature = "updates"))]
 mod updates_binding;

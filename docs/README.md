@@ -10,6 +10,7 @@ New here? Start with [Getting started](getting-started.md), then read
 | [Application shapes](application.md) | Standalone and routed apps, startup, shutdown |
 | [Routing](routing.md) | Typed routes, tabs, history, guards, loaders |
 | [Managed work](managed-work.md) | Tasks, activities and cancellation |
+| [Window placement](window-placement.md) | Opt-in native bounds, displays, and window modes |
 | [Application menus](menus.md) | Command-backed menu bars, dock items and context models |
 | [Guarded quit](guarded-quit.md) | Save/discard/cancel on exit |
 | [Services](services.md) | Composing application services |
