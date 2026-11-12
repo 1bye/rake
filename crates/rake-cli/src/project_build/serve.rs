@@ -88,9 +88,10 @@ impl Server {
                                 .insert(id, stream.try_clone().map_err(|error| error.to_string())?);
                             drop(sockets_guard);
                             let sockets = &sockets;
+                            let stopped = &stopped;
 
                             workers.push(Some(scope.spawn(move || {
-                                let _ = handle(stream, address, config);
+                                let _ = handle(stream, address, config, stopped);
 
                                 sockets
                                     .lock()
@@ -174,13 +175,66 @@ impl Request {
     }
 }
 
-fn request(stream: &mut TcpStream) -> Result<Request> {
+// Windows shutdown does not reliably interrupt an already blocked recv. Poll only
+// request reads so cancellation never waits for the 15-second receive timeout.
+fn read_exact(
+    stream: &mut TcpStream,
+    bytes: &mut [u8],
+    stopping: &AtomicBool,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = stopping;
+
+        stream.read_exact(bytes)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::io::{Error, ErrorKind};
+
+        stream.set_nonblocking(true)?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+
+        let result = (|| {
+            let mut remaining = bytes;
+
+            while !remaining.is_empty() {
+                if stopping.load(Ordering::Acquire) {
+                    return Err(Error::new(ErrorKind::Interrupted, "Web server stopped"));
+                }
+
+                if std::time::Instant::now() >= deadline {
+                    return Err(Error::new(ErrorKind::TimedOut, "Web request timed out"));
+                }
+
+                match stream.read(remaining) {
+                    Ok(0) => return Err(Error::from(ErrorKind::UnexpectedEof)),
+                    Ok(count) => remaining = &mut remaining[count..],
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                    Err(error) => return Err(error),
+                }
+            }
+
+            Ok(())
+        })();
+
+        let blocking = stream.set_nonblocking(false);
+
+        result.and(blocking)
+    }
+}
+
+fn request(stream: &mut TcpStream, stopping: &AtomicBool) -> Result<Request> {
     let mut bytes = Vec::new();
 
     while !bytes.ends_with(b"\r\n\r\n") {
         let mut byte = [0];
 
-        stream.read_exact(&mut byte)?;
+        read_exact(stream, &mut byte, stopping)?;
         bytes.push(byte[0]);
 
         if bytes.len() > 64 * 1024 {
@@ -302,12 +356,17 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
     Some(active)
 }
 
-fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result<()> {
+fn handle(
+    mut stream: TcpStream,
+    address: SocketAddr,
+    config: &Config,
+    stopping: &AtomicBool,
+) -> Result<()> {
     // macOS accept inherits the listener's O_NONBLOCK; each worker uses blocking I/O.
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
-    let request = match request(&mut stream) {
+    let request = match request(&mut stream, stopping) {
         Ok(request) => request,
         Err(_) => return Ok(()),
     };
@@ -348,7 +407,13 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
                 );
             }
 
-            return control_request(&mut stream, &request, broker, config.preview.as_deref());
+            return control_request(
+                &mut stream,
+                &request,
+                broker,
+                config.preview.as_deref(),
+                stopping,
+            );
         }
 
         return error(
@@ -591,6 +656,7 @@ fn control_request(
     request: &Request,
     broker: &super::broker::Broker,
     preview: Option<&super::preview::Preview>,
+    stopping: &AtomicBool,
 ) -> Result<()> {
     use super::broker::{Error, MAX_BYTES};
     let mut consumed = false;
@@ -609,7 +675,7 @@ fn control_request(
 
         let mut bytes = vec![0; length.expect("validated length")];
 
-        stream.read_exact(&mut bytes)?;
+        read_exact(stream, &mut bytes, stopping)?;
         consumed = true;
         let body: Value = serde_json::from_slice(&bytes)?;
 
@@ -1092,6 +1158,9 @@ mod tests {
         let mut pending = TcpStream::connect(address).unwrap();
 
         write!(pending, "GET / HTTP/1.1\r\n").unwrap();
+        let mut body = TcpStream::connect(address).unwrap();
+
+        write!(body, "POST /__rake/development HTTP/1.1\r\nHost: {address}\r\nX-Rake-Token: {}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{", server.broker.as_ref().unwrap().token()).unwrap();
         let mut foreign = TcpStream::connect(address).unwrap();
 
         write!(foreign, "GET / HTTP/1.1\r\nHost: foreign\r\n\r\n").unwrap();
@@ -1304,6 +1373,44 @@ mod tests {
         );
     }
 
+    fn assert_pending(stream: &mut TcpStream, message: &str) {
+        #[cfg(unix)]
+        {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let pending = stream.read(&mut [0]);
+
+            assert!(
+                pending.is_err_and(|error| matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                )),
+                "{message}"
+            );
+        }
+
+        #[cfg(windows)]
+        {
+            // A Winsock receive timeout makes the connection indeterminate.
+            // Observe the same pending interval without issuing a timed recv.
+            stream.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_millis(200);
+
+            while Instant::now() < deadline {
+                let pending = stream.read(&mut [0]);
+
+                assert!(
+                    pending.is_err_and(|error| error.kind() == std::io::ErrorKind::WouldBlock),
+                    "{message}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+
+            stream.set_nonblocking(false).unwrap();
+        }
+    }
+
     #[test]
     fn control_requests_wait_for_segmented_headers_and_json_bodies() {
         let root = tempfile::tempdir().unwrap();
@@ -1341,29 +1448,10 @@ mod tests {
 
         let mut stream = TcpStream::connect(address).unwrap();
 
-        stream
-            .set_read_timeout(Some(Duration::from_millis(200)))
-            .unwrap();
         write!(stream, "POST /__rake/development HTTP/1.1\r\n").unwrap();
-        let pending = stream.read(&mut [0]);
-
-        assert!(
-            pending.is_err_and(|error| matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )),
-            "partial headers must remain pending"
-        );
+        assert_pending(&mut stream, "partial headers must remain pending");
         write!(stream,"Host: {address}\r\nX-Rake-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{").unwrap();
-        let pending = stream.read(&mut [0]);
-
-        assert!(
-            pending.is_err_and(|error| matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )),
-            "partial JSON must remain pending"
-        );
+        assert_pending(&mut stream, "partial JSON must remain pending");
         stream.write_all(b"}").unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
