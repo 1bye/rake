@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn resolve(root: &Path, source: &SourceLocation) -> Result<PathBuf> {
+    #[cfg(windows)]
+    let _source = rake_client::private::open_source(root, Path::new(&source.file))?;
     let root = root.canonicalize()?;
     let path = root.join(&source.file).canonicalize()?;
 
@@ -44,9 +46,12 @@ pub(crate) fn read(source: &SourceLocation) -> Result<String> {
     let path = resolve(&root, source)?;
     let mut text = String::new();
 
-    std::fs::File::open(path)?
-        .take(256 * 1024 + 1)
-        .read_to_string(&mut text)?;
+    #[cfg(unix)]
+    let file = std::fs::File::open(path)?;
+    #[cfg(windows)]
+    let file = rake_client::private::open_source(&root, &path)?;
+
+    file.take(256 * 1024 + 1).read_to_string(&mut text)?;
 
     if text.len() > 256 * 1024 {
         return Err("Rust source exceeds 256 KiB".into());

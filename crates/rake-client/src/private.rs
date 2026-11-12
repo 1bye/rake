@@ -6,7 +6,9 @@ use std::{fs::File, io, path::Path};
 #[path = "private/windows.rs"]
 mod windows;
 #[cfg(windows)]
-pub use windows::{Security, open_source};
+pub(crate) use windows::validate_security;
+#[cfg(windows)]
+pub use windows::{Security, open_source, write_atomic};
 
 /// Creates a new private regular file without replacing an existing object.
 ///

@@ -557,7 +557,13 @@ fn build(args: &Args, processes: &Processes<'_>) -> Result<()> {
 
 fn write_marker(path: &Path, marker: &Value) -> Result<()> {
     use std::io::Write;
+    #[cfg(unix)]
     let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or("marker parent missing")?)?;
+    #[cfg(windows)]
+    let mut file = tempfile::Builder::new().make_in(
+        path.parent().ok_or("marker parent missing")?,
+        rake_client::private::create,
+    )?;
 
     file.write_all(&serde_json::to_vec(marker)?)?;
     file.persist(path)?;

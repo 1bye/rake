@@ -1,6 +1,6 @@
 //! Explicit development-only checkpoint storage. Failed restoration never deletes it.
 
-#[cfg(any(unix, target_family = "wasm"))]
+#[cfg(any(unix, windows, target_family = "wasm"))]
 use super::MAX_CHECKPOINT_BYTES;
 use super::WorkspaceCheckpoint;
 #[cfg(feature = "gpui")]
@@ -52,8 +52,31 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
         })())
     }
 
+    #[cfg(windows)]
+    {
+        use std::io::Read;
+
+        if std::env::var("RAKE_DEV_CONTROL").as_deref() != Ok("1") {
+            return None;
+        }
+
+        let path = std::env::var_os("RAKE_RELOAD_CHECKPOINT")?;
+
+        Some((|| {
+            let file = rake_client::private::open(std::path::Path::new(&path))
+                .map_err(|error| error.to_string())?;
+            let mut bytes = Vec::new();
+
+            file.take(MAX_CHECKPOINT_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+
+            decode(&bytes)
+        })())
+    }
+
     // Checkpoints are owned by the existing Unix development supervisor.
-    #[cfg(all(not(unix), not(target_family = "wasm")))]
+    #[cfg(all(not(any(unix, windows)), not(target_family = "wasm")))]
     {
         None
     }
@@ -72,7 +95,7 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
     }
 }
 
-#[cfg(all(feature = "gpui", any(unix, target_family = "wasm")))]
+#[cfg(all(feature = "gpui", any(unix, windows, target_family = "wasm")))]
 fn decode(bytes: &[u8]) -> Result<WorkspaceCheckpoint, String> {
     if bytes.len() > MAX_CHECKPOINT_BYTES {
         return Err("reload checkpoint exceeds 512 KiB".into());
@@ -83,7 +106,7 @@ fn decode(bytes: &[u8]) -> Result<WorkspaceCheckpoint, String> {
 
 #[cfg(feature = "gpui")]
 pub(crate) fn clear() {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
         && let Some(path) = std::env::var_os("RAKE_RELOAD_CHECKPOINT")
     {

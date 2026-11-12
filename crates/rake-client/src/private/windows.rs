@@ -329,6 +329,7 @@ pub(super) fn prepare_directory(path: &Path) -> io::Result<()> {
 /// # Errors
 /// Returns `PermissionDenied` for escapes or reparse points, or filesystem errors.
 pub fn open_source(root: &Path, source: &Path) -> io::Result<File> {
+    let _root = parents(&root.join(".source-boundary"))?;
     let root = root.canonicalize()?;
     let path = std::path::absolute(root.join(source))?;
 
@@ -345,6 +346,68 @@ pub fn open_source(root: &Path, source: &Path) -> io::Result<File> {
     validate(&file, false, false)?;
 
     Ok(file)
+}
+
+/// Atomically replaces a private JSON/output file with a newly created private file.
+///
+/// # Errors
+/// Returns unsafe-directory, creation, write, or atomic replacement failures.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::{
+        io::Write,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().ok_or_else(denied)?;
+    let _parents = parents(path)?;
+    let directory = raw_open(
+        parent,
+        READ_CONTROL | FILE_READ_ATTRIBUTES,
+        OPEN_EXISTING,
+        None,
+    )?;
+    validate(&directory, true, true)?;
+
+    struct Temporary(PathBuf);
+
+    impl Drop for Temporary {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    let (temporary, mut file) = loop {
+        let candidate = parent.join(format!(
+            ".rake-private-{}-{}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+
+        match create(&candidate) {
+            Ok(file) => break (Temporary(candidate), file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+
+    file.write_all(bytes)?;
+    file.flush()?;
+    drop(file);
+    let source = wide(&temporary.0)?;
+    let destination = wide(path)?;
+    // SAFETY: both paths are terminated and parent directories remain pinned.
+    if unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -298,20 +298,28 @@ impl ProcessOutput {
 
     fn read(&self) -> super::Result<Option<Value>> {
         use std::io::Read;
+        #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
 
         let Some(path) = &self.path else {
             return Ok(None);
         };
 
-        let file = match std::fs::File::open(path) {
+        #[cfg(unix)]
+        let opened = std::fs::File::open(path);
+        #[cfg(windows)]
+        let opened = rake_client::private::open(path);
+
+        let file = match opened {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
         };
 
+        #[cfg(unix)]
         let metadata = file.metadata()?;
 
+        #[cfg(unix)]
         if !metadata.is_file()
             || metadata.mode() & 0o077 != 0
             || metadata.uid()

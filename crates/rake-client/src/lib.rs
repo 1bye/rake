@@ -82,6 +82,9 @@ pub mod local;
 #[cfg(any(unix, windows))]
 pub mod private;
 
+#[cfg(windows)]
+pub mod pipe;
+
 /// A discovered runtime endpoint. Credentials are kept only in owner-readable files.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -178,12 +181,12 @@ pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Re
 
     let reply = match &instance.endpoint {
         Endpoint::Local { path } => {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             {
                 local::exchange(path, request, timeout)?
             }
 
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             {
                 let _ = path;
 
