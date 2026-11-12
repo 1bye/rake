@@ -217,6 +217,7 @@ fn poll_with_owner(
 
     if boundary == Boundary::Full {
         let owner = reload_owner.expect("full live mode has a reload owner");
+
         if let Some(outcome) = &event {
             let applied = matches!(outcome, RuntimeEvent::Applied { .. });
             let started = Instant::now();
@@ -256,11 +257,13 @@ impl Global for LiveDriver {}
 impl LiveDriver {
     fn poll(&mut self) -> Option<RuntimeEvent> {
         let mut source = LiveSource(&mut self.live);
+
         poll_with_owner(&mut source, self.boundary, self.reload_owner.as_ref())
     }
 
     fn record(&self, event: RuntimeEvent) {
         let mut fields = BTreeMap::new();
+
         fields.insert(
             "at_unix_us".into(),
             Value::from(duration_us(
@@ -288,17 +291,21 @@ impl LiveDriver {
                 fields.insert("took_us".into(), Value::from(duration_us(took)));
                 fields.insert("waited_us".into(), Value::from(duration_us(waited)));
                 fields.insert("boundary".into(), Value::from(boundary.as_str()));
+
                 if let Some(duration) = boundary_finish_us {
                     fields.insert("boundary_finish_us".into(), Value::from(duration));
                 }
+
                 "live_patch_applied"
             }
             RuntimeEvent::Restart { reason } => {
                 fields.insert("reason".into(), Value::from(reason));
+
                 "live_restart_requested"
             }
             RuntimeEvent::Declined { reason } => {
                 fields.insert("reason".into(), Value::from(reason));
+
                 "live_patch_declined"
             }
         };
@@ -336,12 +343,14 @@ pub(crate) fn install(collector: Collector, cx: &mut App, reload_owner: Option<R
     }
 
     let boundary = boundary_from_environment();
+
     if boundary == Boundary::Full && reload_owner.is_none() {
         record_start_declined(
             &collector,
             "full reload boundary requires an attached runtime".into(),
             boundary,
         );
+
         return;
     }
 
@@ -349,11 +358,13 @@ pub(crate) fn install(collector: Collector, cx: &mut App, reload_owner: Option<R
         Ok(live) => live,
         Err(reason) => {
             record_start_declined(&collector, reason, boundary);
+
             return;
         }
     };
 
     let poll_task = start_polling(cx, poll_app);
+
     cx.set_global(LiveDriver {
         live,
         collector,
@@ -366,6 +377,7 @@ pub(crate) fn install(collector: Collector, cx: &mut App, reload_owner: Option<R
 #[cfg(all(feature = "live", not(target_family = "wasm")))]
 fn record_start_declined(collector: &Collector, reason: String, boundary: Boundary) {
     let mut fields = BTreeMap::new();
+
     fields.insert("reason".into(), Value::from(reason));
     fields.insert("boundary".into(), Value::from(boundary.as_str()));
     collector.record("warn", TARGET, "live_patch_declined", Vec::new(), fields);
@@ -400,6 +412,7 @@ fn poll_app(cx: &mut App) {
 #[cfg(all(feature = "live", not(target_family = "wasm")))]
 fn refresh_windows(cx: &mut App) {
     cx.refresh_windows();
+
     #[cfg(target_os = "macos")]
     for handle in cx.windows() {
         let _ = handle.update(cx, |_, window, cx| {
@@ -426,6 +439,7 @@ fn show_restart_notice(message: String, cx: &mut App) {
             refresh_windows(cx);
         });
     });
+
     cx.set_global(RestartNotice {
         message: Some(message),
         _dismiss: dismiss,
@@ -437,9 +451,11 @@ fn show_restart_notice(message: String, cx: &mut App) {
 pub(crate) fn status_notice(cx: &App) -> Option<gpui::AnyElement> {
     use gpui::{IntoElement as _, ParentElement as _, Styled as _};
     let message = cx.try_global::<RestartNotice>()?.message.clone()?;
+
     let colors = crate::theme::try_current::<crate::theme::Semantic>()
         .map(|theme| *theme)
         .unwrap_or_else(crate::theme::Semantic::dark);
+
     Some(
         gpui::div()
             .absolute()
@@ -480,6 +496,7 @@ mod tests {
     impl OutcomeSource for FakeSource {
         fn poll(&mut self) -> Option<LiveOutcome> {
             self.polls += 1;
+
             self.outcomes.pop_front()
         }
     }
@@ -492,9 +509,11 @@ mod tests {
     #[test]
     fn restart_status_dismisses_itself_without_changing_keyboard_focus() {
         use gpui::{InteractiveElement as _, ParentElement as _};
+
         struct NoticeView {
             focus: gpui::FocusHandle,
         }
+
         impl gpui::Render for NoticeView {
             fn render(
                 &mut self,
@@ -507,20 +526,27 @@ mod tests {
             }
         }
         let mut app = gpui::TestAppContext::single();
+
         let (_, context) = app.add_window_view(|window, cx| {
             let focus = cx.focus_handle();
+
             window.focus(&focus, cx);
+
             NoticeView { focus }
         });
+
         let focus = context.update(|window, cx| {
             let focus = window.focused(cx).expect("test focus");
+
             show_restart_notice("restarted fixture: state was not preserved".into(), cx);
             assert!(focus.is_focused(window));
             assert!(status_notice(cx).is_some());
             window.draw(cx).clear(cx);
             assert!(focus.is_focused(window));
+
             focus
         });
+
         context.run_until_parked();
         context.executor().advance_clock(Duration::from_secs(6));
         context.run_until_parked();
@@ -579,11 +605,14 @@ mod tests {
     #[test]
     fn ui_timer_polls_without_windows_or_frames_and_stops_with_its_owner() {
         let cx = gpui::TestAppContext::single();
+
         let source = Rc::new(RefCell::new(FakeSource {
             outcomes: VecDeque::new(),
             polls: 0,
         }));
+
         let events = Rc::new(RefCell::new(Vec::new()));
+
         let timer = cx.update(|cx| {
             let source = source.clone();
             let events = events.clone();
@@ -594,6 +623,7 @@ mod tests {
                 }
             })
         });
+
         cx.run_until_parked();
 
         for _ in 0..3 {
@@ -663,6 +693,7 @@ mod tests {
             }),
             error: None,
         };
+
         let status_for_read = status.clone();
         let status_for_finish = status;
 
@@ -670,6 +701,7 @@ mod tests {
             status: Rc::new(move || status_for_read.clone()),
             finish: Rc::new(move |id, applied| {
                 finished.borrow_mut().push((id.into(), applied));
+
                 Ok(status_for_finish.clone())
             }),
         }
@@ -689,6 +721,7 @@ mod tests {
             }]),
             polls: 0,
         };
+
         let finished = Rc::new(RefCell::new(Vec::new()));
         let owner = fake_owner(ReloadPhase::Quiescing, Some("boundary-1"), finished.clone());
 
@@ -715,6 +748,7 @@ mod tests {
             ]),
             polls: 0,
         };
+
         let finished = Rc::new(RefCell::new(Vec::new()));
         let owner = fake_owner(ReloadPhase::Ready, Some("boundary-2"), finished.clone());
 

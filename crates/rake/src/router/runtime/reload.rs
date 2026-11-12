@@ -784,28 +784,36 @@ mod tests {
         let source = Router::new(RouterConfig::default());
         let mut pool = LocalPool::new();
         let driver = source.clone();
+
         pool.spawner()
             .spawn_local(async move {
                 driver.run().await.unwrap();
             })
             .unwrap();
         let mut entry_ids = Vec::new();
+
         for id in 1..=2 {
             let operation = source
                 .navigator()
                 .open_with(Destination::Page(id), OpenOptions::new_tab());
+
             let Outcome::Committed(opened) = pool.run_until(operation.wait()).unwrap() else {
                 panic!("open failed")
             };
+
             let entry = source.entry(opened.entry_id).unwrap();
+
             entry.set_dirty(true).unwrap();
+
             if id == 1 {
                 entry
                     .on_reload(|| Draft { edits: 42 }.checkpoint())
                     .unwrap();
             }
+
             entry_ids.push(entry.id().unwrap());
         }
+
         source
             .prepare_reload(ReloadRequest {
                 id: "partial".into(),
@@ -818,6 +826,7 @@ mod tests {
             ReloadError::MissingState(entry_ids[1])
         );
         let checkpoint = source.reload_partial_checkpoint("test").unwrap();
+
         assert!(checkpoint.tabs[0].entries[0].dirty);
         assert!(!checkpoint.tabs[1].entries[0].dirty);
         assert!(checkpoint.tabs[1].entries[0].state.is_none());
@@ -827,20 +836,26 @@ mod tests {
         );
         let restored = Rc::new(RefCell::new(Vec::new()));
         let observed = restored.clone();
+
         let mount = Rc::new(
             move |destination: Destination, entry: EntryHandle<Destination>, _| {
                 let draft = entry.reload_state::<Draft>();
                 let observed = observed.clone();
+
                 Box::pin(async move {
                     let Destination::Page(id) = destination;
+
                     observed
                         .borrow_mut()
                         .push((id, draft.unwrap().map_or(0, |draft| draft.edits)));
+
                     Ok(Rc::new(()) as super::super::Resource)
                 }) as futures::future::LocalBoxFuture<'static, _>
             },
         );
+
         let replacement = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
+
         block_on(replacement.restore_workspace(&checkpoint, "test")).unwrap();
         assert_eq!(*restored.borrow(), vec![(1, 42), (2, 0)]);
         assert_eq!(

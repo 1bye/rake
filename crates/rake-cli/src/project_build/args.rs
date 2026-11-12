@@ -259,9 +259,11 @@ pub(super) fn parse(
 
     let web = values.get("--target").is_some_and(|value| value == "web");
     let live = values.contains_key("--live");
+
     if live && (command != "dev" || values.get("--compiler").is_some_and(|v| v != "blaze")) {
         return Err("--live applies to dev and cannot be combined with --compiler cargo".into());
     }
+
     let compiler = match values.get("--compiler").map(String::as_str) {
         None if live => Compiler::Blaze,
         None | Some("cargo") => Compiler::Cargo,
@@ -272,12 +274,15 @@ pub(super) fn parse(
             ));
         }
     };
+
     if values.contains_key("--compiler") && command != "dev" {
         return Err("--compiler applies to dev".into());
     }
+
     if compiler == Compiler::Blaze && (web || values.contains_key("--preview")) {
         return Err("--compiler blaze requires desktop without --preview".into());
     }
+
     if compiler == Compiler::Blaze && values.contains_key("--native-reloader") {
         return Err("--compiler blaze cannot be combined with --native-reloader".into());
     }

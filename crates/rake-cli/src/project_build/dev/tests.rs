@@ -133,6 +133,7 @@ impl Runtime {
                             } else {
                                 json!({"Ok":{"value":response}})
                             };
+
                             let _ = writeln!(connection, "{}", reply);
                         }
                     }
@@ -554,21 +555,25 @@ fn blaze_arguments_are_optional_and_reject_web_preview_and_other_commands() {
             &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
         )
     };
+
     assert_eq!(parse(&[]).unwrap().unwrap().compiler, Compiler::Cargo);
     assert_eq!(
         parse(&["--compiler", "blaze"]).unwrap().unwrap().compiler,
         Compiler::Blaze
     );
+
     for arguments in [
         vec!["--compiler=blaze", "--target=web"],
         vec!["--preview", "--compiler=blaze"],
     ] {
         let arguments: Vec<_> = arguments.iter().map(|s| s.to_string()).collect();
+
         assert_eq!(
             args::parse("dev", &arguments).err().unwrap(),
             "--compiler blaze requires desktop without --preview"
         );
     }
+
     assert!(args::parse("build", &["--compiler=blaze".into()]).is_err());
     assert_eq!(
         parse(&["--compiler=blaze", "--native-reloader=/tmp/backend"])
@@ -582,6 +587,7 @@ fn blaze_arguments_are_optional_and_reject_web_preview_and_other_commands() {
 
 fn macho(path: &Path, uuid: u8) {
     let mut bytes = vec![0u8; 56];
+
     bytes[..4].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe]);
     bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
     bytes[20..24].copy_from_slice(&24u32.to_le_bytes());
@@ -595,6 +601,7 @@ fn macho(path: &Path, uuid: u8) {
 fn blaze_watched_artifact_uses_uuid_and_rejects_ambiguity_and_truncated_tables() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path();
+
     fs::create_dir_all(target.join("debug")).unwrap();
     fs::create_dir_all(target.join("blaze/whole/a")).unwrap();
     macho(&target.join("debug/app"), 1);
@@ -622,12 +629,15 @@ fn blaze_daemon_wire_escapes_source_and_rejects_failed_truncated_and_oversized_r
             .prefix("blaze-wire-")
             .tempdir_in("/tmp")
             .unwrap();
+
         let socket = dir.path().join("daemon.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let success = reply == b"ok\n";
+
         let thread = thread::spawn(move || {
             let (mut connection, _) = listener.accept().unwrap();
             let mut request = String::new();
+
             BufReader::new(&connection).read_line(&mut request).unwrap();
             assert_eq!(
                 request,
@@ -635,14 +645,17 @@ fn blaze_daemon_wire_escapes_source_and_rejects_failed_truncated_and_oversized_r
             );
             let _ = connection.write_all(&reply);
         });
+
         let cancelled = AtomicBool::new(false);
         let processes = Processes::new(&cancelled);
+
         let result = blaze::edit(
             &socket,
             Path::new("/workspace/main.rs"),
             "fn main() {\n\tprintln!(\"a\\b\");\n}",
             &processes,
         );
+
         assert_eq!(result.is_ok(), success);
         thread.join().unwrap();
     }
@@ -655,6 +668,7 @@ fn blaze_runtime_outcomes_and_uuid_choose_patch_rebuild_or_checkpointed_restart_
         identity: Some("uuid:first".into()),
         ..Live::default()
     };
+
     assert_eq!(
         live.decision("uuid:first", BuildKind::Edit),
         Decision::Patch
@@ -665,6 +679,7 @@ fn blaze_runtime_outcomes_and_uuid_choose_patch_rebuild_or_checkpointed_restart_
     );
     let restart =
         json!({"sequence":1,"kind":"live_restart_requested","fields":{"reason":"room used up"}});
+
     assert!(live.observe(&restart));
     assert!(!live.observe(&restart));
     assert_eq!(
@@ -694,11 +709,14 @@ fn blaze_stat_watcher_detects_atomic_saves_and_deletions() {
     let dir = tempfile::tempdir().unwrap();
     let project = project(dir.path());
     let source = dir.path().join("main.rs");
+
     fs::write(&source, "one").unwrap();
     let first = fingerprint::stamps(&project, None).unwrap();
+
     fs::write(dir.path().join("replacement"), "two").unwrap();
     fs::rename(dir.path().join("replacement"), &source).unwrap();
     let second = fingerprint::stamps(&project, None).unwrap();
+
     assert_ne!(first, second);
     fs::remove_file(source).unwrap();
     assert_ne!(second, fingerprint::stamps(&project, None).unwrap());
@@ -709,6 +727,7 @@ fn blaze_environment_keeps_explicit_memory_limits_and_feature_aliases() {
     use std::ffi::OsString;
     let env =
         blaze::environment([(OsString::from("BLAZE_MEMORY_MAX"), OsString::from("8G"))].into());
+
     assert_eq!(
         env.get(std::ffi::OsStr::new("BLAZE_MEMORY_MAX")).unwrap(),
         "8G"
@@ -720,12 +739,14 @@ fn blaze_environment_keeps_explicit_memory_limits_and_feature_aliases() {
     );
     let dir = tempfile::tempdir().unwrap();
     let mut project = project(dir.path());
+
     project.package["dependencies"] = json!([{"name":"rake-app","rename":"framework","kind":null}]);
     let args = Args {
         dev: true,
         compiler: super::super::Compiler::Blaze,
         ..Args::default()
     };
+
     assert_eq!(
         project.build_features(&args).as_deref(),
         Some("framework/devtools,framework/live")
@@ -735,13 +756,16 @@ fn blaze_environment_keeps_explicit_memory_limits_and_feature_aliases() {
 #[test]
 fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation() {
     let root = tempfile::tempdir().unwrap();
+
     fs::create_dir(root.path().join("builds-root")).unwrap();
     let args = Args {
         compiler: super::super::Compiler::Blaze,
         ..Args::default()
     };
+
     let cancelled = AtomicBool::new(false);
     let runtime = Runtime::new(replies);
+
     let mut supervisor = Supervisor::new(
         &args,
         project(root.path()),
@@ -749,12 +773,14 @@ fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation(
         &cancelled,
     )
     .unwrap();
+
     supervisor.app = Some(
         Processes::new(&cancelled)
             .start(Command::new("/bin/sleep").arg("300"))
             .unwrap(),
     );
     let mut advertisement = runtime.instance.clone();
+
     advertisement["pid"] = json!(supervisor.app.as_ref().unwrap().0.id());
     write_marker(&supervisor.control.join("app.json"), &advertisement).unwrap();
     supervisor.live.as_mut().unwrap().full_boundary = true;
@@ -762,14 +788,17 @@ fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation(
     cancelled.store(true, Ordering::Release);
     supervisor.finish_live_boundary(false).unwrap();
     let calls = runtime.calls.lock().unwrap();
+
     let prepare = calls
         .iter()
         .find(|v| v["message"]["value"]["type"] == "prepare_reload")
         .unwrap();
+
     let finish = calls
         .iter()
         .find(|v| v["message"]["value"]["type"] == "finish_reload")
         .unwrap();
+
     assert_eq!(
         prepare["message"]["value"]["request"]["mechanism"],
         "native_code_replacement"
@@ -785,23 +814,29 @@ fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation(
 fn blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_restart() {
     let root = tempfile::tempdir().unwrap();
     let session = root.path().join("session");
+
     fs::create_dir(&session).unwrap();
     let artifact = root.path().join("app");
+
     fs::write(&artifact, "#!/bin/sh\nexec /bin/sleep 300\n").unwrap();
     fs::set_permissions(&artifact, fs::Permissions::from_mode(0o755)).unwrap();
     let args = Args {
         compiler: super::super::Compiler::Blaze,
         ..Args::default()
     };
+
     let cancelled = AtomicBool::new(false);
     let runtime = Runtime::new(replies);
     let mut supervisor = Supervisor::new(&args, project(root.path()), session, &cancelled).unwrap();
+
     supervisor.launch(&artifact).unwrap();
     let pid = supervisor.app.as_ref().unwrap().0.id();
     let mut advertisement = runtime.instance.clone();
+
     advertisement["pid"] = json!(pid);
     write_marker(&supervisor.control.join("app.json"), &advertisement).unwrap();
     let live = supervisor.live.as_mut().unwrap();
+
     live.restart = Some("the room the program set aside for edits is used up".into());
     live.kind = blaze::BuildKind::Edit;
     supervisor.publish(2, &artifact).unwrap();
@@ -828,8 +863,10 @@ fn blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_re
 fn blaze_metadata_signature_changes_for_manifests_not_body_edits() {
     let root = tempfile::tempdir().unwrap();
     let project = project(root.path());
+
     fs::write(root.path().join("Cargo.toml"), "manifest").unwrap();
     let initial = blaze::configuration(&project).unwrap();
+
     fs::write(root.path().join("helper.rs"), "one").unwrap();
     assert_eq!(blaze::configuration(&project).unwrap(), initial);
     fs::write(root.path().join("Cargo.toml"), "different").unwrap();
@@ -840,12 +877,15 @@ fn blaze_metadata_signature_changes_for_manifests_not_body_edits() {
 fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
     use super::super::args::{self, Compiler};
     let plain = args::parse("dev", &[]).unwrap().unwrap();
+
     assert_eq!(plain.compiler, Compiler::Cargo);
     assert!(!plain.live);
     assert!(plain.blaze_binary.is_none());
     let mut live = args::parse("dev", &["--live".into()]).unwrap().unwrap();
+
     assert_eq!(live.compiler, Compiler::Blaze);
     assert!(live.live);
+
     for args in [
         vec!["--live", "--target=web"],
         vec!["--live", "--preview"],
@@ -859,9 +899,11 @@ fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
             .is_err()
         );
     }
+
     assert!(args::parse("build", &["--live".into()]).is_err());
     live.blaze_binary = Some(std::path::PathBuf::from("/private/pinned/blaze"));
     let mut command = std::process::Command::new(live.blaze_binary.as_ref().unwrap());
+
     blaze::configure(&mut command, &live);
     assert_eq!(command.get_program(), "/private/pinned/blaze");
     let env: std::collections::BTreeMap<_, _> = command
@@ -873,6 +915,7 @@ fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
             )
         })
         .collect();
+
     for (key, value) in [
         ("BLAZE_PROC_MACRO_WASM", "0"),
         ("BLAZE_PROC_MACRO_SERVER", "0"),
@@ -900,8 +943,10 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
             "prepare_reload" => None,
             _ => Some(Value::Null),
         });
+
         let root = runtime.directory.path();
         let artifact = root.join("artifact");
+
         fs::write(&artifact, "fixture executable").unwrap();
         let args = Args {
             dev: true,
@@ -909,10 +954,13 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
             compiler: super::super::Compiler::Blaze,
             ..Args::default()
         };
+
         let cancelled = AtomicBool::new(false);
         let session = root.join("session");
+
         fs::create_dir(&session).unwrap();
         let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+
         supervisor.app = Some(
             Processes::new(&cancelled)
                 .start(Command::new("/bin/sleep").arg("300"))
@@ -920,9 +968,11 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
         );
         let pid = supervisor.app.as_ref().unwrap().0.id();
         let mut instance = runtime.instance.clone();
+
         instance["pid"] = json!(pid);
         write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
         let live = supervisor.live.as_mut().unwrap();
+
         live.identity = Some(blaze::identity(&artifact).unwrap());
         live.restart = Some("view layout changed".into());
         live.sequence = 7;
@@ -947,6 +997,7 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
         if !busy {
             // A later edit's distinct outcome must still be allowed to request restart.
             let live = supervisor.live.as_mut().unwrap();
+
             assert!(live.observe(&json!({"sequence":1,"kind":"live_restart_requested","fields":{"reason":"new edit"}})));
             assert!(live.restart.is_some());
             assert!(supervisor.publication(3, &artifact).unwrap());
@@ -958,6 +1009,7 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
 #[test]
 fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
     use super::super::Compiler;
+
     for (compiler, require_state, blocked) in [
         (Compiler::Blaze, false, false),
         (Compiler::Blaze, true, true),
@@ -970,7 +1022,9 @@ fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
                 replies(value, index)
             }
         });
+
         let root = runtime.directory.path();
+
         let args = Args {
             dev: true,
             json: true,
@@ -978,13 +1032,17 @@ fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
             require_state,
             ..Args::default()
         };
+
         let cancelled = AtomicBool::new(false);
         let session = root.join("session");
+
         fs::create_dir(&session).unwrap();
         let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
         let result = supervisor.prepare(&runtime.instance, &root.join("artifact"));
+
         if blocked {
             let error = result.unwrap_err().to_string();
+
             assert!(
                 error.contains("standalone root state is not checkpointed"),
                 "{error}"
@@ -1016,7 +1074,9 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
                 {"id":4,"destination":{"route":"other"},"state":{"schema":"other","data":{"count":42}}}
             ]}]})
         };
+
         let captured = checkpoint.clone();
+
         let runtime = Runtime::new(move |value, index| {
             if value["type"] == "partial_checkpoint" {
                 Some(captured.clone())
@@ -1024,8 +1084,10 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
                 replies(value, index)
             }
         });
+
         let root = runtime.directory.path();
         let artifact = root.join("artifact");
+
         fs::write(&artifact, "#!/bin/sh\nprintf '%s' \"$RAKE_LIVE_RESTART_NOTICE\" > notice.txt\nexec /bin/sleep 300\n").unwrap();
         fs::set_permissions(&artifact, fs::Permissions::from_mode(0o755)).unwrap();
         let args = Args {
@@ -1034,10 +1096,13 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
             compiler: Compiler::Blaze,
             ..Args::default()
         };
+
         let cancelled = AtomicBool::new(false);
         let session = root.join("session");
+
         fs::create_dir(&session).unwrap();
         let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+
         supervisor.app = Some(
             Processes::new(&cancelled)
                 .start(Command::new("/bin/sleep").arg("300"))
@@ -1045,6 +1110,7 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         );
         let old_pid = supervisor.app.as_ref().unwrap().0.id();
         let mut instance = runtime.instance.clone();
+
         instance["pid"] = json!(old_pid);
         write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
         supervisor.live.as_mut().unwrap().restart = Some(
@@ -1052,6 +1118,7 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         );
         supervisor.publish(2, &artifact).unwrap();
         let pid = supervisor.app.as_ref().unwrap().0.id();
+
         assert_ne!(pid, old_pid);
         assert_eq!(read_json(&supervisor.checkpoint).unwrap(), checkpoint);
         let message: String = if case == "full" {
@@ -1061,16 +1128,20 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         } else {
             "restarted fixture: field change in Toolkit; app state was not preserved for Home (entry-2); registered checkpoints restored".into()
         };
+
         if case == "full" {
             assert!(supervisor.status["restart_notice"].is_null());
         } else {
             assert_eq!(supervisor.status["restart_notice"], message);
         }
+
         let deadline = Instant::now() + Duration::from_secs(2);
+
         while !root.join("notice.txt").exists() {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(5));
         }
+
         assert_eq!(
             fs::read_to_string(root.join("notice.txt")).unwrap(),
             message
@@ -1091,8 +1162,10 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
                 replies(value, index)
             }
         });
+
         let root = runtime.directory.path();
         let artifact = root.join("artifact");
+
         fs::write(&artifact, "old executable").unwrap();
         let args = Args {
             dev: true,
@@ -1101,10 +1174,13 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
             require_state: true,
             ..Args::default()
         };
+
         let cancelled = AtomicBool::new(false);
         let session = root.join("session");
+
         fs::create_dir(&session).unwrap();
         let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+
         supervisor.app = Some(
             Processes::new(&cancelled)
                 .start(Command::new("/bin/sleep").arg("300"))
@@ -1112,9 +1188,11 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
         );
         let pid = supervisor.app.as_ref().unwrap().0.id();
         let mut instance = runtime.instance.clone();
+
         instance["pid"] = json!(pid);
         write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
         let live = supervisor.live.as_mut().unwrap();
+
         live.identity = Some(blaze::identity(&artifact).unwrap());
         live.kind = blaze::BuildKind::Edit;
         live.restart = Some("field change".into());
@@ -1128,23 +1206,28 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
             !supervisor.checkpoint.exists(),
             "a probe must not replace the recovery checkpoint"
         );
+
         if case == "full" {
             assert_eq!(supervisor.status["phase"], "rebuild_required");
         } else {
             assert_eq!(supervisor.status["phase"], "reload_blocked");
             assert!(supervisor.live.as_ref().unwrap().restart.is_none());
         }
+
         if case == "missing" {
             assert_eq!(
                 supervisor.status["error"],
                 "{\"Reload\":{\"MissingState\":2}}"
             );
         }
+
         let calls = runtime.calls.lock().unwrap();
+
         let aborted = calls.iter().any(|call| {
             call["message"]["value"]["type"] == "finish_reload"
                 && call["message"]["value"]["applied"] == false
         });
+
         assert_eq!(aborted, case != "root");
         drop(calls);
         supervisor.finish().unwrap();

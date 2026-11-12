@@ -82,6 +82,7 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
             if args.live {
                 args.blaze_binary = Some(blaze_install::ensure()?);
             }
+
             let processes = Processes::new(&cancelled);
 
             if command == "doctor" {
@@ -267,9 +268,11 @@ impl Project {
             .ok_or("package directory missing")?;
 
         let assets = web::bundle_assets(package, directory, !args.web)?;
+
         let available_targets = package["targets"]
             .as_array()
             .ok_or("Cargo targets missing")?;
+
         let targets: Vec<_> = available_targets
             .iter()
             .filter(|target| {
@@ -289,6 +292,7 @@ impl Project {
                     .is_none_or(|name| target["name"] == *name)
             })
             .collect();
+
         if targets.is_empty() && !args.web {
             let binaries: Vec<_> = available_targets
                 .iter()
@@ -299,6 +303,7 @@ impl Project {
                 })
                 .filter_map(|target| target["name"].as_str())
                 .collect();
+
             let name = string(package, "name")?;
 
             if binaries.is_empty() {
@@ -315,6 +320,7 @@ impl Project {
             )
             .into());
         }
+
         if targets.len() != 1 {
             return Err("select one binary with --bin, or a single cdylib for Web".into());
         }

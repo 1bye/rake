@@ -4,6 +4,7 @@ use super::super::{Args, Processes, Project, Result, string};
 use super::{MAX_BYTES, Supervisor, exchange};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+
 use std::{
     collections::BTreeMap,
     ffi::OsString,
@@ -53,12 +54,15 @@ impl Live {
         else {
             return false;
         };
+
         self.cursor = cursor;
+
         match record["kind"].as_str() {
             Some("live_patch_applied") => {
                 let Some(sequence) = record["fields"]["sequence"].as_u64() else {
                     return false;
                 };
+
                 self.sequence = sequence;
                 self.restart = None;
                 self.declined = None;
@@ -67,6 +71,7 @@ impl Live {
                 let Some(reason) = record["fields"]["reason"].as_str() else {
                     return false;
                 };
+
                 self.restart = Some(reason.into());
                 self.declined = None;
             }
@@ -74,10 +79,12 @@ impl Live {
                 let Some(reason) = record["fields"]["reason"].as_str() else {
                     return false;
                 };
+
                 self.declined = Some(reason.into());
             }
             _ => return false,
         }
+
         true
     }
 
@@ -104,6 +111,7 @@ pub(super) fn environment(mut env: BTreeMap<OsString, OsString>) -> BTreeMap<OsS
     ] {
         env.insert(name.into(), value.into());
     }
+
     for (name, value) in [
         ("RUST_MIN_STACK", "67108864"),
         ("BLAZE_MEMORY_MAX", "16G"),
@@ -113,11 +121,13 @@ pub(super) fn environment(mut env: BTreeMap<OsString, OsString>) -> BTreeMap<OsS
     ] {
         env.entry(name.into()).or_insert_with(|| value.into());
     }
+
     env
 }
 
 pub(super) fn configure(command: &mut Command, args: &Args) {
     command.envs(environment(std::env::vars_os().collect()));
+
     if let Some(binary) = args.blaze_binary.as_ref()
         && let Some(dir) = binary.parent()
     {
@@ -137,6 +147,7 @@ fn socket(args: &Args) -> Result<PathBuf> {
     {
         return Ok(dir.join("runtime/daemon.sock"));
     }
+
     let home = std::env::var_os("BLAZE_HOME")
         .map(PathBuf::from)
         .or_else(|| {
@@ -144,6 +155,7 @@ fn socket(args: &Args) -> Result<PathBuf> {
         })
         .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".cache/blaze")))
         .ok_or("no Blaze home directory")?;
+
     Ok(home.join("daemon.sock"))
 }
 
@@ -158,6 +170,7 @@ fn escape(value: &str) -> String {
 fn unescape(value: &str) -> String {
     let mut chars = value.chars();
     let mut output = String::new();
+
     while let Some(ch) = chars.next() {
         if ch == '\\' {
             match chars.next() {
@@ -171,6 +184,7 @@ fn unescape(value: &str) -> String {
             output.push(ch);
         }
     }
+
     output
 }
 
@@ -186,17 +200,22 @@ pub(super) fn edit(
         escape(&std::path::absolute(path)?.to_string_lossy()),
         escape(text)
     );
+
     let mut connection = UnixStream::connect(socket)?;
+
     connection.set_nonblocking(true)?;
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut written = 0;
     let mut response = Vec::new();
     let mut buffer = [0; 65536];
+
     loop {
         processes.check_cancelled()?;
+
         if Instant::now() >= deadline {
             return Err("Blaze edit request timed out".into());
         }
+
         let result = if written < request.len() {
             connection
                 .write(&request.as_bytes()[written..])
@@ -205,10 +224,12 @@ pub(super) fn edit(
                 })
         } else {
             let remaining = (MAX_BYTES + 1 - response.len()).min(buffer.len());
+
             connection.read(&mut buffer[..remaining]).inspect(|&count| {
                 response.extend_from_slice(&buffer[..count]);
             })
         };
+
         match result {
             Ok(0) => return Err("Blaze edit response is truncated".into()),
             Ok(_) => {}
@@ -222,14 +243,18 @@ pub(super) fn edit(
             }
             Err(error) => return Err(error.into()),
         }
+
         if response.len() > MAX_BYTES {
             return Err("Blaze edit response exceeds the limit".into());
         }
+
         if let Some(end) = response.iter().position(|byte| *byte == b'\n') {
             let reply = std::str::from_utf8(&response[..end])?.trim_end_matches('\r');
+
             if !reply.starts_with("ok") {
                 return Err(unescape(reply).into());
             }
+
             return Ok(());
         }
     }
@@ -239,24 +264,32 @@ pub(super) fn identity(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path)?;
     let mut bytes = [0; 32];
     let count = file.read(&mut bytes)?;
+
     if count >= 4 && bytes[..4] == [0xcf, 0xfa, 0xed, 0xfe] {
         if count != 32 {
             return Err("truncated Mach-O header".into());
         }
+
         let commands = u32::from_le_bytes(bytes[16..20].try_into()?);
         let size = u32::from_le_bytes(bytes[20..24].try_into()?) as usize;
+
         if commands > 4096 || size > 16 * MAX_BYTES {
             return Err("invalid Mach-O load command table".into());
         }
+
         let mut data = vec![0; size];
+
         file.read_exact(&mut data)?;
         let mut offset = 0;
+
         for _ in 0..commands {
             let header = data
                 .get(offset..offset + 8)
                 .ok_or("truncated Mach-O load command")?;
+
             let command = u32::from_le_bytes(header[..4].try_into()?);
             let length = u32::from_le_bytes(header[4..].try_into()?) as usize;
+
             if length < 8
                 || offset
                     .checked_add(length)
@@ -264,10 +297,12 @@ pub(super) fn identity(path: &Path) -> Result<String> {
             {
                 return Err("invalid Mach-O load command size".into());
             }
+
             if command == 0x1b {
                 if length != 24 {
                     return Err("invalid LC_UUID size".into());
                 }
+
                 return Ok(format!(
                     "uuid:{}",
                     data[offset + 8..offset + 24]
@@ -276,20 +311,28 @@ pub(super) fn identity(path: &Path) -> Result<String> {
                         .collect::<String>()
                 ));
             }
+
             offset += length;
         }
+
         return Err("Blaze executable has no LC_UUID".into());
     }
+
     let mut digest = Sha256::new();
+
     digest.update(&bytes[..count]);
     let mut buffer = [0; 65536];
+
     loop {
         let count = file.read(&mut buffer)?;
+
         if count == 0 {
             break;
         }
+
         digest.update(&buffer[..count]);
     }
+
     Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
@@ -297,14 +340,17 @@ pub(super) fn artifact(target: &Path, profile: &str, name: &str) -> Result<PathB
     let copied = target.join(profile).join(name);
     let id = identity(&copied)?;
     let mut candidates = Vec::new();
+
     if let Ok(entries) = fs::read_dir(target.join("blaze/whole")) {
         for entry in entries {
             let path = entry?.path().join(name);
+
             if path.is_file() && identity(&path)? == id {
                 candidates.push(path);
             }
         }
     }
+
     if candidates.len() != 1 {
         return Err(format!(
             "expected one daemon-watched Blaze executable matching {}; found {}",
@@ -313,11 +359,13 @@ pub(super) fn artifact(target: &Path, profile: &str, name: &str) -> Result<PathB
         )
         .into());
     }
+
     Ok(candidates.remove(0))
 }
 
 pub(super) fn configuration(project: &Project) -> Result<[u8; 32]> {
     let mut digest = Sha256::new();
+
     for root in &project.watch_roots {
         for name in [
             "Cargo.toml",
@@ -326,7 +374,9 @@ pub(super) fn configuration(project: &Project) -> Result<[u8; 32]> {
             ".cargo/config",
         ] {
             let path = root.join(name);
+
             digest.update(path.as_os_str().as_encoded_bytes());
+
             if path.is_file() {
                 digest.update(fs::read(path)?);
             } else {
@@ -334,6 +384,7 @@ pub(super) fn configuration(project: &Project) -> Result<[u8; 32]> {
             }
         }
     }
+
     Ok(digest.finalize().into())
 }
 
@@ -343,10 +394,13 @@ fn compiler_command(args: &Args) -> Result<Command> {
             .blaze_binary
             .as_ref()
             .ok_or("the pinned live compiler was not initialized")?;
+
         // The thin `blaze` launcher can honor a workspace pin to another release.
         // Enter this exact engine directly so --live cannot fetch/run another Blaze.
         let mut command = Command::new(binary.with_file_name("blaze-engine"));
+
         command.arg("cargo");
+
         Ok(command)
     } else {
         Ok(Command::new("blaze"))
@@ -355,6 +409,7 @@ fn compiler_command(args: &Args) -> Result<Command> {
 
 pub(super) fn build(project: &Project, args: &Args, processes: &Processes<'_>) -> Result<PathBuf> {
     let mut command = compiler_command(args)?;
+
     command
         .args(["build", "--locked", "--events=json", "--manifest-path"])
         .arg(string(&project.package, "manifest_path")?)
@@ -364,14 +419,18 @@ pub(super) fn build(project: &Project, args: &Args, processes: &Processes<'_>) -
         .arg(&project.target)
         .args(["--config", "profile.dev.debug=\"line-tables-only\""])
         .current_dir(&project.root);
+
     if args.release {
         command.arg("--release");
     }
+
     if let Some(features) = project.build_features(args) {
         command.arg("--features").arg(features);
     }
+
     configure(&mut command, args);
     processes.run_output(&mut command, |_| {})?;
+
     artifact(
         &project.target_directory,
         if args.release { "release" } else { "debug" },
@@ -393,16 +452,21 @@ pub(super) fn update(
     {
         let result = (|| {
             let socket = socket(args)?;
+
             for path in paths {
                 edit(&socket, path, &fs::read_to_string(path)?, processes)?;
             }
+
             Ok::<_, Box<dyn std::error::Error>>(())
         })();
+
         if result.is_ok() {
             return Ok((previous.to_owned(), BuildKind::Edit));
         }
+
         processes.check_cancelled()?;
     }
+
     Ok((build(project, args, processes)?, BuildKind::Full))
 }
 
@@ -416,10 +480,13 @@ impl Supervisor<'_> {
         {
             return Ok(());
         }
+
         let Some(instance) = self.instance() else {
             return Ok(());
         };
+
         let cursor = self.live.as_ref().map_or(0, |live| live.cursor);
+
         let snapshot = exchange(
             &instance,
             "query",
@@ -428,10 +495,12 @@ impl Supervisor<'_> {
             None,
             self.cancelled,
         )?;
+
         if let Some(records) = snapshot["records"].as_array() {
             for record in records {
                 if self.live.as_mut().is_some_and(|live| live.observe(record)) {
                     let mut fields = record["fields"].clone();
+
                     fields["runtime_pid"] = self.status["runtime_pid"].clone();
                     self.record(
                         record["kind"].as_str().ok_or("live event kind missing")?,
@@ -440,6 +509,7 @@ impl Supervisor<'_> {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -453,11 +523,14 @@ impl Supervisor<'_> {
         {
             return Ok(());
         }
+
         let instance = self
             .instance()
             .ok_or("full live boundary requires the app's control endpoint")?;
+
         let id = uuid::Uuid::new_v4().to_string();
         let start = Instant::now();
+
         self.live.as_mut().ok_or("live state missing")?.boundary =
             Some((instance.clone(), id.clone()));
         exchange(
@@ -468,12 +541,15 @@ impl Supervisor<'_> {
             Some(&format!("{id}/prepare")),
             self.cancelled,
         )?;
+
         while self.query(&instance, json!({"type":"reload"}))?["phase"] != "ready" {
             if start.elapsed() > Duration::from_secs(15) {
                 return Err("live reload boundary timed out".into());
             }
+
             thread::sleep(Duration::from_millis(10));
         }
+
         self.record(
             "live_boundary_prepared",
             json!({"boundary_id":id,"took_us":start.elapsed().as_micros() as u64}),
@@ -484,9 +560,11 @@ impl Supervisor<'_> {
         let Some((instance, id)) = self.live.as_mut().and_then(|live| live.boundary.take()) else {
             return Ok(());
         };
+
         // Cleanup also runs on cancellation, with the same keyed abort as preparation.
         let cleanup = std::sync::atomic::AtomicBool::new(false);
         let deadline = Instant::now() + Duration::from_secs(2);
+
         loop {
             let status = exchange(
                 &instance,
@@ -496,9 +574,11 @@ impl Supervisor<'_> {
                 None,
                 &cleanup,
             )?;
+
             if !matches!(status["phase"].as_str(), Some("ready" | "quiescing")) {
                 return Ok(());
             }
+
             if !applied || Instant::now() >= deadline {
                 exchange(
                     &instance,
@@ -508,8 +588,10 @@ impl Supervisor<'_> {
                     Some(&format!("{id}/abort")),
                     &cleanup,
                 )?;
+
                 return Ok(());
             }
+
             thread::sleep(Duration::from_millis(10));
         }
     }
@@ -517,6 +599,7 @@ impl Supervisor<'_> {
 
 pub(super) fn stamp_identity(stamps: &super::fingerprint::Stamps) -> [u8; 32] {
     let mut digest = Sha256::new();
+
     for (path, stamp) in stamps {
         digest.update(path.as_os_str().as_encoded_bytes());
         digest.update(stamp.0.to_le_bytes());
@@ -524,19 +607,23 @@ pub(super) fn stamp_identity(stamps: &super::fingerprint::Stamps) -> [u8; 32] {
         digest.update(stamp.2.to_le_bytes());
         digest.update(stamp.3.to_le_bytes());
     }
+
     digest.finalize().into()
 }
 
 #[cfg(test)]
 mod pinned_socket_tests {
     use super::*;
+
     #[test]
     fn pinned_edits_use_the_same_home_as_the_build_and_app() {
         let args = Args {
             blaze_binary: Some(PathBuf::from("/pinned/blaze")),
             ..Args::default()
         };
+
         let mut command = Command::new("/app");
+
         configure(&mut command, &args);
         let home = command
             .get_envs()
@@ -544,6 +631,7 @@ mod pinned_socket_tests {
             .unwrap()
             .1
             .unwrap();
+
         assert_eq!(
             socket(&args).unwrap(),
             PathBuf::from(home).join("daemon.sock")
@@ -554,15 +642,18 @@ mod pinned_socket_tests {
 #[cfg(test)]
 mod pinned_command_tests {
     use super::*;
+
     #[test]
     fn live_bypasses_the_workspace_version_redirector_and_never_uses_path() {
         let mut args = Args {
             live: true,
             ..Args::default()
         };
+
         assert!(compiler_command(&args).is_err());
         args.blaze_binary = Some(PathBuf::from("/pinned/blaze"));
         let command = compiler_command(&args).unwrap();
+
         assert_eq!(command.get_program(), "/pinned/blaze-engine");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),

@@ -101,8 +101,10 @@ fn walk(
                     stamp,
                 );
             }
+
             continue;
         }
+
         match fs::File::open(&path) {
             Ok(mut file) => {
                 let mut buffer = [0; 65536];
@@ -157,8 +159,10 @@ pub(super) fn stamps(project: &Project, output: Option<&Path>) -> Result<Stamps>
     let mut digest = Sha256::new();
     let mut visited = HashSet::new();
     let mut stamps = Stamps::new();
+
     for root in &project.watch_roots {
         walk(root, output, &mut visited, &mut digest, Some(&mut stamps))?;
     }
+
     Ok(stamps)
 }

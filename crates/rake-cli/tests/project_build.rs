@@ -886,6 +886,7 @@ fn native_dev_explains_why_a_library_only_package_cannot_run() {
 
     assert!(!output.status.success());
     let error = String::from_utf8(output.stderr).unwrap();
+
     assert!(
         error.contains("package 'fixture' has no native binary target"),
         "{error}"
@@ -902,6 +903,7 @@ fn native_dev_lists_available_binaries_for_a_misspelled_name() {
     let fixture = Fixture::new();
     let path = fixture.root.join("metadata.json");
     let mut metadata: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
     metadata["packages"][0]["targets"] = json!([
         {"name":"actual-app","kind":["bin"],"crate_types":["bin"]}
     ]);
@@ -910,6 +912,7 @@ fn native_dev_lists_available_binaries_for_a_misspelled_name() {
 
     assert!(!output.status.success());
     let error = String::from_utf8(output.stderr).unwrap();
+
     assert!(error.contains("no binary named 'missing'"), "{error}");
     assert!(error.contains("available binaries: actual-app"), "{error}");
     assert!(!fixture.root.join("build-args").exists());

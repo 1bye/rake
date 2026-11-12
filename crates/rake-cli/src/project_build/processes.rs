@@ -118,14 +118,18 @@ impl<'a> Processes<'a> {
     ) -> Result<()> {
         let mut pending = Vec::new();
         let mut tail: Vec<String> = Vec::new();
+
         let blaze = std::path::Path::new(command.get_program())
             .file_name()
             .is_some_and(|name| name == "blaze" || name == "blaze-engine");
+
         let mut structured_error = None;
         let mut diagnostic_tail = None;
+
         let mut line = |bytes: &[u8], pid| -> Result<()> {
             let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
             let message = serde_json::from_str::<serde_json::Value>(&text).ok();
+
             if blaze {
                 if let Some(finished) = message
                     .as_ref()
@@ -134,10 +138,12 @@ impl<'a> Processes<'a> {
                 {
                     structured_error = finished["summary"]["error"].as_str().map(str::to_owned);
                 }
+
                 if text.starts_with("blaze time:") && diagnostic_tail.is_none() {
                     diagnostic_tail = Some(last_chars(&tail.concat(), 8000));
                 }
             }
+
             let printed = match message {
                 Some(message) if message.is_object() => {
                     if message["reason"] == "compiler-artifact" {

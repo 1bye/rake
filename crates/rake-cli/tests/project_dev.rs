@@ -126,9 +126,11 @@ fi
             .env("BLAZE_HOME", self.directory.path())
             .args(["dev", "--json"]);
         command.env_remove("RAKE_REQUIRE_STATE");
+
         if let Some(value) = require_state {
             command.env("RAKE_REQUIRE_STATE", value);
         }
+
         if no_open {
             command.arg("--no-open");
         }
@@ -568,6 +570,7 @@ if [ "$count" -gt 2 ]; then /bin/cat "$FIXTURE/../extended-metadata.json"; else 
 "#);
     // Keep the blocked-publication assertion under the opt-in strict policy.
     let mut running = fixture.start(&["--require-state"]);
+
     assert_eq!(running.phase("watching")["published"], 2);
     assert!(!running.session.join("builds/1").exists());
     fs::write(external.join("Cargo.toml"), "updated dependency").unwrap();
@@ -1027,6 +1030,7 @@ fn blaze_direct_edits_fall_back_for_structured_errors_and_keep_the_old_process()
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
     let fixture = Fixture::new();
+
     fixture.tool("blaze",r#"
 printf '%s\n' "$@" > "$CONTROL/blaze-args"
 printf '%s,%s,%s,%s\n' "$BLAZE_PROC_MACRO_WASM" "$BLAZE_PROC_MACRO_SERVER" "$BLAZE_SANDBOX" "$LIBLZMA_NO_PKG_CONFIG" > "$CONTROL/blaze-env"
@@ -1040,11 +1044,13 @@ fi
 /bin/cp "$CONTROL/app" "$FIXTURE/target/blaze/whole/worker/fixture"
 "#);
     let listener = UnixListener::bind(fixture.directory.path().join("daemon.sock")).unwrap();
+
     listener.set_nonblocking(true).unwrap();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopping = stop.clone();
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let seen = requests.clone();
+
     let daemon = thread::spawn(move || {
         while !stopping.load(std::sync::atomic::Ordering::Acquire) {
             match listener.accept() {
@@ -1053,14 +1059,17 @@ fi
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
                     let mut line = String::new();
+
                     BufReader::new(&connection).read_line(&mut line).unwrap();
                     let mut requests = seen.lock().unwrap();
+
                     requests.push(line);
                     let reply = if requests.len() == 2 {
                         "error\tcompile failed\n"
                     } else {
                         "ok\n"
                     };
+
                     let _ = connection.write_all(reply.as_bytes());
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1070,9 +1079,11 @@ fi
             }
         }
     });
+
     let mut running = fixture.start(&["--compiler", "blaze"]);
     let first = running.phase("watching");
     let pid = first["runtime_pid"].as_u64().unwrap();
+
     assert_eq!(
         fs::read_to_string(running.control.join("blaze-env"))
             .unwrap()
@@ -1080,11 +1091,13 @@ fi
         "0,0,on,1"
     );
     let arguments = fs::read_to_string(running.control.join("blaze-args")).unwrap();
+
     assert!(arguments.contains("--bin\nfixture"));
     assert!(arguments.contains("framework/devtools,framework/live"));
     fs::write(fixture.root.join("src/main.rs"), "direct source\n").unwrap();
     wait(|| {
         let s = running.status();
+
         (s["phase"] == "watching"
             && s["build"].as_u64().unwrap() > first["build"].as_u64().unwrap())
         .then_some(())
@@ -1100,6 +1113,7 @@ fi
     fs::write(running.control.join("fail-blaze"), "fail").unwrap();
     fs::write(fixture.root.join("src/main.rs"), "compile error").unwrap();
     let failed = running.phase("build_failed");
+
     assert!(
         failed["error"]
             .as_str()
@@ -1123,6 +1137,7 @@ fi
     stop.store(true, std::sync::atomic::Ordering::Release);
     daemon.join().unwrap();
     let requests = requests.lock().unwrap();
+
     assert_eq!(requests.len(), 3);
     assert!(requests[0].ends_with("direct source\\n\n"));
 }
@@ -1132,17 +1147,21 @@ fn require_state_environment_blocks_then_accepts_a_later_edit() {
     let fixture = Fixture::new();
     let mut running = fixture.start_environment(&[], true, Some("1"));
     let pid = running.phase("watching")["runtime_pid"].as_u64().unwrap() as u32;
+
     fs::write(fixture.root.join("src/main.rs"), "second").unwrap();
     let first = running.phase("reload_blocked");
+
     assert!(first["error"].as_str().unwrap().contains("--require-state"));
     assert!(alive(pid));
     fs::write(fixture.root.join("src/main.rs"), "third").unwrap();
     let next = wait(|| {
         let status = running.status();
+
         (status["phase"] == "reload_blocked"
             && status["build"].as_u64()? > first["build"].as_u64()?)
         .then_some(status)
     });
+
     assert_eq!(next["runtime_pid"], pid);
     running.stop(libc::SIGTERM);
 }

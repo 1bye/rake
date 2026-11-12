@@ -146,9 +146,11 @@ pub(crate) fn status_notice(cx: &gpui::App) -> Option<gpui::AnyElement> {
     {
         super::live::status_notice(cx)
     }
+
     #[cfg(any(not(feature = "live"), target_family = "wasm"))]
     {
         let _ = cx;
+
         None
     }
 }
