@@ -17,10 +17,6 @@ use serde_json::{Value, json};
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::{
-        fs::{DirBuilderExt, PermissionsExt},
-        process::ExitStatusExt,
-    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -31,9 +27,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::{
+    fs::{DirBuilderExt, PermissionsExt},
+    process::ExitStatusExt,
+};
+
 use transport::{MAX_BYTES, exchange};
 
 pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
+    #[cfg(windows)]
+    if args.preview {
+        return Err("Native preview capture is available only on macOS".into());
+    }
+
     if args.status {
         let session = args
             .session
@@ -59,11 +66,15 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
     args.native_reloader = args.native_reloader.map(fs::canonicalize).transpose()?;
     let project = Project::load(&args, &Processes::new(cancelled))?;
 
+    #[cfg(unix)]
     let session = tempfile::Builder::new()
         .prefix("rake-dev-")
         .permissions(fs::Permissions::from_mode(0o700))
         .tempdir_in("/tmp")?
         .keep();
+
+    #[cfg(windows)]
+    let session = super::windows::temporary("rake-dev-")?.keep();
 
     let mut supervisor = Supervisor::new(&args, project, session, cancelled)?;
     let result = supervisor.run();
@@ -73,6 +84,11 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
 
     result
 }
+
+#[cfg(unix)]
+type HelperDirectory = tempfile::TempDir;
+#[cfg(windows)]
+type HelperDirectory = super::windows::Directory;
 
 struct Supervisor<'a> {
     args: &'a Args,
@@ -85,7 +101,7 @@ struct Supervisor<'a> {
     cdp: Option<ProcessGroup>,
     http: Option<super::serve::Server>,
     embedded: Option<ProcessGroup>,
-    helpers: Option<tempfile::TempDir>,
+    helpers: Option<HelperDirectory>,
     launch_url: Option<String>,
     output: SharedOutput,
     readers: Vec<JoinHandle<std::result::Result<(), String>>>,
@@ -101,7 +117,10 @@ impl<'a> Supervisor<'a> {
     ) -> Result<Self> {
         let control = session.join("control");
 
+        #[cfg(unix)]
         fs::DirBuilder::new().mode(0o700).create(&control)?;
+        #[cfg(windows)]
+        rake_client::private::create_directory(&control)?;
         fs::create_dir(session.join("builds"))?;
         let status = json!({"protocol":1, "pid":std::process::id(), "target":if args.web {"web"} else {"desktop"}, "package":project.package["name"],
             "phase":"starting", "published":0, "build":0, "error":null,
@@ -440,9 +459,12 @@ impl<'a> Supervisor<'a> {
 
         if let Some(status) = app.0.try_wait()? {
             if self.status["app_running"] == true {
+                #[cfg(unix)]
                 let code = status
                     .code()
                     .unwrap_or_else(|| -status.signal().unwrap_or(1));
+                #[cfg(windows)]
+                let code = status.code().unwrap_or(1);
 
                 self.output
                     .lock()
@@ -697,5 +719,5 @@ fn remove_file(path: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

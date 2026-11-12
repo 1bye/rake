@@ -305,6 +305,29 @@ pub(super) fn open(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+pub(super) fn create_directory(path: &Path) -> io::Result<()> {
+    let _parents = parents(path)?;
+    let security = Security::current_user()?;
+    let attributes = security.attributes();
+    let name = wide(path)?;
+    // SAFETY: name and attributes remain live through this synchronous call.
+    if unsafe { CreateDirectoryW(name.as_ptr(), &attributes) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    validate(
+        &raw_open(
+            path,
+            READ_CONTROL | FILE_READ_ATTRIBUTES,
+            OPEN_EXISTING,
+            None,
+            false,
+        )?,
+        true,
+        true,
+    )
+}
+
 pub(super) fn prepare_directory(path: &Path) -> io::Result<()> {
     let _parents = parents(path)?;
     let security = Security::current_user()?;

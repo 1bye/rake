@@ -74,6 +74,26 @@ pub(super) fn launch(command: &mut Command) -> std::io::Result<u32> {
     Ok(pid)
 }
 
+/// Starts a detached opener without enrolling it in an owned kill-on-close Job.
+#[cfg(windows)]
+pub(super) fn launch(command: &mut Command) -> std::io::Result<u32> {
+    use std::{os::windows::process::CommandExt, process::Stdio};
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+        .spawn()?;
+    let pid = child.id();
+
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
+    Ok(pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,8 @@
 //! Native preview orchestration over the broker, with owned encoders and expiring references.
+#[cfg(unix)]
+mod capture;
+#[cfg(windows)]
+#[path = "capture_unavailable.rs"]
 mod capture;
 mod selection;
 mod socket;
@@ -349,21 +353,24 @@ impl Preview {
 
         let result = (|| -> std::io::Result<()> {
             stream.set_write_timeout(Some(Duration::from_millis(500)))?;
-            use std::os::fd::AsRawFd;
-            let size: libc::c_int = 64 * 1024;
-
-            // SAFETY: stream is live; size points to the correctly sized socket option.
-            if unsafe {
-                libc::setsockopt(
-                    stream.as_raw_fd(),
-                    libc::SOL_SOCKET,
-                    libc::SO_SNDBUF,
-                    (&size as *const libc::c_int).cast(),
-                    std::mem::size_of_val(&size) as libc::socklen_t,
-                )
-            } < 0
+            #[cfg(unix)]
             {
-                return Err(std::io::Error::last_os_error());
+                use std::os::fd::AsRawFd;
+                let size: libc::c_int = 64 * 1024;
+
+                // SAFETY: stream is live; size points to the correctly sized socket option.
+                if unsafe {
+                    libc::setsockopt(
+                        stream.as_raw_fd(),
+                        libc::SOL_SOCKET,
+                        libc::SO_SNDBUF,
+                        (&size as *const libc::c_int).cast(),
+                        std::mem::size_of_val(&size) as libc::socklen_t,
+                    )
+                } < 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
 
             write!(
@@ -427,5 +434,5 @@ fn token() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

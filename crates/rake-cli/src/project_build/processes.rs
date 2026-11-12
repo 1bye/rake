@@ -50,14 +50,12 @@ impl<'a> Processes<'a> {
         }
     }
 
-    #[cfg(unix)]
     pub(super) fn with_stopping(mut self, stopping: &'a AtomicBool) -> Self {
         self.stopping = Some(stopping);
 
         self
     }
 
-    #[cfg(unix)]
     pub(super) fn with_output(mut self, sink: &'a OutputSink<'a>) -> Self {
         self.output_sink = Some(sink);
 

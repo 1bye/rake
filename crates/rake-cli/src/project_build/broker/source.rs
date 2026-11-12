@@ -1,9 +1,13 @@
 //! Exact captured-source CLI invocation; paths are resolved by the existing ctl owner.
-use super::{Error, MAX_BYTES, Options, Result};
+#[cfg(unix)]
+use super::MAX_BYTES;
+use super::{Error, Options, Result};
+#[cfg(unix)]
 use crate::project_build::processes::ProcessGroup;
 use rake_http::CancellationToken;
 use serde_json::Value;
 
+#[cfg(unix)]
 use std::{
     io::Read,
     os::{fd::AsRawFd, unix::process::CommandExt},
@@ -57,6 +61,7 @@ pub(super) fn arguments(body: &Value) -> Result<Vec<String>> {
     Ok(args)
 }
 
+#[cfg(unix)]
 pub(super) fn open(
     options: &Options,
     runtime: &str,
@@ -144,6 +149,7 @@ pub(super) fn open(
     }
 }
 
+#[cfg(unix)]
 fn drain(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> std::io::Result<bool> {
     let mut buffer = [0; 8192];
 
@@ -162,4 +168,12 @@ fn drain(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> std::io::Result<bool> {
             Err(error) => return Err(error),
         }
     }
+}
+
+#[cfg(windows)]
+pub(super) fn open(_: &Options, _: &str, _: &[String], _: &CancellationToken) -> Result<Value> {
+    Err(Error::new(
+        502,
+        "Native source opening is not available on Windows",
+    ))
 }

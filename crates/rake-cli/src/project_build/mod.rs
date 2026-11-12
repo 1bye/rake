@@ -2,24 +2,25 @@
 //! The native HTTP origin owns application assets, the broker and preview transports.
 
 mod args;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod broker;
-#[cfg(any(unix, test))]
 mod browser;
 mod bundle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod dev;
 mod favicon;
 mod offline;
 mod permissions;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod preview;
 mod processes;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod resources;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod serve;
 mod web;
+#[cfg(windows)]
+mod windows;
 
 use args::Args;
 use processes::{Capture, Processes};
@@ -82,11 +83,7 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
             if command == "doctor" {
                 doctor(&args, &processes)
             } else if command == "dev" {
-                #[cfg(unix)]
-                { dev::run(&args, &cancelled).map(|()| 0) }
-
-                #[cfg(windows)]
-                { Err("development supervision requires Unix private local IPC; doctor, build and bundle are supported on Windows".into()) }
+                dev::run(&args, &cancelled).map(|()| 0)
             } else {
                 build(&args, &processes).map(|()| 0)
             }
@@ -166,7 +163,6 @@ struct Project {
     web_dir: PathBuf,
     assets: Option<PathBuf>,
     bindgen: Option<PathBuf>,
-    #[cfg(unix)]
     watch_roots: Vec<PathBuf>,
 }
 
@@ -331,7 +327,6 @@ impl Project {
             None
         };
 
-        #[cfg(unix)]
         let watch_roots = {
             let mut watch_roots = vec![root.clone()];
 
@@ -355,7 +350,6 @@ impl Project {
         };
 
         Ok(Self {
-            #[cfg(unix)]
             watch_roots,
             package: package.clone(),
             target,

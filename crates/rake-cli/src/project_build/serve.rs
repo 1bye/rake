@@ -1043,7 +1043,18 @@ mod tests {
             )
             .is_none()
         );
+        #[cfg(unix)]
         std::os::unix::fs::symlink(temp.path(), builds.join("1/escape")).unwrap();
+        #[cfg(windows)]
+        assert!(
+            std::process::Command::new("cmd")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(builds.join("1/escape"))
+                .arg(temp.path())
+                .status()
+                .unwrap()
+                .success()
+        );
         assert!(
             translated(
                 &config,

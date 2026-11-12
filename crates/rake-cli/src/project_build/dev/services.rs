@@ -7,10 +7,12 @@ use serde_json::json;
 use std::{
     fs,
     io::Read,
-    os::{fd::AsRawFd, unix::fs::PermissionsExt},
     path::PathBuf,
     process::{ChildStdout, Command, Stdio},
 };
+
+#[cfg(unix)]
+use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
 
 impl Supervisor<'_> {
     fn service_command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -68,10 +70,14 @@ impl Supervisor<'_> {
             return Ok(());
         }
 
+        #[cfg(unix)]
         let helpers = tempfile::Builder::new()
             .prefix("rake-tools-")
             .permissions(fs::Permissions::from_mode(0o700))
             .tempdir()?;
+
+        #[cfg(windows)]
+        let helpers = super::super::windows::temporary("rake-tools-")?;
 
         super::super::resources::extract(helpers.path())?;
         self.helpers = Some(helpers);
@@ -277,6 +283,7 @@ fn readiness(
 
     loop {
         Processes::new(cancelled).check_cancelled()?;
+        #[cfg(unix)]
         let mut descriptor = libc::pollfd {
             fd: pipe.as_raw_fd(),
             events: libc::POLLIN,
@@ -284,7 +291,15 @@ fn readiness(
         };
 
         // SAFETY: descriptor points to one live owned pipe for this poll call.
+        #[cfg(unix)]
         let ready = unsafe { libc::poll(&mut descriptor, 1, 25) };
+        #[cfg(windows)]
+        let ready = if super::super::windows::readable(&pipe)? {
+            1
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            0
+        };
 
         if ready < 0 {
             let error = std::io::Error::last_os_error();
@@ -322,7 +337,7 @@ fn readiness(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     //! Covers: readiness EOF and frame bounds shared by CDP, Web and Node children.
     //! Real: pipes, readiness parser and owned process groups. Doubles: shell output.
