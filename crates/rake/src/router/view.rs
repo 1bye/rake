@@ -678,6 +678,8 @@ impl<R: Route> Workspace<R> {
         }
 
         router.client().set_commands(commands);
+        crate::menus::install(router.client(), &layout_services, cx)
+            .map_err(|error| MountError(error.to_string()))?;
         #[cfg(feature = "tray")]
         crate::tray::bind(router.navigator(), &layout_services);
 

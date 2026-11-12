@@ -168,15 +168,50 @@ type Handler = Rc<
     ) -> Result<LocalBoxFuture<'static, Result<Value, CommandError>>, CommandError>,
 >;
 
+/// Presentation shared by command menus and keyboard bindings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandPresentation {
+    /// Human-readable menu label.
+    pub label: String,
+    /// GPUI keystroke (for example `cmd-s`), bound globally by the menu host.
+    pub shortcut: Option<String>,
+}
+
+/// Current availability and toggle state, shared by every command entry point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandState {
+    /// Whether invocation is permitted.
+    pub enabled: bool,
+    /// Whether a menu checkmark is displayed.
+    pub checked: bool,
+    /// Optional current label, overriding the presentation label.
+    pub label: Option<String>,
+}
+
+impl Default for CommandState {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            checked: false,
+            label: None,
+        }
+    }
+}
+
 struct Registered {
     descriptor: CommandDescriptor,
     handler: Handler,
+    presentation: CommandPresentation,
+    state: CommandState,
 }
 
 /// Explicit registry shared by GUI, Rust client and external runtime messages.
 /// Registration is bounded at 256 commands; replacing a handler is not implicit.
 #[derive(Clone, Default)]
-pub struct Commands(Rc<RefCell<BTreeMap<String, Registered>>>);
+pub struct Commands(
+    Rc<RefCell<BTreeMap<String, Registered>>>,
+    Rc<event_listener::Event>,
+);
 
 impl Commands {
     /// An empty command registry.
@@ -224,12 +259,69 @@ impl Commands {
         registry.insert(
             descriptor.id.clone(),
             Registered {
+                presentation: CommandPresentation {
+                    label: descriptor.id.clone(),
+                    shortcut: None,
+                },
+                state: CommandState::default(),
                 descriptor,
                 handler,
             },
         );
 
         Ok(())
+    }
+
+    /// Sets command presentation and wakes mounted menu hosts, including shortcut updates.
+    /// # Errors
+    /// Returns `Unknown` for an unregistered stable ID.
+    pub fn set_presentation(
+        &self,
+        id: &str,
+        presentation: CommandPresentation,
+    ) -> Result<(), CommandError> {
+        self.0
+            .borrow_mut()
+            .get_mut(id)
+            .ok_or_else(|| CommandError::Unknown(id.into()))?
+            .presentation = presentation;
+        self.1.notify(usize::MAX);
+
+        Ok(())
+    }
+
+    /// Updates availability, checkmark and label, waking mounted menu hosts.
+    /// Disabled commands are rejected through GUI, CLI and agent entry points alike.
+    /// # Errors
+    /// Returns `Unknown` for an unregistered stable ID.
+    pub fn set_state(&self, id: &str, state: CommandState) -> Result<(), CommandError> {
+        self.0
+            .borrow_mut()
+            .get_mut(id)
+            .ok_or_else(|| CommandError::Unknown(id.into()))?
+            .state = state;
+        self.1.notify(usize::MAX);
+
+        Ok(())
+    }
+
+    /// Reads the current presentation and state for a registered stable ID.
+    /// # Errors
+    /// Returns `Unknown` for an unregistered stable ID.
+    pub fn presentation(
+        &self,
+        id: &str,
+    ) -> Result<(CommandPresentation, CommandState), CommandError> {
+        self.0
+            .borrow()
+            .get(id)
+            .map(|command| (command.presentation.clone(), command.state.clone()))
+            .ok_or_else(|| CommandError::Unknown(id.into()))
+    }
+
+    #[cfg(feature = "gpui")]
+    pub(crate) fn listen(&self) -> event_listener::EventListener {
+        self.1.listen()
     }
 
     /// Copies the stable application command schemas.
@@ -248,12 +340,22 @@ impl Commands {
         window: bool,
         context: CommandContext,
     ) -> Result<LocalBoxFuture<'static, Result<Value, CommandError>>, CommandError> {
-        let (capability, handler) = self
+        let (capability, enabled, handler) = self
             .0
             .borrow()
             .get(id)
-            .map(|command| (command.descriptor.capability, command.handler.clone()))
+            .map(|command| {
+                (
+                    command.descriptor.capability,
+                    command.state.enabled,
+                    command.handler.clone(),
+                )
+            })
             .ok_or_else(|| CommandError::Unknown(id.into()))?;
+
+        if !enabled {
+            return Err(CommandError::Failed(format!("command is disabled: {id}")));
+        }
 
         if capability == ExecutionCapability::RequiresWindow && !window {
             return Err(CommandError::RequiresWindow);

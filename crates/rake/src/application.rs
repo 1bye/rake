@@ -467,6 +467,17 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Supplies live command-backed native menus. Web validates them without installing a menu bar.
+    /// Unknown command IDs are reported by `run` before initializing the host.
+    pub fn menus(mut self, menus: crate::menus::Menus) -> Self {
+        match self.services.clone().with(menus) {
+            Ok(services) => self.services = services,
+            Err(error) => self.configuration_error = Some(AppError::Service(error)),
+        }
+
+        self
+    }
+
     /// Opts into development control for commands, work, shutdown and inspection.
     /// Routed applications additionally expose workspace operations.
     /// Both release and debug builds default to disabled.
@@ -756,6 +767,10 @@ impl<R: Route> App<R> {
         }
 
         let services = self.services()?;
+
+        if let Ok(menus) = services.get::<crate::menus::Menus>() {
+            menus.validate(&self.commands)?;
+        }
 
         if usize::from(self.root.is_some())
             + usize::from(self.routes.is_some())
