@@ -33,7 +33,7 @@ kit = ["gpui", "rake-ui/kit"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support"]
-gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 rake-autostart = { version = "=0.1.0-alpha.3", path = "../rake-autostart", optional = true }
@@ -83,10 +83,13 @@ console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "0.6", optional = true }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"], optional = true }
+
 metal = { version = "0.33", optional = true }
 foreign-types = { version = "0.5", optional = true }
 objc2 = { version = "0.6.5", optional = true }
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry"], optional = true }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSBundle", "NSError"], optional = true }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"], optional = true }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
 
