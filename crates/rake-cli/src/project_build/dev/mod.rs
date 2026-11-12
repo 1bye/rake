@@ -4,6 +4,7 @@
 mod blaze;
 mod fingerprint;
 mod output;
+mod presentation;
 mod services;
 mod transport;
 
@@ -65,9 +66,28 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
     }
 
     let mut args = args.clone();
+    let presentation = presentation::Presentation::new(&args);
+    presentation
+        .lock()
+        .expect("presentation lock poisoned")
+        .begin(&[], false)?;
+
+    if args.live {
+        args.blaze_binary = Some(super::blaze_install::ensure()?);
+    }
 
     args.native_reloader = args.native_reloader.map(fs::canonicalize).transpose()?;
-    let project = Project::load(&args, &Processes::new(cancelled))?;
+    let diagnostic = |text: &str| {
+        presentation
+            .lock()
+            .expect("presentation lock poisoned")
+            .build_output(text)
+    };
+    let project = Project::load(
+        &args,
+        &Processes::new(cancelled)
+            .with_diagnostics((!args.json && !args.verbose).then_some(&diagnostic)),
+    )?;
 
     #[cfg(unix)]
     let session = tempfile::Builder::new()
@@ -79,7 +99,7 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
     #[cfg(windows)]
     let session = super::windows::temporary("rake-dev-")?.keep();
 
-    let mut supervisor = Supervisor::new(&args, project, session, cancelled)?;
+    let mut supervisor = Supervisor::new(&args, project, session, cancelled, presentation)?;
     let result = supervisor.run();
 
     // Also cancel a build when another owned resource fails, before joining its worker.
@@ -111,6 +131,7 @@ struct Supervisor<'a> {
     readers: Vec<JoinHandle<std::result::Result<(), String>>>,
     cancelled: &'a AtomicBool,
     live: Option<blaze::Live>,
+    presentation: presentation::Shared,
 }
 
 impl<'a> Supervisor<'a> {
@@ -119,7 +140,12 @@ impl<'a> Supervisor<'a> {
         project: Project,
         session: PathBuf,
         cancelled: &'a AtomicBool,
+        presentation: presentation::Shared,
     ) -> Result<Self> {
+        presentation
+            .lock()
+            .expect("presentation lock poisoned")
+            .project(&project);
         let control = session.join("control");
 
         #[cfg(unix)]
@@ -152,6 +178,7 @@ impl<'a> Supervisor<'a> {
             output: ProcessOutput::new(),
             readers: Vec::new(),
             cancelled,
+            presentation,
         };
 
         supervisor.record("starting", json!({}))?;
@@ -160,6 +187,22 @@ impl<'a> Supervisor<'a> {
     }
 
     fn event(&self, value: Value, text: &str) -> Result<()> {
+        if !self.args.json && !self.args.verbose {
+            self.presentation
+                .lock()
+                .expect("presentation lock poisoned")
+                .event(
+                    &value,
+                    if self.args.web {
+                        self.status["published"].as_u64().unwrap_or(0) > 0
+                    } else {
+                        self.status["app_running"] == true
+                    },
+                )?;
+
+            return Ok(());
+        }
+
         let mut stdout = std::io::stdout().lock();
 
         writeln!(
@@ -264,21 +307,26 @@ impl<'a> Supervisor<'a> {
                 }
             })
             .collect();
+        let stdout = app.0.stdout.take().ok_or("app stdout missing")?;
+        let stderr = app.0.stderr.take().ok_or("app stderr missing")?;
+        self.app = Some(app);
+        self.record("running", json!({"runtime_pid":pid, "app_running":true, "mechanism":if self.live.is_some() {"blaze_live_patch"} else {"native_restart"}, "error":null}))?;
+
         self.readers.push(output::collect(
-            app.0.stdout.take().ok_or("app stdout missing")?,
+            stdout,
             self.output.clone(),
             pid,
             "stdout",
+            self.presentation.clone(),
         ));
         self.readers.push(output::collect(
-            app.0.stderr.take().ok_or("app stderr missing")?,
+            stderr,
             self.output.clone(),
             pid,
             "stderr",
+            self.presentation.clone(),
         ));
-        self.app = Some(app);
-
-        self.record("running", json!({"runtime_pid":pid, "app_running":true, "mechanism":if self.live.is_some() {"blaze_live_patch"} else {"native_restart"}, "error":null}))
+        Ok(())
     }
 
     fn query(&self, instance: &Value, value: Value) -> Result<Value> {
@@ -298,6 +346,10 @@ impl<'a> Supervisor<'a> {
 
     fn prepare_restart(&mut self, instance: &Value, artifact: &Path, probe: bool) -> Result<bool> {
         self.restart_notice = None;
+        self.presentation
+            .lock()
+            .expect("presentation lock poisoned")
+            .reset_views(&[]);
 
         if self.live.is_some() && self.args.require_state {
             let snapshot = self.query(instance, json!({"type":"snapshot"}))?;
@@ -381,6 +433,10 @@ impl<'a> Supervisor<'a> {
 
                 if entries.is_empty() || !reset.is_empty() {
                     self.restart_notice = Some(self.state_loss_notice(&reset));
+                    self.presentation
+                        .lock()
+                        .expect("presentation lock poisoned")
+                        .reset_views(&reset);
                 }
             }
 
@@ -411,9 +467,18 @@ impl<'a> Supervisor<'a> {
                         .expect("process output lock poisoned")
                         .append(text, pid, stream, None, false)
                 };
+                let diagnostic = |text: &str| {
+                    self.presentation
+                        .lock()
+                        .expect("presentation lock poisoned")
+                        .build_output(text)
+                };
 
                 Processes::new(self.cancelled)
                     .with_output(&sink)
+                    .with_diagnostics(
+                        (!self.args.json && !self.args.verbose).then_some(&diagnostic),
+                    )
                     .run_output(&mut command, |_| {})?;
                 exchange(
                     instance,
@@ -549,6 +614,10 @@ impl<'a> Supervisor<'a> {
             } else {
                 remove_file(&self.checkpoint)?;
                 self.restart_notice = Some(self.state_loss_notice(&[]));
+                self.presentation
+                    .lock()
+                    .expect("presentation lock poisoned")
+                    .reset_views(&[]);
             }
 
             if let Some(notice) = &self.restart_notice {
@@ -763,8 +832,23 @@ impl<'a> Supervisor<'a> {
 
                     let current = if self.live.is_some() {
                         blaze::stamp_identity(&stamps)
-                    } else {
+                    } else if self.args.json || self.args.verbose {
                         fingerprint(&self.project, self.args.output.as_deref())?
+                    } else {
+                        let (current, next) =
+                            fingerprint::scan(&self.project, self.args.output.as_deref())?;
+
+                        if previous.is_some() && previous != Some(current) {
+                            changed_paths.extend(
+                                next.keys()
+                                    .chain(stamps.keys())
+                                    .filter(|path| next.get(*path) != stamps.get(*path))
+                                    .cloned(),
+                            );
+                        }
+                        stamps = next;
+
+                        current
                     };
 
                     if previous != Some(current) {
@@ -883,6 +967,12 @@ impl<'a> Supervisor<'a> {
                             live.needs_build = false;
                         }
 
+                        let paths: Vec<_> =
+                            std::mem::take(&mut changed_paths).into_iter().collect();
+                        self.presentation
+                            .lock()
+                            .expect("presentation lock poisoned")
+                            .begin(&paths, forced)?;
                         self.record("building", json!({"build":number, "error":null}))?;
 
                         if let Err(error) = self.prepare_live_boundary() {
@@ -891,9 +981,6 @@ impl<'a> Supervisor<'a> {
                             self.record("build_failed", json!({"error":error.to_string()}))?;
                             continue;
                         }
-
-                        let paths: Vec<_> =
-                            std::mem::take(&mut changed_paths).into_iter().collect();
 
                         let cached = self.live.as_ref().map(|_| self.project.clone());
 
@@ -925,6 +1012,7 @@ impl<'a> Supervisor<'a> {
                         let stopping = &stopping;
                         let output = self.session.join("builds").join(number.to_string());
                         let process_output = self.output.clone();
+                        let presentation = self.presentation.clone();
 
                         worker = Some(scope.spawn(move || {
                             let sink = |text: &str, pid, stream: &str| {
@@ -933,10 +1021,19 @@ impl<'a> Supervisor<'a> {
                                     .expect("process output lock poisoned")
                                     .append(text, pid, stream, None, false);
                             };
+                            let diagnostic = |text: &str| {
+                                presentation
+                                    .lock()
+                                    .expect("presentation lock poisoned")
+                                    .build_output(text)
+                            };
 
                             let processes = Processes::new(cancelled)
                                 .with_stopping(stopping)
                                 .with_output(&sink);
+                            let processes = processes.with_diagnostics(
+                                (!args.json && !args.verbose).then_some(&diagnostic),
+                            );
 
                             let loaded = match cached {
                                 Some(project) if configuration == current_configuration => {

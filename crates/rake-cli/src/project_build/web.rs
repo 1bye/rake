@@ -234,6 +234,10 @@ pub(super) fn build(
     fs::create_dir_all(output)?;
     let mut command = Command::new("cargo");
 
+    if args.dev && !args.json && !args.verbose {
+        command.env("CARGO_TERM_COLOR", "never");
+    }
+
     command
         .args([
             "build",

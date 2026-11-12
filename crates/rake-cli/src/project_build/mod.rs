@@ -63,7 +63,7 @@ pub(crate) fn run_client(command: &mut Command) -> Result<i32> {
 }
 
 pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
-    let mut args = match args::parse(command, arguments) {
+    let args = match args::parse(command, arguments) {
         Ok(Some(args)) => args,
         Ok(None) => return 0,
         Err(error) => {
@@ -79,10 +79,6 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
     let result = ctrlc::set_handler(move || flag.store(true, Ordering::Release))
         .map_err(Into::into)
         .and_then(|()| {
-            if args.live {
-                args.blaze_binary = Some(blaze_install::ensure()?);
-            }
-
             let processes = Processes::new(&cancelled);
 
             if command == "doctor" {
@@ -196,6 +192,10 @@ impl Project {
             }
 
             command.arg("--manifest-path").arg(&args.manifest);
+
+            if args.dev && !args.json && !args.verbose {
+                command.env("CARGO_TERM_COLOR", "never");
+            }
 
             command
         };
@@ -452,6 +452,10 @@ impl Project {
         };
 
         let mut command = Command::new(executable);
+
+        if args.dev && !args.json && !args.verbose {
+            command.env("CARGO_TERM_COLOR", "never");
+        }
 
         command
             .args([

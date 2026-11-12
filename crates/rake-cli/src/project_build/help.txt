@@ -3,7 +3,7 @@ usage: rake [-h] [--target {desktop,web}] [--manifest-path MANIFEST_PATH]
               [--release | --debug] [--web-dir WEB_DIR] [--output OUTPUT]
               [--native-reloader NATIVE_RELOADER] [--require-state]
               [--port PORT] [--instance INSTANCE] [--cdp] [--preview]
-              [--elements] [--no-open] [--json] [--session SESSION]
+              [--elements] [--no-open] [--json] [--verbose] [--session SESSION]
               [--base-path BASE_PATH] [--routing {path,hash}]
               [--sign-identity SIGN_IDENTITY] [--entitlements ENTITLEMENTS]
               {dev,build,bundle,doctor,inspect} [{status}]
@@ -40,6 +40,7 @@ options:
                         selects desktop or Web
   --no-open
   --json
+  --verbose             Development only: show supervisor events and full tool output
   --session SESSION
   --base-path BASE_PATH
                         Web bundle deployment prefix, such as /notes/

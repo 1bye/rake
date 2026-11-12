@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use std::{
     collections::VecDeque,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::Instant,
@@ -66,6 +66,7 @@ pub(super) fn collect(
     output: SharedOutput,
     pid: u32,
     stream: &'static str,
+    presentation: super::presentation::Shared,
 ) -> JoinHandle<std::result::Result<(), String>> {
     thread::spawn(move || {
         let mut reader = BufReader::new(pipe);
@@ -85,12 +86,11 @@ pub(super) fn collect(
                 .lock()
                 .expect("process output lock poisoned")
                 .append(text, pid, stream, None, structured);
-            let mut stderr = std::io::stderr().lock();
-
-            stderr
-                .write_all(text.as_bytes())
+            presentation
+                .lock()
+                .expect("presentation lock poisoned")
+                .app_output(text)
                 .map_err(|error| error.to_string())?;
-            stderr.flush().map_err(|error| error.to_string())?;
         }
 
         Ok(())

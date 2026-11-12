@@ -27,6 +27,8 @@ ctrlc = { version = "3.5", features = ["termination"] }
 base64 = "0.22.1"
 regex = "1"
 shlex = "2"
+termcolor = "1.4"
+unicode-width = "0.2"
 sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"
@@ -62,4 +64,4 @@ name = "new_build"
 required-features = ["scaffold-tests"]
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }

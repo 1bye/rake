@@ -115,9 +115,16 @@ impl Supervisor<'_> {
                     .expect("process output lock poisoned")
                     .append(text, pid, stream, None, false);
             };
+            let diagnostic = |text: &str| {
+                self.presentation
+                    .lock()
+                    .expect("presentation lock poisoned")
+                    .build_output(text)
+            };
 
             Processes::new(self.cancelled)
                 .with_output(&sink)
+                .with_diagnostics((!self.args.json && !self.args.verbose).then_some(&diagnostic))
                 .run_output(&mut command, |_| {})?;
         }
 
