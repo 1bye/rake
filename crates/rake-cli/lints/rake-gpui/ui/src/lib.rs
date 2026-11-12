@@ -13,6 +13,8 @@ fn dropped_tasks(cx: &mut Context<View>) {
     let saved = cx.spawn(async |_, _| {});
     let _kept_until_scope_end = cx.spawn(async |_, _| {});
 
+    let _ = &saved;
+    &saved;
     saved.detach();
 }
 
@@ -34,3 +36,71 @@ fn unrelated() {
 }
 
 struct View;
+
+use gpui::prelude::*;
+use gpui::{App, AppContext, Entity, InteractiveElement, IntoElement, Render, Window, div};
+use std::time::Duration;
+
+impl Render for View {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _child = cx.new(|_| View); //~ gpui_render_new
+        std::thread::sleep(Duration::ZERO); //~ gpui_ui_blocking
+        let _ = std::fs::read("data"); //~ gpui_ui_blocking
+        smol::block_on(async {}); //~ gpui_ui_blocking
+        futures::executor::block_on(async {}); //~ gpui_ui_blocking
+
+        // Constructing a future or closure does not execute its body on the UI thread.
+        let _future = async { std::thread::sleep(Duration::ZERO) };
+        let _later = || std::thread::sleep(Duration::ZERO);
+
+        div()
+            .id("test")
+            .on_click(cx.listener(|_, _, _, _| {
+                std::thread::sleep(Duration::ZERO); //~ gpui_ui_blocking
+                let _ = std::fs::File::open("data"); //~ gpui_ui_blocking
+            }))
+            .on_action(cx.listener(|_, _: &gpui::NoAction, _, _| {
+                smol::block_on(async {}); //~ gpui_ui_blocking
+            }))
+    }
+}
+
+fn constructors(cx: &mut App) -> Entity<View> {
+    cx.new(|_| View)
+}
+
+fn reentrant_updates(entity: Entity<View>, other: Entity<View>, cx: &mut App) {
+    entity.update(cx, |_, cx| {
+        entity.update(cx, |_, _| {}); //~ gpui_reentrant_update
+        cx.entity().update(cx, |_, _| {}); //~ gpui_reentrant_update
+        other.update(cx, |_, _| {});
+        let _not_called = || entity.update(cx, |_, _| {});
+        cx.notify();
+    });
+    entity.update(cx, |_, _| {});
+    // Delayed work runs after the outer borrow ends.
+    entity.update(cx, |_, cx| {
+        cx.spawn(async |entity, cx| {
+            entity.update(cx, |_, _| {}).ok();
+        })
+        .detach();
+    });
+}
+
+struct Unrelated;
+
+impl Unrelated {
+    fn render(&self) {
+        std::thread::sleep(Duration::ZERO);
+        smol::block_on(async {});
+    }
+}
+
+fn handler_boundaries(cx: &mut Context<View>) {
+    let _listener = cx.listener(|_, _: &(), _, cx| {
+        let _worker = || std::fs::read("deferred");
+        cx.spawn(async |_, _| std::thread::sleep(Duration::ZERO))
+            .detach();
+        let _ = cx.new(|_| View);
+    });
+}
