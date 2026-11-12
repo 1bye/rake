@@ -204,3 +204,87 @@ fn reset_serializes_with_queued_saves_and_preserves_other_windows() {
     fresh.load();
     assert_eq!(*fresh.inner.records.borrow(), records);
 }
+
+#[test]
+fn all_modes_restore_the_same_normal_bounds() {
+    let app = gpui::TestAppContext::single();
+    let (_directory, policy) = policy();
+
+    app.update(|cx| {
+        install(policy.clone(), cx);
+        let display = cx.primary_display().expect("test display");
+        let bounds = Rect {
+            x: 50.,
+            y: 50.,
+            width: 600.,
+            height: 400.,
+        };
+
+        for mode in [Mode::Windowed, Mode::Maximized, Mode::Fullscreen] {
+            policy.inner.records.borrow_mut().insert(
+                "main".into(),
+                SavedWindow {
+                    bounds,
+                    display: display.uuid().ok().map(|uuid| uuid.to_string()),
+                    mode,
+                },
+            );
+            let mut options = options();
+            let prepared = prepare(WindowId(1), &mut options, cx).expect("mapped main window");
+            let expected = match mode {
+                Mode::Windowed => WindowBounds::Windowed(bounds_to_gpui(bounds)),
+                Mode::Maximized => WindowBounds::Maximized(bounds_to_gpui(bounds)),
+                Mode::Fullscreen => WindowBounds::Fullscreen(bounds_to_gpui(bounds)),
+            };
+
+            assert_eq!(options.window_bounds, Some(expected));
+            assert_eq!(prepared.normal, Some(bounds));
+        }
+    });
+}
+
+#[test]
+fn invalid_keys_opt_out_without_creating_preference_records() {
+    let app = gpui::TestAppContext::single();
+    let (_directory, policy) = policy();
+    let policy = policy.keys(|_| Some(String::new()));
+
+    app.update(|cx| install(policy.clone(), cx));
+    open(&app, WindowId(1));
+
+    assert!(policy.inner.records.borrow().is_empty());
+    app.update(|cx| assert!(cx.global::<Driver>().windows.is_empty()));
+}
+
+#[test]
+fn changed_scale_preserves_logical_bounds_and_stable_key_restores_with_new_runtime_id() {
+    let app = gpui::TestAppContext::single();
+    let (directory, policy) = policy();
+    let policy = policy.keys(|_| Some("editor".into()));
+
+    app.executor().allow_parking();
+    app.update(|cx| install(policy.clone(), cx));
+    let editor = open(&app, WindowId(2));
+
+    app.simulate_window_resize(editor, gpui::size(gpui::px(750.), gpui::px(550.)));
+    app.simulate_window_scale_factor_change(editor, 2.);
+    assert_eq!(policy.inner.records.borrow()["editor"].bounds.width, 750.);
+    app.quit();
+
+    let replacement = gpui::TestAppContext::single();
+    let loaded = WindowState::new(Preferences::at(directory.path()))
+        .keys(|id| (id == WindowId(42)).then(|| "editor".into()));
+
+    loaded.load();
+    replacement.update(|cx| install(loaded, cx));
+    let reopened = open(&replacement, WindowId(42));
+
+    replacement.update(|cx| {
+        reopened
+            .update(cx, |_, window, _| {
+                assert_eq!(f32::from(window.bounds().size.width), 750.);
+                assert_eq!(f32::from(window.bounds().size.height), 550.);
+            })
+            .expect("stable editor key restores despite a different runtime ID")
+    });
+}

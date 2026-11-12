@@ -15,7 +15,31 @@ fn reset_loads_existing_records_and_preserves_other_preferences() {
             .set("theme", "dark")
             .await
             .expect("seed unrelated preference");
-        state.reset("main").await.expect("reset missing placement");
+        let record = serde_json::json!({
+            "bounds": { "x": 50, "y": 50, "width": 600, "height": 400 },
+            "display": null, "mode": "windowed"
+        });
+        preferences
+            .set(
+                "rake-window-state-v1",
+                &serde_json::json!({
+                    "version": 1, "windows": { "main": record, "editor": record }
+                })
+                .to_string(),
+            )
+            .await
+            .expect("seed saved windows");
+        state.reset("main").await.expect("reset existing placement");
+        let value = preferences
+            .get("rake-window-state-v1")
+            .await
+            .expect("read saved windows")
+            .expect("placement document");
+        let document: serde_json::Value =
+            serde_json::from_str(&value).expect("valid placement JSON");
+
+        assert!(document["windows"].get("main").is_none());
+        assert_eq!(document["windows"]["editor"], record);
         assert_eq!(
             preferences.get("theme").await.expect("read theme"),
             Some("dark".into())

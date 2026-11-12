@@ -33,8 +33,10 @@ impl Rect {
         let height = self.height.min(display.height);
 
         Self {
-            x: self.x.clamp(display.x, display.x + display.width - width),
-            y: self.y.clamp(display.y, display.y + display.height - height),
+            x: self.x.clamp(display.x, display.x + (display.width - width)),
+            y: self
+                .y
+                .clamp(display.y, display.y + (display.height - height)),
             width,
             height,
         }
@@ -56,6 +58,7 @@ pub(super) struct SavedWindow {
     pub mode: Mode,
 }
 
+// Native GPUI consumes display snapshots; headless builds use them only in tests.
 #[derive(Debug)]
 #[cfg_attr(
     not(all(feature = "gpui", not(target_family = "wasm"))),
@@ -103,6 +106,7 @@ pub(super) fn encode(windows: &BTreeMap<String, SavedWindow>) -> String {
 /// Returns a display index and fully visible restore bounds. The caller keeps
 /// its defaults if no valid display exists. A missing/off-screen display uses
 /// the app's default display and placement, clamped to that display's work area.
+// The pure algorithm is also tested in builds without the native GPUI adapter.
 #[cfg_attr(
     not(all(feature = "gpui", not(target_family = "wasm"))),
     allow(dead_code)
