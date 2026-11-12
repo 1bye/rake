@@ -7,10 +7,12 @@ use serde_json::json;
 use std::{
     fs,
     io::Read,
-    os::{fd::AsRawFd, unix::fs::PermissionsExt},
     path::PathBuf,
     process::{ChildStdout, Command, Stdio},
 };
+
+#[cfg(unix)]
+use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
 
 impl Supervisor<'_> {
     fn service_command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -68,10 +70,14 @@ impl Supervisor<'_> {
             return Ok(());
         }
 
+        #[cfg(unix)]
         let helpers = tempfile::Builder::new()
             .prefix("rake-tools-")
             .permissions(fs::Permissions::from_mode(0o700))
             .tempdir()?;
+
+        #[cfg(windows)]
+        let helpers = super::super::windows::temporary("rake-tools-")?;
 
         super::super::resources::extract(helpers.path())?;
         self.helpers = Some(helpers);
@@ -277,6 +283,7 @@ fn readiness(
 
     loop {
         Processes::new(cancelled).check_cancelled()?;
+        #[cfg(unix)]
         let mut descriptor = libc::pollfd {
             fd: pipe.as_raw_fd(),
             events: libc::POLLIN,
@@ -284,7 +291,17 @@ fn readiness(
         };
 
         // SAFETY: descriptor points to one live owned pipe for this poll call.
+        #[cfg(unix)]
         let ready = unsafe { libc::poll(&mut descriptor, 1, 25) };
+
+        #[cfg(windows)]
+        let ready = if super::super::windows::readable(&pipe)? {
+            1
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+
+            0
+        };
 
         if ready < 0 {
             let error = std::io::Error::last_os_error();
@@ -322,7 +339,7 @@ fn readiness(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     //! Covers: readiness EOF and frame bounds shared by CDP, Web and Node children.
     //! Real: pipes, readiness parser and owned process groups. Doubles: shell output.
@@ -351,5 +368,104 @@ mod tests {
 
             assert_eq!(actual, expected, "{source}");
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use crate::project_build::dev::windows_tests::{Fixture, Process, wait_for};
+
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn windows_service_readiness_bounds_cancellation_and_job_cleanup() {
+        let fixture = Fixture::new();
+        let cancelled = Arc::new(AtomicBool::new(false));
+
+        for event in ["cdp_listening", "embedded_devtools_listening"] {
+            let mut command = fixture.command(&["--ready", event]);
+
+            command.stdout(Stdio::piped());
+            let mut group = Processes::new(&cancelled).start(&mut command).unwrap();
+            let process = Process::observe(group.0.id());
+
+            let line =
+                readiness(group.0.stdout.take().unwrap(), &cancelled, "no readiness").unwrap();
+
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["event"],
+                event
+            );
+            drop(group);
+            process.stopped();
+        }
+
+        for (mode, valid) in [("--empty", false), ("--last-line", true)] {
+            let mut command = fixture.command(&[mode]);
+
+            command.stdout(Stdio::piped());
+            let mut group = Processes::new(&cancelled).start(&mut command).unwrap();
+            let process = Process::observe(group.0.id());
+            let result = readiness(group.0.stdout.take().unwrap(), &cancelled, "no readiness");
+
+            if valid {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&result.unwrap()).unwrap()["event"],
+                    "cdp_listening"
+                );
+            } else {
+                assert!(result.unwrap_err().to_string().contains("no readiness"));
+            }
+
+            drop(group);
+            process.stopped();
+        }
+
+        let marker = fixture.root.path().join("silent-ready");
+        let mut command = fixture.command(&["--silent"]);
+
+        command.arg(&marker).stdout(Stdio::piped());
+        let mut group = Processes::new(&cancelled).start(&mut command).unwrap();
+        let process = Process::observe(group.0.id());
+        let flag = cancelled.clone();
+
+        let cancel = std::thread::spawn(move || {
+            wait_for(&marker);
+            flag.store(true, Ordering::Release);
+        });
+
+        let started = Instant::now();
+
+        let error =
+            readiness(group.0.stdout.take().unwrap(), &cancelled, "no readiness").unwrap_err();
+
+        assert!(error.to_string().contains("interrupted"));
+        cancel.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        drop(group);
+        process.stopped();
+
+        let cancelled = AtomicBool::new(false);
+        let mut command = fixture.command(&["--overflow"]);
+
+        command.stdout(Stdio::piped());
+        let mut group = Processes::new(&cancelled).start(&mut command).unwrap();
+        let process = Process::observe(group.0.id());
+
+        assert!(
+            readiness(group.0.stdout.take().unwrap(), &cancelled, "no readiness")
+                .unwrap_err()
+                .to_string()
+                .contains("frame limit")
+        );
+        drop(group);
+        process.stopped();
     }
 }

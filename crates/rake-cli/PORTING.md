@@ -1,5 +1,38 @@
 # Project toolchain port
 
+## Windows desktop/Web supervisor (#57, phase 2)
+
+Windows development children use the existing suspended-enrollment, kill-on-close
+Job boundary. App, build, CDP-service and DevTools-companion children are owned;
+output readers are joined after their Jobs are stopped, including descendants
+holding inherited output handles. Unix retains its process groups and signals.
+Browser openers use raw detached processes with a new process group, outside
+owned Jobs; stopping a development session must never terminate them.
+
+Anonymous-pipe readiness uses PeekNamedPipe with cancellation checks, keeping the
+same byte bound and EOF/last-line behavior. Windows reload/checkpoint exchanges
+use the phase-1 named pipe and cancellable futures with a finite total deadline,
+retaining mutation keys for retries and the matching abort after interruption.
+Session/helper directories are exclusively created with owner-only DACLs, using
+phase-1 owner/reparse validation; discovery, status, output and checkpoint reads
+remain private. Windows fingerprints hash UTF-16 path units and ignore reparse
+points to avoid junction cycles; Unix path bytes and ordering are unchanged.
+
+Windows --preview fails clearly before starting resources: native capture still
+requires macOS Swift. CLI inspection/CDP enablement and source opening remain the
+phase-3 boundary. This layer ports the shared service readiness/lifetime adapter;
+its CDP and companion readiness tests use explicitly identified helper processes.
+
+Windows integration tests use a headless app fixture with the production private
+files and named-pipe transport. They exercise start, stateful reload/checkpoint,
+abort after cancellation, descendant termination, inherited output-reader cleanup,
+UTF-8 output, detached-opener survival, Web publication/reload/origin shutdown,
+readiness EOF/overflow/cancellation and junction-excluding fingerprints. These
+run early in the desktop Windows job; real native GUI smoke and existing full
+workspace suites remain unchanged. The temporary stacked-PR branch filter is a
+labelled validation commit and must be removed before handback.
+
+
 ## Windows endpoints and private files (#57, phase 1)
 
 The native application control host and standalone client support local Windows

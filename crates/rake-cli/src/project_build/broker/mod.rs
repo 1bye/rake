@@ -9,12 +9,14 @@ use serde_json::{Value, json};
 use std::{
     fmt, fs,
     io::Read,
-    os::unix::{
-        fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
-        net::UnixStream,
-    },
     path::{Path, PathBuf},
     time::Duration,
+};
+
+#[cfg(unix)]
+use std::os::unix::{
+    fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+    net::UnixStream,
 };
 
 pub(super) const MAX_BYTES: usize = 1024 * 1024;
@@ -300,7 +302,11 @@ impl Broker {
             ));
         }
 
+        #[cfg(unix)]
         let path = self.bridge.directory.join(format!("{runtime}.sock"));
+
+        #[cfg(windows)]
+        let path = rake_client::pipe::path(&runtime);
 
         if Path::new(endpoint["path"].as_str().expect("validated endpoint")) != path {
             return Err(Error::new(
@@ -309,8 +315,10 @@ impl Broker {
             ));
         }
 
+        #[cfg(unix)]
         let metadata = fs::symlink_metadata(&path)?;
 
+        #[cfg(unix)]
         if !metadata.file_type().is_socket() || !owned_private(&metadata) {
             return Err(Error::new(
                 403,
@@ -328,8 +336,14 @@ impl Broker {
 
         futures::executor::block_on(async {
             use futures::io::{AsyncReadExt, AsyncWriteExt};
+            #[cfg(unix)]
             let mut connection = self
                 .socket_io(async_io::Async::<UnixStream>::connect(path))
+                .await?;
+
+            #[cfg(windows)]
+            let mut connection = self
+                .socket_io(rake_client::pipe::Stream::connect(&path))
                 .await?;
 
             self.socket_io(connection.write_all(&bytes)).await?;
@@ -450,6 +464,7 @@ impl Drop for Broker {
     }
 }
 
+#[cfg(unix)]
 fn owned_private(metadata: &fs::Metadata) -> bool {
     // SAFETY: geteuid has no pointer or thread preconditions.
     metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0
@@ -545,10 +560,10 @@ fn token() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use bridge::Ticket;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::time::Instant;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

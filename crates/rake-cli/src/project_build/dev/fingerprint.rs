@@ -7,7 +7,6 @@ use std::{
     collections::HashSet,
     fs,
     io::Read,
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
@@ -51,6 +50,7 @@ fn walk(
 
         if EXCLUDED.iter().any(|name| entry.file_name() == *name)
             || path.is_symlink()
+            || reparse(&path)
             || output.is_some_and(|output| path.starts_with(output))
         {
             continue;
@@ -71,7 +71,19 @@ fn walk(
             continue;
         }
 
-        digest.update(path.as_os_str().as_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            digest.update(path.as_os_str().as_bytes());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+
+            for unit in path.as_os_str().encode_wide() {
+                digest.update(unit.to_le_bytes());
+            }
+        }
 
         match fs::File::open(&path) {
             Ok(mut file) => {
@@ -99,4 +111,24 @@ fn walk(
     }
 
     Ok(())
+}
+
+fn reparse(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = path;
+
+        false
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        fs::symlink_metadata(path).is_ok_and(|metadata| {
+            metadata.file_attributes()
+                & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+                != 0
+        })
+    }
 }

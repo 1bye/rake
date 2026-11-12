@@ -68,7 +68,13 @@ impl Bridge {
             return json!({"published":0});
         };
 
-        fs::File::open(path)
+        #[cfg(unix)]
+        let opened = fs::File::open(path);
+
+        #[cfg(windows)]
+        let opened = rake_client::private::open(path);
+
+        opened
             .ok()
             .and_then(|file| serde_json::from_reader(file.take(MAX_BYTES as u64)).ok())
             .unwrap_or_else(|| json!({"published":0,"phase":"starting"}))

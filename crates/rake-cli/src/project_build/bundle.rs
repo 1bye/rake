@@ -329,7 +329,6 @@ mod tests {
             web_dir: site.into(),
             assets: None,
             bindgen: None,
-            #[cfg(unix)]
             watch_roots: vec![],
         }
     }

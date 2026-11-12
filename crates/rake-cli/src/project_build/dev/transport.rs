@@ -4,11 +4,12 @@ use super::super::Result;
 use serde_json::{Value, json};
 
 use std::{
-    io::{Read, Write},
-    os::unix::net::UnixStream,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::io::{Read, Write};
 
 pub(super) const MAX_BYTES: usize = 1024 * 1024;
 
@@ -70,13 +71,14 @@ pub(super) fn exchange(
         .ok_or_else(|| "runtime reply value missing".into())
 }
 
+#[cfg(unix)]
 fn send(
     path: &str,
     encoded: &[u8],
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> std::io::Result<Vec<u8>> {
-    let mut connection = UnixStream::connect(path)?;
+    let mut connection = std::os::unix::net::UnixStream::connect(path)?;
 
     connection.set_write_timeout(Some(timeout))?;
     connection.write_all(encoded)?;
@@ -124,4 +126,77 @@ fn send(
             Err(error) => return Err(error),
         }
     }
+}
+
+#[cfg(windows)]
+fn send(
+    path: &str,
+    encoded: &[u8],
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> std::io::Result<Vec<u8>> {
+    use futures::{
+        future::{Either, select},
+        io::{AsyncReadExt, AsyncWriteExt},
+    };
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .filter(|_| !timeout.is_zero())
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid runtime timeout")
+        })?;
+
+    futures::executor::block_on(async {
+        let work = async {
+            let mut stream = rake_client::pipe::Stream::connect(std::path::Path::new(path)).await?;
+
+            stream.write_all(encoded).await?;
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 65536];
+
+            loop {
+                let remaining = (MAX_BYTES + 1 - bytes.len()).min(buffer.len());
+                let count = stream.read(&mut buffer[..remaining]).await?;
+
+                if count == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "runtime disconnected during reload",
+                    ));
+                }
+
+                bytes.extend_from_slice(&buffer[..count]);
+
+                if bytes.len() > MAX_BYTES || bytes.contains(&b'\n') {
+                    return Ok(bytes);
+                }
+            }
+        };
+
+        let stop = async {
+            loop {
+                if cancelled.load(Ordering::Acquire) {
+                    return std::io::Error::other("build interrupted");
+                }
+
+                if Instant::now() >= deadline {
+                    return std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "runtime exchange timed out",
+                    );
+                }
+
+                async_io::Timer::after(
+                    Duration::from_millis(5)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                )
+                .await;
+            }
+        };
+
+        match select(Box::pin(stop), Box::pin(work)).await {
+            Either::Left((error, _)) => Err(error),
+            Either::Right((result, _)) => result,
+        }
+    })
 }

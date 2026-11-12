@@ -67,6 +67,24 @@ pub fn open(path: &Path) -> io::Result<File> {
     }
 }
 
+/// Exclusively creates a current-user-only directory, rejecting existing objects.
+///
+/// # Errors
+/// Returns filesystem errors, including existing paths and unsafe components.
+pub fn create_directory(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+
+    #[cfg(windows)]
+    {
+        windows::create_directory(path)
+    }
+}
+
 /// Creates or validates an owned private directory without following its final link.
 ///
 /// # Errors
@@ -118,6 +136,12 @@ mod tests {
         ));
 
         prepare_directory(&root).unwrap();
+        assert_eq!(
+            create_directory(&root).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        create_directory(&root.join("child")).unwrap();
+        prepare_directory(&root.join("child")).unwrap();
         let path = root.join("private.json");
 
         std::io::Write::write_all(&mut create(&path).unwrap(), b"secret").unwrap();
