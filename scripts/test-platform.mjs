@@ -167,4 +167,13 @@ await assert.rejects(notifications.request_notification_permission(), {name: 'No
 globalThis.isSecureContext = true;
 delete globalThis.Notification;
 assert.throws(() => notifications.notification_permission(), {name: 'NotSupportedError'});
+// Hosts without userActivation leave gesture enforcement to their own permission API.
+globalThis.Notification = NotificationHost;
+NotificationHost.permission = 'default';
+nextPermission = 'granted';
+const userActivation = navigator.userActivation;
+delete navigator.userActivation;
+assert.equal(await notifications.request_notification_permission(), 'granted');
+navigator.userActivation = userActivation;
+
 console.log('Notifications: eager authorization, denial, replacement, click focus/activation and disposal passed');

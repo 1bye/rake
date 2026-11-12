@@ -1,6 +1,8 @@
 //! Application-owned OS notifications and URL activation payloads.
 
-use super::{Capability, Error, PermissionState, Platform, Request};
+#[cfg(any(feature = "gpui", test, not(target_family = "wasm")))]
+use super::Error;
+use super::{Capability, PermissionState, Platform, Request};
 #[cfg(feature = "gpui")]
 use std::cell::Cell;
 #[cfg(any(feature = "gpui", test))]
