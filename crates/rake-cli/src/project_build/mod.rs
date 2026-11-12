@@ -2,10 +2,10 @@
 //! The native HTTP origin owns application assets, the broker and preview transports.
 
 mod args;
+mod blaze_install;
 #[cfg(any(unix, windows))]
 mod broker;
 mod browser;
-mod blaze_install;
 mod bundle;
 #[cfg(any(unix, windows))]
 mod dev;

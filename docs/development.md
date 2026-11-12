@@ -329,3 +329,28 @@ upstream history: rebase it onto the next upstream tag using `rake/upstream-base
 review every inherited fix, then rerun installation, six-trial text/helper reload
 acceptance, and relevant compiler differential tests. The recovered root remains
 only on the fork's local `snapshot-archive` branch.
+
+### Fresh apps with Blaze
+
+On Apple Silicon macOS:
+
+```sh
+rake new hello
+cd hello
+rake dev --live
+```
+
+The first live run downloads and verifies the pinned Blaze bundle. No global
+Blaze install or manual feature flags are needed. The generated manifest exposes
+`live = ["rake/live"]`, `devtools = ["rake/devtools"]` and
+`gpui-fast = ["rake/gpui-fast"]`. Cargo includes their optional dependencies when
+creating the lockfile, while `--live` enables only live runtime and devtools.
+This also keeps the two GPUI backends on a compatible Taffy version. Plain
+`rake dev` still uses Cargo and the default backend.
+
+Older generated apps can add these aliases and run `cargo generate-lockfile`
+once before `rake dev --live`. Keep that lockfile committed. Blaze's pinned
+planner can request inactive optional dependencies absent from a Cargo lockfile;
+this is an engine limitation, not a reason to enable every app feature at runtime.
+A restart restores only registered checkpoints; other fields reset with a notice.
+Use `rake dev --live --require-state` to block a restart that cannot restore state.

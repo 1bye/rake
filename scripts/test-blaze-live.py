@@ -19,8 +19,7 @@ def main(v):
     evidence=Path(v.evidence).resolve() if v.evidence else Path(tempfile.mkdtemp(prefix="rake-live-evidence-"))
     evidence.mkdir(parents=True,exist_ok=True)
     if (Path.home()/".rake").exists():raise SystemExit("clean-install acceptance requires ~/.rake to be absent; preserve it rather than deleting user files")
-    sys.path.insert(0,str(root/"crates/rake-cli/scripts"))
-    from dev import exchange
+    from native_test_client import exchange
     source=root/"examples/view/src/lib.rs";original=source.read_text()
     baseline=original.replace('mod inputs;','mod inputs;\n\nfn rake_pinned_probe_helper() -> &\'static str { "Pinned helper initial" }')
     heading='<h1>HTML-like views. Native GPUI.</h1>'

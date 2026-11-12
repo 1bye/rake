@@ -26,8 +26,7 @@ def main(v):
         raise SystemExit('Choose a fresh evidence directory; keep target/store paths in environment to reuse caches')
     if v.clean_install and (Path.home()/'.rake').exists(): raise SystemExit('Preserve ~/.rake before clean-install acceptance')
     assert v.mode in {'pinned','lab'} and v.trials>0
-    sys.path.insert(0,str(root/'crates/rake-cli/scripts'))
-    from dev import exchange
+    from native_test_client import exchange
     source=root/'examples/view/src/lib.rs'; original=source.read_bytes(); baseline=Path(v.fixture).read_text()
     assert 'Live text base' in baseline and 'Helper base' in baseline
     env={k:x for k,x in os.environ.items() if not k.startswith(('BLAZE_','RAKE_'))}

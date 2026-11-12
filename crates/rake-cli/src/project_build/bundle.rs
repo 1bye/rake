@@ -326,6 +326,7 @@ mod tests {
             package: json!({"name":"example","version":"1.0.0","metadata":{"rake":{"bundle":{"identifier":"dev.example.tools","web":{"base_path":"/tools/","offline":offline}}}}}),
             target: "app".into(),
             root: site.into(),
+            #[cfg(unix)]
             target_directory: site.join("target"),
             web_dir: site.into(),
             assets: None,
