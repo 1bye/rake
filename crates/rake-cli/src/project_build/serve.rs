@@ -91,7 +91,20 @@ impl Server {
                             let stopped = &stopped;
 
                             workers.push(Some(scope.spawn(move || {
-                                let _ = handle(stream, address, config, stopped);
+                                let mut stream = stream;
+                                let result = handle(&mut stream, address, config, stopped);
+
+                                #[cfg(test)]
+                                if let Err(error) = &result {
+                                    eprintln!("development HTTP handler failed: {error}");
+                                }
+
+                                let _ = result;
+
+                                // Send the FIN after queued response bytes, before either
+                                // duplicated Winsock handle is closed.
+                                #[cfg(windows)]
+                                let _ = stream.shutdown(Shutdown::Write);
 
                                 sockets
                                     .lock()
@@ -357,7 +370,7 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
 }
 
 fn handle(
-    mut stream: TcpStream,
+    stream: &mut TcpStream,
     address: SocketAddr,
     config: &Config,
     stopping: &AtomicBool,
@@ -366,10 +379,7 @@ fn handle(
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
-    let request = match request(&mut stream, stopping) {
-        Ok(request) => request,
-        Err(_) => return Ok(()),
-    };
+    let request = request(stream, stopping)?;
 
     let control = config.broker.is_some();
 
@@ -379,7 +389,7 @@ fn handle(
 
     if control && !valid_host {
         return error(
-            &mut stream,
+            stream,
             &request,
             403,
             if request.method == "POST" {
@@ -400,7 +410,7 @@ fn handle(
                 || !broker.authenticate(request.header("X-Rake-Token"))
             {
                 return error(
-                    &mut stream,
+                    stream,
                     &request,
                     403,
                     "development bridge authentication failed",
@@ -408,7 +418,7 @@ fn handle(
             }
 
             return control_request(
-                &mut stream,
+                stream,
                 &request,
                 broker,
                 config.preview.as_deref(),
@@ -417,7 +427,7 @@ fn handle(
         }
 
         return error(
-            &mut stream,
+            stream,
             &request,
             403,
             "development bridge authentication failed",
@@ -426,7 +436,7 @@ fn handle(
 
     if !["GET", "HEAD"].contains(&request.method.as_str()) {
         return error(
-            &mut stream,
+            stream,
             &request,
             501,
             &format!("Unsupported method ('{}')", request.method),
@@ -436,7 +446,7 @@ fn handle(
     if let Some(preview) = &config.preview {
         if request.method == "GET" && request.path == "/__rake/preview_control" {
             return match preview.control(
-                &mut stream,
+                stream,
                 &request,
                 config
                     .broker
@@ -445,7 +455,7 @@ fn handle(
                     .token(),
             ) {
                 Ok(()) => Ok(()),
-                Err(failure) => error(&mut stream, &request, failure.status, &failure.to_string()),
+                Err(failure) => error(stream, &request, failure.status, &failure.to_string()),
             };
         }
 
@@ -474,13 +484,13 @@ fn handle(
         };
 
         if let Some((bytes, mime)) = asset {
-            return respond(&mut stream,&request,200,mime,bytes,&[("Cache-Control","no-store".into()),("X-Content-Type-Options","nosniff".into()),("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'".into())]);
+            return respond(stream,&request,200,mime,bytes,&[("Cache-Control","no-store".into()),("X-Content-Type-Options","nosniff".into()),("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'".into())]);
         }
     }
 
     if route.starts_with("/__rake/inspector") || route.starts_with("/__rake/elements") {
         return error(
-            &mut stream,
+            stream,
             &request,
             410,
             "Rake Inspector is deprecated; use Chrome DevTools (--cdp)",
@@ -489,7 +499,7 @@ fn handle(
 
     if config.control_only {
         return error(
-            &mut stream,
+            stream,
             &request,
             404,
             "native control serves no application assets",
@@ -498,7 +508,7 @@ fn handle(
 
     if control && route == "/__rake/bootstrap.js" {
         return respond(
-            &mut stream,
+            stream,
             &request,
             200,
             "text/javascript; charset=utf-8",
@@ -525,7 +535,7 @@ fn handle(
     }
 
     let Some(mut path) = path else {
-        return error(&mut stream, &request, 404, "File not found");
+        return error(stream, &request, 404, "File not found");
     };
 
     if control && (route == "/" || route == "/index.html" || shell_fallback) {
@@ -575,7 +585,7 @@ fn handle(
         )?;
 
         return respond(
-            &mut stream,
+            stream,
             &request,
             200,
             "text/html; charset=utf-8",
@@ -592,7 +602,7 @@ fn handle(
             };
 
             return respond(
-                &mut stream,
+                stream,
                 &request,
                 301,
                 "text/html",
@@ -606,12 +616,12 @@ fn handle(
         } else if path.join("index.htm").is_file() {
             path.push("index.htm");
         } else {
-            return listing(&mut stream, &request, &path);
+            return listing(stream, &request, &path);
         }
     }
 
     let Ok(mut file) = fs::File::open(&path) else {
-        return error(&mut stream, &request, 404, "File not found");
+        return error(stream, &request, 404, "File not found");
     };
 
     let metadata = file.metadata()?;
@@ -622,7 +632,7 @@ fn handle(
         && modified.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
             <= since.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
     {
-        return respond(&mut stream, &request, 304, "text/plain", &[], &[]);
+        return respond(stream, &request, 304, "text/plain", &[], &[]);
     }
 
     let mime = if path
@@ -637,7 +647,7 @@ fn handle(
     };
 
     headers(
-        &mut stream,
+        stream,
         200,
         &mime,
         metadata.len(),
@@ -645,7 +655,7 @@ fn handle(
     )?;
 
     if request.method != "HEAD" {
-        std::io::copy(&mut file, &mut stream)?;
+        std::io::copy(&mut file, stream)?;
     }
 
     Ok(())
@@ -1458,7 +1468,9 @@ mod tests {
             .unwrap();
         let mut response = String::new();
 
-        stream.read_to_string(&mut response).unwrap();
+        let received = stream.read_to_string(&mut response);
+
+        assert!(received.is_ok(), "{received:?}; response: {response:?}");
         assert!(response.starts_with("HTTP/1.0 200"), "{response}");
         let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
 
