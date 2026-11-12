@@ -20,6 +20,10 @@ use std::{
 use windows_sys::Win32::{Foundation::*, Storage::FileSystem::*, System::Pipes::*};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
+// Keep each NOWAIT write below the pipe quota; an oversized kernel write can
+// make no progress even when a reader is waiting and the pipe is empty.
+const WRITE_CHUNK_BYTES: usize = PIPE_BUFFER_BYTES as usize / 4;
 
 fn name(path: &Path) -> io::Result<Vec<u16>> {
     let text = path.to_str().ok_or(io::ErrorKind::InvalidInput)?;
@@ -196,6 +200,8 @@ impl AsyncWrite for Stream {
         cx: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
+        let buffer = &buffer[..buffer.len().min(WRITE_CHUNK_BYTES)];
+
         match self.file.as_mut().map_or_else(
             || Err(io::ErrorKind::BrokenPipe.into()),
             |file| file.write(buffer),
@@ -242,8 +248,8 @@ fn instance(path: &Path, first: bool) -> io::Result<File> {
                 },
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
             33,
-            65536,
-            65536,
+            PIPE_BUFFER_BYTES,
+            PIPE_BUFFER_BYTES,
             0,
             &attributes,
         )

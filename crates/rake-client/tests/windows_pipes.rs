@@ -8,7 +8,7 @@ use futures::{
 
 use rake_client::{
     local,
-    pipe::{self, Listener},
+    pipe::{self, Listener, Stream},
 };
 
 use rake_protocol::control::{
@@ -192,4 +192,48 @@ fn discovery_skips_invalid_and_oversized_advertisements() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].application_id, "windows-test");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pipe_moves_large_payloads_both_directions_without_loss() {
+    let path = pipe::path(&identity());
+    let listener = Listener::bind(&path).unwrap();
+
+    let payload: Vec<u8> = (0..MAX_MESSAGE_BYTES + 1)
+        .map(|index| (index % 251) as u8)
+        .collect();
+
+    futures::executor::block_on(async {
+        let server = async {
+            let mut stream = listener.accept().await.unwrap();
+            let mut received = vec![0; payload.len()];
+
+            stream.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, payload);
+            stream.write_all(&received).await.unwrap();
+            let mut end = [0];
+            let _ = stream.read(&mut end).await;
+        };
+
+        let client = async {
+            let mut stream = Stream::connect(&path).await.unwrap();
+            let mut received = vec![0; payload.len()];
+
+            stream.write_all(&payload).await.unwrap();
+            stream.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, payload);
+        };
+
+        assert!(
+            matches!(
+                select(
+                    Box::pin(futures::future::join(server, client)),
+                    Box::pin(async_io::Timer::after(Duration::from_secs(3)))
+                )
+                .await,
+                Either::Left(_)
+            ),
+            "large bidirectional pipe transfer stalled"
+        );
+    });
 }
