@@ -94,9 +94,23 @@ update the definition matching and UI fixtures together.
 The four catalogue entries describe conservative boundaries: discarded Task
 statements/wildcards, resolved Render/RenderOnce constructors, provable current or
 same-local entity updates, and blocking calls directly in render or registered GPUI
-listeners/action handlers. Helpers, aliases of entity identity and arbitrary call
-flow are deliberately opaque. The check does not infer where nested futures and unregistered closures will run. The missing-notify rule is deferred: state mutation
-alone does not prove notification is required, and a helper may already notify.
+listeners/action handlers. Registration accepts inline closures and function/method
+paths resolving to local definitions, including generic functions. A pre-pass
+collects those definitions before checking bodies, so definition/registration order
+does not matter. A function also called elsewhere is still checked because its
+registration establishes a UI-thread execution path. Nested closures, nested
+functions and async blocks do not inherit the registered function's UI context;
+separately registered callbacks inside them are checked in their own right.
+External functions, indirect function pointers, transitive helper calls, aliases of
+entity identity and arbitrary call flow remain opaque.
+
+Entity allocation remains specific to render bodies: allocation in an event handler
+is valid. Allocation inside iterator closures is not inferred to occur during
+render. `Iterator::map` is lazy; recognizing an adapter or callback alone does not
+prove that it is consumed during render. Following eager consumers such as
+`children(...)` would require a separate precise execution/consumption analysis.
+The missing-notify rule is deferred: state mutation alone does not prove that
+notification is required, and a helper may already notify.
 
 To add a deep rule:
 
