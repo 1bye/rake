@@ -105,6 +105,10 @@ fn prepare(
     runtime.router.install_quit_action(cx);
     configure(&runtime, config);
 
+    if let Err(error) = crate::menus::install(runtime.router.client(), services, cx) {
+        tracing::error!(%error, "menu host could not start");
+    }
+
     if config.close_policy == ClosePolicy::KeepRunning {
         cx.set_quit_mode(gpui::QuitMode::Explicit);
     }
@@ -124,6 +128,11 @@ fn prepare_background(services: &Services, config: &ManagedConfig, cx: &mut gpui
 
     runtime.router.install_quit_action(cx);
     configure(&runtime, config);
+
+    if let Err(error) = crate::menus::install(runtime.router.client(), services, cx) {
+        tracing::error!(%error, "menu host could not start");
+    }
+
     cx.set_quit_mode(gpui::QuitMode::Explicit);
 
     runtime
