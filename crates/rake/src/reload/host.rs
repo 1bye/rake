@@ -65,6 +65,7 @@ pub(crate) fn load(config: ControlConfig) -> Option<Result<WorkspaceCheckpoint, 
         Some((|| {
             let file = rake_client::private::open(std::path::Path::new(&path))
                 .map_err(|error| error.to_string())?;
+
             let mut bytes = Vec::new();
 
             file.take(MAX_CHECKPOINT_BYTES as u64 + 1)

@@ -681,6 +681,7 @@ fn read_json(path: &Path) -> Result<Value> {
 
     #[cfg(unix)]
     let file = fs::File::open(path)?;
+
     #[cfg(windows)]
     let file = rake_client::private::open(path)?;
 

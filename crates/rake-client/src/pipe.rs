@@ -48,7 +48,7 @@ pub fn path(runtime: &impl std::fmt::Display) -> PathBuf {
 
 /// Owns a nonblocking byte pipe, polled cooperatively at a bounded interval.
 pub struct Stream {
-    file: File,
+    file: Option<File>,
     read_timer: Option<Pin<Box<Timer>>>,
     write_timer: Option<Pin<Box<Timer>>>,
 }
@@ -56,7 +56,7 @@ pub struct Stream {
 impl Stream {
     fn new(file: File) -> Self {
         Self {
-            file,
+            file: Some(file),
             read_timer: None,
             write_timer: None,
         }
@@ -134,7 +134,7 @@ impl AsyncRead for Stream {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        match self.file.read(buffer) {
+        match self.file.as_mut().map_or(Ok(0), |file| file.read(buffer)) {
             Err(error) if error.raw_os_error() == Some(ERROR_NO_DATA as i32) => {
                 retry(&mut self.read_timer, cx)
             }
@@ -152,10 +152,13 @@ impl AsyncWrite for Stream {
         cx: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        match self.file.write(buffer) {
+        match self.file.as_mut().map_or_else(
+            || Err(io::ErrorKind::BrokenPipe.into()),
+            |file| file.write(buffer),
+        ) {
             Ok(0) if !buffer.is_empty() => retry(&mut self.write_timer, cx),
             Err(error) if error.raw_os_error() == Some(ERROR_NO_DATA as i32) => {
-                retry(&mut self.write_timer, cx)
+                Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()))
             }
             result => Poll::Ready(result),
         }
@@ -166,7 +169,9 @@ impl AsyncWrite for Stream {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.file.take();
+
         Poll::Ready(Ok(()))
     }
 }

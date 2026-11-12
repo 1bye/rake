@@ -235,6 +235,7 @@ fn raw_open(
     access: u32,
     creation: u32,
     security: Option<&Security>,
+    share_delete: bool,
 ) -> io::Result<File> {
     let path = wide(path)?;
     let attributes = security.map(Security::attributes);
@@ -244,7 +245,7 @@ fn raw_open(
         CreateFileW(
             path.as_ptr(),
             access,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | if share_delete { FILE_SHARE_DELETE } else { 0 },
             attributes.as_ref().map_or(ptr::null(), ptr::from_ref),
             creation,
             FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
@@ -273,7 +274,7 @@ fn parents(path: &Path) -> io::Result<Vec<File>> {
             continue;
         }
 
-        let file = raw_open(&current, FILE_READ_ATTRIBUTES, OPEN_EXISTING, None)?;
+        let file = raw_open(&current, FILE_READ_ATTRIBUTES, OPEN_EXISTING, None, false)?;
         validate(&file, true, false)?;
         held.push(file);
     }
@@ -289,6 +290,7 @@ pub(super) fn create(path: &Path) -> io::Result<File> {
         GENERIC_WRITE | READ_CONTROL | FILE_READ_ATTRIBUTES,
         CREATE_NEW,
         Some(&security),
+        false,
     )?;
     validate(&file, false, true)?;
 
@@ -297,7 +299,7 @@ pub(super) fn create(path: &Path) -> io::Result<File> {
 
 pub(super) fn open(path: &Path) -> io::Result<File> {
     let _parents = parents(path)?;
-    let file = raw_open(path, GENERIC_READ | READ_CONTROL, OPEN_EXISTING, None)?;
+    let file = raw_open(path, GENERIC_READ | READ_CONTROL, OPEN_EXISTING, None, true)?;
     validate(&file, false, true)?;
 
     Ok(file)
@@ -323,6 +325,7 @@ pub(super) fn prepare_directory(path: &Path) -> io::Result<()> {
             READ_CONTROL | FILE_READ_ATTRIBUTES,
             OPEN_EXISTING,
             None,
+            false,
         )?,
         true,
         true,
@@ -347,7 +350,7 @@ pub fn open_source(root: &Path, source: &Path) -> io::Result<File> {
     }
 
     let _parents = parents(&path)?;
-    let file = raw_open(&path, GENERIC_READ, OPEN_EXISTING, None)?;
+    let file = raw_open(&path, GENERIC_READ, OPEN_EXISTING, None, true)?;
     validate(&file, false, false)?;
 
     Ok(file)
@@ -370,6 +373,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         READ_CONTROL | FILE_READ_ATTRIBUTES,
         OPEN_EXISTING,
         None,
+        false,
     )?;
     validate(&directory, true, true)?;
 
@@ -451,7 +455,7 @@ mod tests {
             );
             let security = Security(LocalAllocation(descriptor));
             let path = root.join(format!("public-{index}"));
-            let file = raw_open(&path, GENERIC_WRITE, CREATE_NEW, Some(&security)).unwrap();
+            let file = raw_open(&path, GENERIC_WRITE, CREATE_NEW, Some(&security), false).unwrap();
             drop(file);
             assert!(open(&path).is_err(), "accepted {sddl}");
         }
@@ -473,7 +477,10 @@ mod tests {
         let path = root.join("output.json");
 
         for bytes in [b"first".as_slice(), "é漢字".as_bytes()] {
+            // An active reader must not prevent replacement of the next snapshot.
+            let previous = open(&path).ok();
             write_atomic(&path, bytes).unwrap();
+            drop(previous);
             let mut read = Vec::new();
             std::io::Read::read_to_end(&mut open(&path).unwrap(), &mut read).unwrap();
             assert_eq!(read, bytes);

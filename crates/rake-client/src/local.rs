@@ -28,6 +28,7 @@ pub fn directory() -> PathBuf {
                 // SAFETY: geteuid has no pointer or threading preconditions.
                 PathBuf::from(format!("/tmp/rake-{}", unsafe { libc::geteuid() }))
             }
+
             #[cfg(windows)]
             {
                 std::env::temp_dir().join("rake-control")
@@ -45,6 +46,7 @@ pub fn prepare_directory(path: &Path) -> io::Result<()> {
     {
         crate::private::prepare_directory(path)
     }
+
     #[cfg(unix)]
     {
         match DirBuilder::new().mode(0o700).create(path) {
@@ -187,6 +189,7 @@ pub fn exchange(
         let exchange = async {
             #[cfg(unix)]
             let mut stream = Async::<UnixStream>::connect(path).await?;
+
             #[cfg(windows)]
             let mut stream = crate::pipe::Stream::connect(path).await?;
 

@@ -559,6 +559,7 @@ fn write_marker(path: &Path, marker: &Value) -> Result<()> {
     use std::io::Write;
     #[cfg(unix)]
     let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or("marker parent missing")?)?;
+
     #[cfg(windows)]
     let mut file = tempfile::Builder::new().make_in(
         path.parent().ok_or("marker parent missing")?,
@@ -704,6 +705,7 @@ mod windows_private_tests {
         ] {
             write_marker(&path, &value).unwrap();
             let file = rake_client::private::open(&path).unwrap();
+
             assert_eq!(serde_json::from_reader::<_, Value>(file).unwrap(), value);
         }
     }

@@ -8,6 +8,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn resolve(root: &Path, source: &SourceLocation) -> Result<PathBuf> {
     #[cfg(windows)]
     let _source = rake_client::private::open_source(root, Path::new(&source.file))?;
+
     let root = root.canonicalize()?;
     let path = root.join(&source.file).canonicalize()?;
 
@@ -48,6 +49,7 @@ pub(crate) fn read(source: &SourceLocation) -> Result<String> {
 
     #[cfg(unix)]
     let file = std::fs::File::open(path)?;
+
     #[cfg(windows)]
     let file = rake_client::private::open_source(&root, &path)?;
 

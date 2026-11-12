@@ -15,10 +15,12 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use async_io::Async;
+
 #[cfg(unix)]
 type Listener = Async<UnixListener>;
 #[cfg(unix)]
 type Stream = Async<UnixStream>;
+
 use futures::future::{Either, select};
 use futures::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use futures::stream::FuturesUnordered;
@@ -61,13 +63,18 @@ impl LocalServer {
     fn bind_info(info: RuntimeInfo, application_id: &str, path: &Path) -> io::Result<Self> {
         prepare_directory(path)?;
         let stem = info.runtime_id.to_string();
+
         #[cfg(unix)]
         let socket = path.join(format!("{stem}.sock"));
+
         #[cfg(windows)]
         let socket = rake_client::pipe::path(&stem);
+
         let manifest = path.join(format!("{stem}.json"));
+
         #[cfg(unix)]
         let listener = Async::<UnixListener>::bind(&socket)?;
+
         #[cfg(windows)]
         let listener = Listener::bind(&socket)?;
 
@@ -148,6 +155,7 @@ impl LocalServer {
             }
         }
     }
+
     #[cfg(windows)]
     async fn accept(&self) -> io::Result<Stream> {
         self.listener.accept().await
@@ -252,6 +260,7 @@ fn encode_reply(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
 impl Drop for LocalServer {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.manifest);
+
         #[cfg(unix)]
         let _ = fs::remove_file(&self.socket);
     }

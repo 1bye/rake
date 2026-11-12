@@ -307,6 +307,7 @@ impl ProcessOutput {
 
         #[cfg(unix)]
         let opened = std::fs::File::open(path);
+
         #[cfg(windows)]
         let opened = rake_client::private::open(path);
 

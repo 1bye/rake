@@ -461,6 +461,7 @@ fn private_read(path: &Path) -> Result<Value> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
+
     #[cfg(windows)]
     let file = rake_client::private::open(path).map_err(|error| {
         Error::new(

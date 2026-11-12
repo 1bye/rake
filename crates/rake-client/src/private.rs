@@ -5,6 +5,7 @@ use std::{fs::File, io, path::Path};
 #[cfg(windows)]
 #[path = "private/windows.rs"]
 mod windows;
+
 #[cfg(windows)]
 pub(crate) use windows::validate_security;
 #[cfg(windows)]
@@ -26,6 +27,7 @@ pub fn create(path: &Path) -> io::Result<File> {
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)
     }
+
     #[cfg(windows)]
     {
         windows::create(path)
@@ -44,6 +46,7 @@ pub fn open(path: &Path) -> io::Result<File> {
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)?;
+
         let metadata = file.metadata()?;
         // SAFETY: geteuid has no preconditions.
         let uid = unsafe { libc::geteuid() };
@@ -57,6 +60,7 @@ pub fn open(path: &Path) -> io::Result<File> {
 
         Ok(file)
     }
+
     #[cfg(windows)]
     {
         windows::open(path)
@@ -91,6 +95,7 @@ pub fn prepare_directory(path: &Path) -> io::Result<()> {
 
         Ok(())
     }
+
     #[cfg(windows)]
     {
         windows::prepare_directory(path)
@@ -111,8 +116,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+
         prepare_directory(&root).unwrap();
         let path = root.join("private.json");
+
         std::io::Write::write_all(&mut create(&path).unwrap(), b"secret").unwrap();
         assert_eq!(
             std::io::read_to_string(open(&path).unwrap()).unwrap(),
@@ -128,8 +135,10 @@ mod tests {
     fn public_files_and_symlinks_are_rejected() {
         use std::os::unix::fs::{PermissionsExt, symlink};
         let root = std::env::temp_dir().join(format!("rake-private-links-{}", std::process::id()));
+
         prepare_directory(&root).unwrap();
         let path = root.join("private");
+
         drop(create(&path).unwrap());
         symlink(&path, root.join("link")).unwrap();
         assert!(open(&root.join("link")).is_err());
