@@ -164,10 +164,16 @@ impl Render for Foundation {
                 }
                 <button
                     id="notification-permission"
-                    on:click={cx.listener(|this, _, _, cx| {
-                        let request = this.runtime.services().platform().request_notification_permission();
-                        this.notification_permission = Some(this.runtime.action(cx, request));
-                    })}
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let request = this
+                                .runtime
+                                .services()
+                                .platform()
+                                .request_notification_permission();
+                            this.notification_permission = Some(this.runtime.action(cx, request));
+                        })
+                    }
                 >
                     "Allow OS notifications"
                 </button>
@@ -176,18 +182,20 @@ impl Render for Foundation {
                 }
                 <button
                     id="show-notification"
-                    on:click={cx.listener(|this, _, _, cx| {
-                        let request = this.runtime.services().platform().show_notification(
-                            rake::platform::Notification {
-                                tag: "foundation-export".into(),
-                                title: "Export finished".into(),
-                                body: "Click to open export 42".into(),
-                                activation_url: "rake-foundation://exports/42".into(),
-                            },
-                            cx,
-                        );
-                        this.notification = Some(this.runtime.action(cx, request));
-                    })}
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let request = this.runtime.services().platform().show_notification(
+                                rake::platform::Notification {
+                                    tag: "foundation-export".into(),
+                                    title: "Export finished".into(),
+                                    body: "Click to open export 42".into(),
+                                    activation_url: "rake-foundation://exports/42".into(),
+                                },
+                                cx,
+                            );
+                            this.notification = Some(this.runtime.action(cx, request));
+                        })
+                    }
                 >
                     "Show OS notification"
                 </button>
@@ -196,13 +204,20 @@ impl Render for Foundation {
                 }
                 <button
                     id="dismiss-notification"
-                    on:click={cx.listener(|this, _, _, cx| {
-                        this.status = match this.runtime.services().platform().dismiss_notification("foundation-export", cx) {
-                            Ok(()) => "Notification dismissed".into(),
-                            Err(error) => error.to_string(),
-                        };
-                        cx.notify();
-                    })}
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            this.status = match this
+                                .runtime
+                                .services()
+                                .platform()
+                                .dismiss_notification("foundation-export", cx)
+                            {
+                                Ok(()) => "Notification dismissed".into(),
+                                Err(error) => error.to_string(),
+                            };
+                            cx.notify();
+                        })
+                    }
                 >
                     "Dismiss OS notification"
                 </button>
