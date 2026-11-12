@@ -31,27 +31,36 @@ mod browser {
                 record_bytes,
                 diagnostics: 32,
             });
+
         let collector = Collector::new(128);
+
         DIAGNOSTICS.with(|slot| *slot.borrow_mut() = Some(collector.clone()));
         let mut app = rake::App::new("test.web-crash")
             .diagnostics(DiagnosticsConfig::new().collector(collector))
             .distribution_policy(Some(r#"{"version":"consumer-web-1.2.3"}"#), "");
+
         if mode != "automatic" {
             let fail = mode == "fail";
             let unwind = mode == "unwind";
+
             app = app.crash_reports(config, move |record: &CrashRecord| {
                 attempted(&record.id);
                 assert!(!unwind, "sink panic");
+
                 if fail {
                     return Err(std::io::Error::other("PRIVATE_SINK_ERROR"));
                 }
+
                 accepted(&rake::serde_json::to_string(record)?);
+
                 Ok(())
             });
         }
+
         if mode == "disabled" {
             app = app.without_crash_reports();
         }
+
         app.root(|_, _, cx| cx.new(|_| rake::gpui::Empty).into())
             .run()
             .map_err(|error| JsValue::from_str(&error.to_string()))
@@ -74,6 +83,7 @@ mod browser {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+
             rake::serde_json::to_string(&records).unwrap()
         })
     }
@@ -84,6 +94,7 @@ mod browser {
         if large {
             panic!("{}", "🦀\\\"\nSECRET_USER_CONTENT".repeat(10_000));
         }
+
         panic!("SECRET_USER_CONTENT");
     }
 }

@@ -14,6 +14,7 @@ use crate::storage::file::{check_directory, check_file, private_options};
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static NEXT_RECORD: AtomicU64 = AtomicU64::new(0);
+
 use super::record::*;
 
 impl CrashConfig {
@@ -36,6 +37,7 @@ impl CrashConfig {
         };
 
         let mut builder = fs::DirBuilder::new();
+
         builder.recursive(true);
         #[cfg(unix)]
         {
@@ -54,6 +56,7 @@ impl CrashConfig {
         };
 
         reporter.prune()?;
+
         Ok(reporter)
     }
 }
@@ -100,6 +103,7 @@ impl CrashReporter {
 
         let reporter = self.clone();
         let previous = std::panic::take_hook();
+
         std::panic::set_hook(Box::new(move |info| {
             // No catch_unwind here: Rust aborts before unwinding a panic in a hook.
             // Only owned primitive metadata is formatted; no application callbacks run.
@@ -111,15 +115,19 @@ impl CrashReporter {
                     location.column()
                 )
             });
+
             let mut record = reporter.record(
                 location,
                 collector.try_crash_tail(reporter.limits.diagnostics),
             );
+
             let (message, truncated) =
                 panic_message(info.payload(), reporter.include_panic_message);
+
             record.message = message;
             record.truncated |= truncated;
             let _ = reporter.write(record);
+
             previous(info);
         }));
 
@@ -146,6 +154,7 @@ impl CrashReporter {
             .create(true)
             .truncate(false)
             .open(self.directory.join("delivery.lock"))?;
+
         check_file(&lock)?;
 
         match lock.try_lock() {
@@ -188,10 +197,12 @@ impl CrashReporter {
             };
 
             let mut bytes = Vec::new();
+
             // Borrow the locked file so its lock lives through the sink callback.
             (&file)
                 .take((self.limits.record_bytes + 1) as u64)
                 .read_to_end(&mut bytes)?;
+
             if bytes.len() <= self.limits.record_bytes
                 && serde_json::from_slice::<RecordVersion>(&bytes)
                     .is_ok_and(|record| record.schema_version > 1)
@@ -234,6 +245,7 @@ impl CrashReporter {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
+
         let mut trace = TraceText {
             text: String::new(),
             truncated: false,
@@ -241,6 +253,7 @@ impl CrashReporter {
 
         let _ = write!(trace, "{}", Backtrace::force_capture());
         let location_truncated = location.as_ref().is_some_and(|text| text.len() > 256);
+
         CrashRecord {
             schema_version: 1,
             id: format!(
@@ -270,10 +283,12 @@ impl CrashReporter {
         let bytes = encode(&mut record, self.limits.record_bytes)?;
 
         let temporary = Temporary(self.directory.join(format!(".{}.tmp", record.id)));
+
         let mut file = private_options()
             .write(true)
             .create_new(true)
             .open(&temporary.0)?;
+
         check_file(&file)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
@@ -287,8 +302,9 @@ impl CrashReporter {
             .create(true)
             .truncate(false)
             .open(self.directory.join("retention.pending"))?;
+
         check_file(&marker)?;
-        drop(marker);
+        marker.set_len(1)?;
 
         self.prune()
     }
@@ -313,9 +329,19 @@ impl CrashReporter {
     }
 
     fn prune(&self) -> io::Result<()> {
-        // A writer marks pending AFTER commit, BEFORE trying the lock. The owner
-        // clears it BEFORE scanning and checks again AFTER unlock, so a contending
-        // writer cannot leave an unobserved commit when all writers have finished.
+        check_directory(&self.directory)?;
+        // Never unlink the shared notification: Windows rejects opens while an
+        // existing handle keeps a deleted file pending. Its length is a one-bit flag.
+        let pending = private_options()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.directory.join("retention.pending"))?;
+
+        check_file(&pending)?;
+
+        // Mark AFTER commit, clear BEFORE scanning, check AFTER unlock. A writer
+        // either appears in this scan, notifies this owner, or becomes the next owner.
         loop {
             check_directory(&self.directory)?;
             let lock = private_options()
@@ -324,6 +350,7 @@ impl CrashReporter {
                 .create(true)
                 .truncate(false)
                 .open(self.directory.join("retention.lock"))?;
+
             check_file(&lock)?;
 
             match lock.try_lock() {
@@ -333,13 +360,8 @@ impl CrashReporter {
             }
 
             let retention_lock = FileLock(&lock);
-            let pending = self.directory.join("retention.pending");
 
-            match fs::remove_file(&pending) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
+            pending.set_len(0)?;
 
             let paths = self.records()?;
             let mut excess = paths.len().saturating_sub(self.limits.records);
@@ -369,7 +391,7 @@ impl CrashReporter {
             drop(retention_lock);
             drop(lock);
 
-            if !pending.try_exists()? {
+            if pending.metadata()?.len() == 0 {
                 return Ok(());
             }
         }
@@ -403,6 +425,7 @@ impl Drop for Claim {
 }
 
 struct Temporary(PathBuf);
+
 impl Drop for Temporary {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
@@ -412,14 +435,17 @@ impl Drop for Temporary {
 fn data_root() -> io::Result<PathBuf> {
     #[cfg(target_os = "windows")]
     let root = std::env::var_os("APPDATA").map(PathBuf::from);
+
     #[cfg(target_os = "macos")]
     let root = std::env::var_os("HOME")
         .map(|root| PathBuf::from(root).join("Library/Application Support"));
+
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let root = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|root| root.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|root| PathBuf::from(root).join(".local/share")));
+
     root.filter(|root| root.is_absolute())
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no absolute app-data root"))
 }

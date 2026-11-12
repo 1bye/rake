@@ -2,7 +2,6 @@
 """Rake project builds and the development supervisor (Python 3.11+, standard library)."""
 
 import argparse
-import copy
 import hashlib
 import json
 import os
@@ -21,8 +20,8 @@ import tomllib
 import uuid
 import webbrowser
 
-from inspector import ProcessOutput
-from bundle import BundleConfig, base_path, copy_tree, distribution
+from runtime_broker import ProcessOutput
+from bundle import BundleConfig, base_path, copy_tree, distribution, install_favicon
 
 MAX_BYTES = 1024 * 1024
 EXCLUDED = {".git", "target", "dist", "node_modules", ".rake", "__pycache__", ".DS_Store"}
@@ -252,6 +251,7 @@ class Project:
             (output / "index.html").write_text("<!doctype html><html><head><meta charset='utf-8'><title>Rake</title>"
                 "<style>html,body,canvas{margin:0;width:100%;height:100%;display:block}</style></head><body>"
                 f"<script type='module'>import init from '/pkg/{self.target['name']}.js';await init();</script></body></html>")
+        install_favicon(output)
         return output
 
 
@@ -300,6 +300,8 @@ class Supervisor:
                            ("native_code_replacement" if project.args.native_reloader else "native_restart")}
         self.app = None
         self.server = None
+        self.embedded = None
+        self.launch_url = None
         self.output = ProcessOutput()
         self.readers = []
         self.output_revision = -1
@@ -315,6 +317,7 @@ class Supervisor:
     def start_server(self):
         env = {**os.environ, "RAKE_CONTROL_DIR": str(self.control),
                "RAKE_SOURCE_ROOT": os.environ.get("RAKE_SOURCE_ROOT", str(self.project.root))}
+        cdp_url = None
         if self.project.args.cdp:
             executable = os.environ.get("RAKE_CLI") or shutil.which("rake")
             if not executable:
@@ -343,18 +346,20 @@ class Supervisor:
             "--control", "--port", str(self.project.args.port), "--directory", str(waiting),
             "--development-state", str(self.status_path), "--build-root", str(self.builds),
             "--process-output", str(self.session / "output.json"),
-            *(["--inspector-only"] if self.project.args.target == "desktop" else []),
-            *(["--preview-helper", str(preview_helper)] if preview_helper else [])],
+            *(["--control-only"] if self.project.args.target == "desktop" else []),
+            *(["--preview-helper", str(preview_helper)] if preview_helper else []),
+            *(["--cdp-url", cdp_url] if cdp_url else [])],
             env=env, stdout=subprocess.PIPE, text=True)
         # Server writes its private launch URL after binding, before serving requests.
         line = self.server.stdout.readline()
         if not line.startswith("Serving "):
             raise RuntimeError("development server could not start")
         url = line.split(" at ", 1)[1].strip()
-        print(json.dumps({"event": "preview_listening" if preview_helper else "web_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
+        self.launch_url = url
+        print(json.dumps({"event": "preview_listening" if preview_helper else "web_listening" if self.project.args.target == "web" else "control_listening", "url": url, "session": str(self.session)}) if self.project.args.json else
               f"{line.strip()}\nSession: {self.session}", flush=True)
         self.server.stdout.close()
-        if not self.project.args.no_open:
+        if not self.project.args.no_open and (preview_helper or (self.project.args.target == "web" and not self.project.args.cdp)):
             webbrowser.open(url)
 
     def instance(self):
@@ -396,6 +401,20 @@ class Supervisor:
     def publish(self, number, artifact):
         if self.project.args.target == "web":
             self.record("watching", published=number, directory=str(artifact), error=None)
+            if self.project.args.cdp and self.embedded is None:
+                self.embedded = self.processes.start(["node", str(Path(__file__).with_name("embedded-devtools.mjs")),
+                    "--session", str(self.session), "--app-url", self.launch_url, "--json"], stdout=subprocess.PIPE, text=True)
+                line = self.embedded.stdout.readline()
+                self.embedded.stdout.close()
+                if not line:
+                    raise RuntimeError("embedded Chrome DevTools exited before publishing its launch URL")
+                ready = json.loads(line)
+                if ready.get("event") != "embedded_devtools_listening":
+                    raise RuntimeError("embedded Chrome DevTools could not start")
+                self.record("watching", devtools_url=ready["url"])
+                print(json.dumps(ready) if self.project.args.json else f"Chrome DevTools toggle: {ready['url']}", flush=True)
+                if not self.project.args.no_open:
+                    webbrowser.open(ready["url"])
             return
         if self.app and self.app.poll() is None:
             instance = self.instance()
@@ -470,6 +489,8 @@ class Supervisor:
         while True:
             if self.server and self.server.poll() is not None:
                 raise RuntimeError("development Web server exited")
+            if self.embedded and self.embedded.poll() is not None:
+                raise RuntimeError("embedded Chrome DevTools companion exited")
             output = self.output.snapshot()
             if output["revision"] != self.output_revision:
                 private_json(self.session / "output.json", output)
@@ -580,10 +601,10 @@ def main():
     parser.add_argument("--native-reloader", type=Path, help="External native backend; owns ABI/code retirement and exits zero only after successful replacement")
     parser.add_argument("--restart-without-state", action="store_true", help="Explicitly allow restarting apps without a control endpoint")
     parser.add_argument("--port", type=int)
-    parser.add_argument("--instance", help="Initial inspector runtime UUID or application ID")
+    parser.add_argument("--instance", help="Runtime UUID or application ID for CDP selection")
     parser.add_argument("--cdp", action="store_true", help="Expose opted-in runtimes to stock Chrome DevTools")
     parser.add_argument("--preview", action="store_true", help="macOS 14+: stream the native window to a local browser with pointer input and element selection")
-    parser.add_argument("--elements", action="store_true", help="Launch the Elements-only Rake Inspector; --target selects desktop or Web")
+    parser.add_argument("--elements", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("status", nargs="?", choices=["status"])
@@ -597,8 +618,17 @@ def main():
         parser.error("--preview requires rake dev --target desktop on macOS 14 or later")
     if args.cdp and args.command != "dev":
         parser.error("--cdp applies to dev")
-    if args.elements and args.command != "inspect":
-        parser.error("--elements applies to inspect")
+    if args.cdp and args.target == "web":
+        try:
+            version = subprocess.check_output(["node", "--version"], text=True).strip()
+            if int(version.lstrip("v").split(".")[0]) < 22:
+                raise ValueError("Node version")
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            parser.error("Web Chrome DevTools requires Node 22 or later")
+    if args.elements:
+        parser.error("The Rake inspector is deprecated; use Chrome DevTools with --cdp")
+    if args.package == "rake-inspector":
+        parser.error("The Rake inspector is deprecated and cannot be built or bundled; use Chrome DevTools")
     args.release = args.release if args.release is not None else args.command == "bundle"
     if (args.base_path is not None or args.routing) and (args.command != "bundle" or args.target != "web"):
         parser.error("--base-path/--routing require bundle --target web")
@@ -628,66 +658,7 @@ def main():
             parser.error("output cannot be a symlink")
         args.output = args.output.resolve()
     if args.command == "inspect":
-        if not args.elements:
-            parser.error("the legacy inspector was removed; use rake cdp --session PATH to connect Chrome DevTools")
-        env = dict(os.environ)
-        if args.session:
-            # Keep the advertised socket spelling: macOS /tmp and /private/tmp
-            # name the same files but endpoint validation compares exact paths.
-            env["RAKE_CONTROL_DIR"] = str(Path(os.path.abspath(args.session)) / "control")
-        processes = Processes()
-        elements_directory = None
-        process = None
-        def interrupt_inspector(*_args):
-            raise KeyboardInterrupt()
-        signal.signal(signal.SIGTERM, interrupt_inspector)
-        try:
-            elements_directory = tempfile.TemporaryDirectory(prefix="rake-elements-", dir="/tmp")
-            inspector_args = copy.copy(args)
-            inspector_args.package = "rake-inspector"
-            inspector_args.bin = None
-            inspector_args.features = None
-            inspector_args.web_dir = None
-            inspector_args.output = None
-            project = Project(inspector_args, processes)
-            elements_artifact = project.build(processes, Path(elements_directory.name) / "application")
-            command = [sys.executable, str(Path(__file__).with_name("serve-web.py")), "--inspector-only", "--control", "--port", str(args.port)]
-            if args.target == "web":
-                command += ["--inspector-app", str(elements_artifact)]
-            if args.session:
-                command += ["--development-state", str(args.session.resolve() / "status.json"),
-                            "--build-root", str(args.session.resolve() / "builds"),
-                            "--process-output", str(args.session.resolve() / "output.json")]
-            process = processes.start(command, env=env, stdout=subprocess.PIPE, text=True)
-            line = process.stdout.readline()
-            if not line.startswith("Serving "):
-                raise RuntimeError("inspector server could not start")
-            url = line.split(" at ", 1)[1].strip()
-            if args.instance and args.target == "web":
-                from urllib.parse import quote
-                url = url.replace("#__rake_control=", "?instance=" + quote(args.instance, safe="") + "#__rake_control=")
-            print(json.dumps({"event": "inspector_listening", "url": url}) if args.json else url, flush=True)
-            viewer = None
-            if not args.no_open:
-                if args.target == "desktop":
-                    viewer_env = {**env, "RAKE_INSPECTOR_URL": url}
-                    if args.instance:
-                        viewer_env["RAKE_INSPECTOR_INSTANCE"] = args.instance
-                    viewer = processes.start([str(elements_artifact)], env=viewer_env, stdout=sys.stderr)
-                else:
-                    webbrowser.open(url)
-            code = (viewer or process).wait()
-            if code:
-                raise RuntimeError(f"Inspector {'application' if viewer else 'server'} exited {code}")
-        except KeyboardInterrupt:
-            pass
-        finally:
-            processes.close()
-            if process:
-                process.stdout.close()
-            if elements_directory:
-                elements_directory.cleanup()
-        return 0
+        parser.error("Use rake inspect or rake cdp through the CLI; the legacy Rake inspector is deprecated")
 
     processes = Processes()
     supervisor = None

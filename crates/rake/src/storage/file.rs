@@ -216,17 +216,20 @@ fn check_values(values: &Values) -> Result<(), StorageError> {
 }
 
 pub(crate) fn private_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
-
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+
         options
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+
+        options
     }
 
-    options
+    #[cfg(not(unix))]
+    OpenOptions::new()
 }
 
 pub(crate) fn check_file(file: &File) -> io::Result<()> {

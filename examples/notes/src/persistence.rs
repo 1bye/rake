@@ -53,6 +53,7 @@ impl Envelope {
     fn encode(&self) -> Result<String, StorageError> {
         self.library.validate()?;
         let bytes = schema()?.encode(self).map_err(schema_error)?;
+
         let bytes =
             String::from_utf8(bytes).map_err(|error| StorageError::Invalid(error.to_string()))?;
 
@@ -162,6 +163,7 @@ fn legacy_envelope(value: rake::serde_json::Value) -> Result<Envelope, StorageEr
             .as_object_mut()
             .ok_or_else(|| StorageError::Invalid("Invalid library.".into()))?
             .remove("format");
+
         rake::serde_json::from_value(value)
             .map_err(|error| StorageError::Invalid(error.to_string()))?
     };

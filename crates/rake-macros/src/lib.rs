@@ -20,6 +20,7 @@ pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
         .unwrap_or_else(|error| error.to_compile_error())
         .into()
 }
+
 #[cfg(feature = "view")]
 use rake_view_syntax as view;
 

@@ -7,6 +7,7 @@ use futures::{channel::oneshot, executor::block_on, future::LocalBoxFuture};
 use rake::storage::{Backend, CacheConfig, MemoryBackend, Schema, StorageError, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -28,11 +29,13 @@ fn schema() -> Schema {
                 .ok_or(StorageError::MissingMigration { from: 0 })?;
 
             value["title"] = title;
+
             Ok(value)
         })
         .unwrap()
         .with_migration(1, |mut value| {
             value["pinned"] = json!(false);
+
             Ok(value)
         })
         .unwrap()
@@ -45,8 +48,10 @@ async fn backend_contract(backend: impl Backend + Clone) {
     let store = Store::<Note>::new(backend.clone())
         .with_schema(schema())
         .with_cache(CacheConfig::new(4, 4096).unwrap());
+
     let other = store.clone();
     let (first, second) = futures::join!(store.get("note"), other.get("note"));
+
     let expected = Note {
         title: "old".into(),
         pinned: false,
@@ -102,11 +107,13 @@ async fn backend_contract(backend: impl Backend + Clone) {
     let failing = Schema::new(2)
         .with_migration(0, |mut value| {
             value["changed"] = json!(true);
+
             Ok(value)
         })
         .unwrap()
         .with_migration(1, |_| Err(StorageError::Capacity))
         .unwrap();
+
     let failing = Store::<Value>::new(backend.clone()).with_schema(failing);
 
     backend.set("note", raw).await.unwrap();
@@ -188,6 +195,7 @@ fn file_migration_contract_and_failed_reads_preserve_the_whole_file() {
 
         backend_contract(backend.clone()).await;
         let before = std::fs::read(path.join("store.json")).unwrap();
+
         let failing = Store::<Value>::new(backend.clone()).with_schema(
             Schema::new(1)
                 .with_migration(0, |_| Err(StorageError::Capacity))
@@ -246,6 +254,7 @@ fn fixture_codec_and_registration_validation() {
         schema().decode::<u8>(fixture),
         Err(StorageError::Codec(_))
     ));
+
     for malformed in [
         br#"{"$rake_schema":"bad","value":0}"#.as_slice(),
         br#"{"$rake_schema":0}"#,
@@ -256,6 +265,7 @@ fn fixture_codec_and_registration_validation() {
             Err(StorageError::Codec(_))
         ));
     }
+
     let (value, changed) = Schema::new(0).decode::<Value>(b"null").unwrap();
 
     assert_eq!(value, Value::Null);
@@ -337,6 +347,7 @@ fn migrated_cache_and_concurrent_clones_do_not_repeat_steps_or_overwrite_new_wri
         let store = Store::<Note>::new(backend.clone())
             .with_schema(schema())
             .with_cache(CacheConfig::new(4, 4096).unwrap());
+
         let other = store.clone();
         let (release, receiver) = oneshot::channel();
 
@@ -369,10 +380,12 @@ fn migrated_cache_and_concurrent_clones_do_not_repeat_steps_or_overwrite_new_wri
 
         *backend.read_delay.borrow_mut() = Some(receiver);
         let mut read = Box::pin(store.get("note"));
+
         let replacement = Note {
             title: "new".into(),
             pinned: true,
         };
+
         let mut write = Box::pin(other.set("note", &replacement));
 
         assert!(futures::poll!(&mut read).is_pending());
@@ -444,6 +457,7 @@ fn migration_serialization_failure_preserves_the_original() {
         backend.set("note", raw).await.unwrap();
         let store = Store::<Unwritable>::new(backend.clone())
             .with_schema(Schema::new(1).with_migration(0, Ok).unwrap());
+
         let error = store.get("note").await.unwrap_err();
 
         assert!(matches!(error, StorageError::Codec(_)));
@@ -470,6 +484,7 @@ fn application_validation_error_is_the_migration_source_and_preserves_bytes() {
                 Ok(value)
             })
             .unwrap();
+
         let store = Store::<Value>::new(backend.clone()).with_schema(schema);
         let error = store.get("note").await.unwrap_err();
 

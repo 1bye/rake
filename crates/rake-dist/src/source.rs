@@ -2,6 +2,7 @@
 
 use crate::{Config, Error, Format, Metadata, Package, Plan, Platform, files};
 use serde::{Deserialize, Serialize};
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -176,12 +177,14 @@ pub struct SourcePlan {
 pub fn bundle_file_schema() -> serde_json::Value {
     let mut schema = crate::configuration_schema();
     let program = schemars::schema_for!(Program).to_value();
+
     if let Some(definitions) = program.get("$defs").and_then(|v| v.as_object()) {
         schema["$defs"]
             .as_object_mut()
             .expect("Config schema has definitions")
             .extend(definitions.clone());
     }
+
     schema["title"] = "Bundle.toml".into();
     schema["properties"]["program"] = program;
     schema["properties"]["root"] = serde_json::json!({"type":"string", "description":"Input root relative to the config directory; must contain the config"});
@@ -189,6 +192,7 @@ pub fn bundle_file_schema() -> serde_json::Value {
     schema["properties"]["name"] = serde_json::json!({"type":"string", "minLength":1});
     schema["properties"]["identifier"] = serde_json::json!({"type":"string", "minLength":1});
     schema["required"] = serde_json::json!(["schema_version", "name", "identifier", "program"]);
+
     schema
 }
 
@@ -208,10 +212,12 @@ pub fn select_bundle_file(
     if config.is_some() && manifest.is_some() {
         return Err(source_error("--config conflicts with --manifest-path"));
     }
+
     let selected = if let Some(path) = config {
         Some(directory.join(path))
     } else if manifest.is_none() {
         let path = directory.join("Bundle.toml");
+
         match fs::symlink_metadata(&path) {
             Ok(_) => Some(path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -220,14 +226,17 @@ pub fn select_bundle_file(
     } else {
         None
     };
+
     let Some(path) = selected else {
         return Ok(None);
     };
+
     if package.is_some() || bin.is_some() {
         return Err(source_error(
             "a selected Bundle.toml conflicts with --package/--bin; put selection in [program]",
         ));
     }
+
     load_bundle_file(&path).map(Some)
 }
 
@@ -242,37 +251,49 @@ pub fn load_bundle_file(path: &Path) -> Result<BundleSource, Error> {
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or(Path::new(".")),
         )?;
+
         let path = dunce::canonicalize(path)?;
+
         if !path.starts_with(&parent) {
             return Err(source_error("config symlink escapes its directory"));
         }
+
         let mut value: serde_json::Value = serde_json::to_value(
             toml::from_str::<toml::Value>(&fs::read_to_string(&path)?)
                 .map_err(|e| source_error(e.to_string()))?,
         )?;
+
         let schema = bundle_file_schema();
+
         check_keys(&value, &schema, &schema, "")?;
         let object = value
             .as_object_mut()
             .ok_or_else(|| source_error("expected a TOML table"))?;
+
         let root = object
             .remove("root")
             .map(serde_json::from_value::<PathBuf>)
             .transpose()
             .map_err(|e| source_error(format!("root: {e}")))?;
+
         let root = dunce::canonicalize(parent.join(root.unwrap_or_else(|| PathBuf::from("."))))?;
+
         if !root.is_dir() || !path.starts_with(&root) {
             return Err(source_error("root must contain the selected config"));
         }
+
         let program = serde_json::from_value(
             object
                 .remove("program")
                 .ok_or_else(|| source_error("missing [program]"))?,
         )
         .map_err(|e| source_error(format!("program: {e}")))?;
+
         let config: Config =
             serde_json::from_value(value).map_err(|e| source_error(e.to_string()))?;
+
         validate_identity(&config)?;
+
         Ok(BundleSource {
             root,
             lock_path: path.with_extension("lock"),
@@ -281,6 +302,7 @@ pub fn load_bundle_file(path: &Path) -> Result<BundleSource, Error> {
             config,
         })
     };
+
     result().map_err(|error| source_error(format!("{}: {error}", path.display())))
 }
 
@@ -288,11 +310,13 @@ fn validate_identity(config: &Config) -> Result<(), Error> {
     if config.schema_version != Some(1) {
         return Err(source_error("standalone schema_version must be 1"));
     }
+
     for (key, value) in [("name", &config.name), ("identifier", &config.identifier)] {
         if value.as_ref().is_none_or(|v| v.trim().is_empty()) {
             return Err(source_error(format!("standalone {key} is required")));
         }
     }
+
     Ok(())
 }
 
@@ -316,6 +340,7 @@ fn check_keys(
     {
         return check_keys(value, resolved, document, path);
     }
+
     for keyword in ["oneOf", "anyOf"] {
         if let Some(variants) = schema.get(keyword).and_then(|v| v.as_array()) {
             let variant = variants
@@ -336,11 +361,13 @@ fn check_keys(
                         .iter()
                         .find(|s| s.get("type").is_none_or(|t| t != "null"))
                 });
+
             if let Some(variant) = variant {
                 return check_keys(value, variant, document, path);
             }
         }
     }
+
     if let Some(object) = value.as_object() {
         for (key, value) in object {
             let field = if path.is_empty() {
@@ -348,6 +375,7 @@ fn check_keys(
             } else {
                 format!("{path}.{key}")
             };
+
             if let Some(child) = schema.get("properties").and_then(|v| v.get(key)) {
                 check_keys(value, child, document, &field)?;
             } else if let Some(additional) =
@@ -362,9 +390,11 @@ fn check_keys(
                         p.keys()
                             .min_by_key(|candidate| edit_distance(key, candidate))
                     });
+
                 let hint = closest
                     .map(|key| format!("; did you mean `{key}`?"))
                     .unwrap_or_default();
+
                 return Err(source_error(format!("unknown key `{field}`{hint}")));
             }
         }
@@ -375,22 +405,28 @@ fn check_keys(
             check_keys(value, items, document, &format!("{path}[{index}]"))?;
         }
     }
+
     Ok(())
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {
     let mut row: Vec<usize> = (0..=right.chars().count()).collect();
+
     for (i, a) in left.chars().enumerate() {
         let mut diagonal = row[0];
+
         row[0] = i + 1;
+
         for (j, b) in right.chars().enumerate() {
             let previous = row[j + 1];
+
             row[j + 1] = (row[j] + 1)
                 .min(previous + 1)
                 .min(diagonal + usize::from(a != b));
             diagonal = previous;
         }
     }
+
     *row.last().expect("distance row contains its origin")
 }
 
@@ -412,11 +448,13 @@ pub(crate) fn cargo_metadata(manifest: &Path) -> Result<Metadata, Error> {
         ])
         .arg(manifest)
         .output()?;
+
     if !output.status.success() {
         return Err(Error::Cargo(
             String::from_utf8_lossy(&output.stderr).trim().into(),
         ));
     }
+
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
@@ -429,11 +467,13 @@ pub(crate) fn select_package<'a>(
         .iter()
         .filter(|p| metadata.workspace_members.contains(&p.id))
         .collect();
+
     let selected: Vec<_> = candidates
         .iter()
         .copied()
         .filter(|p| package.is_none_or(|name| name == p.name))
         .collect();
+
     if selected.len() != 1 {
         return Err(source_error(format!(
             "select program.package from: {}",
@@ -444,6 +484,7 @@ pub(crate) fn select_package<'a>(
                 .join(", ")
         )));
     }
+
     Ok(selected[0])
 }
 
@@ -456,7 +497,9 @@ pub(crate) fn select_package<'a>(
 /// executables, Cargo ambiguity, or existing effective Config validation errors.
 pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
     let source = &request.source;
+
     validate_identity(&source.config)?;
+
     if !source.root.is_absolute()
         || dunce::canonicalize(&source.root)? != source.root
         || !source.lock_path.is_absolute()
@@ -465,6 +508,7 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             "source root must be canonical and lock_path must be absolute",
         ));
     }
+
     if let SourceOrigin::File { path } = &source.origin
         && (!path.starts_with(&source.root)
             || path
@@ -482,6 +526,7 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             "file source/lock provenance does not match root",
         ));
     }
+
     let (program, package, version, target, shadowed_metadata) = match &source.program {
         Program::Cargo {
             manifest,
@@ -492,39 +537,48 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             let manifest = files::confined(&source.root, manifest)?;
             let metadata = cargo_metadata(&manifest)?;
             let selected = select_package(&metadata, package.as_deref())?;
+
             // A workspace manifest cannot select an application outside the declared root.
             if !dunce::canonicalize(&selected.manifest_path)?.starts_with(&source.root) {
                 return Err(source_error("selected Cargo package escapes input root"));
             }
+
             let binaries: Vec<_> = selected
                 .targets
                 .iter()
                 .filter(|t| t.kind.iter().any(|k| k == "bin"))
                 .map(|t| t.name.as_str())
                 .collect();
+
             let selected_bins: Vec<_> = binaries
                 .iter()
                 .copied()
                 .filter(|name| bin.as_deref().is_none_or(|b| b == *name))
                 .collect();
+
             if selected_bins.len() != 1 {
                 return Err(source_error(format!(
                     "select program.bin from: {}",
                     binaries.join(", ")
                 )));
             }
+
             let mut features = features.clone();
+
             for feature in &request.features {
                 if !features.contains(feature) {
                     features.push(feature.clone());
                 }
             }
+
             let target = request.target.clone().map_or_else(crate::host_target, Ok)?;
+
             let shadowed = selected
                 .metadata
                 .pointer("/rake/bundle")
                 .map(|_| vec![selected.manifest_path.clone()])
                 .unwrap_or_default();
+
             (
                 ResolvedProgram::Cargo {
                     manifest: selected.manifest_path.clone(),
@@ -550,21 +604,25 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
                     "prebuilt programs do not support Cargo-only --debug/--features",
                 ));
             }
+
             if source.config.macos.universal {
                 return Err(source_error(
                     "prebuilt programs do not support macos.universal",
                 ));
             }
+
             if target.is_some() && request.target.is_some() && target != &request.target {
                 return Err(source_error(
                     "program.target conflicts with --target-triple",
                 ));
             }
+
             let target = target
                 .as_ref()
                 .or(request.target.as_ref())
                 .ok_or_else(|| source_error("prebuilt requires program.target or --target-triple"))?
                 .clone();
+
             Platform::from_target(&target)?;
             semver::Version::parse(version)
                 .map_err(|e| source_error(format!("program.version: {e}")))?;
@@ -576,13 +634,18 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
                     ""
                 },
             );
-            let path = files::confined(&source.root, Path::new(&expanded))?;
+
+            let relative = rake_dist_core::portable_relative_path(Path::new(&expanded))?;
+            let path = files::confined(&source.root, &relative)?;
+
             if !path.is_file() {
                 return Err(source_error("program.path must be a loose executable file"));
             }
+
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
+
                 if request.platform != Platform::Windows
                     && fs::metadata(&path)?.permissions().mode() & 0o111 == 0
                 {
@@ -593,10 +656,13 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             validate_executable_image(&path)?;
             let package = executable_name(&path, request.platform)?;
             let manifest = source.root.join("Cargo.toml");
+
             let shadowed = if manifest.is_file() {
                 let manifest = files::confined(&source.root, Path::new("Cargo.toml"))?;
+
                 let value: toml::Value = toml::from_str(&fs::read_to_string(&manifest)?)
                     .map_err(|e| source_error(e.to_string()))?;
+
                 value
                     .get("package")
                     .and_then(|v| v.get("metadata"))
@@ -607,6 +673,7 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             } else {
                 Vec::new()
             };
+
             (
                 ResolvedProgram::Prebuilt {
                     path,
@@ -619,14 +686,17 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             )
         }
     };
+
     if request.entitlements.is_some() && request.platform != Platform::Macos {
         return Err(source_error("--entitlements requires macOS"));
     }
+
     let target = if source.config.macos.universal && request.platform == Platform::Macos {
         "universal-apple-darwin".into()
     } else {
         target
     };
+
     let plan = source.config.plan_for(
         &package,
         &version,
@@ -634,8 +704,10 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
         Some(&target),
         (!request.formats.is_empty()).then_some(&request.formats),
     )?;
+
     for package in plan.packages() {
         let config = package.config();
+
         if matches!(source.program, Program::Prebuilt { .. })
             && (config.web.base_path.is_some()
                 || config.web.routing.is_some()
@@ -645,45 +717,56 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
                 "prebuilt programs do not support Web configuration",
             ));
         }
+
         if config.updates.enabled || package.format() == Format::Velopack {
             return Err(source_error(
                 "standalone updates/Velopack require the build-context integration (RFC step 2), which is not supported yet",
             ));
         }
+
         if package.format() == Format::Flatpak {
             return Err(source_error(
                 "standalone Flatpak requires source/build-context integration, which is not supported yet",
             ));
         }
     }
+
     let output = absolute_output(&request.output)?;
     let mut protected = vec![source.lock_path.as_path()];
+
     if let SourceOrigin::File { path } = &source.origin {
         protected.push(path);
     }
+
     if let ResolvedProgram::Cargo { manifest, .. } = &program {
         protected.push(manifest);
     }
+
     if protected.iter().any(|path| path.starts_with(&output)) {
         return Err(source_error(
             "output overlaps configuration, manifest or lock input",
         ));
     }
+
     if source.root.starts_with(&output) {
         return Err(source_error("output overlaps application source"));
     }
+
     if let ResolvedProgram::Prebuilt { path, .. } = &program {
         let cache = source.root.join(PREBUILT_COMPONENT_CACHE);
+
         if fs::symlink_metadata(&cache).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
             return Err(source_error(
                 "prebuilt component cache must not be a symlink",
             ));
         }
+
         if path.starts_with(&cache) || output.starts_with(&cache) || cache.starts_with(&output) {
             return Err(source_error(
                 "prebuilt component cache cannot be used as program input or overlap output",
             ));
         }
+
         crate::execution::reject_input_overlap(
             &plan,
             &source.root,
@@ -692,13 +775,17 @@ pub fn plan_source(request: &SourceBundleRequest) -> Result<SourcePlan, Error> {
             "prebuilt component cache",
         )?;
     }
+
     crate::execution::reject_input_overlap(&plan, &source.root, &output, &target, "output")?;
+
     if let ResolvedProgram::Prebuilt { path, .. } = &program
         && (path.starts_with(&output) || output.starts_with(path))
     {
         return Err(source_error("output overlaps prebuilt executable"));
     }
+
     validate_lock(&source.lock_path)?;
+
     Ok(SourcePlan {
         source: source.clone(),
         program,
@@ -714,21 +801,26 @@ fn absolute_output(path: &Path) -> Result<PathBuf, Error> {
     if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(source_error("output must not be a symlink"));
     }
+
     let absolute = std::path::absolute(path)?;
     // Resolve existing ancestors without creating output, including symlinks.
     let mut ancestor = absolute.as_path();
     let mut missing = Vec::new();
+
     while !ancestor.exists() {
         let component = ancestor
             .components()
             .next_back()
             .ok_or_else(|| source_error("invalid output path"))?;
+
         missing.push(component.as_os_str().to_owned());
         ancestor = ancestor
             .parent()
             .ok_or_else(|| source_error("invalid output parent"))?;
     }
+
     let mut result = dunce::canonicalize(ancestor)?;
+
     for name in missing.into_iter().rev() {
         if name == ".." {
             result.pop();
@@ -736,6 +828,7 @@ fn absolute_output(path: &Path) -> Result<PathBuf, Error> {
             result.push(name);
         }
     }
+
     Ok(result)
 }
 
@@ -743,6 +836,7 @@ fn validate_lock(path: &Path) -> Result<(), Error> {
     if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(source_error("component lock must not be a symlink"));
     }
+
     Ok(())
 }
 
@@ -751,19 +845,23 @@ pub(crate) fn executable_name(path: &Path, platform: Platform) -> Result<String,
         .file_name()
         .and_then(|p| p.to_str())
         .ok_or_else(|| source_error("program.path needs a UTF-8 executable name"))?;
+
     let name = if platform == Platform::Windows && name.to_ascii_lowercase().ends_with(".exe") {
         &name[..name.len() - 4]
     } else {
         name
     };
+
     if name.is_empty() {
         return Err(source_error("program.path needs an executable name"));
     }
+
     Ok(name.into())
 }
 
 fn validate_executable_image(path: &Path) -> Result<(), Error> {
     use object::{Object, read::macho::FatArch};
+
     fn executable(bytes: &[u8]) -> bool {
         object::File::parse(bytes).is_ok_and(|file| {
             file.kind() == object::ObjectKind::Executable
@@ -773,6 +871,7 @@ fn validate_executable_image(path: &Path) -> Result<(), Error> {
         })
     }
     let bytes = fs::read(path)?;
+
     let valid = match object::FileKind::parse(bytes.as_slice()) {
         Ok(object::FileKind::MachOFat32) => {
             object::read::macho::MachOFatFile32::parse(bytes.as_slice()).is_ok_and(|fat| {
@@ -790,10 +889,12 @@ fn validate_executable_image(path: &Path) -> Result<(), Error> {
         }
         _ => executable(&bytes),
     };
+
     if !valid {
         return Err(source_error(
             "program.path must be a native executable image, not an object or shared library",
         ));
     }
+
     Ok(())
 }

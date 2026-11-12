@@ -17,9 +17,11 @@ fn malformed_images_and_untrusted_strings_fail_before_registration() {
 #[test]
 fn menu_validation_checks_nested_ids_and_radio_exclusivity() {
     let nested = Menu::new().item(MenuItem::new("open", "Nested"));
+
     let duplicate = Menu::new()
         .item(MenuItem::new("open", "Open"))
         .item(MenuItem::new("sub", "Sub").kind(ItemKind::Submenu(nested)));
+
     assert!(duplicate.validate().is_err());
 
     let radio = |id| {
@@ -28,6 +30,7 @@ fn menu_validation_checks_nested_ids_and_radio_exclusivity() {
             selected: true,
         })
     };
+
     assert!(
         Menu::new()
             .item(radio("one"))
@@ -44,7 +47,9 @@ fn disabled_or_hidden_ancestors_prevent_stale_menu_dispatch() {
             .kind(ItemKind::Submenu(Menu::new().item(
                 MenuItem::new("check", "Check").kind(ItemKind::Check(CheckState::Mixed)),
             )));
+
     let menu = Menu::new().item(parent.clone());
+
     assert!(menu.actionable("check"));
     parent.enabled = false;
     assert!(!Menu::new().item(parent.clone()).actionable("check"));
@@ -57,6 +62,7 @@ fn disabled_or_hidden_ancestors_prevent_stale_menu_dispatch() {
 fn native_text_and_accelerators_are_validated_without_a_desktop() {
     use rake_tray::{Accelerator, macos};
     let key = Accelerator::parse("Cmd+Shift+k").unwrap();
+
     assert!(key.super_key && key.shift);
     assert_eq!(key.key, "k");
     assert!(Accelerator::parse("Ctrl+Ctrl+k").is_err());
@@ -71,6 +77,7 @@ fn native_text_and_accelerators_are_validated_without_a_desktop() {
             .is_err()
     );
     let mut item = MenuItem::new("mnemonic", "Open");
+
     item.access_key = Some('x');
     assert!(Menu::new().item(item).validate().is_err());
 }
@@ -82,6 +89,7 @@ fn composed_badges_preserve_straight_alpha_and_progress_bounds() {
     let badge = Image::new(ImageRepresentation::rgba(1, 1, vec![255, 0, 0, 128]).unwrap());
     let composed = transparent.badge(&badge, Corner::BottomRight, 0.5).unwrap();
     let bytes = composed.representations()[0].bytes();
+
     assert_eq!(
         &bytes[60..64],
         &[255, 0, 0, 128],

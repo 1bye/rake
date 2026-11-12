@@ -2,6 +2,7 @@
 """Serve a built example on loopback, with app-shell rewrites for path routing."""
 
 import argparse
+import os
 import io
 import json
 import secrets
@@ -12,47 +13,43 @@ import urllib.parse
 import urllib.error
 
 from dev_bridge import BridgeError, DevBridge, MAX_BYTES
-from inspector import Inspector
+from runtime_broker import RuntimeBroker
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import TCPServer
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--example", choices=["foundation", "routing", "routing-hash", "notes", "view", "inspector", "files"], default="routing")
+parser.add_argument("--example", choices=["foundation", "routing", "routing-hash", "notes", "view", "files"], default="routing")
 parser.add_argument("--port", type=int, default=8081)
 parser.add_argument("--control", action="store_true", help="Enable authenticated browser-to-CLI development control")
 parser.add_argument("--directory", type=Path, help="Serve another built application directory")
 parser.add_argument("--development-state", type=Path, help="Private supervisor status, enabled only with control")
 parser.add_argument("--build-root", type=Path, help="Immutable published Web build directories")
-parser.add_argument("--inspector-only", action="store_true", help="Serve native runtime inspection without application assets")
+parser.add_argument("--control-only", "--inspector-only", dest="control_only", action="store_true", help="Serve native development control without application assets")
 parser.add_argument("--process-output", type=Path, help="Private supervisor output snapshot")
-parser.add_argument("--inspector-app", type=Path, help="Serve the built Rake Elements Wasm frontend on the dedicated inspector origin")
+parser.add_argument("--cdp-url", help="Private loopback CDP discovery endpoint")
 parser.add_argument("--preview-helper", type=Path, help="Compiled macOS capture helper, used only on the native preview origin")
 args = parser.parse_args()
-if args.preview_helper and not (args.inspector_only and args.control and args.development_state):
+if args.preview_helper and not (args.control_only and args.control and args.development_state):
     parser.error("--preview-helper requires native inspection and supervisor state")
-if args.inspector_app:
-    if not args.inspector_only or not args.control:
-        parser.error("--inspector-app requires --inspector-only --control")
-    args.inspector_app = args.inspector_app.resolve(strict=True)
-    if not all((args.inspector_app / name).is_file() for name in ("index.html", "pkg/rake_inspector.js", "pkg/rake_inspector_bg.wasm")):
-        parser.error("--inspector-app must contain a built Rake Inspector")
 if bool(args.development_state) != bool(args.build_root) or (args.development_state and not args.control):
     parser.error("development state/build root require each other and --control")
-if args.inspector_only and not args.control:
+if args.cdp_url and not args.control:
+    parser.error("--cdp-url requires --control")
+if args.control_only and not args.control:
     parser.error("--inspector-only requires --control")
 bridge = DevBridge(f"http://127.0.0.1:{args.port}", development_state=args.development_state) if args.control else None
-inspector = Inspector(bridge, args.process_output, allow_native=args.inspector_only) if bridge else None
+inspector = RuntimeBroker(bridge, args.process_output, allow_native=args.control_only, cdp_url=args.cdp_url) if bridge else None
 preview = None
 if args.preview_helper:
     from preview import Preview
     preview = Preview(inspector, args.preview_helper)
 directory = args.directory
-if directory is None and not args.inspector_only:
+if directory is None and not args.control_only:
     directory = Path(__file__).resolve().parents[3] / "dist" / args.example
 
-if not args.inspector_only and not (directory / "index.html").is_file():
+if not args.control_only and not (directory / "index.html").is_file():
     build_args = "routing --hash" if args.example == "routing-hash" else args.example
     raise SystemExit(f"Build the example first: python3 scripts/build-web.py --example {build_args}")
 
@@ -93,6 +90,22 @@ BOOTSTRAP_JS = rb"""(() => {
         const runtime = document.documentElement.getAttribute('data-rake-runtime');
         seenRuntime ||= !!runtime;
         if (state.published > build && !seenRuntime) location.reload();
+        const failure = runtime && state.runtimes[runtime] && state.runtimes[runtime].error;
+        let status = document.getElementById('__rake_development');
+        if (failure || state.error) {
+          if (!status && document.body) {
+            status = document.createElement('div'); status.id = '__rake_development'; status.setAttribute('role', 'alert');
+            status.style.cssText = 'position:fixed;bottom:8px;left:8px;max-width:70vw;max-height:35vh;overflow:auto;white-space:pre-wrap;background:#18232b;color:#f0f4e8;padding:8px;font:12px monospace;z-index:2147483647';
+            document.body.append(status);
+          }
+          if (status) status.textContent = 'Rake: ' + (failure || state.error);
+        } else if (status) status.remove();
+        if (state.devtools_url && window.parent === window && !document.getElementById('__rake_devtools')) {
+          const button = document.createElement('a'); button.id = '__rake_devtools'; button.href = state.devtools_url + '#devtools';
+          button.title = 'Open Chrome DevTools'; button.setAttribute('aria-label', button.title); button.textContent = '\u2039\u203a';
+          button.style.cssText = 'position:fixed;bottom:12px;right:12px;width:28px;height:28px;border-radius:50%;background:#242424;color:#ddd;display:grid;place-items:center;text-decoration:none;font:14px monospace;z-index:2147483647';
+          document.body.append(button);
+        }
       } catch (_) { /* The running application remains usable while disconnected. */ }
     }
     // Recursive scheduling bounds concurrent requests if the server is slow.
@@ -208,28 +221,11 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             return io.BytesIO(encoded)
-        if args.inspector_app and route == "/__rake/elements":
-            self.send_response(302)
-            self.send_header("Location", "/__rake/elements/")
-            self.end_headers()
+        if route.startswith(("/__rake/inspector", "/__rake/elements")):
+            self.send_error(410, "Rake Inspector is deprecated; use Chrome DevTools (--cdp)")
             return None
-        if args.inspector_app and route.startswith("/__rake/elements/"):
-            relative = urllib.parse.unquote(route.removeprefix("/__rake/elements/")) or "index.html"
-            asset = (args.inspector_app / relative).resolve()
-            if not asset.is_relative_to(args.inspector_app) or not asset.is_file():
-                self.send_error(404, "inspector asset unavailable")
-                return None
-            encoded = asset.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", self.guess_type(str(asset)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            return io.BytesIO(encoded)
-        if args.inspector_only:
-            self.send_error(404, "native inspector serves no application assets")
+        if args.control_only:
+            self.send_error(404, "native control serves no application assets")
             return None
         if bridge and self.path.split("?", 1)[0] == "/__rake/bootstrap.js":
             self.send_response(200)
@@ -298,10 +294,10 @@ class BoundedServer(ThreadingHTTPServer):
 server = BoundedServer(("127.0.0.1", args.port), partial(AppHandler, directory=str(directory)))
 args.port = server.server_port
 if bridge:
-    bridge.url = f"http://127.0.0.1:{args.port}"
+    bridge.url = os.environ.get("RAKE_PUBLIC_BRIDGE_URL") or f"http://127.0.0.1:{args.port}"
 launch_url = f"http://127.0.0.1:{args.port}"
 if bridge:
-    launch_url += f"{'/__rake/preview' if preview else '/__rake/elements/' if args.inspector_app else '/'}#__rake_control={bridge.token}"
+    launch_url += f"{'/__rake/preview' if preview else '/'}#__rake_control={bridge.token}"
 print(f"Serving {args.example} at {launch_url}", flush=True)
 
 stopping = False

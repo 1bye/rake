@@ -1,5 +1,6 @@
 //! StatusNotifierItem presentation, interpreted by the desktop host.
 use crate::Image;
+
 /// SNI category used by panel grouping policy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Category {
@@ -13,6 +14,7 @@ pub enum Category {
     /// Hardware.
     Hardware,
 }
+
 /// SNI activity; Passive does not guarantee disappearance on every panel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Status {
@@ -24,6 +26,7 @@ pub enum Status {
     /// Requests attention.
     NeedsAttention,
 }
+
 /// Native rich tooltip with plain title/body and an optional image.
 #[derive(Clone, Debug, Default)]
 pub struct Tooltip {
@@ -34,6 +37,7 @@ pub struct Tooltip {
     /// Native named or raster tooltip image.
     pub image: Option<Image>,
 }
+
 /// SNI fields whose presentation remains host-controlled.
 #[derive(Clone, Debug, Default)]
 pub struct Presentation {

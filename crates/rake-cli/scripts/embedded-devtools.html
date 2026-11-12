@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Rake</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { display: flex; background: #242424; }
+  [hidden] { display: none !important; }
+  #app { width: 100%; min-width: 240px; flex-shrink: 0; position: relative; overflow: hidden; background: #fffefa; }
+  body[data-devtools-open] #app { width: var(--app-width, 58%); }
+  iframe { border: 0; display: block; }
+  #application { transform-origin: top left; }
+  #divider { width: 5px; flex-shrink: 0; cursor: col-resize; background: #414141; touch-action: none; }
+  #divider:hover, #divider:focus-visible { background: #8ab4f8; outline: none; }
+  #tools { flex: 1; min-width: 280px; }
+  #inspector { width: 100%; height: 100%; }
+  #toggle { position: fixed; right: 12px; bottom: 12px; z-index: 10; width: 28px; height: 28px;
+    display: grid; place-items: center; padding: 0; border: 1px solid #666; border-radius: 50%;
+    background: #242424; color: #ddd; cursor: pointer; box-shadow: 0 2px 8px #0003; }
+  #toggle:hover, #toggle:focus-visible { color: white; border-color: #8ab4f8; outline: 2px solid #8ab4f8; outline-offset: 2px; }
+  #toggle[aria-expanded="true"] { color: #8ab4f8; }
+  #status { position: fixed; left: 12px; bottom: 12px; margin: 0; padding: 8px; color: #eee; background: #242424; font: 12px system-ui; }
+  body.resizing iframe { pointer-events: none; }
+</style>
+<section id="app" aria-label="Application preview">
+  <iframe id="application" title="Application" allow="clipboard-read; clipboard-write"></iframe>
+</section>
+<div id="divider" hidden role="separator" aria-label="Resize app and DevTools" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" aria-valuenow="58" tabindex="0"></div>
+<section id="tools" hidden aria-label="Chrome DevTools">
+  <iframe id="inspector" title="Chrome DevTools inspector"></iframe>
+</section>
+<button id="toggle" type="button" title="Open Chrome DevTools" aria-label="Open Chrome DevTools" aria-expanded="false" aria-controls="tools">
+  <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M10 3v10M4 6l2 2-2 2"/></svg>
+</button>
+<p id="status" hidden role="alert"></p>
+<script type="module">
+  const config = /* EMBEDDED_CONFIG */;
+  const application = document.querySelector('#application'), inspector = document.querySelector('#inspector');
+  const app = document.querySelector('#app'), divider = document.querySelector('#divider');
+  const tools = document.querySelector('#tools'), toggle = document.querySelector('#toggle');
+  const status = document.querySelector('#status');
+  let open = false, runtime, attached;
+  function scale() {
+    const value = open ? 0.8 : 1;
+    application.style.width = `${100 / value}%`;
+    application.style.height = `${100 / value}%`;
+    application.style.transform = `scale(${value})`;
+  }
+  function attach() {
+    if (!open || !runtime || attached === runtime) return;
+    const url = new URL(config.frontend);
+    url.searchParams.set('ws', config.socket + runtime);
+    url.searchParams.set('panel', 'elements');
+    inspector.src = url.href;
+    attached = runtime;
+  }
+  function setOpen(value) {
+    open = value;
+    document.body.toggleAttribute('data-devtools-open', open);
+    tools.hidden = divider.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.title = open ? 'Close Chrome DevTools' : 'Open Chrome DevTools';
+    toggle.setAttribute('aria-label', toggle.title);
+    scale();
+    if (open) attach();
+    else { inspector.src = 'about:blank'; attached = undefined; }
+  }
+  toggle.addEventListener('click', () => setOpen(!open));
+  scale(); application.src = config.appUrl;
+  if (location.hash === '#devtools') setOpen(true);
+  setInterval(() => {
+    try {
+      const current = application.contentDocument?.documentElement.dataset.rakeRuntime;
+      if (!current) return;
+      runtime = current;
+      status.hidden = true;
+      attach();
+    } catch {
+      status.textContent = 'Application must use the same origin as this preview'; status.hidden = false;
+    }
+  }, 250);
+  function resize(percent) {
+    const value = Math.min(80, Math.max(20, percent));
+    app.style.setProperty('--app-width', `${value}%`);
+    divider.setAttribute('aria-valuenow', String(Math.round(value)));
+  }
+  divider.addEventListener('pointerdown', event => {
+    divider.setPointerCapture(event.pointerId); document.body.classList.add('resizing');
+  });
+  divider.addEventListener('pointermove', event => {
+    if (divider.hasPointerCapture(event.pointerId)) resize(event.clientX / innerWidth * 100);
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    divider.addEventListener(type, () => document.body.classList.remove('resizing'));
+  }
+  divider.addEventListener('keydown', event => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault(); resize(parseFloat(divider.getAttribute('aria-valuenow')) + (event.key === 'ArrowRight' ? 2 : -2));
+  });
+</script>
+</html>

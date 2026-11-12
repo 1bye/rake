@@ -26,6 +26,12 @@ rake-dist = { version = "=0.1.0-alpha.3", path = "../rake-dist" }
 ctrlc = { version = "3.5", features = ["termination"] }
 base64 = "0.22.1"
 regex = "1"
+sha2 = "0.10"
+zip = { version = "9.1", default-features = false, features = ["deflate"] }
+percent-encoding = "2"
+mime_guess = "2"
+httpdate = "1"
+html5ever = "0.27"
 rake-client.workspace = true
 rake-protocol.workspace = true
 rake-diagnostics = { workspace = true, features = ["devtools"] }

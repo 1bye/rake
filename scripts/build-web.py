@@ -5,11 +5,15 @@ from pathlib import Path
 import argparse
 import shutil
 import subprocess
+import sys
 import tomllib
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
+from bundle import install_favicon
 
 project = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--example", choices=["foundation", "routing", "notes", "view", "inspector", "files"], default="foundation")
+parser.add_argument("--example", choices=["foundation", "routing", "notes", "view", "files"], default="foundation")
 parser.add_argument("--hash", action="store_true", help="Build the routing example with fragment URLs")
 args = parser.parse_args()
 
@@ -41,4 +45,5 @@ subprocess.run([
     binary, "--target", "web", "--out-dir", str(output / "pkg"),
     str(project / "target" / "wasm32-unknown-unknown" / "debug" / f"{package.replace('-', '_')}.wasm"),
 ], check=True)
+install_favicon(output)
 print(f"Built {output}; serve with python3 crates/rake-cli/scripts/serve-web.py --example {output.name}")

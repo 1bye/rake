@@ -16,9 +16,11 @@
 //! ```
 
 mod commands;
+#[cfg(any(unix, target_family = "wasm"))]
 mod host;
 mod memory;
 
+#[cfg(any(unix, target_family = "wasm"))]
 pub(crate) use host::HostClient;
 
 pub use commands::*;
@@ -371,6 +373,7 @@ impl<R: Route> RuntimeClient<R> {
         if self.router.is_shutdown() {
             return Err(ControlError::RuntimeShutdown);
         }
+
         self.command(&Command::Run { id, arguments })
     }
 
@@ -762,10 +765,18 @@ pub(crate) async fn run_host<R: Route>(
     client: RuntimeClient<R>,
     application_id: String,
 ) {
+    #[cfg(any(unix, target_family = "wasm"))]
     run_host_client(config, HostClient::new(client), application_id).await;
+
+    #[cfg(not(any(unix, target_family = "wasm")))]
+    {
+        let _ = (config, client, application_id);
+
+        futures::future::pending::<()>().await;
+    }
 }
 
-#[cfg(feature = "gpui")]
+#[cfg(all(feature = "gpui", any(unix, target_family = "wasm")))]
 pub(crate) async fn run_host_client(
     config: ControlConfig,
     client: HostClient,
@@ -794,9 +805,6 @@ pub(crate) async fn run_host_client(
             Err(error) => crate::error!(%error, "Invalid development bridge configuration"),
         }
     }
-
-    #[cfg(not(any(unix, target_family = "wasm")))]
-    let _ = (client, application_id);
 
     futures::future::pending::<()>().await;
 }

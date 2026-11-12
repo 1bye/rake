@@ -1,4 +1,4 @@
-//! Bundled build/watch supervisor, sharing the repository's standard-library Web tooling.
+//! Retained embedded compatibility resources for the staged broker and preview ports.
 
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::process::CommandExt;
@@ -9,41 +9,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
     std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        for (name, source) in [
-            ("bundle.py", include_str!("../scripts/bundle.py")),
-            ("web_offline.py", include_str!("../scripts/web_offline.py")),
-            (
-                "web-service-worker.js",
-                include_str!("../scripts/web-service-worker.js"),
-            ),
-            ("inspector.py", include_str!("../scripts/inspector.py")),
-            ("dev.py", include_str!("../scripts/dev.py")),
-            (
-                "rake-web-font-licenses.txt",
-                include_str!("../scripts/rake-web-font-licenses.txt"),
-            ),
-            ("preview.py", include_str!("../scripts/preview.py")),
-            (
-                "preview_socket.py",
-                include_str!("../scripts/preview_socket.py"),
-            ),
-            (
-                "preview-stream.js",
-                include_str!("../scripts/preview-stream.js"),
-            ),
-            (
-                "preview-annotations.js",
-                include_str!("../scripts/preview-annotations.js"),
-            ),
-            ("preview.swift", include_str!("../scripts/preview.swift")),
-            ("preview.html", include_str!("../scripts/preview.html")),
-            ("preview.js", include_str!("../scripts/preview.js")),
-            ("preview.css", include_str!("../scripts/preview.css")),
-            ("serve-web.py", include_str!("../scripts/serve-web.py")),
-            ("dev_bridge.py", include_str!("../scripts/dev_bridge.py")),
-        ] {
-            std::fs::write(directory.join(name), source)?;
-        }
+        extract(&directory)?;
 
         let error = std::process::Command::new("python3")
             .arg(directory.join("dev.py"))
@@ -58,4 +24,59 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Erro
     let _ = std::fs::remove_dir_all(directory);
 
     result
+}
+
+/// Materialize the retained helper resources for their owning session.
+pub(crate) fn extract(directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source) in [
+        ("bundle.py", include_str!("../scripts/bundle.py")),
+        (
+            "default-icon.svg",
+            include_str!("../scripts/default-icon.svg"),
+        ),
+        ("web_offline.py", include_str!("../scripts/web_offline.py")),
+        (
+            "web-service-worker.js",
+            include_str!("../scripts/web-service-worker.js"),
+        ),
+        (
+            "runtime_broker.py",
+            include_str!("../scripts/runtime_broker.py"),
+        ),
+        (
+            "embedded-devtools.mjs",
+            include_str!("../scripts/embedded-devtools.mjs"),
+        ),
+        (
+            "embedded-devtools.html",
+            include_str!("../scripts/embedded-devtools.html"),
+        ),
+        ("dev.py", include_str!("../scripts/dev.py")),
+        (
+            "rake-web-font-licenses.txt",
+            include_str!("../scripts/rake-web-font-licenses.txt"),
+        ),
+        ("preview.py", include_str!("../scripts/preview.py")),
+        (
+            "preview_socket.py",
+            include_str!("../scripts/preview_socket.py"),
+        ),
+        (
+            "preview-stream.js",
+            include_str!("../scripts/preview-stream.js"),
+        ),
+        (
+            "preview-annotations.js",
+            include_str!("../scripts/preview-annotations.js"),
+        ),
+        ("preview.swift", include_str!("../scripts/preview.swift")),
+        ("preview.html", include_str!("../scripts/preview.html")),
+        ("preview.js", include_str!("../scripts/preview.js")),
+        ("preview.css", include_str!("../scripts/preview.css")),
+        ("serve-web.py", include_str!("../scripts/serve-web.py")),
+        ("dev_bridge.py", include_str!("../scripts/dev_bridge.py")),
+    ] {
+        std::fs::write(directory.join(name), source)?;
+    }
+    Ok(())
 }

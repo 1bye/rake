@@ -1,99 +1,351 @@
 name: Rake
 on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**/*.md'
+      - .agents/**
+  push:
+    branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**/*.md'
+      - .agents/**
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  # Only superseded PR runs are cancelled; main pushes each keep their own group.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Keep dependency caches small; CI assertions do not require full debug symbols.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+
 jobs:
-  native-and-web:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt
+      - run: python3 scripts/check-gpui-pins.py
+      - run: cargo fmt --all --check
+      # These suites take seconds and need neither a Rust build nor a browser.
+      - run: python3 scripts/test-web-deployment.py
+      - run: python3 scripts/test-desktop-smoke.py
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Fast web script tests
+        run: |
+          node scripts/test-notes-storage.mjs
+          node scripts/test-platform.mjs
+          node scripts/test-web-runtime.mjs
+          node scripts/test-offline.mjs
+          node scripts/test-file-processing.mjs
+
+  portable:
+    if: github.event_name != 'schedule'
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: portable
+          # This parallel job is short; keep download hits without a second Wasm target tree.
+          cache-targets: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Portable API lints
+        run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
+      - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
+      - run: cargo check -p rake-macros --no-default-features --locked
+      - name: Headless example lints
+        run: cargo clippy -p rake-notes --no-default-features --all-targets --locked -- -D warnings
+      - name: Headless example tests
+        run: cargo test -p rake-notes --no-default-features --locked
+      - name: Portable Wasm libraries
+        run: cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
+      # Example packages enable updates on the facade, so retain the standalone default graph.
+      - run: cargo check -p rake-app --lib --target wasm32-unknown-unknown --locked
+      - name: Default Wasm lints
+        run: cargo clippy -p rake-app -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p renamed-facade -p rake-files --lib --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: Headless Wasm lints
+        run: |
+          cargo clippy -p rake-web-host-fixture --lib --target wasm32-unknown-unknown --locked -- -D warnings
+          cargo clippy -p rake-app --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: Wasm feature checks
+        run: |
+          cargo check -p rake-app --features tray --target wasm32-unknown-unknown --locked
+          cargo check -p rake-app --features native-components --lib --target wasm32-unknown-unknown --locked
+          cargo check -p rake-view -p renamed-facade --lib --features rake/devtools --target wasm32-unknown-unknown --locked
+          cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
+      - name: Wasm artifact builds
+        run: cargo build -p rake-foundation -p rake-routing -p rake-notes -p rake-view --lib --target wasm32-unknown-unknown --locked
+
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python3 scripts/cache-budget.py
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            updates: updates-appimage
+          - os: windows-latest
+            updates: updates-velopack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: desktop-${{ matrix.os }}
+          # Reserve compiled-cache space for Windows and macOS; Linux keeps download hits.
+          cache-targets: ${{ runner.os == 'Windows' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install GPUI Linux development and software Vulkan libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-xinput-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev libfontconfig-dev \
+            xvfb xauth openbox mesa-vulkan-drivers vulkan-tools
+      - name: Default desktop lints
+        run: >-
+          cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
+          -p rake-kit-example -p rake-ui -p rake-view -p rake-files
+          -p rake-tray -p rake-autostart --all-targets --locked -- -D warnings
+      # Surface graphics failures before the longer workspace/trybuild suites.
+      - name: Build real desktop smoke app
+        id: smoke-build
+        if: ${{ !cancelled() }}
+        run: cargo build -p rake-desktop-example --features native-smoke --locked
+      - name: Render a GPUI frame on Linux (X11 and lavapipe)
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Linux' }}
+        timeout-minutes: 2
+        run: |
+          XDG_RUNTIME_DIR="$(mktemp -d)"
+          export XDG_RUNTIME_DIR
+          trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
+          lavapipe=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#lavapipe[@]}" -eq 1
+          test -f "${lavapipe[0]}"
+          export VK_ICD_FILENAMES="${lavapipe[0]}"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          unset WAYLAND_DISPLAY
+          # shellcheck disable=SC2016 # The inner shell expands its own environment.
+          xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash -euc '
+            openbox > "$XDG_RUNTIME_DIR/openbox.log" 2>&1 &
+            trap "kill $!" EXIT
+            vulkaninfo --summary
+            python3 scripts/desktop-smoke.py target/debug/rake-desktop-example
+          '
+      - name: Render a GPUI frame on Windows (D3D11)
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        timeout-minutes: 2
+        run: python scripts/desktop-smoke.py target/debug/rake-desktop-example.exe
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: desktop-smoke-${{ matrix.os }}
+          path: target/desktop-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Workspace tests (default native GPUI)
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --locked --no-fail-fast
+      - name: View tests without devtools or kit
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
+          --features rake-app/view-test-support,rake-view/view-test-support,rake-notes/view-test-support
+          --locked --no-fail-fast
+      - name: Devtools view tests without kit
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app --features view-test-support,devtools
+          --lib --test view_state --test element_inspection --locked --no-fail-fast
+      - name: Desktop feature lints
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
+          -p rake-kit-example -p rake-ui -p rake-view -p rake-files
+          -p rake-tray -p rake-autostart --all-targets --locked
+          --features rake-desktop-example/native-smoke,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools,rake-notes/view-test-support,rake-view/view-test-support
+          -- -D warnings
+      - name: Desktop feature tests (devtools, kit, tray, updates)
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
+          -p rake-foundation -p rake-routing -p rake-files -p rake-tray -p rake-autostart -p rake-updates
+          -p rake-client -p rake-http -p rake-protocol --locked --no-fail-fast
+          --features rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-notes/view-test-support,rake-view/view-test-support
+      - name: GPUI fast desktop lints
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
+          -p rake-kit-example -p rake-ui -p rake-view -p rake-files
+          -p rake-tray -p rake-autostart --all-targets --locked
+          --features rake-app/gpui-fast,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools
+          -- -D warnings
+
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python scripts/cache-budget.py ${{ runner.os == 'Windows' && '--targets' || '' }}
+
+  native:
+    if: github.event_name != 'schedule'
+    needs: gate
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: python3 scripts/check-gpui-pins.py
-      - run: cargo fmt --all --check
+        with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: native
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The formatter CLI depends on the distribution bundler; keep its build off the gate.
       - run: cargo run -p rake-app-cli --locked -- format --check
+      - run: cargo test -p rake-ui --features test-support --locked
       - name: Check generated lint guide and rule docs
         run: cargo test -p rake-app-cli --locked --bin rake catalogue_artifacts_are_current
       - name: Lint examples (including warnings)
         run: python3 scripts/check-example-lints.py
-      - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-app --features native-components --all-targets --locked -- -D warnings
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
       - run: cargo test -p rake-native --doc --locked
       - run: cargo test -p rake-native --features native-tests --test appkit --locked
-      - run: cargo clippy -p rake-client -p rake-http -p rake-protocol -p rake-diagnostics --lib --locked -- -D warnings -D clippy::missing_errors_doc -D clippy::must_use_candidate -D clippy::return_self_not_must_use
       - run: cargo test -p rake-tray --locked
+      - run: cargo test --workspace --locked --no-fail-fast
+      - run: cargo test -p rake-files --lib --locked
+      - run: cargo test -p rake-app --test platform --locked
       - run: cargo clippy -p rake-app --features tray --all-targets --locked -- -D warnings
       - run: cargo test -p rake-app --features tray,view-test-support --lib --locked
       - run: cargo check -p rake-app --features tray,gpui-fast --all-targets --locked
-      - run: cargo check -p rake-app --features tray --target wasm32-unknown-unknown --locked
       - run: cargo check -p renamed-facade --features tray --locked
-      - run: cargo test --workspace --locked --no-fail-fast
       - run: cargo test -p rake-app --features view-test-support --lib --test view_state --test actions --test inspection_compiled_out --locked
+      - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo test -p rake-app --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
       - run: cargo clippy -p rake-app --all-targets --features view-test-support,devtools --locked -- -D warnings
       - run: cargo test -p rake-ui --features kit --test semantic --locked
       - run: cargo test -p rake-app --features kit,view-test-support,devtools --lib --test view_state --locked
       - run: cargo clippy -p rake-kit-example --features kit,devtools --all-targets --locked -- -D warnings
       - run: cargo check -p renamed-facade --features devtools --locked
-      - run: cargo test -p rake-view --features view-test-support --lib --locked
-      - run: cargo check -p rake-app --lib --target wasm32-unknown-unknown --locked
       - run: cargo test -p rake-notes --features view-test-support --locked
-      - run: cargo check -p rake-app --no-default-features --locked
-      - run: cargo check -p rake-app --features native-components --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-diagnostics -p rake-protocol -p rake-http --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-macros --no-default-features --locked
-      - run: cargo test -p rake-client -p rake-http -p rake-protocol --locked
-      - run: cargo test -p rake-ui --features test-support --locked
       - run: cargo clippy -p rake-app --no-default-features --locked -- -D warnings
+      - name: Headless application tests
+        run: cargo test -p rake-app --no-default-features --test platform --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
       - run: cargo test -p rake-app-cli --features scaffold-tests --test new_build --locked
-      - run: cargo build -p rake-app-cli --locked
-      - name: Install matching Wasm bindings tool
-        run: |
-          python3 - <<'PY'
-          import subprocess, tomllib
-          from pathlib import Path
-          lock = tomllib.loads(Path("Cargo.lock").read_text())
-          version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
-          subprocess.run(["cargo", "install", "wasm-bindgen-cli", "--version", version, "--locked"], check=True)
-          PY
-      - run: python3 scripts/test-bundle.py
-      - run: python3 scripts/test-dev-bridge.py
-      - run: python3 scripts/test-supervisor.py
-      - run: python3 scripts/test-inspector.py
-      - uses: actions/setup-node@v4
+
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python3 scripts/cache-budget.py --targets
+
+  extended:
+    if: github.event_name != 'pull_request'
+    needs: gate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
-          node-version: 22
-      - run: node scripts/test-web-loading.mjs
-      - run: node scripts/test-notes-storage.mjs
-      - run: node scripts/test-platform.mjs
-      - run: node scripts/test-web-runtime.mjs
-      - run: node scripts/test-offline.mjs
-      - run: node scripts/test-file-processing.mjs
-      - run: cargo test -p rake-files --lib --locked
-      - run: cargo clippy -p rake-files --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: python3 scripts/test-web-deployment.py
-      - run: cargo test -p rake-app --no-default-features --test platform --locked
-      - run: cargo test -p rake-app --test platform --locked
-      - run: cargo clippy -p rake-web-host-fixture --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo clippy -p rake-app --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo test -p rake-inspector --no-default-features --locked
-      - run: cargo clippy -p rake-inspector --no-default-features --all-targets --locked -- -D warnings
-      - run: cargo test -p rake-notes --no-default-features --locked
-      - run: cargo clippy -p rake-notes --no-default-features --all-targets --locked -- -D warnings
-      - run: cargo test -p rake-app --no-default-features --test managed_work --test routing --test windows --test runtime_control --test reload --test web_deployment --test element_inspection --test application_commands --test guarded_quit --test services --locked
-      - run: cargo check -p rake-foundation -p rake-routing -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-view -p renamed-facade --lib --features rake/devtools --target wasm32-unknown-unknown --locked
-      - run: cargo clippy -p rake-app -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector -p renamed-facade --lib --target wasm32-unknown-unknown --locked -- -D warnings
-      - run: cargo build -p rake-foundation -p rake-routing -p rake-notes -p rake-view -p rake-inspector --lib --target wasm32-unknown-unknown --locked
-      - run: cargo check -p rake-routing --lib --features hash-routing --target wasm32-unknown-unknown --locked
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: extended
+          cache-targets: false
+          # Keep binaries/drivers, not a duplicate stable + nightly target tree.
+          cache-directories: ~/.dylint_drivers
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install spacing tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-dylint@6.3.2,dylint-link@6.3.2
+        env:
+          # Used only if the prebuilt binary installer needs its source fallback.
+          RUSTUP_TOOLCHAIN: nightly-2026-08-20
+      - run: python3 scripts/check-spacing.py
       - run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
-      - run: rustup toolchain install nightly-2026-08-20 --profile minimal --component rustc-dev,llvm-tools-preview,rust-src,rustfmt
-      - run: cargo +nightly-2026-08-20 install cargo-dylint dylint-link --version 6.3.2 --locked
-      - run: python3 scripts/check-spacing.py
+      - run: cargo build -p rake-app-cli --locked
+      - name: Read locked Wasm bindings version
+        id: wasm-bindgen
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          lock = tomllib.loads(Path("Cargo.lock").read_text())
+          version = next(item["version"] for item in lock["package"] if item["name"] == "wasm-bindgen")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\n")
+          PY
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen.outputs.version }}
+          fallback: none
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Native CLI and development script suites
+        run: |
+          python3 scripts/test-bundle.py
+          python3 scripts/test-dev-bridge.py
+          python3 scripts/test-supervisor.py
+          python3 scripts/test-runtime-broker.py
+          node --test scripts/test-embedded-devtools.mjs
+      - run: node scripts/test-web-loading.mjs
+      - run: node scripts/test-web-crash.mjs
+      - name: Estimate tools and download cache size
+        if: ${{ always() }}
+        run: python3 scripts/cache-budget.py --drivers

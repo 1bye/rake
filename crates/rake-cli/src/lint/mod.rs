@@ -81,7 +81,9 @@ struct Report {
 impl Diagnostic {
     fn at_bytes(id: &'static str, file: &Path, text: &str, range: std::ops::Range<usize>) -> Self {
         let mut diagnostic = Self::new(id, file, Span::call_site());
+
         diagnostic.span = byte_span(text, range);
+
         diagnostic
     }
 
@@ -100,6 +102,7 @@ impl Diagnostic {
 
     fn new(id: &'static str, file: &Path, span: Span) -> Self {
         let rule = rule(id).expect("diagnostics use catalogue IDs");
+
         let position = |point: proc_macro2::LineColumn| Position {
             line: point.line.max(1),
             column: point.column + 1,
@@ -129,11 +132,13 @@ impl Diagnostic {
 fn byte_span(text: &str, range: std::ops::Range<usize>) -> SourceSpan {
     let position = |offset| {
         let prefix = &text[..offset];
+
         Position {
             line: prefix.bytes().filter(|byte| *byte == b'\n').count() + 1,
             column: prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1,
         }
     };
+
     SourceSpan {
         start: position(range.start),
         end: position(range.end),
@@ -143,8 +148,10 @@ fn byte_span(text: &str, range: std::ops::Range<usize>) -> SourceSpan {
 pub(crate) fn run(arguments: &[String]) -> Result<bool> {
     if arguments.iter().any(|argument| argument == "--hook") {
         hook::run(arguments);
+
         return Ok(false);
     }
+
     let mut json = false;
     let mut guide = None;
     let mut update = None;
@@ -188,16 +195,20 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
                 "--guide cannot be combined with a project path, --explain or --fix".into(),
             );
         }
+
         if update.is_some() && !agents {
             return Err("--update requires --guide=agents".into());
         }
+
         if let Some(path) = update {
             let original = fs::read_to_string(&path)?;
             let refreshed = guide::refresh_agents(&original)?;
             let changed = refreshed != original;
+
             if changed {
                 fs::write(&path, refreshed)?;
             }
+
             if json {
                 println!(
                     "{}",
@@ -208,13 +219,16 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
             } else {
                 println!("{} already up to date", path.display());
             }
+
             return Ok(false);
         }
+
         let guide = if agents {
             guide::agents()
         } else {
             guide::generate()
         };
+
         if json {
             println!(
                 "{}",
@@ -223,6 +237,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
         } else {
             print!("{guide}");
         }
+
         return Ok(false);
     }
 
@@ -266,6 +281,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool> {
 
     let path = path.unwrap_or(std::env::current_dir()?);
     let (root, mut report) = check_target(&path)?;
+
     if fix {
         fix::apply(&root, &report)?;
         report = check_target(&path)?.1;
@@ -299,11 +315,13 @@ fn render(diagnostic: &Diagnostic, source: &str) -> String {
     let start = &diagnostic.span.start;
     let end = &diagnostic.span.end;
     let line = source.lines().nth(start.line - 1).unwrap_or("");
+
     let width = if end.line == start.line {
         end.column.saturating_sub(start.column).max(1)
     } else {
         line.chars().count().saturating_sub(start.column - 1).max(1)
     };
+
     let severity = if diagnostic.level == Level::Deny {
         "error"
     } else {
@@ -341,12 +359,14 @@ struct Config {
 fn load_config(directory: &Path) -> Result<Config> {
     let manifest = directory.join("Cargo.toml");
     let value: toml::Value = toml::from_str(&fs::read_to_string(&manifest)?)?;
+
     let config = value
         .get("package")
         .and_then(|v| v.get("metadata"))
         .and_then(|v| v.get("rake"))
         .and_then(|v| v.get("lint"))
         .cloned();
+
     let mut config: Config = config
         .map(|value| value.try_into())
         .transpose()?
@@ -408,31 +428,39 @@ fn check_project(root: &Path) -> Result<Report> {
 
     let mut sources = Vec::new();
     let mut manifests = BTreeMap::new();
+
     scan_directory(root, &Config::default(), None, &mut |path, config| {
         manifests.insert(config.package.clone(), config.clone());
+
         if path.extension().is_some_and(|ext| ext == "rs") {
             sources.push((path.to_owned(), fs::read_to_string(path)?, config.clone()));
         }
+
         Ok(())
     })?;
     let mut themed = std::collections::BTreeSet::new();
+
     for (_, text, config) in &sources {
         if source::installs_theme(text) {
             themed.insert(config.package.clone());
         }
     }
+
     for (path, text, config) in sources {
         let relative = path.strip_prefix(root)?;
         let diagnostics = source::check_themed(relative, &text, themed.contains(&config.package));
         let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, false);
+
         if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
             report
                 .original_sources
                 .insert(diagnostic.file.clone(), text);
         }
+
         report.diagnostics.extend(diagnostics);
         report.files_checked += 1;
     }
+
     // Empty packages and virtual workspace release profiles must also be checked.
     for (directory, config) in manifests {
         let path = directory.join("Cargo.toml");
@@ -440,13 +468,16 @@ fn check_project(root: &Path) -> Result<Report> {
         let relative = path.strip_prefix(root)?;
         let diagnostics = manifest::check(relative, &text)?;
         let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, true);
+
         if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
             report
                 .original_sources
                 .insert(diagnostic.file.clone(), text);
         }
+
         report.diagnostics.extend(diagnostics);
     }
+
     finish_report(&mut report);
 
     Ok(report)
@@ -461,7 +492,9 @@ fn scan_directory(
     if boundary.is_some_and(|root| root != directory) && directory.join("Cargo.toml").is_file() {
         return Ok(());
     }
+
     let mut local;
+
     let config = if directory.join("Cargo.toml").is_file() {
         local = load_config(directory)?;
         local.exclude.extend_from_slice(&inherited.exclude);
@@ -470,9 +503,11 @@ fn scan_directory(
     } else {
         inherited
     };
+
     if directory.join("Cargo.toml").is_file() {
         visit(&directory.join("Cargo.toml"), config)?;
     }
+
     let mut entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
 
     entries.sort_by_key(|entry| entry.file_name());
@@ -529,13 +564,16 @@ fn filter_diagnostics(
         if let Some(level) = levels.get(diagnostic.rule_id) {
             diagnostic.level = *level;
         }
+
         diagnostic.level != Level::Allow
     };
+
     diagnostics.retain_mut(|diagnostic| {
         enabled(diagnostic) && !suppressions.iter_mut().any(|s| s.suppresses(diagnostic))
     });
     diagnostics.extend(suppressions.into_iter().filter_map(|suppression| {
         let mut diagnostic = suppression.unused()?;
+
         enabled(&mut diagnostic).then_some(diagnostic)
     }));
 
@@ -545,27 +583,35 @@ fn filter_diagnostics(
 /// Reuse lint discovery, package excludes, and compile-fail fixture handling.
 pub(crate) fn files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
+
     scan_directory(root, &Config::default(), None, &mut |path, _| {
         if path.extension().is_some_and(|extension| extension == "rs") {
             files.push(path.to_owned());
         }
+
         Ok(())
     })?;
+
     Ok(files)
 }
 
 fn check_target(path: &Path) -> Result<(PathBuf, Report)> {
     let path = path.canonicalize()?;
+
     if path.is_dir() {
         return Ok((path.clone(), check_project(&path)?));
     }
+
     if !path.is_file() {
         return Err("lint expects a regular file or project directory".into());
     }
+
     let rust = path.extension().is_some_and(|extension| extension == "rs");
+
     if !rust && path.file_name().is_none_or(|name| name != "Cargo.toml") {
         return Err("lint expects a project directory, Rust file or Cargo.toml".into());
     }
+
     let root = path
         .parent()
         .and_then(|parent| {
@@ -574,8 +620,10 @@ fn check_target(path: &Path) -> Result<(PathBuf, Report)> {
                 .find(|directory| directory.join("Cargo.toml").is_file())
         })
         .ok_or("lint file must belong to a directory containing Cargo.toml")?;
+
     let config = load_config(root)?;
     let relative = path.strip_prefix(root)?;
+
     let mut report = Report {
         schema_version: 1,
         diagnostics: Vec::new(),
@@ -583,6 +631,7 @@ fn check_target(path: &Path) -> Result<(PathBuf, Report)> {
         denied: false,
         original_sources: BTreeMap::new(),
     };
+
     let ignored = relative.components().any(|part| {
         matches!(
             part.as_os_str().to_str(),
@@ -593,10 +642,13 @@ fn check_target(path: &Path) -> Result<(PathBuf, Report)> {
         .iter()
         .any(|excluded| path.starts_with(excluded))
         || (rust && path.with_extension("stderr").is_file());
+
     if !ignored {
         let text = fs::read_to_string(&path)?;
+
         let diagnostics = if rust {
             let mut themed = source::installs_theme(&text);
+
             // Search only this package for theme installation, stopping reads as
             // soon as evidence is found; nested packages cannot supply evidence.
             if !themed {
@@ -607,23 +659,31 @@ fn check_target(path: &Path) -> Result<(PathBuf, Report)> {
                     {
                         themed = source::installs_theme(&fs::read_to_string(candidate)?);
                     }
+
                     Ok(())
                 })?;
             }
+
             report.files_checked = 1;
+
             source::check_themed(relative, &text, themed)
         } else {
             manifest::check(relative, &text)?
         };
+
         let diagnostics = filter_diagnostics(relative, &text, &config.levels, diagnostics, !rust);
+
         if let Some(diagnostic) = diagnostics.iter().find(|d| d.edit.is_some()) {
             report
                 .original_sources
                 .insert(diagnostic.file.clone(), text);
         }
+
         report.diagnostics = diagnostics;
     }
+
     finish_report(&mut report);
+
     Ok((root.to_owned(), report))
 }
 

@@ -35,6 +35,7 @@ type MainWindow = Rc<
         &mut gpui::App,
     ) -> Result<AnyView, crate::router::MountError>,
 >;
+
 type WindowOptionsFactory = Rc<dyn Fn() -> WindowOptions>;
 
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
@@ -245,6 +246,7 @@ impl<R: Route> App<R> {
     #[must_use]
     pub fn tray(mut self, tray: crate::tray::Tray) -> Self {
         self.trays.push(tray);
+
         self
     }
 
@@ -256,6 +258,7 @@ impl<R: Route> App<R> {
         handler: impl FnMut(&crate::tray::Event, &mut gpui::App) + 'static,
     ) -> Self {
         self.tray_handlers.push(Box::new(handler));
+
         self
     }
 
@@ -277,6 +280,7 @@ impl<R: Route> App<R> {
                 }
             }
         }
+
         self
     }
 
@@ -289,11 +293,13 @@ impl<R: Route> App<R> {
         resources: &'static str,
     ) -> Self {
         let mut app = self;
+
         app.crash_version = crate::crash::startup::version_from_policy(policy);
 
         #[cfg(feature = "updates")]
         {
             let mut app = app;
+
             app.distribution = policy.map(|policy| (policy, resources));
 
             app
@@ -546,6 +552,7 @@ impl<R: Route> App<R> {
         sink: impl crate::crash::CrashSink,
     ) -> Self {
         let mut app = self;
+
         app.crash_reports.configure(config, sink);
 
         app
@@ -640,6 +647,7 @@ impl<R: Route> App<R> {
         + 'static,
     ) -> Self {
         self.main_window = Some((Rc::new(options), Rc::new(mount)));
+
         self
     }
 
@@ -648,6 +656,7 @@ impl<R: Route> App<R> {
     #[must_use]
     pub fn tray_popup(mut self, id: impl Into<String>, popup: crate::tray::Popup) -> Self {
         self.tray_popups.push((id.into(), popup));
+
         self
     }
 
@@ -943,6 +952,7 @@ impl<R: Route> App<R> {
                 Err(error) => {
                     errors.record(AppError::Tray(error));
                     crate::tray::stop(cx);
+
                     return;
                 }
             };
@@ -972,7 +982,9 @@ impl<R: Route> App<R> {
             #[cfg(not(target_family = "wasm"))]
             if let Some((options, mount)) = self.main_window {
                 let config = background_config.expect("main window configuration validated");
+
                 managed::install_main_window(options, mount, self.background, services, config, cx);
+
                 return;
             }
 
@@ -1263,9 +1275,11 @@ pub fn show_main_window(cx: &mut gpui::App) -> Result<(), AppError> {
     {
         managed::show_main_window(cx)
     }
+
     #[cfg(target_family = "wasm")]
     {
         let _ = cx;
+
         Err(AppError::BackgroundUnsupported)
     }
 }
@@ -1290,6 +1304,7 @@ mod configuration_tests {
         #[serde(serialize_with = "reject_command")]
         value: String,
     }
+
     #[cfg(feature = "tray")]
     fn reject_command<S: serde::Serializer>(_: &str, _: S) -> Result<S::Ok, S::Error> {
         Err(serde::ser::Error::custom(
@@ -1303,6 +1318,7 @@ mod configuration_tests {
         let pages = crate::router::__routes(|_: &Destination, _, _, _| {
             Err(crate::router::MountError("unused fixture".into()))
         });
+
         let app = App::new("tray.builder-test")
             .tray_command(
                 "main",
@@ -1314,6 +1330,7 @@ mod configuration_tests {
             .tray(crate::tray::Tray::new("main"))
             .routes(pages)
             .navigation_feedback(false);
+
         assert!(
             matches!(app.run(), Err(AppError::Command(crate::control::CommandError::Arguments(message))) if message.contains("fixture command cannot serialize"))
         );

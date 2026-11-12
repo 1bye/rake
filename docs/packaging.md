@@ -44,7 +44,7 @@ Configuration belongs to the selected package's Cargo.toml:
 name = "Notes"
 identifier = "com.example.notes"
 assets = "assets"
-icon = "icons/notes.png" # Optional; .png or .icns on macOS
+icon = "icons/notes.png" # Optional; .png or .svg, also .icns on macOS
 build_number = "12"     # Optional; defaults to the numeric Cargo version
 minimum_system_version = "13.0" # Optional macOS deployment declaration
 
@@ -58,6 +58,16 @@ routing = "path"
 - **Version:** Cargo's full version stays in the manifest and archive, and the numeric part supplies the macOS short version.
 - **Build numbers:** one to three numeric components.
 - **Minimum OS:** declares compatibility. It doesn't change Rust or linker deployment targets, or prove that dependencies support that OS.
+
+Native apps use Rake's static Vermilion icon when `icon` is omitted, including
+development apps launched with `rake dev`. Set `icon` to use your own design.
+
+Web development and deployment bundles use the same SVG as a default favicon.
+The native Rust `rake build --target web` path does not yet install this fallback;
+see the [landing report](../.agents/reports/land-native-review.md) for this follow-up.
+Declare a `<link rel="icon" href="...">` in your Web host document to override it; explicit empty favicons such as `href="data:,"` are also
+preserved. The generated `assets/rake-icon.svg` follows the deployment base path
+and offline asset layout.
 
 Asset and icon paths are explicit, package-relative inputs. Files outside the package, symlinks, special files and output-name collisions fail. The asset tree is copied without following links, and static resource permissions are normalized.
 
@@ -77,7 +87,7 @@ unrelated working directory.
 
 ## Native artifacts
 
-On macOS the artifact is a versioned `.app` with an executable, Info.plist, resources and optional icon. PNG icons are converted to ICNS.
+On macOS the artifact is a versioned `.app` with an executable, Info.plist, resources and an icon. PNG and SVG sources are converted to ICNS.
 
 Plain non-system dylib dependencies are resolved from loader and executable paths and `LC_RPATH` entries, copied recursively into `Contents/Frameworks`, rewritten and signed before the outer app. Filename collisions and unresolved libraries fail. Use explicit framework and runtime recipes in schema 1 for external framework bundles and plugins. System frameworks and `/usr/lib` dependencies stay system-provided.
 

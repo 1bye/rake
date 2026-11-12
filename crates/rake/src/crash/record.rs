@@ -21,6 +21,7 @@ impl fmt::Write for TraceText {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         let available = MAX_BACKTRACE_BYTES.saturating_sub(self.text.len());
         let part = prefix(text, available);
+
         self.text.push_str(part);
         self.truncated |= part.len() < text.len();
 

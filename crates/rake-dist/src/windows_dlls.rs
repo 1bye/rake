@@ -146,9 +146,13 @@ fn deploy(
     })
     .map_err(|error| Error::Execution(error.to_string()))?;
 
+    let resource_stage = dunce::canonicalize(resource_stage)?;
+
     for path in paths {
+        let path = dunce::canonicalize(path)?;
+
         let relative = path
-            .strip_prefix(resource_stage)
+            .strip_prefix(&resource_stage)
             .map_err(|_| Error::Execution("DLL deployment escaped stage".into()))?;
 
         let relative = rake_dist_core::portable_relative_path(relative)?;

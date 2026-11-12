@@ -1,0 +1,814 @@
+//! Covers: native watch/publication, reload policy, private sessions, cancellation and CDP ownership.
+//! Real: CLI supervisor, filesystem, IPC and Unix process groups.
+//! Doubles: Cargo metadata, native bundler, console app and CDP adapter are shell tools.
+//! Requires: Unix and /bin/sh; no Python, Node, GPU or network.
+
+#![cfg(unix)]
+
+use serde_json::{Value, json};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::{Child, Command},
+    thread,
+    time::{Duration, Instant},
+};
+
+struct Fixture {
+    directory: tempfile::TempDir,
+    root: PathBuf,
+    tools: PathBuf,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("app");
+        let tools = directory.path().join("tools");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir(&tools).unwrap();
+        fs::write(root.join("Cargo.toml"), "fixture").unwrap();
+        fs::write(root.join("src/main.rs"), "first").unwrap();
+        let package = json!({"id":"fixture", "name":"fixture", "version":"1.0.0", "source":null,
+            "manifest_path":root.join("Cargo.toml"), "metadata":{}, "features":{},
+            "dependencies":[{"name":"rake-app", "rename":"framework", "kind":null}],
+            "targets":[{"name":"fixture", "kind":["bin"], "crate_types":["bin"]}]});
+        fs::write(
+            root.join("metadata.json"),
+            json!({"workspace_root":root,
+            "workspace_members":["fixture"], "packages":[package]})
+            .to_string(),
+        )
+        .unwrap();
+        let fixture = Self {
+            directory,
+            root,
+            tools,
+        };
+        fixture.tool("cargo", "/bin/cat \"$FIXTURE/metadata.json\"");
+        fixture.tool(
+            "rake-double",
+            r#"
+if [ "$1" = cdp ]; then
+    printf '%s' "$$" > "$CONTROL/cdp-pid"
+    printf '{"event":"cdp_listening","url":"http://127.0.0.1:9999"}\n'
+    exec /bin/sleep 300
+fi
+printf '%s\n' "$@" > "$CONTROL/build-args"
+while [ "$1" != --output ]; do shift; done
+output=$2
+if [ -f "$FIXTURE/fail" ]; then exit 7; fi
+if [ -f "$FIXTURE/hold" ]; then
+    printf '%s' "$$" > "$CONTROL/build-pid"
+    while [ -f "$FIXTURE/hold" ]; do /bin/sleep .05; done
+fi
+/bin/mkdir -p "$output/Fixture.app/Contents/MacOS"
+/bin/cp "$CONTROL/app" "$output/Fixture.app/Contents/MacOS/fixture"
+/bin/chmod 755 "$output/Fixture.app/Contents/MacOS/fixture"
+if [ "$(/usr/bin/uname)" = Darwin ]; then
+    printf '{"artifact":"%s/Fixture.app"}\n' "$output"
+else
+    printf '{"artifact":"%s/Fixture.app/Contents/MacOS/fixture"}\n' "$output"
+fi
+"#,
+        );
+        fixture.app("printf 'hello app\\n'\nprintf '\\036RAKE_DIAGNOSTIC {\"message\":\"structured\"}\\n' >&2\nexec /bin/sleep 300");
+        fixture
+    }
+
+    fn tool(&self, name: &str, source: &str) {
+        executable(&self.tools.join(name), source);
+    }
+
+    fn app(&self, source: &str) {
+        executable(&self.directory.path().join("app-double"), source);
+    }
+
+    fn start(&self, extra: &[&str]) -> Running {
+        self.start_options(extra, true)
+    }
+
+    fn start_options(&self, extra: &[&str], no_open: bool) -> Running {
+        let control = self.directory.path().join("control");
+        fs::create_dir_all(&control).unwrap();
+        fs::copy(
+            self.directory.path().join("app-double"),
+            control.join("app"),
+        )
+        .unwrap();
+        let events = fs::File::create(control.join("events")).unwrap();
+        let errors = fs::File::create(control.join("errors")).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rake"));
+        command
+            .current_dir(&self.root)
+            .env("PATH", &self.tools)
+            .env("FIXTURE", &self.root)
+            .env("CONTROL", &control)
+            .env("RAKE_CLI", self.tools.join("rake-double"))
+            .args(["dev", "--json"]);
+        if no_open {
+            command.arg("--no-open");
+        }
+        let child = command
+            .args(extra)
+            .stdout(events)
+            .stderr(errors)
+            .spawn()
+            .unwrap();
+        let mut running = Running {
+            child,
+            session: PathBuf::new(),
+            control,
+        };
+        running.session = wait(|| {
+            // Web readiness can still be pending when the test cancels or kills the server.
+            if let Ok(args) = fs::read_to_string(running.control.join("server-args")) {
+                let mut args = args.lines();
+                while let Some(argument) = args.next() {
+                    if argument == "--development-state" {
+                        return Some(PathBuf::from(args.next()?).parent()?.to_path_buf());
+                    }
+                }
+            }
+            fs::read_to_string(running.control.join("events"))
+                .ok()?
+                .lines()
+                .find_map(|line| {
+                    let value: Value = serde_json::from_str(line).ok()?;
+                    value["session"]
+                        .is_string()
+                        .then(|| PathBuf::from(value["session"].as_str().unwrap()))
+                })
+        });
+        running
+    }
+}
+
+fn executable(path: &Path, source: &str) {
+    fs::write(path, format!("#!/bin/sh\n{source}\n")).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+struct Running {
+    child: Child,
+    session: PathBuf,
+    control: PathBuf,
+}
+
+impl Running {
+    fn status(&self) -> Value {
+        serde_json::from_slice(&fs::read(self.session.join("status.json")).unwrap()).unwrap()
+    }
+
+    fn phase(&self, phase: &str) -> Value {
+        wait(|| {
+            let value = self.status();
+            (value["phase"] == phase).then_some(value)
+        })
+    }
+
+    fn stop(&mut self, signal: i32) {
+        // SAFETY: signal only the child created by this fixture.
+        unsafe {
+            libc::kill(self.child.id() as i32, signal);
+        }
+        wait(|| self.child.try_wait().unwrap());
+        assert!(self.child.wait().unwrap().success());
+        assert_eq!(self.status()["phase"], "stopped");
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        // SAFETY: the fixture owns this child, including during assertion unwinding.
+        unsafe {
+            libc::kill(self.child.id() as i32, libc::SIGTERM);
+        }
+        let _ = self.child.wait();
+        if !self.session.as_os_str().is_empty() {
+            let _ = fs::remove_dir_all(&self.session);
+        }
+    }
+}
+
+fn wait<T>(mut probe: impl FnMut() -> Option<T>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(value) = probe() {
+            return value;
+        }
+        assert!(Instant::now() < deadline, "condition timed out");
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn alive(pid: u32) -> bool {
+    // SAFETY: signal zero tests existence without mutating the process.
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[test]
+fn watches_publishes_keeps_old_app_on_failure_restarts_and_survives_crash() {
+    let fixture = Fixture::new();
+    let mut running = fixture.start(&["--restart-without-state", "--features", "theme"]);
+    let first = running.phase("watching");
+    let pid = first["runtime_pid"].as_u64().unwrap() as u32;
+    assert!(alive(pid));
+    assert_eq!(first["mechanism"], "native_restart");
+    // Publication does not imply the newly spawned app has emitted its first line.
+    wait(|| {
+        let bytes = fs::read(running.session.join("output.json")).ok()?;
+        let output: Value = serde_json::from_slice(&bytes).ok()?;
+        output["records"]
+            .as_array()?
+            .iter()
+            .any(|record| record["structured"] == true)
+            .then_some(())
+    });
+    assert!(
+        fs::read_to_string(running.control.join("build-args"))
+            .unwrap()
+            .contains("theme,framework/devtools")
+    );
+    fs::write(fixture.root.join("fail"), "fail").unwrap();
+    let failed = running.phase("build_failed");
+    assert_eq!(failed["published"], first["published"]);
+    assert!(alive(pid));
+    assert!(!running.session.join("builds/2").exists());
+    fs::remove_file(fixture.root.join("fail")).unwrap();
+    fs::write(fixture.root.join("src/main.rs"), "second").unwrap();
+    let second = wait(|| {
+        let s = running.status();
+        (s["phase"] == "watching" && s["published"].as_u64()? > 1).then_some(s)
+    });
+    let next_pid = second["runtime_pid"].as_u64().unwrap() as u32;
+    assert_ne!(next_pid, pid);
+    assert!(!alive(pid));
+    // SAFETY: simulate a crash of the app launched by our fixture.
+    unsafe {
+        libc::kill(next_pid as i32, libc::SIGKILL);
+    }
+    assert_eq!(running.phase("app_exited")["exit_code"], -9);
+    fs::write(fixture.root.join("src/main.rs"), "third").unwrap();
+    let third = wait(|| {
+        let s = running.status();
+        (s["phase"] == "watching" && s["published"].as_u64()? > second["published"].as_u64()?)
+            .then_some(s)
+    });
+    let status = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .args(["dev", "status", "--session"])
+        .arg(&running.session)
+        .arg("--json")
+        .env("PATH", &fixture.tools)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&status.stdout).unwrap(),
+        third
+    );
+    running.stop(libc::SIGINT);
+    assert!(!alive(third["runtime_pid"].as_u64().unwrap() as u32));
+    assert_eq!(
+        fs::read_dir(running.session.join("control"))
+            .unwrap()
+            .count(),
+        0
+    );
+    for path in [&running.session, &running.session.join("control")] {
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    for name in ["status.json", "output.json"] {
+        assert_eq!(
+            fs::metadata(running.session.join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    let output: Value =
+        serde_json::from_slice(&fs::read(running.session.join("output.json")).unwrap()).unwrap();
+    assert!(
+        output["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["structured"] == true),
+        "{output}"
+    );
+    assert!(
+        output["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["stream"] == "lifecycle" && record["level"] == "error")
+    );
+}
+
+#[test]
+fn blocks_restart_without_opt_in_and_owns_cdp() {
+    let fixture = Fixture::new();
+    let mut running = fixture.start(&["--cdp"]);
+    let first = running.phase("watching");
+    let cdp_pid: u32 = fs::read_to_string(running.control.join("cdp-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(alive(cdp_pid));
+    let cdp: Value =
+        serde_json::from_slice(&fs::read(running.session.join("cdp.json")).unwrap()).unwrap();
+    assert_eq!(cdp["url"], "http://127.0.0.1:9999");
+    fs::write(fixture.root.join("src/main.rs"), "second").unwrap();
+    assert!(
+        running.phase("reload_blocked")["error"]
+            .as_str()
+            .unwrap()
+            .contains("--restart-without-state")
+    );
+    assert!(alive(first["runtime_pid"].as_u64().unwrap() as u32));
+    running.stop(libc::SIGTERM);
+    assert!(!alive(cdp_pid));
+}
+
+#[test]
+fn cancellation_during_build_cleans_compiler_group_and_stops_session() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("hold"), "hold").unwrap();
+    let mut running = fixture.start(&[]);
+    let pid: u32 = wait(|| {
+        fs::read_to_string(running.control.join("build-pid"))
+            .ok()?
+            .parse()
+            .ok()
+    });
+    running.stop(libc::SIGTERM);
+    assert!(!alive(pid));
+    assert_eq!(running.status()["published"], 0);
+}
+
+#[test]
+fn superseded_build_is_discarded_before_publication() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("hold"), "hold").unwrap();
+    let mut running = fixture.start(&[]);
+    wait(|| fs::read_to_string(running.control.join("build-pid")).ok());
+    fs::write(fixture.root.join("src/main.rs"), "changed during build").unwrap();
+    fs::remove_file(fixture.root.join("hold")).unwrap();
+    let status = running.phase("watching");
+    assert_eq!(status["published"], 2);
+    assert!(!running.session.join("builds/1").exists());
+    assert!(
+        fs::read_to_string(running.control.join("events"))
+            .unwrap()
+            .contains("build_superseded")
+    );
+    running.stop(libc::SIGINT);
+}
+
+#[test]
+fn cleanup_kills_descendants_that_ignore_sigterm() {
+    let fixture = Fixture::new();
+    fixture.app("/bin/sh -c 'trap \"\" TERM; echo $$ > \"$CONTROL/descendant\"; exec /bin/sleep 300' &\nwait");
+    let mut running = fixture.start(&[]);
+    running.phase("watching");
+    let descendant: u32 = wait(|| {
+        fs::read_to_string(running.control.join("descendant"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    });
+    running.stop(libc::SIGTERM);
+    wait(|| {
+        let status = Command::new("/bin/ps")
+            .args(["-o", "stat=", "-p", &descendant.to_string()])
+            .output()
+            .unwrap();
+        (!alive(descendant)
+            || String::from_utf8_lossy(&status.stdout)
+                .trim()
+                .starts_with('Z'))
+        .then_some(())
+    });
+}
+
+#[test]
+fn cdp_startup_failure_keeps_exit_one_and_cancellable_readiness_stops_cleanly() {
+    for ready in [true, false] {
+        let fixture = Fixture::new();
+        fixture.tool(
+            "rake-double",
+            if ready {
+                "printf '{\"event\":\"wrong\"}\\n'\nexec /bin/sleep 300"
+            } else {
+                "printf '%s' \"$$\" > \"$CONTROL/cdp-pid\"\nexec /bin/sleep 300"
+            },
+        );
+        let mut running = fixture.start(&["--cdp"]);
+        if ready {
+            let status = wait(|| running.child.try_wait().unwrap());
+            assert_eq!(status.code(), Some(1));
+            assert_eq!(running.status()["phase"], "stopped");
+            assert!(
+                fs::read_to_string(running.control.join("errors"))
+                    .unwrap()
+                    .contains("CDP adapter could not start")
+            );
+        } else {
+            let pid: u32 = wait(|| {
+                fs::read_to_string(running.control.join("cdp-pid"))
+                    .ok()?
+                    .parse()
+                    .ok()
+            });
+            running.stop(libc::SIGTERM);
+            assert!(!alive(pid));
+        }
+    }
+}
+
+#[test]
+fn metadata_refresh_includes_new_local_watch_roots_before_publication() {
+    let fixture = Fixture::new();
+    let external = fixture.directory.path().join("local-dependency");
+    fs::create_dir(&external).unwrap();
+    fs::write(external.join("Cargo.toml"), "local manifest").unwrap();
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+    metadata["packages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"local", "source":null, "manifest_path":external.join("Cargo.toml")}));
+    fs::write(
+        fixture.directory.path().join("extended-metadata.json"),
+        metadata.to_string(),
+    )
+    .unwrap();
+    fixture.tool("cargo", r#"
+count=0
+if [ -f "$CONTROL/metadata-count" ]; then count=$(/bin/cat "$CONTROL/metadata-count"); fi
+count=$((count + 1))
+printf '%s' "$count" > "$CONTROL/metadata-count"
+if [ "$count" -gt 2 ]; then /bin/cat "$FIXTURE/../extended-metadata.json"; else /bin/cat "$FIXTURE/metadata.json"; fi
+"#);
+    let mut running = fixture.start(&[]);
+    assert_eq!(running.phase("watching")["published"], 2);
+    assert!(!running.session.join("builds/1").exists());
+    fs::write(external.join("Cargo.toml"), "updated dependency").unwrap();
+    wait(|| {
+        let status = running.status();
+        (status["phase"] == "reload_blocked" && status["build"] == 3).then_some(())
+    });
+    running.stop(libc::SIGTERM);
+}
+
+impl Fixture {
+    fn web(&self) {
+        let mut metadata: Value =
+            serde_json::from_slice(&fs::read(self.root.join("metadata.json")).unwrap()).unwrap();
+        metadata["packages"][0]["targets"] = json!([
+            {"name":"fixture", "kind":["cdylib"], "crate_types":["cdylib"]}
+        ]);
+        fs::write(self.root.join("metadata.json"), metadata.to_string()).unwrap();
+        fs::write(
+            self.root.join("Cargo.lock"),
+            "[[package]]\nname='wasm-bindgen'\nversion='0.2.100'\n",
+        )
+        .unwrap();
+        fs::write(self.root.join("input.wasm"), "wasm fixture").unwrap();
+        self.tool("cargo", r#"
+if [ "$1" = metadata ]; then /bin/cat "$FIXTURE/metadata.json"; exit; fi
+printf '%s\n' "$@" > "$CONTROL/build-args"
+printf 'web build diagnostic\n' >&2
+if [ -f "$FIXTURE/fail" ]; then exit 7; fi
+if [ -f "$FIXTURE/hold" ]; then
+    printf '%s' "$$" > "$CONTROL/build-pid"
+    while [ -f "$FIXTURE/hold" ]; do /bin/sleep .05; done
+fi
+printf '{"reason":"compiler-artifact","package_id":"fixture","target":{"name":"fixture"},"filenames":["%s/input.wasm"]}\n' "$FIXTURE"
+"#);
+        self.tool(
+            "wasm-bindgen",
+            r#"
+if [ "$1" = --version ]; then printf 'wasm-bindgen 0.2.100\n'; exit; fi
+/bin/mkdir -p "$4"
+/bin/cp "$5" "$4/fixture_bg.wasm"
+printf 'export default async function init() {}' > "$4/fixture.js"
+"#,
+        );
+        self.tool(
+            "python3",
+            r#"
+if [ "$1" = -m ]; then
+    printf '%s\n' "$@" >> "$CONTROL/browser-args"
+    exit 0
+fi
+printf '%s' "$$" > "$CONTROL/server-pid"
+printf '%s\n' "$@" > "$CONTROL/server-args"
+if [ -f "$CONTROL/server-bad" ]; then printf 'wrong readiness\n'; exit; fi
+if [ ! -f "$CONTROL/server-hold" ]; then
+    printf 'Serving notes at http://127.0.0.1:9876/#__rake_control=fixture-token\n'
+fi
+exec /bin/sleep 300
+"#,
+        );
+        self.tool("node", r#"
+if [ "$1" = --version ]; then printf 'v26.0.0\n'; exit; fi
+printf '%s' "$$" > "$CONTROL/node-pid"
+printf '%s\n' "$@" >> "$CONTROL/node-args"
+if [ -f "$CONTROL/node-bad" ]; then printf '{"event":"wrong"}\n'; else
+printf '{"event":"embedded_devtools_listening","url":"http://127.0.0.1:9876/embedded-devtools-fixture.html"}\n'; fi
+exec /bin/sleep 300
+"#);
+    }
+}
+
+#[test]
+fn web_publication_owns_server_and_single_companion_and_retains_old_build_on_failure() {
+    let fixture = Fixture::new();
+    fixture.web();
+    let mut running = fixture.start(&["--target=web", "--port=0", "--cdp"]);
+    wait(|| running.status()["devtools_url"].as_str().map(str::to_owned));
+    let first = running.phase("watching");
+    assert_eq!(first["target"], "web");
+    assert_eq!(first["mechanism"], "web_page_reload");
+    assert_eq!(first["published"], 1);
+    let server_pid: u32 = fs::read_to_string(running.control.join("server-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let node_pid: u32 = fs::read_to_string(running.control.join("node-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let cdp_pid: u32 = fs::read_to_string(running.control.join("cdp-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(alive(server_pid) && alive(node_pid) && alive(cdp_pid));
+    let args = fs::read_to_string(running.control.join("server-args")).unwrap();
+    for flag in [
+        "--control",
+        "--development-state",
+        "--build-root",
+        "--process-output",
+        "--cdp-url",
+        "\n0\n",
+    ] {
+        assert!(args.contains(flag), "{args}");
+    }
+    assert!(!args.contains("--control-only"));
+    let events = fs::read_to_string(running.control.join("events")).unwrap();
+    let ready: Value = events
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|value| value["event"] == "web_listening")
+        .unwrap();
+    assert!(
+        fs::read_to_string(running.control.join("node-args"))
+            .unwrap()
+            .contains(ready["url"].as_str().unwrap())
+    );
+    fs::write(fixture.root.join("fail"), "fail").unwrap();
+    assert_eq!(running.phase("build_failed")["published"], 1);
+    assert!(
+        Path::new(first["directory"].as_str().unwrap())
+            .join("index.html")
+            .is_file()
+    );
+    fs::remove_file(fixture.root.join("fail")).unwrap();
+    wait(|| {
+        let status = running.status();
+        (status["phase"] == "watching" && status["published"].as_u64()? > 1).then_some(())
+    });
+    assert_eq!(
+        fs::read_to_string(running.control.join("node-args"))
+            .unwrap()
+            .lines()
+            .filter(|line| line.ends_with("embedded-devtools.mjs"))
+            .count(),
+        1
+    );
+    let helpers = PathBuf::from(args.lines().next().unwrap())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    running.stop(libc::SIGTERM);
+    assert!(!alive(server_pid) && !alive(node_pid) && !alive(cdp_pid));
+    assert!(
+        !helpers.exists(),
+        "extracted helpers must have session ownership"
+    );
+    let output: Value =
+        serde_json::from_slice(&fs::read(running.session.join("output.json")).unwrap()).unwrap();
+    assert!(
+        output["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["stream"] == "build"
+                && record["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("web build diagnostic"))),
+        "{output}"
+    );
+}
+
+#[test]
+fn web_server_readiness_is_cancellable_and_exit_is_fatal() {
+    for hold in [true, false] {
+        let fixture = Fixture::new();
+        fixture.web();
+        fs::create_dir(fixture.directory.path().join("control")).unwrap();
+        fs::write(fixture.directory.path().join("control/server-hold"), "hold").unwrap();
+        let mut running = fixture.start(&["--target", "web", "--port", "0"]);
+        let pid: u32 = wait(|| {
+            fs::read_to_string(running.control.join("server-pid"))
+                .ok()?
+                .parse()
+                .ok()
+        });
+        if hold {
+            running.stop(libc::SIGINT);
+        } else {
+            // SAFETY: this fixture owns the service being killed.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
+            assert_eq!(running.status()["phase"], "stopped");
+        }
+        assert!(!alive(pid));
+    }
+}
+
+#[test]
+fn web_server_invalid_readiness_fails_and_no_cdp_needs_no_node() {
+    for bad in [false, true] {
+        let fixture = Fixture::new();
+        fixture.web();
+        fs::remove_file(fixture.tools.join("node")).unwrap();
+        fs::create_dir(fixture.directory.path().join("control")).unwrap();
+        if bad {
+            fs::write(fixture.directory.path().join("control/server-bad"), "bad").unwrap();
+        }
+        let mut running = fixture.start(&["--target", "web", "--port", "0"]);
+        if bad {
+            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
+            assert!(
+                fs::read_to_string(running.control.join("errors"))
+                    .unwrap()
+                    .contains("development server could not start")
+            );
+        } else {
+            assert_eq!(running.phase("watching")["published"], 1);
+            assert!(!running.control.join("cdp-pid").exists());
+            running.stop(libc::SIGTERM);
+        }
+    }
+}
+
+#[test]
+fn web_cdp_rejects_missing_old_invalid_or_failing_node_before_loading_project() {
+    let fixture = Fixture::new();
+    for source in [
+        None,
+        Some("printf 'v21.9.0\\n'"),
+        Some("printf 'invalid\\n'"),
+        Some("printf 'v26.0.0\\n'; exit 7"),
+    ] {
+        if let Some(source) = source {
+            fixture.tool("node", source);
+        } else {
+            let _ = fs::remove_file(fixture.tools.join("node"));
+        }
+        let result = Command::new(env!("CARGO_BIN_EXE_rake"))
+            .env("PATH", &fixture.tools)
+            .current_dir(fixture.directory.path())
+            .args(["dev", "--target=web", "--cdp", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2), "{result:?}");
+        let error: Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(
+            error["error"]["message"],
+            "Web Chrome DevTools requires Node 22 or later"
+        );
+    }
+}
+
+#[test]
+fn browser_opening_uses_webbrowser_selection_and_cdp_opens_only_the_companion() {
+    for cdp in [false, true] {
+        let fixture = Fixture::new();
+        fixture.web();
+        let args = if cdp {
+            vec!["--target=web", "--port=0", "--cdp"]
+        } else {
+            vec!["--target=web", "--port=0"]
+        };
+        let mut running = fixture.start_options(&args, false);
+        running.phase("watching");
+        let args = wait(|| fs::read_to_string(running.control.join("browser-args")).ok());
+        assert_eq!(
+            args.lines().take(2).collect::<Vec<_>>(),
+            ["-m", "webbrowser"]
+        );
+        assert_eq!(args.lines().count(), 3, "open exactly one browser URL");
+        assert_eq!(args.contains("embedded-devtools-fixture.html"), cdp);
+        running.stop(libc::SIGTERM);
+    }
+}
+
+#[test]
+fn web_companion_exit_is_fatal_and_invalid_readiness_blocks_publication() {
+    for bad in [false, true] {
+        let fixture = Fixture::new();
+        fixture.web();
+        fs::create_dir(fixture.directory.path().join("control")).unwrap();
+        if bad {
+            fs::write(fixture.directory.path().join("control/node-bad"), "bad").unwrap();
+        }
+        let mut running = fixture.start(&["--target", "web", "--port", "0", "--cdp"]);
+        let pid: u32 = wait(|| {
+            fs::read_to_string(running.control.join("node-pid"))
+                .ok()?
+                .parse()
+                .ok()
+        });
+        if bad {
+            assert!(
+                running.phase("reload_blocked")["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("embedded Chrome DevTools could not start")
+            );
+            running.stop(libc::SIGTERM);
+        } else {
+            wait(|| running.status()["devtools_url"].as_str().map(str::to_owned));
+            // SAFETY: this fixture owns the service being killed.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            assert_eq!(wait(|| running.child.try_wait().unwrap()).code(), Some(1));
+            assert!(
+                fs::read_to_string(running.control.join("errors"))
+                    .unwrap()
+                    .contains("embedded Chrome DevTools companion exited")
+            );
+        }
+        assert!(!alive(pid));
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn preview_session_compiles_helper_before_server_and_marks_app_environment() {
+    let fixture = Fixture::new();
+    fixture.web();
+    // Retain the desktop package/metadata and native build adapter.
+    let desktop = Fixture::new();
+    fs::copy(
+        desktop.root.join("metadata.json"),
+        fixture.root.join("metadata.json"),
+    )
+    .unwrap();
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+    metadata["workspace_root"] = json!(fixture.root);
+    metadata["packages"][0]["manifest_path"] = json!(fixture.root.join("Cargo.toml"));
+    fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
+    fixture.tool("cargo", "/bin/cat \"$FIXTURE/metadata.json\"");
+    fixture.tool(
+        "xcrun",
+        r#"
+printf '%s\n' "$@" > "$CONTROL/swift-args"
+while [ "$1" != -o ]; do shift; done
+printf 'capture fixture' > "$2"
+"#,
+    );
+    fixture
+        .app("printf '%s' \"$RAKE_DEV_PREVIEW\" > \"$CONTROL/preview-env\"\nexec /bin/sleep 300");
+    let mut running = fixture.start(&["--preview", "--cdp", "--port", "0"]);
+    running.phase("watching");
+    assert_eq!(
+        wait(|| fs::read_to_string(running.control.join("preview-env")).ok()),
+        "1"
+    );
+    let args = fs::read_to_string(running.control.join("server-args")).unwrap();
+    assert!(args.contains("--control-only") && args.contains("--preview-helper"));
+    assert!(running.session.join("preview-capture").is_file());
+    assert!(
+        fs::read_to_string(running.control.join("swift-args"))
+            .unwrap()
+            .contains("-module-cache-path")
+    );
+    assert!(!running.control.join("node-pid").exists());
+    running.stop(libc::SIGTERM);
+}

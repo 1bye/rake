@@ -28,11 +28,13 @@ fn run(source: &str, config: &str, arguments: &[&str]) -> Output {
 #[test]
 fn json_exit_status_distinguishes_warn_deny_and_allow() {
     let warning = run("fn main() { rake::view! { <button/> }; }", "", &["--json"]);
+
     let denied = run(
         "fn main() { rake::view! { <img src=\"a\"/> }; }",
         "",
         &["--json"],
     );
+
     let allowed = run(
         "fn main() { rake::view! { <img src=\"a\"/> }; }",
         "[package.metadata.rake.lint.levels]\nview-image-alt='allow'",
@@ -65,11 +67,13 @@ fn deny_override_and_reasoned_suppression_control_exits() {
     let config = "[package.metadata.rake.lint.levels]\nview-button-label='deny'";
     let source = "fn main() { rake::view! { <button/> }; }";
     let denied = run(source, config, &[]);
+
     let suppressed = run(
         &format!("// rake-lint: allow(view-button-label) Embedded widget names itself.\n{source}"),
         config,
         &[],
     );
+
     let missing_reason = run(
         &format!("// rake-lint: allow(view-button-label)\n{source}"),
         config,
@@ -93,6 +97,7 @@ fn deny_override_and_reasoned_suppression_control_exits() {
 #[test]
 fn explanations_are_available_without_a_project() {
     let directory = tempfile::tempdir().unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .args(["lint", "--explain", "view-loop-index-id", "--json"])
         .current_dir(directory.path())
@@ -210,6 +215,7 @@ fn compile_fail_fixtures_and_project_excludes_do_not_fail_the_command() {
 #[test]
 fn agent_guide_recommends_formatting_without_requiring_a_project() {
     let directory = tempfile::tempdir().unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .args(["lint", "--guide"])
         .current_dir(directory.path())
@@ -225,8 +231,10 @@ fn agent_guide_recommends_formatting_without_requiring_a_project() {
 fn fix_rechecks_formats_preserves_comments_and_is_idempotent() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path();
+
     fs::write(root.join("Cargo.toml"), "[package]\nname='lint-fix'\nversion='0.1.0'\nedition='2024'\n[profile.release]\ndebug-assertions=true # keep profile reason\n").unwrap();
     let source = "fn main() {\n    // keep before\n    rake::view! { <div id=\"stable\" style={|s| s.flex().p_4()} aria-label=\"named\"/> }; // keep after\n}\n";
+
     fs::write(root.join("main.rs"), source).unwrap();
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_rake"))
@@ -235,14 +243,17 @@ fn fix_rechecks_formats_preserves_comments_and_is_idempotent() {
             .output()
             .unwrap()
     };
+
     let before = run(&["lint", "--json"]);
     let json: serde_json::Value = serde_json::from_slice(&before.stdout).unwrap();
+
     assert!(
         before.status.success(),
         "{}",
         String::from_utf8_lossy(&before.stderr)
     );
     assert_eq!(json["diagnostics"].as_array().unwrap().len(), 2);
+
     for diagnostic in json["diagnostics"].as_array().unwrap() {
         assert_eq!(
             diagnostic["machine_fix"]["applicability"],
@@ -252,21 +263,26 @@ fn fix_rechecks_formats_preserves_comments_and_is_idempotent() {
     }
 
     let output = run(&["lint", "--fix", "--json"]);
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
     assert_eq!(json["diagnostics"], serde_json::json!([]));
     let fixed = fs::read_to_string(root.join("main.rs")).unwrap();
+
     assert!(fixed.contains("id=\"stable\" class=\"flex p-4\" aria-label=\"named\""));
     assert!(fixed.contains("// keep before"));
     assert!(fixed.contains("// keep after"));
     syn::parse_file(&fixed).unwrap();
     let manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
     assert!(manifest.contains("debug-assertions=false # keep profile reason"));
     let formatted = run(&["format", "main.rs", "--check"]);
+
     assert!(
         formatted.status.success(),
         "{}{}",
@@ -286,12 +302,14 @@ fn fix_rechecks_formats_preserves_comments_and_is_idempotent() {
 fn fix_retains_unsafe_commented_suppressed_and_denied_findings() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path();
+
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname='lint-fix'\nversion='0.1.0'\nedition='2024'",
     )
     .unwrap();
     let source = "fn main() { rake::view! {\n<div>\n<div style={|s| s /* keep inside */ .flex()}/>\n// rake-lint: allow(view-style-class) Demonstrate builders.\n<div style={|s| s.p_2()}/>\n<img src=\"a\"/>\n</div> }; }\n";
+
     fs::write(root.join("main.rs"), source).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
@@ -300,9 +318,11 @@ fn fix_retains_unsafe_commented_suppressed_and_denied_findings() {
         .env("PATH", "")
         .output()
         .unwrap();
+
     assert_eq!(output.status.code(), Some(1));
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let diagnostics = json["diagnostics"].as_array().unwrap();
+
     assert_eq!(diagnostics.len(), 2);
     assert!(diagnostics.iter().all(|d| d.get("machine_fix").is_none()));
     assert_eq!(fs::read_to_string(root.join("main.rs")).unwrap(), source);
@@ -312,6 +332,7 @@ fn fix_retains_unsafe_commented_suppressed_and_denied_findings() {
 fn fix_works_with_unicode_crlf_and_attribute_order() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path();
+
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname='lint-fix'\nversion='0.1.0'\nedition='2024'",
@@ -324,18 +345,21 @@ fn fix_works_with_unicode_crlf_and_attribute_order() {
         .current_dir(root)
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let source = fs::read_to_string(root.join("main.rs")).unwrap();
+
     assert!(source.contains("aria-label=\"你好\" class=\"p-2\" id=\"last\""));
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .args(["format", "main.rs", "--check"])
         .current_dir(root)
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
@@ -350,6 +374,7 @@ fn fix_rejects_modes_that_do_not_check_a_project() {
         vec!["--explain", "view-style-class", "--fix", "--json"],
     ] {
         let output = run("", "", &args);
+
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
         assert!(serde_json::from_slice::<serde_json::Value>(&output.stderr).unwrap()["error"]["message"].is_string());
@@ -359,17 +384,20 @@ fn fix_rejects_modes_that_do_not_check_a_project() {
 #[test]
 fn file_suppressions_control_json_exit_status_and_machine_fixes() {
     let source = "// rake-lint: allow-file(view-button-label) Mounted widgets name their actions.\nfn main() { rake::view! { <div><button/><button/></div> }; }";
+
     let output = run(
         source,
         "[package.metadata.rake.lint.levels]\nview-button-label='deny'",
         &["--json"],
     );
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
     assert_eq!(report["diagnostics"], serde_json::json!([]));
 
     let unused = run(
@@ -377,8 +405,10 @@ fn file_suppressions_control_json_exit_status_and_machine_fixes() {
         "[package.metadata.rake.lint.levels]\ninvalid-suppression='deny'",
         &["--json"],
     );
+
     assert_eq!(unused.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&unused.stdout).unwrap();
+
     assert_eq!(report["diagnostics"][0]["rule_id"], "invalid-suppression");
     assert!(
         report["diagnostics"][0]["message"]
@@ -389,13 +419,16 @@ fn file_suppressions_control_json_exit_status_and_machine_fixes() {
     assert_eq!(report["diagnostics"][0]["span"]["start"]["line"], 1);
 
     let project = tempfile::tempdir().unwrap();
+
     fs::write(
         project.path().join("Cargo.toml"),
         "[package]\nname='lint-fix'\nversion='0.1.0'",
     )
     .unwrap();
     let source = "// rake-lint: allow-file(view-style-class) Demonstrates fluent builders.\nfn main(){rake::view! { <div style={|s| s.flex()}/> };}\n";
+
     fs::write(project.path().join("main.rs"), source).unwrap();
+
     for _ in 0..2 {
         let output = Command::new(env!("CARGO_BIN_EXE_rake"))
             .args(["lint", "--fix", "--json"])
@@ -403,12 +436,14 @@ fn file_suppressions_control_json_exit_status_and_machine_fixes() {
             .env("PATH", "")
             .output()
             .unwrap();
+
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
         assert_eq!(report["diagnostics"], serde_json::json!([]));
         assert_eq!(
             fs::read_to_string(project.path().join("main.rs")).unwrap(),
@@ -420,6 +455,7 @@ fn file_suppressions_control_json_exit_status_and_machine_fixes() {
 #[test]
 fn compact_agent_guide_refreshes_only_marked_content() {
     let directory = tempfile::tempdir().unwrap();
+
     let execute = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_rake"))
             .args(args)
@@ -428,16 +464,22 @@ fn compact_agent_guide_refreshes_only_marked_content() {
             .output()
             .unwrap()
     };
+
     let output = execute(&["lint", "--guide=agents"]);
+
     assert!(output.status.success());
     let block = String::from_utf8(output.stdout).unwrap();
+
     assert!(block.contains("Always supply img alt"));
     let original = format!("Custom project instructions\n{block}Local footer\n");
+
     fs::write(directory.path().join("AGENTS.md"),
         "Custom project instructions\n<!-- rake-lint:begin -->\nOld rules\n<!-- rake-lint:end -->\nLocal footer\n").unwrap();
     let updated = execute(&["lint", "--guide=agents", "--update", "AGENTS.md", "--json"]);
+
     assert!(updated.status.success());
     let json: serde_json::Value = serde_json::from_slice(&updated.stdout).unwrap();
+
     assert_eq!(json["updated"], true);
     assert_eq!(json["path"], "AGENTS.md");
     assert!(json.get("guide").is_none());
@@ -446,6 +488,7 @@ fn compact_agent_guide_refreshes_only_marked_content() {
         original
     );
     let unchanged = execute(&["lint", "--guide=agents", "--update", "AGENTS.md"]);
+
     assert!(unchanged.status.success());
     assert_eq!(
         String::from_utf8(unchanged.stdout).unwrap(),
@@ -453,6 +496,7 @@ fn compact_agent_guide_refreshes_only_marked_content() {
     );
     fs::write(directory.path().join("AGENTS.md"), "Custom project instructions\n<!-- rake-lint:begin -->\nOld rules\n<!-- rake-lint:end -->\nLocal footer\n").unwrap();
     let changed = execute(&["lint", "--guide=agents", "--update", "AGENTS.md"]);
+
     assert!(changed.status.success());
     assert_eq!(
         String::from_utf8(changed.stdout).unwrap(),
@@ -462,6 +506,7 @@ fn compact_agent_guide_refreshes_only_marked_content() {
         fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
         original
     );
+
     for invalid in ["No markers\n".to_owned(), format!("{block}{block}")] {
         fs::write(directory.path().join("AGENTS.md"), &invalid).unwrap();
         assert!(
@@ -474,6 +519,7 @@ fn compact_agent_guide_refreshes_only_marked_content() {
             invalid
         );
     }
+
     for args in [
         vec!["lint", "--update", "AGENTS.md"],
         vec!["lint", "--guide", "--update", "AGENTS.md"],
@@ -487,6 +533,7 @@ fn compact_agent_guide_refreshes_only_marked_content() {
 fn single_file_json_and_fixes_do_not_touch_siblings() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
+
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname='app'\nversion='0.1.0'\nedition='2024'",
@@ -498,18 +545,21 @@ fn single_file_json_and_fixes_do_not_touch_siblings() {
     )
     .unwrap();
     let sibling = "fn { intentionally broken Rust";
+
     fs::write(root.join("other.rs"), sibling).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .args(["lint", "--json", "main.rs", "--fix"])
         .current_dir(root)
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
     assert_eq!(report["files_checked"], 1);
     assert_eq!(report["diagnostics"], serde_json::json!([]));
     assert!(
@@ -524,6 +574,7 @@ fn single_file_json_and_fixes_do_not_touch_siblings() {
 fn single_manifest_fix_preserves_comments_and_does_not_parse_rust_siblings() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path();
+
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname='app'\nversion='0.1.0'\n[profile.release]\ndebug-assertions=true # keep\n",
@@ -536,12 +587,14 @@ fn single_manifest_fix_preserves_comments_and_does_not_parse_rust_siblings() {
         .env("PATH", "")
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
     assert_eq!(report["files_checked"], 0);
     assert_eq!(report["diagnostics"], serde_json::json!([]));
     assert!(

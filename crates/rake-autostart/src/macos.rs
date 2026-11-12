@@ -27,8 +27,10 @@ pub(crate) fn apply(login: &LaunchAtLogin, operation: Operation) -> Result<Statu
             "SMAppService requires macOS 13 or newer".into(),
         ));
     }
+
     let bundle = NSBundle::mainBundle();
     let path = bundle.bundlePath().to_string();
+
     if Path::new(&path)
         .extension()
         .is_none_or(|extension| extension != "app")
@@ -38,6 +40,7 @@ pub(crate) fn apply(login: &LaunchAtLogin, operation: Operation) -> Result<Statu
     {
         return Ok(Status::Unsupported("launch at login requires a signed .app bundle whose CFBundleIdentifier matches the app id; unbundled cargo run is unsupported".into()));
     }
+
     if !login.args.is_empty() {
         return Ok(Status::Unsupported(
             "SMAppService.mainAppService does not support custom login arguments".into(),
@@ -49,13 +52,16 @@ pub(crate) fn apply(login: &LaunchAtLogin, operation: Operation) -> Result<Statu
     unsafe {
         let service = SMAppService::mainAppService();
         let current = status(service.status());
+
         match operation {
             Operation::Enable if current == Status::Disabled => {
                 if let Err(error) = service.registerAndReturnError() {
                     let applied = status(service.status());
+
                     if applied == Status::RequiresApproval {
                         return Ok(applied);
                     }
+
                     return Err(Error::Service(error.to_string()));
                 }
             }
@@ -74,6 +80,7 @@ pub(crate) fn apply(login: &LaunchAtLogin, operation: Operation) -> Result<Statu
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn maps_all_native_statuses_and_unknown_future_values() {
         assert_eq!(status(SMAppServiceStatus::NotRegistered), Status::Disabled);

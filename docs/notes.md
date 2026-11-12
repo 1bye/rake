@@ -8,8 +8,8 @@ composition, commands, reload checkpoints, dirty-entry guards and inspection.
 
 ```sh
 cargo run -p rake-notes
-# Development runtime and graphical inspector
-cargo run -p rake-app-cli -- dev --package rake-notes
+# Web development with embedded Chrome DevTools
+cargo run -p rake-app-cli -- dev --target web --package rake-notes --cdp
 # Application bundle, ad-hoc signed by default on macOS
 cargo run -p rake-app-cli -- bundle --package rake-notes
 # Browser artifacts (matching wasm-bindgen-cli required)
@@ -86,6 +86,15 @@ rake ctl quit
 
 `notes.edit` requires the observed version and rejects stale changes. The GUI's per-keystroke edits call the same typed notebook operation synchronously, and create and Save now dispatch through the shared operation registry. The service is resolved from `CommandContext.services`.
 
-Lists expose summaries, not note bodies. The Elements panel exposes `notes.workspace`, `notes.title`, `notes.body`, `notes.search`, `notes.note.<id>`, save and recovery boundaries. Note contents aren't added to diagnostics or inspection metadata.
+Lists expose summaries, not note bodies. The shell uses `rake::view!` to capture
+`notes.workspace`, its sidebar and collection navigation, keyed note rows, and the
+document header, article and editor mounts. Shared `Input` and `Textarea` controls
+retain main's keyboard handling, accessibility and byte limits. Rendered labels,
+note titles and previews can appear in devtools captures; full editor contents
+are excluded from inspection text and diagnostics.
+
+Run `python3 scripts/test-notes-view.py --session /tmp/rake-dev-EXAMPLE` against a
+visible development app with a selected note to check the hierarchy and private
+editor focus targets.
 
 See [test coverage](internal/test-coverage.md) for what's automated, and the [real-browser procedure](internal/notes-browser-testing.md) for Chrome input, long-document scrolling, background autosave, stale tabs, malformed recovery and a renderer crash.

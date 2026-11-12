@@ -23,6 +23,7 @@ impl From<Group> for Invocation {
 pub(crate) fn nested_views(tokens: TokenStream, visit: &mut impl FnMut(Invocation)) {
     let tokens: Vec<_> = tokens.into_iter().collect();
     let mut position = 0;
+
     while position < tokens.len() {
         if position + 2 < tokens.len()
             && matches!(&tokens[position], TokenTree::Ident(name) if name == "view")
@@ -33,15 +34,18 @@ pub(crate) fn nested_views(tokens: TokenStream, visit: &mut impl FnMut(Invocatio
             position += 3;
             continue;
         }
+
         if let TokenTree::Group(group) = &tokens[position] {
             nested_views(group.stream(), visit);
         }
+
         position += 1;
     }
 }
 
 pub(crate) fn invocations(source: &str) -> syn::Result<Vec<Invocation>> {
     struct Collector(Vec<Invocation>);
+
     impl<'ast> Visit<'ast> for Collector {
         fn visit_macro(&mut self, mac: &'ast syn::Macro) {
             if mac
@@ -55,6 +59,7 @@ pub(crate) fn invocations(source: &str) -> syn::Result<Vec<Invocation>> {
                     syn::MacroDelimiter::Brace(token) => token.span,
                     syn::MacroDelimiter::Bracket(token) => token.span,
                 };
+
                 self.0.push(Invocation {
                     tokens: mac.tokens.clone(),
                     open: span.open(),
@@ -69,6 +74,8 @@ pub(crate) fn invocations(source: &str) -> syn::Result<Vec<Invocation>> {
     }
     let file = syn::parse_file(source)?;
     let mut collector = Collector(Vec::new());
+
     collector.visit_file(&file);
+
     Ok(collector.0)
 }

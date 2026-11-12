@@ -9,6 +9,8 @@ pub(crate) struct Shell {
     layout: LayoutContext<Destination>,
     app: Rc<AppInfo>,
     navigation_clicks: usize,
+    #[cfg(feature = "native-smoke")]
+    smoke_rendered: bool,
 }
 
 impl Shell {
@@ -26,6 +28,8 @@ impl Shell {
             layout,
             app,
             navigation_clicks: 0,
+            #[cfg(feature = "native-smoke")]
+            smoke_rendered: false,
         }))
     }
 
@@ -37,7 +41,24 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "native-smoke")]
+        if !self.smoke_rendered && self.layout.navigator().current_tab().is_ok() {
+            self.smoke_rendered = true;
+            // open_window can render before its first presentation. Force a platform
+            // frame, then acknowledge it on the following frame callback.
+            let navigator = self.layout.navigator();
+
+            _window.on_next_frame(move |window, _| {
+                window.refresh();
+                window.on_next_frame(move |_, _| {
+                    println!("RAKE_DESKTOP_SMOKE_FRAME");
+                    drop(navigator.quit(QuitOptions::default()));
+                });
+            });
+            _window.defer(cx, |window, _| window.refresh());
+        }
+
         let ready = self.layout.navigator().current_tab().is_ok();
         let outlet = self.layout.outlet();
 

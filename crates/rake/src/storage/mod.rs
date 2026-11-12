@@ -335,6 +335,7 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     pub async fn get(&self, key: &str) -> Result<Option<T>, StorageError> {
         validate_key(key)?;
         let schema = self.inner.schema.borrow().clone();
+
         let _operation = if schema.is_some() {
             Some(self.inner.operations.lock().await)
         } else {
@@ -366,6 +367,7 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     pub async fn set(&self, key: &str, value: &T) -> Result<(), StorageError> {
         validate_key(key)?;
         let schema = self.inner.schema.borrow().clone();
+
         let bytes = match &schema {
             Some(schema) => schema.encode(value)?,
             None => serde_json::to_vec(value)?,
@@ -394,6 +396,7 @@ impl<T: Serialize + DeserializeOwned + 'static> Store<T> {
     pub async fn remove(&self, key: &str) -> Result<(), StorageError> {
         validate_key(key)?;
         let versioned = self.inner.schema.borrow().is_some();
+
         let _operation = if versioned {
             Some(self.inner.operations.lock().await)
         } else {

@@ -27,6 +27,7 @@ mod windows;
 
 #[cfg(target_os = "windows")]
 pub use windows::remove_installed;
+
 #[cfg(any(target_os = "windows", test))]
 mod windows_command;
 
@@ -80,6 +81,7 @@ impl LaunchAtLogin {
     /// Returns [`Error::InvalidId`] for unsafe or empty IDs.
     pub fn new(app_id: impl Into<String>) -> Result<Self, Error> {
         let app_id = app_id.into();
+
         if app_id.is_empty()
             || app_id.len() > 128
             || app_id == "."
@@ -106,6 +108,7 @@ impl LaunchAtLogin {
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> Result<Self, Error> {
         self.args = args.into_iter().map(Into::into).collect();
+
         if self.args.iter().any(|arg| arg.contains(['\0', '\r', '\n'])) {
             return Err(Error::InvalidCommand(
                 "arguments contain NUL or line breaks".into(),
@@ -158,9 +161,11 @@ impl LaunchAtLogin {
         {
             windows::apply(self, operation)
         }
+
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             let _ = (operation, &self.app_id);
+
             Ok(Status::Unsupported(
                 "launch at login is unavailable on this platform (including web/wasm)".into(),
             ))
@@ -195,6 +200,7 @@ mod tests {
                 "{id:?}"
             );
         }
+
         assert!(LaunchAtLogin::new("dev.rake.app-1_test").is_ok());
     }
 }

@@ -1,8 +1,10 @@
 use crate::{CheckState, Error, EventKind, Input, ItemKind, Menu, host::Sink};
+
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
     runtime::ProtocolObject, sel,
 };
+
 use objc2_app_kit::{NSEventModifierFlags, NSMenu, NSMenuDelegate, NSMenuItem};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 use std::{cell::Cell, rc::Rc};
@@ -87,15 +89,18 @@ impl NativeMenu {
     pub(super) fn new(spec: &Menu, sink: Sink, mtm: MainThreadMarker) -> Result<Self, Error> {
         let tracking = Rc::new(Cell::new(false));
         let changed = Rc::new(event_listener::Event::new());
+
         let allocated = Observer::alloc(mtm).set_ivars(Observation {
             sink: sink.clone(),
             tracking: tracking.clone(),
             changed: changed.clone(),
         });
+
         // SAFETY: Initialized NSObject subclass allocation.
         let observer: Retained<Observer> = unsafe { msg_send![super(allocated), init] };
         let mut targets = Vec::new();
         let menu = build(spec, &sink, mtm, &mut targets)?;
+
         menu.setDelegate(Some(ProtocolObject::from_ref(&*observer)));
 
         Ok(Self {
@@ -121,21 +126,27 @@ fn build(
     targets: &mut Vec<Retained<Target>>,
 ) -> Result<Retained<NSMenu>, Error> {
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(""));
+
     menu.setAutoenablesItems(false);
+
     if let Some(layout) = &spec.macos {
         menu.setMinimumWidth(layout.minimum_width.into());
         menu.setShowsStateColumn(layout.shows_state_column);
         menu.setAllowsContextMenuPlugIns(layout.context_plugins);
+
         if layout.palette {
             if !menu.respondsToSelector(sel!(setPresentationStyle:)) {
                 return Err(Error::Unsupported(crate::Feature::MenuPalette));
             }
+
             menu.setPresentationStyle(objc2_app_kit::NSMenuPresentationStyle::Palette);
         }
+
         if layout.selection != crate::macos::Selection::Automatic {
             if !menu.respondsToSelector(sel!(setSelectionMode:)) {
                 return Err(Error::Unsupported(crate::Feature::MenuPalette));
             }
+
             menu.setSelectionMode(match layout.selection {
                 crate::macos::Selection::Automatic => objc2_app_kit::NSMenuSelectionMode::Automatic,
                 crate::macos::Selection::One => objc2_app_kit::NSMenuSelectionMode::SelectOne,
@@ -158,11 +169,13 @@ fn build(
                 )
             }
         };
+
         if let Some(appearance) = &spec.macos {
             if let Some(badge) = &appearance.badge {
                 if !item.respondsToSelector(sel!(setBadge:)) {
                     return Err(Error::Unsupported(crate::Feature::MenuBadges));
                 }
+
                 use crate::macos::Badge;
                 use objc2::AnyThread as _;
                 use objc2_app_kit::NSMenuItemBadge;
@@ -178,34 +191,42 @@ fn build(
                     Badge::Updates(count) => NSMenuItemBadge::updatesWithCount(*count as isize),
                     Badge::Alerts(count) => NSMenuItemBadge::alertsWithCount(*count as isize),
                 };
+
                 item.setBadge(Some(&badge));
             }
+
             if let Some(images) = &appearance.state_images {
                 let off = images
                     .off
                     .as_ref()
                     .map(|image| super::macos::native_image(image, &spec.label))
                     .transpose()?;
+
                 let on = images
                     .on
                     .as_ref()
                     .map(|image| super::macos::native_image(image, &spec.label))
                     .transpose()?;
+
                 let mixed = images
                     .mixed
                     .as_ref()
                     .map(|image| super::macos::native_image(image, &spec.label))
                     .transpose()?;
+
                 item.setOffStateImage(off.as_deref());
+
                 // SAFETY: NSMenuItem copies/retains validated image objects; pointers are not cached by us.
                 unsafe {
                     item.setOnStateImage(on.as_deref());
                     item.setMixedStateImage(mixed.as_deref());
                 }
             }
+
             if let Some(text) = &appearance.attributed_title {
                 item.setAttributedTitle(Some(&*super::macos::attributed_text(text)?));
             }
+
             item.setAlternate(appearance.alternate);
             item.setIndentationLevel(appearance.indentation.into());
             item.setToolTip(
@@ -215,31 +236,40 @@ fn build(
                     .map(|s| NSString::from_str(s))
                     .as_deref(),
             );
+
             if let Some(subtitle) = &appearance.subtitle {
                 if !item.respondsToSelector(sel!(setSubtitle:)) {
                     return Err(Error::Unsupported(crate::Feature::MenuSubtitles));
                 }
+
                 item.setSubtitle(Some(&NSString::from_str(subtitle)));
             }
         }
+
         if let Some(value) = &spec.accelerator {
             let key = crate::Accelerator::parse(value)?;
             let mut modifiers = NSEventModifierFlags::empty();
+
             if key.control {
                 modifiers |= NSEventModifierFlags::Control;
             }
+
             if key.alt {
                 modifiers |= NSEventModifierFlags::Option;
             }
+
             if key.shift {
                 modifiers |= NSEventModifierFlags::Shift;
             }
+
             if key.super_key {
                 modifiers |= NSEventModifierFlags::Command;
             }
+
             item.setKeyEquivalent(&NSString::from_str(&key.key));
             item.setKeyEquivalentModifierMask(modifiers);
         }
+
         item.setHidden(!spec.visible);
         item.setEnabled(
             spec.enabled && !matches!(spec.kind, ItemKind::Header | ItemKind::Separator),
@@ -257,6 +287,7 @@ fn build(
             ItemKind::Radio { selected, .. } => item.setState(isize::from(*selected)),
             _ => {}
         }
+
         if let Some(image) = &spec.image {
             item.setImage(Some(&*super::macos::native_image(image, &spec.label)?));
         }
@@ -265,8 +296,10 @@ fn build(
             sink: sink.clone(),
             id: spec.id.clone(),
         });
+
         // SAFETY: NSObject subclass allocation with initialized ivars.
         let target: Retained<Target> = unsafe { msg_send![super(allocated), init] };
+
         // SAFETY: The selector and retained target have matching action ABI and outlive the menu.
         unsafe {
             item.setTarget(Some(&target));

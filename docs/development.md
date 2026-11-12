@@ -46,12 +46,17 @@ RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake instances --jso
 RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake ctl reload status --json
 ```
 
-Desktop dev launches the native app. Web dev prints a private launch URL and opens
-it in the default browser unless you pass `--no-open`. Build and reload status
-is available in the terminal and through `rake dev status --session PATH`.
+Desktop dev launches the native app; `--preview` opens its browser preview.
+Web dev opens the app directly. With `--cdp`, it opens the embedded
+[Chrome DevTools](devtools.md) toggle instead. Node 22+ is required for Web
+`--cdp`; frontend assets download when the panel opens. `--no-open` prints the
+private launch URL without opening a browser. Build and reload status is also
+available through `rake dev status --session PATH`.
 
-Use `rake dev --cdp` to start the [Chrome DevTools adapter](devtools.md) with the
-app. Use `rake cdp --session PATH` to attach an adapter to an existing session.
+Use `rake dev --cdp` to start the Chrome DevTools adapter with the app, or
+`rake inspect --session PATH` / `rake cdp --session PATH` to attach to an existing
+session. `--instance UUID` selects a runtime. The legacy HTML and GPUI inspectors
+are disabled and are not bundled.
 
 `--json` emits supervisor events as JSON lines, and compiler and app diagnostics go to stderr. `status.json` stays readable when the app is stopped or crashed.
 

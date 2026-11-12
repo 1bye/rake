@@ -12,6 +12,7 @@ pub enum ItemLength {
     /// Explicit positive finite width.
     Points(f64),
 }
+
 /// Native status button appearance, independent of interaction policy.
 #[derive(Clone, Debug, Default)]
 pub struct Appearance {
@@ -38,6 +39,7 @@ pub struct Appearance {
     /// Native user removal behavior.
     pub removal: Removal,
 }
+
 /// Native menu item details.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MenuAppearance {
@@ -71,6 +73,7 @@ pub enum Badge {
     /// Alerts count.
     Alerts(u32),
 }
+
 /// Explicit native checkmark images.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StateImages {
@@ -81,6 +84,7 @@ pub struct StateImages {
     /// Indeterminate image.
     pub mixed: Option<Image>,
 }
+
 /// Native palette selection behavior (macOS 14+).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Selection {
@@ -92,6 +96,7 @@ pub enum Selection {
     /// Allow selecting multiple items.
     Any,
 }
+
 /// Native menu-wide layout, separate from menu item state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuLayout {
@@ -106,6 +111,7 @@ pub struct MenuLayout {
     /// Enable native context-menu plug-ins explicitly.
     pub context_plugins: bool,
 }
+
 impl Default for MenuLayout {
     fn default() -> Self {
         Self {
@@ -129,6 +135,7 @@ pub enum Removal {
     /// Request guarded quit when the user removes the item.
     RequestQuit,
 }
+
 /// Current status-bar dimensions, in AppKit logical points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
@@ -154,12 +161,14 @@ pub struct TextRun {
     /// Optional sRGB RGBA8 foreground color; None uses native default styling.
     pub color: Option<[u8; 4]>,
 }
+
 /// Attributed native text; each run can have its own system font and color.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AttributedText {
     /// Ordered runs; at most 128, with at most 16 KiB of combined UTF-8 text.
     pub runs: Vec<TextRun>,
 }
+
 impl AttributedText {
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         if self.runs.len() > 128
@@ -169,14 +178,17 @@ impl AttributedText {
                 "attributed text exceeds run/text limits".into(),
             ));
         }
+
         for run in &self.runs {
             crate::text(&run.text, "attributed text", 16 * 1024)?;
+
             if !(1..=256).contains(&run.size) {
                 return Err(crate::Error::InvalidInput(
                     "attributed font size must be 1–256 points".into(),
                 ));
             }
         }
+
         Ok(())
     }
 }

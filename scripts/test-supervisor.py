@@ -29,7 +29,7 @@ spec = importlib.util.spec_from_file_location("rake_dev", (Path(__file__).resolv
 dev = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dev)
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "target/debug/rake"
+CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
 
 
 def wait_for(predicate, timeout=30):
@@ -51,6 +51,37 @@ def alive(pid):
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_web_cdp_starts_one_owned_toggle_companion_after_publication(self):
+        with tempfile.TemporaryDirectory(prefix="rake-toggle-supervisor-") as temporary:
+            root = Path(temporary)
+            session = root / "session"
+            session.mkdir(mode=0o700)
+            args = SimpleNamespace(target="web", native_reloader=None, cdp=True, no_open=True, json=True)
+            processes = dev.Processes()
+            project = SimpleNamespace(args=args, package={"name":"test.web"})
+            companion = None
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    supervisor = dev.Supervisor(project, session, processes)
+                    supervisor.launch_url = "http://127.0.0.1:8081/#__rake_control=test-only"
+                    dev.private_json(session / "cdp.json", {"url":"http://127.0.0.1:9"})
+                    first = supervisor.builds / "1"
+                    first.mkdir()
+                    supervisor.publish(1, first)
+                    companion = supervisor.embedded
+                    self.assertIsNone(companion.poll())
+                    launch = supervisor.status["devtools_url"]
+                    self.assertIn("embedded-devtools-", launch)
+                    self.assertTrue(any(first.glob("embedded-devtools-*.html")))
+                    second = supervisor.builds / "2"
+                    second.mkdir()
+                    supervisor.publish(2, second)
+                    self.assertIs(supervisor.embedded, companion)
+                    self.assertEqual(supervisor.status["devtools_url"], launch)
+            finally:
+                processes.close()
+            self.assertIsNotNone(companion.poll(), "companion must stop with its supervisor")
+
     def test_doctor_reports_installed_targets_and_optional_node(self):
         for target, installed, expected in [
             ("desktop", "aarch64-apple-darwin", 0),

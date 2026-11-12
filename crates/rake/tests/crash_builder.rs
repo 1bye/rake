@@ -27,6 +27,7 @@ impl Drop for Sink {
 #[test]
 fn shared_builder_accepts_crash_reports_without_launching() {
     let dropped = Rc::new(Cell::new(0));
+
     let app = rake::App::new("test.crash").crash_reports(
         rake::crash_config!()
             .directory("unused-crash-directory")
@@ -42,6 +43,7 @@ fn shared_builder_accepts_crash_reports_without_launching() {
 #[test]
 fn crash_builder_last_call_wins_and_opt_out_releases_sink() {
     let dropped = Rc::new(Cell::new(0));
+
     let app = rake::App::new("test.crash")
         .crash_reports(rake::crash_config!(), Sink(dropped.clone()))
         .without_crash_reports();
@@ -50,6 +52,7 @@ fn crash_builder_last_call_wins_and_opt_out_releases_sink() {
     drop(app);
     assert_eq!(dropped.get(), 1);
     let dropped = Rc::new(Cell::new(0));
+
     let app = rake::App::new("test.crash")
         .without_crash_reports()
         .crash_reports(rake::crash_config!(), Sink(dropped.clone()));

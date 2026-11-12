@@ -11,8 +11,10 @@ fn portable_feature_exports_the_complete_contract() {
         .unwrap()
         .args(["--background"])
         .unwrap();
+
     let _: LaunchAtLogin = login;
     let _: Status = Status::Unsupported("test".into());
+
     assert!(matches!(
         LaunchAtLogin::new("../unsafe"),
         Err(Error::InvalidId)

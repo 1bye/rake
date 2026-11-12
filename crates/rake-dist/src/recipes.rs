@@ -105,6 +105,7 @@ pub(crate) fn runtimes(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
             }
             "directory" | "gstreamer" => {
                 let relative = PathBuf::from("rake/runtimes").join(&runtime.name);
+                let relative = rake_dist_core::portable_relative_path(&relative)?;
                 let destination = resource_stage.join(&relative);
 
                 files::copy(&source, &destination)?;
@@ -141,6 +142,7 @@ pub(crate) fn runtimes(input: Input<'_>) -> Result<Vec<PathBuf>, Error> {
                 })?;
 
                 let relative = PathBuf::from("rake/runtimes").join(&runtime.name);
+                let relative = rake_dist_core::portable_relative_path(&relative)?;
                 let destination = resource_stage.join(&relative);
 
                 fs::create_dir_all(

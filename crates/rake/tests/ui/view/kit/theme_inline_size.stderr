@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `Hsla: From<TextToken>` is not satisfied
+ --> tests/ui/view/kit/theme_inline_size.rs:4:21
+  |
+4 | fn main() { let _ = rake::view! { <p><span class="text-body">Hello</span></p> }; }
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                     |
+  |                     the trait `From<TextToken>` is not implemented for `Hsla`
+  |                     required by a bound introduced by this call
+  |
+help: `Hsla` implements trait `From<T>`
+ --> $CARGO/gpui-pre-$VERSION/src/color.rs
+  |
+  | impl From<Rgba> for Hsla {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^ `From<Rgba>`
+  |
+ ::: $CARGO/gpui-component-$VERSION/src/theme/theme_color.rs
+  |
+  | impl From<ThemeToken> for Hsla {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `From<ThemeToken>`
+  = note: required for `TextToken` to implement `Into<Hsla>`
+  = note: required for `TextToken` to implement `rake::__private::ThemeRunText`
+  = note: this error originates in the macro `rake::view` (in Nightly builds, run with -Z macro-backtrace for more info)

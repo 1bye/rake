@@ -1,7 +1,8 @@
 # DevTools status
 
 Stock Chrome DevTools through the CDP adapter is the supported frontend. The HTML
-inspector and `rake-inspector` are legacy prototypes. Their previous completion
+inspector and `rake-inspector` are deprecated and disabled, and are excluded from
+CLI bundles and supported builds. Their previous completion
 checks are historical evidence, not Chrome UI verification.
 
 The original five implementation phases are delivered: paged trees and stable

@@ -64,7 +64,7 @@ fn registered_backend_outputs_are_hashed_and_confined() {
     assert!(
         checked[0]
             .path
-            .starts_with(fs::canonicalize(&request.output).unwrap())
+            .starts_with(dunce::canonicalize(&request.output).unwrap())
     );
     assert!(
         run_package_backend(

@@ -697,11 +697,13 @@ fn only_the_root_retains_layout_for_nested_elements_and_markup_properties() {
             element.layout.children.is_empty(),
             "nested layout was copied into the semantic tree"
         );
+
         for attribute in &element.attributes {
             if let AttributeValue::Markup(child) = &attribute.value {
                 check(child);
             }
         }
+
         for child in &element.children {
             if let Node::Element(child) = child {
                 check(child);
@@ -713,13 +715,17 @@ fn only_the_root_retains_layout_for_nested_elements_and_markup_properties() {
         "<Panel heading={<h1><strong>Title</strong></h1>}><div><span>Body</span></div></Panel>",
     )
     .unwrap();
+
     let layout = view.layout().unwrap();
+
     assert!(!layout.children.is_empty());
+
     for attribute in &view.root().attributes {
         if let AttributeValue::Markup(child) = &attribute.value {
             check(child);
         }
     }
+
     for child in &view.root().children {
         if let Node::Element(child) = child {
             check(child);

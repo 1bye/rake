@@ -46,6 +46,7 @@ pub enum LayoutKind {
 impl Default for Layout {
     fn default() -> Self {
         let span = Span::call_site();
+
         Self {
             start: span,
             end: span,
@@ -64,6 +65,7 @@ impl Layout {
         children: Vec<Self>,
     ) -> Self {
         let first = start.span();
+
         // Container endpoints already belong to their final child. Avoid
         // rescanning every descendant token at each level of markup nesting.
         if matches!(
@@ -79,14 +81,18 @@ impl Layout {
                 errors: Vec::new(),
             };
         }
+
         let mut last = first;
+
         while start != input.cursor() {
             let Some((token, next)) = start.token_tree() else {
                 break;
             };
+
             last = token.span();
             start = next;
         }
+
         Self {
             start: first,
             end: last,
@@ -100,9 +106,11 @@ impl Layout {
         if let Some(error) = self.errors.first() {
             return Err(error.clone());
         }
+
         for child in &self.children {
             child.validate()?;
         }
+
         Ok(())
     }
 }

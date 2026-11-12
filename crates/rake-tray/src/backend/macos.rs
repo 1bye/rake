@@ -2,17 +2,22 @@ use crate::{
     Anchor, Button, CoordinateSpace, Error, EventKind, Input, Point, Rect, Registration, Rendering,
     Request, Tray, host::Sink,
 };
+
 use objc2::runtime::NSObject;
+
 use objc2::{
     AnyThread, ClassType, DeclaredClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
     rc::Retained, sel,
 };
+
 use objc2_app_kit::{
     NSAccessibility, NSApplication, NSCellImagePosition, NSEventMask, NSEventType, NSImage,
     NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
+
 use objc2_foundation::{NSData, NSObjectProtocol, NSSize, NSString};
 use objc2_foundation::{NSKeyValueObservingOptions, NSObjectNSKeyValueObserverRegistration};
+
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -61,6 +66,7 @@ struct VisibilityState {
     programmatic: Rc<Cell<bool>>,
     removal: Rc<Cell<crate::macos::Removal>>,
 }
+
 define_class!(
     // SAFETY: The observer is retained and detached before its item owner is dropped.
     #[unsafe(super(NSObject))]
@@ -113,7 +119,9 @@ impl Item {
         let mtm = MainThreadMarker::new().ok_or_else(|| {
             Error::InvalidInput("AppKit tray creation requires the main thread".into())
         })?;
+
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
+
         item.setAutosaveName(Some(&NSString::from_str(&format!(
             "{application}.{}",
             spec.id
@@ -123,13 +131,16 @@ impl Item {
         let target: Retained<ActionTarget> = unsafe { msg_send![super(allocated), init] };
         let programmatic = Rc::new(Cell::new(false));
         let removal = Rc::new(Cell::new(crate::macos::Removal::Prevent));
+
         let allocated = VisibilityObserver::alloc(mtm).set_ivars(VisibilityState {
             sink: sink.clone(),
             programmatic: programmatic.clone(),
             removal: removal.clone(),
         });
+
         // SAFETY: NSObject subclass allocation with initialized ivars.
         let observer: Retained<VisibilityObserver> = unsafe { msg_send![super(allocated), init] };
+
         // SAFETY: This dedicated observer is retained until the matching removal in Item::remove.
         unsafe {
             item.addObserver_forKeyPath_options_context(
@@ -152,10 +163,12 @@ impl Item {
             menu: RefCell::new(None),
             sink,
         };
+
         let button = result
             .item
             .button(mtm)
             .ok_or_else(|| Error::HostUnavailable)?;
+
         // SAFETY: The retained target implements this selector and outlives the button attachment.
         unsafe {
             button.setTarget(Some(&result._target));
@@ -165,6 +178,7 @@ impl Item {
             NSEventMask::LeftMouseUp | NSEventMask::RightMouseUp | NSEventMask::OtherMouseUp,
         );
         let mut initial = spec.clone();
+
         if initial
             .macos
             .as_ref()
@@ -172,6 +186,7 @@ impl Item {
         {
             initial.visible &= result.item.isVisible();
         }
+
         result.apply_now(0, &initial)?;
 
         Ok(result)
@@ -179,11 +194,13 @@ impl Item {
 
     fn apply_now(&self, revision: u64, spec: &Tray) -> Result<(), Error> {
         let button = self.item.button(self.mtm).ok_or(Error::HostUnavailable)?;
+
         let image = spec
             .image
             .as_ref()
             .map(|source| native_image(source, &spec.tooltip))
             .transpose()?;
+
         let menu = spec
             .menu
             .as_ref()
@@ -192,27 +209,33 @@ impl Item {
                     .map(Rc::new)
             })
             .transpose()?;
+
         let appearance = spec.macos.clone().unwrap_or_default();
+
         let alternate = appearance
             .alternate_image
             .as_ref()
             .map(|image| native_image(image, &appearance.accessibility_label))
             .transpose()?;
+
         let attributed = appearance
             .attributed_title
             .as_ref()
             .map(attributed_text)
             .transpose()?;
+
         let alternate_attributed = appearance
             .attributed_alternate_title
             .as_ref()
             .map(attributed_text)
             .transpose()?;
+
         if spec.interaction == crate::Interaction::NativeMenu {
             self.item.setMenu(menu.as_ref().map(|m| &*m.menu));
         } else {
             self.item.setMenu(None);
         }
+
         *self.menu.borrow_mut() = menu;
         self.item.setLength(match appearance.length {
             crate::macos::ItemLength::Content => NSVariableStatusItemLength,
@@ -221,12 +244,15 @@ impl Item {
         });
         button.setTitle(&NSString::from_str(&appearance.title));
         button.setAlternateTitle(&NSString::from_str(&appearance.alternate_title));
+
         if let Some(text) = attributed {
             button.setAttributedTitle(&text);
         }
+
         if let Some(text) = alternate_attributed {
             button.setAttributedAlternateTitle(&text);
         }
+
         button.setAlternateImage(alternate.as_deref());
         button.setImagePosition(NSCellImagePosition::ImageLeading);
         button.setAppearsDisabled(appearance.appears_disabled);
@@ -263,29 +289,39 @@ impl Item {
     pub(crate) fn apply(self: &Rc<Self>, revision: u64, spec: &Tray) -> Request<()> {
         let item = self.clone();
         let spec = spec.clone();
+
         Box::pin(async move {
             if item.removed.get() {
                 return Err(Error::Removed);
             }
+
             loop {
                 let menu = item.menu.borrow().clone();
+
                 let Some(menu) = menu else { break };
+
                 let changed = menu.changed.listen();
+
                 if !menu.tracking.get() {
                     break;
                 }
+
                 changed.await;
+
                 if item.removed.get() {
                     return Err(Error::Removed);
                 }
             }
+
             if item.revision.get() <= revision {
                 item.apply_now(revision, &spec)?;
                 item.revision.set(revision);
             }
+
             Ok(())
         })
     }
+
     #[cfg(feature = "native-tests")]
     pub(crate) fn probe_menu_selection(&self, index: usize) -> Result<(), Error> {
         let menu = self
@@ -293,10 +329,13 @@ impl Item {
             .borrow()
             .clone()
             .ok_or(Error::InvalidInput("item has no native menu".into()))?;
+
         if index >= menu.menu.numberOfItems() as usize {
             return Err(Error::InvalidInput("menu probe index is invalid".into()));
         }
+
         menu.menu.performActionForItemAtIndex(index as isize);
+
         Ok(())
     }
 
@@ -306,17 +345,21 @@ impl Item {
             .borrow()
             .clone()
             .ok_or(Error::InvalidInput("item has no menu".into()))?;
+
         let button = self.item.button(self.mtm).ok_or(Error::Removed)?;
+
         menu.menu.popUpMenuPositioningItem_atLocation_inView(
             None,
             objc2_foundation::NSPoint::new(0.0, button.bounds().size.height),
             Some(&button),
         );
+
         Ok(())
     }
 
     pub(crate) fn metrics(&self) -> crate::macos::Metrics {
         let bar = NSStatusBar::systemStatusBar();
+
         crate::macos::Metrics {
             vertical: bar.isVertical(),
             thickness: bar.thickness(),
@@ -328,13 +371,16 @@ impl Item {
     pub(crate) fn registration(&self) -> Registration {
         Registration::Registered
     }
+
     pub(crate) fn anchor(&self) -> Result<Option<Anchor>, Error> {
         let Some(button) = self.item.button(self.mtm) else {
             return Ok(None);
         };
+
         let Some(window) = button.window() else {
             return Ok(None);
         };
+
         let rect = window.convertRectToScreen(button.convertRect_toView(button.bounds(), None));
 
         Ok(Some(Anchor {
@@ -356,6 +402,7 @@ impl Item {
             .button(self.mtm)
             .ok_or(Error::Removed)?
             .highlight(highlighted);
+
         Ok(())
     }
 
@@ -363,21 +410,26 @@ impl Item {
         let Some(button) = self.item.button(self.mtm) else {
             return Ok(None);
         };
+
         let Some(window) = button.window() else {
             return Ok(None);
         };
+
         let Some(screen) = window.screen() else {
             return Ok(None);
         };
+
         let Some(number) = screen
             .deviceDescription()
             .objectForKey(&NSString::from_str("NSScreenNumber"))
         else {
             return Ok(None);
         };
+
         // SAFETY: NSScreenNumber is documented as an NSNumber in the device description.
         let id: u32 = unsafe { msg_send![&*number, unsignedIntValue] };
         let frame = screen.frame();
+
         let convert = |rect: objc2_foundation::NSRect| Rect {
             origin: Point {
                 x: rect.origin.x - frame.origin.x,
@@ -386,7 +438,9 @@ impl Item {
             width: rect.size.width,
             height: rect.size.height,
         };
+
         let icon = window.convertRectToScreen(button.convertRect_toView(button.bounds(), None));
+
         Ok(Some(crate::PopupAnchor {
             display_id: id.into(),
             icon: convert(icon),
@@ -396,6 +450,7 @@ impl Item {
 
     pub(crate) fn shutdown(&self) -> Request<()> {
         self.remove();
+
         crate::ready(Ok(()))
     }
 
@@ -404,12 +459,14 @@ impl Item {
             if let Some(menu) = self.menu.borrow().as_ref() {
                 menu.menu.cancelTracking();
             }
+
             // SAFETY: This is the exact observer/key pair registered during creation.
             unsafe {
                 self.item
                     .removeObserver_forKeyPath(&self.observer, &NSString::from_str("visible"));
             }
             self.item.setMenu(None);
+
             if let Some(button) = self.item.button(self.mtm) {
                 // SAFETY: Clear the weak target before releasing its retained owner.
                 unsafe {
@@ -437,34 +494,44 @@ pub(super) fn native_image(
         NSImage::imageNamed(&NSString::from_str(name)).or_else(|| {
             // SAFETY: Query the class before invoking a symbol introduced after older deployment targets.
             let available: bool = unsafe { msg_send![NSImage::class(), respondsToSelector: sel!(imageWithSystemSymbolName:accessibilityDescription:)] };
+
             if !available { return None; }
+
             NSImage::imageWithSystemSymbolName_accessibilityDescription(
                 &NSString::from_str(name),
                 Some(&NSString::from_str(description)),
             )
         })
     });
+
     let image = if let Some(named) = named {
         named
     } else {
         if source.representations.is_empty() {
             return Err(Error::Unsupported(crate::Feature::NamedImage));
         }
+
         let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(18.0, 18.0));
+
         for rep in &source.representations {
             let bitmap = objc2_app_kit::NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(
                 &rep.to_png()?,
             ))
             .ok_or(Error::HostUnavailable)?;
+
             bitmap.setSize(NSSize::new(18.0, 18.0));
             image.addRepresentation(&bitmap);
         }
+
         image
     };
+
     use objc2_foundation::NSCopying;
     let image = image.copy();
+
     image.setSize(NSSize::new(18.0, 18.0));
     image.setTemplate(source.rendering == Rendering::Template);
+
     Ok(image)
 }
 
@@ -475,12 +542,14 @@ pub(super) fn attributed_text(
     use objc2_app_kit::{NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName};
     use objc2_foundation::{NSAttributedString, NSDictionary, NSMutableAttributedString};
     let result = NSMutableAttributedString::new();
+
     for run in &text.runs {
         let font = if run.bold {
             NSFont::boldSystemFontOfSize(run.size.into())
         } else {
             NSFont::systemFontOfSize(run.size.into())
         };
+
         let color = run.color.map(|rgba| {
             NSColor::colorWithSRGBRed_green_blue_alpha(
                 f64::from(rgba[0]) / 255.0,
@@ -489,16 +558,20 @@ pub(super) fn attributed_text(
                 f64::from(rgba[3]) / 255.0,
             )
         });
+
         // SAFETY: Static AppKit attribute keys; paired values have the documented NSFont/NSColor types.
         let attributes: Retained<NSDictionary<NSString, AnyObject>> = unsafe {
             let mut keys = vec![NSFontAttributeName];
             let mut values: Vec<&AnyObject> = vec![&font];
+
             if let Some(color) = &color {
                 keys.push(NSForegroundColorAttributeName);
                 values.push(color);
             }
+
             NSDictionary::from_slices(&keys, &values)
         };
+
         // SAFETY: Attribute keys and values above match AppKit's documented attributed-string contract.
         let part = unsafe {
             NSAttributedString::initWithString_attributes(
@@ -507,7 +580,9 @@ pub(super) fn attributed_text(
                 Some(&attributes),
             )
         };
+
         result.appendAttributedString(&part);
     }
+
     Ok(result.into_super())
 }

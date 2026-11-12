@@ -262,7 +262,7 @@ fn native_inventory(root: &Path) -> Result<std::collections::BTreeSet<PathBuf>, 
             let native = is_native(&path)?;
 
             if native {
-                output.insert(fs::canonicalize(path)?);
+                output.insert(dunce::canonicalize(path)?);
             }
         }
     }

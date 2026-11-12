@@ -207,7 +207,7 @@ fn windows_version(version: &str) -> Result<u64, Box<dyn std::error::Error>> {
         .fold(0_u64, |value, field| (value << 16) | u64::from(*field)))
 }
 
-/// Generates PNG and ICO variants from one PNG; a simple neutral icon is the default.
+/// Generates PNG and ICO variants from a PNG or SVG, defaulting to the static Rake icon.
 /// # Errors
 /// Returns decoding, dimension or filesystem errors. SVG rasterization disables external resource loading.
 pub fn generate_icons(
@@ -216,30 +216,13 @@ pub fn generate_icons(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let image = match source {
         Some(path) if path.extension().is_some_and(|extension| extension == "svg") => {
-            let mut options = resvg::usvg::Options::default();
-
-            options.image_href_resolver.resolve_string = Box::new(|_, _| None);
-            options.image_href_resolver.resolve_data = Box::new(|_, _, _| None);
             let bytes = fs::read(path)?;
 
             if bytes.len() > 4 * 1024 * 1024 {
                 return Err("SVG icon exceeds 4 MiB".into());
             }
 
-            let tree = resvg::usvg::Tree::from_data(&bytes, &options)?;
-
-            let mut pixels =
-                resvg::tiny_skia::Pixmap::new(256, 256).ok_or("icon allocation failed")?;
-
-            let scale = resvg::tiny_skia::Transform::from_scale(
-                256.0 / tree.size().width(),
-                256.0 / tree.size().height(),
-            );
-
-            resvg::render(&tree, scale, &mut pixels.as_mut());
-
-            // tiny-skia stores premultiplied RGBA; PNG encoding unpremultiplies.
-            image::load_from_memory(&pixels.encode_png()?)?.into_rgba8()
+            rasterize_svg(&bytes)?
         }
         Some(path) => {
             let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
@@ -252,7 +235,7 @@ pub fn generate_icons(
 
             reader.decode()?.into_rgba8()
         }
-        None => image::RgbaImage::from_pixel(256, 256, image::Rgba([42, 90, 70, 255])),
+        None => rasterize_svg(include_bytes!("../assets/default-icon.svg"))?,
     };
 
     if image.width() != image.height() || image.width() == 0 || image.width() > 8192 {
@@ -268,6 +251,25 @@ pub fn generate_icons(
     resized.save(directory.join("icon.ico"))?;
 
     Ok(directory)
+}
+
+fn rasterize_svg(bytes: &[u8]) -> Result<image::RgbaImage, Box<dyn std::error::Error>> {
+    let mut options = resvg::usvg::Options::default();
+
+    options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    options.image_href_resolver.resolve_data = Box::new(|_, _, _| None);
+    let tree = resvg::usvg::Tree::from_data(bytes, &options)?;
+
+    let mut pixels = resvg::tiny_skia::Pixmap::new(256, 256).ok_or("icon allocation failed")?;
+    let scale = resvg::tiny_skia::Transform::from_scale(
+        256.0 / tree.size().width(),
+        256.0 / tree.size().height(),
+    );
+
+    resvg::render(&tree, scale, &mut pixels.as_mut());
+
+    // tiny-skia stores premultiplied RGBA; PNG encoding unpremultiplies.
+    Ok(image::load_from_memory(&pixels.encode_png()?)?.into_rgba8())
 }
 
 /// Generates required MSIX store/tile assets from the normalized icon.
