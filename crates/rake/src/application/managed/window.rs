@@ -111,6 +111,7 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
     let failed = failure.clone();
 
     let mut options = options();
+
     let placement =
         crate::window_state::native::prepare(crate::router::WindowId(1), &mut options, cx);
 

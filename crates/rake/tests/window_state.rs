@@ -16,9 +16,10 @@ fn reset_loads_existing_records_and_preserves_other_preferences() {
             .await
             .expect("seed unrelated preference");
         let record = serde_json::json!({
-            "bounds": { "x": 50, "y": 50, "width": 600, "height": 400 },
-            "display": null, "mode": "windowed"
+            "bounds": { "x": 50.0, "y": 50.0, "width": 600.0, "height": 400.0 },
+            "display": null, "mode": "windowed", "decoration_height": 0.0
         });
+
         preferences
             .set(
                 "rake-window-state-v1",
@@ -35,6 +36,7 @@ fn reset_loads_existing_records_and_preserves_other_preferences() {
             .await
             .expect("read saved windows")
             .expect("placement document");
+
         let document: serde_json::Value =
             serde_json::from_str(&value).expect("valid placement JSON");
 
@@ -59,8 +61,10 @@ fn policy_survives_the_typed_routes_builder_transition() {
     let preferences = rake::platform::Platform::default()
         .preferences("window-state.api-test")
         .expect("valid namespace");
+
     let state = rake::window_state::WindowState::new(preferences)
         .keys(|id| (id == rake::router::WindowId(1)).then(|| "main".into()));
+
     let app: rake::App<Destination> = rake::App::new("window-state.api-test")
         .window_state(state)
         .routes(rake::router::__routes(|_: &Destination, _, _, _| {

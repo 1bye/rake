@@ -25,6 +25,7 @@ fn saved(bounds: Rect) -> SavedWindow {
         bounds,
         display: Some("external".into()),
         mode: Mode::Windowed,
+        decoration_height: 0.,
     }
 }
 
@@ -99,6 +100,7 @@ fn mixed_scales_preserve_logical_size_and_identity_after_display_reordering() {
     // A 3840x2160 display at 2x exposes the same logical size as 1920x1080 at 1x.
     let bounds = rect(2100., 100., 800., 600.);
     let state = saved(bounds);
+
     let displays = [
         display("internal", rect(0., 0., 1920., 1080.)),
         display("external", rect(1920., 0., 1920., 1080.)),
@@ -137,6 +139,7 @@ fn scale_change_shrinking_logical_work_area_clamps_without_rescaling() {
 #[test]
 fn absent_uuid_matches_visible_bounds_and_no_displays_leave_defaults() {
     let mut state = saved(rect(100., 100., 500., 400.));
+
     state.display = None;
     let visible = rect(0., 25., 1440., 875.);
 
@@ -163,6 +166,7 @@ fn serialization_preserves_independent_windows_and_all_modes() {
         .enumerate()
         .map(|(index, mode)| {
             let mut state = saved(rect(index as f32 * 50., 50., 800., 600.));
+
             state.mode = mode;
 
             (format!("document-{index}"), state)
@@ -175,6 +179,7 @@ fn serialization_preserves_independent_windows_and_all_modes() {
 #[test]
 fn corrupt_records_preserve_other_windows_and_unknown_versions_use_defaults() {
     let good = saved(rect(100., 100., 800., 600.));
+
     let value = serde_json::json!({"version": 1, "windows": {
         "main": good, "broken": {"mode": "windowed"},
         "zero": {"bounds": {"x": 0, "y": 0, "width": 0, "height": 5}, "display": null, "mode": "windowed"}
@@ -184,6 +189,7 @@ fn corrupt_records_preserve_other_windows_and_unknown_versions_use_defaults() {
         decode(&value.to_string()),
         BTreeMap::from([("main".into(), good)])
     );
+
     for value in ["", "{", "null", r#"{"version":2,"windows":{}}"#] {
         assert!(decode(value).is_empty(), "invalid document: {value}");
     }
@@ -204,4 +210,26 @@ fn nonfinite_and_unreasonable_bounds_are_rejected() {
             None
         );
     }
+}
+
+#[test]
+fn native_chrome_fits_work_area_without_growing_client_size_on_each_restore() {
+    let displays = [display("external", rect(0., 30., 1000., 700.))];
+    let mut state = saved(rect(100., 100., 720., 480.));
+
+    state.decoration_height = 32.;
+
+    assert_eq!(
+        restore(&state, &displays, 0, displays[0].visible),
+        Some((0, state.bounds))
+    );
+    state.bounds = rect(100., 300., 720., 700.);
+
+    assert_eq!(
+        restore(&state, &displays, 0, displays[0].visible),
+        Some((0, rect(100., 30., 720., 668.)))
+    );
+    state.decoration_height = f32::NAN;
+
+    assert_eq!(restore(&state, &displays, 0, displays[0].visible), None);
 }

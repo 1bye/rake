@@ -56,6 +56,16 @@ pub(super) struct SavedWindow {
     pub bounds: Rect,
     pub display: Option<String>,
     pub mode: Mode,
+    #[serde(default)]
+    pub decoration_height: f32,
+}
+
+impl SavedWindow {
+    fn valid(&self) -> bool {
+        self.bounds.valid()
+            && self.decoration_height.is_finite()
+            && (0.0..=1024.0).contains(&self.decoration_height)
+    }
 }
 
 // Native GPUI consumes display snapshots; headless builds use them only in tests.
@@ -94,7 +104,7 @@ pub(super) fn decode(value: &str) -> BTreeMap<String, SavedWindow> {
         .filter_map(|(key, value)| {
             let record = serde_json::from_value::<SavedWindow>(value).ok()?;
 
-            (valid_key(&key) && record.bounds.valid()).then_some((key, record))
+            (valid_key(&key) && record.valid()).then_some((key, record))
         })
         .collect()
 }
@@ -117,9 +127,21 @@ pub(super) fn restore(
     default_display: usize,
     default_bounds: Rect,
 ) -> Option<(usize, Rect)> {
-    if !saved.bounds.valid() {
+    if !saved.valid() {
         return None;
     }
+
+    let outer = Rect {
+        height: saved.bounds.height + saved.decoration_height,
+        ..saved.bounds
+    };
+
+    let client_bounds = |bounds: Rect| {
+        (bounds.height > saved.decoration_height).then_some(Rect {
+            height: bounds.height - saved.decoration_height,
+            ..bounds
+        })
+    };
 
     let selected = displays.iter().position(|display| {
         display.visible.valid() && saved.display.is_some() && display.uuid == saved.display
@@ -127,16 +149,16 @@ pub(super) fn restore(
 
     let selected = selected.or_else(|| {
         saved.display.is_none().then(|| {
-            displays.iter().position(|display| {
-                display.visible.valid() && saved.bounds.intersects(display.visible)
-            })
+            displays
+                .iter()
+                .position(|display| display.visible.valid() && outer.intersects(display.visible))
         })?
     });
 
     if let Some(index) = selected
-        && saved.bounds.intersects(displays[index].visible)
+        && outer.intersects(displays[index].visible)
     {
-        return Some((index, saved.bounds.clamp(displays[index].visible)));
+        return client_bounds(outer.clamp(displays[index].visible)).map(|bounds| (index, bounds));
     }
 
     let index = displays
@@ -146,11 +168,18 @@ pub(super) fn restore(
         .or_else(|| displays.iter().position(|display| display.visible.valid()))?;
 
     let display = displays[index].visible;
+
     let fallback = if default_bounds.valid() {
         default_bounds
     } else {
         saved.bounds
     };
+
+    let fallback = Rect {
+        height: fallback.height + saved.decoration_height,
+        ..fallback
+    };
+
     let bounds = if fallback.intersects(display) {
         fallback
     } else {
@@ -161,7 +190,7 @@ pub(super) fn restore(
         }
     };
 
-    Some((index, bounds.clamp(display)))
+    client_bounds(bounds.clamp(display)).map(|bounds| (index, bounds))
 }
 
 #[cfg(test)]

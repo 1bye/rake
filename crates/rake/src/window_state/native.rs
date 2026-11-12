@@ -8,10 +8,13 @@ use super::{
     WindowState,
     placement::{self, Display, Mode, Rect, SavedWindow},
 };
+
 use crate::router::WindowId;
 
 /// Coalesce events without postponing persistence indefinitely during a drag.
 const SAVE_INTERVAL: Duration = Duration::from_millis(250);
+// Native transitions normally complete sooner; a rejected request must not freeze tracking.
+const RESTORE_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Signals {
     dirty: Cell<bool>,
@@ -37,13 +40,19 @@ struct Observer {
     signals: Rc<Signals>,
     key: String,
     normal: Rect,
+    decoration_height: f32,
+    // Zoom animations can report windowed frames; keep the last settled normal bounds.
+    candidate: Option<Rect>,
+    pending_mode: Option<Mode>,
+    _settle: Option<gpui::Task<()>>,
+    _restore: Option<gpui::Task<()>>,
     _bounds: Subscription,
     _display: Subscription,
 }
 
 impl Observer {
-    fn capture(&mut self, window: &Window, cx: &gpui::App) {
-        let mode = if window.is_fullscreen() {
+    fn capture(&mut self, window: &Window, cx: &mut gpui::Context<Self>, settle: bool) {
+        let actual_mode = if window.is_fullscreen() {
             Mode::Fullscreen
         } else if window.is_maximized() {
             Mode::Maximized
@@ -51,21 +60,90 @@ impl Observer {
             Mode::Windowed
         };
 
+        if self.pending_mode == Some(actual_mode) {
+            self.pending_mode = None;
+        }
+
+        let mode = self.pending_mode.unwrap_or(actual_mode);
+
         if mode == Mode::Windowed {
             let bounds = rect(window.window_bounds().get_bounds());
 
+            // The pinned macOS adapter reports frame bounds, but WindowOptions
+            // opens a content rect. Persist client height to avoid titlebar growth.
+            #[cfg(target_os = "macos")]
+            let bounds = {
+                let client_height = f32::from(window.viewport_size().height);
+
+                if !bounds.valid() || !client_height.is_finite() || client_height <= 0. {
+                    return;
+                }
+
+                let decoration_height = (bounds.height - client_height).max(0.);
+
+                if decoration_height > 1024. {
+                    return;
+                }
+
+                self.decoration_height = decoration_height;
+
+                Rect {
+                    height: client_height,
+                    ..bounds
+                }
+            };
+
             if bounds.valid() {
-                self.normal = bounds;
+                self.candidate = Some(bounds);
+
+                if settle {
+                    let executor = cx.background_executor().clone();
+
+                    self._settle = Some(cx.spawn(async move |observer, cx| {
+                        executor.timer(SAVE_INTERVAL).await;
+                        let _ = observer.update(cx, |observer, _| {
+                            if let Some(bounds) = observer.candidate.take() {
+                                observer.normal = bounds;
+                            }
+                        });
+                    }));
+                }
             }
+        } else {
+            if mode == Mode::Fullscreen {
+                if let WindowBounds::Fullscreen(bounds) = window.window_bounds() {
+                    let bounds = rect(bounds);
+
+                    self.normal = Rect {
+                        height: bounds.height - self.decoration_height,
+                        ..bounds
+                    };
+                } else if let Some(bounds) = self.candidate {
+                    self.normal = bounds;
+                }
+            }
+
+            #[cfg(target_os = "windows")]
+            if let WindowBounds::Maximized(bounds) = window.window_bounds() {
+                self.normal = rect(bounds);
+            }
+
+            self.candidate = None;
+            self._settle = None;
         }
 
         let record = SavedWindow {
-            bounds: self.normal,
+            bounds: if mode == Mode::Windowed {
+                self.candidate.unwrap_or(self.normal)
+            } else {
+                self.normal
+            },
             display: window
                 .display(cx)
                 .and_then(|display| display.uuid().ok())
                 .map(|uuid| uuid.to_string()),
             mode,
+            decoration_height: self.decoration_height,
         };
 
         if self.policy.inner.records.borrow().get(&self.key) != Some(&record) {
@@ -88,6 +166,7 @@ pub(crate) fn install(policy: WindowState, cx: &mut gpui::App) {
         changed: event_listener::Event::new(),
         final_save: event_listener::Event::new(),
     });
+
     let writes = signals.clone();
     let saving = policy.clone();
     let executor = cx.background_executor().clone();
@@ -145,11 +224,12 @@ pub(crate) fn install(policy: WindowState, cx: &mut gpui::App) {
 
         for (observer, handle) in windows {
             let _ = handle.update(cx, |_, window, cx| {
-                observer.update(cx, |observer, cx| observer.capture(window, cx))
+                observer.update(cx, |observer, cx| observer.capture(window, cx, false))
             });
         }
 
         let driver = cx.global::<Driver>();
+
         driver.signals.stopping.set(true);
         driver.signals.changed.notify(usize::MAX);
         driver.signals.final_save.notify(usize::MAX);
@@ -172,6 +252,7 @@ pub(crate) fn install(policy: WindowState, cx: &mut gpui::App) {
 pub(crate) struct Prepared {
     key: String,
     normal: Option<Rect>,
+    mode: Option<Mode>,
 }
 
 pub(crate) fn prepare(
@@ -194,9 +275,11 @@ pub(crate) fn prepare(
     }
 
     let records = driver.policy.inner.records.borrow();
+
     let Some(saved) = records.get(&key) else {
         return Some(Prepared {
             key,
+            mode: requested_mode(options),
             normal: options
                 .window_bounds
                 .map(|bounds| rect(bounds.get_bounds())),
@@ -204,13 +287,16 @@ pub(crate) fn prepare(
     };
 
     let displays = cx.displays();
+
     let default_id = options
         .display_id
         .or_else(|| cx.primary_display().map(|display| display.id()));
+
     let default_display = displays
         .iter()
         .position(|display| Some(display.id()) == default_id)
         .unwrap_or(0);
+
     let default_bounds = options
         .window_bounds
         .map(|bounds| bounds.get_bounds())
@@ -219,6 +305,7 @@ pub(crate) fn prepare(
                 .get(default_display)
                 .map(|display| display.default_bounds())
         });
+
     let snapshots: Vec<_> = displays
         .iter()
         .map(|display| Display {
@@ -243,6 +330,7 @@ pub(crate) fn prepare(
 
     Some(Prepared {
         key,
+        mode: requested_mode(options),
         normal: options
             .window_bounds
             .map(|bounds| rect(bounds.get_bounds())),
@@ -250,31 +338,78 @@ pub(crate) fn prepare(
 }
 
 pub(crate) fn observe(placement: Option<Prepared>, window: &mut Window, cx: &mut gpui::App) {
-    let Some(Prepared { key, normal }) = placement else {
+    let Some(Prepared { key, normal, mode }) = placement else {
         return;
     };
 
     let driver = cx.global::<Driver>();
     let policy = driver.policy.clone();
     let signals = driver.signals.clone();
+    let supplied_normal = normal;
     let normal = normal.unwrap_or_else(|| rect(window.window_bounds().get_bounds()));
+
+    #[cfg(target_os = "macos")]
+    let decoration_height = if window.is_fullscreen() {
+        (f32::from(window.window_bounds().get_bounds().size.height) - normal.height).max(0.)
+    } else {
+        (f32::from(window.bounds().size.height) - f32::from(window.viewport_size().height)).max(0.)
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let decoration_height = 0.;
+
+    let normal = if supplied_normal.is_none() {
+        Rect {
+            height: normal.height - decoration_height,
+            ..normal
+        }
+    } else {
+        normal
+    };
+
     let observer = cx.new(|cx: &mut gpui::Context<Observer>| Observer {
         policy,
         signals,
         key: key.clone(),
         normal,
-        _bounds: cx
-            .observe_window_bounds(window, |observer, window, cx| observer.capture(window, cx)),
+        decoration_height,
+        candidate: None,
+        pending_mode: mode,
+        _settle: None,
+        _restore: None,
+        _bounds: cx.observe_window_bounds(window, |observer, window, cx| {
+            observer.capture(window, cx, true)
+        }),
         _display: window.observe_window_display({
             let observer = cx.weak_entity();
 
             move |window, cx| {
-                let _ = observer.update(cx, |observer, cx| observer.capture(window, cx));
+                let _ = observer.update(cx, |observer, cx| observer.capture(window, cx, true));
             }
         }),
     });
 
-    observer.update(cx, |observer, cx| observer.capture(window, cx));
+    observer.update(cx, |observer, cx| {
+        observer.capture(window, cx, true);
+
+        if observer.pending_mode.is_some() {
+            let handle = window.window_handle();
+            let executor = cx.background_executor().clone();
+
+            observer._restore = Some(cx.spawn(async move |observer, cx| {
+                // A compositor can reject a mode request. Do not keep ignoring
+                // windowed geometry after its native transition has had time to run.
+                executor.timer(RESTORE_TIMEOUT).await;
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = observer.update(cx, |observer, cx| {
+                        if observer.pending_mode.take().is_some() {
+                            observer.capture(window, cx, true);
+                        }
+                    });
+                });
+            }));
+        }
+    });
     cx.global_mut::<Driver>().windows.insert(
         window.window_handle().window_id(),
         (key, observer, window.window_handle()),
@@ -289,7 +424,7 @@ pub(crate) fn capture(window: &Window, cx: &mut gpui::App) {
         .map(|(_, observer, _)| observer.clone());
 
     if let Some(observer) = observer {
-        observer.update(cx, |observer, cx| observer.capture(window, cx));
+        observer.update(cx, |observer, cx| observer.capture(window, cx, true));
     }
 }
 
@@ -311,3 +446,11 @@ fn bounds_to_gpui(rect: Rect) -> gpui::Bounds<gpui::Pixels> {
 
 #[cfg(all(test, feature = "view-test-support"))]
 mod tests;
+
+fn requested_mode(options: &WindowOptions) -> Option<Mode> {
+    match options.window_bounds {
+        Some(WindowBounds::Maximized(_)) => Some(Mode::Maximized),
+        Some(WindowBounds::Fullscreen(_)) => Some(Mode::Fullscreen),
+        _ => None,
+    }
+}

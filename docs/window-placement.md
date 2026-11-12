@@ -51,11 +51,18 @@ outside the `App` policy.
 ## Displays, scaling, and window modes
 
 Rake saves normal restore bounds in logical pixels, a stable display UUID when
-available, and windowed/maximized/fullscreen mode. The backing scale is not
+available, and windowed/maximized/fullscreen mode. Native titlebar height is
+accounted for separately when the adapter opens content bounds but reports frame
+bounds, preventing a window from growing on each launch. The backing scale is not
 multiplied into saved coordinates. Moving between 1x and 2x displays therefore
 preserves logical size; a smaller logical work area clamps the size as needed.
 Normal bounds are retained while maximized or fullscreen so leaving those modes
-does not replace the original restore size with the full display size.
+does not replace the original restore size with the full display size. Where the
+native adapter does not expose unmaximized restore bounds, Rake retains the last
+windowed bounds settled for 250 ms; a resize immediately followed by maximizing
+may therefore restore the preceding settled size. Startup mode requests are
+protected from intermediate animation frames. If the host has not entered the
+requested mode after two seconds, tracking follows its actual mode.
 
 On reopening, Rake matches display UUIDs rather than transient display indices.
 Partially off-screen bounds are clamped fully into that display's visible work
@@ -103,7 +110,23 @@ coordinates, smaller work areas, mixed logical display sizes, all window modes,
 corrupt records, and schema versions. Headless window tests exercise GPUI's test
 platform; they do not establish behavior of a real window manager.
 
-Real desktop reopening must be checked on macOS, Windows, Linux X11, and Linux
-Wayland before issue #14's cross-platform acceptance is complete. Record each OS
-version, display resolution, scale, and monitor layout with the results. No
-untested platform should be inferred from a successful compile or headless test.
+Native verification on macOS 26.6.2 (25G83), Apple silicon, used a built-in
+3456×2234 display at logical 1728×1117, 2x, with a second 3840×2160 display at
+logical 1920×1080, 2x, connected. The desktop smoke build reopened a 720×480
+content area at (200, 150) across three launches with changed fallback defaults;
+the actual native frame remained 720×512. Saved maximized and fullscreen records
+restored their modes while retaining those normal bounds. Injected off-screen
+bounds and a missing display UUID fell back to a visible display. The latter
+simulates disconnection in saved data; it is not a physical unplug/replug test.
+
+Build with `cargo build -p rake-desktop-example --features native-smoke`. Set
+`RAKE_DESKTOP_SMOKE_PREFERENCES` to an isolated temporary directory. The smoke app
+prints `RAKE_DESKTOP_SMOKE_BOUNDS`, presents a frame, and quits cleanly. Set
+`RAKE_DESKTOP_SMOKE_ALTERNATE_BOUNDS=1` on the first launch to start at (200, 150)
+with a 720×480 content area; omit it on subsequent launches to verify that saved
+placement takes precedence over different defaults.
+
+Windows, Linux X11, and Linux Wayland native reopening still require verification
+before issue #14's cross-platform acceptance is complete. Record each OS version,
+display resolution, scale, and monitor layout with the results. A successful
+compile or headless test does not establish native window-manager behavior.

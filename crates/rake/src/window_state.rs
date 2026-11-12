@@ -116,6 +116,7 @@ impl WindowState {
 
             self.load_locked().await?;
             self.inner.records.borrow_mut().remove(key);
+
             self.save_locked().await
         }
     }

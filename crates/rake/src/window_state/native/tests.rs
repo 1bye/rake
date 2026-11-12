@@ -170,6 +170,7 @@ fn fullscreen_keeps_normal_bounds_and_quit_flushes_before_debounce() {
     app.quit();
     let data = std::fs::read_to_string(directory.path().join(super::super::PREFERENCE_KEY))
         .expect("quit awaits final preference write");
+
     let records = placement::decode(&data);
 
     assert_eq!(records["main"].mode, Mode::Fullscreen);
@@ -195,6 +196,7 @@ fn reset_serializes_with_queued_saves_and_preserves_other_windows() {
     finish_writes(&app, &policy);
     let data = std::fs::read_to_string(directory.path().join(super::super::PREFERENCE_KEY))
         .expect("preferences exist");
+
     let records = placement::decode(&data);
 
     assert!(!records.contains_key("main"));
@@ -213,6 +215,7 @@ fn all_modes_restore_the_same_normal_bounds() {
     app.update(|cx| {
         install(policy.clone(), cx);
         let display = cx.primary_display().expect("test display");
+
         let bounds = Rect {
             x: 50.,
             y: 50.,
@@ -227,10 +230,12 @@ fn all_modes_restore_the_same_normal_bounds() {
                     bounds,
                     display: display.uuid().ok().map(|uuid| uuid.to_string()),
                     mode,
+                    decoration_height: 0.,
                 },
             );
             let mut options = options();
             let prepared = prepare(WindowId(1), &mut options, cx).expect("mapped main window");
+
             let expected = match mode {
                 Mode::Windowed => WindowBounds::Windowed(bounds_to_gpui(bounds)),
                 Mode::Maximized => WindowBounds::Maximized(bounds_to_gpui(bounds)),
@@ -269,17 +274,27 @@ fn changed_scale_preserves_logical_bounds_and_stable_key_restores_with_new_runti
     app.simulate_window_resize(editor, gpui::size(gpui::px(750.), gpui::px(550.)));
     app.simulate_window_scale_factor_change(editor, 2.);
     assert_eq!(policy.inner.records.borrow()["editor"].bounds.width, 750.);
-    app.quit();
+    app.update(|cx| {
+        editor
+            .update(cx, |_, window, cx| {
+                capture(window, cx);
+                window.remove_window();
+            })
+            .expect("close editor")
+    });
+    app.run_until_parked();
+    finish_writes(&app, &policy);
 
-    let replacement = gpui::TestAppContext::single();
+    // A new TestPlatform generates different display UUIDs. Reuse the host so
+    // this test keeps the monitor connected while replacing the policy/cache.
     let loaded = WindowState::new(Preferences::at(directory.path()))
         .keys(|id| (id == WindowId(42)).then(|| "editor".into()));
 
     loaded.load();
-    replacement.update(|cx| install(loaded, cx));
-    let reopened = open(&replacement, WindowId(42));
+    app.update(|cx| install(loaded, cx));
+    let reopened = open(&app, WindowId(42));
 
-    replacement.update(|cx| {
+    app.update(|cx| {
         reopened
             .update(cx, |_, window, _| {
                 assert_eq!(f32::from(window.bounds().size.width), 750.);
@@ -287,4 +302,50 @@ fn changed_scale_preserves_logical_bounds_and_stable_key_restores_with_new_runti
             })
             .expect("stable editor key restores despite a different runtime ID")
     });
+}
+
+#[test]
+fn startup_zoom_frames_keep_restore_bounds_and_rejected_modes_eventually_follow_host() {
+    let app = gpui::TestAppContext::single();
+    let (_directory, policy) = policy();
+
+    let bounds = Rect {
+        x: 50.,
+        y: 50.,
+        width: 600.,
+        height: 400.,
+    };
+
+    app.update(|cx| install(policy.clone(), cx));
+    let window = app.update(|cx| {
+        // TestPlatform's zoom method panics. Inject the prepared request at the
+        // observer boundary while its physical test window stays windowed.
+        cx.open_window(options(), |window, cx| {
+            observe(
+                Some(Prepared {
+                    key: "main".into(),
+                    normal: Some(bounds),
+                    mode: Some(Mode::Maximized),
+                }),
+                window,
+                cx,
+            );
+
+            cx.new(|_| gpui::Empty)
+        })
+        .expect("window for mode transition test")
+        .into()
+    });
+
+    // TestPlatform does not implement zoom; these mimic windowed animation frames.
+    app.simulate_window_resize(window, gpui::size(gpui::px(1000.), gpui::px(700.)));
+    app.simulate_window_resize(window, gpui::size(gpui::px(1500.), gpui::px(900.)));
+    assert_eq!(policy.inner.records.borrow()["main"].bounds, bounds);
+    assert_eq!(policy.inner.records.borrow()["main"].mode, Mode::Maximized);
+    app.run_until_parked();
+    app.executor().advance_clock(Duration::from_secs(2));
+    app.run_until_parked();
+
+    assert_eq!(policy.inner.records.borrow()["main"].mode, Mode::Windowed);
+    assert_eq!(policy.inner.records.borrow()["main"].bounds.width, 1500.);
 }
