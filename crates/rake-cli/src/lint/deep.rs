@@ -29,15 +29,39 @@ pub(super) type Findings = BTreeMap<PathBuf, Vec<Diagnostic>>;
 fn prerequisites() -> Result<()> {
     let nightly = Command::new("rustup")
         .args(["run", NIGHTLY, "rustc", "--version"])
+        .env("RUSTUP_AUTO_INSTALL", "0")
         .output();
 
-    let dylint = Command::new("cargo").args(["dylint", "--version"]).output();
+    let dylint = Command::new("cargo")
+        .args(["dylint", "--version"])
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .output();
 
     if !nightly.is_ok_and(|output| output.status.success())
         || !dylint.is_ok_and(|output| output.status.success())
     {
         return Err(format!(
             "deep lint requires the pinned nightly and cargo-dylint. Install explicitly:\n{INSTALL}"
+        )
+        .into());
+    }
+
+    let components = Command::new("rustup")
+        .args(["component", "list", "--toolchain", NIGHTLY, "--installed"])
+        .output()?;
+
+    let installed = String::from_utf8(components.stdout)?;
+    let required = ["rustc-dev", "rust-src", "llvm-tools", "rustfmt"];
+
+    if !components.status.success()
+        || required.iter().any(|name| {
+            !installed
+                .lines()
+                .any(|line| line == *name || line.starts_with(&format!("{name}-")))
+        })
+    {
+        return Err(format!(
+            "deep lint requires the pinned nightly components. Install explicitly:\n{INSTALL}"
         )
         .into());
     }
@@ -85,6 +109,7 @@ pub(super) fn collect(root: &Path) -> Result<Findings> {
 
     let metadata = Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version=1", "--locked"])
+        .env("RUSTUP_AUTO_INSTALL", "0")
         .current_dir(root)
         .output()?;
 

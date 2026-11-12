@@ -95,8 +95,7 @@ The four catalogue entries describe conservative boundaries: discarded Task
 statements/wildcards, resolved Render/RenderOnce constructors, provable current or
 same-local entity updates, and blocking calls directly in render or registered GPUI
 listeners/action handlers. Helpers, aliases of entity identity and arbitrary call
-flow are deliberately opaque. Nested futures and unregistered closures do not
-inherit the caller's thread. The missing-notify rule is deferred: state mutation
+flow are deliberately opaque. The check does not infer where nested futures and unregistered closures will run. The missing-notify rule is deferred: state mutation
 alone does not prove notification is required, and a helper may already notify.
 
 To add a deep rule:

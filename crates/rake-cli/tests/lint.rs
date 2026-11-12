@@ -633,7 +633,12 @@ fn deep_cli_merges_filters_and_sets_exit_status() {
     let bin = root.join("tools");
 
     fs::create_dir(&bin).unwrap();
-    fs::write(bin.join("rustup"), "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(
+        bin.join("rustup"),
+        "#!/bin/sh\nprintf 'rustc-dev-test\nrust-src\nllvm-tools-test\nrustfmt-test\n'\nexit 0\n",
+    )
+    .unwrap();
+
     fs::write(
         bin.join("cargo"),
         r##"#!/bin/sh
@@ -746,5 +751,16 @@ esac
         String::from_utf8(failed.stderr)
             .unwrap()
             .contains("did not complete Cargo verification")
+    );
+
+    fs::write(bin.join("rustup"), "#!/bin/sh\nexit 0\n").unwrap();
+
+    let partial = invoke(source, "warn", true, "0");
+
+    assert_eq!(partial.status.code(), Some(1));
+    assert!(
+        String::from_utf8(partial.stderr)
+            .unwrap()
+            .contains("requires the pinned nightly components")
     );
 }
