@@ -148,3 +148,26 @@ fn reading_a_fifo_is_rejected_without_waiting_for_a_writer() {
         Err(Error::InvalidInput(_))
     ));
 }
+
+#[cfg(not(feature = "gpui"))]
+#[test]
+fn headless_notifications_report_unsupported_without_prompting() {
+    use rake::platform::Notification;
+    let platform = Platform::default();
+    let _notification = Notification {
+        tag: "headless".into(),
+        title: "Done".into(),
+        body: String::new(),
+        activation_url: "app://export/1".into(),
+    };
+
+    assert!(!platform.capabilities().notifications.supported);
+    assert!(matches!(
+        block_on(platform.notification_permission()),
+        Err(Error::Unsupported(_))
+    ));
+    assert!(matches!(
+        block_on(platform.request_notification_permission()),
+        Err(Error::Unsupported(_))
+    ));
+}
