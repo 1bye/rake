@@ -77,7 +77,13 @@ Routed and standalone root apps opt in with `ControlConfig::FromEnvironment`. Na
 
 `App::root` keeps its `Services` mount signature. `App::root_with` receives a weak `RuntimeContext` with the managed command, task, quit and update-restart boundary.
 
-Standalone roots have no router navigation or checkpointed workspace, so their reload is a fresh root replacement. The supervisor first ensures the old host reaches the managed runtime boundary. If that can't be coordinated, the old app stays usable, and `--restart-without-state` explicitly allows a restart without restored state.
+Standalone roots have no checkpointed workspace: a restart creates a fresh root.
+With Blaze, the supervisor restarts and reports that state was not preserved.
+`--require-state` (or `RAKE_REQUIRE_STATE=1`) instead keeps the old process alive
+when state cannot be preserved. An unavailable/busy runtime boundary still waits
+or reports its error; the supervisor does not discard an in-flight operation.
+Plain Cargo supervision retains its strict checkpoint capture and requires
+`--restart-without-state` to restart an app without a control endpoint.
 
 `App::background(...)` is native-only and starts the managed runtime without an
 initial window; browser hosts reject it. Standalone window close uses
@@ -176,3 +182,177 @@ A successful build asks each connected browser runtime to prepare through the sa
 A failed checkpoint or storage operation aborts and leaves the old app running. Restoration failures keep the original checkpoint for a later build or explicit restart. The page shows build and reload failures and reconnects to the broker independently of app diagnostics. Static production builds have no bridge or reload polling.
 
 Standalone `App::root` and `App::root_with` pages can also expose inspection through the authenticated Web bridge. Their reload is a full-page replacement with fresh local state, with no router checkpoint, so select the new runtime explicitly in an attached inspector. Controlled Wasm module swapping isn't implemented.
+
+
+## Experimental pinned native live reload (Apple Silicon)
+
+Use a CLI built from this branch. From the workspace root, a local invocation is
+`cargo run -p rake-app-cli -- dev --live --manifest-path examples/view/Cargo.toml --bin rake-view`.
+
+`rake dev --live` uses the Rake-patched Blaze compiler, independently of a `blaze`
+on `PATH`. It invokes the pinned engine directly, so a workspace's Blaze version
+pin cannot redirect live mode to another compiler. The first run downloads the exact archive in
+`crates/rake-cli/blaze-pin.toml`, checks its SHA-256 before extracting it, and
+installs it in `~/.rake/blaze/<version>/`. Later starts recheck the saved archive
+and installed files. A wrong checksum or damaged install is an error.
+
+```sh
+cd examples/view
+rake dev --live --bin rake-view
+rake doctor --json
+```
+
+This is currently **Apple Silicon macOS only**. The pinned
+[`v0.20261030.1-rake.1` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.1)
+is published; ordinary live mode downloads it automatically. To use a copy of
+that exact published archive offline:
+
+```sh
+BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
+```
+
+`BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
+is an explicit developer override; it requires the patched
+`rust-analyzer-proc-macro-srv` beside that executable and bypasses the release pin.
+Doctor reports the pinned installation's platform, version, checksum and server
+readiness without installing anything.
+
+For an app outside this workspace, expose Rake's live dependency feature in the
+app manifest and refresh the lockfile before the first live build:
+
+```toml
+[features]
+live = ["rake/live"]
+```
+
+```sh
+cargo metadata --format-version 1 > /dev/null
+rake dev --live --bin your-app
+```
+
+Use your dependency alias in place of `rake` if it is renamed. This pins the
+optional `blaze-live` Git dependency that Blaze requires in `Cargo.lock`.
+Passing only an ad hoc `rake/live` flag did not persist that pin in the tested
+Cargo version. The repository's workspace examples already have it pinned.
+
+Live mode enables the app's existing Rake `live` feature, which automatically
+enables `pathfinder_simd/pf-no-simd` on macOS. It sets the hybrid macro options
+`BLAZE_PROC_MACRO_WASM=0`, `BLAZE_PROC_MACRO_SERVER=0`,
+`LIBLZMA_NO_PKG_CONFIG=1`, sandboxing, and the 64 MiB Rust stack. The compiler
+build command always selects `--bin`; libraries such as an app's `cdylib` are
+not built for this mode. The packaged fixed macro server is selected explicitly;
+no toolchain binary is replaced. Runtime/store directories live beside the
+versioned compiler. The pinned Rust toolchain may download on the first build.
+
+The supervisor sends ordinary saves directly to the daemon. The app polls on
+its UI thread every 16 ms and redraws after a patch, including occluded windows.
+Layout changes or patch-area exhaustion use the existing checkpointed restart;
+apps must register the state they want restored. Configure the app with
+`.control(rake::control::ControlConfig::FromEnvironment)` so the supervisor can
+observe outcomes and coordinate a restart. The endpoint is enabled only in the
+development environment. On a layout change, the default is to restart: registered
+entry checkpoints restore, and entries without a checkpoint reset. Standalone
+roots restart fresh. Before restarting, the CLI names the reset entries (route
+name and entry ID); the replacement shows the same non-interactive status for
+six seconds without taking focus. Fully checkpointed restarts show no warning.
+Use `--require-state` or `RAKE_REQUIRE_STATE=1` to block missing-checkpoint
+restarts and keep the old process and state in Blaze mode. Omit the flag and
+unset `RAKE_REQUIRE_STATE` for Blaze's permissive default. Cargo retains its
+existing `--restart-without-state` opt-in and strict checkpoint policy. The pinned Blaze engine latches a type-change restart
+request for the lifetime of the running process. In strict mode, later saves
+are still handled, but reverting the field does not resume body patches: they
+can continue requesting a restart. Preserve or save the old state before
+restarting the session; the supervisor does not bypass Blaze's layout guard.
+Busy work is retried; permanent failures wait for another edit. Compile errors
+leave the old app running. Static initializers may reset the edited static. See
+`.agents/reports/blaze-live-integration.md` for the measured limitations.
+The broader app trial is in `.agents/reports/blaze-live-app-trial.md`: the Fast
+GPU-surface backend currently aborts under the pinned engine, and unregistered
+view fields or service data do not survive routed restarts. Live mode launches
+the compiler executable directly, without Cargo dev's application bundle;
+bundle-relative resources and installation/update metadata can therefore differ.
+Plain `rake dev` remains Cargo-based and needs no Blaze installation. The older
+`--compiler blaze` laboratory option remains available separately.
+
+### Registering restart state
+
+A restart restores **only registered checkpoint data**. Other view fields and
+service state reset, even when restoration reports success. Rake cannot detect
+fields omitted from a registered checkpoint (including counters like Kit's).
+Capture every value you need to retain; recreate handles, tasks and services.
+
+For a routed view, define owned state:
+
+```rust
+#[rake::data]
+struct Draft { edits: u32 }
+
+impl rake::reload::ReloadState for Draft {
+    const SCHEMA: &'static str = "my-app.draft";
+    const VERSION: u32 = 1;
+}
+```
+
+Inside `RouteViews::mount`, decode it and register a provider before returning
+the view (imports omitted; see `examples/routing/src/lib.rs` for the full mount):
+
+```rust
+let entry = page.entry();
+let restored = entry.reload_state::<Draft>()
+    .map_err(|error| MountError(error.to_string()))?;
+let edits = Rc::new(Cell::new(restored.map_or(0, |state| state.edits)));
+let captured = edits.clone();
+entry.on_reload(move || Draft { edits: captured.get() }.checkpoint())
+    .map_err(|error| MountError(error.to_string()))?;
+// Store `edits` in the view; do not create a second independent counter.
+```
+
+Explicit provider/serialization errors still fail capture. Partial restart only
+relaxes a missing provider; it does not bypass quiescence, size limits, schema
+validation or a failed restore.
+
+### Fork maintenance
+
+The fork is prepared in `~/Documents/GitHub/blaze-rake-fork`; its `RAKE_FORK.md`
+describes the verified upstream base (`v0.20261030.1`, `6560553`), the seven
+engine fixes, eight separately preserved earlier lab fixes, matching toolchain
+macro server and Apple Silicon release recipe. Its infrastructure workflows are
+archived; only explicit fork release workflows remain active.
+
+The first fork release is published. Its GitHub-built archive differs from the
+local build, so the pin records the published archive's checksum. For future
+releases, verify the actual public bytes before updating the pin. Local rebuilds
+can have different checksums. Fork and Rake changes still need separate owner
+approval before pushing or publishing; local maintenance does neither.
+
+Allow roughly 2–4 hours per compatible upstream bump, and a day or more for
+compiler/Cranelift/proc-macro ABI changes. The release branch now retains
+upstream history: rebase it onto the next upstream tag using `rake/upstream-base`,
+review every inherited fix, then rerun installation, six-trial text/helper reload
+acceptance, and relevant compiler differential tests. The recovered root remains
+only on the fork's local `snapshot-archive` branch.
+
+### Fresh apps with Blaze
+
+On Apple Silicon macOS:
+
+```sh
+rake new hello
+cd hello
+rake dev --live
+```
+
+The first live run downloads and verifies the pinned Blaze bundle. No global
+Blaze install or manual feature flags are needed. The generated manifest exposes
+`live = ["rake/live"]`, `devtools = ["rake/devtools"]` and
+`gpui-fast = ["rake/gpui-fast"]`. Cargo includes their optional dependencies when
+creating the lockfile, while `--live` enables only live runtime and devtools.
+This also keeps the two GPUI backends on a compatible Taffy version. Plain
+`rake dev` still uses Cargo and the default backend.
+
+Older generated apps can add these aliases and run `cargo generate-lockfile`
+once before `rake dev --live`. Keep that lockfile committed. Blaze's pinned
+planner can request inactive optional dependencies absent from a Cargo lockfile;
+this is an engine limitation, not a reason to enable every app feature at runtime.
+A restart restores only registered checkpoints; other fields reset with a notice.
+Use `rake dev --live --require-state` to block a restart that cannot restore state.

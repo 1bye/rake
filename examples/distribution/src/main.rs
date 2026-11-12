@@ -49,19 +49,21 @@ fn application() -> App {
         println!("RAKE_NATIVE_START:{}", env!("CARGO_PKG_VERSION"));
     }
 
-    App::new("dev.rake.desktop-example").root(|_, _, cx| {
-        if cfg!(feature = "native-acceptance") {
-            println!("RAKE_NATIVE_WINDOW");
-        }
+    App::new("dev.rake.desktop-example")
+        .control(rake::control::ControlConfig::FromEnvironment)
+        .root(|_, _, cx| {
+            if cfg!(feature = "native-acceptance") {
+                println!("RAKE_NATIVE_WINDOW");
+            }
 
-        rake::theme::install(
-            cx,
-            Colors {
-                surface: rgb(0x18232b),
-                ink: rgb(0xf0f4e8),
-            },
-        );
+            rake::theme::install(
+                cx,
+                Colors {
+                    surface: rgb(0x18232b),
+                    ink: rgb(0xf0f4e8),
+                },
+            );
 
-        cx.new(|_| Desktop { rendered: false }).into()
-    })
+            cx.new(|_| Desktop { rendered: false }).into()
+        })
 }

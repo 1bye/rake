@@ -2,6 +2,7 @@
 //! The native HTTP origin owns application assets, the broker and preview transports.
 
 mod args;
+mod blaze_install;
 #[cfg(any(unix, windows))]
 mod broker;
 mod browser;
@@ -22,7 +23,7 @@ mod web;
 #[cfg(windows)]
 mod windows;
 
-use args::Args;
+use args::{Args, Compiler};
 use processes::{Capture, Processes};
 use serde_json::{Value, json};
 
@@ -62,7 +63,7 @@ pub(crate) fn run_client(command: &mut Command) -> Result<i32> {
 }
 
 pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
-    let args = match args::parse(command, arguments) {
+    let mut args = match args::parse(command, arguments) {
         Ok(Some(args)) => args,
         Ok(None) => return 0,
         Err(error) => {
@@ -78,6 +79,10 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
     let result = ctrlc::set_handler(move || flag.store(true, Ordering::Release))
         .map_err(Into::into)
         .and_then(|()| {
+            if args.live {
+                args.blaze_binary = Some(blaze_install::ensure()?);
+            }
+
             let processes = Processes::new(&cancelled);
 
             if command == "doctor" {
@@ -115,6 +120,8 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         installed_targets: Value,
         wasm_bindgen: Value,
         node: Value,
+        blaze: Value,
+        live: Value,
     }
     let probe = |program: &str, arguments: &[&str]| {
         let mut command = Command::new(program);
@@ -128,6 +135,11 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
     };
 
     let checks = Checks {
+        live: blaze_install::readiness(),
+        blaze: match probe("blaze", &["--version"]) {
+            Value::String(version) => json!({"note":version}),
+            _ => json!({"note":"optional: Blaze not found; Cargo remains the default compiler"}),
+        },
         rust: probe("rustc", &["--version"]),
         cargo: probe("cargo", &["--version"]),
         installed_targets: probe("rustup", &["target", "list", "--installed"]),
@@ -156,6 +168,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
     Ok(if ready { 0 } else { 1 })
 }
 
+#[derive(Clone)]
 struct Project {
     package: Value,
     target: String,
@@ -164,6 +177,7 @@ struct Project {
     assets: Option<PathBuf>,
     bindgen: Option<PathBuf>,
     watch_roots: Vec<PathBuf>,
+    target_directory: PathBuf,
 }
 
 impl Project {
@@ -255,9 +269,11 @@ impl Project {
 
         let assets = web::bundle_assets(package, directory, !args.web)?;
 
-        let targets: Vec<_> = package["targets"]
+        let available_targets = package["targets"]
             .as_array()
-            .ok_or("Cargo targets missing")?
+            .ok_or("Cargo targets missing")?;
+
+        let targets: Vec<_> = available_targets
             .iter()
             .filter(|target| {
                 let kinds = if args.web {
@@ -276,6 +292,34 @@ impl Project {
                     .is_none_or(|name| target["name"] == *name)
             })
             .collect();
+
+        if targets.is_empty() && !args.web {
+            let binaries: Vec<_> = available_targets
+                .iter()
+                .filter(|target| {
+                    target["kind"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+                })
+                .filter_map(|target| target["name"].as_str())
+                .collect();
+
+            let name = string(package, "name")?;
+
+            if binaries.is_empty() {
+                return Err(format!(
+                    "package '{name}' has no native binary target; add src/main.rs or [[bin]] to use rake dev (including --live); a cdylib alone is not a native app"
+                )
+                .into());
+            }
+
+            return Err(format!(
+                "package '{name}' has no binary named '{}'; available binaries: {}",
+                args.binary.as_deref().unwrap_or_default(),
+                binaries.join(", ")
+            )
+            .into());
+        }
 
         if targets.len() != 1 {
             return Err("select one binary with --bin, or a single cdylib for Web".into());
@@ -350,6 +394,10 @@ impl Project {
         };
 
         Ok(Self {
+            target_directory: metadata["target_directory"]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| root.join("target")),
             watch_roots,
             package: package.clone(),
             target,
@@ -364,21 +412,23 @@ impl Project {
         let mut features: Vec<String> = args.features.iter().cloned().collect();
 
         if args.dev {
-            if self.package["features"].get("devtools").is_some() {
-                features.push("devtools".into());
-            } else if let Some(dependencies) = self.package["dependencies"].as_array() {
-                for dependency in dependencies {
-                    if dependency["kind"].is_null()
-                        && ["rake-app", "rak", "rake"]
-                            .iter()
-                            .any(|name| dependency["name"] == *name)
-                    {
-                        let name = dependency["rename"]
-                            .as_str()
-                            .or_else(|| dependency["name"].as_str());
-
-                        if let Some(name) = name {
-                            features.push(format!("{name}/devtools"));
+            for feature in ["devtools"]
+                .into_iter()
+                .chain((args.compiler == Compiler::Blaze).then_some("live"))
+            {
+                if self.package["features"].get(feature).is_some() {
+                    features.push(feature.into());
+                } else if let Some(dependencies) = self.package["dependencies"].as_array() {
+                    for dependency in dependencies {
+                        if dependency["kind"].is_null()
+                            && ["rake-app", "rak", "rake"]
+                                .iter()
+                                .any(|name| dependency["name"] == *name)
+                            && let Some(name) = dependency["rename"]
+                                .as_str()
+                                .or_else(|| dependency["name"].as_str())
+                        {
+                            features.push(format!("{name}/{feature}"));
                         }
                     }
                 }

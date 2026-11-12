@@ -34,12 +34,30 @@ fn generated_app_builds_natively_and_for_the_browser() {
 
     let project = directory.path().join("consumer-app");
 
-    // Seed the tested workspace versions so consumer builds reuse its dependency cache.
-    // Metadata adds the consumer package; all actual builds stay locked.
-    std::fs::copy(workspace.join("Cargo.lock"), project.join("Cargo.lock")).unwrap();
+    assert!(!project.join("Cargo.lock").exists());
     run(Command::new("cargo")
         .current_dir(&project)
         .args(["metadata", "--format-version", "1"]));
+
+    let lock: toml::Value =
+        toml::from_str(&std::fs::read_to_string(project.join("Cargo.lock")).unwrap()).unwrap();
+    let packages = lock["package"].as_array().unwrap();
+
+    for name in ["blaze-live", "gpui-fast", "hdrhistogram"] {
+        assert!(
+            packages
+                .iter()
+                .any(|package| package["name"].as_str() == Some(name)),
+            "missing {name} from a fresh app lockfile"
+        );
+    }
+
+    assert!(
+        packages
+            .iter()
+            .any(|package| package["name"].as_str() == Some("taffy")
+                && package["version"].as_str() == Some("0.15.0"))
+    );
 
     for arguments in [
         vec!["build", "--locked"],
