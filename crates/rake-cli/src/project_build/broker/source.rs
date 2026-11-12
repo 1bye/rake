@@ -1,19 +1,20 @@
 //! Exact captured-source CLI invocation; paths are resolved by the existing ctl owner.
-#[cfg(unix)]
-use super::MAX_BYTES;
-use super::{Error, Options, Result};
+use super::{Error, MAX_BYTES, Options, Result};
+#[cfg(windows)]
+use crate::project_build::Processes;
 #[cfg(unix)]
 use crate::project_build::processes::ProcessGroup;
 use rake_http::CancellationToken;
 use serde_json::Value;
 
-#[cfg(unix)]
 use std::{
     io::Read,
-    os::{fd::AsRawFd, unix::process::CommandExt},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::{fd::AsRawFd, unix::process::CommandExt};
 
 pub(super) fn arguments(body: &Value) -> Result<Vec<String>> {
     let id = body["id"]
@@ -61,7 +62,6 @@ pub(super) fn arguments(body: &Value) -> Result<Vec<String>> {
     Ok(args)
 }
 
-#[cfg(unix)]
 pub(super) fn open(
     options: &Options,
     runtime: &str,
@@ -79,22 +79,33 @@ pub(super) fn open(
         return Err(unavailable());
     }
 
-    let child = Command::new(&options.cli)
+    let mut command = Command::new(&options.cli);
+
+    command
         .args(["ctl", "--instance", runtime, "inspect", "source"])
         .args(args)
         .arg("--json")
         .env("RAKE_CONTROL_DIR", &options.directory)
         .env("RAKE_SOURCE_ROOT", &options.source_root)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    let mut group = ProcessGroup(
+        command
+            .process_group(0)
+            .spawn()
+            .map_err(|_| unavailable())?,
+    );
+
+    #[cfg(windows)]
+    let mut group = Processes::new(&std::sync::atomic::AtomicBool::new(false))
+        .start(&mut command)
         .map_err(|_| unavailable())?;
 
-    let mut group = ProcessGroup(child);
     let mut stdout = group.0.stdout.take().expect("source stdout was piped");
     let mut stderr = group.0.stderr.take().expect("source stderr was piped");
 
+    #[cfg(unix)]
     for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
         // SAFETY: both descriptors belong to live owned pipes. Flags preserve their mode.
         let result = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -171,9 +182,26 @@ fn drain(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> std::io::Result<bool> {
 }
 
 #[cfg(windows)]
-pub(super) fn open(_: &Options, _: &str, _: &[String], _: &CancellationToken) -> Result<Value> {
-    Err(Error::new(
-        502,
-        "Native source opening is not available on Windows",
-    ))
+fn drain(
+    pipe: &mut (impl Read + std::os::windows::io::AsRawHandle),
+    bytes: &mut Vec<u8>,
+) -> std::io::Result<bool> {
+    let mut buffer = [0; 8192];
+
+    while super::super::windows::readable(pipe)? {
+        match pipe.read(&mut buffer) {
+            Ok(0) => return Ok(true),
+            Ok(count) => {
+                if bytes.len() + count > MAX_BYTES {
+                    return Err(std::io::Error::other("source output exceeds 1 MiB"));
+                }
+
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(false)
 }
