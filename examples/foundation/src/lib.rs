@@ -296,6 +296,7 @@ pub fn application() -> App {
                 });
 
                 let platform = runtime.services().platform();
+
                 let activations = cx.spawn(async move |view, cx| {
                     loop {
                         let url = platform.next_open_url().await;

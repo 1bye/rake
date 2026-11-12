@@ -9,7 +9,7 @@ export function request_notification_permission() {
   try {
     const permission = notification_permission();
     if (permission !== 'default') return Promise.resolve(permission);
-    if (globalThis.navigator?.userActivation?.isActive !== true)
+    if (globalThis.navigator?.userActivation?.isActive === false)
       throw new DOMException('notification permission requires a user gesture', 'NotAllowedError');
     return Notification.requestPermission();
   } catch (error) { return Promise.reject(error); }

@@ -1,9 +1,9 @@
 # OS notifications
 
 Use `services.platform()` for application-owned notifications. This service posts
-plain-text OS notifications, separate from in-app toasts. It uses the existing
+OS notifications, separate from in-app toasts. It uses the existing
 native host delivery API and the browser Notification API on Web. No feature beyond
-Rake's default `gpui` feature is needed to post or dismiss. Headless builds expose
+Rake's default `gpui` feature is needed to post or dismiss. Native headless builds expose
 permission queries that return `platform::Error::Unsupported`.
 
 ```rust
@@ -55,14 +55,16 @@ command. There is no automatic URL-to-command execution. Custom application URLs
 are payloads in this path and do not require registering an external URL scheme.
 The existing inbox holds 32 pending activations and drops its oldest on overflow.
 
-Tags identify replacements in one running application. A click consumes its payload;
+Tags identify payload replacements in one running application; replacing a host
+banner depends on platform support. Any surviving banner for a reused tag delivers
+the latest payload for that tag. A click consumes its payload;
 late duplicate responses and dismissed/unknown tags are ignored. Up to 128 distinct
 notification payloads may be pending. Further posts return `Unavailable`; replacing
 an existing tag still works. Call `dismiss_notification(tag, cx)` to release a tag
 and request host removal, even if its banner has already disappeared. Dismissal is
 best effort and does not erase host-managed history. Tag/title/body are limited to
 128 bytes/1 KiB/16 KiB respectively; tag and title must be nonempty. URL payloads
-must be absolute and no longer than 16 KiB.
+must be absolute and no longer than 16 KiB before and after URL encoding.
 
 Payloads and response callbacks live in the running process/tab. Notifications
 remaining in a system center after exit do **not** relaunch or restore Rake payloads.
@@ -77,7 +79,7 @@ rich actions and inline replies are outside this API.
 | --- | --- |
 | macOS | Launch an actual `.app` bundle with `CFBundleIdentifier`; ship a signed bundle with a stable identifier. The bundle identifier, not `App::new` alone, identifies authorization. An unpackaged `cargo run` executable returns `Unsupported` before touching the authorization center. First posting/requesting permission can prompt; denial is a normal result. No notification entitlement or usage-description key is added. Sandboxed distributions must follow their own signing policy. |
 | Windows | Use the app identity installed by the distribution pipeline and keep it stable. Rake passes its application ID to the host at startup. The host uses package identity when present, otherwise a per-user application identity. A running process and an available toast service are needed for callbacks; cold activation is not implemented. Permission/suppression status is `Unknown`. |
-| Linux | Requires a graphical session with a notification daemon on the session D-Bus. The daemon must support default-action callbacks for clicks; not every daemon does. Replacement, focus and dismissal depend on the desktop. Headless sessions may silently suppress native delivery. Permission status is `Unknown`. |
+| Linux | Requires a graphical session with a notification daemon on the session D-Bus. The daemon must support default-action callbacks for clicks; not every daemon does. The current native adapter does not replace or retract shown banners; Rake still replaces/forgets their payloads. Focus depends on the desktop. Headless sessions may silently suppress native delivery. Permission status is `Unknown`. |
 | Web | Requires HTTPS or a trustworthy localhost origin, a supported `Notification` constructor, permission, and a running tab. Request permission directly from a click/key event; embedding/cross-origin policy may deny it. Some mobile browsers only support service-worker notifications and reject this constructor: an explicit host error is returned. No background delivery after the tab exits. Browser focus is best effort. |
 
 Use the same identifier in `App::new` and bundle metadata. Rake's bundle/distribution

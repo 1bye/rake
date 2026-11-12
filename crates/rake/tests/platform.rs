@@ -154,6 +154,7 @@ fn reading_a_fifo_is_rejected_without_waiting_for_a_writer() {
 fn headless_notifications_report_unsupported_without_prompting() {
     use rake::platform::Notification;
     let platform = Platform::default();
+
     let _notification = Notification {
         tag: "headless".into(),
         title: "Done".into(),

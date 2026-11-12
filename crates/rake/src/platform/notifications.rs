@@ -18,8 +18,8 @@ const MAX_PENDING: usize = 128;
 #[cfg(all(feature = "gpui", not(target_family = "wasm")))]
 const TAG_PREFIX: &str = "rake.notification:";
 
-/// Plain-text notification with an application URL delivered when its body is clicked.
-/// Tags replace earlier notifications in the same running application. Payloads are
+/// Notification with an application URL delivered when its body is clicked.
+/// Tags replace payloads and, where supported, earlier host notifications. Payloads are
 /// kept in memory, so activation after process exit is not supported.
 ///
 /// ```
@@ -38,7 +38,7 @@ pub struct Notification {
     pub tag: String,
     /// Nonempty headline, at most 1 KiB of UTF-8 text.
     pub title: String,
-    /// Additional plain text, at most 16 KiB of UTF-8 text.
+    /// Additional text, at most 16 KiB of UTF-8 text; rendering follows host policy.
     pub body: String,
     /// Absolute application URL, at most 16 KiB; validate its arguments on receipt.
     pub activation_url: String,
@@ -67,7 +67,7 @@ impl Notification {
 pub enum NotificationOutcome {
     /// Submitted to the host; focus modes and host policy may suppress delivery.
     Submitted,
-    /// Permission was denied. The application can continue normally.
+    /// Permission is absent. The application can continue or request authorization.
     Denied,
 }
 
@@ -76,7 +76,6 @@ pub enum NotificationOutcome {
 pub(super) struct Notifications {
     #[cfg(feature = "gpui")]
     installed: Cell<bool>,
-    #[cfg(any(feature = "gpui", test))]
     pending: RefCell<BTreeMap<String, url::Url>>,
     #[cfg(all(feature = "gpui", target_family = "wasm"))]
     browser: RefCell<Option<browser::Host>>,
@@ -147,13 +146,14 @@ impl Platform {
         self.notification_permission()
     }
 
-    /// Posts plain text and retains a URL payload for the shared activation inbox.
+    /// Posts a notification and retains a URL payload for the shared activation inbox.
     /// Web never prompts here: request authorization from a user event first.
     /// macOS authorization is initiated immediately and awaited before submission.
     /// Keep one consumer of [`Self::next_open_url`] to validate and route payloads
     /// or dispatch application commands. At most 128 distinct tags may be pending;
     /// clicks and explicit dismissal release them. Dropping the request does not
-    /// revoke a permission prompt or a notification already submitted.
+    /// revoke a permission prompt or a notification already submitted. Await in
+    /// application-owned foreground work while the GPUI application is alive.
     ///
     /// # Errors
     /// Returns `InvalidInput` for malformed URLs/text limits, `Unsupported` when
@@ -250,6 +250,7 @@ impl Platform {
         #[cfg(target_family = "wasm")]
         {
             let _ = cx;
+
             browser::dismiss_tag(self, tag);
         }
 
@@ -278,6 +279,7 @@ impl Platform {
         let Some(tag) = tag.strip_prefix(TAG_PREFIX) else {
             return false;
         };
+
         let payload = self.notifications.pending.borrow_mut().remove(tag);
 
         if let Some(payload) = payload {
@@ -312,6 +314,7 @@ impl Platform {
         #[cfg(target_family = "wasm")]
         {
             let _ = (identifier, cx);
+
             *self.notifications.browser.borrow_mut() = Some(browser::install(self));
         }
     }
@@ -329,6 +332,7 @@ mod tests {
             body: String::new(),
             activation_url: "invalid".into(),
         };
+
         assert!(matches!(
             notification.validate(),
             Err(Error::InvalidInput(_))
@@ -347,6 +351,7 @@ mod tests {
             body: String::new(),
             activation_url: format!("app://job/{}", "漢".repeat(2000)),
         };
+
         assert!(notification.activation_url.len() < 16 * 1024);
         assert!(notification.validate().is_err());
         notification.activation_url = "app://job/42".into();

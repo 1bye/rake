@@ -5,9 +5,11 @@ use block2::RcBlock;
 use futures::channel::oneshot;
 use objc2::runtime::Bool;
 use objc2_foundation::{NSBundle, NSError};
+
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNUserNotificationCenter,
 };
+
 use std::sync::Mutex;
 
 pub(super) fn available() -> bool {
@@ -50,6 +52,7 @@ pub(super) fn permission(prompt: bool) -> Request<PermissionState> {
                 let _ = sender.send(result);
             }
         });
+
         center.requestAuthorizationWithOptions_completionHandler(
             UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
             &completion,
@@ -59,6 +62,7 @@ pub(super) fn permission(prompt: bool) -> Request<PermissionState> {
             move |settings: std::ptr::NonNull<objc2_user_notifications::UNNotificationSettings>| {
                 // SAFETY: the framework supplies non-null settings valid for this callback.
                 let status = unsafe { settings.as_ref() }.authorizationStatus();
+
                 let permission = match status {
                     UNAuthorizationStatus::NotDetermined => PermissionState::Prompt,
                     UNAuthorizationStatus::Denied => PermissionState::Denied,
@@ -77,6 +81,7 @@ pub(super) fn permission(prompt: bool) -> Request<PermissionState> {
                 }
             },
         );
+
         center.getNotificationSettingsWithCompletionHandler(&completion);
     }
 
