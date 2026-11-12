@@ -144,6 +144,11 @@ impl Security {
 
 fn validate(file: &File, directory: bool, private: bool) -> io::Result<()> {
     use std::os::windows::fs::MetadataExt;
+    // SAFETY: the file owns a live handle; only disk files/directories are accepted.
+    if unsafe { GetFileType(file.as_raw_handle()) } != FILE_TYPE_DISK {
+        return Err(denied());
+    }
+
     let metadata = file.metadata()?;
 
     if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
@@ -451,6 +456,32 @@ mod tests {
             assert!(open(&path).is_err(), "accepted {sddl}");
         }
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_output_and_checkpoints_stay_private_across_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "rake-atomic-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        prepare_directory(&root).unwrap();
+        let path = root.join("output.json");
+
+        for bytes in [b"first".as_slice(), "é漢字".as_bytes()] {
+            write_atomic(&path, bytes).unwrap();
+            let mut read = Vec::new();
+            std::io::Read::read_to_end(&mut open(&path).unwrap(), &mut read).unwrap();
+            assert_eq!(read, bytes);
+        }
+
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        assert!(open_source(&root, Path::new("../outside.rs")).is_err());
+        assert!(open_source(&root, Path::new("output.json")).is_ok());
         std::fs::remove_dir_all(root).unwrap();
     }
 

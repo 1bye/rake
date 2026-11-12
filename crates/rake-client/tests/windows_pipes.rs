@@ -7,7 +7,7 @@ use futures::{
 };
 use rake_client::{
     local,
-    pipe::{self, Listener, Stream},
+    pipe::{self, Listener},
 };
 use rake_protocol::control::{
     ControlError, MAX_MESSAGE_BYTES, Message, PROTOCOL_VERSION, Query, Reply, Request,
@@ -105,29 +105,18 @@ fn missing_pipe_and_stalled_read_and_write_share_one_deadline() {
         let path = pipe::path(&identity());
         let listener = Listener::bind(&path).unwrap();
         let start = Instant::now();
-        futures::executor::block_on(async {
-            let exchange = async {
-                let mut stream = Stream::connect(&path).await.unwrap();
+        let mut request = request();
 
-                if write {
-                    stream
-                        .write_all(&vec![b'x'; MAX_MESSAGE_BYTES * 2])
-                        .await
-                        .unwrap();
-                } else {
-                    let mut byte = [0];
-                    stream.read_exact(&mut byte).await.unwrap();
-                }
-            };
-            assert!(matches!(
-                select(
-                    Box::pin(exchange),
-                    Box::pin(async_io::Timer::after(Duration::from_millis(50)))
-                )
-                .await,
-                Either::Right(_)
-            ));
-        });
+        if write {
+            request.key = Some("x".repeat(MAX_MESSAGE_BYTES - 1024));
+        }
+
+        assert_eq!(
+            local::exchange(&path, &request, Duration::from_millis(50))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
         assert!(start.elapsed() < Duration::from_secs(2));
         drop(listener);
     }
@@ -152,4 +141,39 @@ fn remote_and_arbitrary_device_names_are_rejected() {
             "{path}"
         );
     }
+}
+
+#[test]
+fn discovery_skips_invalid_and_oversized_advertisements() {
+    let root = std::env::temp_dir().join(format!("rake-discover-{}", identity()));
+    local::prepare_directory(&root).unwrap();
+    let value = serde_json::json!({
+        "application_id":"windows-test", "pid":std::process::id(),
+        "endpoint":{"type":"local", "path":pipe::path(&identity())},
+        "info":{
+            "protocol":1,"runtime_id":"00000000-0000-4000-8000-000000000001",
+            "platform":"native","commands":[],"queries":["info"],
+            "supported_targets":[],"completed_operations":8,"pending_operations":8,
+            "idempotency_capacity":8
+        }
+    });
+    serde_json::to_writer(
+        rake_client::private::create(&root.join("good.json")).unwrap(),
+        &value,
+    )
+    .unwrap();
+    std::io::Write::write_all(
+        &mut rake_client::private::create(&root.join("invalid.json")).unwrap(),
+        b"invalid",
+    )
+    .unwrap();
+    std::io::Write::write_all(
+        &mut rake_client::private::create(&root.join("large.json")).unwrap(),
+        &vec![b'x'; MAX_MESSAGE_BYTES + 1],
+    )
+    .unwrap();
+    let found = local::discover(&root).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].application_id, "windows-test");
+    std::fs::remove_dir_all(root).unwrap();
 }

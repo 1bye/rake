@@ -679,9 +679,12 @@ impl<'a> Supervisor<'a> {
 fn read_json(path: &Path) -> Result<Value> {
     let mut bytes = Vec::new();
 
-    fs::File::open(path)?
-        .take(MAX_BYTES as u64)
-        .read_to_end(&mut bytes)?;
+    #[cfg(unix)]
+    let file = fs::File::open(path)?;
+    #[cfg(windows)]
+    let file = rake_client::private::open(path)?;
+
+    file.take(MAX_BYTES as u64).read_to_end(&mut bytes)?;
 
     Ok(serde_json::from_slice(&bytes)?)
 }

@@ -1,4 +1,4 @@
-//! Owner-only Unix discovery and bounded blocking socket exchanges.
+//! Owner-only native discovery and bounded blocking endpoint exchanges.
 
 pub use crate::{Endpoint, Instance};
 #[cfg(unix)]

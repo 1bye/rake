@@ -1,4 +1,4 @@
-//! Unix-domain development transport. Private discovery directories and sockets
+//! Native development transport. Private discovery directories and endpoints
 //! restrict access to the current user. Owned protocol frames are decoded/encoded
 //! on the blocking pool; host dispatch and all UI state remain on the local thread.
 

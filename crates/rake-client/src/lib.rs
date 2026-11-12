@@ -89,9 +89,9 @@ pub mod pipe;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Endpoint {
-    /// Permission-restricted Unix socket.
+    /// Owner-only native endpoint: Unix socket or local Windows named pipe.
     Local {
-        /// Socket path.
+        /// Socket path or local named-pipe name.
         path: PathBuf,
     },
     /// Authenticated development broker, addressed by runtime ID.

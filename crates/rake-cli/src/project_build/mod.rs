@@ -566,7 +566,10 @@ fn write_marker(path: &Path, marker: &Value) -> Result<()> {
     )?;
 
     file.write_all(&serde_json::to_vec(marker)?)?;
+    #[cfg(unix)]
     file.persist(path)?;
+    #[cfg(windows)]
+    file.into_temp_path().persist(path)?;
 
     Ok(())
 }
@@ -684,4 +687,24 @@ fn relative_name(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[cfg(all(test, windows))]
+mod windows_private_tests {
+    use super::*;
+
+    #[test]
+    fn development_markers_remain_private_when_atomically_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.json");
+
+        for value in [
+            json!({"generation":1}),
+            json!({"generation":2,"text":"é漢字"}),
+        ] {
+            write_marker(&path, &value).unwrap();
+            let file = rake_client::private::open(&path).unwrap();
+            assert_eq!(serde_json::from_reader::<_, Value>(file).unwrap(), value);
+        }
+    }
 }

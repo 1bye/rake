@@ -161,6 +161,11 @@ jobs:
             libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libxcb-xinput-dev \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev libfontconfig-dev \
             xvfb xauth openbox mesa-vulkan-drivers vulkan-tools
+      - name: Windows private files and native endpoints
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p rake-client --locked
+          cargo test -p rake-app --no-default-features --test local_control --locked
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
