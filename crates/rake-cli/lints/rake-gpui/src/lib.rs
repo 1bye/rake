@@ -8,13 +8,17 @@ extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
 
+use std::collections::HashSet;
+
 use rustc_errors::{Diag, DiagDecorator};
 use rustc_hir::def::Res;
+use rustc_hir::intravisit::{self, Visitor};
 use rustc_hir::{Expr, ExprKind, Node, PatKind, QPath, Stmt, StmtKind};
 use rustc_lint::{LateContext, LateLintPass, LintContext};
-use rustc_middle::ty::{self, Ty};
+use rustc_middle::ty::{self, Ty, TyCtxt, TypeckResults};
 use rustc_session::{declare_lint, impl_lint_pass};
 use rustc_span::Span;
+use rustc_span::def_id::LocalDefId;
 
 dylint_linting::dylint_library!();
 
@@ -38,7 +42,53 @@ declare_lint! {
     pub GPUI_UI_BLOCKING, Warn, "blocking operation on the UI thread"
 }
 
-struct Gpui;
+const UI_METHODS: &[&str] = &[
+    "listener",
+    "on_action",
+    "on_click",
+    "on_mouse_down",
+    "on_mouse_up",
+    "on_key_down",
+    "on_key_up",
+];
+
+#[derive(Default)]
+struct Gpui {
+    ui_handlers: HashSet<LocalDefId>,
+}
+
+struct HandlerPaths<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    typeck: &'tcx TypeckResults<'tcx>,
+    handlers: &'a mut HashSet<LocalDefId>,
+}
+
+impl<'tcx> Visitor<'tcx> for HandlerPaths<'_, 'tcx> {
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        if let ExprKind::MethodCall(_, _, args, _) = expr.kind {
+            if self
+                .typeck
+                .type_dependent_def_id(expr.hir_id)
+                .is_some_and(|id| {
+                    self.tcx.crate_name(id.krate).as_str() == "gpui"
+                        && UI_METHODS.contains(&self.tcx.item_name(id).as_str())
+                })
+            {
+                for arg in args {
+                    if matches!(arg.kind, ExprKind::Path(_)) {
+                        if let ty::FnDef(id, _) = self.typeck.expr_ty(arg).kind() {
+                            if let Some(local) = id.as_local() {
+                                self.handlers.insert(local);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        intravisit::walk_expr(self, expr);
+    }
+}
 
 impl_lint_pass!(Gpui => [GPUI_DROPPED_TASK, GPUI_RENDER_NEW, GPUI_REENTRANT_UPDATE, GPUI_UI_BLOCKING]);
 
@@ -51,7 +101,7 @@ pub fn register_lints(sess: &rustc_session::Session, store: &mut rustc_lint::Lin
         GPUI_REENTRANT_UPDATE,
         GPUI_UI_BLOCKING,
     ]);
-    store.register_late_lint_pass(Box::new(|_| Box::new(Gpui)));
+    store.register_late_lint_pass(Box::new(|_| Box::new(Gpui::default())));
 }
 
 fn gpui_type(cx: &LateContext<'_>, ty: Ty<'_>, name: &str) -> bool {
@@ -107,8 +157,8 @@ fn in_render(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
     })
 }
 
-fn ui_callback(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
-    if in_render(cx, expr) {
+fn ui_callback(cx: &LateContext<'_>, expr: &Expr<'_>, handlers: &HashSet<LocalDefId>) -> bool {
+    if in_render(cx, expr) || handlers.contains(&cx.tcx.hir_enclosing_body_owner(expr.hir_id)) {
         return true;
     }
 
@@ -127,19 +177,7 @@ fn ui_callback(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
             } else if let Some(id) = closure {
                 if let ExprKind::MethodCall(_, _, args, _) = parent.kind {
                     return args.iter().any(|arg| arg.hir_id == id)
-                        && gpui_method(
-                            cx,
-                            parent,
-                            &[
-                                "listener",
-                                "on_action",
-                                "on_click",
-                                "on_mouse_down",
-                                "on_mouse_up",
-                                "on_key_down",
-                                "on_key_up",
-                            ],
-                        );
+                        && gpui_method(cx, parent, UI_METHODS);
                 }
 
                 return false;
@@ -207,6 +245,20 @@ fn reentrant(cx: &LateContext<'_>, expr: &Expr<'_>, receiver: &Expr<'_>) -> bool
 }
 
 impl<'tcx> LateLintPass<'tcx> for Gpui {
+    fn check_crate(&mut self, cx: &LateContext<'tcx>) {
+        // Each body is visited independently, including registrations in closures.
+        // Finish discovery before linting so handler definition order is irrelevant.
+        for owner in cx.tcx.hir_body_owners() {
+            let mut visitor = HandlerPaths {
+                tcx: cx.tcx,
+                typeck: cx.tcx.typeck(owner),
+                handlers: &mut self.ui_handlers,
+            };
+
+            visitor.visit_body(cx.tcx.hir_body_owned_by(owner));
+        }
+    }
+
     fn check_stmt(&mut self, cx: &LateContext<'tcx>, stmt: &'tcx Stmt<'tcx>) {
         let expr = match stmt.kind {
             StmtKind::Semi(expr) => expr,
@@ -269,7 +321,7 @@ impl<'tcx> LateLintPass<'tcx> for Gpui {
                     || path == "async_io::driver::block_on"
                     || path == "futures_executor::local_pool::block_on";
 
-                if blocking && ui_callback(cx, expr) {
+                if blocking && ui_callback(cx, expr, &self.ui_handlers) {
                     emit(
                         cx,
                         GPUI_UI_BLOCKING,
