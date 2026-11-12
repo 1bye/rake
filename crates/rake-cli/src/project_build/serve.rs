@@ -68,6 +68,12 @@ impl Server {
 
                     match listener.accept() {
                         Ok((stream, _)) => {
+                            // Winsock accepts inherit the listener's nonblocking mode.
+                            #[cfg(windows)]
+                            stream
+                                .set_nonblocking(false)
+                                .map_err(|error| error.to_string())?;
+
                             let mut sockets_guard =
                                 sockets.lock().expect("Web connection lock poisoned");
 
@@ -1049,7 +1055,7 @@ mod tests {
         assert!(
             std::process::Command::new("cmd")
                 .args(["/d", "/c", "mklink", "/J"])
-                .arg(builds.join("1/escape"))
+                .arg(builds.join("1").join("escape"))
                 .arg(temp.path())
                 .status()
                 .unwrap()
