@@ -1,13 +1,19 @@
-//! Owner-only Unix discovery and bounded blocking socket exchanges.
+//! Owner-only native discovery and bounded blocking endpoint exchanges.
 
 pub use crate::{Endpoint, Instance};
-use async_io::{Async, Timer};
+#[cfg(unix)]
+use async_io::Async;
+use async_io::Timer;
 use futures::future::{Either, select};
 use futures::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use rake_protocol::control::{ControlError, MAX_MESSAGE_BYTES, Reply, Request};
-use std::fs::{self, DirBuilder, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::{DirBuilder, OpenOptions};
 use std::io::{self, Read};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -17,8 +23,16 @@ pub fn directory() -> PathBuf {
     std::env::var_os("RAKE_CONTROL_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            // SAFETY: geteuid has no pointer or threading preconditions.
-            PathBuf::from(format!("/tmp/rake-{}", unsafe { libc::geteuid() }))
+            #[cfg(unix)]
+            {
+                // SAFETY: geteuid has no pointer or threading preconditions.
+                PathBuf::from(format!("/tmp/rake-{}", unsafe { libc::geteuid() }))
+            }
+
+            #[cfg(windows)]
+            {
+                std::env::temp_dir().join("rake-control")
+            }
         })
 }
 
@@ -28,24 +42,32 @@ pub fn directory() -> PathBuf {
 /// Returns filesystem errors, or `PermissionDenied` if the existing path is
 /// a symlink, is owned by another user, or grants group/other access.
 pub fn prepare_directory(path: &Path) -> io::Result<()> {
-    match DirBuilder::new().mode(0o700).create(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(error),
+    #[cfg(windows)]
+    {
+        crate::private::prepare_directory(path)
     }
 
-    let metadata = fs::symlink_metadata(path)?;
-    // SAFETY: geteuid has no pointer or threading preconditions.
-    let uid = unsafe { libc::geteuid() };
+    #[cfg(unix)]
+    {
+        match DirBuilder::new().mode(0o700).create(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
 
-    if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "control directory must be an owned directory with mode 0700",
-        ));
+        let metadata = fs::symlink_metadata(path)?;
+        // SAFETY: geteuid has no pointer or threading preconditions.
+        let uid = unsafe { libc::geteuid() };
+
+        if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "control directory must be an owned directory with mode 0700",
+            ));
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// Reads bounded, owner-only instance advertisements. A crashed host can leave stale
@@ -70,25 +92,44 @@ pub fn discover(path: &Path) -> io::Result<Vec<Instance>> {
             continue;
         }
 
-        let Some(metadata) = skip_missing(fs::symlink_metadata(&path))? else {
-            continue;
+        #[cfg(unix)]
+        let file = {
+            let Some(metadata) = skip_missing(fs::symlink_metadata(&path))? else {
+                continue;
+            };
+
+            // SAFETY: geteuid has no pointer or threading preconditions.
+            let uid = unsafe { libc::geteuid() };
+
+            if !metadata.is_file() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+                continue;
+            }
+
+            let Some(file) = skip_missing(
+                OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(&path),
+            )?
+            else {
+                continue;
+            };
+
+            file
         };
 
-        // SAFETY: geteuid has no pointer or threading preconditions.
-        let uid = unsafe { libc::geteuid() };
-
-        if !metadata.is_file() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
-            continue;
-        }
-
-        let Some(file) = skip_missing(
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&path),
-        )?
-        else {
-            continue;
+        #[cfg(windows)]
+        let file = match crate::private::open(&path) {
+            Ok(file) => file,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
         };
 
         let mut bytes = Vec::new();
@@ -146,7 +187,11 @@ pub fn exchange(
 
     futures::executor::block_on(async {
         let exchange = async {
+            #[cfg(unix)]
             let mut stream = Async::<UnixStream>::connect(path).await?;
+
+            #[cfg(windows)]
+            let mut stream = crate::pipe::Stream::connect(path).await?;
 
             stream.write_all(&bytes).await?;
             let mut reply = Vec::new();

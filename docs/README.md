@@ -11,11 +11,13 @@ New here? Start with [Getting started](getting-started.md), then read
 | [Routing](routing.md) | Typed routes, tabs, history, guards, loaders |
 | [Managed work](managed-work.md) | Tasks, activities and cancellation |
 | [Window placement](window-placement.md) | Opt-in native bounds, displays, and window modes |
+| [Application menus](menus.md) | Command-backed menu bars, dock items and context models |
 | [Guarded quit](guarded-quit.md) | Save/discard/cancel on exit |
 | [Services](services.md) | Composing application services |
 | [Storage](storage.md) | Typed persistent storage |
 | [Native crash reports](crash-reports.md) | Private panic records and application-owned delivery |
 | [Launch at login](launch-at-login.md) | Per-user startup, approval and uninstall behavior |
+| [OS notifications](notifications.md) | Authorization, notification delivery and URL payload activation |
 | [Platform services](platform-services.md) | Files, clipboard, preferences, URLs |
 | [Browser apps](web-applications.md) | Workers, offline bundles, deployment updates |
 | [Fieldnotes](notes.md) | The complete reference app |

@@ -15,6 +15,10 @@ struct Foundation {
     status: String,
     runtime: RuntimeContext,
     clipboard: Option<AsyncAction<(), rake::platform::Error>>,
+    notification_permission:
+        Option<AsyncAction<rake::platform::PermissionState, rake::platform::Error>>,
+    notification: Option<AsyncAction<rake::platform::NotificationOutcome, rake::platform::Error>>,
+    _activations: rake::gpui::Task<()>,
     reload: Option<AsyncAction<(), rake::web::Error>>,
     deployment: Option<rake::web::Deployment>,
     web_updates: Option<Loader<Option<rake::web::DeploymentVersion>, rake::web::Error>>,
@@ -158,6 +162,65 @@ impl Render for Foundation {
                 if let Some(status) = clipboard_status {
                     <p>{status}</p>
                 }
+                <button
+                    id="notification-permission"
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let request = this
+                                .runtime
+                                .services()
+                                .platform()
+                                .request_notification_permission();
+                            this.notification_permission = Some(this.runtime.action(cx, request));
+                        })
+                    }
+                >
+                    "Allow OS notifications"
+                </button>
+                if let Some(permission) = &self.notification_permission {
+                    <p>{format!("Notification permission: {:?}", permission.state(cx))}</p>
+                }
+                <button
+                    id="show-notification"
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            let request = this.runtime.services().platform().show_notification(
+                                rake::platform::Notification {
+                                    tag: "foundation-export".into(),
+                                    title: "Export finished".into(),
+                                    body: "Click to open export 42".into(),
+                                    activation_url: "rake-foundation://exports/42".into(),
+                                },
+                                cx,
+                            );
+                            this.notification = Some(this.runtime.action(cx, request));
+                        })
+                    }
+                >
+                    "Show OS notification"
+                </button>
+                if let Some(notification) = &self.notification {
+                    <p>{format!("Notification: {:?}", notification.state(cx))}</p>
+                }
+                <button
+                    id="dismiss-notification"
+                    on:click={
+                        cx.listener(|this, _, _, cx| {
+                            this.status = match this
+                                .runtime
+                                .services()
+                                .platform()
+                                .dismiss_notification("foundation-export", cx)
+                            {
+                                Ok(()) => "Notification dismissed".into(),
+                                Err(error) => error.to_string(),
+                            };
+                            cx.notify();
+                        })
+                    }
+                >
+                    "Dismiss OS notification"
+                </button>
                 <p>{update_status}</p>
                 if let Some(version) = version {
                     <p>{format!("Version {version}")}</p>
@@ -247,12 +310,39 @@ pub fn application() -> App {
                     })
                 });
 
+                let platform = runtime.services().platform();
+
+                let activations = cx.spawn(async move |view, cx| {
+                    loop {
+                        let url = platform.next_open_url().await;
+
+                        if view
+                            .update(cx, |this: &mut Foundation, cx| {
+                                // Validate application-specific scheme/arguments before dispatching.
+                                if url.scheme() == "rake-foundation"
+                                    && url.host_str() == Some("exports")
+                                {
+                                    this.status =
+                                        format!("Notification opened export {}", url.path());
+                                    cx.notify();
+                                }
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+
                 Foundation {
                     message: runtime.load(cx, load_message),
                     updates: runtime.bind_updates(cx),
                     status,
                     runtime,
                     clipboard: None,
+                    notification_permission: None,
+                    notification: None,
+                    _activations: activations,
                     reload: None,
                     deployment,
                     web_updates,

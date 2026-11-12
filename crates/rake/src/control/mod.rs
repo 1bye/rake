@@ -16,16 +16,16 @@
 //! ```
 
 mod commands;
-#[cfg(any(unix, target_family = "wasm"))]
+#[cfg(any(unix, windows, target_family = "wasm"))]
 mod host;
 mod memory;
 
-#[cfg(any(unix, target_family = "wasm"))]
+#[cfg(any(unix, windows, target_family = "wasm"))]
 pub(crate) use host::HostClient;
 
 pub use commands::*;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod local;
 #[cfg(target_family = "wasm")]
 mod web;
@@ -72,10 +72,10 @@ impl ClientState {
 }
 
 // A native host must let accepted transport responses reach the socket before exit.
-#[cfg(any(unix, target_family = "wasm"))]
+#[cfg(any(unix, windows, target_family = "wasm"))]
 pub(crate) struct ResponseGuard(Rc<ClientState>);
 
-#[cfg(any(unix, target_family = "wasm"))]
+#[cfg(any(unix, windows, target_family = "wasm"))]
 impl Drop for ResponseGuard {
     fn drop(&mut self) {
         self.0.responses.set(self.0.responses.get() - 1);
@@ -103,7 +103,7 @@ impl<R: Route> RuntimeClient<R> {
         &self.router
     }
 
-    #[cfg(any(unix, target_family = "wasm"))]
+    #[cfg(any(unix, windows, target_family = "wasm"))]
     pub(crate) fn begin_response(&self) -> ResponseGuard {
         self.state.responses.set(self.state.responses.get() + 1);
 
@@ -742,7 +742,7 @@ impl ControlConfig {
                 return false;
             }
 
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             {
                 std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1")
             }
@@ -751,7 +751,7 @@ impl ControlConfig {
                 WebBridgeConfig::from_document().is_ok_and(|config| config.is_some())
             }
 
-            #[cfg(not(any(unix, target_family = "wasm")))]
+            #[cfg(not(any(unix, windows, target_family = "wasm")))]
             {
                 false
             }
@@ -765,10 +765,10 @@ pub(crate) async fn run_host<R: Route>(
     client: RuntimeClient<R>,
     application_id: String,
 ) {
-    #[cfg(any(unix, target_family = "wasm"))]
+    #[cfg(any(unix, windows, target_family = "wasm"))]
     run_host_client(config, HostClient::new(client), application_id).await;
 
-    #[cfg(not(any(unix, target_family = "wasm")))]
+    #[cfg(not(any(unix, windows, target_family = "wasm")))]
     {
         let _ = (config, client, application_id);
 
@@ -776,14 +776,14 @@ pub(crate) async fn run_host<R: Route>(
     }
 }
 
-#[cfg(all(feature = "gpui", any(unix, target_family = "wasm")))]
+#[cfg(all(feature = "gpui", any(unix, windows, target_family = "wasm")))]
 pub(crate) async fn run_host_client(
     config: ControlConfig,
     client: HostClient,
     application_id: String,
 ) {
     if matches!(config, ControlConfig::FromEnvironment) {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if std::env::var("RAKE_DEV_CONTROL").as_deref() == Ok("1") {
             match local::LocalServer::bind_host(&client, &application_id, &local::directory()) {
                 Ok(server) => {

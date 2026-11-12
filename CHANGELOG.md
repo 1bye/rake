@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added application-owned OS notifications through platform services, explicit
+  authorization and denial handling, browser notifications, dismissal and click
+  payloads in the shared URL activation inbox. See [notifications](docs/notifications.md)
+  for platform requirements and the Foundation example.
+
 - Native GPUI `App` now records bounded, private panic records locally by default,
   including development runs. Delivery remains opt-in and Rake never uploads.
   Default setup errors warn and continue. Use `App::without_crash_reports()` to

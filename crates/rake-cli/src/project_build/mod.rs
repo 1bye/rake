@@ -2,24 +2,25 @@
 //! The native HTTP origin owns application assets, the broker and preview transports.
 
 mod args;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod broker;
-#[cfg(any(unix, test))]
 mod browser;
 mod bundle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod dev;
 mod favicon;
 mod offline;
 mod permissions;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod preview;
 mod processes;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod resources;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod serve;
 mod web;
+#[cfg(windows)]
+mod windows;
 
 use args::Args;
 use processes::{Capture, Processes};
@@ -82,11 +83,7 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
             if command == "doctor" {
                 doctor(&args, &processes)
             } else if command == "dev" {
-                #[cfg(unix)]
-                { dev::run(&args, &cancelled).map(|()| 0) }
-
-                #[cfg(windows)]
-                { Err("development supervision requires Unix private local IPC; doctor, build and bundle are supported on Windows".into()) }
+                dev::run(&args, &cancelled).map(|()| 0)
             } else {
                 build(&args, &processes).map(|()| 0)
             }
@@ -166,7 +163,6 @@ struct Project {
     web_dir: PathBuf,
     assets: Option<PathBuf>,
     bindgen: Option<PathBuf>,
-    #[cfg(unix)]
     watch_roots: Vec<PathBuf>,
 }
 
@@ -331,7 +327,6 @@ impl Project {
             None
         };
 
-        #[cfg(unix)]
         let watch_roots = {
             let mut watch_roots = vec![root.clone()];
 
@@ -355,7 +350,6 @@ impl Project {
         };
 
         Ok(Self {
-            #[cfg(unix)]
             watch_roots,
             package: package.clone(),
             target,
@@ -557,10 +551,20 @@ fn build(args: &Args, processes: &Processes<'_>) -> Result<()> {
 
 fn write_marker(path: &Path, marker: &Value) -> Result<()> {
     use std::io::Write;
+    #[cfg(unix)]
     let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or("marker parent missing")?)?;
 
+    #[cfg(windows)]
+    let mut file = tempfile::Builder::new().make_in(
+        path.parent().ok_or("marker parent missing")?,
+        rake_client::private::create,
+    )?;
+
     file.write_all(&serde_json::to_vec(marker)?)?;
+    #[cfg(unix)]
     file.persist(path)?;
+    #[cfg(windows)]
+    rake_client::private::replace(file.as_file(), path)?;
 
     Ok(())
 }
@@ -678,4 +682,35 @@ fn relative_name(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[cfg(all(test, windows))]
+mod windows_private_tests {
+    use super::*;
+
+    #[test]
+    fn development_markers_remain_private_when_atomically_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.json");
+
+        for value in [
+            json!({"generation":1}),
+            json!({"generation":2,"text":"é漢字"}),
+        ] {
+            let previous = rake_client::private::open(&path).ok();
+
+            write_marker(&path, &value).unwrap();
+
+            if let Some(previous) = previous {
+                assert_eq!(
+                    serde_json::from_reader::<_, Value>(previous).unwrap(),
+                    json!({"generation":1})
+                );
+            }
+
+            let file = rake_client::private::open(&path).unwrap();
+
+            assert_eq!(serde_json::from_reader::<_, Value>(file).unwrap(), value);
+        }
+    }
 }

@@ -68,6 +68,12 @@ impl Server {
 
                     match listener.accept() {
                         Ok((stream, _)) => {
+                            // Winsock accepts inherit the listener's nonblocking mode.
+                            #[cfg(windows)]
+                            stream
+                                .set_nonblocking(false)
+                                .map_err(|error| error.to_string())?;
+
                             let mut sockets_guard =
                                 sockets.lock().expect("Web connection lock poisoned");
 
@@ -82,9 +88,23 @@ impl Server {
                                 .insert(id, stream.try_clone().map_err(|error| error.to_string())?);
                             drop(sockets_guard);
                             let sockets = &sockets;
+                            let stopped = &stopped;
 
                             workers.push(Some(scope.spawn(move || {
-                                let _ = handle(stream, address, config);
+                                let mut stream = stream;
+                                let result = handle(&mut stream, address, config, stopped);
+
+                                #[cfg(test)]
+                                if let Err(error) = &result {
+                                    eprintln!("development HTTP handler failed: {error}");
+                                }
+
+                                let _ = result;
+
+                                // Send the FIN after queued response bytes, before either
+                                // duplicated Winsock handle is closed.
+                                #[cfg(windows)]
+                                let _ = stream.shutdown(Shutdown::Write);
 
                                 sockets
                                     .lock()
@@ -168,13 +188,66 @@ impl Request {
     }
 }
 
-fn request(stream: &mut TcpStream) -> Result<Request> {
+// Windows shutdown does not reliably interrupt an already blocked recv. Poll only
+// request reads so cancellation never waits for the 15-second receive timeout.
+fn read_exact(
+    stream: &mut TcpStream,
+    bytes: &mut [u8],
+    stopping: &AtomicBool,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = stopping;
+
+        stream.read_exact(bytes)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::io::{Error, ErrorKind};
+
+        stream.set_nonblocking(true)?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+
+        let result = (|| {
+            let mut remaining = bytes;
+
+            while !remaining.is_empty() {
+                if stopping.load(Ordering::Acquire) {
+                    return Err(Error::new(ErrorKind::Interrupted, "Web server stopped"));
+                }
+
+                if std::time::Instant::now() >= deadline {
+                    return Err(Error::new(ErrorKind::TimedOut, "Web request timed out"));
+                }
+
+                match stream.read(remaining) {
+                    Ok(0) => return Err(Error::from(ErrorKind::UnexpectedEof)),
+                    Ok(count) => remaining = &mut remaining[count..],
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                    Err(error) => return Err(error),
+                }
+            }
+
+            Ok(())
+        })();
+
+        let blocking = stream.set_nonblocking(false);
+
+        result.and(blocking)
+    }
+}
+
+fn request(stream: &mut TcpStream, stopping: &AtomicBool) -> Result<Request> {
     let mut bytes = Vec::new();
 
     while !bytes.ends_with(b"\r\n\r\n") {
         let mut byte = [0];
 
-        stream.read_exact(&mut byte)?;
+        read_exact(stream, &mut byte, stopping)?;
         bytes.push(byte[0]);
 
         if bytes.len() > 64 * 1024 {
@@ -296,15 +369,17 @@ fn translated(config: &Config, request: &Request) -> Option<PathBuf> {
     Some(active)
 }
 
-fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result<()> {
+fn handle(
+    stream: &mut TcpStream,
+    address: SocketAddr,
+    config: &Config,
+    stopping: &AtomicBool,
+) -> Result<()> {
     // macOS accept inherits the listener's O_NONBLOCK; each worker uses blocking I/O.
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
-    let request = match request(&mut stream) {
-        Ok(request) => request,
-        Err(_) => return Ok(()),
-    };
+    let request = request(stream, stopping)?;
 
     let control = config.broker.is_some();
 
@@ -314,7 +389,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
 
     if control && !valid_host {
         return error(
-            &mut stream,
+            stream,
             &request,
             403,
             if request.method == "POST" {
@@ -335,18 +410,24 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
                 || !broker.authenticate(request.header("X-Rake-Token"))
             {
                 return error(
-                    &mut stream,
+                    stream,
                     &request,
                     403,
                     "development bridge authentication failed",
                 );
             }
 
-            return control_request(&mut stream, &request, broker, config.preview.as_deref());
+            return control_request(
+                stream,
+                &request,
+                broker,
+                config.preview.as_deref(),
+                stopping,
+            );
         }
 
         return error(
-            &mut stream,
+            stream,
             &request,
             403,
             "development bridge authentication failed",
@@ -355,7 +436,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
 
     if !["GET", "HEAD"].contains(&request.method.as_str()) {
         return error(
-            &mut stream,
+            stream,
             &request,
             501,
             &format!("Unsupported method ('{}')", request.method),
@@ -365,7 +446,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
     if let Some(preview) = &config.preview {
         if request.method == "GET" && request.path == "/__rake/preview_control" {
             return match preview.control(
-                &mut stream,
+                stream,
                 &request,
                 config
                     .broker
@@ -374,7 +455,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
                     .token(),
             ) {
                 Ok(()) => Ok(()),
-                Err(failure) => error(&mut stream, &request, failure.status, &failure.to_string()),
+                Err(failure) => error(stream, &request, failure.status, &failure.to_string()),
             };
         }
 
@@ -403,13 +484,13 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
         };
 
         if let Some((bytes, mime)) = asset {
-            return respond(&mut stream,&request,200,mime,bytes,&[("Cache-Control","no-store".into()),("X-Content-Type-Options","nosniff".into()),("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'".into())]);
+            return respond(stream,&request,200,mime,bytes,&[("Cache-Control","no-store".into()),("X-Content-Type-Options","nosniff".into()),("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'".into())]);
         }
     }
 
     if route.starts_with("/__rake/inspector") || route.starts_with("/__rake/elements") {
         return error(
-            &mut stream,
+            stream,
             &request,
             410,
             "Rake Inspector is deprecated; use Chrome DevTools (--cdp)",
@@ -418,7 +499,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
 
     if config.control_only {
         return error(
-            &mut stream,
+            stream,
             &request,
             404,
             "native control serves no application assets",
@@ -427,7 +508,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
 
     if control && route == "/__rake/bootstrap.js" {
         return respond(
-            &mut stream,
+            stream,
             &request,
             200,
             "text/javascript; charset=utf-8",
@@ -454,7 +535,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
     }
 
     let Some(mut path) = path else {
-        return error(&mut stream, &request, 404, "File not found");
+        return error(stream, &request, 404, "File not found");
     };
 
     if control && (route == "/" || route == "/index.html" || shell_fallback) {
@@ -504,7 +585,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
         )?;
 
         return respond(
-            &mut stream,
+            stream,
             &request,
             200,
             "text/html; charset=utf-8",
@@ -521,7 +602,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
             };
 
             return respond(
-                &mut stream,
+                stream,
                 &request,
                 301,
                 "text/html",
@@ -535,12 +616,12 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
         } else if path.join("index.htm").is_file() {
             path.push("index.htm");
         } else {
-            return listing(&mut stream, &request, &path);
+            return listing(stream, &request, &path);
         }
     }
 
     let Ok(mut file) = fs::File::open(&path) else {
-        return error(&mut stream, &request, 404, "File not found");
+        return error(stream, &request, 404, "File not found");
     };
 
     let metadata = file.metadata()?;
@@ -551,7 +632,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
         && modified.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
             <= since.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
     {
-        return respond(&mut stream, &request, 304, "text/plain", &[], &[]);
+        return respond(stream, &request, 304, "text/plain", &[], &[]);
     }
 
     let mime = if path
@@ -566,7 +647,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
     };
 
     headers(
-        &mut stream,
+        stream,
         200,
         &mime,
         metadata.len(),
@@ -574,7 +655,7 @@ fn handle(mut stream: TcpStream, address: SocketAddr, config: &Config) -> Result
     )?;
 
     if request.method != "HEAD" {
-        std::io::copy(&mut file, &mut stream)?;
+        std::io::copy(&mut file, stream)?;
     }
 
     Ok(())
@@ -585,6 +666,7 @@ fn control_request(
     request: &Request,
     broker: &super::broker::Broker,
     preview: Option<&super::preview::Preview>,
+    stopping: &AtomicBool,
 ) -> Result<()> {
     use super::broker::{Error, MAX_BYTES};
     let mut consumed = false;
@@ -603,7 +685,7 @@ fn control_request(
 
         let mut bytes = vec![0; length.expect("validated length")];
 
-        stream.read_exact(&mut bytes)?;
+        read_exact(stream, &mut bytes, stopping)?;
         consumed = true;
         let body: Value = serde_json::from_slice(&bytes)?;
 
@@ -1043,7 +1125,18 @@ mod tests {
             )
             .is_none()
         );
+        #[cfg(unix)]
         std::os::unix::fs::symlink(temp.path(), builds.join("1/escape")).unwrap();
+        #[cfg(windows)]
+        assert!(
+            std::process::Command::new("cmd")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(builds.join("1").join("escape"))
+                .arg(temp.path())
+                .status()
+                .unwrap()
+                .success()
+        );
         assert!(
             translated(
                 &config,
@@ -1075,6 +1168,9 @@ mod tests {
         let mut pending = TcpStream::connect(address).unwrap();
 
         write!(pending, "GET / HTTP/1.1\r\n").unwrap();
+        let mut body = TcpStream::connect(address).unwrap();
+
+        write!(body, "POST /__rake/development HTTP/1.1\r\nHost: {address}\r\nX-Rake-Token: {}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{", server.broker.as_ref().unwrap().token()).unwrap();
         let mut foreign = TcpStream::connect(address).unwrap();
 
         write!(foreign, "GET / HTTP/1.1\r\nHost: foreign\r\n\r\n").unwrap();
@@ -1287,6 +1383,44 @@ mod tests {
         );
     }
 
+    fn assert_pending(stream: &mut TcpStream, message: &str) {
+        #[cfg(unix)]
+        {
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let pending = stream.read(&mut [0]);
+
+            assert!(
+                pending.is_err_and(|error| matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                )),
+                "{message}"
+            );
+        }
+
+        #[cfg(windows)]
+        {
+            // A Winsock receive timeout makes the connection indeterminate.
+            // Observe the same pending interval without issuing a timed recv.
+            stream.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_millis(200);
+
+            while Instant::now() < deadline {
+                let pending = stream.read(&mut [0]);
+
+                assert!(
+                    pending.is_err_and(|error| error.kind() == std::io::ErrorKind::WouldBlock),
+                    "{message}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+
+            stream.set_nonblocking(false).unwrap();
+        }
+    }
+
     #[test]
     fn control_requests_wait_for_segmented_headers_and_json_bodies() {
         let root = tempfile::tempdir().unwrap();
@@ -1324,36 +1458,19 @@ mod tests {
 
         let mut stream = TcpStream::connect(address).unwrap();
 
-        stream
-            .set_read_timeout(Some(Duration::from_millis(200)))
-            .unwrap();
         write!(stream, "POST /__rake/development HTTP/1.1\r\n").unwrap();
-        let pending = stream.read(&mut [0]);
-
-        assert!(
-            pending.is_err_and(|error| matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )),
-            "partial headers must remain pending"
-        );
+        assert_pending(&mut stream, "partial headers must remain pending");
         write!(stream,"Host: {address}\r\nX-Rake-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{").unwrap();
-        let pending = stream.read(&mut [0]);
-
-        assert!(
-            pending.is_err_and(|error| matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )),
-            "partial JSON must remain pending"
-        );
+        assert_pending(&mut stream, "partial JSON must remain pending");
         stream.write_all(b"}").unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         let mut response = String::new();
 
-        stream.read_to_string(&mut response).unwrap();
+        let received = stream.read_to_string(&mut response);
+
+        assert!(received.is_ok(), "{received:?}; response: {response:?}");
         assert!(response.starts_with("HTTP/1.0 200"), "{response}");
         let body: Value = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
 

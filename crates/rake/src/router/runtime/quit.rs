@@ -507,24 +507,6 @@ impl<R: Route> Router<R> {
                 drop(Router(core).quit(QuitOptions::default()));
             }
         });
-
-        #[cfg(not(target_family = "wasm"))]
-        {
-            cx.bind_keys([gpui::KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd-q"
-                } else {
-                    "ctrl-q"
-                },
-                crate::quit::RequestQuit,
-                None,
-            )]);
-            cx.set_menus([gpui::Menu {
-                name: "Application".into(),
-                items: vec![gpui::MenuItem::action("Quit", crate::quit::RequestQuit)],
-                disabled: false,
-            }]);
-        }
     }
 }
 
