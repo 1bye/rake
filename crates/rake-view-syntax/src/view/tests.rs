@@ -208,7 +208,7 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
 }
 
 #[test]
-fn component_paths_properties_and_children_expand_to_struct_literals() {
+fn component_paths_properties_and_children_expand_to_typed_rust() {
     for source in [
         "<Badge id={id} label={label} highlighted={true}/>",
         "<ui::Card id={id} header={header} footer={None}>\"Body\"</ui::Card>",
@@ -233,6 +233,10 @@ fn component_paths_properties_and_children_expand_to_struct_literals() {
         ),
         ("<Card label={a} label={b}/>", "duplicate attribute `label`"),
     ] {
+        if cfg!(feature = "reactive") && expected == "Rust field names" {
+            syn::parse2::<syn::Expr>(expand(source).expect(source)).expect("builder property");
+            continue;
+        }
         let error = expand(source).expect_err(source).to_string();
 
         assert!(error.contains(expected), "{source}: {error}");
@@ -323,7 +327,16 @@ fn expansion_snapshots() {
 
     for (name, source) in fixtures {
         let expanded = expand(&source).expect(name).to_string() + "\n";
-        let path = directory.join(format!("{name}.txt"));
+        let mut path = directory.join(format!("{name}.txt"));
+        if cfg!(feature = "reactive") {
+            let reactive = directory.join(format!("{name}.reactive.txt"));
+            if reactive.exists()
+                || (std::env::var_os("RAKE_UPDATE_SNAPSHOTS").is_some()
+                    && std::fs::read_to_string(&path).expect("base snapshot exists") != expanded)
+            {
+                path = reactive;
+            }
+        }
 
         if std::env::var_os("RAKE_UPDATE_SNAPSHOTS").is_some() {
             std::fs::write(&path, &expanded).expect("write snapshot");

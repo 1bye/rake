@@ -7572,6 +7572,7 @@ dependencies = [
  "gpui-fast",
  "gpui-kit",
  "gpui-pre",
+ "rake-macros",
  "tracing",
  "unicode-segmentation",
 ]

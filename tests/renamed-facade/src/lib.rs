@@ -6,31 +6,31 @@
 use framework::gpui;
 use framework::prelude::*;
 
-#[cfg(feature = "experimental-components")]
+#[cfg(feature = "experimental-reactive")]
 #[framework::component]
-fn FunctionCounter(cx: &mut framework::Scope, start: i32) -> impl gpui::IntoElement {
-    let (value, setter) = cx.use_state(|| start);
+fn FunctionCounter(start: i32, cx: &mut framework::reactive::Setup) -> impl gpui::IntoElement {
+    let value = cx.signal(start);
 
     framework::view! {
         <button
             id="increment"
-            aria-label={value.to_string()}
+            aria-label={value.get(cx).to_string()}
             on:click={
                 move |_, _, cx| {
-                    let _ = setter.update(cx, |value| *value += 1);
+                    let _ = value.update(cx, |value| *value += 1);
                 }
             }
         >
-            {value.to_string()}
+            {value.get(cx).to_string()}
         </button>
     }
 }
 
 #[doc = "Function components expand through the renamed dependency on native and Wasm targets."]
-#[cfg(feature = "experimental-components")]
+#[cfg(feature = "experimental-reactive")]
 pub fn function_component_markup() -> impl gpui::IntoElement {
     let defaults = FunctionCounter {
-        id: "defaults",
+        id: "defaults".into(),
         start: 0,
     };
 
@@ -39,7 +39,7 @@ pub fn function_component_markup() -> impl gpui::IntoElement {
     }
 }
 
-#[derive(gpui::IntoElement)]
+#[derive(gpui::IntoElement, framework::Props)]
 struct ComponentPanel {
     id: gpui::ElementId,
     title: gpui::SharedString,
@@ -64,11 +64,11 @@ impl gpui::RenderOnce for ComponentPanel {
 }
 
 /// Typed components and their children also work through a renamed Rake dependency.
-pub fn component_markup() -> impl gpui::IntoElement {
+pub fn component_markup(window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
     framework::view! {
         <self::ComponentPanel
-            id={"panel".into()}
-            title={"Components".into()}
+            id={gpui::ElementId::from("panel")}
+            title={gpui::SharedString::from("Components")}
             header={
                 <h2>Markup through a renamed facade</h2>
             }
@@ -104,6 +104,8 @@ pub fn paragraph_markup(labels: &[&str]) -> impl gpui::IntoElement {
 
 /// Overlay components are ordinary typed tags through a renamed facade, too.
 pub fn overlay_markup(
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
     state: framework::overlay::OverlayHostState,
     anchor: framework::overlay::AnchorState,
     popup: framework::overlay::OverlayState,
@@ -134,7 +136,7 @@ pub fn overlay_markup(
             <Popover state={popup} anchor={anchor}>
                 <p>"Controls"</p>
             </Popover>
-            <Dialog state={dialog} title={"Documents".into()} footer={None}>
+            <Dialog state={dialog} title={gpui::SharedString::from("Documents")} footer={None}>
                 <p>"Retained content can be mounted here."</p>
             </Dialog>
         </OverlayHost>
@@ -150,7 +152,11 @@ gpui::actions!(
 );
 
 /// Keyboard helpers and namespaced actions resolve through the renamed facade.
-pub fn keyboard_markup(focus: &gpui::FocusHandle, disabled: bool) -> impl gpui::IntoElement {
+pub fn keyboard_markup(
+    cx: &mut gpui::App,
+    focus: &gpui::FocusHandle,
+    disabled: bool,
+) -> impl gpui::IntoElement {
     framework::view! {
         <section
             focus={&focus}
@@ -295,7 +301,12 @@ impl Default for ComponentPanel {
 }
 
 /// Shorthand, defaults, booleans and match arms also resolve through a renamed facade.
-pub fn syntax_markup(id: gpui::ElementId, selected: Option<String>) -> impl gpui::IntoElement {
+pub fn syntax_markup(
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+    id: gpui::ElementId,
+    selected: Option<String>,
+) -> impl gpui::IntoElement {
     framework::view! {
         <self::ComponentPanel {id} {..Default::default()}>
             <main>

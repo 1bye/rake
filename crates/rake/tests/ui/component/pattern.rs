@@ -1,5 +1,8 @@
 #[rake::component]
-fn Invalid(cx: &mut rake::Scope, (first, second): (i32, i32)) -> impl rake::gpui::IntoElement {
+fn Invalid(
+    (first, second): (i32, i32),
+    cx: &mut rake::reactive::Setup,
+) -> impl rake::gpui::IntoElement {
     rake::gpui::div()
 }
 

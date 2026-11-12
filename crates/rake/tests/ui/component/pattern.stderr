@@ -1,5 +1,5 @@
-error: component props must be named parameters
- --> tests/ui/component/pattern.rs:2:34
+error: use a named component property
+ --> tests/ui/component/pattern.rs:3:5
   |
-2 | fn Invalid(cx: &mut rake::Scope, (first, second): (i32, i32)) -> impl rake::gpui::IntoElement {
-  |                                  ^^^^^^^^^^^^^^^
+3 |     (first, second): (i32, i32),
+  |     ^^^^^^^^^^^^^^^

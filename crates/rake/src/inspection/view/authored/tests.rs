@@ -11,8 +11,9 @@ use crate::{
     router::WindowId,
 };
 
-#[derive(IntoElement)]
+#[derive(IntoElement, crate::Props)]
 struct Row {
+    #[prop(no_into)]
     id: gpui::ElementId,
 }
 
@@ -441,7 +442,7 @@ fn views_without_an_inspection_host_do_not_sample_styles() {
 #[test]
 fn component_properties_do_not_require_clone_debug_or_gpui_key_conversion() {
     struct CustomId(usize);
-    #[derive(IntoElement)]
+    #[derive(IntoElement, crate::Props)]
     struct CustomComponent {
         id: CustomId,
     }
@@ -469,8 +470,9 @@ struct AccessibleFixture {
 }
 
 impl Render for AccessibleFixture {
-    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let clicks = self.clicks.clone();
+        let _ = &cx;
         crate::view! {
             <section
                 id="accessibility-root"
@@ -996,4 +998,53 @@ fn base_button_retains_resolved_hover_styles_and_live_edits() {
             .width,
         160.
     );
+}
+
+#[cfg(feature = "experimental-reactive")]
+#[test]
+fn signal_metadata_preserves_binding_names_and_bounds_value_previews() {
+    use crate::reactive::Setup;
+
+    #[crate::component]
+    fn Counter(cx: &mut Setup) -> impl IntoElement {
+        let count = cx.signal(7_i32);
+        let title = cx.signal("é".repeat(300));
+        crate::view! {
+            <div>{count}{title}</div>
+        }
+    }
+    struct Host(Store);
+    impl Render for Host {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            crate::view! {
+                <div>
+                    <Counter id="counter" />
+                </div>
+            }
+            .root(self.0.clone(), 0, WindowId(1))
+        }
+    }
+    let mut app = gpui::TestAppContext::single();
+    let store = Store::default();
+    store.attach();
+    let (_, cx) = app.add_window_view(|_, _| Host(store.clone()));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    let snapshot = store.snapshot();
+    let counter = named(&snapshot, "counter");
+    let signals = &counter.view.as_ref().unwrap().signals;
+    assert_eq!(signals.len(), 2);
+    assert_eq!(signals[0].name, "count");
+    assert_eq!(signals[0].value, Some(serde_json::json!(7)));
+    assert_eq!(signals[1].name, "title");
+    assert_eq!(
+        signals[1].value.as_ref().unwrap().as_str().unwrap().len(),
+        256
+    );
+    assert!(counter.metadata_truncated);
 }

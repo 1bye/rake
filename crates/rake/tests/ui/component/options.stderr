@@ -1,4 +1,4 @@
-error: component accepts only `memo`
+error: expected view or cached
  --> tests/ui/component/options.rs:1:19
   |
 1 | #[rake::component(unknown)]

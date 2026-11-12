@@ -1,0 +1,16 @@
+error[E0277]: missing required component property `__Label_text`
+ --> tests/ui/component/missing_prop.rs:7:13
+  |
+7 |       let _ = rake::view! {
+  |  _____________^
+8 | |         <Label/>
+9 | |     };
+  | |_____^ set the required property before calling build
+  |
+  = help: the trait `rake::__private::RequiredProp<__Label_text>` is not implemented for `rake::__private::PropMissing`
+note: required by a bound in `LabelBuilder::<__Prop_text>::build`
+ --> tests/ui/component/missing_prop.rs:1:1
+  |
+1 | #[rake::component]
+  | ^^^^^^^^^^^^^^^^^^ required by this bound in `LabelBuilder::<__Prop_text>::build`
+  = note: this error originates in the macro `rake::view` which comes from the expansion of the derive macro `::rake::Props` (in Nightly builds, run with -Z macro-backtrace for more info)

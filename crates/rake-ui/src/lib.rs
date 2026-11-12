@@ -50,3 +50,12 @@ pub use gpui_kit as kit;
 compile_error!(
     "Rake's kit feature is native-only: GPUI Kit 0.9.0 enables Web multithreading that requires nightly. Use default Rake views for stable single-threaded Web builds."
 );
+
+mod props;
+
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::props::{
+        EquivalentProp, PropComparison, PropMissing, PropSet, PropsBuilder, RequiredProp, Value,
+    };
+}

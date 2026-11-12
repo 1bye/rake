@@ -32,32 +32,36 @@ jobs:
             mesa-vulkan-drivers xvfb fonts-dejavu-core
       - name: Test runtime and inspection
         run: >-
-          cargo test -p rake-app --features experimental-components,view-test-support,devtools --lib --locked
+          cargo test -p rake-app --features experimental-reactive,view-test-support,devtools --lib --locked
       - name: Test consumer behavior
-        run: cargo test -p rake-app --locked --features experimental-components,view-test-support,devtools --test function_components --test view_state
+        run: cargo test -p rake-app --locked --features experimental-reactive,view-test-support,devtools --test function_components --test view --test view_components --test view_state
       - name: Check component consumers and targets
         run: |
-          cargo clippy -p rake-app --locked --features experimental-components,view-test-support,devtools --lib --test function_components --bench function_components --example components -- -D warnings
-          cargo check -p renamed-facade --locked --features experimental-components,framework/view-test-support
-          cargo check -p rake-app -p renamed-facade --locked --features rake-app/experimental-components,renamed-facade/experimental-components --target wasm32-unknown-unknown --lib
+          cargo clippy -p rake-app --locked --features experimental-reactive,view-test-support,devtools --lib --test function_components --bench function_components --example components -- -D warnings
+          cargo check -p renamed-facade --locked --features experimental-reactive,framework/view-test-support
+          cargo check -p rake-view --locked --all-targets --features rake/experimental-reactive,rake/view-test-support
+          cargo test -p rake-view-syntax -p rake-macros -p rake-protocol --locked --features rake-macros/reactive
+          cargo test -p rake-view-syntax --locked
+          cargo test -p rake-app --locked --features experimental-reactive,view-test-support --doc
+          cargo check -p rake-app -p renamed-facade --locked --features rake-app/experimental-reactive,renamed-facade/experimental-reactive --target wasm32-unknown-unknown --lib
           cargo check -p rake-app --locked --features view-test-support --lib
           cargo check -p rake-app -p rake-macros --locked --no-default-features --lib
       - name: Check AppKit backend compatibility
         if: runner.os == 'macOS'
         run: |
-          cargo check -p rake-app --locked --features experimental-components,view-test-support,native-components --example native
+          cargo check -p rake-app --locked --features experimental-reactive,view-test-support,native-components --example native
           cargo check -p rake-native --locked --features gpui-fast,native-tests,gpui_fast_platform/runtime_shaders,gpui_platform/runtime_shaders --test appkit
       - name: Run headless benchmarks and lifetime assertions
-        run: cargo bench -p rake-app --locked --features experimental-components,view-test-support --bench function_components -- --quick
+        run: cargo bench -p rake-app --locked --features experimental-reactive,view-test-support --bench function_components -- --quick
       - name: Smoke-test native windows
         shell: python
         run: |
           import json, os, signal, subprocess
-          build = subprocess.run(["cargo", "bench", "-p", "rake-app", "--locked", "--features", "experimental-components,view-test-support", "--bench", "function_components", "--no-run", "--message-format=json"], text=True, capture_output=True, check=True)
+          build = subprocess.run(["cargo", "bench", "-p", "rake-app", "--locked", "--features", "experimental-reactive,view-test-support", "--bench", "function_components", "--no-run", "--message-format=json"], text=True, capture_output=True, check=True)
           artifacts = [json.loads(line) for line in build.stdout.splitlines() if line.startswith("{")]
           binary = next(item["executable"] for item in artifacts if item.get("target", {}).get("name") == "function_components" and item.get("executable"))
           prefix = ["xvfb-run", "-a"] if os.environ["RUNNER_OS"] == "Linux" else []
-          for variant in ["plain", "hooks", "memo", "raw"]:
+          for variant in ["plain", "plain-cached", "signals", "cached", "raw"]:
               process = subprocess.Popen(prefix + [binary, "--native", variant], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
               try:
                   stdout, stderr = process.communicate(timeout=60)

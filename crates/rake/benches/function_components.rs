@@ -1,13 +1,13 @@
 #![doc = "Equivalent GPUI, function-component, and raw keyed-state workloads. Supports headless measurements and an actual native window."]
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::time::Instant;
 
-use rake::component::{Scope, State};
 use rake::gpui::{self, AppContext, Context, IntoElement, Render, Window, prelude::*};
+use rake::reactive::{Setup, Signal};
 use serde_json::json;
 
 #[cfg(feature = "gpui-fast")]
@@ -15,9 +15,18 @@ use gpui_fast_platform as gpui_platform;
 
 #[path = "function_components/async_work.rs"]
 mod async_work;
+#[path = "function_components/dependencies.rs"]
+mod dependencies;
+#[path = "function_components/resources.rs"]
+mod resources;
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static LIVE_BYTES: AtomicIsize = AtomicIsize::new(0);
+const RENDERER: &str = if cfg!(feature = "gpui-fast") {
+    "gpui-fast 0.1.13"
+} else {
+    "gpui-pre 0.3.11"
+};
 const SCENARIOS: [&str; 6] = ["mount", "parent", "leaf", "all", "reorder", "cycle"];
 
 struct CountingAllocator;
@@ -61,8 +70,9 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 #[derive(Clone, Copy, Debug)]
 enum Variant {
     Plain,
-    Hooks,
-    Memo,
+    PlainCached,
+    Signals,
+    Cached,
     Raw,
 }
 
@@ -71,7 +81,7 @@ enum Writer {
     #[default]
     Empty,
     Plain(gpui::WeakEntity<Plain>),
-    Hooks(State<i32>),
+    Signals(Signal<i32>),
     Raw(gpui::WeakEntity<i32>),
 }
 
@@ -85,7 +95,7 @@ impl Writer {
                     cx.notify();
                 })
                 .is_ok(),
-            Self::Hooks(state) => state.update(cx, |value| *value += 1).is_ok(),
+            Self::Signals(state) => state.update(cx, |value| *value += 1).is_some(),
             Self::Raw(owner) => owner
                 .update(cx, |value, cx| {
                     *value += 1;
@@ -99,6 +109,7 @@ impl Writer {
 #[derive(Default)]
 struct Probe {
     writer: RefCell<Writer>,
+    rendered: Cell<i32>,
 }
 
 impl PartialEq for Probe {
@@ -107,7 +118,8 @@ impl PartialEq for Probe {
     }
 }
 
-fn row(value: i32) -> impl IntoElement {
+fn row(probe: &Probe, value: i32) -> impl IntoElement + use<> {
+    probe.rendered.set(value);
     gpui::div()
         .w(gpui::px(48.))
         .h(gpui::px(16.))
@@ -122,39 +134,36 @@ struct Plain {
 impl Render for Plain {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.probe.writer.replace(Writer::Plain(cx.weak_entity()));
-        row(self.values.iter().sum())
+        row(&self.probe, self.values.iter().sum())
     }
 }
 
-#[rake::component]
-fn HookRow(cx: &mut Scope, hooks: usize, probe: Rc<Probe>) -> impl IntoElement {
-    hook_row(cx, hooks, probe)
+#[rake::component(cached = false)]
+fn SignalRow(signals: usize, probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
+    let values = create_signals(cx, signals, &probe);
+    row(&probe, values.iter().map(|value| value.get(cx)).sum())
 }
 
-#[rake::component(memo)]
-fn MemoRow(cx: &mut Scope, hooks: usize, probe: Rc<Probe>) -> impl IntoElement {
-    hook_row(cx, hooks, probe)
+#[rake::component(cached = "w-12 h-4")]
+fn CachedRow(signals: usize, probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
+    let values = create_signals(cx, signals, &probe);
+    row(&probe, values.iter().map(|value| value.get(cx)).sum())
 }
 
-fn hook_row(cx: &mut Scope, hooks: usize, probe: Rc<Probe>) -> impl IntoElement {
-    let mut sum = 0;
-
-    for index in 0..hooks {
-        let (value, setter) = cx.use_state(|| 0_i32);
-        sum += value;
-
-        if index == 0 {
-            probe.writer.replace(Writer::Hooks(setter));
-        }
-    }
-
-    row(sum)
+fn create_signals<V: 'static>(
+    cx: &mut Setup<'_, '_, V>,
+    count: usize,
+    probe: &Probe,
+) -> Vec<Signal<i32>> {
+    let values: Vec<_> = (0..count).map(|_| cx.signal(0)).collect();
+    probe.writer.replace(Writer::Signals(values[0]));
+    values
 }
 
 #[derive(gpui::IntoElement)]
 struct RawRow {
     id: usize,
-    hooks: usize,
+    signals: usize,
     probe: Rc<Probe>,
 }
 
@@ -162,7 +171,7 @@ impl gpui::RenderOnce for RawRow {
     fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let mut sum = 0;
         window.with_id(("row", self.id), |window| {
-            for index in 0..self.hooks {
+            for index in 0..self.signals {
                 let state = window.use_keyed_state(("hook", index), cx, |_, _| 0_i32);
                 sum += *state.read(cx);
 
@@ -171,7 +180,7 @@ impl gpui::RenderOnce for RawRow {
                 }
             }
         });
-        row(sum)
+        row(&self.probe, sum)
     }
 }
 
@@ -183,16 +192,16 @@ struct Row {
 
 struct Host {
     variant: Variant,
-    hooks: usize,
+    signals: usize,
     rows: Vec<Row>,
     next: usize,
 }
 
 impl Host {
-    fn new(variant: Variant, hooks: usize) -> Self {
+    fn new(variant: Variant, signals: usize) -> Self {
         Self {
             variant,
-            hooks,
+            signals,
             rows: Vec::new(),
             next: 0,
         }
@@ -220,7 +229,7 @@ impl Host {
                 self.rows.pop();
                 self.append();
             }
-            "parent" | "hooks" => {}
+            "parent" | "signals" => {}
             _ => panic!("unknown scenario"),
         }
 
@@ -246,28 +255,39 @@ impl Render for Host {
 
         for item in &mut self.rows {
             parent = match self.variant {
-                Variant::Plain => {
+                Variant::Plain | Variant::PlainCached => {
                     let view = item.plain.get_or_insert_with(|| {
                         cx.new(|_| Plain {
-                            values: vec![0; self.hooks],
+                            values: vec![0; self.signals],
                             probe: item.probe.clone(),
                         })
                     });
-                    parent.child(view.clone())
+                    if matches!(self.variant, Variant::PlainCached) {
+                        view.read(cx);
+                        parent.child(
+                            view.clone().cached(
+                                gpui::StyleRefinement::default()
+                                    .w(gpui::px(48.))
+                                    .h(gpui::px(16.)),
+                            ),
+                        )
+                    } else {
+                        parent.child(view.clone())
+                    }
                 }
-                Variant::Hooks => parent.child(HookRow {
-                    id: ("row", item.id),
-                    hooks: self.hooks,
+                Variant::Signals => parent.child(SignalRow {
+                    id: ("row", item.id).into(),
+                    signals: self.signals,
                     probe: item.probe.clone(),
                 }),
-                Variant::Memo => parent.child(MemoRow {
-                    id: ("row", item.id),
-                    hooks: self.hooks,
+                Variant::Cached => parent.child(CachedRow {
+                    id: ("row", item.id).into(),
+                    signals: self.signals,
                     probe: item.probe.clone(),
                 }),
                 Variant::Raw => parent.child(RawRow {
                     id: item.id,
-                    hooks: self.hooks,
+                    signals: self.signals,
                     probe: item.probe.clone(),
                 }),
             };
@@ -278,8 +298,11 @@ impl Render for Host {
 }
 
 fn draw<V: Render>(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle<V>) {
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-        .unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        window.simulate_next_frame(cx);
+    })
+    .unwrap();
 }
 
 fn percentiles(times: &mut [f64]) -> (f64, f64) {
@@ -287,9 +310,9 @@ fn percentiles(times: &mut [f64]) -> (f64, f64) {
     (times[times.len() / 2], times[times.len() * 95 / 100])
 }
 
-fn measure(variant: Variant, count: usize, hooks: usize, scenario: &str, samples: usize) {
+fn measure(variant: Variant, count: usize, signals: usize, scenario: &str, samples: usize) {
     let mut cx = gpui::TestAppContext::single();
-    let window = cx.add_window(|_, _| Host::new(variant, hooks));
+    let window = cx.add_window(|_, _| Host::new(variant, signals));
     cx.run_until_parked();
     draw(&mut cx, window);
     let baseline = LIVE_BYTES.load(Ordering::Relaxed);
@@ -318,6 +341,13 @@ fn measure(variant: Variant, count: usize, hooks: usize, scenario: &str, samples
         draw(&mut cx, window);
         let elapsed = start.elapsed().as_secs_f64() * 1e6;
         let allocated = ALLOCATIONS.load(Ordering::Relaxed) - before;
+        if matches!(scenario, "leaf" | "all") {
+            assert_eq!(
+                probes[0].rendered.get(),
+                (iteration + 1) as i32,
+                "updated row must render its current value"
+            );
+        }
         cx.run_until_parked();
 
         if iteration >= 5 {
@@ -342,16 +372,18 @@ fn measure(variant: Variant, count: usize, hooks: usize, scenario: &str, samples
     });
     drop(probes);
     let retained = LIVE_BYTES.load(Ordering::Relaxed) - baseline;
+    let runtime_stats = cx.update(|cx| rake::reactive::runtime_stats(cx));
+    assert_eq!(runtime_stats, rake::reactive::RuntimeStats::default());
     let (p50, p95) = percentiles(&mut times);
     println!(
         "{}",
         json!({
-            "renderer": "gpui-fast 0.1.13", "backend": "TestAppContext", "variant": format!("{variant:?}"), "scenario": scenario,
-            "instances": count, "hooks": hooks, "samples": samples,
+            "renderer": RENDERER, "backend": "TestAppContext", "variant": format!("{variant:?}"), "scenario": scenario,
+            "instances": count, "signals": signals, "samples": samples,
             "p50_us": p50, "p95_us": p95,
             "allocations_per_sample": allocations as f64 / samples as f64,
             "live_after_mount_bytes": after_mount, "retained_after_unmount_bytes": retained,
-            "initial_handles_disposed": disposed
+            "initial_handles_disposed": disposed, "runtime_after_unmount": runtime_stats
         })
     );
     assert!(disposed, "component retained after unmount");
@@ -371,7 +403,7 @@ impl Render for Native {
         let variant = host.variant;
         let scenario = self.scenario;
         let instances = host.rows.len();
-        let hooks = host.hooks;
+        let signals = host.signals;
         let probes: Vec<_> = host.rows.iter().map(|row| row.probe.clone()).collect();
         let started = Instant::now();
         let measurement = gpui::canvas(
@@ -391,8 +423,8 @@ impl Render for Native {
                     println!(
                         "{}",
                         json!({
-                            "renderer": "gpui-fast 0.1.13", "backend": "native", "variant": format!("{variant:?}"),
-                            "scenario": scenario, "instances": instances, "hooks": hooks,
+                            "renderer": RENDERER, "backend": "native", "variant": format!("{variant:?}"),
+                            "scenario": scenario, "instances": instances, "signals": signals,
                             "samples": times.len(), "p50_us": p50, "p95_us": p95
                         })
                     );
@@ -428,29 +460,30 @@ fn main() {
     {
         let variant = match args.get(index + 1).map(String::as_str) {
             Some("plain") => Variant::Plain,
-            Some("hooks") => Variant::Hooks,
-            Some("memo") => Variant::Memo,
+            Some("plain-cached") => Variant::PlainCached,
+            Some("signals") => Variant::Signals,
+            Some("cached") => Variant::Cached,
             Some("raw") => Variant::Raw,
-            _ => panic!("a benchmark case requires plain, hooks, memo, or raw"),
+            _ => panic!("a benchmark case requires plain, plain-cached, signals, cached, or raw"),
         };
         let requested = args.get(index + 2).map(String::as_str).unwrap_or("all");
         let scenario = SCENARIOS
             .into_iter()
-            .chain(["hooks"])
+            .chain(["signals"])
             .find(|scenario| *scenario == requested)
             .expect("unknown benchmark scenario");
         let instances = args
             .get(index + 3)
             .map(|value| value.parse().unwrap())
             .unwrap_or(100);
-        let hooks = args
+        let signals = args
             .get(index + 4)
             .map(|value| value.parse().unwrap())
             .unwrap_or(1);
-        assert!(instances > 0 && hooks > 0);
+        assert!(instances > 0 && signals > 0);
 
         if args[index] == "--headless" {
-            measure(variant, instances, hooks, scenario, 31);
+            measure(variant, instances, signals, scenario, 31);
             return;
         }
 
@@ -458,7 +491,7 @@ fn main() {
             cx.open_window(gpui::WindowOptions::default(), move |_, cx| {
                 cx.new(|cx| {
                     let host = cx.new(|_| {
-                        let mut host = Host::new(variant, hooks);
+                        let mut host = Host::new(variant, signals);
                         for _ in 0..instances {
                             host.append();
                         }
@@ -485,20 +518,28 @@ fn main() {
     };
     let samples = if quick { 7 } else { 31 };
 
-    for variant in [Variant::Plain, Variant::Hooks, Variant::Memo, Variant::Raw] {
+    for variant in [
+        Variant::Plain,
+        Variant::PlainCached,
+        Variant::Signals,
+        Variant::Cached,
+        Variant::Raw,
+    ] {
         for &count in sizes {
             for scenario in SCENARIOS {
                 measure(variant, count, 1, scenario, samples);
             }
         }
 
-        for hooks in [1, 10, 50] {
-            measure(variant, 100, hooks, "hooks", samples);
+        for signals in [1, 10, 50] {
+            measure(variant, 100, signals, "signals", samples);
         }
 
-        if !matches!(variant, Variant::Memo) {
+        if !matches!(variant, Variant::Cached | Variant::PlainCached) {
             async_work::measure(variant, false, samples);
             async_work::measure(variant, true, samples);
         }
     }
+    dependencies::run(samples);
+    resources::run(samples);
 }

@@ -1,204 +1,226 @@
 # Experimental function components
 
-The stable markup reference is [View syntax](view.md). Function components are
-available with `rake-app`'s opt-in `experimental-components` feature. This is a
-source-checkout prototype for [issue #27](https://github.com/1bye/rake/issues/27);
-the published alpha does not yet include it. Enable the feature on your local
-Rake dependency. It is not enabled by default. This feature selects the pinned
-`gpui-fast` backend for native and WASM builds. Use `rake::gpui` for GPUI types
-so your components and application share the same backend.
+Enable `experimental-reactive` on a local `rake-app` dependency to use
+`#[rake::component]` and `rake::reactive`. This source-checkout prototype follows
+[issue #27](https://github.com/1bye/rake/issues/27)'s signals redesign. It replaces
+the earlier `experimental-components` hooks API and is not enabled by default.
+Use `rake::gpui` so the application and its components share the selected backend.
+The stable markup reference remains [View syntax](view.md).
 
 ```rust
-use rake::{Scope, gpui::{IntoElement, SharedString}};
+use rake::{gpui::{IntoElement, SharedString}, reactive::Setup};
 
 #[rake::component]
-fn Counter(cx: &mut Scope, label: SharedString, start: i32) -> impl IntoElement {
-    let (count, set_count) = cx.use_state(|| start);
-    let doubled = cx.use_memo(count, |value| value * 2);
+fn Counter(label: SharedString, start: i32, cx: &mut Setup) -> impl IntoElement {
+    let count = cx.signal(start);
+    let doubled = cx.memo(move |cx| count.get(cx) * 2);
 
     rake::view! {
         <button
             id="increment"
-            aria-label={format!("{label}: {count} ({doubled})")}
-            on:click={move |_, _, cx| {
-                let _ = set_count.update(cx, |value| *value += 1);
-            }}
+            class="w-40 h-10"
+            aria-label={format!("{label}: {}", count.get(cx))}
+            on:click={move |cx| count.update(cx, |value| *value += 1)}
         >
-            {format!("{label}: {count} ({doubled})")}
+            {label} ": " {count} " (" {doubled} ")"
         </button>
     }
 }
-
-fn example() -> impl IntoElement {
-    rake::view! { <Counter id="clicks" label="Clicks" start={0}/> }
-}
 ```
 
-## Ownership and React comparisons
+Use it as `<Counter id="clicks" label="Clicks" start={0}/>` inside `view!`.
+The complete runnable example is `crates/rake/examples/components.rs`.
+
+## Setup, rendering, and ownership
+
+Statements before the final expression execute once per mount. The final
+expression executes on each render, with prop names rebound to their current
+values and the real GPUI `window` and `cx`. Put computations that should rerun
+inside that expression, or use `cx.memo` for a reusable derived value.
+
+A component with a final `&mut Setup` parameter owns one typed GPUI `Render`
+entity. `Setup` dereferences to its real `Context`, so ordinary GPUI operations
+remain available. Without `Setup`, a component is a stateless `RenderOnce`
+struct. `#[rake::component(view)]` forces a view boundary without local state.
+The render closure and props remain concrete generic types. Children and event
+callbacks use shared closures because those values must be cloneable props.
+
+Use signals for state whose lifetime belongs to a mounted UI component. Keep
+application data, retained tab state, and large collections in ordinary entity
+fields when another part of the application owns them. Signals add a registry,
+an entity per value, and dependency subscriptions; they are not free fields.
+There is no thread-local runtime or separate batching API.
 
 | React | Rake |
 | --- | --- |
-| Function runs again during rendering | A generated GPUI entity calls the Rust function during rendering |
-| `useState(initial)` | `cx.use_state(|| initial)` returns an owned snapshot and a `Copy` setter |
-| Functional state update | `setter.update(cx, |value| *value += 1)` edits the latest stored value |
-| `useRef` | `cx.use_ref(...)` retains data without notifying on mutation |
-| Dependency array | One comparable Rust value; use a tuple for several dependencies |
-| Effect cleanup | Return an owned closure from `use_effect` |
-| Keyed child | Explicit `id`, scoped by the parent element path and component type |
+| Component body runs on every render | Setup runs once; the final expression renders again |
+| `useState` returns a render snapshot | `Signal` is a handle; read its current value through `cx` |
+| Functional setter | `count.update(cx, \|value\| *value += 1)` |
+| `useMemo` dependency array | `cx.memo` tracks signals read by its callback |
+| `useEffect` and returned cleanup | `cx.effect` and `cx.on_cleanup` inside the callback |
+| Hook call order must remain fixed | Setup can create signals conditionally or in loops |
+| A keyed child retains state | Explicit stable `id`, component type, and parent path retain state |
 
-Use hooks for local UI state such as disclosure state, selection, or a transient
-request. Keep application/domain state in ordinary `Entity` fields when other
-parts of the application own it, observe it, or must retain it after the component
-disappears. One generated entity owns each mounted function component.
+## Signals and derived values
 
-`count` is a snapshot for one render. A closure that captures it keeps that
-snapshot. `set_count.update` changes the current stored value, so two updates do
-not overwrite each other using an old captured count. Cloning a state snapshot
-costs whatever that type's `Clone` costs; share large owned data when appropriate.
+`Signal<T>` and `Memo<T>` are `Copy` handles, including when `T` is not `Clone`.
+Copying a handle does not retain its component. `read(cx)` borrows `&T`,
+`get(cx)` clones a `T: Clone`, and `with(cx, callback)` provides a scoped borrow.
+`Signal::entity(cx)` returns the underlying GPUI entity for interoperability.
+Retaining that entity explicitly can extend the value's lifetime beyond unmount.
 
-## Hook contracts
+`set` and `update` notify readers. `set_if_changed` requires `PartialEq` and
+suppresses equal writes. Writes work with `App`, `Context`, and `AsyncApp` through
+`SignalContext`; disposed or foreign-application handles do nothing, and
+`update` returns `None`. Reads after disposal panic, like using an invalid owner;
+use `is_alive` when retaining handles outside their component.
 
-- `use_state` initializes once per mount and requires `Clone` for snapshots.
-  Changing a `start` prop does not reset an existing slot.
-- `use_ref` accepts non-`Clone` values. Its `read(cx, callback)` and
-  `update(cx, callback)` access the current value, including during rendering.
-  Ref updates do not notify the component.
-- `use_memo(dependencies, compute)` requires comparable dependencies and a
-  cloneable result. The callback receives `&dependencies`.
-- `use_effect(dependencies, effect)` runs after paint and after the render borrow
-  has ended. The callback receives `&mut gpui::App` and returns `()` or a cleanup
-  closure. Cleanup runs before replacement and on unmount. Repeated renders
-  before paint retain the latest pending effect. Unpainted components do not
-  run effects.
-- `use_context::<G>()` clones an installed GPUI global and observes its changes.
-  `use_theme::<T>()` observes the installed `ThemeGlobal<T>` and returns `Rc<T>`.
-- `use_resource(&runtime, dependencies, factory)` uses Rake's existing managed
-  loading binding. The factory receives owned dependencies and `LoadContext`.
-  Changed dependencies cancel and replace the previous loader. The returned
-  `Resource` provides `read`, `retry`, and `cancel`, without `Clone` bounds on
-  successful values or errors.
+`cx.signal(value)` is owned by the component. `Signal::new(cx, value)` and
+`Signal::from_entity(cx, entity)` are application-owned registrations: call
+`dispose(cx)` when that explicit ownership should end. Generational IDs prevent
+an old handle from reaching a new value in a reused slot.
 
-```rust
-let request = cx.use_resource(&runtime, document_id, |id, load| async move {
-    load.background_executor()
-        .spawn(async move { std::fs::read_to_string(format!("{id}.txt")) })
-        .await
-});
+`cx.memo(move |cx| ...)` tracks synchronous signal reads, replaces dependencies
+when branches change, and notifies only when its `PartialEq` result changes.
+A direct read of a recognized local signal in setup is rejected because it
+would capture only the mount-time value. This syntax check does not follow
+aliases or calls through arbitrary helper functions.
 
-let label = request.read(cx, |state| match state {
-    rake::loading::LoadStatus::Ready(value) => value.clone(),
-    rake::loading::LoadStatus::Failed(error) => error.to_string(),
-    _ => "Loading…".into(),
-})?;
-```
+`{count}` and `{doubled}` render displayable values in element children.
+Paragraphs use Rake's text-run builder, so format a read there, for example
+`<p>{count.get(cx).to_string()}</p>`. `disabled={busy}` accepts either a bool or a
+`Signal<bool>`. Signal reads in other attributes can be explicit, such as
+`aria-expanded={expanded.get(cx)}`.
 
-Setters, refs, and resource handles are `Copy` and stay on the UI thread. They
-accept `App`, `Context`, `AsyncApp`, and `Scope`. They do not keep their owner
-alive. Stale handles, including handles used with another application, return
-`ComponentError::Disposed`. Reused registry entries get a new generation, so an
-old async callback cannot update a replacement component.
+## Props, events, and children
 
-For additional async work, retain the task in an effect cleanup to cancel it on
-unmount:
+With the feature enabled, component tags use type-state builders. Handwritten
+component structs add `#[derive(rake::Props)]`. Required fields must be supplied;
+`Option<T>` and `bool` default to `None` and `false`. `#[prop(default)]` uses
+`Default`, and `#[prop(default = expression)]` evaluates only when omitted.
+Setters accept `Into` by default; `#[prop(no_into)]` opts out. `{..base}` applies
+explicit attributes over the base, preserving source evaluation order.
+Generic components retain their bounds. Stateful props must be `Clone + 'static`.
 
 ```rust
-cx.use_effect((), move |cx| {
-    let task = cx.spawn(async move |cx| {
-        let value = fetch().await;
-        let _ = set_data.set(cx, value);
-    });
-    move || drop(task)
+#[rake::component]
+fn Greeting(
+    name: SharedString,
+    #[prop(default = 1)] repetitions: usize,
+) -> impl IntoElement {
+    rake::view! { <div>{name.repeat(repetitions)}</div> }
+}
+```
+
+A stateless `fn Card(props: CardProps)` delegates to the named struct's derived
+builder, allowing `<Card title="..."/>`. A stateful named-props component accepts
+that struct explicitly: `<Card id="card" props={props}/>`.
+
+A setup prop normally keeps its mount-time value. Mark it `#[prop(track)]` to
+receive a `Memo<T>` in setup that follows the parent; its type requires
+`PartialEq`. In the render expression it is still the current ordinary prop.
+Untracked props never reset state merely because their input changes.
+
+`#[event] click: ClickEvent` creates an optional `Event<ClickEvent>` prop.
+Invoke it with `click.call(event, window, cx)`. `on:click` accepts
+`move |cx| ...`, `move |event, cx| ...`, or the full GPUI handler.
+`#[rest] rest: Attrs` forwards root utility styling, accessible label/description,
+expanded state, disabled state, and clicks. Other event kinds must be declared
+as explicit event props. Forwarded styles cannot contain interactive variants.
+Disabled buttons retain the built-in keyboard and interaction suppression.
+
+Stateful `Children` and markup slots are rerunnable factories receiving the real
+window and app. Capture owned values, and clone non-`Copy` values inside a factory
+when each render consumes them. Stateless children can remain one-shot elements.
+Keep render parameters named `window` and `cx` when nested markup uses these
+factories or reactive attributes.
+
+## Effects, async work, and resources
+
+`cx.effect(move |window, cx| ...)` runs after a frame and again when a synchronous
+tracked read changes. Register cleanup with `cx.on_cleanup` inside the effect;
+it runs before replacement and on unmount. `cx.on_cleanup` in setup runs once at
+unmount. Cleanup has a live `App`, and component signals remain available while
+cleanup executes.
+
+`cx.spawn(async move |cx| ...)` owns its foreground task until completion or
+unmount. Explicit GPUI task handles created through other APIs keep their normal
+GPUI ownership rules. Move blocking work to a background executor.
+
+```rust
+let weather = cx.resource(move |cx| {
+    let city = city.get(cx);
+    async move { fetch_weather(city).await }
 });
 ```
 
-Call hooks in the same order every render. Conditional hooks, early returns that
-skip hooks, and changing the number of looped hook calls are invalid. The runtime
-diagnoses count, kind, and storage-type changes. Swapping hooks with the same
-kind and type cannot be distinguished; it is still incorrect.
+A resource starts at mount. Reads before the factory returns its future are
+tracked; reads inside the future are not. Input changes and `retry(cx)` cancel
+the previous task. `read(cx)` borrows the existing `LoadStatus`; `latest(cx)`
+retains the last successful value during loading or failure without requiring
+`Clone`. Generation checks reject stale results. Unmount cancels outstanding
+work, including a request that has never completed.
 
-## Props, identity, and rendering
+## Context, identity, and caching
 
-The macro generates a props struct named after the function. `id` is reserved
-for mount identity. Other parameters become cloneable props, converted with
-`Into` when the function runs. String literals therefore work for `SharedString`
-without changing existing `view!` component construction. Struct-update defaults
-continue to work. Component functions currently require synchronous, non-generic
-signatures with `&mut Scope` first and named prop parameters.
+`cx.provide(value)` and `cx.context::<T>()` perform a mount-time lookup through
+function-component parents. Provide a signal when descendants should react to
+changes. A handwritten GPUI view interrupts that parent chain. App-wide state
+uses `provide_global(cx, value)` and the `ReactiveApp::global_signal` extension.
 
-State survives parent renders and list reordering under stable keys. Changing a
-key, component type, or keyed ancestor creates a fresh instance. Removing an
-element releases its entity when GPUI retires that frame's element state.
-Conditional branches, switched-out tabs, and virtualized rows that leave the
-rendered tree reset on remount. GPUI cached subtrees retain their element state.
-Keeping a route/page entity alive alone does not preserve removed function
-components; put persistent tab data in that entity.
+Stable keys preserve state through reorder. Removing a branch, switching out a
+tab subtree, or virtualizing a row away releases its component when GPUI retires
+unused element state. A later remount starts fresh. Retaining only the page
+entity does not retain removed descendants. Cached subtrees preserve their
+mounted state; a uniform list's measurement row may remain mounted offscreen.
 
-A setter updates its component's hook storage and notifies that component.
-The retained renderer reuses unchanged ancestors and siblings automatically,
-including content-sized components. Layout changes still propagate: growing a
-child, changing inherited styles, or resizing the window can require rebuilding
-surrounding layout.
+Automatic caching is conservative: a literal root class with explicit width
+and height, including percentages, supplies GPUI's cached layout box. Use
+`#[rake::component(cached = false)]` to disable it or
+`#[rake::component(cached = "w-40 h-10")]` to provide a definite box. Dynamic styles,
+rest attributes, and inferred flex stretching do not automatically qualify.
+Content-sized caching is a separate GPUI follow-up. Equal comparable props reuse
+the cached view; props without a known `PartialEq` implementation conservatively
+invalidate it. Signal dependencies still invalidate the owning view.
 
-`#[rake::component(memo)]` compares incoming props using `PartialEq` and reuses
-an unchanged component when its parent renders again. It needs no explicit
-width or height. State and observed context changes still redraw it. Without
-`memo`, a parent render runs the component again with the latest props, as in
-React. Use memoization for expensive children whose props usually stay equal.
+Without caching, GPUI may redraw ancestors and siblings. The pinned backend also
+requires Rake subscriptions for cached function-component reads, collected across
+render, layout, and paint. State locality alone does not guarantee render isolation.
 
-The optional `.into_element().cached(style)` API remains available for explicit,
-definite-size GPUI caching. Automatic retention does not guess or freeze a
-component's dimensions. Tests cover independent siblings, intrinsic-size memo
-components, layout reflow, after-paint effects, and disposal of virtualized rows.
-A uniform list's measurement row remains mounted even when outside the viewport;
-other removed rows release their hooks and reset on remount.
+## Backend constraints and inspection
 
-## Inspection and verification
+The pinned GPUI `AppContext` has no associated `Result` type. This prototype uses
+`SignalContext` and `Option` for disposed writes rather than the proposed
+`C::Result`. `AsyncApp` itself can panic after its application disappears; Rake
+cannot turn that into a fallible write through this backend's public API.
+Registration also requires `cx`, so `from_entity(cx, entity)` replaces the
+proposed context-free `From<Entity<T>>` conversion.
 
-With `devtools`, authored component boundaries expose up to 64 hook slots with
-position, kind, and storage type. Scalar and string state/ref values have bounded
-previews; other values remain opaque. Strings and type names are limited to 256
-UTF-8 bytes, and metadata to 16 KiB per boundary. User state needs neither `Debug`
-nor serialization. CDP exposes this information as `rakeHooks`.
+The macro hashes setup tokens into mount identity. Setup edits therefore change
+the key; render-only edits do not. This is compile-time evidence, not proof of
+Blaze's live patch delivery or closure-layout compatibility. Live reload remains
+unverified for this implementation.
 
-```sh
-cargo test -p rake-app --features experimental-components,view-test-support --test function_components
-cargo test -p rake-app --features experimental-components,view-test-support,devtools --lib component::
-cargo bench -p rake-app --features experimental-components,view-test-support --bench function_components
-cargo bench -p rake-app --features experimental-components,view-test-support --bench function_components -- --headless hooks parent 1000 1
-cargo bench -p rake-app --features experimental-components,view-test-support --bench function_components -- --native hooks
-```
+With `devtools`, the inspector and CDP expose `rakeSignals` with binding names,
+kinds, types, and bounded scalar/string previews. Other values remain opaque
+without requiring `Debug`. Metadata is limited to 64 bindings and 16 KiB per
+boundary. Diagnostic ownership counts under `view-test-support` cover Rake-owned
+components, registered signals, observers, dependency subscriptions, and tasks;
+they exclude GPUI caches and externally retained entities.
 
-The native benchmark also accepts `plain`, `memo`, and `raw`, followed by optional
-`scenario instances hooks` arguments, for example `--native hooks mount 10000 1`.
-Scenarios are `mount`, `parent`, `leaf`, `all`, `reorder`, `cycle`, and `hooks`.
-`--headless` accepts the same arguments and runs one case with 31 measured
-samples. Use separate processes and alternate the variant order for comparisons;
-the quick suite alone is not a performance acceptance result. All four variants
-use the same renderer, recorded in each result. `hooks` preserves ordinary prop
-rendering; `memo` measures equal-prop reuse comparable to retained plain entities.
-Headless measurements cover
-CPU render/layout/paint, allocations, retained process memory, and lifetime
-checks; they do not measure GPU presentation. Async scenarios report frame times
-and separate whole mount/settle/unmount cycle times.
-
-Try the interactive counters, including reorder and remount behavior:
+## Verification
 
 ```sh
-cargo run -p rake-app --features experimental-components,gpui_fast_platform/runtime_shaders --example components
+cargo test -p rake-app --locked --features experimental-reactive,view-test-support,devtools --lib --test function_components --test view_state
+cargo bench -p rake-app --locked --features experimental-reactive,view-test-support --bench function_components
+cargo bench -p rake-app --locked --features experimental-reactive,view-test-support --bench function_components -- --headless cached leaf 1000 1
+cargo bench -p rake-app --locked --features experimental-reactive,view-test-support --bench function_components -- --native signals all 100 1
+cargo run -p rake-app --features experimental-reactive,gpui_platform/runtime_shaders --example components
 ```
 
-The [benchmark report](../.agents/reports/react-function-components.md) records
-measurements and remaining merge gates. Stable hook positions avoid
-source-line keys, but do not establish Blaze compatibility or preserve arbitrary
-Rust values across process restarts. Real Blaze edits require separate proof.
-
-The manual [function-component workflow](../.github/workflows/function-components.yml)
-enables the feature on macOS and Linux, runs consumer tests and lifetime checks,
-and checks native, WASM, renamed-dependency, and feature-disabled builds. Its
-Linux window smoke test uses Xvfb and Mesa Vulkan drivers; it does not
-establish physical-display or hardware-GPU performance.
-
-## Formatting
-
-Run `rake format` after editing markup. See [Formatting Rust and view markup](format.md)
-for exact layout rules, preservation guarantees, check mode, and rust-analyzer setup.
+Variants are `plain`, `plain-cached`, `signals`, `cached`, and `raw`. Headless
+measurements include CPU mutation/render/layout/paint and allocator counts, not
+GPU presentation. The full suite also measures fan-out, memo chains, children,
+async disposal, rapid resource inputs, and retry. Native measurements remain a
+follow-up in the revised issue. See the [signals report](../.agents/reports/reactive-signals.md)
+for measured costs, verification, and remaining acceptance gaps.

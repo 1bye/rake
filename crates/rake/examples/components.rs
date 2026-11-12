@@ -1,24 +1,24 @@
 #![doc = "Two independently owned function counters with keyed reorder and unmount controls."]
 
-use rake::Scope;
 use rake::gpui::{Context, IntoElement, Render, SharedString, Window, prelude::*};
+use rake::reactive::Setup;
 
 #[rake::component]
-fn Counter(cx: &mut Scope, label: SharedString) -> impl IntoElement {
-    let (count, setter) = cx.use_state(|| 0_i32);
-    let doubled = cx.use_memo(count, |value| value * 2);
+fn Counter(label: SharedString, cx: &mut Setup) -> impl IntoElement {
+    let count = cx.signal(0_i32);
+    let doubled = cx.memo(move |cx| count.get(cx) * 2);
 
     rake::view! {
         <section class="flex flex-col gap-2 p-4">
             <h2>{label.clone()}</h2>
-            <p>{format!("Count: {count}; doubled: {doubled}")}</p>
+            <p>{format!("Count: {}; doubled: {}", count.get(cx), doubled.get(cx))}</p>
             <div class="flex gap-2">
                 <button
                     id="increment"
                     aria-label={format!("Increment {label}")}
                     on:click={
                         move |_, _, cx| {
-                            let _ = setter.update(cx, |value| *value += 1);
+                            let _ = count.update(cx, |value| *value += 1);
                         }
                     }
                 >
@@ -29,7 +29,7 @@ fn Counter(cx: &mut Scope, label: SharedString) -> impl IntoElement {
                     aria-label={format!("Reset {label}")}
                     on:click={
                         move |_, _, cx| {
-                            let _ = setter.set(cx, 0);
+                            count.set(cx, 0);
                         }
                     }
                 >

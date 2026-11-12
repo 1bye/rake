@@ -10,13 +10,25 @@ use syn::{DeriveInput, ItemFn, Token, parenthesized, parse_macro_input};
 mod command;
 #[cfg(feature = "components")]
 mod component;
+mod props;
 mod route;
+#[cfg(feature = "components")]
+mod setup_reads;
+
+#[doc = "Generates a type-state builder for a component props struct."]
+#[proc_macro_derive(Props, attributes(prop, event, rest, props))]
+pub fn props(input: TokenStream) -> TokenStream {
+    props::expand(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
 
 #[doc = "Generates an experimental stateful function component and its typed props."]
 #[cfg(feature = "components")]
 #[proc_macro_attribute]
 pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
-    component::expand(args.into(), parse_macro_input!(input as ItemFn))
+    let function = parse_macro_input!(input as ItemFn);
+    component::expand(args.into(), function)
         .unwrap_or_else(|error| error.to_compile_error())
         .into()
 }

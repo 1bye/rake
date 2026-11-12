@@ -3,13 +3,9 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use rake::component::Scope;
 use rake::gpui::{self, AppContext, Context, IntoElement, Render, Window, prelude::*};
-use rake::loading::{LoadStatus, Loader};
-use rake::prelude::{
-    Collector, HttpClient, HttpConfig, RouterConfig, Runtime, RuntimeContext, ServiceRegistry,
-    Services,
-};
+use rake::loading::{LoadState, LoadStatus};
+use rake::reactive::{ReactiveApp, Setup};
 use serde_json::json;
 
 use super::{ALLOCATIONS, Variant, draw, percentiles};
@@ -59,36 +55,26 @@ async fn load(input: i32, pending: bool, counters: Rc<Lifetimes>) -> Result<i32,
 }
 
 #[rake::component]
-fn HookAsync(
-    cx: &mut Scope,
-    runtime: RuntimeContext,
-    pending: bool,
-    counters: Rc<Lifetimes>,
-) -> impl IntoElement {
-    let (input, setter) = cx.use_state(|| 0_i32);
+fn SignalAsync(pending: bool, counters: Rc<Lifetimes>, cx: &mut Setup) -> impl IntoElement {
+    let input = cx.signal(0_i32);
     let loading = counters.clone();
-    let resource = cx.use_resource(&runtime, input, move |input, _| {
-        load(input, pending, loading.clone())
+    let resource = cx.resource(move |cx| load(input.get(cx), pending, loading.clone()));
+    cx.spawn(async move |cx| {
+        input.set(cx, 1);
     });
-    cx.use_effect((), move |cx| {
-        let active = Active::new(counters, true);
-        let task = cx.spawn(async move |cx| {
-            let _ = setter.set(cx, 1);
-        });
-        move || drop((task, active))
+    cx.effect(move |_, cx| {
+        let active = Active::new(counters.clone(), true);
+        cx.on_cleanup(move |_| drop(active));
     });
-    let value = resource
-        .read(cx, |state| match state {
-            LoadStatus::Ready(value) => *value,
-            _ => -1,
-        })
-        .unwrap();
-    gpui::div().child(value.to_string())
+    gpui::div().child(match resource.read(cx) {
+        LoadStatus::Ready(value) => value.to_string(),
+        _ => "-1".to_owned(),
+    })
 }
 
 struct PlainAsync {
-    runtime: RuntimeContext,
-    loader: Option<Loader<i32, std::io::Error>>,
+    load: LoadState<i32, std::io::Error>,
+    task: Option<gpui::Task<()>>,
     input: i32,
     loaded: Option<i32>,
     pending: bool,
@@ -98,10 +84,10 @@ struct PlainAsync {
 }
 
 impl PlainAsync {
-    fn new(runtime: RuntimeContext, pending: bool, counters: Rc<Lifetimes>) -> Self {
+    fn new(pending: bool, counters: Rc<Lifetimes>) -> Self {
         Self {
-            runtime,
-            loader: None,
+            load: LoadState::new(),
+            task: None,
             input: 0,
             loaded: None,
             pending,
@@ -115,18 +101,23 @@ impl PlainAsync {
 impl Render for PlainAsync {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.loaded != Some(self.input) {
-            self.loader.take();
+            self.task.take();
             let input = self.input;
             let pending = self.pending;
             let counters = self.counters.clone();
-            self.loader = Some(
-                self.runtime
-                    .load(cx, move |_| load(input, pending, counters.clone())),
-            );
+            let token = self.load.begin();
+            self.task = Some(cx.spawn(async move |owner, cx| {
+                let result = load(input, pending, counters).await;
+                let _ = owner.update(cx, |view, cx| {
+                    if view.load.complete(token, result) {
+                        cx.notify();
+                    }
+                });
+            }));
             self.loaded = Some(input);
         }
 
-        let value = match self.loader.as_ref().unwrap().state(cx) {
+        let value = match self.load.state() {
             LoadStatus::Ready(value) => *value,
             _ => -1,
         };
@@ -157,7 +148,6 @@ impl Render for PlainAsync {
 #[derive(gpui::IntoElement)]
 struct RawAsync {
     id: usize,
-    runtime: RuntimeContext,
     pending: bool,
     counters: Rc<Lifetimes>,
 }
@@ -165,7 +155,7 @@ struct RawAsync {
 impl gpui::RenderOnce for RawAsync {
     fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let owner = window.use_keyed_state(("async", self.id), cx, |_, _| {
-            PlainAsync::new(self.runtime, self.pending, self.counters)
+            PlainAsync::new(self.pending, self.counters)
         });
         owner.update(cx, |view, cx| view.render(window, cx).into_any_element())
     }
@@ -173,8 +163,6 @@ impl gpui::RenderOnce for RawAsync {
 
 struct Host {
     variant: Variant,
-    runtime: RuntimeContext,
-    _driver: gpui::Task<()>,
     counters: Rc<Lifetimes>,
     plain: Vec<gpui::Entity<PlainAsync>>,
     visible: bool,
@@ -191,27 +179,20 @@ impl Render for Host {
 
         for id in 0..100 {
             parent = match self.variant {
-                Variant::Plain => {
+                Variant::Plain | Variant::PlainCached => {
                     if id == self.plain.len() {
-                        self.plain.push(cx.new(|_| {
-                            PlainAsync::new(
-                                self.runtime.clone(),
-                                self.pending,
-                                self.counters.clone(),
-                            )
-                        }));
+                        self.plain
+                            .push(cx.new(|_| PlainAsync::new(self.pending, self.counters.clone())));
                     }
                     parent.child(self.plain[id].clone())
                 }
-                Variant::Hooks | Variant::Memo => parent.child(HookAsync {
-                    id: ("async", id),
-                    runtime: self.runtime.clone(),
+                Variant::Signals | Variant::Cached => parent.child(SignalAsync {
+                    id: ("async", id).into(),
                     pending: self.pending,
                     counters: self.counters.clone(),
                 }),
                 Variant::Raw => parent.child(RawAsync {
                     id,
-                    runtime: self.runtime.clone(),
                     pending: self.pending,
                     counters: self.counters.clone(),
                 }),
@@ -225,28 +206,12 @@ impl Render for Host {
 pub(super) fn measure(variant: Variant, pending: bool, samples: usize) {
     let mut cx = gpui::TestAppContext::single();
     let counters = Rc::new(Lifetimes::default());
-    let window = cx.add_window(|_, cx| {
-        let runtime = Runtime::new(
-            RouterConfig::default(),
-            Services::new(
-                HttpClient::new(HttpConfig::new()).unwrap(),
-                Collector::default(),
-                ServiceRegistry::new(),
-            ),
-        );
-        let context = runtime.context();
-        let driver = cx.spawn(async move |_, _| {
-            let _ = runtime.run().await;
-        });
-        Host {
-            variant,
-            runtime: context,
-            _driver: driver,
-            counters: counters.clone(),
-            plain: Vec::new(),
-            visible: false,
-            pending,
-        }
+    let window = cx.add_window(|_, _| Host {
+        variant,
+        counters: counters.clone(),
+        plain: Vec::new(),
+        visible: false,
+        pending,
     });
     let mut times = Vec::new();
     let mut frames = Vec::new();
@@ -298,7 +263,7 @@ pub(super) fn measure(variant: Variant, pending: bool, samples: usize) {
     println!(
         "{}",
         json!({
-            "renderer": "gpui-fast 0.1.13", "backend": "TestAppContext", "variant": format!("{variant:?}"),
+            "renderer": super::RENDERER, "backend": "TestAppContext", "variant": format!("{variant:?}"),
             "scenario": if pending { "effect_resource_cancel" } else { "effect_resource_async" },
             "instances": 100, "samples": samples,
             "p50_us": frame_p50, "p95_us": frame_p95,

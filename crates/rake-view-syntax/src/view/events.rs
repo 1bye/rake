@@ -44,7 +44,7 @@ pub(super) fn expand(
     index: usize,
 ) -> syn::Result<TokenStream> {
     let attribute_value = attribute.expression()?;
-    let mut value = quote!(#attribute_value);
+    let mut value = handler(attribute_value)?;
 
     let name = if let Some((_, canonical)) =
         LEGACY.iter().find(|(legacy, _)| *legacy == attribute.name)
@@ -118,4 +118,28 @@ pub(super) fn expand(
             EVENTS.join(", ")
         ),
     ))
+}
+
+pub(super) fn handler(value: &syn::Expr) -> syn::Result<TokenStream> {
+    let syn::Expr::Closure(closure) = value else {
+        return Ok(quote!(#value));
+    };
+    let mut closure = closure.clone();
+    match closure.inputs.len() {
+        1 => {
+            closure.inputs.insert(0, syn::parse_quote!(_));
+            closure.inputs.insert(0, syn::parse_quote!(_));
+        }
+        2 => closure.inputs.insert(1, syn::parse_quote!(_)),
+        3 | 4 => {}
+        _ => {
+            return Err(syn::Error::new_spanned(
+                closure,
+                "an event handler needs cx, event and cx, or event, window and cx",
+            ));
+        }
+    }
+    let body = &closure.body;
+    closure.body = syn::parse_quote!({ #body; });
+    Ok(quote!(#closure))
 }

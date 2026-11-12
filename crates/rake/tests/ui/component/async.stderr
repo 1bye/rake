@@ -1,5 +1,5 @@
-error: components must be ordinary synchronous functions without generic parameters
+error: components must be ordinary synchronous functions
  --> tests/ui/component/async.rs:2:1
   |
-2 | async fn Invalid(cx: &mut rake::Scope) -> impl rake::gpui::IntoElement {
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2 | async fn Invalid(cx: &mut rake::reactive::Setup) -> impl rake::gpui::IntoElement {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,5 +1,9 @@
 # Function components: issue #27
 
+Historical hooks results from November 8. The signals redesign supersedes this API;
+see [the current signals report](reactive-signals.md). These measurements do not
+verify the new implementation.
+
 Date: 2026-11-08. Branch: `feat/react-styled-function-component`. Base: `2289d0b`.
 These results describe the working tree, not a published release.
 

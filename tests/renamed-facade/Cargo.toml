@@ -16,6 +16,6 @@ workspace = true
 framework = { package = "rake-app", path = "../../crates/rake" }
 
 [features]
-experimental-components = ["framework/experimental-components"]
+experimental-reactive = ["framework/experimental-reactive"]
 tray = ["framework/tray"]
 devtools = ["framework/devtools"]

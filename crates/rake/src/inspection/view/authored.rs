@@ -44,7 +44,7 @@ impl Definition {
         let mut metadata = ViewMetadata {
             tag: limited(tag, 256, truncated),
             style_sources: Vec::new(),
-            hooks: Vec::new(),
+            signals: Vec::new(),
         };
         const MAX_SOURCE_BYTES: usize = 4096;
         let mut bytes = super::super::budget::size(&metadata, MAX_SOURCE_BYTES);

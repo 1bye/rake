@@ -12,6 +12,7 @@ description = "GPUI view helpers, themes and overlays"
 workspace = true
 
 [dependencies]
+rake-macros = { version = "=0.1.0-alpha.3", path = "../rake-macros" }
 tracing.workspace = true
 unicode-segmentation = "1.13.3"
 gpui_pre = { package = "gpui-pre", version = "=0.3.11", default-features = false }

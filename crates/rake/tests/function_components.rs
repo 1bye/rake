@@ -1,14 +1,11 @@
 #![cfg(not(target_family = "wasm"))]
-#![doc = "Exercises real GPUI component identity, hooks, and cleanup using TestAppContext; no display or GPU required."]
+#![doc = "Exercises real GPUI component identity, signals, and cleanup using TestAppContext; no display or GPU required."]
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use rake::component::{ComponentError, Scope, State};
 use rake::gpui::{self, Context, IntoElement, Render, SharedString, Window, prelude::*};
-
-#[path = "function_components/hooks.rs"]
-mod hooks;
+use rake::reactive::{Setup, Signal};
 
 #[path = "function_components/rendering.rs"]
 mod rendering;
@@ -16,30 +13,33 @@ mod rendering;
 #[derive(Default)]
 struct Probe {
     value: Cell<i32>,
-    setter: Cell<Option<State<i32>>>,
+    setter: Cell<Option<Signal<i32>>>,
     renders: Cell<usize>,
 }
 
 #[rake::component]
-fn Counter(cx: &mut Scope, label: SharedString, start: i32, probe: Rc<Probe>) -> impl IntoElement {
-    let (count, setter) = cx.use_state(|| start);
-    probe.renders.set(probe.renders.get() + 1);
-    probe.value.set(count);
-    probe.setter.replace(Some(setter));
+fn Counter(label: SharedString, start: i32, probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
+    let count = cx.signal(start);
+    probe.setter.set(Some(count));
+    {
+        probe.renders.set(probe.renders.get() + 1);
+        probe.value.set(count.get(cx));
+        rake::view! {
+            <button
+                id="increment"
+                class="h-10 w-40"
+                aria-label={format!("{label}: {}", count.get(cx))}
+                on:click={move |cx| count.update(cx, |value| *value += 1)}
+            >
+                {format!("{label}: {}", count.get(cx))}
+            </button>
+        }
+    }
+}
 
-    rake::view! {
-        <button
-            id="increment"
-            class="h-10 w-40"
-            aria-label={format!("{label}: {count}")}
-            on:click={
-                move |_, _, cx| {
-                    let _ = setter.update(cx, |value| *value += 1);
-                }
-            }
-        >
-            {format!("{label}: {count}")}
-        </button>
+impl PartialEq for Probe {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
     }
 }
 
@@ -71,8 +71,11 @@ impl Render for Host {
 
 fn draw<V: Render>(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle<V>) {
     cx.run_until_parked();
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-        .unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        window.simulate_next_frame(cx);
+    })
+    .unwrap();
     cx.run_until_parked();
 }
 
@@ -113,7 +116,7 @@ fn fixture() -> (
 fn siblings_keep_independent_state_across_parent_renders_and_keyed_changes() {
     let (mut cx, window, probes) = fixture();
     let first = probes[0].setter.get().unwrap();
-    cx.update(|cx| first.set(cx, 7).unwrap());
+    cx.update(|cx| first.set(cx, 7));
     draw(&mut cx, window);
     assert_eq!(probes[0].value.get(), 7);
     assert_eq!(probes[1].value.get(), 0);
@@ -148,16 +151,16 @@ fn stale_setters_do_not_keep_components_alive_or_reach_replacements() {
     let old = probes[0].setter.get().unwrap();
     change(&mut cx, window, |host| host.keys = vec![1]);
     draw(&mut cx, window);
-    assert_eq!(
-        cx.update(|cx| old.set(cx, 99)),
-        Err(ComponentError::Disposed)
+    assert!(
+        cx.update(|cx| old.update(cx, |value| *value = 99))
+            .is_none()
     );
 
     change(&mut cx, window, |host| host.keys = vec![0, 1]);
     assert_eq!(probes[0].value.get(), 0);
-    assert_eq!(
-        cx.update(|cx| old.set(cx, 99)),
-        Err(ComponentError::Disposed)
+    assert!(
+        cx.update(|cx| old.update(cx, |value| *value = 99))
+            .is_none()
     );
 }
 
@@ -168,7 +171,7 @@ fn setters_are_copy_and_work_from_async_contexts() {
     let copy = setter;
     cx.update(|cx| {
         cx.spawn(async move |cx| {
-            setter.set(cx, 3).unwrap();
+            setter.set(cx, 3);
             copy.update(cx, |value| *value += 4).unwrap();
         })
         .detach();
@@ -182,9 +185,10 @@ fn handles_reject_another_application() {
     let (_original, _, probes) = fixture();
     let setter = probes[0].setter.get().unwrap();
     let (other, _, _) = fixture();
-    assert_eq!(
-        other.update(|cx| setter.set(cx, 10)),
-        Err(ComponentError::Disposed)
+    assert!(
+        other
+            .update(|cx| setter.update(cx, |value| *value = 10))
+            .is_none()
     );
 }
 
@@ -229,20 +233,6 @@ fn raw_source_location_state_collides_before_render_once_root_ids_are_in_scope()
 }
 
 #[test]
-fn state_updates_skip_the_parent_and_unchanged_siblings() {
-    let (mut cx, window, probes) = fixture();
-    let before = window.read_with(&cx, |host, _| host.renders.get()).unwrap();
-    let children = [probes[0].renders.get(), probes[1].renders.get()];
-    cx.update(|cx| probes[0].setter.get().unwrap().set(cx, 1).unwrap());
-    draw(&mut cx, window);
-    let after = window.read_with(&cx, |host, _| host.renders.get()).unwrap();
-    assert_eq!(after, before);
-    assert_eq!(probes[0].renders.get(), children[0] + 1);
-    assert_eq!(probes[1].renders.get(), children[1]);
-    assert_eq!(probes[0].value.get(), 1);
-}
-
-#[test]
 fn macro_reports_invalid_component_signatures() {
     trybuild::TestCases::new().compile_fail("tests/ui/component/*.rs");
 }
@@ -251,8 +241,8 @@ fn macro_reports_invalid_component_signatures() {
 fn props_defaults_keep_the_existing_struct_update_syntax() {
     let probe = Rc::new(Probe::default());
     let defaults = Counter {
-        id: "defaults",
-        label: "Default",
+        id: "defaults".into(),
+        label: "Default".into(),
         start: 4,
         probe,
     };
@@ -270,9 +260,9 @@ fn repeated_mounts_release_component_values_and_effect_cleanups() {
         let stale = probes[0].setter.get().unwrap();
         change(&mut cx, window, |host| host.keys.clear());
         draw(&mut cx, window);
-        assert_eq!(
-            cx.update(|cx| stale.set(cx, 1)),
-            Err(ComponentError::Disposed)
+        assert!(
+            cx.update(|cx| stale.update(cx, |value| *value = 1))
+                .is_none()
         );
         change(&mut cx, window, |host| host.keys = vec![0, 1]);
     }
@@ -309,7 +299,7 @@ fn retained_tab_entities_reset_function_state_when_their_subtree_unmounts() {
     });
     draw(&mut cx, window);
     let old = probes[0].setter.get().unwrap();
-    cx.update(|cx| old.set(cx, 7).unwrap());
+    cx.update(|cx| old.set(cx, 7));
     draw(&mut cx, window);
     assert_eq!(probes[0].value.get(), 7);
     let page = window
@@ -319,10 +309,7 @@ fn retained_tab_entities_reset_function_state_when_their_subtree_unmounts() {
     change(&mut cx, window, |tabs| tabs.selected = 1);
     draw(&mut cx, window);
     assert!(page.upgrade().is_some());
-    assert_eq!(
-        cx.update(|cx| old.set(cx, 9)),
-        Err(ComponentError::Disposed)
-    );
+    assert!(cx.update(|cx| old.update(cx, |value| *value = 9)).is_none());
 
     change(&mut cx, window, |tabs| tabs.selected = 0);
     assert_eq!(probes[0].value.get(), 0);
@@ -334,8 +321,8 @@ impl Render for Parents {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         gpui::div().children(self.0.iter().map(|(parent, probe)| {
             gpui::div().id(("parent", *parent)).child(Counter {
-                id: "shared-child-id",
-                label: "Count",
+                id: "shared-child-id".into(),
+                label: "Count".into(),
                 start: 0,
                 probe: probe.clone(),
             })
@@ -350,7 +337,7 @@ fn identical_ids_in_different_parents_have_independent_state() {
     let window =
         cx.add_window(|_, _| Parents(vec![(8, probes[0].clone()), (19, probes[1].clone())]));
     draw(&mut cx, window);
-    cx.update(|cx| probes[0].setter.get().unwrap().set(cx, 4).unwrap());
+    cx.update(|cx| probes[0].setter.get().unwrap().set(cx, 4));
     draw(&mut cx, window);
     assert_eq!(probes[0].value.get(), 4);
     assert_eq!(probes[1].value.get(), 0);

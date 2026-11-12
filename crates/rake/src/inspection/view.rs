@@ -378,11 +378,11 @@ impl Capture {
 #[derive(Default)]
 struct ActiveCapture(Option<Capture>);
 
-#[cfg(feature = "experimental-components")]
-pub(crate) fn component_hooks(
+#[cfg(feature = "experimental-reactive")]
+pub(crate) fn component_signals(
     cx: &mut App,
     kind: &str,
-    hooks: Vec<super::HookMetadata>,
+    signals: Vec<super::SignalMetadata>,
     truncated: bool,
 ) {
     let Some(capture) = cx
@@ -402,7 +402,7 @@ pub(crate) fn component_hooks(
     else {
         return;
     };
-    let bytes = super::budget::size(&hooks, 16 * 1024);
+    let bytes = super::budget::size(&signals, 16 * 1024);
     let capture = cx.global_mut::<ActiveCapture>().0.as_mut().unwrap();
 
     if bytes > 16 * 1024 || capture.bytes + bytes > super::MAX_CAPTURE_BYTES {
@@ -411,7 +411,7 @@ pub(crate) fn component_hooks(
     }
 
     if let Some(view) = &mut capture.snapshot.elements[index].view {
-        view.hooks = hooks;
+        view.signals = signals;
         capture.bytes += bytes;
         capture.snapshot.elements[index].metadata_truncated |= truncated;
     }

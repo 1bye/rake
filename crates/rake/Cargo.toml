@@ -32,7 +32,7 @@ devtools-memory = ["devtools", "dep:backtrace"]
 kit = ["gpui", "rake-ui/kit"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
-experimental-components = ["gpui-fast", "rake-macros/components", "dep:slotmap"]
+experimental-reactive = ["gpui", "rake-macros/reactive", "dep:slotmap"]
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support", "gpui_platform/runtime_shaders", "gpui_fast_platform?/runtime_shaders"]
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
@@ -115,12 +115,12 @@ harness = false
 
 [[test]]
 name = "function_components"
-required-features = ["experimental-components", "view-test-support"]
+required-features = ["experimental-reactive", "view-test-support"]
 
 [[bench]]
 name = "function_components"
 harness = false
-required-features = ["experimental-components", "view-test-support"]
+required-features = ["experimental-reactive", "view-test-support"]
 
 [[example]]
 name = "startup-failure"
@@ -129,7 +129,7 @@ required-features = ["gpui"]
 
 [[example]]
 name = "components"
-required-features = ["experimental-components"]
+required-features = ["experimental-reactive"]
 
 [[example]]
 name = "native"
