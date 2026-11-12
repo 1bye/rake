@@ -79,6 +79,7 @@ fn walk(
         #[cfg(windows)]
         {
             use std::os::windows::ffi::OsStrExt;
+
             for unit in path.as_os_str().encode_wide() {
                 digest.update(unit.to_le_bytes());
             }
@@ -116,11 +117,14 @@ fn reparse(path: &Path) -> bool {
     #[cfg(unix)]
     {
         let _ = path;
+
         false
     }
+
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
+
         fs::symlink_metadata(path).is_ok_and(|metadata| {
             metadata.file_attributes()
                 & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT

@@ -149,6 +149,7 @@ fn send(
     futures::executor::block_on(async {
         let work = async {
             let mut stream = rake_client::pipe::Stream::connect(std::path::Path::new(path)).await?;
+
             stream.write_all(encoded).await?;
             let mut bytes = Vec::new();
             let mut buffer = [0; 65536];
@@ -171,6 +172,7 @@ fn send(
                 }
             }
         };
+
         let stop = async {
             loop {
                 if cancelled.load(Ordering::Acquire) {

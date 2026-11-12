@@ -304,6 +304,7 @@ impl Broker {
 
         #[cfg(unix)]
         let path = self.bridge.directory.join(format!("{runtime}.sock"));
+
         #[cfg(windows)]
         let path = rake_client::pipe::path(&runtime);
 
@@ -339,6 +340,7 @@ impl Broker {
             let mut connection = self
                 .socket_io(async_io::Async::<UnixStream>::connect(path))
                 .await?;
+
             #[cfg(windows)]
             let mut connection = self
                 .socket_io(rake_client::pipe::Stream::connect(&path))

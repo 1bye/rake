@@ -85,6 +85,7 @@ pub(super) fn launch(command: &mut Command) -> std::io::Result<u32> {
         .stderr(Stdio::null())
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()?;
+
     let pid = child.id();
 
     std::thread::spawn(move || {

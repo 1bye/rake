@@ -463,6 +463,7 @@ impl<'a> Supervisor<'a> {
                 let code = status
                     .code()
                     .unwrap_or_else(|| -status.signal().unwrap_or(1));
+
                 #[cfg(windows)]
                 let code = status.code().unwrap_or(1);
 
@@ -721,3 +722,6 @@ fn remove_file(path: &Path) -> std::io::Result<()> {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod windows_tests;
