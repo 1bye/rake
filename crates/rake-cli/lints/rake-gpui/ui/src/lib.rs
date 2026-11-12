@@ -139,3 +139,79 @@ mod lookalike {
         let _ = Task::ready();
     }
 }
+
+// Defined before registration: discovery must finish before any body is checked.
+impl View {
+    fn save(&mut self, _: &gpui::NoAction, _: &mut Window, cx: &mut Context<Self>) {
+        std::thread::sleep(Duration::ZERO); //~ gpui_ui_blocking
+        // UI-thread execution does not make entity allocation a render allocation.
+        let _child = cx.new(|_| View);
+        let _later = || std::thread::sleep(Duration::ZERO);
+        let _future = async { std::thread::sleep(Duration::ZERO) };
+        fn nested_function() {
+            std::thread::sleep(Duration::ZERO);
+        }
+    }
+
+    fn never_registered(&mut self, _: &gpui::NoAction, _: &mut Window, _: &mut Context<Self>) {
+        std::thread::sleep(Duration::ZERO);
+    }
+
+    fn spawn_work(&mut self, _: &gpui::NoAction, _: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn(async |_, _| std::thread::sleep(Duration::ZERO))
+            .detach();
+    }
+
+    fn click(_: &gpui::ClickEvent, _: &mut Window, _: &mut App) {
+        smol::block_on(async {}); //~ gpui_ui_blocking
+    }
+
+    fn register_paths(cx: &mut Context<Self>) {
+        let _ = cx.listener(Self::save);
+        let _ = div().on_action(cx.listener(Self::save));
+        let _ = div().on_action(cx.listener(Self::spawn_work));
+        let _ = div().id("path-click").on_click(Self::click);
+        let _ = div().on_action(Self::direct_action);
+        let _ = cx.listener(generic_listener::<View>);
+        let _ = cx.listener(Self::used_elsewhere_too);
+        let _ = cx.listener(|_, _: &(), _, _| {
+            let _ = div().on_action(nested_registration);
+        });
+        FakeListener.listener(Self::not_a_gpui_handler);
+    }
+
+    fn direct_action(_: &gpui::NoAction, _: &mut Window, _: &mut App) {
+        futures::executor::block_on(async {}); //~ gpui_ui_blocking
+    }
+
+    fn used_elsewhere_too(&mut self, _: &gpui::NoAction, _: &mut Window, _: &mut Context<Self>) {
+        let _ = std::fs::read("data"); //~ gpui_ui_blocking
+    }
+
+    fn ordinary_call(
+        &mut self,
+        action: &gpui::NoAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.used_elsewhere_too(action, window, cx);
+    }
+
+    fn not_a_gpui_handler(_: &mut Context<Self>) {
+        std::thread::sleep(Duration::ZERO);
+    }
+}
+
+fn generic_listener<T: 'static>(_: &mut T, _: &(), _: &mut Window, _: &mut Context<T>) {
+    std::thread::sleep(Duration::ZERO); //~ gpui_ui_blocking
+}
+
+fn nested_registration(_: &gpui::NoAction, _: &mut Window, _: &mut App) {
+    std::thread::sleep(Duration::ZERO); //~ gpui_ui_blocking
+}
+
+struct FakeListener;
+
+impl FakeListener {
+    fn listener(&self, _: fn(&mut Context<View>)) {}
+}
