@@ -76,8 +76,11 @@ fn remaining(timeout: Duration) -> std::io::Result<Duration> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod local;
+
+#[cfg(any(unix, windows))]
+pub mod private;
 
 /// A discovered runtime endpoint. Credentials are kept only in owner-readable files.
 #[derive(Clone, Serialize, Deserialize)]
