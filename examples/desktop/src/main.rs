@@ -20,7 +20,12 @@ struct AppInfo {
 
 #[rake::app]
 fn application() -> Result<App<pages::Destination>, rake::AppError> {
+    let preferences = rake::platform::Platform::default()
+        .preferences("dev.rake.starter")
+        .map_err(|error| rake::AppError::Window(error.to_string()))?;
+
     Ok(App::new("dev.rake.starter")
+        .window_state(rake::window_state::WindowState::new(preferences))
         .service(AppInfo {
             name: "Rake Starter",
             version: env!("CARGO_PKG_VERSION"),
