@@ -218,6 +218,15 @@ async fn serve_one(stream: Stream, client: HostClient) {
         bytes.push(b'\n');
         reader.get_mut().write_all(&bytes).await?;
 
+        #[cfg(windows)]
+        {
+            // Closing the server handle can discard unread pipe output. The client
+            // closes after reading its reply; retain this handle until then, within
+            // the same five-second deadline, without blocking FlushFileBuffers.
+            let mut end = [0];
+            let _ = futures::io::AsyncReadExt::read(reader.get_mut(), &mut end).await;
+        }
+
         Ok::<_, io::Error>(())
     };
 

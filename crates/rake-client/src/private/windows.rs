@@ -87,14 +87,14 @@ fn user() -> io::Result<Vec<usize>> {
 
 /// Owns a protected security descriptor granting full access only to the current user.
 /// Used for both filesystem creation and local named-pipe creation.
-pub struct Security(LocalAllocation);
+pub(crate) struct Security(LocalAllocation);
 
 impl Security {
     /// Builds a descriptor using the process token's user SID.
     ///
     /// # Errors
     /// Returns token or security-descriptor API failures.
-    pub fn current_user() -> io::Result<Self> {
+    pub(crate) fn current_user() -> io::Result<Self> {
         let user = user()?;
         // SAFETY: user contains a live TOKEN_USER returned by GetTokenInformation.
         let sid = unsafe { (*(user.as_ptr().cast::<TOKEN_USER>())).User.Sid };
@@ -133,7 +133,7 @@ impl Security {
 
     /// Returns non-inheritable creation attributes borrowing this descriptor.
     #[must_use]
-    pub fn attributes(&self) -> SECURITY_ATTRIBUTES {
+    pub(crate) fn attributes(&self) -> SECURITY_ATTRIBUTES {
         SECURITY_ATTRIBUTES {
             nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: self.0.0,
@@ -270,7 +270,7 @@ fn parents(path: &Path) -> io::Result<Vec<File>> {
     for component in parent.components() {
         current.push(component);
 
-        if !current.has_root() {
+        if matches!(component, std::path::Component::Prefix(_)) || !current.has_root() {
             continue;
         }
 
@@ -339,7 +339,7 @@ pub(super) fn prepare_directory(path: &Path) -> io::Result<()> {
 pub fn open_source(root: &Path, source: &Path) -> io::Result<File> {
     let _root = parents(&root.join(".source-boundary"))?;
     let root = root.canonicalize()?;
-    let path = std::path::absolute(root.join(source))?;
+    let path = root.join(source);
 
     if !path.starts_with(&root)
         || path
@@ -488,7 +488,10 @@ mod tests {
 
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         assert!(open_source(&root, Path::new("../outside.rs")).is_err());
-        assert!(open_source(&root, Path::new("output.json")).is_ok());
+        drop(
+            open_source(&root, Path::new("output.json"))
+                .expect("open an in-root source through its canonical Windows path"),
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

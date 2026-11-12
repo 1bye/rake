@@ -163,6 +163,7 @@ jobs:
             xvfb xauth openbox mesa-vulkan-drivers vulkan-tools
       - name: Windows private files and native endpoints
         if: runner.os == 'Windows'
+        shell: bash
         run: |
           cargo test -p rake-client --locked
           cargo test -p rake-app --no-default-features --test local_control --locked
