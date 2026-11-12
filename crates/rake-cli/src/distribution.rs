@@ -316,9 +316,9 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
 
     if compatibility && formats.is_empty() {
         formats.push(match platform {
-            Platform::Macos => rake_dist::Format::Zip,
+            Platform::Macos | Platform::Windows => rake_dist::Format::Zip,
             Platform::Linux => rake_dist::Format::Tar,
-            _ => return Err("legacy compatibility is available on macOS and Linux".into()),
+            _ => return Err("legacy compatibility requires macOS, Windows or Linux".into()),
         });
     }
 

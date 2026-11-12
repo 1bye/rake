@@ -51,7 +51,12 @@ impl Render for Shell {
 
             _window.on_next_frame(move |window, _| {
                 window.refresh();
-                window.on_next_frame(move |_, _| {
+                window.on_next_frame(move |window, _| {
+                    println!(
+                        "RAKE_DESKTOP_SMOKE_BOUNDS {:?} SCALE {}",
+                        window.window_bounds(),
+                        window.scale_factor()
+                    );
                     println!("RAKE_DESKTOP_SMOKE_FRAME");
                     drop(navigator.quit(QuitOptions::default()));
                 });

@@ -1,0 +1,380 @@
+{
+  "scripts/test-preview.py:test_selection_keeps_source_and_exact_window_without_a_mutation": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "selection_keeps_source_and_exact_window_without_mutation"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_grab_promotes_text_and_collects_pinned_ancestors_and_descendant_text": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "grab_promotes_text_and_collects_pinned_ancestors_and_descendant_text"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_hover_is_lightweight_and_expired_context_never_uses_another_capture": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "hover_is_lightweight_and_expired_context_never_uses_another_capture"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_annotation_resolution_follows_stable_ids_and_keeps_exact_targets_scoped": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "annotation_resolution_follows_stable_ids_and_keeps_exact_targets_scoped"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_annotation_resolution_pins_pages_and_rejects_other_window_generations": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "annotation_resolution_pins_pages_and_rejects_other_window_generations"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_annotation_resolution_rejects_nonadvancing_pages_and_masks_hidden_targets": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "annotation_resolution_rejects_nonadvancing_pages_and_masks_hidden_targets"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_invalid_annotation_targets_and_expired_references_never_reach_runtime": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "invalid_annotation_targets_and_expired_references_never_reach_runtime"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_click_is_submitted_once_without_a_retry_key": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "click_is_submitted_once_without_retry_key_and_fractional_scroll_keeps_geometry"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_invalid_expired_or_foreign_positions_never_reach_runtime": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "invalid_expired_or_foreign_positions_never_reach_runtime"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_scroll_is_bounded_and_unsupported_input_is_rejected": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "scroll_is_bounded_and_unsupported_input_is_rejected"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_closing_preview_terminates_only_its_helper_and_drops_references": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "closing_capture_reaps_its_helper_and_releases_waiting_viewers",
+        "preview_state_bounds_references_and_changes_epoch_only_for_window_geometry"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_truncated_and_oversized_capture_frames_fail_explicitly": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "truncated_and_oversized_capture_frames_fail_explicitly"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_fractional_scroll_uses_viewport_identity_and_preserves_phase": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "click_is_submitted_once_without_retry_key_and_fractional_scroll_keeps_geometry"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_video_join_starts_at_keyframe_and_releases_viewer_on_disconnect": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "video_join_starts_at_keyframe_and_releases_viewer_on_disconnect"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_disconnect_during_video_headers_releases_encoder": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "disconnect_during_video_headers_releases_encoder"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_websocket_reads_masked_text_and_rejects_fragments_and_large_frames": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "masked_text_and_control_frames_reject_fragments_unmasked_and_oversized_input"
+      ]
+    }
+  ],
+  "scripts/test-preview.py:test_preview_flag_rejects_web_and_non_dev_commands": [
+    {
+      "target": "test:project_build",
+      "tests": [
+        "parser_preserves_errors_flags_and_doctor_validation_order"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_default_icon_is_shared_with_native_apps_and_installation_is_idempotent": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "default_icon_is_shared_and_installation_is_idempotent"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_authored_favicons_including_explicit_empty_icons_are_preserved": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "authored_favicons_including_empty_icons_are_preserved"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_comments_and_script_strings_do_not_count_as_favicon_links": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "comments_and_script_strings_do_not_count_as_favicon_links"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_implicit_head_is_supported": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "implicit_head_is_supported"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_generated_asset_does_not_overwrite_an_application_file": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "generated_icon_does_not_overwrite_an_application_file"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_offline_builds_pin_assets_and_keep_router_root_separate": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "offline_builds_pin_assets_and_keep_router_root_separate"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_online_bundles_have_version_checks_without_changing_asset_layout": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "online_bundles_have_version_checks_without_changing_asset_layout"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_configuration_rejects_nonboolean_offline": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "web_metadata_rejects_nonboolean_offline_and_accepts_native_sections"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_shared_application_metadata_accepts_native_sections_on_web": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "web_metadata_rejects_nonboolean_offline_and_accepts_native_sections"
+      ]
+    }
+  ],
+  "scripts/test-web-deployment.py:test_generated_names_cannot_collide_with_inputs": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "generated_names_and_development_metadata_cannot_collide_with_inputs"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_web_cdp_starts_one_owned_toggle_companion_after_publication": [
+    {
+      "target": "test:project_dev",
+      "tests": [
+        "web_publication_owns_server_and_single_companion_and_retains_old_build_on_failure"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_doctor_reports_installed_targets_and_optional_node": [
+    {
+      "target": "test:project_build",
+      "tests": [
+        "doctor_matches_required_targets_and_optional_tools_without_python"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_only_dev_auto_enables_inspection_including_renamed_dependencies": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "dev_features_and_options_use_the_shared_native_supervisor"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_new_project_resolves_first_lock_but_existing_project_stays_locked": [
+    {
+      "target": "test:project_build",
+      "tests": [
+        "first_lock_resolution_and_subsequent_metadata_stay_locked"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_owned_process_cleanup_kills_descendants_that_ignore_term": [
+    {
+      "target": "test:project_dev",
+      "tests": [
+        "cleanup_kills_descendants_that_ignore_sigterm"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_native_transport_retry_keeps_the_same_request_identity": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "native_transport_retry_keeps_the_same_request_identity"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_checkpoint_files_preserve_utf8_byte_bounds": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "checkpoint_files_preserve_utf8_byte_bounds"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_build_output_is_replaced_only_after_success": [
+    {
+      "target": "test:project_build",
+      "tests": [
+        "web_build_keeps_authored_index_and_rolls_back_failed_replacements"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_native_backend_failure_aborts_without_stopping_the_old_host": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "native_backend_failure_aborts_and_success_applies_without_stopping_old_host"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_immutable_web_assets_keep_the_referring_build_and_do_not_expose_traversal": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "immutable_builds_survive_publication_and_referer_pins_absolute_imports"
+      ]
+    }
+  ],
+  "scripts/test-supervisor.py:test_web_builds_coordinate_once_per_build_and_busy_reload_does_not_starve_decisions": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "reload_busy_retries_and_shutdown_wakes_pending_clients"
+      ]
+    }
+  ],
+  "scripts/test-bundle.py:test_explicit_inputs_reject_links_special_files_collisions_and_invalid_metadata": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "explicit_bundle_inputs_preserve_original_validation_cases"
+      ]
+    },
+    {
+      "target": "test:project_build",
+      "tests": [
+        "web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches",
+        "parser_preserves_errors_flags_and_doctor_validation_order"
+      ]
+    }
+  ],
+  "scripts/test-dev-bridge.py:test_non_ascii_preview_token_is_rejected": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "native_preview_assets_authentication_control_replies_and_shutdown"
+      ]
+    }
+  ],
+  "scripts/test-dev-bridge.py:test_capacity_and_expired_browser_discovery": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "capacity_expired_leases_and_tickets_keep_timeout_delivery_semantics"
+      ]
+    }
+  ],
+  "scripts/test-runtime-broker.py:test_source_opening_uses_an_exact_runtime_id_and_never_accepts_paths_or_cli_options": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "source_targets_accept_only_exact_element_ids_and_captured_indices",
+        "source_opener_receives_exact_arguments_control_directory_and_source_root"
+      ]
+    }
+  ],
+  "scripts/test-runtime-broker.py:test_cdp_discovery_rejects_non_loopback_and_defaults_to_disabled": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "loopback_endpoints_reject_credentials_paths_aliases_and_redirect_targets"
+      ]
+    }
+  ],
+  "scripts/test-runtime-broker.py:test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "native_successor_metadata_belongs_only_to_the_supervisor_runtime"
+      ]
+    }
+  ],
+  "scripts/test-runtime-broker.py:test_application_web_servers_cannot_proxy_or_list_native_ipc": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "native_forwarding_keeps_the_exact_envelope_and_rejects_foreign_or_public_sockets"
+      ]
+    }
+  ],
+  "scripts/test-runtime-broker.py:test_process_output_is_bounded_and_has_no_fabricated_causal_owner": [
+    {
+      "target": "bin:rake",
+      "tests": [
+        "process_output_matches_the_private_ring_and_utf8_byte_bounds",
+        "output_is_private_bounded_and_cursor_filtered_without_inventing_causal_ownership"
+      ]
+    }
+  ]
+}

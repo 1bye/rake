@@ -64,30 +64,38 @@ pub(super) fn parse(
     let mut profile = None;
     let mut unknown = Vec::new();
     let mut index = 0;
+
     while index < arguments.len() {
         let argument = &arguments[index];
+
         index += 1;
+
         if argument == "--" {
             if index == arguments.len() {
                 break;
             }
+
             if index + 1 == arguments.len() && positional.is_none() {
                 positional = Some(arguments[index].clone());
                 break;
             }
+
             return Err(format!(
                 "unrecognized arguments: {}",
                 arguments[index..].join(" ")
             ));
         }
+
         if !argument.starts_with('-') {
             if positional.is_some() {
                 unknown.push(argument.clone());
                 continue;
             }
+
             positional = Some(argument.clone());
             continue;
         }
+
         let (name, attached) = if argument == "-h" {
             ("--help", None)
         } else if argument.starts_with("-p") && !argument.starts_with("--") {
@@ -102,10 +110,12 @@ pub(super) fn parse(
                     (name, Some(value))
                 })
         };
+
         let matching: Vec<_> = OPTIONS
             .iter()
             .filter(|(option, _)| *option == name)
             .collect();
+
         let matching = if matching.is_empty() && name.starts_with("--") {
             OPTIONS
                 .iter()
@@ -114,6 +124,7 @@ pub(super) fn parse(
         } else {
             matching
         };
+
         if matching.len() > 1 {
             return Err(format!(
                 "ambiguous option: {name} could match {}",
@@ -124,10 +135,12 @@ pub(super) fn parse(
                     .join(", ")
             ));
         }
+
         let Some(&&(option, takes_value)) = matching.first() else {
             unknown.push(argument.clone());
             continue;
         };
+
         if option == "--help" {
             print!(
                 "{}",
@@ -137,8 +150,10 @@ pub(super) fn parse(
                     include_str!("help.txt")
                 }
             );
+
             return Ok(None);
         }
+
         let value = if takes_value {
             if let Some(value) = attached {
                 value.to_owned()
@@ -149,7 +164,9 @@ pub(super) fn parse(
                         !value.starts_with('-') || value.parse::<i64>().is_ok() || *value == "-"
                     })
                     .ok_or_else(|| format!("argument {option}: expected one argument"))?;
+
                 index += 1;
+
                 value.clone()
             }
         } else {
@@ -158,8 +175,10 @@ pub(super) fn parse(
                     "argument {option}: ignored explicit argument '{value}'"
                 ));
             }
+
             String::new()
         };
+
         if matches!(option, "--release" | "--debug") {
             if let Some(previous) = profile
                 && previous != option
@@ -168,37 +187,46 @@ pub(super) fn parse(
                     "argument {option}: not allowed with argument {previous}"
                 ));
             }
+
             profile = Some(option);
         }
+
         if option == "--target" && !["desktop", "web"].contains(&value.as_str()) {
             let choices = if command == "dev" {
                 "desktop, web"
             } else {
                 "'desktop', 'web'"
             };
+
             return Err(format!(
                 "argument --target: invalid choice: '{value}' (choose from {choices})"
             ));
         }
+
         if option == "--routing" && !["path", "hash"].contains(&value.as_str()) {
             let choices = if command == "dev" {
                 "path, hash"
             } else {
                 "'path', 'hash'"
             };
+
             return Err(format!(
                 "argument --routing: invalid choice: '{value}' (choose from {choices})"
             ));
         }
+
         if option == "--base-path" {
             super::web::valid_base(&serde_json::Value::String(value.clone()))
                 .map_err(|_| format!("argument --base-path: invalid base_path value: '{value}'"))?;
         }
+
         if option == "--port" && value.trim().parse::<i64>().is_err() {
             return Err(format!("argument --port: invalid int value: '{value}'"));
         }
+
         values.insert(option, value);
     }
+
     if let Some(status) = &positional
         && status != "status"
     {
@@ -207,14 +235,18 @@ pub(super) fn parse(
         } else {
             "'status'"
         };
+
         return Err(format!(
             "argument status: invalid choice: '{status}' (choose from {choices})"
         ));
     }
+
     if !unknown.is_empty() {
         return Err(format!("unrecognized arguments: {}", unknown.join(" ")));
     }
+
     let web = values.get("--target").is_some_and(|value| value == "web");
+
     for (flag, message) in [
         (
             "--preview",
@@ -232,6 +264,7 @@ pub(super) fn parse(
     ] {
         if flag == "--elements" && command == "dev" && web && values.contains_key("--cdp") {
             let version = std::process::Command::new("node").arg("--version").output();
+
             let valid = version
                 .ok()
                 .filter(|output| output.status.success())
@@ -246,10 +279,12 @@ pub(super) fn parse(
                         .ok()
                 })
                 .is_some_and(|major| major >= 22);
+
             if !valid {
                 return Err("Web Chrome DevTools requires Node 22 or later".into());
             }
         }
+
         if values.contains_key(flag)
             && !(command == "dev"
                 && (flag == "--cdp" || (flag == "--preview" && !web && cfg!(target_os = "macos"))))
@@ -257,6 +292,7 @@ pub(super) fn parse(
             return Err(message.into());
         }
     }
+
     if command == "dev"
         && values
             .get("--package")
@@ -267,36 +303,45 @@ pub(super) fn parse(
                 .into(),
         );
     }
+
     if (values.contains_key("--base-path") || values.contains_key("--routing"))
         && !(command == "bundle" && web)
     {
         return Err("--base-path/--routing require bundle --target web".into());
     }
+
     if values.contains_key("--sign-identity") || values.contains_key("--entitlements") {
         return Err("--sign-identity/--entitlements require a macOS desktop bundle".into());
     }
+
     if positional.is_some() && (command != "dev" || !values.contains_key("--session")) {
         return Err("use rake dev status --session PATH".into());
     }
+
     if command != "doctor" && positional.is_none() {
         if let Some(port) = values.get("--port") {
             let port: i64 = port.trim().parse().map_err(|_| "port must be 0–65535")?;
+
             if !(0..=65535).contains(&port) {
                 return Err("port must be 0–65535".into());
             }
         }
+
         if values.contains_key("--native-reloader") && web {
             return Err("--native-reloader applies to desktop only".into());
         }
     }
+
     let output = if command != "doctor" && positional.is_none() {
         values
             .get("--output")
             .map(|value| {
                 let path = PathBuf::from(value);
+
                 if path.is_symlink() {
                     return Err("output cannot be a symlink".into());
                 }
+
                 resolve(&path).map_err(|error| error.to_string())
             })
             .transpose()?
@@ -342,6 +387,7 @@ pub(super) fn report_error(arguments: &[String], error: &str) {
         super::report_json_error(error);
     } else {
         let help = include_str!("help.txt");
+
         eprintln!(
             "{}\nrake: error: {error}",
             help.split("\n\n").next().unwrap_or_default()
@@ -353,21 +399,27 @@ pub(super) fn report_error(arguments: &[String], error: &str) {
 pub(super) fn web_target(arguments: &[String]) -> bool {
     let mut web = false;
     let mut index = 0;
+
     while let Some(argument) = arguments.get(index) {
         index += 1;
+
         if argument == "--" {
             break;
         }
+
         let (name, attached) = argument
             .split_once('=')
             .map_or((argument.as_str(), None), |(name, value)| {
                 (name, Some(value))
             });
+
         let exact = OPTIONS.iter().find(|(option, _)| *option == name);
+
         let matches: Vec<_> = OPTIONS
             .iter()
             .filter(|(option, _)| name.starts_with("--") && option.starts_with(name))
             .collect();
+
         let option = exact.or_else(|| {
             if matches.len() == 1 {
                 Some(matches[0])
@@ -375,19 +427,25 @@ pub(super) fn web_target(arguments: &[String]) -> bool {
                 None
             }
         });
+
         let Some(&(option, takes_value)) = option else {
             continue;
         };
+
         let value = if takes_value && attached.is_none() {
             let value = arguments.get(index).map(String::as_str);
+
             index += 1;
+
             value
         } else {
             attached
         };
+
         if option == "--target" {
             web = value == Some("web");
         }
     }
+
     web
 }

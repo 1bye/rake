@@ -1,5 +1,556 @@
 # Project toolchain port
 
+## Windows desktop/Web supervisor (#57, phase 2)
+
+Windows development children use the existing suspended-enrollment, kill-on-close
+Job boundary. App, build, CDP-service and DevTools-companion children are owned;
+output readers are joined after their Jobs are stopped, including descendants
+holding inherited output handles. Unix retains its process groups and signals.
+Browser openers use raw detached processes with a new process group, outside
+owned Jobs; stopping a development session must never terminate them.
+
+Anonymous-pipe readiness uses PeekNamedPipe with cancellation checks, keeping the
+same byte bound and EOF/last-line behavior. Windows reload/checkpoint exchanges
+use the phase-1 named pipe and cancellable futures with a finite total deadline,
+retaining mutation keys for retries and the matching abort after interruption.
+Session/helper directories are exclusively created with owner-only DACLs, using
+phase-1 owner/reparse validation; discovery, status, output and checkpoint reads
+remain private. Windows fingerprints hash UTF-16 path units and ignore reparse
+points to avoid junction cycles; Unix path bytes and ordering are unchanged.
+
+Windows --preview fails clearly before starting resources: native capture still
+requires macOS Swift. CLI inspection/CDP enablement and source opening remain the
+phase-3 boundary. This layer ports the shared service readiness/lifetime adapter;
+its CDP and companion readiness tests use explicitly identified helper processes.
+
+Windows integration tests use a headless app fixture with the production private
+files and named-pipe transport. They exercise start, stateful reload/checkpoint,
+abort after cancellation, descendant termination, inherited output-reader cleanup,
+UTF-8 output, detached-opener survival, Web publication/reload/origin shutdown,
+readiness EOF/overflow/cancellation and junction-excluding fingerprints. These
+run early in the desktop Windows job; real native GUI smoke and existing full
+workspace suites remain unchanged. The temporary stacked-PR branch filter is a
+labelled validation commit and must be removed before handback.
+
+
+## Windows endpoints and private files (#57, phase 1)
+
+The native application control host and standalone client support local Windows
+named pipes. Advertisements retain the existing `.json` filenames and `local`
+endpoint/path representation. Pipe names use the runtime UUID under
+`\\.\pipe\rake-`; they are not filesystem socket files. `RAKE_CONTROL_DIR`
+retains its override behavior; the Windows default is `rake-control` within the
+current user's temporary directory. Unix socket names and default paths are
+unchanged. No control message, JSON/status format or authentication token changes.
+
+Windows pipes use a protected DACL granting only the process token's current
+user SID, `FILE_FLAG_FIRST_PIPE_INSTANCE`, and `PIPE_REJECT_REMOTE_CLIENTS`.
+Clients reject remote/arbitrary device names and validate pipe ownership/DACLs
+through the opened handle. Identification-only security quality of service
+prevents server impersonation of the client. Both ends use nonblocking byte-mode
+handles with cooperative 5 ms polling: cancellation closes owned handles and
+leaves no blocking worker or pending kernel I/O. The existing one-total-deadline
+client exchange, 1 MiB newline frames, 32-connection server bound and five-second
+server deadline remain in force. Runtime dispatch stays on the host event loop.
+
+`rake_client::private` supplies exclusive private-file creation and handle-based
+opening. Windows creates protected owner-only DACLs and rejects foreign owners,
+null DACLs and every ACE granting another SID access. Disk objects only are
+accepted. Reparse points are rejected on every path component; ancestor directory
+handles exclude delete sharing while the final object is opened and checked.
+Readers permit atomic replacement of the final filename, while all validation
+and reads address the same opened object. Windows 10+ FileRenameInfoEx POSIX
+replacement preserves existing readers of the previous snapshot. Source opening uses a canonical root,
+rejects escapes and reparse points, and returns a file handle. Source files need
+not have private ACLs, matching Unix source confinement rather than discovery
+privacy. Existing Unix UID/mode/no-follow operations remain unchanged.
+
+Native discovery, checkpoint restoration, atomic development JSON markers and
+process-output readers use this boundary on Windows. Inspection/source adapters
+remain behind their CLI gates until phase 3; their Windows file paths are wired
+to the same checked opens. Supervisor readiness/lifetime portability remains
+phase 2. Native Swift preview capture remains macOS-only.
+
+Windows desktop CI runs private-file/client and headless app-endpoint tests
+before GPUI checks. Tests cover native discovery/dispatch/cleanup, exclusive
+binding, oversized requests/replies, total deadlines during connection/read/write,
+remote-name rejection, protected/private output replacement, public/null DACL
+refusal and junction/source escape refusal. The same app-endpoint integration
+also runs on Unix, alongside all existing Unix transport tests.
+
+
+## Phase 6: embedded Python removed
+
+Closes #42. Base: `codex/port-phase5-preview` at
+`0b11369e997a4f346d56c045382f63568e238128` ([phase 5](https://github.com/1bye/rake/pull/54)).
+Phase 4 (`49633f29`) and phase 5 passed gate, portable, Windows desktop, Ubuntu
+desktop and macOS native; extended was skipped on normal PR events.
+
+### Current implementation and differences
+
+No CLI runtime path needs Python. Delete all eight embedded .py helpers and
+project.rs, including interpreter launch/extraction and its environment hook.
+Materialize only preview.swift and the embedded DevTools JS/HTML for their owned
+services; serve preview assets/bootstrap directly from embedded bytes. **Swift
+capture, preview HTML/JS/CSS and other non-Python resources remain embedded.**
+Remove the unused Python-server supervisor field. Browser candidates honor quoted
+BROWSER commands and %s, then use open, xdg-open or cmd /c start. No shell is used
+for BROWSER commands unless explicitly requested by the command itself. As with
+Python's webbrowser, the session does not own openers: each runs in its own
+process group and is only reaped, so stopping `rake dev` never terminates a
+browser that xdg-open or a BROWSER command started.
+
+Drop doctor’s `python` field: no built-in runtime still needs it. Preserve the
+other diagnostic fields and their order, optional Node, Web readiness and exit
+codes. Remove the interpreter prerequisite from CLI help, docs and generated
+README. Repository-only verification scripts still use Python. build-web.py now
+uses the Rust build command, including its output ownership/rollback checks;
+move an old unowned dist directory before first using this wrapper. Web platform
+fixtures use real Rust bundling, and the routing GUI suite uses the Rust broker.
+
+Unix process groups and merged output retain their contracts. Windows tools use
+anonymous pipes and kill-on-close Job Objects. Assign a suspended child before
+resuming it, so descendants cannot escape initial enrollment. Preserve bounded
+metadata/output and real missing-tool versus permission diagnostics. Web URL,
+identity and ZIP paths use slash separators; Windows ZIP timestamps use the CRT
+and regular files use mode 0644. The Windows Node agent uses a temporary module
+rather than putting its embedded source on the bounded Windows command line;
+it inherits console streams, returns the child exit code, owns its Job through
+Ctrl-C and removes the module before returning. Unix retains exec semantics.
+No dependency/toolchain versions changed: shlex 2 and windows-sys 0.61 were
+already locked and are now direct dependencies where needed.
+
+### Test conversion and coverage
+
+Before deleting Python, compare all 30 preview results and exact request
+envelopes, then capture the reference output in
+[preview-python-reference.json](tests/fixtures/preview-python-reference.json).
+The same corpus now runs by default as Rust coverage, with no interpreter or
+new ignore. The two remaining default ignores predate this port.
+
+Keep original Python suite test names and real HTTP, native, Web and CLI
+assertions. Replace deleted-helper internal assertions with the named Rust
+contracts in [ported-contract-tests.json](../../scripts/ported-contract-tests.json).
+The runner requires actual named test execution and rejects zero-test/ignored
+results. Add direct favicon/idempotency, input/base-path/metadata, private UTF-8
+checkpoint and relative-program permission-error cases so coverage is retained.
+Native GUI preview uses a small bounded test-only Unix JSON client, without
+retaining the production Python broker. Move deployment-internal gate coverage
+to the existing Rust workspace suites on Linux, Windows and macOS; no contract
+or assertion is removed. The raw oversize-upload probe now reads a bounded
+complete HTTP status line before asserting 413, after Linux delivered a partial
+first recv. No timing bound or expected status was relaxed.
+
+### Verification
+
+Mac: Rust 1.98.0 / Python 3.14.4 first on PATH / Node 26.4.0 / Chrome 156,
+shared /tmp/rake-port-target, dev/test debug info disabled, incremental off:
+
+- Full CLI: **354 passed, 0 failed, 2 existing ignored** (256 unit + 98 integration).
+- Clippy all-targets -D warnings, Cargo fmt, changed-file rake format and diff
+  checks passed. Lint: **725 Rust files, 14 existing diagnostics, 0 denied**.
+- Supervisor **14**, bridge **5**, runtime broker **9**, preview **18**,
+  deployment **10**, embedded DevTools **1**: all passed. Converted internal
+  cases actually execute their mapped Rust tests; HTTP cases use the real CLI.
+- Matching temporary wasm-bindgen 0.2.129: bundle **7**, loading **1**,
+  real Chrome crash **17**, real browser platform **9**: all passed.
+- Native preview passed repeated clicks, fractional scrolling, source selection,
+  blur/opaque toggles and stale rejection. No StaleGeneration on this run.
+- Updated routing GUI test: **30 boundaries**, real layout/styles/source,
+  replacement/stale IDs and Rust HTTP parity passed. build-web.py built real Notes.
+- Live Web dev: built/published/fetched page/bootstrap and native development
+  state, no Python child, SIGTERM exit 0 and **zero owned descendants** afterward.
+- Live desktop --preview --cdp: built/published/fetched page, actual JPEG and
+  WebSocket state, real source selection and pointer move over Rust HTTP, CDP
+  discovery and agent snapshot; notes-view live/saved each **100 nodes**.
+  Use isolated Notes data and reveal its own notebook window before capture.
+  SIGTERM exit 0, **zero owned descendants** and removed owned session.
+
+Additional capture repeats against an occluded, not-yet-drawn Notes window got
+only keepalives; revealing that same owned application through its runtime API
+made it visible/drawn and the complete capture/input check passed. No capture
+assertion or production behavior changed. An initial full-run formatter check
+read the unstaged deleted project.rs; stage the intended file set before its
+successful repeat. Temporary harness import/ZIP API fixes preserve assertions.
+
+Devbox: Rust 1.98.0 / Python 3.12.3, umask 022, debug info and incremental off:
+**350 passed, 0 failed, 2 existing ignored**; Clippy, Cargo fmt and lint passed
+(725 files, 14 existing diagnostics, 0 denied). Bridge **5**, deployment **10**
+passed. Supervisor **13 passed / 1 skipped**: only Node syntax checking skips
+because Node is not installed. No Node/GPUI dependencies or other tools installed.
+
+Initial phase-6 CI at a562114: gate, portable, Linux desktop and macOS native
+passed; Windows desktop failed the fresh console-build regression. Its old
+Windows-only dispatch forced the raw --locked adapter, bypassing first-lockfile
+creation. Remove that shortcut and extend the existing installed-layout adapter
+to Windows ZIP: preserve the executable, assets and installation descriptor in
+application/, report the .exe and Windows manifest identity, and reuse native
+resource/manifest staging without downloading an installer. Keep explicit native
+distribution builds on their existing adapter. Strengthen the real portable build
+test with assets, owned rebuild and unowned-output refusal; add an all-host Windows
+layout/manifest regression. Replacement Windows CI is pending.
+
+At 67049f9 the Windows test reached native staging and correctly rejected the
+fixture's missing rake-build integration. Keep that existing production guard.
+Use real rake-build/build.rs and rake-resources dependencies in the fixture on
+every host, and make its installed executable read the packaged asset from an
+unrelated working directory. Preserve the fresh-lockfile, output ownership,
+rebuild, archive/manifest and asset assertions. Windows installed builds retain
+the native packager's existing rake-build requirement; explicit build --native
+remains the raw Cargo executable adapter.
+
+Fixture-correction repeat: Mac and Linux each passed all **3** portable CLI tests,
+all-target Clippy and Cargo fmt; Mac rake format passed. At 67049f9, gate,
+portable, Ubuntu desktop and macOS native passed again. Windows CI must still
+confirm the corrected fixture with real build-script resource integration.
+
+Follow-up validation: Mac full CLI repeat **354 passed, 0 failed, 2 existing
+ignored**, portable build tests **3**, compatibility tests **2**; Linux portable
+tests **3** and compatibility tests **2**. Both machines passed all-target CLI
+and distribution Clippy. Mac Cargo/rake format and lint passed (725 files,
+14 existing diagnostics, 0 denied).
+
+A Windows-only
+Job test exercises real descendants and metadata bounds; portable CLI tests
+exercise doctor, a real console build with spaces, Web bundling with compiled
+Rust tool doubles, portable URLs/ZIP names and Windows agent module cleanup.
+A separate phase-5 extended dispatch reached Dylint and reported 863 earlier-code
+spacing locations, zero from phases 4/5. This differs from #51’s tool-install
+failure and remains reported rather than suppressed. Extended does not run on
+normal PR events; do not claim a phase-6 extended pass.
+
+### Remaining Windows work — explicit limited gate
+
+Doctor, build, native/Web bundle and the TCP/Node agent are portable. Keep dev,
+inspect/ctl, CDP and native source access gated where they use Unix facilities.
+Full support still needs:
+
+- A Windows native IPC endpoint/client/server (named pipes or equivalent),
+  cancellable bounded exchanges, and the matching advertisement/session layout.
+- Owned/private discovery and source/output validation using Windows ACLs,
+  identities and reparse-point checks; do not weaken Unix UID/mode confinement.
+- Supervisor app/CDP/companion lifecycle, readiness and output readers on Windows,
+  reload/checkpoint cancellation and shutdown/descendant tests using Job ownership.
+- Windows CDP/native inspection/source adapters and platform GUI validation.
+  Preview capture remains macOS-specific Swift; a Windows capture adapter would
+  need the same frame/input/generation bounds and lifetime rules.
+
+This is the narrower gate explicitly permitted by the task, not a claim of
+Windows dev/inspection support. No follow-up issues were opened. Keep all PRs
+as drafts; retain worktrees for review fixes. Final task cleanup removes shared
+build outputs, temporary wasm-bindgen and owned sessions/processes after CI.
+
+
+## Phase 5: native local preview
+
+Refs #42. Base: `codex/port-phase4-broker` at
+`e0ea92fe086987b9b5efc32440238f0cbbcaf8a0` ([phase 4](https://github.com/1bye/rake/pull/52)).
+Phase 4 and its accepted-socket follow-up passed gate, portable, Windows desktop,
+Ubuntu desktop and macOS native; extended was skipped.
+
+### Implementation and protocol
+
+`project_build/preview/` owns expiring capture references, exact-generation
+selection/hover/grab, bounded annotation paging, native video fanout, capture
+process lifetime and authenticated RFC 6455 controls. `serve.rs` handles preview
+POSTs, assets and WebSockets natively; `dev/services.rs` compiles the unchanged
+Swift helper and constructs preview. No Python serving backend or proxy starts.
+Remove the intermediate phase-4 NativeBroker callback; standalone retained Python
+helpers remain available for reference comparisons until phase 6.
+
+Preserve both codecs, epoch/window identity, 64 references with five-second expiry,
+finite content coordinates, ties-to-even viewport geometry, exact generations,
+non-retrying inputs with null keys, 33 annotation targets, 32 pages/8192 offset
+and 1.5-second lookup budget. Preserve masked, unfragmented text controls,
+origin/subprotocol token authentication, 16 KiB input, 256 KiB output and 250 ms
+metadata updates. Video retains 120 packets / 8 MiB, 2 MiB payload / 4096-byte
+metadata bounds, configuration replay and keyframe recovery after gaps or age
+above 150 ms. Reserve viewers before headers and release encoders after the last
+viewer, including header disconnects. Capture close retains the two-second grace
+before terminating its owned process group.
+
+**Swift capture and preview JS/CSS/HTML remain embedded non-Python resources.**
+Python extraction and browser selection remain for phase 6; the Unix gate is
+unchanged. No preview feature is dropped. Preserve the existing HTTP/1.0 101
+WebSocket response and earlier native JSON ordering/UTF-8 escaping/Server-header
+differences. Drain helper stderr continuously, retaining only 4096 diagnostic
+bytes, rather than risking a full pipe before reading it on exit.
+
+### Coverage mapping
+
+Existing Python internal tests remain present. The HTTP case in test-preview.py
+now uses the real Rust CLI by default; `RAKE_TEST_PYTHON_BROKER=1` selects the
+reference. Removed Python-backend readiness/fatal-exit cases become native
+listener shutdown and capture-compiler failure tests. Existing CDP/Node readiness
+coverage remains; no assertion is silently removed or weakened.
+
+| Python contract | Native coverage |
+| --- | --- |
+| exact selection/source/window | `selection_keeps_source_and_exact_window_without_mutation` |
+| text promotion, source ancestry and copy text | `grab_promotes_text_and_collects_pinned_ancestors_and_descendant_text` |
+| lightweight hover / changed capture | `hover_is_lightweight_and_expired_context_never_uses_another_capture` |
+| stable/exact annotation targets | `annotation_resolution_follows_stable_ids_and_keeps_exact_targets_scoped` |
+| pinned pages and window generations | `annotation_resolution_pins_pages_and_rejects_other_window_generations` |
+| nonadvancing pages / hidden layouts | `annotation_resolution_rejects_nonadvancing_pages_and_masks_hidden_targets` |
+| invalid targets / expired references | `invalid_annotation_targets_and_expired_references_never_reach_runtime` |
+| one-shot click / fractional scroll | `click_is_submitted_once_without_retry_key_and_fractional_scroll_keeps_geometry` |
+| invalid positions / input bounds | `invalid_expired_or_foreign_positions_never_reach_runtime`, `scroll_is_bounded_and_unsupported_input_is_rejected` |
+| helper/reference cleanup | `closing_capture_reaps_its_helper_and_releases_waiting_viewers`, `preview_state_bounds_references_and_changes_epoch_only_for_window_geometry` |
+| packet bounds/truncation | `truncated_and_oversized_capture_frames_fail_explicitly`, `capture_queue_bounds_both_packet_count_and_retained_bytes` |
+| joining at a keyframe / header disconnect | `video_join_starts_at_keyframe_and_releases_viewer_on_disconnect`, `disconnect_during_video_headers_releases_encoder` |
+| WebSocket framing/limits | `masked_text_and_control_frames_reject_fragments_unmasked_and_oversized_input`, `outbound_frames_use_all_length_encodings_and_keep_the_response_bound` |
+| HTTP auth/assets/control/shutdown | `serve::tests::native_preview_assets_authentication_control_replies_and_shutdown` |
+| preview flags | existing `project_build` argument and `dev::tests` parser coverage |
+
+### Verification
+
+Mac: Rust 1.98.0, Python 3.14.4 first on PATH, Node 26.4.0; shared
+`/tmp/rake-port-target`, dev/test debug info disabled and incremental off.
+
+- Full `cargo test -p rake-app-cli --locked --no-fail-fast`: **340 passed,
+  0 failed, 3 ignored** (245 unit and 95 integration). Two ignores predate this
+  port; the new manual Python comparison separately passed all **30 exact
+  result/request-envelope cases** with Python 3.14.
+- All-target Clippy `--locked -- -D warnings`, Cargo fmt and changed-file
+  rake format checks passed. `rake lint`: **721 files, 14 existing diagnostics,
+  0 denied**. `git diff --check` passed.
+- Supervisor **14**, dev bridge **5**, runtime broker **9**, preview **18**,
+  Web deployment **10**, embedded DevTools **1**: all passed.
+- Python-reference preview: **18 passed**. The original Python internal assertions
+  also remain in the default script suites; earlier phase-4 broker comparisons
+  retain their recorded results below.
+- With authorized temporary wasm-bindgen 0.2.129: bundle **7 passed**, real
+  Fieldnotes loading passed, Chrome 156 crash suite passed **17 scenarios**.
+- Native preview passed repeated clicks, bidirectional fractional scrolling,
+  Rust-source selection, blur/opaque toggling and stale-reference rejection.
+  No StaleGeneration occurred on this run; the previously known intermittent
+  race remains recorded, without evidence that this port causes it.
+- Live Web `rake dev -p rake-notes --target web --no-open --json`: built,
+  published, fetched immutable/bootstrap-injected page and native development
+  state; SIGTERM exit 0, stopped record and owned session cleanup.
+- Live desktop `--preview --cdp --no-open --json`: built/published, fetched page,
+  native preview state, actual JPEG frame, authenticated WebSocket state, CDP
+  discovery and agent snapshot; notes-view live/saved each **100 nodes**.
+  SIGTERM exit 0 and stopped record; use an isolated Fieldnotes data directory.
+
+Earlier Mac runs exposed inherited O_NONBLOCK (fixed and regression-tested in
+phase 4) and a new fixture setting a timeout after RST (move timeout setup before
+RST, without weakening cleanup assertions). The first final supervisor attempt
+timed out while concurrent checks held the shared Cargo target; its serial repeat
+passed all 14 unchanged cases. The initial live-video probe rejected a valid
+keepalive before the image; the corrected probe waited for JPEG and passed.
+Temporary installation build outputs were removed immediately after installation.
+The user subsequently removed the 40 GB disk floor; no unrelated files/processes
+were cleaned or stopped.
+
+Devbox, Rust 1.98.0 / Python 3.12.3, umask 022, debug info and incremental off:
+full CLI **336 passed, 0 failed, 3 ignored**; focused preview **18 passed** and
+manual Python differential **30 passed**. Clippy, Cargo fmt, rake format and lint
+passed (721 files, 14 existing diagnostics, 0 denied). Bridge **5**, reference
+preview/broker **18 / 9**, deployment **10** passed. Supervisor: **12 passed,
+1 skipped, 1 error** because Node is absent; its real CLI lifecycle case passed.
+No Node or GPUI system dependencies were installed on devbox. Its default umask
+002 exposes an unchanged archive mode assertion; the full repeat passed with 022.
+Interpret new helper doubles with the installed shell to avoid Linux ETXTBSY
+from concurrent forks retaining writer descriptors; real Swift launch is direct.
+
+Phase-5 dispatched CI at `59f5dec` passed gate, portable, Windows desktop,
+Ubuntu desktop and macOS native. Extended installed spacing tools successfully,
+then failed `scripts/check-spacing.py`; this is distinct from #51's install error.
+The captured diagnostics identify 283 phase-4-owned and 420 phase-5-owned
+blank-line locations plus 863 locations attributed to pre-phase-4 code. Fix the
+port-owned locations on their phase branches, carry the lower fix forward by
+cherry-pick, and keep the earlier baseline warnings visible. These Rust changes
+insert blank lines only (`git diff --ignore-blank-lines` is empty). Mac preview
+unit tests, Cargo fmt, all-target Clippy and diff checks pass; Dylint itself is
+verified in dispatched CI because additional local installs are not authorized.
+Fresh CI is pending on the follow-up heads. Phase 6 removes retained Python/extraction,
+updates prerequisite docs and browser opening, and resolves Windows boundaries.
+
+## Phase 4: native runtime broker and development bridge
+
+Refs #42. Base: main at `85f13c8`. `project_build/broker/` owns browser leases,
+private discovery, runtime forwarding, source-opening invocation, CDP discovery
+and output reads. `serve.rs` handles authenticated bridge/broker POSTs directly.
+Web sessions no longer launch `serve-web.py`. Keep the Python sources available
+for reference comparisons and phase-5 preview; extraction/removal belongs to phase 6.
+
+### Protocol and ownership
+
+- Retain exact runtime envelopes, request/retry keys, JSON result envelopes,
+  action names, status codes, 1 MiB response frames and the 1 MiB minus 1024-byte
+  HTTP input limit. The bootstrap bytes, discovery/session fields and public
+  origin advertisements stay compatible with `rake cdp`, `rake agent`, browser
+  runtimes and embedded DevTools.
+- Retain constant-time token authentication, numeric loopback binding, Host and
+  Origin checks, canonical runtime IDs and validated loopback HTTP forwarding
+  with redirects forbidden. HTTP fields decode as ISO-8859-1, matching Python,
+  so non-ASCII tokens receive 403 rather than a reset.
+- Discovery/output reads use no-follow, nonblocking opens, descriptor metadata,
+  current effective UID, private regular-file checks and bounded reads. Native
+  access requires the control-only origin and an exact private control-directory
+  socket with owned/private socket metadata. List at most 128 sorted discovery
+  candidates; never expose endpoints/tokens to the page.
+- Browser state owns at most 32 leases and 128 tickets (32 per runtime), preserves
+  insertion-ordered ticket delivery/redelivery, 30-second leases, 60-second ticket
+  expiry, 2-second polls, 10-second client timeouts and busy-reload retry delays.
+  A client timeout retains the ticket and is not cancellation or approval.
+- Captured source targets accept only bounded exact element IDs and boundary,
+  style or handler indices. Invoke the existing `ctl inspect source` command with
+  the session control directory/source root; that command keeps Rust-file and
+  workspace confinement. Ignore supplied file paths. Own the opener process group,
+  bound both pipes and cancel/reap it on shutdown.
+- Server shutdown cancels HTTP forwarding, wakes polls/clients, removes owned
+  advertisements, closes connections and joins workers. Native connect/write/read
+  steps use cancellable five-second deadlines, including full socket backlogs.
+  Check stopping under the
+  connection-registration lock to avoid accepting an untracked late reader.
+
+### Complete intermediate preview boundary
+
+Only preview sessions start the retained Python server. A small authenticated
+`NativeBroker` callback supplies its `Preview` with native development state,
+instance discovery and runtime requests. The Rust origin forwards only preview
+routes (including the existing binary/video and WebSocket transport); no Python
+bridge lease/ticket state is instantiated in that mode. Its private backend and
+shared token belong to the session. Standalone Python serving remains unchanged
+unless the internal `RAKE_NATIVE_BROKER_URL`/`RAKE_NATIVE_BROKER_TOKEN` are set.
+Swift capture and the preview JS/CSS/HTML assets remain embedded resources.
+
+### Tests and Python mapping
+
+The HTTP suites now start real Rust CLI dev origins by default using
+`scripts/broker_test_server.py`: Cargo/wasm-bindgen/Swift are tool doubles, while
+HTTP, authentication, broker, terminal clients and Unix peers are real. Set
+`RAKE_TEST_PYTHON_BROKER=1` to run the same assertions against the reference server.
+Original Python internal tests stay present; none are removed or weakened.
+
+| Original coverage / contract | Native coverage |
+| --- | --- |
+| bridge owned roundtrip, redelivery, CLI and private discovery | `test-dev-bridge.py` HTTP tests run against Rust; `owned_protocol_roundtrip_redelivery_private_discovery_and_cleanup` |
+| capacity and expired browser discovery | `capacity_expired_leases_and_tickets_keep_timeout_delivery_semantics` |
+| native forwarding and credential hiding | `test-runtime-broker.py` HTTP tests run against Rust; `native_forwarding_keeps_the_exact_envelope_and_rejects_foreign_or_public_sockets` |
+| exact source invocation and captured target validation | `source_targets_accept_only_exact_element_ids_and_captured_indices`, `source_opener_receives_exact_arguments_control_directory_and_source_root` |
+| CDP disable/default, URL constraints, redirect rejection, response bounds | `loopback_endpoints_reject_credentials_paths_aliases_and_redirect_targets`, `external_web_and_cdp_forwarding_reject_redirects_and_bound_response_bodies` |
+| external Web forwarding | `external_web_forwarding_preserves_credentials_and_envelope_only_at_validated_origin` |
+| successor metadata isolation | `native_successor_metadata_belongs_only_to_the_supervisor_runtime` |
+| Web origins cannot list/access native IPC | native forwarding test plus retained Python internal assertion |
+| process output bounds and cursor/privacy | existing `dev::tests::process_output_matches_the_private_ring_and_utf8_byte_bounds`; `output_is_private_bounded_and_cursor_filtered_without_inventing_causal_ownership` |
+| secure bounded file reads | `private_reads_reject_links_public_files_fifos_and_oversized_frames` |
+| native reply bounds and socket cancellation | `native_reply_bounds_and_shutdown_cancel_pending_socket_work` |
+| reload busy retry, cancellation and opener output bounds | `reload_busy_retries_and_shutdown_wakes_pending_clients`, `source_output_overflow_is_bounded_and_stopped_brokers_do_not_launch_openers` |
+| no Python Web server, bind errors and helper lifecycle | new `project_dev::web_serves_without_python_or_node_and_reports_occupied_listener`; existing readiness/fatal-exit tests now exercise the retained preview backend |
+| HTTP JSON size/type/shape and build-ID validation | additional `test-dev-bridge.py::test_json_frame_bounds_shape_and_action_validation`, run on both implementations |
+
+A new oversized-upload reference check reproduced Python's early-response reset;
+compare declared oversize lengths without uploading the body, asserting the same
+413 deterministically. Rust also passed the actual oversized-body check. The
+existing early-error drain regression remains. The initial native token check
+caught UTF-8-only header decoding; fix it with HTTP's Latin-1 decoding. A new CDP
+test caught optional-discovery fallback hiding redirect rejection; preserve the
+explicit error separately from unavailable discovery. The first full run caught
+an incorrect Content-Length in the new fake Web peer; correct its wire length.
+Three supervisor fixtures timed out under concurrent validation on that run;
+the complete repeat passed all 15 without assertion or timeout weakening.
+
+### Differences and retained work
+
+- Preserve prior native JSON key ordering/OS-library diagnostics and static Server
+  header differences. Tokens, PIDs, ephemeral ports and timing naturally differ.
+  JSON uses UTF-8 rather than Python's ASCII escaping; wire frames stay bounded.
+- Source-opener output was previously captured without a bound before truncation.
+  Both native pipes now stop at 1 MiB; overflow reports the existing unavailable
+  opener error and reaps the process group. Source errors still expose at most
+  2048 characters. Shutdown explicitly cancels outstanding broker work.
+- Reuse workspace `rake-http` for deadline/cancellation-aware HTTP with redirects
+  disabled, `async-io` for the existing client's native socket adapter, and already
+  locked `subtle` for constant-time token comparison.
+  No new dependency versions or toolchain installs. Temporary wasm-bindgen
+  0.2.129 is the sole testing-tool installation and is removed at handoff.
+- The Unix gate remains necessary for the existing supervisor/process and native
+  socket implementation. Windows scope, native browser selection and prerequisite
+  documentation remain phase 6. No feature is dropped and no Windows claim is made.
+
+### Verification: macOS, Rust 1.98.0 / Python 3.14.4 / Node 26.4.0
+
+Use `/tmp/rake-port-target`, dev/test debug information disabled, incremental off,
+Python 3.14 and temporary wasm-bindgen first on PATH. Linux/devbox not used.
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p rake-app-cli --locked --no-fail-fast` | **320 passed, 2 existing ignored, 0 failed**: 225 unit + 95 integration |
+| CLI all-target Clippy `--locked -- -D warnings` | Passed |
+| `cargo fmt --all --check`, changed-file `rake format --check`, diff whitespace | Passed |
+| `rake lint` | Passed: 714 Rust files, 14 existing diagnostics, 0 denied |
+| Supervisor / bridge / broker / preview / Web deployment / embedded DevTools suites | **14 / 5 / 9 / 18 / 10 / 1 passed** |
+| Reference bridge / broker suites | **5 / 9 passed** with `RAKE_TEST_PYTHON_BROKER=1` |
+| Direct Python/Rust differential | **36 normalized JSON/status cases passed**; both advertisements/sessions cleaned |
+| Bundle suite with matching wasm-bindgen 0.2.129 | **7 passed, 0 failed** |
+| Web loading | Passed real Fieldnotes module-graph resolution and startup error display |
+| Web crash | Passed **17 real Chrome 156 scenarios**, including Rust panic/sink, privacy, cross-tab delivery, UTF-8 limits and recovery |
+| Native preview | Passed repeated click, fractional scroll, Rust-source selection, blur/opaque toggle and stale-reference checks; no StaleGeneration on this run |
+| Live Web dev | Built/published Fieldnotes, fetched injected immutable page/bootstrap and native development state; no Python server; SIGTERM exit 0 with clean stopped records/advertisements/owned descendants |
+
+Desktop `rake dev -p rake-notes --preview --cdp --no-open --json` also passed:
+Swift compilation, real native publication, authenticated preview state, RFC6455
+upgrade/state delivery through the native router and a `rake agent` snapshot.
+Live and saved notes-view captures each passed with **100 nodes**. SIGTERM exited
+0; stopped records, advertisements and all observed owned descendants were clean.
+CI results belong in the PR body. After the final full run, the fixture cleanup
+check repeated all **15 project_dev tests**, passing with early-startup sessions
+removed by their own PID and creation time. The first desktop probe reached publication before runtime discovery;
+wait explicitly for its advertisement before querying. An initial WebSocket probe
+expected HTTP/1.1, while the retained Python transport correctly emits its existing
+HTTP/1.0 101 response; the probe now checks that unchanged response.
+
+Keep `/tmp/rake-port-p4` for review fixes. Reclaim completed Wasm artifacts after
+those suites to preserve the requested 40 GB free-space floor. The live checkout
+is untouched apart from fetch/worktree registration. No merge, main push,
+force-push, rebase, amend, issue comment or label.
+
+### Follow-up: CI for stacked base branches
+
+Allow existing pull-request CI on the phase-4 and phase-5 base branch names as
+well as main. Keep jobs, assertions, permissions and extended's existing event
+condition unchanged. The manual phase-5 run at `1a9fb99` verified that all 703
+port-owned spacing locations are fixed; extended retains 863 earlier-code
+locations and zero attributed to this port. Its branch-dispatched status was not
+reported on the stacked PR dashboard, so use normal PR events for subsequent
+stack checks rather than repeated manual dispatches.
+
+### Follow-up: spacing discovered by dispatched CI
+
+Phase-5 manual CI passed gate, portable, Windows desktop, Ubuntu desktop and
+macOS native, but extended reached the spacing checker and failed. Tool
+installation succeeded; this is distinct from the installation problem in #51.
+Apply the 283 reported blank-line insertions owned by phase 4 on its own branch;
+no non-whitespace Rust change. Mac: broker tests **14 passed**, Cargo fmt and
+whitespace/diff checks passed. Carry this commit forward without rewriting any
+pushed history. Older spacing warnings outside phases 4/5 remain a reported
+baseline failure, with phase-5 findings recorded in its PR.
+
+### Follow-up: accepted connection mode
+
+The phase-5 native WebSocket regression exposed macOS inheriting O_NONBLOCK from
+our nonblocking listener. Explicitly restore blocking mode on accepted worker
+sockets before timed HTTP reads; preview proxying still selects its existing
+nonblocking forwarding mode. The new regression splits both headers and JSON
+across a bounded read timeout and requires successful authenticated completion.
+The phase-5 WebSocket case failed on the Mac before this change and passed after
+it. A real Mac CLI check splitting authenticated headers and JSON also passed.
+Devbox, Rust 1.98.0 with umask 022: full CLI **317 passed, 2 ignored**,
+all-target Clippy `-D warnings`, Cargo fmt, rake format and rake lint passed.
+The added Rust segmented-request regression is included in that full run.
+Latest CI is recorded in the PR body. This fix is a
+new commit on the phase-4 branch; pushed history is preserved.
+
+### Remaining phases
+
+- Phase 5: port `preview.py`/`preview_socket.py` and retire the compatibility server;
+  retain Swift capture and browser resources.
+- Phase 6: delete embedded Python/extraction/launch paths, replace Python browser
+  opening, update prerequisites/doctor and resolve platform gates/Windows scope.
+
 ## Phase 3: Web serving, bundles and offline payloads
 
 Refs #42. Based on `codex/port-phase2-web` at

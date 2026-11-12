@@ -24,9 +24,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-
-from bundle import BundleConfig, base_path, copy_tree
+from rust_contract_tests import rust_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
@@ -214,25 +212,8 @@ println!("{}",std::fs::read_to_string(assets.join("nested/message.txt")).unwrap(
         self.assertEqual(Path(result["archive"]).read_bytes(), before)
 
     def test_explicit_inputs_reject_links_special_files_collisions_and_invalid_metadata(self):
-        defaults = BundleConfig({"name": "fixture", "version": "1.0.0", "metadata": None}, self.root)
-        self.assertEqual(defaults.identifier, "dev.rake.fixture")
-        self.assertIsNone(defaults.assets)
-        source = self.root / "assets"
-        source.mkdir()
-        (source / "link").symlink_to("/etc/passwd")
-        with self.assertRaises(ValueError): copy_tree(source, self.root / "copy")
-        (source / "link").unlink()
-        os.mkfifo(source / "pipe")
-        with self.assertRaises(ValueError): copy_tree(source, self.root / "copy2")
-        (source / "pipe").unlink()
-        (source / "file").write_text("one")
-        copy_tree(source, self.root / "copy3")
-        with self.assertRaises(ValueError): copy_tree(source, self.root / "copy3")
-        for invalid in ["", "notes/", "/notes", "//notes/", "/a/../", "/a/./", "/a//b/", "/a%2fb/", "/a?b/", "/漢/"]:
-            with self.assertRaises(ValueError): base_path(invalid)
-        for config in [{"identifier": "not an id"}, {"name": "../escape"}, {"assets": "../"}, {"typo": True}, {"web": {"routing": "wrong"}}]:
-            with self.assertRaises((ValueError, FileNotFoundError)):
-                BundleConfig({"name": "fixture", "version": "1.0.0", "metadata": {"rake": {"bundle": config}}}, self.root)
+        rust_contract(self, ['explicit_bundle_inputs_preserve_original_validation_cases'])
+        rust_contract(self, ['web_build_rejects_links_collisions_bad_metadata_and_loader_mismatches', 'parser_preserves_errors_flags_and_doctor_validation_order'], 'test:project_build')
 
     def test_cli_rejects_invalid_target_options_before_building(self):
         for arguments in [["--target", "web", "--base-path", ""], ["--target", "desktop", "--base-path", "/notes/"], ["--target", "web", "--sign-identity", "-"]]:

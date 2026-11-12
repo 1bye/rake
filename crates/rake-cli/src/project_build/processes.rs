@@ -1,19 +1,28 @@
-//! Bounded tool output and owned Unix process groups, including compiler descendants.
+//! Bounded tool output and owned process trees, including compiler descendants.
 
 use super::Result;
+
 use std::{
     io::{Read, Write},
-    os::{
-        fd::OwnedFd,
-        unix::{net::UnixStream, process::CommandExt},
-    },
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
+
+#[cfg(unix)]
+use std::{
+    os::{
+        fd::OwnedFd,
+        unix::{net::UnixStream, process::CommandExt},
+    },
+    time::Instant,
+};
+
+#[cfg(windows)]
+mod windows;
 
 const MAX_BYTES: usize = 1024 * 1024;
 const METADATA_LIMIT: usize = 32 * MAX_BYTES;
@@ -43,21 +52,32 @@ impl<'a> Processes<'a> {
 
     pub(super) fn with_stopping(mut self, stopping: &'a AtomicBool) -> Self {
         self.stopping = Some(stopping);
+
         self
     }
 
     pub(super) fn with_output(mut self, sink: &'a OutputSink<'a>) -> Self {
         self.output_sink = Some(sink);
+
         self
     }
 
     pub(super) fn start(&self, command: &mut Command) -> Result<ProcessGroup> {
         self.check_cancelled()?;
-        Ok(ProcessGroup(command.process_group(0).spawn()?))
+        #[cfg(unix)]
+        {
+            Ok(ProcessGroup(command.process_group(0).spawn()?))
+        }
+
+        #[cfg(windows)]
+        {
+            windows::spawn(command)
+        }
     }
 
     pub(super) fn capture(&self, command: &mut Command, mode: Capture) -> Result<String> {
         let mut bytes = Vec::new();
+
         let status = self.execute(
             command,
             matches!(mode, Capture::Diagnostic),
@@ -65,15 +85,18 @@ impl<'a> Processes<'a> {
                 if bytes.len() + chunk.len() > METADATA_LIMIT {
                     return Err("tool metadata exceeds 32 MiB".into());
                 }
+
                 bytes.extend_from_slice(chunk);
+
                 Ok(())
             },
         )?;
+
         if !status.success() {
             return Err(if !matches!(mode, Capture::Metadata) {
                 format!(
                     "Command '{}' returned non-zero exit status {}.",
-                    python_command(command),
+                    diagnostic_command(command),
                     exit_code(status)
                 )
             } else {
@@ -95,13 +118,16 @@ impl<'a> Processes<'a> {
     ) -> Result<()> {
         let mut pending = Vec::new();
         let mut tail = Vec::new();
+
         let mut line = |bytes: &[u8], pid| -> Result<()> {
             let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
             let message = serde_json::from_str::<serde_json::Value>(&text).ok();
+
             let printed = match message {
                 Some(message) if message.is_object() => {
                     if message["reason"] == "compiler-artifact" {
                         artifact(message);
+
                         None
                     } else if message["reason"] == "compiler-message" {
                         Some(
@@ -116,25 +142,32 @@ impl<'a> Processes<'a> {
                 }
                 _ => Some(text),
             };
+
             if let Some(text) = printed {
                 if let Some(sink) = self.output_sink {
                     sink(&text, pid, "build");
                 }
+
                 if !text.is_empty() {
                     std::io::stderr().write_all(text.as_bytes())?;
                     std::io::stderr().flush()?;
                     tail.push(last_chars(&text, 4000));
+
                     if tail.len() > 8 {
                         tail.remove(0);
                     }
                 }
             }
+
             Ok(())
         };
+
         let mut output_pid = 0;
+
         let status = self.execute(command, true, |chunk, pid| {
             output_pid = pid;
             pending.extend_from_slice(chunk);
+
             while let Some(end) = pending
                 .iter()
                 .take(MAX_BYTES)
@@ -145,11 +178,14 @@ impl<'a> Processes<'a> {
                 line(&pending[..end], pid)?;
                 pending.drain(..end);
             }
+
             Ok(())
         })?;
+
         if !pending.is_empty() {
             line(&pending, output_pid)?;
         }
+
         if !status.success() {
             return Err(format!(
                 "{} exited {}\n{}",
@@ -182,18 +218,16 @@ impl<'a> Processes<'a> {
         mut consume: impl FnMut(&[u8], u32) -> Result<()>,
     ) -> Result<ExitStatus> {
         self.check_cancelled()?;
-        let (mut reader, writer) = UnixStream::pair()?;
-        command
-            .process_group(0)
-            .stdout(Stdio::from(OwnedFd::from(writer.try_clone()?)));
-        if merge_stderr {
-            command.stderr(Stdio::from(OwnedFd::from(writer)));
-        } else {
-            command.stderr(Stdio::inherit());
-            drop(writer);
-        }
-        let child = command.spawn().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
+        let (mut reader, stdout, stderr) = output_pipe(merge_stderr)?;
+
+        command.stdout(stdout);
+        command.stderr(stderr.unwrap_or_else(Stdio::inherit));
+        let mut group = self.start(command).map_err(|error| {
+            // Retain the missing-tool diagnostic used by doctor and build callers.
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            {
                 format!(
                     "[Errno 2] No such file or directory: '{}'",
                     command.get_program().to_string_lossy()
@@ -202,11 +236,13 @@ impl<'a> Processes<'a> {
                 format!("{}: {error}", command.get_program().to_string_lossy())
             }
         })?;
+
         command.stdout(Stdio::null()).stderr(Stdio::inherit());
-        let mut group = ProcessGroup(child);
         let (sender, receiver) = mpsc::sync_channel(4);
+
         let thread = std::thread::spawn(move || {
             let mut buffer = [0; 8192];
+
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
@@ -217,28 +253,35 @@ impl<'a> Processes<'a> {
                     }
                     Err(error) => {
                         let _ = sender.send(Err(error));
+
                         break;
                     }
                 }
             }
         });
+
         let result = (|| {
             loop {
                 self.check_cancelled()?;
+
                 match receiver.recv_timeout(Duration::from_millis(25)) {
                     Ok(chunk) => consume(&chunk?, group.0.id())?,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
             }
+
             loop {
                 self.check_cancelled()?;
+
                 if let Some(status) = group.0.try_wait()? {
                     return Ok(status);
                 }
+
                 std::thread::sleep(Duration::from_millis(25));
             }
         })();
+
         // Stop descendants before joining a reader which may still hold their pipe.
         drop(group);
         drop(receiver);
@@ -254,7 +297,7 @@ fn last_chars(text: &str, count: usize) -> String {
         .collect()
 }
 
-fn python_command(command: &Command) -> String {
+fn diagnostic_command(command: &Command) -> String {
     let arguments = std::iter::once(command.get_program())
         .chain(command.get_args())
         .map(|argument| format!("{argument:?}"))
@@ -266,47 +309,113 @@ fn python_command(command: &Command) -> String {
 }
 
 fn exit_code(status: ExitStatus) -> i32 {
-    use std::os::unix::process::ExitStatusExt;
-    status
-        .code()
-        .unwrap_or_else(|| -status.signal().unwrap_or(1))
-}
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
 
-pub(super) struct ProcessGroup(pub(super) Child);
+        status
+            .code()
+            .unwrap_or_else(|| -status.signal().unwrap_or(1))
+    }
 
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        let pid = self.0.id() as i32;
-        // SAFETY: a negative child PID addresses the process group created above.
-        unsafe {
-            libc::kill(-pid, libc::SIGTERM);
-        }
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while self.0.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        // SAFETY: also reap descendants left behind after the group leader exited.
-        unsafe {
-            libc::kill(-pid, libc::SIGKILL);
-        }
-        let _ = self.0.wait();
+    #[cfg(windows)]
+    {
+        status.code().unwrap_or(1)
     }
 }
 
-pub(super) fn which(program: &str) -> Option<std::path::PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|path| path.join(program))
-            .find(|path| {
-                path.metadata().is_ok_and(|metadata| {
-                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-                })
-            })
-    })
+pub(super) struct ProcessGroup(pub(super) Child, #[cfg(windows)] windows::Job);
+
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            let pid = self.0.id() as i32;
+
+            // SAFETY: a negative child PID addresses the process group created above.
+            unsafe {
+                libc::kill(-pid, libc::SIGTERM);
+            }
+            let deadline = Instant::now() + Duration::from_secs(3);
+
+            while self.0.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+
+            // SAFETY: also reap descendants left behind after the group leader exited.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+            let _ = self.0.wait();
+        }
+
+        #[cfg(windows)]
+        {
+            self.1.terminate();
+            let _ = self.0.wait();
+        }
+    }
 }
 
-#[cfg(test)]
+#[cfg(unix)]
+fn output_pipe(merge: bool) -> std::io::Result<(UnixStream, Stdio, Option<Stdio>)> {
+    let (reader, writer) = UnixStream::pair()?;
+    let stdout = Stdio::from(OwnedFd::from(writer.try_clone()?));
+    let stderr = merge.then(|| Stdio::from(OwnedFd::from(writer)));
+
+    Ok((reader, stdout, stderr))
+}
+
+#[cfg(windows)]
+fn output_pipe(merge: bool) -> std::io::Result<(std::fs::File, Stdio, Option<Stdio>)> {
+    windows::pipe(merge)
+}
+
+pub(super) fn which(program: &str) -> Option<std::path::PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+
+    #[cfg(unix)]
+    let names = [std::ffi::OsString::from(program)];
+
+    #[cfg(windows)]
+    let names = {
+        let mut names = vec![std::ffi::OsString::from(program)];
+
+        if std::path::Path::new(program).extension().is_none() {
+            let extensions =
+                std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+
+            for extension in extensions
+                .split(';')
+                .filter(|extension| extension.starts_with('.'))
+            {
+                names.push(format!("{program}{extension}").into());
+            }
+        }
+
+        names
+    };
+
+    std::env::split_paths(&paths)
+        .flat_map(|path| names.iter().map(move |name| path.join(name)))
+        .find(|path| {
+            path.metadata().is_ok_and(|metadata| {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                }
+
+                #[cfg(windows)]
+                {
+                    metadata.is_file()
+                }
+            })
+        })
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     //! Covers bounded metadata and child-command failure contracts.
     //! Real: Unix process groups and tool output pipes. Doubles: shell commands.
@@ -317,6 +426,7 @@ mod tests {
     fn metadata_is_bounded_before_parsing() {
         let cancelled = AtomicBool::new(false);
         let processes = Processes::new(&cancelled);
+
         let error = processes
             .capture(
                 Command::new("/bin/dd").args(["if=/dev/zero", "bs=1048576", "count=33"]),
@@ -331,12 +441,14 @@ mod tests {
     fn failed_metadata_and_diagnostic_probes_keep_their_error_contracts() {
         let cancelled = AtomicBool::new(false);
         let processes = Processes::new(&cancelled);
+
         let error = processes
             .capture(
                 Command::new("/bin/sh").args(["-c", "exit 7"]),
                 Capture::Metadata,
             )
             .unwrap_err();
+
         assert_eq!(error.to_string(), "/bin/sh metadata command failed");
 
         let error = processes
@@ -345,6 +457,7 @@ mod tests {
                 Capture::Diagnostic,
             )
             .unwrap_err();
+
         assert_eq!(
             error.to_string(),
             "Command '['/bin/sh', '-c', 'exit 7']' returned non-zero exit status 7."
@@ -352,9 +465,31 @@ mod tests {
     }
 
     #[test]
+    fn relative_tool_permission_errors_are_not_reported_as_missing_programs() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let tool = root.path().join("tool");
+
+        std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let cancelled = AtomicBool::new(false);
+
+        let error = Processes::new(&cancelled)
+            .capture(
+                Command::new("./tool").current_dir(root.path()),
+                Capture::Metadata,
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("Permission denied"), "{error}");
+        assert!(!error.to_string().contains("No such file"));
+    }
+
+    #[test]
     fn cancelled_work_never_starts_a_tool() {
         let cancelled = AtomicBool::new(true);
         let processes = Processes::new(&cancelled);
+
         let error = processes
             .capture(&mut Command::new("/nonexistent-tool"), Capture::Metadata)
             .unwrap_err();

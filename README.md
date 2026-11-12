@@ -27,7 +27,7 @@ AI agents inspect and control the running app.
 
 ## Quick start
 
-Rake needs Rust 1.98.0, native development tools and Python 3.11+. Install the CLI
+Rake needs Rust 1.98.0 and native development tools. Install the CLI
 and create a desktop/browser app:
 
 ```sh

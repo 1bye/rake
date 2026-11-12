@@ -6,7 +6,6 @@ This takes you from nothing to a running app, then adds the CLI, the browser and
 
 - Rust 1.98.0. Inside this repository, `rust-toolchain.toml` selects it for you.
 - On macOS, Apple's development tools.
-- For the CLI, Python 3.11 or newer.
 - For the browser, a WebGPU-capable browser.
 
 ## Create your first app

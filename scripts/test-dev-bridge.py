@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Exercise authentication and real browser/terminal HTTP broker exchanges."""
-
+"""CLI contracts after embedded Python removal; internal cases map to native Rust tests.
+See crates/rake-cli/PORTING.md. HTTP/native fixtures continue running against the Rust CLI.
+"""
 import concurrent.futures
+import io
 import json
 import os
 from pathlib import Path
-import selectors
+import shutil
 import signal
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
-import urllib.request
 import urllib.parse
+import urllib.request
 import uuid
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-
-from dev_bridge import BridgeError, DevBridge
-
+from rust_contract_tests import rust_contract
+ROOT = Path(__file__).resolve().parents[1]
+CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
 
 class BrokerHTTP(unittest.TestCase):
     def setUp(self):
@@ -28,51 +32,20 @@ class BrokerHTTP(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         (self.directory / "index.html").write_text('<html lang="en"><meta charset="utf-8"><body>test</body></html>')
-        self.discovery = self.directory / "control"
-        env = dict(os.environ, RAKE_CONTROL_DIR=str(self.discovery))
-        # A private loopback server must become ready without reverse DNS.
-        bootstrap = """import runpy, sys
-from pathlib import Path
-from unittest.mock import patch
-sys.argv.pop(0)
-sys.path.insert(0, str(Path(sys.argv[0]).resolve().parent))
-with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must not resolve DNS')):
-    runpy.run_path(sys.argv[0], run_name='__main__')
-"""
-        self.server_log = (self.directory / "server.log").open("w+")
-        self.process = subprocess.Popen([sys.executable, "-c", bootstrap, str((Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py")), "--directory", str(self.directory), "--port", "0", "--control"], env=env, stdout=subprocess.PIPE, stderr=self.server_log, text=True)
-        self.addCleanup(self.stop_server)
-        with selectors.DefaultSelector() as selector:
-            selector.register(self.process.stdout, selectors.EVENT_READ)
-            ready = bool(selector.select(10))
-            line = self.process.stdout.readline() if ready else ""
-        if not line.startswith("Serving "):
-            self.process.poll()
-            self.server_log.seek(0)
-            self.fail("server failed to start: " + self.server_log.read(16384))
-        launch = urllib.parse.urlsplit(line.strip().split()[-1])
-        self.url = urllib.parse.urlunsplit(launch._replace(fragment="")).rstrip("/")
-        self.config = {"url": self.url, "token": launch.fragment.removeprefix("__rake_control=")}
+        from broker_test_server import BrokerServer
+        self.server = BrokerServer(self.directory)
+        self.addCleanup(self.server.close)
+        self.discovery = self.server.control
+        self.url = self.server.url
+        self.config = {"url":self.url,"token":self.server.token}
         with urllib.request.urlopen(self.url) as response:
             document = response.read().decode()
         self.assertNotIn(self.config["token"], document)
-        self.assertIn('src="/__rake/bootstrap.js"', document)
+        self.assertRegex(document, r'src="/__rake/bootstrap\.js(?:\?build=\d+)?"')
         with urllib.request.urlopen(self.url + "/__rake/bootstrap.js") as response:
             self.assertNotIn(self.config["token"], response.read().decode())
         self.runtime = str(uuid.uuid4())
         self.info = {"element_inspection": "unavailable", "element_interaction": False, "protocol": 1, "runtime_id": self.runtime, "platform": "web", "commands": [], "queries": ["info"], "supported_targets": ["CurrentTab", "NewTab"], "idempotency_capacity": 1024, "completed_operations": 256, "pending_operations": 1024}
-
-    def stop_server(self):
-        try:
-            if self.process.poll() is None:
-                self.process.send_signal(signal.SIGINT)
-                self.process.wait(timeout=10)
-        finally:
-            if self.process.poll() is None:
-                self.process.kill()
-                self.process.wait(timeout=5)
-            self.process.stdout.close()
-            self.server_log.close()
 
     def post(self, path, body, token=None, origin=None):
         headers = {"Content-Type": "application/json", "X-Rake-Token": self.config["token"] if token is None else token}
@@ -122,35 +95,51 @@ with patch('socket.getfqdn', side_effect=AssertionError('loopback readiness must
             self.assertEqual(process.returncode, 0, stderr)
             self.assertEqual(json.loads(stdout), result["Ok"])
 
+    def test_json_frame_bounds_shape_and_action_validation(self):
+        for action, payload, content_type, status in [
+            ("connect", b"{}", "text/plain", 413),
+            ("connect", b"[]", "application/json", 400),
+            ("connect", b"{", "application/json", 400),
+            ("inspect", b"{}", "application/json", 400),
+            ("inspect_unknown", b"{}", "application/json", 404),
+        ]:
+            request = urllib.request.Request(self.url + "/__rake/" + action, payload,
+                {"Content-Type":content_type,"X-Rake-Token":self.config["token"]})
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=15)
+            self.assertEqual(error.exception.code,status,(action,len(payload)))
+            error.exception.close()
+        # Reject the declared oversized frame before waiting for a body. The old
+        # Python server can reset a concurrent oversized upload before its 413 arrives.
+        import socket
+        parsed = urllib.parse.urlsplit(self.url)
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=5) as connection:
+            connection.sendall((f"POST /__rake/connect HTTP/1.0\r\nHost: {parsed.netloc}\r\n"
+                f"Content-Type: application/json\r\nX-Rake-Token: {self.config['token']}\r\n"
+                f"Content-Length: {1024 * 1024 - 1023}\r\n\r\n").encode())
+            status = bytearray()
+            while not status.endswith(b"\r\n"):
+                chunk = connection.recv(1)
+                if not chunk:
+                    break
+                status.extend(chunk)
+                self.assertLessEqual(len(status), 4096)
+            self.assertTrue(status.endswith(b"\r\n"), status)
+            self.assertTrue(status.startswith(b"HTTP/1.0 413"), status)
+        for build in [True,-1,2**53+1,"1",None]:
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.post("connect", {"application_id":"test","info":self.info,"build_id":build})
+            self.assertEqual(error.exception.code,400)
+            error.exception.close()
 
-class PreviewAuthentication(unittest.TestCase):
+
+class NativeInternalContracts(unittest.TestCase):
     def test_non_ascii_preview_token_is_rejected(self):
-        from types import SimpleNamespace
-        from preview_socket import Socket
-        handler = SimpleNamespace(headers={
-            "Host": "127.0.0.1:9000", "Origin": "http://127.0.0.1:9000",
-            "Sec-WebSocket-Protocol": "rake-preview-v1, rake-token.é",
-        })
-        with self.assertRaises(BridgeError) as error:
-            Socket.upgrade(handler, "expected")
-        self.assertEqual(error.exception.status, 403)
+        rust_contract(self, ['native_preview_assets_authentication_control_replies_and_shutdown'], 'bin:rake')
 
-
-class BrokerBounds(unittest.TestCase):
     def test_capacity_and_expired_browser_discovery(self):
-        with tempfile.TemporaryDirectory() as directory:
-            bridge = DevBridge("http://127.0.0.1:9000", directory)
-            runtime = str(uuid.uuid4())
-            bridge.handle("connect", {"application_id": "test", "info": {"protocol": 1, "runtime_id": runtime, "platform": "web"}})
-            bridge.tickets = {str(i): {"runtime": runtime, "created": __import__("time").monotonic(), "result": None} for i in range(32)}
-            with self.assertRaises(BridgeError) as error:
-                bridge.handle("client", {"runtime_id": runtime, "request": {"runtime_id": runtime, "protocol": 1}})
-            self.assertEqual(error.exception.status, 429)
-            bridge.instances[runtime]["seen"] -= 31
-            with self.assertRaises(BridgeError):
-                bridge.handle("poll", {"runtime_id": runtime})
-            self.assertFalse((Path(directory) / f"{runtime}.json").exists())
-            bridge.close()
+        rust_contract(self, ['capacity_expired_leases_and_tickets_keep_timeout_delivery_semantics'], 'bin:rake')
+
 
 
 if __name__ == "__main__":

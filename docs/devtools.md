@@ -52,7 +52,7 @@ target/debug/rake cdp --session /tmp/rake-dev-EXAMPLE --no-open --json
 The first command builds and runs the example and prints a CDP discovery URL.
 Open its `/json/list` endpoint and paste the target’s `devtoolsFrontendUrl` into
 Chrome. To attach to a session started without `--cdp`, use the second command
-and paste the URL it prints. Python 3.11+ is required by the supervisor.
+and paste the URL it prints. The supervisor runs in Rust; it requires no Python interpreter.
 
 ## Connection
 

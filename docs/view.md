@@ -676,7 +676,7 @@ opaque unless they execute their own instrumented rendering. See
 ```sh
 cargo run -p rake-view
 python3 scripts/build-web.py --example view
-python3 crates/rake-cli/scripts/serve-web.py --example view --port 8083
+python3 -m http.server --directory dist/view 8083
 
 cargo test -p rake-macros --locked
 cargo test -p rake-app --test view_ui --locked

@@ -13,6 +13,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+from broker_test_server import BrokerServer
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,15 +37,19 @@ def main():
         raise SystemExit("requires a macOS GUI session; this test does not silently skip")
     with tempfile.TemporaryDirectory(prefix="rake-elements-", dir="/tmp") as temporary:
         directory = Path(temporary)
-        control = directory / "control"
-        control.mkdir(mode=0o700)
+        server = BrokerServer(directory, native=True)
+        control = server.control
         env = {**os.environ, "RAKE_DEV_CONTROL": "1", "RAKE_CONTROL_DIR": str(control)}
         with (directory / "app.log").open("w+") as log:
-            app = subprocess.Popen([str(ROOT / "target/debug/rake-routing")], cwd=ROOT, env=env, stdout=log, stderr=log)
-            server = None
+            binary = Path(os.environ.get("RAKE_ROUTING_BIN", str(Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake-routing")))
+            try:
+                app = subprocess.Popen([str(binary)], cwd=ROOT, env=env, stdout=log, stderr=log)
+            except BaseException:
+                server.close()
+                raise
             try:
                 def ctl(*arguments):
-                    result = subprocess.run([str(ROOT / "target/debug/rake"), "ctl", "--json", *arguments],
+                    result = subprocess.run([str(Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"), "ctl", "--json", *arguments],
                         env=env, capture_output=True, text=True, timeout=10, check=True)
                     return json.loads(result.stdout)
 
@@ -89,11 +94,10 @@ def main():
                 current = eventually(replaced)
                 assert all(node["entry_id"] != edit["entry_id"] for node in current["elements"])
                 assert not set(elements).intersection(node["id"] for node in current["elements"])
-                stale = subprocess.run([str(ROOT / "target/debug/rake"), "ctl", "--json", "inspect", "element", edit["id"]], env=env, capture_output=True, text=True, timeout=10)
+                stale = subprocess.run([str(Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"), "ctl", "--json", "inspect", "element", edit["id"]], env=env, capture_output=True, text=True, timeout=10)
                 assert stale.returncode != 0 and "refresh" in stale.stderr
                 # Forward the same query through the actual Elements panel's HTTP endpoint.
-                server = subprocess.Popen([sys.executable, str(ROOT / "crates/rake-cli/scripts/serve-web.py"), "--inspector-only", "--control", "--port", "0"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                launch = urllib.parse.urlsplit(server.stdout.readline().strip().split()[-1])
+                launch = urllib.parse.urlsplit(server.url + "/#__rake_control=" + server.token)
                 runtime = ctl("info")["value"]["runtime_id"]
                 envelope = {"protocol": 1, "runtime_id": runtime, "key": None, "message": {"type": "query", "value": {"type": "inspect_tree"}}}
                 request = urllib.request.Request(f"http://{launch.netloc}/__rake/inspect", json.dumps({"request": envelope}).encode(),
@@ -108,7 +112,8 @@ def main():
                 print(log.read(), file=sys.stderr)
                 raise
             finally:
-                for process in (server, app):
+                server.close()
+                for process in (app,):
                     if process is not None:
                         process.terminate()
                         try:

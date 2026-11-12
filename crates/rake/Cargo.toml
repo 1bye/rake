@@ -34,7 +34,7 @@ kit = ["gpui", "rake-ui/kit"]
 experimental-view = []
 experimental-components = ["gpui-fast", "rake-macros/components", "dep:slotmap"]
 view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support", "gpui_platform/runtime_shaders", "gpui_fast_platform?/runtime_shaders"]
-gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
+gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
 rake-autostart = { version = "=0.1.0-alpha.3", path = "../rake-autostart", optional = true }
@@ -63,8 +63,10 @@ gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], o
 gpui_fast = { workspace = true, optional = true }
 gpui_fast_platform = { workspace = true, features = ["font-kit", "wayland", "x11"], optional = true }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(any(unix, windows))'.dependencies]
 rake-client.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 backtrace = { version = "0.3.76", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -83,10 +85,13 @@ console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = ["console", "Window", "History", "Location", "Event", "BeforeUnloadEvent", "EventTarget", "Document", "Element", "HtmlElement", "Node", "Storage", "ClipboardEvent", "DataTransfer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "0.6", optional = true }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"], optional = true }
+
 metal = { version = "0.33", optional = true }
 foreign-types = { version = "0.5", optional = true }
 objc2 = { version = "0.6.5", optional = true }
-objc2-foundation = { version = "0.3.2", features = ["NSGeometry"], optional = true }
+objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSBundle", "NSError"], optional = true }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"], optional = true }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
 

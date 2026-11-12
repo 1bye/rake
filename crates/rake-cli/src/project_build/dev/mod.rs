@@ -1,5 +1,5 @@
 //! Owns desktop/Web sessions, asynchronous builds, publication and retained discovery records.
-//! Serving and preview remain owned helper processes until their later porting phases.
+//! The session owns its native HTTP broker, preview helper process and optional CDP companion.
 
 mod fingerprint;
 mod output;
@@ -9,16 +9,14 @@ mod transport;
 use super::{
     Args, Processes, Project, Result, json_line, processes::ProcessGroup, string, write_marker,
 };
+
 use fingerprint::fingerprint;
 use output::{ProcessOutput, SharedOutput};
 use serde_json::{Value, json};
+
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::{
-        fs::{DirBuilderExt, PermissionsExt},
-        process::ExitStatusExt,
-    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -28,15 +26,29 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+use std::os::unix::{
+    fs::{DirBuilderExt, PermissionsExt},
+    process::ExitStatusExt,
+};
+
 use transport::{MAX_BYTES, exchange};
 
 pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
+    #[cfg(windows)]
+    if args.preview {
+        return Err("Native preview capture is available only on macOS".into());
+    }
+
     if args.status {
         let session = args
             .session
             .as_ref()
             .ok_or("use rake dev status --session PATH")?;
+
         let status = read_json(&session.join("status.json"))?;
+
         println!(
             "{}",
             if args.json {
@@ -45,23 +57,38 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
                 super::ascii_json(&serde_json::to_string_pretty(&status)?)
             }
         );
+
         return Ok(());
     }
+
     let mut args = args.clone();
+
     args.native_reloader = args.native_reloader.map(fs::canonicalize).transpose()?;
     let project = Project::load(&args, &Processes::new(cancelled))?;
+
+    #[cfg(unix)]
     let session = tempfile::Builder::new()
         .prefix("rake-dev-")
         .permissions(fs::Permissions::from_mode(0o700))
         .tempdir_in("/tmp")?
         .keep();
+
+    #[cfg(windows)]
+    let session = super::windows::temporary("rake-dev-")?.keep();
+
     let mut supervisor = Supervisor::new(&args, project, session, cancelled)?;
     let result = supervisor.run();
+
     // Also cancel a build when another owned resource fails, before joining its worker.
     supervisor.finish()?;
 
     result
 }
+
+#[cfg(unix)]
+type HelperDirectory = tempfile::TempDir;
+#[cfg(windows)]
+type HelperDirectory = super::windows::Directory;
 
 struct Supervisor<'a> {
     args: &'a Args,
@@ -72,12 +99,10 @@ struct Supervisor<'a> {
     status: Value,
     app: Option<ProcessGroup>,
     cdp: Option<ProcessGroup>,
-    server: Option<ProcessGroup>,
     http: Option<super::serve::Server>,
     embedded: Option<ProcessGroup>,
-    helpers: Option<tempfile::TempDir>,
+    helpers: Option<HelperDirectory>,
     launch_url: Option<String>,
-    openers: Vec<ProcessGroup>,
     output: SharedOutput,
     readers: Vec<JoinHandle<std::result::Result<(), String>>>,
     cancelled: &'a AtomicBool,
@@ -91,11 +116,16 @@ impl<'a> Supervisor<'a> {
         cancelled: &'a AtomicBool,
     ) -> Result<Self> {
         let control = session.join("control");
+
+        #[cfg(unix)]
         fs::DirBuilder::new().mode(0o700).create(&control)?;
+        #[cfg(windows)]
+        rake_client::private::create_directory(&control)?;
         fs::create_dir(session.join("builds"))?;
         let status = json!({"protocol":1, "pid":std::process::id(), "target":if args.web {"web"} else {"desktop"}, "package":project.package["name"],
             "phase":"starting", "published":0, "build":0, "error":null,
             "mechanism":if args.web {"web_page_reload"} else if args.native_reloader.is_some() {"native_code_replacement"} else {"native_restart"}});
+
         let mut supervisor = Self {
             args,
             project,
@@ -105,16 +135,15 @@ impl<'a> Supervisor<'a> {
             status,
             app: None,
             cdp: None,
-            server: None,
             http: None,
             embedded: None,
             helpers: None,
             launch_url: None,
-            openers: Vec::new(),
             output: ProcessOutput::new(),
             readers: Vec::new(),
             cancelled,
         };
+
         supervisor.record("starting", json!({}))?;
 
         Ok(supervisor)
@@ -122,6 +151,7 @@ impl<'a> Supervisor<'a> {
 
     fn event(&self, value: Value, text: &str) -> Result<()> {
         let mut stdout = std::io::stdout().lock();
+
         writeln!(
             stdout,
             "{}",
@@ -138,22 +168,27 @@ impl<'a> Supervisor<'a> {
 
     fn record(&mut self, phase: &str, fields: Value) -> Result<()> {
         self.status["phase"] = json!(phase);
+
         if let (Some(status), Some(fields)) = (self.status.as_object_mut(), fields.as_object()) {
             status.extend(fields.clone());
         }
+
         write_marker(&self.session.join("status.json"), &self.status)?;
         let mut event = fields;
+
         event["event"] = json!(phase);
         let error = event["error"]
             .as_str()
             .filter(|error| !error.is_empty())
             .map(|error| format!(" — {error}"))
             .unwrap_or_default();
+
         self.event(event, &format!("rake: {phase}{error}"))
     }
 
     fn instance(&self) -> Option<Value> {
         let pid = self.app.as_ref()?.0.id();
+
         fs::read_dir(&self.control)
             .ok()?
             .flatten()
@@ -164,29 +199,36 @@ impl<'a> Supervisor<'a> {
 
     fn launch(&mut self, artifact: &Path) -> Result<()> {
         let mut command = Command::new(artifact);
+
         command
             .current_dir(&self.project.root)
             .env("RAKE_DEV_CONTROL", "1")
             .env("RAKE_CONTROL_DIR", &self.control)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
         if std::env::var_os("RUST_BACKTRACE").is_none() {
             command.env("RUST_BACKTRACE", "1");
         }
+
         if self.args.preview {
             command.env("RAKE_DEV_PREVIEW", "1");
         }
+
         if self.checkpoint.exists() {
             command.env("RAKE_RELOAD_CHECKPOINT", &self.checkpoint);
         }
+
         let mut app = Processes::new(self.cancelled).start(&mut command)?;
         let pid = app.0.id();
+
         self.readers = self
             .readers
             .drain(..)
             .filter_map(|reader| {
                 if reader.is_finished() {
                     let _ = reader.join();
+
                     None
                 } else {
                     Some(reader)
@@ -206,6 +248,7 @@ impl<'a> Supervisor<'a> {
             "stderr",
         ));
         self.app = Some(app);
+
         self.record("running", json!({"runtime_pid":pid, "app_running":true, "mechanism":"native_restart", "error":null}))
     }
 
@@ -226,10 +269,13 @@ impl<'a> Supervisor<'a> {
         } else {
             "native_restart"
         };
+
         self.record("preparing_reload", json!({"mechanism":mechanism}))?;
         let boundary = uuid::Uuid::new_v4().to_string();
+
         let result = (|| {
             let deadline = Instant::now() + Duration::from_secs(15);
+
             exchange(
                 instance,
                 "command",
@@ -238,20 +284,26 @@ impl<'a> Supervisor<'a> {
                 Some(&format!("{boundary}/prepare")),
                 self.cancelled,
             )?;
+
             while self.query(instance, json!({"type":"reload"}))?["phase"] != "ready" {
                 if Instant::now() >= deadline {
                     return Err("reload quiescence timed out".into());
                 }
+
                 thread::sleep(Duration::from_millis(50));
             }
+
             let checkpoint = self.query(
                 instance,
                 json!({"type":"checkpoint", "application_id":instance["application_id"]}),
             )?;
+
             write_marker(&self.checkpoint, &checkpoint)?;
+
             if let Some(reloader) = &self.args.native_reloader {
                 self.record("replacing_native_code", json!({}))?;
                 let mut command = Command::new(reloader);
+
                 command
                     .current_dir(&self.project.root)
                     .env("RAKE_RELOAD_ARTIFACT", artifact)
@@ -275,6 +327,7 @@ impl<'a> Supervisor<'a> {
                         .expect("process output lock poisoned")
                         .append(text, pid, stream, None, false)
                 };
+
                 Processes::new(self.cancelled)
                     .with_output(&sink)
                     .run_output(&mut command, |_| {})?;
@@ -287,10 +340,13 @@ impl<'a> Supervisor<'a> {
                     self.cancelled,
                 )?;
                 remove_file(&self.checkpoint)?;
+
                 return Ok(true);
             }
+
             Ok(false)
         })();
+
         if result.is_err() {
             // An interrupted preparation still needs its matching abort to release quiescence.
             let _ = exchange(
@@ -312,18 +368,23 @@ impl<'a> Supervisor<'a> {
                 "watching",
                 json!({"published":number, "directory":artifact, "error":null}),
             )?;
+
             return self.start_embedded();
         }
+
         if let Some(app) = &mut self.app
             && app.0.try_wait()?.is_none()
         {
             if let Some(instance) = self.instance() {
                 let reload = self.query(&instance, json!({"type":"reload"}))?;
+
                 if reload["phase"] != "restore_failed" {
                     let operations = self.query(&instance, json!({"type":"operations"}))?;
+
                     if operations.as_array().is_some_and(|operations| {
                         operations.iter().any(|operation| {
                             let state = &operation[1];
+
                             state == "Queued"
                                 || state == "Running"
                                 || state.get("AwaitingDecision").is_some()
@@ -331,6 +392,7 @@ impl<'a> Supervisor<'a> {
                     }) {
                         return Err("\"Busy\": waiting for pending operations and decisions".into());
                     }
+
                     if self.prepare(&instance, artifact)? {
                         return self.record("watching", json!({"published":number, "error":null}));
                     }
@@ -340,10 +402,14 @@ impl<'a> Supervisor<'a> {
             } else {
                 self.record("restarting_without_state", json!({}))?;
             }
+
             let old_pid = self.app.as_ref().ok_or("app missing")?.0.id();
+
             drop(self.app.take());
+
             for entry in fs::read_dir(&self.control)?.flatten() {
                 let path = entry.path();
+
                 if path
                     .extension()
                     .is_some_and(|extension| extension == "json")
@@ -354,8 +420,10 @@ impl<'a> Supervisor<'a> {
                 }
             }
         }
+
         // A crashed app retains the latest captured checkpoint, just as dev.py does.
         self.launch(artifact)?;
+
         self.record("watching", json!({"published":number, "error":null}))
     }
 
@@ -366,8 +434,10 @@ impl<'a> Supervisor<'a> {
                 if self.cancelled.load(Ordering::Acquire) {
                     return Err(error);
                 }
+
                 let error = error.to_string();
                 let busy = error.contains("\"Busy\"");
+
                 self.record(
                     if busy {
                         "reload_waiting"
@@ -376,6 +446,7 @@ impl<'a> Supervisor<'a> {
                     },
                     json!({"error":error}),
                 )?;
+
                 Ok(!busy)
             }
         }
@@ -385,11 +456,17 @@ impl<'a> Supervisor<'a> {
         let Some(app) = &mut self.app else {
             return Ok(());
         };
+
         if let Some(status) = app.0.try_wait()? {
             if self.status["app_running"] == true {
+                #[cfg(unix)]
                 let code = status
                     .code()
                     .unwrap_or_else(|| -status.signal().unwrap_or(1));
+
+                #[cfg(windows)]
+                let code = status.code().unwrap_or(1);
+
                 self.output
                     .lock()
                     .expect("process output lock poisoned")
@@ -432,16 +509,20 @@ impl<'a> Supervisor<'a> {
             self.event(json!({"event":"session", "session":self.session, "mechanism":self.status["mechanism"]}),
             &format!("Session: {}; reload mechanism: {}", self.session.display(), self.status["mechanism"].as_str().unwrap_or_default()))?;
         }
+
         self.start_server()?;
         let stopping = AtomicBool::new(false);
+
         thread::scope(|scope| {
             let mut worker = None;
+
             type BuildResult = (
                 Option<Project>,
                 std::result::Result<PathBuf, String>,
                 [u8; 32],
             );
             let (sender, receiver) = mpsc::sync_channel::<BuildResult>(1);
+
             let result: Result<()> = (|| {
                 let mut previous = None;
                 let mut changed_at = Instant::now();
@@ -450,6 +531,7 @@ impl<'a> Supervisor<'a> {
                 let mut pending: Option<(u64, PathBuf)> = None;
                 let mut retry_after = Instant::now();
                 let mut output_revision = None;
+
                 loop {
                     Processes::new(self.cancelled).check_cancelled()?;
                     self.observe_services()?;
@@ -458,30 +540,39 @@ impl<'a> Supervisor<'a> {
                         .lock()
                         .expect("process output lock poisoned")
                         .snapshot();
+
                     if output_revision != output["revision"].as_u64() {
                         write_marker(&self.session.join("output.json"), &output)?;
                         output_revision = output["revision"].as_u64();
                     }
+
                     let current = fingerprint(&self.project, self.args.output.as_deref())?;
+
                     if previous != Some(current) {
                         previous = Some(current);
                         changed_at = Instant::now();
                         pending = None;
                     }
+
                     if let Ok((project, result, started)) = receiver.try_recv() {
                         if let Some(worker) = worker.take() {
                             let worker: thread::ScopedJoinHandle<'_, ()> = worker;
+
                             worker.join().map_err(|_| "build worker panicked")?;
                         }
+
                         if let Some(project) = project {
                             self.project = project;
                         }
+
                         // Metadata can add local watch roots while the worker is building.
                         let current = fingerprint(&self.project, self.args.output.as_deref())?;
+
                         if current != started {
                             let _ = fs::remove_dir_all(
                                 self.session.join("builds").join(number.to_string()),
                             );
+
                             self.record("build_superseded", json!({}))?;
                         } else {
                             match result {
@@ -500,6 +591,7 @@ impl<'a> Supervisor<'a> {
                             }
                         }
                     }
+
                     if worker.is_none()
                         && Instant::now() >= retry_after
                         && let Some((number, artifact)) = &pending
@@ -515,8 +607,10 @@ impl<'a> Supervisor<'a> {
                                 pending = None;
                             }
                         }
+
                         retry_after = Instant::now() + Duration::from_secs(1);
                     }
+
                     if worker.is_none()
                         && previous != built
                         && changed_at.elapsed() >= Duration::from_millis(250)
@@ -530,6 +624,7 @@ impl<'a> Supervisor<'a> {
                         let stopping = &stopping;
                         let output = self.session.join("builds").join(number.to_string());
                         let process_output = self.output.clone();
+
                         worker = Some(scope.spawn(move || {
                             let sink = |text: &str, pid, stream: &str| {
                                 process_output
@@ -537,32 +632,40 @@ impl<'a> Supervisor<'a> {
                                     .expect("process output lock poisoned")
                                     .append(text, pid, stream, None, false);
                             };
+
                             let processes = Processes::new(cancelled)
                                 .with_stopping(stopping)
                                 .with_output(&sink);
+
                             let (project, result) = match Project::load(args, &processes) {
                                 Ok(project) => {
                                     let result = project
                                         .build(args, &processes, &output)
                                         .map_err(|error| error.to_string());
+
                                     (Some(project), result)
                                 }
                                 Err(error) => (None, Err(error.to_string())),
                             };
+
                             let _ = sender.send((project, result, current));
                         }));
                     }
+
                     self.observe_app()?;
                     thread::sleep(Duration::from_millis(100));
                 }
             })();
+
             if result.is_err() {
                 // The worker owns its compiler process group; cancellation releases its pipe and joins it.
                 stopping.store(true, Ordering::Release);
             }
+
             if let Some(worker) = worker {
                 worker.join().map_err(|_| "build worker panicked")?;
             }
+
             result
         })
     }
@@ -571,13 +674,13 @@ impl<'a> Supervisor<'a> {
         drop(self.app.take());
         drop(self.cdp.take());
         drop(self.http.take());
-        drop(self.server.take());
         drop(self.embedded.take());
-        self.openers.clear();
         drop(self.helpers.take());
+
         for reader in self.readers.drain(..) {
             let _ = reader.join();
         }
+
         write_marker(
             &self.session.join("output.json"),
             &self
@@ -587,6 +690,7 @@ impl<'a> Supervisor<'a> {
                 .snapshot(),
         )?;
         self.record("stopped", json!({"app_running":false}))?;
+
         for entry in fs::read_dir(&self.control)? {
             remove_file(&entry?.path())?;
         }
@@ -597,9 +701,14 @@ impl<'a> Supervisor<'a> {
 
 fn read_json(path: &Path) -> Result<Value> {
     let mut bytes = Vec::new();
-    fs::File::open(path)?
-        .take(MAX_BYTES as u64)
-        .read_to_end(&mut bytes)?;
+
+    #[cfg(unix)]
+    let file = fs::File::open(path)?;
+
+    #[cfg(windows)]
+    let file = rake_client::private::open(path)?;
+
+    file.take(MAX_BYTES as u64).read_to_end(&mut bytes)?;
 
     Ok(serde_json::from_slice(&bytes)?)
 }
@@ -611,5 +720,8 @@ fn remove_file(path: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod windows_tests;

@@ -1,52 +1,42 @@
 #!/usr/bin/env python3
-"""Covers: runtime broker authentication, native forwarding, discovery and process bounds.
-Real: HTTP server, Unix sockets and control endpoints. Doubles: a native protocol peer.
-Requires: Unix/loopback sockets; no display or browser.
+"""CLI contracts after embedded Python removal; internal cases map to native Rust tests.
+See crates/rake-cli/PORTING.md. HTTP/native fixtures continue running against the Rust CLI.
 """
 import concurrent.futures
+import io
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts"))
-
-from dev_bridge import BridgeError, DevBridge
-from runtime_broker import RuntimeBroker, ProcessOutput
-
+from rust_contract_tests import rust_contract
+ROOT = Path(__file__).resolve().parents[1]
+CLI = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "debug/rake"
 
 class InspectorHTTP(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="rake-inspector-", dir="/tmp")
         self.root = Path(self.temporary.name)
-        self.control = self.root / "control"
-        self.control.mkdir(mode=0o700)
-        self.server = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "crates/rake-cli/scripts/serve-web.py"), "--control-only", "--control", "--port", "0"],
-            env={**os.environ, "RAKE_CONTROL_DIR": str(self.control)}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        launch = urllib.parse.urlsplit(self.server.stdout.readline().strip().split()[-1])
-        self.url = f"http://{launch.netloc}"
-        self.token = launch.fragment.removeprefix("__rake_control=")
+        from broker_test_server import BrokerServer
+        self.server = BrokerServer(self.root, native=True)
+        self.control = self.server.control
+        self.url = self.server.url
+        self.token = self.server.token
 
     def tearDown(self):
-        self.server.terminate()
-        try:
-            self.server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.server.kill()
-            self.server.wait(timeout=5)
-        self.server.stdout.close()
+        self.server.close()
         self.temporary.cleanup()
 
     def post(self, path, body, token=None):
@@ -135,95 +125,22 @@ class InspectorHTTP(unittest.TestCase):
             self.assertEqual(future.result(timeout=5), result)
 
 
-class ElementsHosting(unittest.TestCase):
+class NativeInternalContracts(unittest.TestCase):
     def test_source_opening_uses_an_exact_runtime_id_and_never_accepts_paths_or_cli_options(self):
-        with tempfile.TemporaryDirectory(prefix="rake-source-host-", dir="/tmp") as temporary:
-            bridge = DevBridge("http://127.0.0.1:8081", directory=Path(temporary))
-            runtime = str(uuid.uuid4())
-            bridge.handle("connect", {"application_id": "test.web", "info": {"runtime_id": runtime, "protocol": 1, "platform": "web"}})
-            host = RuntimeBroker(bridge)
-            with patch("runtime_broker.subprocess.run", return_value=subprocess.CompletedProcess([], 0, b'{"path":"/workspace/app.rs","line":3,"column":4}', b"")) as opener:
-                result = host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "file": "/outside.rs"})
-                self.assertEqual(result["line"], 3)
-                self.assertEqual(opener.call_args.args[0][1:], ["ctl", "--instance", runtime, "inspect", "source", "element-1-0", "--json"])
-                self.assertEqual(opener.call_args.kwargs["env"]["RAKE_CONTROL_DIR"], temporary)
-                for value in ["--session", "../app.rs", "element-1-0;touch", 1, ""]:
-                    with self.assertRaises(BridgeError):
-                        host.handle("inspect_source", {"runtime_id": runtime, "id": value})
-                self.assertEqual(opener.call_count, 1)
-                for kind in ["style", "handler"]:
-                    host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "target": {"kind": kind, "index": 0}})
-                    self.assertEqual(opener.call_args.args[0][-3:], ["--" + kind, "0", "--json"])
-                for target in [{"kind":"style","index":-1}, {"kind":"style","index":True}, {"kind":"handler","index":"--help"}, {"kind":"boundary","file":"/secret.rs"}, {"kind":"other"}]:
-                    with self.assertRaises(BridgeError):
-                        host.handle("inspect_source", {"runtime_id": runtime, "id": "element-1-0", "target": target})
-                self.assertEqual(opener.call_count, 3)
-            bridge.close()
+        rust_contract(self, ['source_targets_accept_only_exact_element_ids_and_captured_indices', 'source_opener_receives_exact_arguments_control_directory_and_source_root'], 'bin:rake')
 
-
-
-class Bounds(unittest.TestCase):
     def test_cdp_discovery_rejects_non_loopback_and_defaults_to_disabled(self):
-        with tempfile.TemporaryDirectory(prefix="rake-cdp-link-", dir="/tmp") as temporary:
-            root = Path(temporary)
-            root.chmod(0o700)
-            bridge = DevBridge("http://127.0.0.1:1", root)
-            try:
-                self.assertEqual(RuntimeBroker(bridge).handle("inspect_cdp", {}), [])
-                for url in ["https://example.test", "http://127.0.0.1:9/other", "http://user@127.0.0.1:9", "http://localhost:9"]:
-                    with self.assertRaises(BridgeError):
-                        RuntimeBroker(bridge, cdp_url=url).handle("inspect_cdp", {})
-            finally:
-                bridge.close()
+        rust_contract(self, ['loopback_endpoints_reject_credentials_paths_aliases_and_redirect_targets'], 'bin:rake')
 
     def test_native_successor_metadata_belongs_only_to_the_advertised_supervisor_runtime(self):
-        with tempfile.TemporaryDirectory(prefix="rake-lineage-", dir="/tmp") as temporary:
-            root = Path(temporary)
-            root.chmod(0o700)
-            runtime, predecessor = str(uuid.uuid4()), str(uuid.uuid4())
-            status = root / "status"
-            status.write_text(json.dumps({"runtime_id": runtime, "reload": {"phase": "restored", "restored_from": predecessor}}))
-            for identity in [runtime, str(uuid.uuid4())]:
-                path = root / f"{identity}.json"
-                path.write_text(json.dumps({"application_id": "native", "pid": 1,
-                    "info": {"runtime_id": identity}, "endpoint": {"type": "local", "path": str(root / f"{identity}.sock")}}))
-                path.chmod(0o600)
-            bridge = DevBridge("http://127.0.0.1:1", root, development_state=status)
-            found = RuntimeBroker(bridge, allow_native=True).instances()
-            current = next(item for item in found if item["info"]["runtime_id"] == runtime)
-            other = next(item for item in found if item is not current)
-            self.assertEqual(current["restored_from"], predecessor)
-            self.assertIsNone(other["restored_from"])
-            bridge.close()
+        rust_contract(self, ['native_successor_metadata_belongs_only_to_the_supervisor_runtime'], 'bin:rake')
 
     def test_application_web_servers_cannot_proxy_or_list_native_ipc(self):
-        with tempfile.TemporaryDirectory(prefix="rake-scope-", dir="/tmp") as temporary:
-            root = Path(temporary)
-            root.chmod(0o700)
-            runtime = str(uuid.uuid4())
-            manifest = root / f"{runtime}.json"
-            manifest.write_text(json.dumps({"application_id": "native", "pid": 1,
-                "info": {"runtime_id": runtime}, "endpoint": {"type": "local", "path": str(root / f"{runtime}.sock")}}))
-            manifest.chmod(0o600)
-            bridge = DevBridge("http://127.0.0.1:1", root)
-            inspector = RuntimeBroker(bridge)
-            self.assertEqual(inspector.instances(), [])
-            with self.assertRaises(BridgeError) as error:
-                inspector.handle("inspect", {"request": {"protocol": 1, "runtime_id": runtime, "message": {"type": "query", "value": {"type": "info"}}}})
-            self.assertEqual(error.exception.status, 403)
-            bridge.close()
+        rust_contract(self, ['native_forwarding_keeps_the_exact_envelope_and_rejects_foreign_or_public_sockets'], 'bin:rake')
 
     def test_process_output_is_bounded_and_has_no_fabricated_causal_owner(self):
-        output = ProcessOutput()
-        for _ in range(150):
-            output.append("漢字" * 5000, 42, "stderr")
-        snapshot = output.snapshot()
-        self.assertEqual(len(snapshot["records"]), 128)
-        self.assertEqual(snapshot["dropped"], 22)
-        self.assertLess(len(json.dumps(snapshot).encode()), 1024 * 1024)
-        self.assertNotIn("tab_id", snapshot["records"][0])
-        self.assertTrue(snapshot["records"][0]["truncated"])
-        self.assertLessEqual(len(snapshot["records"][0]["text"].encode()), 2048)
+        rust_contract(self, ['process_output_matches_the_private_ring_and_utf8_byte_bounds', 'output_is_private_bounded_and_cursor_filtered_without_inventing_causal_ownership'], 'bin:rake')
+
 
 
 if __name__ == "__main__":

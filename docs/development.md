@@ -1,8 +1,17 @@
 # Development supervisor and reload
 
 Build the CLI with `cargo build -p rake-app-cli` (or install it with
-`cargo install --path crates/rake-cli`). The CLI bundles its Python helpers;
-Python 3.11+ and the selected Rust/platform toolchain must be on PATH.
+`cargo install --path crates/rake-cli`). The CLI runs the development toolchain in Rust. Put the selected Rust/platform
+toolchain on PATH; no Python interpreter is required. Repository-only Python
+verification scripts still require Python 3.11+.
+
+On Windows, `rake doctor`, `rake build`, native/Web `rake bundle` and the Node
+agent client are supported. Development supervision and native local inspection
+(`dev`, `inspect`, `ctl` and `cdp`) currently require Unix. The remaining Windows
+IPC, discovery-security and supervisor work is recorded in
+[PORTING.md](../crates/rake-cli/PORTING.md). macOS native preview keeps its Swift
+capture helper and needs the Xcode tools and capture permissions.
+
 
 ```sh
 target/debug/rake doctor

@@ -21,6 +21,7 @@ impl Render for Desktop {
             self.rendered = true;
             println!("RAKE_NATIVE_RENDER");
             let resources = rake::resources!().expect("installed acceptance resources");
+            // rake-lint: allow(gpui-ui-blocking) Acceptance-only probe reads a tiny bundled fixture before verifying its first frame.
             let welcome = std::fs::read_to_string(resources.path("welcome.txt").unwrap()).unwrap();
 
             window.on_next_frame(move |_, cx| {

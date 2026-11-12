@@ -84,6 +84,7 @@ pub struct App<R: Route = NoRoute> {
     id: String,
     services: ServiceRegistry,
     window_options: WindowOptions,
+    window_state: Option<crate::window_state::WindowState>,
     workspace_chrome: bool,
     navigation_feedback: bool,
     http: HttpConfig,
@@ -132,6 +133,7 @@ impl App<NoRoute> {
             id: id.into(),
             services: ServiceRegistry::new(),
             window_options: WindowOptions::default(),
+            window_state: None,
             workspace_chrome: true,
             navigation_feedback: true,
             http: HttpConfig::new(),
@@ -201,6 +203,7 @@ impl App<NoRoute> {
             id: self.id,
             services: self.services,
             window_options: self.window_options,
+            window_state: self.window_state,
             workspace_chrome: self.workspace_chrome,
             navigation_feedback: self.navigation_feedback,
             http: self.http,
@@ -409,6 +412,18 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Enables native placement persistence through the supplied preferences policy.
+    ///
+    /// Disabled by default. Missing/corrupt state preserves `window_options`.
+    /// Secondary windows require stable keys from [`crate::window_state::WindowState::keys`].
+    /// Web ignores this policy; the browser owns window geometry.
+    #[must_use]
+    pub fn window_state(mut self, policy: crate::window_state::WindowState) -> Self {
+        self.window_state = Some(policy);
+
+        self
+    }
+
     /// Shows the default routing tab/quit controls. Disable for an application-owned
     /// shell; shared guard decisions, errors, lifecycle and quit shortcuts remain active.
     pub fn workspace_chrome(mut self, visible: bool) -> Self {
@@ -463,6 +478,17 @@ impl<R: Route> App<R> {
     /// Supplies explicit typed application commands shared by GUI and runtime clients.
     pub fn commands(mut self, commands: crate::control::Commands) -> Self {
         self.commands = commands;
+
+        self
+    }
+
+    /// Supplies live command-backed native menus. Web validates them without installing a menu bar.
+    /// Unknown command IDs are reported by `run` before initializing the host.
+    pub fn menus(mut self, menus: crate::menus::Menus) -> Self {
+        match self.services.clone().with(menus) {
+            Ok(services) => self.services = services,
+            Err(error) => self.configuration_error = Some(AppError::Service(error)),
+        }
 
         self
     }
@@ -757,6 +783,10 @@ impl<R: Route> App<R> {
 
         let services = self.services()?;
 
+        if let Ok(menus) = services.get::<crate::menus::Menus>() {
+            menus.validate(&self.commands)?;
+        }
+
         if usize::from(self.root.is_some())
             + usize::from(self.routes.is_some())
             + usize::from(self.background.is_some())
@@ -793,6 +823,13 @@ impl<R: Route> App<R> {
             .routes
             .as_ref()
             .and_then(|_| crate::reload::host::load(self.control));
+
+        #[cfg(not(target_family = "wasm"))]
+        let initial_window_id = checkpoint
+            .as_ref()
+            .and_then(|saved| saved.as_ref().ok())
+            .and_then(|saved| saved.windows.first())
+            .map_or(crate::router::WindowId(1), |window| window.id);
 
         let managed = managed::ManagedConfig {
             config: self.router.clone(),
@@ -894,6 +931,11 @@ impl<R: Route> App<R> {
             )
             .map_err(AppError::Crash)?;
 
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(policy) = &self.window_state {
+            policy.load();
+        }
+
         #[cfg(target_family = "wasm")]
         let application = gpui_platform::single_threaded_web();
 
@@ -937,6 +979,12 @@ impl<R: Route> App<R> {
 
             rake_ui::init(cx);
             install_themes(self.themes, cx);
+            services.platform().install_notifications(&self.id, cx);
+
+            #[cfg(not(target_family = "wasm"))]
+            if let Some(policy) = self.window_state {
+                crate::window_state::native::install(policy, cx);
+            }
 
             #[cfg(feature = "tray")]
             let services = match crate::tray::install(
@@ -1001,6 +1049,13 @@ impl<R: Route> App<R> {
 
             let mount_errors = errors.clone();
 
+            #[cfg(not(target_family = "wasm"))]
+            let placement = crate::window_state::native::prepare(
+                initial_window_id,
+                &mut self.window_options,
+                cx,
+            );
+
             let opened = cx.open_window(self.window_options, move |window, cx| {
                 let view = match root(services, window, cx) {
                     Ok(view) => view,
@@ -1012,6 +1067,11 @@ impl<R: Route> App<R> {
                         cx.new(|_| gpui::Empty).into()
                     }
                 };
+
+                #[cfg(not(target_family = "wasm"))]
+                if !mount_errors.failed() {
+                    crate::window_state::native::observe(placement, window, cx);
+                }
 
                 cx.new(|cx| rake_ui::Root::new(view, window, cx))
             });
