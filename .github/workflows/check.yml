@@ -1,8 +1,7 @@
 name: Rake
 on:
   pull_request:
-    # Temporary #57 stacked-PR CI; remove before handback.
-    branches: [main, codex/windows-endpoints-57]
+    branches: [main]
     paths-ignore:
       - docs/**
       - '**/*.md'
