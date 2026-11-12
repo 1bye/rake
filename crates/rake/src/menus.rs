@@ -29,7 +29,7 @@ impl Menu {
 }
 
 /// Standard host actions. About is an application command, using its own stable ID.
-/// Edit roles preserve macOS responder-chain behavior for system text controls.
+/// Cut, Copy, Paste and Select All preserve macOS native text-control behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
 pub enum MenuRole {
@@ -51,9 +51,9 @@ pub enum MenuRole {
     Paste,
     /// Standard Select All responder action.
     SelectAll,
-    /// Standard Undo responder action.
+    /// Backend Undo role; use a command for application-owned undo history.
     Undo,
-    /// Standard Redo responder action.
+    /// Backend Redo role; use a command for application-owned redo history.
     Redo,
 }
 
@@ -126,7 +126,7 @@ struct Model {
 /// use rake::menus::{Menu, MenuItem, MenuRole, Menus};
 /// let menus = Menus::new([Menu::new("Application", [MenuItem::Role(MenuRole::Quit)])]);
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Menus {
     model: Rc<RefCell<Model>>,
     changed: Rc<event_listener::Event>,
@@ -249,10 +249,12 @@ fn resolve_item(item: &MenuItem, commands: &Commands) -> Result<gpui::MenuItem, 
             let (presentation, state) = commands.presentation(id)?;
 
             let label = state.label.unwrap_or(presentation.label);
+
             let action = Invoke {
                 id: id.clone(),
                 arguments: arguments.clone(),
             };
+
             let item = if state.enabled {
                 gpui::MenuItem::action(label, action)
             } else {
@@ -281,7 +283,7 @@ fn resolve_role(role: MenuRole) -> gpui::MenuItem {
     };
 
     match os_action {
-        Some(os_action) => gpui::MenuItem::os_action(label, Standard { role }, os_action),
+        Some(os_action) => gpui::MenuItem::os_action(label, gpui::NoAction, os_action),
         None => gpui::MenuItem::action(label, Standard { role }),
     }
 }
@@ -301,6 +303,7 @@ pub(crate) fn install<R: Route>(
         .get::<Menus>()
         .map(|menus| (*menus).clone())
         .unwrap_or_else(|_| default_menus());
+
     let commands = client.commands();
 
     menus.validate(&commands)?;
@@ -335,6 +338,7 @@ pub(crate) fn install<R: Route>(
     )]);
     let mut model_changed = menus.changed.listen();
     let mut state_changed = commands.listen();
+
     refresh(&menus, &commands, cx)?;
     let refresh_task = cx.spawn(async move |cx| {
         loop {
@@ -373,6 +377,7 @@ fn bind_items(
                         id: id.clone(),
                         arguments: arguments.clone(),
                     };
+
                     let action: Box<dyn gpui::Action> = if state.enabled {
                         Box::new(action)
                     } else {
@@ -400,6 +405,7 @@ fn bind_items(
 
 fn refresh(menus: &Menus, commands: &Commands, cx: &mut gpui::App) -> Result<(), CommandError> {
     let model = menus.model.borrow();
+
     // Replace only this host's bindings, retaining unrelated application bindings.
     let retained = cx
         .key_bindings()
@@ -411,6 +417,7 @@ fn refresh(menus: &Menus, commands: &Commands, cx: &mut gpui::App) -> Result<(),
         })
         .cloned()
         .collect::<Vec<_>>();
+
     let mut bound = std::collections::BTreeSet::new();
 
     let mut bindings = Vec::new();
@@ -428,6 +435,7 @@ fn refresh(menus: &Menus, commands: &Commands, cx: &mut gpui::App) -> Result<(),
         .iter()
         .map(|menu| resolve_menu(menu, commands))
         .collect::<Result<Vec<_>, _>>()?;
+
     let dock = context_items(&model.dock, commands)?;
 
     cx.set_menus(bar);

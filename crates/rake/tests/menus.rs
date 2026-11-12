@@ -4,10 +4,12 @@
 #![cfg(feature = "gpui")]
 
 use futures::{executor::LocalPool, task::LocalSpawnExt};
+
 use rake::control::{
     Command, CommandError, CommandPresentation, CommandState, Message, PROTOCOL_VERSION, Reply,
     Request,
 };
+
 use rake::menus::{Menu, MenuItem, MenuRole, Menus, context_items};
 use rake::router::{NoRoute, Router, RouterConfig};
 use serde_json::json;
@@ -41,6 +43,7 @@ fn menu_and_wire_run_the_same_handler_and_reject_disabled_commands() {
         .unwrap();
     let item = MenuItem::typed(Add { amount: 3 }).unwrap();
     let menu_reply = item.run(&client).unwrap();
+
     let wire_reply = client
         .request(Request {
             protocol: PROTOCOL_VERSION,
@@ -105,7 +108,9 @@ fn state_changes_refresh_labels_checks_and_availability_in_nested_context_menus(
             MenuItem::Separator,
         ],
     ))];
+
     let before = context_items(&items, &commands).unwrap();
+
     let rake::gpui::MenuItem::Submenu(menu) = &before[0] else {
         panic!("submenu")
     };
@@ -123,6 +128,7 @@ fn state_changes_refresh_labels_checks_and_availability_in_nested_context_menus(
         )
         .unwrap();
     let after = context_items(&items, &commands).unwrap();
+
     let rake::gpui::MenuItem::Submenu(menu) = &after[0] else {
         panic!("submenu")
     };
@@ -138,6 +144,7 @@ fn state_changes_refresh_labels_checks_and_availability_in_nested_context_menus(
 fn invalid_replacement_preserves_existing_menus_and_startup_reports_unknown_id() {
     let commands = rake::control::Commands::new();
     let menus = Menus::new([Menu::new("Application", [MenuItem::Role(MenuRole::Quit)])]);
+
     let unknown = MenuItem::Submenu(Menu::new(
         "Nested",
         [MenuItem::command("missing.command", json!(null))],
@@ -164,6 +171,7 @@ fn invalid_shortcut_does_not_replace_command_presentation() {
         .register::<Add, _, _>(|args, _| async move { Ok(args.amount) })
         .unwrap();
     let original = commands.presentation("counter.add").unwrap();
+
     let result = commands.set_presentation(
         "counter.add",
         CommandPresentation {

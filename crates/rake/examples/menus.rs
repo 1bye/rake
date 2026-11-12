@@ -60,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .services
             .get::<Commands>()
             .map_err(|error| rake::control::CommandError::Failed(error.to_string()))?;
+
         let checked = !commands.presentation("example.toggle")?.1.checked;
 
         commands.set_state(
@@ -95,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
     let toggle = MenuItem::typed(Toggle)?;
+
     let menus = Menus::new([
         Menu::new(
             "Application",
