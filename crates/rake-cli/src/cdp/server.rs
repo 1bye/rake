@@ -9,16 +9,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 fn recoverable_accept_error(error: &std::io::Error) -> bool {
-    matches!(
+    let temporary = matches!(
         error.kind(),
         std::io::ErrorKind::Interrupted
             | std::io::ErrorKind::WouldBlock
             | std::io::ErrorKind::ConnectionAborted
             | std::io::ErrorKind::ConnectionReset
-    ) || matches!(
+    );
+    #[cfg(unix)]
+    let exhausted = matches!(
         error.raw_os_error(),
         Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
-    )
+    );
+    #[cfg(windows)]
+    let exhausted = matches!(error.raw_os_error(), Some(10024 | 10055));
+
+    temporary || exhausted
 }
 
 fn allowed(host: Option<&str>, origin: Option<&str>, authority: &str) -> bool {
@@ -335,10 +341,18 @@ pub(super) fn serve(options: Options) -> Result<()> {
             .args(["-a", "Google Chrome", url])
             .status();
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         let result = std::process::Command::new("xdg-open").arg(url).status();
 
-        if !matches!(result, Ok(status) if status.success()) {
+        #[cfg(windows)]
+        let result = crate::source::windows::open(url);
+
+        #[cfg(unix)]
+        let opened = matches!(result, Ok(status) if status.success());
+        #[cfg(windows)]
+        let opened = result.is_ok();
+
+        if !opened {
             eprintln!("Paste into Chrome: {url}");
         }
     }
@@ -388,6 +402,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn temporary_accept_errors_recover_but_bad_listeners_fail() {
         for code in [

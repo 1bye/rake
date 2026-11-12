@@ -3161,16 +3161,20 @@ mod tests {
 
     #[test]
     fn evaluation_errors_are_visible_exceptions_and_crash_output_survives_dead_ipc() {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("output.json");
 
+        #[cfg(unix)]
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+        #[cfg(windows)]
+        let file = rake_client::private::create(&path).unwrap();
 
         serde_json::to_writer(file, &json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr",
             "text":"thread 'main' panicked at app.rs:42:1: fixture panic\nstack backtrace:"}],"dropped":0})).unwrap();

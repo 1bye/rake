@@ -560,16 +560,20 @@ mod tests {
 
     #[test]
     fn marked_mirrors_are_hidden_live_but_retained_after_runtime_failure() {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("output.json");
 
+        #[cfg(unix)]
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+        #[cfg(windows)]
+        let file = rake_client::private::create(&path).unwrap();
 
         serde_json::to_writer(file,&json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr","text":"INFO app mirrored","structured":true},
             {"sequence":2,"elapsed_us":1,"stream":"stderr","text":"panic output","structured":false}],"dropped":0})).unwrap();
@@ -590,16 +594,20 @@ mod tests {
 
     #[test]
     fn process_output_has_its_own_clock_cursor_and_loss() {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("output.json");
 
+        #[cfg(unix)]
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+        #[cfg(windows)]
+        let file = rake_client::private::create(&path).unwrap();
 
         serde_json::to_writer(file,&json!({"dropped":1,"records":[{"sequence":2,"elapsed_us":500000,"stream":"stderr","text":"test"}]})).unwrap();
         let mut output = ProcessOutput::new(Some(path.clone()));
