@@ -570,7 +570,7 @@ fn write_marker(path: &Path, marker: &Value) -> Result<()> {
     #[cfg(unix)]
     file.persist(path)?;
     #[cfg(windows)]
-    file.into_temp_path().persist(path)?;
+    rake_client::private::replace(file.as_file(), path)?;
 
     Ok(())
 }
@@ -703,7 +703,17 @@ mod windows_private_tests {
             json!({"generation":1}),
             json!({"generation":2,"text":"é漢字"}),
         ] {
+            let previous = rake_client::private::open(&path).ok();
+
             write_marker(&path, &value).unwrap();
+
+            if let Some(previous) = previous {
+                assert_eq!(
+                    serde_json::from_reader::<_, Value>(previous).unwrap(),
+                    json!({"generation":1})
+                );
+            }
+
             let file = rake_client::private::open(&path).unwrap();
 
             assert_eq!(serde_json::from_reader::<_, Value>(file).unwrap(), value);

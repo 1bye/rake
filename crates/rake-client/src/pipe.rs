@@ -25,7 +25,8 @@ fn name(path: &Path) -> io::Result<Vec<u16>> {
     let text = path.to_str().ok_or(io::ErrorKind::InvalidInput)?;
 
     // Never connect to a remote pipe, a device, or another pipe namespace.
-    if !text.starts_with(r"\\.\pipe\rake-")
+    if text.len() <= 14
+        || !text.starts_with(r"\\.\pipe\rake-")
         || !text[14..]
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
@@ -134,7 +135,50 @@ impl AsyncRead for Stream {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        match self.file.as_mut().map_or(Ok(0), |file| file.read(buffer)) {
+        let Some(file) = self.file.as_ref() else {
+            return Poll::Ready(Ok(0));
+        };
+
+        if buffer.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
+        let mut available = 0;
+        // NOWAIT reads can report zero bytes while the peer is still connected.
+        // Peek distinguishes an empty live pipe from a disconnected one.
+        // SAFETY: live nonblocking handle, no buffer, valid byte-count output.
+        if unsafe {
+            PeekNamedPipe(
+                file.as_raw_handle(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+
+            return if matches!(error.raw_os_error(), Some(code) if code == ERROR_BROKEN_PIPE as i32 || code == ERROR_PIPE_NOT_CONNECTED as i32)
+            {
+                Poll::Ready(Ok(0))
+            } else {
+                Poll::Ready(Err(error))
+            };
+        }
+
+        if available == 0 {
+            return retry(&mut self.read_timer, cx);
+        }
+
+        match self
+            .file
+            .as_mut()
+            .expect("pipe handle checked above")
+            .read(buffer)
+        {
+            Ok(0) => retry(&mut self.read_timer, cx),
             Err(error) if error.raw_os_error() == Some(ERROR_NO_DATA as i32) => {
                 retry(&mut self.read_timer, cx)
             }

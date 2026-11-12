@@ -287,7 +287,7 @@ pub(super) fn create(path: &Path) -> io::Result<File> {
     let security = Security::current_user()?;
     let file = raw_open(
         path,
-        GENERIC_WRITE | READ_CONTROL | FILE_READ_ATTRIBUTES,
+        GENERIC_WRITE | READ_CONTROL | FILE_READ_ATTRIBUTES | DELETE,
         CREATE_NEW,
         Some(&security),
         false,
@@ -385,7 +385,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         }
     }
 
-    let (temporary, mut file) = loop {
+    let (_temporary, mut file) = loop {
         let candidate = parent.join(format!(
             ".rake-private-{}-{}.tmp",
             std::process::id(),
@@ -401,15 +401,51 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
     file.write_all(bytes)?;
     file.flush()?;
-    drop(file);
-    let source = wide(&temporary.0)?;
-    let destination = wide(path)?;
-    // SAFETY: both paths are terminated and parent directories remain pinned.
+    replace(&file, path)?;
+
+    Ok(())
+}
+
+/// Atomically renames an owned private file, preserving readers of the old destination.
+/// The file must have been created with [`super::create`].
+///
+/// # Errors
+/// Returns ownership, path validation or Windows rename failures.
+pub fn replace(file: &File, path: &Path) -> io::Result<()> {
+    validate(file, false, true)?;
+    let _parents = parents(path)?;
+    let destination = wide(&std::path::absolute(path)?)?;
+    let name = &destination[..destination.len() - 1];
+    let offset = mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let size = offset + mem::size_of_val(name);
+    let mut buffer = vec![
+        0usize;
+        size.max(mem::size_of::<FILE_RENAME_INFO>())
+            .div_ceil(mem::size_of::<usize>())
+    ];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS (Windows 10+).
+    // POSIX semantics preserve active readers of a replaced snapshot.
+    // SAFETY: buffer has FILE_RENAME_INFO alignment and enough space for header/name;
+    // all fields and inline UTF-16 bytes are initialized within that allocation.
+    unsafe {
+        (*info).Anonymous.Flags = 0x1 | 0x2;
+        (*info).RootDirectory = ptr::null_mut();
+        (*info).FileNameLength = mem::size_of_val(name) as u32;
+        ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            ptr::addr_of_mut!((*info).FileName).cast(),
+            name.len(),
+        );
+    }
+
+    // SAFETY: file is live with DELETE access; info covers size initialized bytes.
     if unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING,
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileRenameInfoEx,
+            info.cast(),
+            size as u32,
         )
     } == 0
     {
@@ -480,7 +516,10 @@ mod tests {
             // An active reader must not prevent replacement of the next snapshot.
             let previous = open(&path).ok();
             write_atomic(&path, bytes).unwrap();
-            drop(previous);
+            if let Some(previous) = previous {
+                assert_eq!(std::io::read_to_string(previous).unwrap(), "first");
+            }
+
             let mut read = Vec::new();
             std::io::Read::read_to_end(&mut open(&path).unwrap(), &mut read).unwrap();
             assert_eq!(read, bytes);

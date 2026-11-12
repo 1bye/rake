@@ -26,7 +26,8 @@ null DACLs and every ACE granting another SID access. Disk objects only are
 accepted. Reparse points are rejected on every path component; ancestor directory
 handles exclude delete sharing while the final object is opened and checked.
 Readers permit atomic replacement of the final filename, while all validation
-and reads address the same opened object. Source opening uses a canonical root,
+and reads address the same opened object. Windows 10+ FileRenameInfoEx POSIX
+replacement preserves existing readers of the previous snapshot. Source opening uses a canonical root,
 rejects escapes and reparse points, and returns a file handle. Source files need
 not have private ACLs, matching Unix source confinement rather than discovery
 privacy. Existing Unix UID/mode/no-follow operations remain unchanged.

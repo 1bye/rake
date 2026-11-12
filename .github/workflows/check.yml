@@ -163,10 +163,11 @@ jobs:
             xvfb xauth openbox mesa-vulkan-drivers vulkan-tools
       - name: Windows private files and native endpoints
         if: runner.os == 'Windows'
-        shell: bash
         run: |
           cargo test -p rake-client --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test -p rake-app --no-default-features --test local_control --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
