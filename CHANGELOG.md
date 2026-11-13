@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-alpha.5 — 2026-11-13
+
+- CLI: enabled `rake dev --live --preview`; previews follow live patches and reconnect
+  after checkpointed restarts.
+- SDK: fixed devtools inspection of virtual-list rows laid out during prepaint,
+  avoiding the `captured boundary cache` panic and retaining row identity and text updates.
+- Generated apps use the matching alpha.5 SDK. Unchanged supporting crates remain
+  pinned to alpha.4.
+
 ## 0.1.0-alpha.4 — 2026-11-13
 
 - Added experimental `rake dev --live` for Apple Silicon Macs, with automatic

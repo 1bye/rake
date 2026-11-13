@@ -7137,7 +7137,7 @@ dependencies = [
 
 [[package]]
 name = "rake-app"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyhow",
  "async-io",
@@ -7194,7 +7194,7 @@ dependencies = [
 
 [[package]]
 name = "rake-app-cli"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "async-io",
  "base64 0.22.1",
