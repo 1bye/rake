@@ -67,6 +67,7 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
 
     let mut args = args.clone();
     let presentation = presentation::Presentation::new(&args);
+
     presentation
         .lock()
         .expect("presentation lock poisoned")
@@ -83,6 +84,7 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
             .expect("presentation lock poisoned")
             .build_output(text)
     };
+
     let project = Project::load(
         &args,
         &Processes::new(cancelled)
@@ -309,6 +311,7 @@ impl<'a> Supervisor<'a> {
             .collect();
         let stdout = app.0.stdout.take().ok_or("app stdout missing")?;
         let stderr = app.0.stderr.take().ok_or("app stderr missing")?;
+
         self.app = Some(app);
         self.record("running", json!({"runtime_pid":pid, "app_running":true, "mechanism":if self.live.is_some() {"blaze_live_patch"} else {"native_restart"}, "error":null}))?;
 
@@ -326,6 +329,7 @@ impl<'a> Supervisor<'a> {
             "stderr",
             self.presentation.clone(),
         ));
+
         Ok(())
     }
 
@@ -467,6 +471,7 @@ impl<'a> Supervisor<'a> {
                         .expect("process output lock poisoned")
                         .append(text, pid, stream, None, false)
                 };
+
                 let diagnostic = |text: &str| {
                     self.presentation
                         .lock()
@@ -846,6 +851,7 @@ impl<'a> Supervisor<'a> {
                                     .cloned(),
                             );
                         }
+
                         stamps = next;
 
                         current
@@ -969,6 +975,7 @@ impl<'a> Supervisor<'a> {
 
                         let paths: Vec<_> =
                             std::mem::take(&mut changed_paths).into_iter().collect();
+
                         self.presentation
                             .lock()
                             .expect("presentation lock poisoned")
@@ -1021,6 +1028,7 @@ impl<'a> Supervisor<'a> {
                                     .expect("process output lock poisoned")
                                     .append(text, pid, stream, None, false);
                             };
+
                             let diagnostic = |text: &str| {
                                 presentation
                                     .lock()
@@ -1031,6 +1039,7 @@ impl<'a> Supervisor<'a> {
                             let processes = Processes::new(cancelled)
                                 .with_stopping(stopping)
                                 .with_output(&sink);
+
                             let processes = processes.with_diagnostics(
                                 (!args.json && !args.verbose).then_some(&diagnostic),
                             );

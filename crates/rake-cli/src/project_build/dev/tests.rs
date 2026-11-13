@@ -44,6 +44,7 @@ fn fingerprint_hashes_contents_in_python_order_ignores_outputs_links_and_dedupli
     let project = project(root);
     let output = root.join("output");
     let (first, stamps) = fingerprint::scan(&project, Some(&output)).unwrap();
+
     assert_eq!(stamps.len(), 2);
     assert!(stamps.contains_key(&root.join("src/main.rs")));
     let mut expected = Sha256::new();
@@ -858,6 +859,7 @@ fn blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_re
 
     let cancelled = AtomicBool::new(false);
     let runtime = Runtime::new(replies);
+
     let mut supervisor = Supervisor::new(
         &args,
         project(root.path()),
@@ -1090,6 +1092,7 @@ fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
             presentation::Presentation::new(&args),
         )
         .unwrap();
+
         let result = supervisor.prepare(&runtime.instance, &root.join("artifact"));
 
         if blocked {

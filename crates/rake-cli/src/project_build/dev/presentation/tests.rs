@@ -15,12 +15,15 @@ fn display(web: bool, live: bool) -> Presentation {
         },
         ..Args::default()
     };
+
     let shared = Presentation::new(&args);
+
     let mut display = Arc::try_unwrap(shared)
         .ok()
         .expect("unique presentation")
         .into_inner()
         .unwrap();
+
     display.buffer = Buffer::no_color();
     display.interactive = false;
     display.unicode = true;
@@ -45,6 +48,7 @@ fn render(display: &mut Presentation, event: Value, available: bool, elapsed_ms:
 #[test]
 fn startup_matches_the_focused_layout_without_internal_events() {
     let mut display = display(false, true);
+
     assert!(render(&mut display, json!({"event":"starting"}), false, 0).is_empty());
     assert!(
         render(
@@ -57,6 +61,7 @@ fn startup_matches_the_focused_layout_without_internal_events() {
     );
 
     let output = render(&mut display, json!({"event":"running"}), true, 2400);
+
     assert_eq!(
         output,
         format!(
@@ -81,6 +86,7 @@ fn startup_matches_the_focused_layout_without_internal_events() {
 #[test]
 fn compiled_live_edits_need_acknowledgment_and_report_only_once() {
     let mut display = display(false, true);
+
     display.header = true;
     display.pending = true;
     display.paths = "src/editor.rs".into();
@@ -92,6 +98,7 @@ fn compiled_live_edits_need_acknowledgment_and_report_only_once() {
         true,
         100,
     );
+
     assert!(ready.contains("Update ready"));
     assert!(!ready.contains("Updated"));
     assert!(display.pending);
@@ -102,6 +109,7 @@ fn compiled_live_edits_need_acknowledgment_and_report_only_once() {
         true,
         112,
     );
+
     assert!(applied.contains("✓ Updated  src/editor.rs"), "{applied}");
     assert!(applied.ends_with("112 ms\n"));
     assert!(!display.pending);
@@ -120,6 +128,7 @@ fn compiled_live_edits_need_acknowledgment_and_report_only_once() {
 fn web_publishes_a_build_without_claiming_browser_confirmation() {
     let mut display = display(true, false);
     let listening = json!({"event":"web_listening", "url":"http://localhost:8081/#private"});
+
     assert!(render(&mut display, listening, false, 0).is_empty());
 
     let started = render(
@@ -128,6 +137,7 @@ fn web_publishes_a_build_without_claiming_browser_confirmation() {
         true,
         2400,
     );
+
     assert!(started.contains("Web app serving · 2.4 s"));
     assert!(started.contains("Open http://localhost:8081/#private"));
     assert!(!started.contains("Desktop"));
@@ -139,6 +149,7 @@ fn web_publishes_a_build_without_claiming_browser_confirmation() {
         true,
         2500,
     );
+
     assert!(update.contains("Update ready"));
     assert!(!update.contains("Updated"));
 }
@@ -146,6 +157,7 @@ fn web_publishes_a_build_without_claiming_browser_confirmation() {
 #[test]
 fn restarts_warn_beforehand_and_do_not_promise_all_state_is_preserved() {
     let mut display = display(false, true);
+
     display.header = true;
     display.pending = true;
     display.reset_views(&["Draft (entry-7)".into()]);
@@ -156,9 +168,11 @@ fn restarts_warn_beforehand_and_do_not_promise_all_state_is_preserved() {
         true,
         100,
     );
+
     assert!(warning.contains("Draft will reset. No reload state is registered."));
     assert!(!warning.contains("entry-7"));
     let restarted = render(&mut display, json!({"event":"running"}), true, 642);
+
     assert!(restarted.contains("Restarted"));
     assert!(!restarted.contains("rake v"));
     assert!(!restarted.contains("preserved"));
@@ -167,6 +181,7 @@ fn restarts_warn_beforehand_and_do_not_promise_all_state_is_preserved() {
 #[test]
 fn errors_are_buffered_once_and_progress_never_enters_the_buffer() {
     let mut display = display(false, false);
+
     display.build_output("   Compiling app v1.0.0\n").unwrap();
     display
         .build_output("    Finished `dev` profile\n")
@@ -194,6 +209,7 @@ fn errors_are_buffered_once_and_progress_never_enters_the_buffer() {
         false,
         189,
     );
+
     assert!(failure.contains("Update failed"));
     assert!(!failure.contains("duplicate"));
     assert!(!failure.contains("Previous version"));
@@ -203,6 +219,7 @@ fn errors_are_buffered_once_and_progress_never_enters_the_buffer() {
 #[test]
 fn paused_and_declined_updates_keep_the_previous_app_explicit() {
     let mut display = display(false, true);
+
     display.header = true;
     display.pending = true;
     let declined = render(
@@ -211,6 +228,7 @@ fn paused_and_declined_updates_keep_the_previous_app_explicit() {
         true,
         100,
     );
+
     assert!(declined.contains("Update not applied"));
     assert!(declined.contains("unsupported change"));
     assert!(declined.contains("Previous version is still running."));
@@ -221,6 +239,7 @@ fn paused_and_declined_updates_keep_the_previous_app_explicit() {
         false,
         101,
     );
+
     assert!(paused.contains("Update paused"));
     assert!(!paused.contains("Previous version"));
     assert!(
@@ -238,18 +257,22 @@ fn paused_and_declined_updates_keep_the_previous_app_explicit() {
 fn unicode_paths_are_bounded_by_display_columns_and_plain_output_uses_ascii_markers() {
     for width in 0..40 {
         let text = truncate("src/漢字/very-long-editor.rs", width);
+
         assert!(
             UnicodeWidthStr::width(text.as_str()) <= width,
             "width {width}: {text}"
         );
     }
+
     assert_eq!(clean("safe\n\x1b[31m\rname"), "safe[31mname");
 
     let mut display = display(false, false);
+
     display.unicode = false;
     display.header = true;
     display.pending = true;
     let plain = render(&mut display, json!({"event":"running"}), true, 642);
+
     assert!(plain.contains("ok Restarted"));
     assert!(!plain.contains(['\x1b', '\r']));
 }
@@ -258,6 +281,7 @@ fn unicode_paths_are_bounded_by_display_columns_and_plain_output_uses_ascii_mark
 fn abnormal_diagnostics_are_bounded_without_splitting_utf8() {
     let mut display = display(false, false);
     let text = "漢".repeat(400_000);
+
     display.build_output(&text).unwrap();
     assert!(display.diagnostics.len() <= 1024 * 1024);
     assert!(display.diagnostics.ends_with('漢'));
@@ -268,6 +292,7 @@ fn abnormal_diagnostics_are_bounded_without_splitting_utf8() {
 #[test]
 fn structured_worker_errors_are_readable_when_there_is_no_compiler_diagnostic() {
     let mut display = display(false, false);
+
     display
         .build_output("{\"error\":{\"message\":\"permission denied: app icon\"}}\n")
         .unwrap();
@@ -278,6 +303,7 @@ fn structured_worker_errors_are_readable_when_there_is_no_compiler_diagnostic() 
         false,
         10,
     );
+
     assert!(failed.contains("Update failed"));
     assert!(!failed.contains("internal worker"));
     display.diagnostics.clear();

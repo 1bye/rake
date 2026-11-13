@@ -164,6 +164,7 @@ fn stamp(metadata: &fs::Metadata) -> (i64, i64, u64, u64) {
             metadata.ino(),
         )
     }
+
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

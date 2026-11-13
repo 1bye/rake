@@ -115,6 +115,7 @@ impl Supervisor<'_> {
                     .expect("process output lock poisoned")
                     .append(text, pid, stream, None, false);
             };
+
             let diagnostic = |text: &str| {
                 self.presentation
                     .lock()

@@ -265,6 +265,7 @@ impl<'a> Processes<'a> {
         }
 
         let mut stderr = std::io::stderr().lock();
+
         stderr.write_all(text.as_bytes())?;
 
         stderr.flush()
@@ -290,6 +291,7 @@ impl<'a> Processes<'a> {
     ) -> Result<ExitStatus> {
         self.check_cancelled()?;
         let (mut reader, stdout, stderr) = output_pipe(merge_stderr)?;
+
         let diagnostic_pipe = if !merge_stderr && self.diagnostic_sink.is_some() {
             Some(output_pipe(false)?)
         } else {
@@ -340,6 +342,7 @@ impl<'a> Processes<'a> {
                         }
                         Err(error) => {
                             let _ = sender.send(Err(error));
+
                             break;
                         }
                     }
@@ -374,6 +377,7 @@ impl<'a> Processes<'a> {
                 match receiver.recv_timeout(Duration::from_millis(25)) {
                     Ok(chunk) => {
                         let (chunk, stderr) = chunk?;
+
                         consume(&chunk, group.0.id(), stderr)?;
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -542,14 +546,19 @@ mod tests {
     fn captured_native_stderr_does_not_corrupt_metadata_or_lose_partial_lines() {
         let cancelled = AtomicBool::new(false);
         let diagnostics = std::sync::Mutex::new(String::new());
+
         let sink = |text: &str| {
             diagnostics.lock().unwrap().push_str(text);
+
             Ok(())
         };
+
         let processes = Processes::new(&cancelled).with_diagnostics(Some(&sink));
         let output = processes.capture(Command::new("/bin/sh").args(["-c", "printf '{\"artifact\":\"app\"}'; i=0; while [ $i -lt 2000 ]; do printf 'warning: keep this diagnostic\\n' >&2; i=$((i+1)); done; printf 'last 漢字' >&2"]), Capture::Metadata).unwrap();
+
         assert_eq!(output, "{\"artifact\":\"app\"}");
         let diagnostics = diagnostics.lock().unwrap();
+
         assert_eq!(diagnostics.matches("warning: keep").count(), 2000);
         assert!(diagnostics.ends_with("last 漢字"));
     }

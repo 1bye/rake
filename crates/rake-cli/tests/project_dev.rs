@@ -140,9 +140,11 @@ fi
             .env("RAKE_CLI", self.tools.join("rake-double"))
             .env("BLAZE_HOME", self.directory.path())
             .arg("dev");
+
         if matches!(output, Output::Json) {
             command.arg("--json");
         }
+
         command.env_remove("RAKE_REQUIRE_STATE");
 
         if let Some(value) = require_state {
@@ -195,6 +197,7 @@ fi
             session.or_else(|| {
                 let args = fs::read_to_string(running.control.join("build-args")).ok()?;
                 let mut args = args.lines();
+
                 while let Some(argument) = args.next() {
                     if argument == "--output" {
                         return Some(
@@ -205,6 +208,7 @@ fi
                         );
                     }
                 }
+
                 None
             })
         });
@@ -324,18 +328,23 @@ fn alive(pid: u32) -> bool {
 #[test]
 fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected() {
     let fixture = Fixture::new();
+
     let mut metadata: Value =
         serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+
     metadata["packages"][0]["metadata"] = json!({"rake":{"bundle":{"name":"Fieldnotes"}}});
     fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
     let tool = fs::read_to_string(fixture.tools.join("rake-double")).unwrap().replace(
         "if [ -f \"$FIXTURE/fail\" ]; then exit 7; fi",
         "printf '   Compiling fixture v1.0.0\\n' >&2\nif [ -f \"$CONTROL/fail\" ]; then printf 'error[E0308]: mismatched types\\n  --> src/main.rs:1:1\\n' >&2; exit 7; fi\nprintf '    Finished dev profile\\n' >&2",
     );
+
     executable(&fixture.tools.join("rake-double"), &tool);
     let mut running = fixture.start_output(&["--restart-without-state"], true, None, Output::Human);
+
     running.phase("watching");
     let stdout = || fs::read_to_string(running.control.join("events")).unwrap();
+
     wait(|| stdout().contains("Desktop app started").then_some(()));
     assert!(stdout().contains(&format!("rake v{}  Fieldnotes", env!("CARGO_PKG_VERSION"))));
     assert!(!stdout().contains("Session:"));
@@ -360,6 +369,7 @@ fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected()
     });
     assert_eq!(stdout().matches("Update failed").count(), 1);
     let errors = fs::read_to_string(running.control.join("errors")).unwrap();
+
     assert_eq!(errors.matches("error[E0308]").count(), 1, "{errors}");
     assert!(errors.contains("src/main.rs:1:1"));
     assert!(
@@ -379,13 +389,16 @@ fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected()
 fn verbose_retains_session_discovery_and_full_tool_output() {
     let fixture = Fixture::new();
     let tool = fs::read_to_string(fixture.tools.join("rake-double")).unwrap();
+
     executable(
         &fixture.tools.join("rake-double"),
         &format!("printf '   Compiling fixture v1.0.0\\n' >&2\n{tool}"),
     );
     let mut running = fixture.start_output(&["--verbose"], true, None, Output::Human);
+
     running.phase("watching");
     let stdout = fs::read_to_string(running.control.join("events")).unwrap();
+
     assert!(stdout.contains("rake: starting"));
     assert!(stdout.contains("Session:"));
     assert!(
@@ -399,14 +412,17 @@ fn verbose_retains_session_discovery_and_full_tool_output() {
 #[test]
 fn first_build_failure_does_not_claim_an_app_started_or_an_old_version_is_running() {
     let fixture = Fixture::new();
+
     let tool = fs::read_to_string(fixture.tools.join("rake-double"))
         .unwrap()
         .replace(
             "if [ -f \"$FIXTURE/fail\" ]; then exit 7; fi",
             "printf 'error[E0308]: mismatched types\\n' >&2; exit 7",
         );
+
     executable(&fixture.tools.join("rake-double"), &tool);
     let mut running = fixture.start_output(&[], true, None, Output::Human);
+
     running.phase("build_failed");
     wait(|| {
         fs::read_to_string(running.control.join("events"))
@@ -415,6 +431,7 @@ fn first_build_failure_does_not_claim_an_app_started_or_an_old_version_is_runnin
             .then_some(())
     });
     let stdout = fs::read_to_string(running.control.join("events")).unwrap();
+
     assert!(stdout.contains("Update failed"));
     assert!(!stdout.contains("Desktop app started"));
     assert!(!stdout.contains("Previous version"));

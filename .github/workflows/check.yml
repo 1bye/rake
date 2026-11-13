@@ -354,7 +354,7 @@ jobs:
           key: wasm-bindgen-${{ runner.os }}-${{ runner.arch }}-${{ steps.wasm-bindgen.outputs.version }}-v1
       - name: Install matching Wasm bindings CLI
         if: steps.wasm-cli.outputs.cache-hit != 'true'
-        run: cargo install --locked wasm-bindgen-cli --version '${{ steps.wasm-bindgen.outputs.version }}'
+        run: cargo install --locked --force wasm-bindgen-cli --version '${{ steps.wasm-bindgen.outputs.version }}'
       - run: cargo build -p rake-app-cli --locked
       - name: Bundle E2E
         run: python3 scripts/test-bundle.py
