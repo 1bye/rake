@@ -30,6 +30,7 @@ exposed unresolved GPUI imports before this manifest fix.
 ## Verification
 
 Initial CLI preflight: 292 tests passed, two ignored.
+
 - Coordinated package dry run: all 21 packages verified, including native SDK and CLI.
 - Workspace with `rake-app/live`: 1,042 passed, four ignored, no failures.
 - Vendored runtime: two tests passed; six source files verified as formatting-only changes.
@@ -51,7 +52,59 @@ Text and helper patches after that build also preserved PID and Count: 1.
 `rake doctor --json` reports live ready with matching hashes and the macro server.
 The original worker-exit cause remains unproven; no engine patch was made.
 
-No packages have been uploaded yet.
+## Publication
+
+All 21 packages were published to crates.io on 2026-11-13 from clean source commit
+`a4c05c47f5f336277950a23008aae91bc2afc723`. All public archives were downloaded;
+their SHA-256 values match the prepared archives and their embedded source commit matches.
+
+- CLI: https://crates.io/crates/rake-app-cli/0.1.0-alpha.4
+  SHA-256: `d3c0fac1b9d265098fe97f6fd83175aceb997c312f7918e60b75476b503c7c58`.
+- SDK: https://crates.io/crates/rake-app/0.1.0-alpha.4
+  SHA-256: `1db430414b4c4a7794ab4eeaed5f403da8ca83ee04d2a94a5af879d41fcdf537`.
+
+The first isolated install command outside the checkout selected the machine's default
+Rust 1.95 and correctly refused the package's existing Rust 1.98 minimum. The install
+succeeded with `cargo +1.98.0`, without changing the default toolchain.
+The CLI and SDK require Rust 1.98 or newer, as before.
+
+The preparation commit is local; no Git branch/tag was pushed and no GitHub release or
+PR was created. All package source is available in the published archives.
 
 Raw evidence: `/Users/yuriihulyk/Documents/Codex/2026-11-13/rake-cli-release/`.
 The original checkout, installed Blaze bundle, fork and system toolchains are unchanged.
+
+
+## Published-package smoke test
+
+Installed the public `rake-app-cli` in an isolated prefix using Cargo 1.98
+(`--debug --locked`); it reports `rake 0.1.0-alpha.4`.
+`rake new alpha4-public` with no dependency override generates
+`rake = { package = "rake-app", version = "=0.1.0-alpha.4" }`.
+All twelve Rake dependencies in its lockfile come from crates.io, with no Git/path
+substitution. The only test-fixture source addition is a small helper for the helper edit.
+
+The generated app started through the published CLI's `rake dev --live --bin` using
+the isolated pinned rake.2 installation. Initial build: 69.16 s with a warm shared
+store (43,085 functions compiled, 129,977 retained), not a cold-build measurement.
+A view text edit and helper body edit both reached the retained rendered tree,
+with the same PID 35290 and Count: 1 throughout. The single observed save-to-tree
+checks were 0.804 s for text and 0.277 s for helper; these are smoke checks with a
+debug-built CLI, not medians or display-scanout measurements. No newly refused
+function or proc-macro failure was reported in the successful runs.
+
+The test app, supervisor and isolated daemon were stopped after verification.
+
+
+## Cleanup and remaining limits
+
+Removed seven temporary build/cache trees after stopping the test processes,
+recovering 16.16 GiB. Published crate archives, checksums, logs, source fixtures and
+an isolated installed CLI remain in the evidence directory. No target directory
+was created in the original checkout.
+
+Live mode remains experimental and Apple Silicon only. The first unproven worker
+exit is recorded above; the quiet empty-store build and registry-only live checks
+passed afterward. Windows/Linux GUI runs and a browser launch were not repeated
+in this release task; browser verification was a Wasm library compile. No GitHub
+CI run was started because no branch was pushed.
