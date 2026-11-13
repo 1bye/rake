@@ -19,7 +19,7 @@ options:
   --target {desktop,web}
   --live                Install/use the pinned experimental Blaze (Apple Silicon only)
   --compiler {cargo,blaze}
-                        Desktop compiler; Blaze excludes Web and preview
+                        Desktop compiler; Blaze excludes Web
   --manifest-path MANIFEST_PATH
   --package, -p PACKAGE
   --bin BIN

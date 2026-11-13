@@ -1,0 +1,28 @@
+[package]
+name = "rake-blaze-live"
+version = "0.1.0-alpha.4"
+description = "Pinned Blaze live-patch runtime for Rake (vendored upstream runtime)"
+edition = "2024"
+rust-version = "1.98"
+publish = ["crates-io"]
+license = "MIT OR Apache-2.0"
+authors = ["Indexable, Inc."]
+repository = "https://github.com/indexable-inc/blaze"
+homepage = "https://ix.dev/blaze"
+readme = "RAKE-VENDOR.md"
+keywords = ["hot-reload", "live-reload", "jit", "compiler"]
+categories = ["development-tools"]
+
+[package.metadata.rake-vendor]
+upstream = "https://github.com/indexable-inc/blaze"
+revision = "6560553cc09f00d8d96edc24d85a5e441352ab7c"
+path = "crates/blaze-live"
+
+[lib]
+name = "blaze_live"
+
+[dependencies]
+
+[lints.clippy]
+# Preserve upstream control flow in this vendored runtime.
+while_let_loop = "allow"

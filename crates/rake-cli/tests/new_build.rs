@@ -43,7 +43,7 @@ fn generated_app_builds_natively_and_for_the_browser() {
         toml::from_str(&std::fs::read_to_string(project.join("Cargo.lock")).unwrap()).unwrap();
     let packages = lock["package"].as_array().unwrap();
 
-    for name in ["blaze-live", "gpui-fast", "hdrhistogram"] {
+    for name in ["rake-blaze-live", "gpui-fast", "hdrhistogram"] {
         assert!(
             packages
                 .iter()

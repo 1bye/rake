@@ -1,6 +1,6 @@
 [package]
 name = "rake-dist-macos"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ description = "macOS packaging, signing and notarization for Rake applications"
 workspace = true
 
 [dependencies]
-rake-dist-core = { version = "=0.1.0-alpha.2", path = "../rake-dist-core" }
+rake-dist-core = { version = "=0.1.0-alpha.4", path = "../rake-dist-core" }
 plist = "1"
 object = { version = "0.37", default-features = false, features = ["read", "std"] }
 base64 = "0.23"

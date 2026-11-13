@@ -646,6 +646,9 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         });
 
         if let Some(capture) = cx.global_mut::<ActiveCapture>().0.as_mut() {
+            // Virtual lists lay out rows during prepaint, outside LayoutHost's scope.
+            self.cache.get_or_insert_with(Default::default);
+
             let owner = self
                 .owner
                 .or_else(|| capture.owners.last().copied().flatten());
@@ -2372,3 +2375,11 @@ mod tests {
 }
 
 use super::retain_with_size;
+
+#[cfg(all(
+    test,
+    feature = "view-test-support",
+    feature = "devtools",
+    not(target_family = "wasm")
+))]
+mod virtual_lists;

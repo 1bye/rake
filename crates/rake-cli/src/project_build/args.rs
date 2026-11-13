@@ -291,8 +291,8 @@ pub(super) fn parse(
         return Err("Blaze live editing is available only on Apple Silicon macOS".into());
     }
 
-    if compiler == Compiler::Blaze && (web || values.contains_key("--preview")) {
-        return Err("--compiler blaze requires desktop without --preview".into());
+    if compiler == Compiler::Blaze && web {
+        return Err("--compiler blaze requires desktop".into());
     }
 
     if compiler == Compiler::Blaze && values.contains_key("--native-reloader") {
