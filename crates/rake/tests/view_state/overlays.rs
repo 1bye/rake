@@ -54,6 +54,7 @@ impl Render for Host {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        let _ = &window;
         let view = &*self;
         let body = rake::view! {
             <section

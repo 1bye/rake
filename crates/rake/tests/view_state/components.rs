@@ -36,6 +36,7 @@ struct ComponentHost {
 
 impl Render for ComponentHost {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = (&window, &cx);
         let observed = &self.observed;
         let states_created = &self.states_created;
         rake::view! {
