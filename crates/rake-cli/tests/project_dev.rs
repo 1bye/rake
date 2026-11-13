@@ -337,7 +337,7 @@ fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected()
     running.phase("watching");
     let stdout = || fs::read_to_string(running.control.join("events")).unwrap();
     wait(|| stdout().contains("Desktop app started").then_some(()));
-    assert!(stdout().contains("rake  Fieldnotes"));
+    assert!(stdout().contains(&format!("rake v{}  Fieldnotes", env!("CARGO_PKG_VERSION"))));
     assert!(!stdout().contains("Session:"));
     assert!(!stdout().contains("native_restart"));
     assert!(!stdout().contains("rake: watching"));

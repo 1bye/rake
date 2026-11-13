@@ -45,10 +45,11 @@ Build commands write to `dist/PACKAGE/TARGET`, or `--output PATH`. Later builds 
 - The previous app stays usable while compiling, and a compile or binding failure keeps it.
 - The watcher stays alive after an app crash. Editing a source restarts the build and launch cycle.
 
-Development output shows the app's bundle display name (or package name), startup
-time and editing behavior. Ordinary native saves report `Restarted`; live edits
-report `Updated` only after the running app acknowledges a patch. A compiled edit
-without an acknowledgment reports `Update ready`. Web publication also reports
+Development output shows the Rake CLI version, the app's bundle display name (or
+package name), startup time and editing behavior. Ordinary native saves report
+`Restarted`; live edits report `Updated` only after the running app acknowledges
+a patch. A compiled edit without an acknowledgment reports `Update ready`.
+Web publication also reports
 `Update ready`, since publishing a build does not confirm that a browser reloaded.
 Source paths and timings accompany completed edits. Compiler warnings and errors
 remain visible, with routine tool progress hidden. Application output is prefixed

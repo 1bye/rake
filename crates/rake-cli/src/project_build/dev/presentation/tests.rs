@@ -59,7 +59,10 @@ fn startup_matches_the_focused_layout_without_internal_events() {
     let output = render(&mut display, json!({"event":"running"}), true, 2400);
     assert_eq!(
         output,
-        "\n  rake  Fieldnotes\n        Desktop app started · 2.4 s\n        Live updates · experimental\n\n        Ctrl+C to stop\n\n"
+        format!(
+            "\n  rake v{}  Fieldnotes\n        Desktop app started · 2.4 s\n        Live updates · experimental\n\n        Ctrl+C to stop\n\n",
+            env!("CARGO_PKG_VERSION")
+        )
     );
     assert!(!output.contains("Blaze"));
     assert!(!output.contains("session"));
@@ -157,6 +160,7 @@ fn restarts_warn_beforehand_and_do_not_promise_all_state_is_preserved() {
     assert!(!warning.contains("entry-7"));
     let restarted = render(&mut display, json!({"event":"running"}), true, 642);
     assert!(restarted.contains("Restarted"));
+    assert!(!restarted.contains("rake v"));
     assert!(!restarted.contains("preserved"));
 }
 

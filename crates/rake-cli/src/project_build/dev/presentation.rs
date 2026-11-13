@@ -376,6 +376,9 @@ impl Presentation {
         self.buffer.set_color(ColorSpec::new().set_bold(true))?;
         write!(self.buffer, "  rake")?;
         self.buffer.reset()?;
+        self.buffer.set_color(ColorSpec::new().set_dimmed(true))?;
+        write!(self.buffer, " v{}", env!("CARGO_PKG_VERSION"))?;
+        self.buffer.reset()?;
         writeln!(self.buffer, "  {}", clean(&self.name))?;
         self.buffer.set_color(ColorSpec::new().set_dimmed(true))?;
         writeln!(
