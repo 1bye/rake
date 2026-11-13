@@ -1137,8 +1137,15 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
 
         let deadline = Instant::now() + Duration::from_secs(2);
 
-        while !root.join("notice.txt").exists() {
-            assert!(Instant::now() < deadline);
+        // The shell creates the file before printf finishes writing it.
+        while !fs::read_to_string(root.join("notice.txt")).is_ok_and(|notice| notice == message) {
+            assert!(
+                Instant::now() < deadline,
+                "notice timeout in {case}: file={:?}, app={:?}, output={:?}",
+                fs::read_to_string(root.join("notice.txt")),
+                supervisor.app.as_mut().unwrap().0.try_wait(),
+                supervisor.output.lock().unwrap().snapshot()
+            );
             thread::sleep(Duration::from_millis(5));
         }
 
