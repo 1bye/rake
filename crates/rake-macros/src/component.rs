@@ -181,6 +181,18 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         let style = if cache_disabled || (rest.is_some() && cache.is_none()) {
             None
         } else if let Some(classes) = cache {
+            if let syn::Expr::Macro(expression) = &tail
+                && expression
+                    .mac
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "view")
+            {
+                syn::parse2::<rake_view_syntax::View>(expression.mac.tokens.clone())?
+                    .validate_cache_root()?;
+            }
+
             let markup: rake_view_syntax::View = syn::parse2(quote!(<div class=#classes/>))?;
             Some(markup.cache_style(&rake)?.ok_or_else(|| {
                 syn::Error::new_spanned(

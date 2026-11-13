@@ -1,0 +1,5 @@
+error: explicit caching cannot preserve positioning, hidden, or variants on the root; use cached = false
+ --> tests/ui/component/cached_hidden.rs:3:30
+  |
+3 |     rake::view! { <div class="hidden w-40 h-10"/> }
+  |                              ^^^^^^^^^^^^^^^^^^

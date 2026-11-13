@@ -183,6 +183,8 @@ class variants, and inferred flex stretching do not automatically qualify.
 These roots render normally so caching cannot change their layout or visibility.
 An explicit cache style must also omit positioning, `hidden`, and variants;
 supplying dimensions alone does not make a positioned root safe to cache.
+For a literal `view!` root, explicitly requesting caching with those unsupported
+classes is a compile error; use `cached = false` instead.
 Content-sized caching is a separate GPUI follow-up. Equal comparable props reuse
 the cached view; props without a known `PartialEq` implementation conservatively
 invalidate it. Signal dependencies still invalidate the owning view.

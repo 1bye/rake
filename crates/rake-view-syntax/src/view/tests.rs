@@ -22,6 +22,7 @@ fn cache_inference_excludes_positioned_hidden_and_variant_roots() {
         "hover:w-20 w-40 h-10",
     ] {
         let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+        assert!(view.validate_cache_root().is_err(), "{classes}");
         assert!(
             view.cache_style(&quote!(::renamed)).unwrap().is_none(),
             "{classes}"
@@ -29,11 +30,18 @@ fn cache_inference_excludes_positioned_hidden_and_variant_roots() {
     }
     for classes in ["w-40 h-10", "w-full h-full", "size-10"] {
         let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+        assert!(view.validate_cache_root().is_ok(), "{classes}");
         assert!(
             view.cache_style(&quote!(::renamed)).unwrap().is_some(),
             "{classes}"
         );
     }
+
+    let view = syn::parse_str::<View>("<div/>").unwrap();
+    assert!(
+        view.validate_cache_root().is_ok(),
+        "an override may supply missing dimensions"
+    );
 }
 
 #[test]

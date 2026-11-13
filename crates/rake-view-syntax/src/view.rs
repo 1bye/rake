@@ -20,6 +20,35 @@ pub struct View(Element);
 pub use layout::{Layout, LayoutKind};
 
 impl View {
+    /// Rejects known root classes that an explicit cache box cannot preserve.
+    ///
+    /// # Errors
+    /// Returns an error for positioning, visibility, or variant utilities on a literal root class.
+    pub fn validate_cache_root(&self) -> syn::Result<()> {
+        if let Some(attribute) = self
+            .0
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "class")
+            && let AttributeValue::Expression(expression) = &attribute.value
+            && let Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(classes),
+                ..
+            }) = &**expression
+            && classes
+                .value()
+                .split_whitespace()
+                .any(unsupported_cache_class)
+        {
+            return Err(syn::Error::new_spanned(
+                classes,
+                "explicit caching cannot preserve positioning, hidden, or variants on the root; use cached = false",
+            ));
+        }
+
+        Ok(())
+    }
+
     #[doc = "Extracts explicit root dimensions for the experimental component cache."]
     pub fn cache_style(&self, rake: &TokenStream) -> syn::Result<Option<TokenStream>> {
         if self.0.is_component()
@@ -54,14 +83,7 @@ impl View {
             .split_whitespace()
             .map(str::to_owned)
             .collect();
-        if classes.iter().any(|class| {
-            let class = class.trim_start_matches('-');
-            matches!(class, "absolute" | "relative" | "hidden")
-                || class.contains(':')
-                || ["inset-", "top-", "right-", "bottom-", "left-"]
-                    .iter()
-                    .any(|prefix| class.starts_with(prefix))
-        }) {
+        if classes.iter().any(|class| unsupported_cache_class(class)) {
             return Ok(None);
         }
         let definite =
@@ -177,6 +199,16 @@ impl View {
 
         Ok(&self.0.layout)
     }
+}
+
+fn unsupported_cache_class(class: &str) -> bool {
+    let class = class.trim_start_matches('-');
+
+    matches!(class, "absolute" | "relative" | "hidden")
+        || class.contains(':')
+        || ["inset-", "top-", "right-", "bottom-", "left-"]
+            .iter()
+            .any(|prefix| class.starts_with(prefix))
 }
 
 #[derive(Clone)]
