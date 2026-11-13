@@ -7,6 +7,76 @@ use rake::reactive::{ReactiveApp, Setup};
 use super::{Probe, change, draw};
 
 #[test]
+fn automatic_cache_preserves_positioned_roots_and_sibling_flow() {
+    #[derive(Default, PartialEq)]
+    struct BoundsProbe {
+        positioned: Cell<gpui::Bounds<gpui::Pixels>>,
+        sibling: Cell<gpui::Bounds<gpui::Pixels>>,
+    }
+
+    #[rake::component]
+    fn Positioned(probe: Rc<BoundsProbe>, cx: &mut Setup) -> impl IntoElement {
+        let _state = cx.signal(0);
+        rake::view! {
+            <div class="absolute left-4 top-4 w-40 h-10">
+                {
+                    gpui::canvas(
+                        move |bounds, _, _| probe.positioned.set(bounds),
+                        |_, _, _, _| {}
+                    )
+                    .size_full()
+                }
+            </div>
+        }
+    }
+
+    struct Parent(Rc<BoundsProbe>);
+    impl Render for Parent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let probe = self.0.clone();
+            gpui::div()
+                .relative()
+                .flex()
+                .w(gpui::px(400.))
+                .h(gpui::px(200.))
+                .child(
+                    Positioned::builder()
+                        .id("positioned")
+                        .probe(probe.clone())
+                        .build(),
+                )
+                .child(
+                    gpui::canvas(
+                        move |bounds, _, _| probe.sibling.set(bounds),
+                        |_, _, _, _| {},
+                    )
+                    .w(gpui::px(30.))
+                    .h(gpui::px(40.)),
+                )
+        }
+    }
+
+    let mut cx = gpui::TestAppContext::single();
+    let probe = Rc::new(BoundsProbe::default());
+    let window = cx.add_window(|_, _| Parent(probe.clone()));
+    for _ in 0..3 {
+        change(&mut cx, window, |_| {});
+        assert_eq!(
+            probe.positioned.get().origin,
+            gpui::point(gpui::px(16.), gpui::px(16.))
+        );
+        assert_eq!(
+            probe.positioned.get().size,
+            gpui::size(gpui::px(160.), gpui::px(40.))
+        );
+        assert_eq!(
+            probe.sibling.get().origin,
+            gpui::point(gpui::px(0.), gpui::px(0.))
+        );
+    }
+}
+
+#[test]
 fn cached_siblings_skip_render_when_one_signal_changes() {
     #[rake::component(cached = "w-40 h-10")]
     fn Leaf(probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {

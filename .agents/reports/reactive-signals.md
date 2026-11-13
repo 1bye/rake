@@ -234,8 +234,8 @@ Zero Rake ownership counters and dropped value/future guards establish the teste
 lifetimes, not a full heap leak audit.
 
 Automatic cache inference covers explicit root width and height, including
-percentages. Dynamic root styles, forwarded rest attributes, inferred flex
-stretching, and content-sized roots are excluded. Rest forwarding currently
+percentages. Dynamic root styles, forwarded rest attributes, positioned or hidden
+roots, class variants, inferred flex stretching, and content-sized roots are excluded. Rest forwarding currently
 covers checked utility styling, accessible label/description/expanded state,
 disabled state, and click handlers; other event kinds need explicit event props.
 Paragraph text uses explicit signal reads. Stateful named props are passed as a
@@ -243,16 +243,146 @@ Paragraph text uses explicit signal reads. Stateful named props are passed as a
 These limits are documented rather than silently presented as the full proposed API.
 
 The macro embeds setup tokens in mount identity and excludes the render tail.
-That is not live reload proof. Blaze is not installed in the current environment;
-no new Blaze run, render-only state-preservation result, or closure-layout safety
-claim is made. The older failed Blaze experiment is not reused as current proof.
+That alone is not live reload proof. Blaze had not been installed for the original
+benchmark run. The 2026-11-13 live trial below supplies fresh evidence for render
+text and setup initializer edits; it does not establish arbitrary closure-layout
+compatibility. The older failed Blaze experiment is not reused as current proof.
 Real-window macOS/Linux benchmarks are follow-ups in the revised issue; Linux
 execution and instruction counts were not collected in this run.
 
 Keep this opt-in and review it as the requested spike/prototype. Performance
-acceptance, the alternative storage experiment, and actual Blaze reload remain
-open. No merge to the upstream default branch is implied by pushing this review
+acceptance and the alternative storage experiment remain open; the live trial
+below covers the two requested reload behaviors. No merge to the upstream default branch is implied by pushing this review
 branch.
+
+## Review resolution proposal (2026-11-13)
+
+This revision completes the automatic-cache layout fix. The regression reproduces
+an absolutely positioned 160 × 40 root moving its sibling from x=0 to x=160 on a
+later parent render. The inference now declines positioned roots, hidden roots,
+and class variants, preserving ordinary GPUI layout. The same test passes across
+three parent renders. Parser coverage also retains inference for fixed dimensions,
+percentages, and `size-*`. This fallback makes no render-isolation claim for the
+excluded roots.
+
+### Verification of this revision
+
+263 feature tests passed: 181 library, 15 function-component consumers, 29 view,
+7 component-markup, and 31 view-state tests; one existing manual benchmark remains
+ignored. A further 29 macro/parser tests passed. The layout regression failed
+before the fix and passed afterward. Rake formatting/lint, focused macro/parser
+Clippy with warnings denied, feature-disabled compilation with `view-test-support`,
+and the `wasm32-unknown-unknown` reactive library check passed.
+
+The initial sandboxed library run could not bind the existing HTTP fixture's
+localhost socket; the complete rerun with socket access passed. A plain native
+check requires Apple's missing `metal` compiler on this machine, so the
+feature-disabled check used the existing runtime-shader test feature. Neither
+limitation prompted source or CI changes.
+
+### Live reload verification
+
+On 2026-11-13, the current CLI installed and verified the published Apple Silicon
+bundle `1bye/blaze` `0.20261030.1-rake.1`, SHA-256
+`aec30a92722bed32f7dd5d101520ab5554149339a66ac670a352065865457e10`.
+No engine override or compiler patch was used. The standalone fixture depends on
+this checkout's `rake-app`, with `experimental-reactive` and `view-test-support`;
+its `live` and `devtools` features forward to Rake. Cargo checked the same fixture
+successfully before the successful Blaze run.
+
+The fixture uses `ControlConfig::FromEnvironment` and mounts this component under
+`id="counter"` in a normal GPUI root:
+
+```rust
+#[rake::component]
+fn Counter(cx: &mut Setup) -> impl IntoElement {
+    let count = cx.signal(0i32);
+    let owner = format!("Owner: {:?}", cx.entity_id());
+    rake::view! {
+        <section>
+            <p>{format!("Version A count {}", count.get(cx))}</p>
+            <p>{owner.clone()}</p>
+            <button id="increment" aria-label="Increment counter"
+                on:click={move |cx| count.update(cx, |value| *value += 1)}>
+                Increment
+            </button>
+        </section>
+    }
+}
+```
+
+Run it with `rake dev --live --manifest-path <fixture>/Cargo.toml
+--bin rake-signals-live-review --json --no-open --require-state`. Use the existing
+`scripts/native_test_client.py` control client to click `increment` three times,
+read `inspect_tree`, then apply the two edits sequentially. Check `diagnostics`
+for `live_patch_applied` and compare the runtime PID, visible count, and owner ID.
+
+| Stage | Edit | PID | Visible count | Component owner |
+| --- | --- | --- | --- | --- |
+| Before edits | Three real preview-input clicks | 94624 | 3 | `EntityId(4v1)` |
+| Render only | `Version A` → `Version B` in the final expression | 94624 | 3 | `EntityId(4v1)` |
+| Setup | `cx.signal(0i32)` → `cx.signal(10i32)` | 94624 | 10 | `EntityId(7v1)` |
+
+Both edits emitted `live_patch_applied`: patch sequences `1794589409728` and
+`1794589410068`, respectively. The executable UUID remained
+`uuid:821dc413d4453cee80dec3d4599975ef`; both events reported zero restored state
+entries. The visible text after setup was `Version B count 10`. This establishes
+state retention for the render edit and component remount for the setup edit,
+without a process restart or checkpoint restoration.
+
+The initial fixture attempt omitted the `AppContext` trait import and was refused
+by Blaze; Cargo identified the missing import. The corrected fixture imports it
+and uses `AnyView::from(cx.new(...))` at the app root. A temporary harness keyword
+collision was also fixed before either patch was applied. Those failed setup
+attempts are not counted as compatibility failures or successful reloads.
+
+Evidence stays in temporary files: `/private/tmp/rake-signals-live-review/`,
+`/private/tmp/rake-live-check.py`, `/private/tmp/rake-live-check.log`, and
+`/private/tmp/rake-review-live-final.{jsonl,stderr}`. No raw JSONL is committed.
+This is a real-window functional trial, not a performance measurement, Linux
+proof, or a guarantee that closure-layout changes can be patched in place.
+
+### API scope requiring agreement
+
+The following are proposed follow-ups, not agreed reductions to #27. This revision
+does not complete these four API extensions. Existing explicit reads remain
+reactive when performed in the render expression.
+
+| Proposed follow-up | Current supported form | Acceptance criteria |
+| --- | --- | --- |
+| Reactive paragraph content | `<p>{count.get(cx).to_string()}</p>` | Accept `Signal<T: Display>` and `Memo<T>` directly inside paragraphs, headings, and styled inline runs; preserve run boundaries, accessible text, and invalidation without requiring unrelated callers to acquire an app context. |
+| Reactive built-in attributes | Direct `Value<bool>` for `disabled`; explicit render-time reads for other attributes | Define the supported attribute matrix and accept plain values, signals, and memos consistently; test updates to accessible names/states as well as visual attributes, including cached views. |
+| Complete rest forwarding | Utility styles, accessible label/description/expanded, disabled, and click | Forward every supported undeclared `aria-*` and `on:*` attribute with typed handlers; specify precedence, diagnose unsupported attributes, and retain disabled keyboard/pointer suppression. |
+| Flex-stretch cache inference | Explicit independent width and height; normal rendering otherwise | Compare cached and uncached bounds under row/column parents, stretched and non-stretched alignment, constrained dimensions, and sibling insertion; infer only when the parent constraints establish both dimensions. |
+
+These follow-ups need maintainer agreement before treating this PR as the agreed
+MVP. Content-sized caching remains the separate backend follow-up already listed
+in #27. No GitHub follow-up issues have been created by this report.
+
+### Performance next step
+
+No performance exception is requested or assumed. Keep the approximately 10%
+update/re-render gate open. The next experiment is a benchmark-only alternative
+that stores local signals in the owning component while retaining the current
+public handles. Compare it with entity-per-signal storage on the same checkout,
+backend, machine, and optimized profile; do not replace production storage before
+there is evidence that the alternative improves it.
+
+Run the existing 1/10/50-read cases and mount, unchanged-parent, single-leaf, bulk
+update, reorder, and repeated-unmount cases at 1, 100, 1,000, and 10,000 instances.
+Use plain GPUI, plain cached GPUI, and raw keyed state as controls. Assert visible
+updates and state identity in every variant. Report p50/p95, allocations, live and
+retained bytes, and component/signal/subscription/task counts; ownership counts
+must return to baseline. Repeat the measurements independently three times rather
+than accepting one noisy run. Report mount bytes and allocations per instance for
+an explicit budget decision, separately from update ratios.
+
+If local storage meets the gate while preserving borrowed reads, interoperation,
+disposal, and async behavior, implement it and rerun the full 174-case suite.
+Otherwise isolate dependency/subscription and keyed-shell overhead next, and
+bring measured tradeoffs back for review. Explanations of overhead do not close
+acceptance. Real-window macOS/Linux measurements remain separate follow-ups from
+the revised issue. This report does not declare the PR ready to merge.
 
 ## Reproduce
 

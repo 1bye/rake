@@ -178,7 +178,11 @@ Automatic caching is conservative: a literal root class with explicit width
 and height, including percentages, supplies GPUI's cached layout box. Use
 `#[rake::component(cached = false)]` to disable it or
 `#[rake::component(cached = "w-40 h-10")]` to provide a definite box. Dynamic styles,
-rest attributes, and inferred flex stretching do not automatically qualify.
+rest attributes, positioned roots (`absolute`, `relative`, or offsets), `hidden`,
+class variants, and inferred flex stretching do not automatically qualify.
+These roots render normally so caching cannot change their layout or visibility.
+An explicit cache style must also omit positioning, `hidden`, and variants;
+supplying dimensions alone does not make a positioned root safe to cache.
 Content-sized caching is a separate GPUI follow-up. Equal comparable props reuse
 the cached view; props without a known `PartialEq` implementation conservatively
 invalidate it. Signal dependencies still invalidate the owning view.
@@ -197,9 +201,12 @@ Registration also requires `cx`, so `from_entity(cx, entity)` replaces the
 proposed context-free `From<Entity<T>>` conversion.
 
 The macro hashes setup tokens into mount identity. Setup edits therefore change
-the key; render-only edits do not. This is compile-time evidence, not proof of
-Blaze's live patch delivery or closure-layout compatibility. Live reload remains
-unverified for this implementation.
+the key; render-only edits do not. A native trial with the pinned Blaze bundle
+verified that a render text edit retained count 3 and the component entity, while
+a setup initializer edit remounted it with count 10, in the same process. See the
+[live verification report](../.agents/reports/reactive-signals.md#live-reload-verification).
+This covers edits that preserve closure layout; structural changes remain subject
+to Blaze's restart policy.
 
 With `devtools`, the inspector and CDP expose `rakeSignals` with binding names,
 kinds, types, and bounded scalar/string previews. Other values remain opaque

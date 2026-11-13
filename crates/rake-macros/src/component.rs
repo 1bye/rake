@@ -183,7 +183,10 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         } else if let Some(classes) = cache {
             let markup: rake_view_syntax::View = syn::parse2(quote!(<div class=#classes/>))?;
             Some(markup.cache_style(&rake)?.ok_or_else(|| {
-                syn::Error::new_spanned(classes, "cached requires explicit width and height")
+                syn::Error::new_spanned(
+                    classes,
+                    "cached requires explicit width and height without positioning, hidden, or variants",
+                )
             })?)
         } else if let syn::Expr::Macro(expression) = &tail {
             if expression

@@ -54,6 +54,16 @@ impl View {
             .split_whitespace()
             .map(str::to_owned)
             .collect();
+        if classes.iter().any(|class| {
+            let class = class.trim_start_matches('-');
+            matches!(class, "absolute" | "relative" | "hidden")
+                || class.contains(':')
+                || ["inset-", "top-", "right-", "bottom-", "left-"]
+                    .iter()
+                    .any(|prefix| class.starts_with(prefix))
+        }) {
+            return Ok(None);
+        }
         let definite =
             |value: &str| value != "auto" && value != "min" && value != "max" && value != "fit";
         let mut width = false;

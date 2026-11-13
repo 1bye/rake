@@ -12,6 +12,31 @@ fn expand(source: &str) -> syn::Result<proc_macro2::TokenStream> {
 }
 
 #[test]
+fn cache_inference_excludes_positioned_hidden_and_variant_roots() {
+    for classes in [
+        "absolute left-4 top-4 w-40 h-10",
+        "relative w-40 h-10",
+        "-left-4 w-40 h-10",
+        "inset-0 w-40 h-10",
+        "hidden w-40 h-10",
+        "hover:w-20 w-40 h-10",
+    ] {
+        let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+        assert!(
+            view.cache_style(&quote!(::renamed)).unwrap().is_none(),
+            "{classes}"
+        );
+    }
+    for classes in ["w-40 h-10", "w-full h-full", "size-10"] {
+        let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+        assert!(
+            view.cache_style(&quote!(::renamed)).unwrap().is_some(),
+            "{classes}"
+        );
+    }
+}
+
+#[test]
 fn accepts_nested_markup_and_rust_control_flow() {
     let expanded = expand(
         r#"
