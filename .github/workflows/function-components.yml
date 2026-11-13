@@ -1,9 +1,30 @@
 name: Function components
 on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**/*.md'
+      - .agents/**
+  push:
+    branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**/*.md'
+      - .agents/**
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   components:
@@ -20,6 +41,12 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rake-ci
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: function-components-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -52,8 +79,10 @@ jobs:
           cargo check -p rake-app --locked --features experimental-reactive,view-test-support,native-components --example native
           cargo check -p rake-native --locked --features gpui-fast,native-tests,gpui_fast_platform/runtime_shaders,gpui_platform/runtime_shaders --test appkit
       - name: Run headless benchmarks and lifetime assertions
+        if: github.event_name == 'workflow_dispatch'
         run: cargo bench -p rake-app --locked --features experimental-reactive,view-test-support --bench function_components -- --quick
       - name: Smoke-test native windows
+        if: github.event_name == 'workflow_dispatch'
         shell: python
         run: |
           import json, os, signal, subprocess
