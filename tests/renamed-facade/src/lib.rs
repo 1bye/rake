@@ -65,6 +65,8 @@ impl gpui::RenderOnce for ComponentPanel {
 
 /// Typed components and their children also work through a renamed Rake dependency.
 pub fn component_markup(window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+    let _ = (&window, &cx);
+
     framework::view! {
         <self::ComponentPanel
             id={gpui::ElementId::from("panel")}
@@ -114,6 +116,7 @@ pub fn overlay_markup(
     use framework::overlay::{Dialog, OverlayAnchor, OverlayHost, Popover};
     use gpui::IntoElement;
 
+    let _ = (&window, &cx);
     let open_popup = popup.clone();
 
     let body = framework::view! {
@@ -157,6 +160,8 @@ pub fn keyboard_markup(
     focus: &gpui::FocusHandle,
     disabled: bool,
 ) -> impl gpui::IntoElement {
+    let _ = &cx;
+
     framework::view! {
         <section
             focus={&focus}
@@ -307,6 +312,8 @@ pub fn syntax_markup(
     id: gpui::ElementId,
     selected: Option<String>,
 ) -> impl gpui::IntoElement {
+    let _ = (&window, &cx);
+
     framework::view! {
         <self::ComponentPanel {id} {..Default::default()}>
             <main>
