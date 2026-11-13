@@ -25,10 +25,29 @@ pub(super) fn fingerprint(project: &Project, output: Option<&Path>) -> Result<[u
     let mut visited = HashSet::new();
 
     for root in &project.watch_roots {
-        walk(root, output, &mut visited, &mut digest, None)?;
+        walk(root, output, &mut visited, &mut digest, None, true)?;
     }
 
     Ok(digest.finalize().into())
+}
+
+pub(super) fn scan(project: &Project, output: Option<&Path>) -> Result<([u8; 32], Stamps)> {
+    let mut digest = Sha256::new();
+    let mut visited = HashSet::new();
+    let mut stamps = Stamps::new();
+
+    for root in &project.watch_roots {
+        walk(
+            root,
+            output,
+            &mut visited,
+            &mut digest,
+            Some(&mut stamps),
+            true,
+        )?;
+    }
+
+    Ok((digest.finalize().into(), stamps))
 }
 
 fn walk(
@@ -37,6 +56,7 @@ fn walk(
     visited: &mut HashSet<PathBuf>,
     digest: &mut Sha256,
     mut stamps: Option<&mut Stamps>,
+    hash_contents: bool,
 ) -> Result<()> {
     // os.walk ignores inaccessible or concurrently deleted directories.
     let Ok(entries) = fs::read_dir(root) else {
@@ -57,17 +77,22 @@ fn walk(
             continue;
         }
 
-        if path.is_dir() {
+        let metadata = stamps.as_ref().and_then(|_| entry.metadata().ok());
+
+        if metadata
+            .as_ref()
+            .map_or_else(|| path.is_dir(), fs::Metadata::is_dir)
+        {
             directories.push(path);
         } else {
-            files.push(path);
+            files.push((path, metadata.as_ref().map(stamp)));
         }
     }
 
     files.sort();
     directories.sort();
 
-    for path in files {
+    for (path, stamp) in files {
         if !visited.insert(path.clone()) {
             continue;
         }
@@ -86,60 +111,71 @@ fn walk(
             }
         }
 
-        if let Some(stamps) = &mut stamps {
-            if let Ok(metadata) = path.metadata() {
-                #[cfg(unix)]
-                use std::os::unix::fs::MetadataExt;
-                #[cfg(windows)]
-                use std::os::windows::fs::MetadataExt;
-                #[cfg(unix)]
-                let stamp = (
-                    metadata.mtime(),
-                    metadata.mtime_nsec(),
-                    metadata.len(),
-                    metadata.ino(),
-                );
+        if hash_contents {
+            match fs::File::open(&path) {
+                Ok(mut file) => {
+                    let mut buffer = [0; 65536];
 
-                #[cfg(windows)]
-                let stamp = (
-                    metadata.last_write_time() as i64,
-                    0,
-                    metadata.file_size(),
-                    0,
-                );
+                    loop {
+                        let count = file.read(&mut buffer)?;
 
-                stamps.insert(path, stamp);
+                        if count == 0 {
+                            break;
+                        }
+
+                        digest.update(&buffer[..count]);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    digest.update(b"deleted-during-scan")
+                }
+                Err(error) => return Err(error.into()),
             }
-
-            continue;
         }
 
-        match fs::File::open(&path) {
-            Ok(mut file) => {
-                let mut buffer = [0; 65536];
-
-                loop {
-                    let count = file.read(&mut buffer)?;
-
-                    if count == 0 {
-                        break;
-                    }
-
-                    digest.update(&buffer[..count]);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                digest.update(b"deleted-during-scan")
-            }
-            Err(error) => return Err(error.into()),
+        if let (Some(stamps), Some(stamp)) = (&mut stamps, stamp) {
+            stamps.insert(path, stamp);
         }
     }
 
     for directory in directories {
-        walk(&directory, output, visited, digest, stamps.as_deref_mut())?;
+        walk(
+            &directory,
+            output,
+            visited,
+            digest,
+            stamps.as_deref_mut(),
+            hash_contents,
+        )?;
     }
 
     Ok(())
+}
+
+fn stamp(metadata: &fs::Metadata) -> (i64, i64, u64, u64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        (
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.len(),
+            metadata.ino(),
+        )
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        (
+            metadata.last_write_time() as i64,
+            0,
+            metadata.file_size(),
+            0,
+        )
+    }
 }
 
 fn reparse(path: &Path) -> bool {
@@ -170,7 +206,14 @@ pub(super) fn stamps(project: &Project, output: Option<&Path>) -> Result<Stamps>
     let mut stamps = Stamps::new();
 
     for root in &project.watch_roots {
-        walk(root, output, &mut visited, &mut digest, Some(&mut stamps))?;
+        walk(
+            root,
+            output,
+            &mut visited,
+            &mut digest,
+            Some(&mut stamps),
+            false,
+        )?;
     }
 
     Ok(stamps)

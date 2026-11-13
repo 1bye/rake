@@ -168,6 +168,25 @@ mod tests {
     }
 
     #[test]
+    fn native_diagnostics_are_separate_from_metadata() {
+        let cancelled = AtomicBool::new(false);
+        let diagnostics = std::sync::Mutex::new(String::new());
+        let sink = |text: &str| {
+            diagnostics.lock().unwrap().push_str(text);
+            Ok(())
+        };
+        let output = super::super::Processes::new(&cancelled)
+            .with_diagnostics(Some(&sink))
+            .capture(
+                Command::new("cmd").args(["/D", "/C", "echo metadata & echo diagnostic 1>&2"]),
+                super::super::Capture::Metadata,
+            )
+            .unwrap();
+        assert_eq!(output.trim(), "metadata");
+        assert_eq!(diagnostics.lock().unwrap().trim(), "diagnostic");
+    }
+
+    #[test]
     fn job_drop_stops_descendants_and_metadata_stays_bounded() {
         let root = tempfile::tempdir().unwrap();
         let mut command = fixture(root.path(), "parent");

@@ -43,7 +43,10 @@ fn fingerprint_hashes_contents_in_python_order_ignores_outputs_links_and_dedupli
     symlink(root.join("src"), root.join("alias")).unwrap();
     let project = project(root);
     let output = root.join("output");
-    let first = fingerprint(&project, Some(&output)).unwrap();
+    let (first, stamps) = fingerprint::scan(&project, Some(&output)).unwrap();
+
+    assert_eq!(stamps.len(), 2);
+    assert!(stamps.contains_key(&root.join("src/main.rs")));
     let mut expected = Sha256::new();
 
     for (name, contents) in [("Cargo.toml", "manifest"), ("src/main.rs", "first")] {
@@ -214,7 +217,14 @@ fn native_backend_failure_aborts_and_success_applies_without_stopping_old_host()
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -301,7 +311,14 @@ fn stateful_restart_prepares_checkpoint_and_busy_operations_delay_publication() 
     let session = root.join("session");
 
     fs::create_dir(&session).unwrap();
-    let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.app = Some(
         Processes::new(&cancelled)
@@ -360,7 +377,14 @@ fn cancellation_during_preparation_aborts_and_preserves_the_old_app() {
     let session = root.join("session");
 
     fs::create_dir(&session).unwrap();
-    let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.app = Some(
         Processes::new(&cancelled)
@@ -417,7 +441,14 @@ fn restore_failure_is_reported_and_clears_after_runtime_recovery() {
     let session = root.join("session");
 
     fs::create_dir(&session).unwrap();
-    let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.app = Some(
         Processes::new(&cancelled)
@@ -771,6 +802,7 @@ fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation(
         project(root.path()),
         root.path().join("builds-root"),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
 
@@ -827,7 +859,15 @@ fn blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_re
 
     let cancelled = AtomicBool::new(false);
     let runtime = Runtime::new(replies);
-    let mut supervisor = Supervisor::new(&args, project(root.path()), session, &cancelled).unwrap();
+
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root.path()),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.launch(&artifact).unwrap();
     let pid = supervisor.app.as_ref().unwrap().0.id();
@@ -959,7 +999,14 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -1037,7 +1084,15 @@ fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
+
         let result = supervisor.prepare(&runtime.instance, &root.join("artifact"));
 
         if blocked {
@@ -1101,7 +1156,14 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -1179,7 +1241,14 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -1258,7 +1327,14 @@ fn cargo_keeps_strict_checkpoint_capture_with_or_without_stateless_opt_in() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         let error = supervisor
             .prepare(&runtime.instance, &root.join("artifact"))

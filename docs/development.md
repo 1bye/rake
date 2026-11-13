@@ -45,7 +45,28 @@ Build commands write to `dist/PACKAGE/TARGET`, or `--output PATH`. Later builds 
 - The previous app stays usable while compiling, and a compile or binding failure keeps it.
 - The watcher stays alive after an app crash. Editing a source restarts the build and launch cycle.
 
-Each launch prints a private `/tmp/rake-dev-*` session directory. Its mode-0700
+Development output shows the Rake CLI version, the app's bundle display name (or
+package name), startup time and editing behavior. Ordinary native saves report
+`Restarted`; live edits report `Updated` only after the running app acknowledges
+a patch. A compiled edit without an acknowledgment reports `Update ready`.
+Web publication also reports
+`Update ready`, since publishing a build does not confirm that a browser reloaded.
+Source paths and timings accompany completed edits. Compiler warnings and errors
+remain visible, with routine tool progress hidden. Application output is prefixed
+with `app`; it is not synthesized by the supervisor. Known view resets are reported
+before restart, without claiming that every unregistered field can be detected.
+
+Use `--verbose` for full tool output, internal supervisor events and the private
+session directory. Styling is automatic for terminals, using the terminal's colors;
+`NO_COLOR` disables color, and `TERM=dumb` disables terminal progress and Unicode
+markers. Redirected output has no color or cursor updates. Modern Windows terminals
+and native Windows console colors are supported; older consoles use ASCII markers.
+Progress uses the existing supervisor and writer synchronization, with no animation
+thread. At most 1 MiB of human build diagnostics is retained until the result;
+an explicit notice reports additional output, available live with `--verbose`.
+
+`--verbose` prints the private `/tmp/rake-dev-*` session directory (the system's
+private temporary directory on Windows). Its mode-0700
 control directory isolates native instances and browser advertisements; checkpoints
 and supervisor status use mode 0600. Inspect it with:
 
@@ -67,7 +88,7 @@ Use `rake dev --cdp` to start the Chrome DevTools adapter with the app, or
 session. `--instance UUID` selects a runtime. The legacy HTML and GPUI inspectors
 are disabled and are not bundled.
 
-`--json` emits supervisor events as JSON lines, and compiler and app diagnostics go to stderr. `status.json` stays readable when the app is stopped or crashed.
+`--json` emits the existing supervisor events as JSON lines, and compiler and app diagnostics go to stderr. `status.json` stays readable when the app is stopped or crashed.
 
 Ctrl-C or SIGTERM stops owned app, build, compiler, server and backend process groups and removes their discovery files. Temporary session artifacts and a failed checkpoint remain for recovery. Remove the session directory when you're done, because it may contain unsaved development data and large build artifacts.
 

@@ -1,4 +1,4 @@
-//! Argument compatibility with the embedded dev.py build/doctor entry points.
+//! Project build and development arguments, preserving existing command invocations.
 
 use super::{PathBuf, resolve};
 use std::collections::BTreeMap;
@@ -36,6 +36,7 @@ pub(super) struct Args {
     pub(super) web_dir: Option<PathBuf>,
     pub(super) output: Option<PathBuf>,
     pub(super) json: bool,
+    pub(super) verbose: bool,
     pub(super) native_reloader: Option<PathBuf>,
 }
 
@@ -61,6 +62,7 @@ const OPTIONS: &[(&str, bool)] = &[
     ("--elements", false),
     ("--no-open", false),
     ("--json", false),
+    ("--verbose", false),
     ("--session", true),
     ("--base-path", true),
     ("--routing", true),
@@ -262,6 +264,10 @@ pub(super) fn parse(
     let web = values.get("--target").is_some_and(|value| value == "web");
     let live = values.contains_key("--live");
 
+    if values.contains_key("--verbose") && command != "dev" {
+        return Err("--verbose applies to dev".into());
+    }
+
     if live && (command != "dev" || values.get("--compiler").is_some_and(|v| v != "blaze")) {
         return Err("--live applies to dev and cannot be combined with --compiler cargo".into());
     }
@@ -429,6 +435,7 @@ pub(super) fn parse(
         web_dir: values.get("--web-dir").map(PathBuf::from),
         output,
         json: values.contains_key("--json"),
+        verbose: values.contains_key("--verbose"),
         native_reloader: values.get("--native-reloader").map(PathBuf::from),
     }))
 }

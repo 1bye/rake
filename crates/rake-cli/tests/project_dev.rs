@@ -22,6 +22,11 @@ struct Fixture {
     tools: PathBuf,
 }
 
+enum Output {
+    Json,
+    Human,
+}
+
 impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
@@ -104,6 +109,16 @@ fi
         no_open: bool,
         require_state: Option<&str>,
     ) -> Running {
+        self.start_output(extra, no_open, require_state, Output::Json)
+    }
+
+    fn start_output(
+        &self,
+        extra: &[&str],
+        no_open: bool,
+        require_state: Option<&str>,
+        output: Output,
+    ) -> Running {
         let control = self.directory.path().join("control");
 
         fs::create_dir_all(&control).unwrap();
@@ -124,7 +139,12 @@ fi
             .env("CONTROL", &control)
             .env("RAKE_CLI", self.tools.join("rake-double"))
             .env("BLAZE_HOME", self.directory.path())
-            .args(["dev", "--json"]);
+            .arg("dev");
+
+        if matches!(output, Output::Json) {
+            command.arg("--json");
+        }
+
         command.env_remove("RAKE_REQUIRE_STATE");
 
         if let Some(value) = require_state {
@@ -163,7 +183,7 @@ fi
                 }
             }
 
-            fs::read_to_string(running.control.join("events"))
+            let session = fs::read_to_string(running.control.join("events"))
                 .ok()?
                 .lines()
                 .find_map(|line| {
@@ -172,7 +192,25 @@ fi
                     value["session"]
                         .is_string()
                         .then(|| PathBuf::from(value["session"].as_str().unwrap()))
-                })
+                });
+
+            session.or_else(|| {
+                let args = fs::read_to_string(running.control.join("build-args")).ok()?;
+                let mut args = args.lines();
+
+                while let Some(argument) = args.next() {
+                    if argument == "--output" {
+                        return Some(
+                            PathBuf::from(args.next()?)
+                                .parent()?
+                                .parent()?
+                                .to_path_buf(),
+                        );
+                    }
+                }
+
+                None
+            })
         });
 
         running
@@ -285,6 +323,126 @@ fn wait<T>(mut probe: impl FnMut() -> Option<T>) -> T {
 fn alive(pid: u32) -> bool {
     // SAFETY: signal zero tests existence without mutating the process.
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[test]
+fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected() {
+    let fixture = Fixture::new();
+
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+
+    metadata["packages"][0]["metadata"] = json!({"rake":{"bundle":{"name":"Fieldnotes"}}});
+    fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
+    let tool = fs::read_to_string(fixture.tools.join("rake-double")).unwrap().replace(
+        "if [ -f \"$FIXTURE/fail\" ]; then exit 7; fi",
+        "printf '   Compiling fixture v1.0.0\\n' >&2\nif [ -f \"$CONTROL/fail\" ]; then printf 'error[E0308]: mismatched types\\n  --> src/main.rs:1:1\\n' >&2; exit 7; fi\nprintf '    Finished dev profile\\n' >&2",
+    );
+
+    executable(&fixture.tools.join("rake-double"), &tool);
+    let mut running = fixture.start_output(&["--restart-without-state"], true, None, Output::Human);
+
+    running.phase("watching");
+    let stdout = || fs::read_to_string(running.control.join("events")).unwrap();
+
+    wait(|| stdout().contains("Desktop app started").then_some(()));
+    assert!(stdout().contains(&format!("rake v{}  Fieldnotes", env!("CARGO_PKG_VERSION"))));
+    assert!(!stdout().contains("Session:"));
+    assert!(!stdout().contains("native_restart"));
+    assert!(!stdout().contains("rake: watching"));
+    wait(|| {
+        fs::read_to_string(running.control.join("errors"))
+            .ok()?
+            .contains("app  hello app")
+            .then_some(())
+    });
+
+    fs::write(fixture.root.join("src/main.rs"), "second").unwrap();
+    wait(|| stdout().contains("Restarted  src/main.rs").then_some(()));
+    fs::write(running.control.join("fail"), "fail").unwrap();
+    fs::write(fixture.root.join("src/main.rs"), "invalid").unwrap();
+    running.phase("build_failed");
+    wait(|| {
+        stdout()
+            .contains("Previous version is still running.")
+            .then_some(())
+    });
+    assert_eq!(stdout().matches("Update failed").count(), 1);
+    let errors = fs::read_to_string(running.control.join("errors")).unwrap();
+
+    assert_eq!(errors.matches("error[E0308]").count(), 1, "{errors}");
+    assert!(errors.contains("src/main.rs:1:1"));
+    assert!(
+        errors.contains("app  hello app"),
+        "stderr={errors:?}; output={}",
+        fs::read_to_string(running.session.join("output.json")).unwrap()
+    );
+    assert!(!errors.contains("Compiling"));
+    assert!(!errors.contains("Finished dev profile"));
+    assert!(!errors.contains("RAKE_DIAGNOSTIC"));
+    assert!(!stdout().contains(['\x1b', '\r']));
+    assert!(!errors.contains(['\x1b', '\r']));
+    running.stop(libc::SIGINT);
+}
+
+#[test]
+fn verbose_retains_session_discovery_and_full_tool_output() {
+    let fixture = Fixture::new();
+    let tool = fs::read_to_string(fixture.tools.join("rake-double")).unwrap();
+
+    executable(
+        &fixture.tools.join("rake-double"),
+        &format!("printf '   Compiling fixture v1.0.0\\n' >&2\n{tool}"),
+    );
+    let mut running = fixture.start_output(&["--verbose"], true, None, Output::Human);
+
+    running.phase("watching");
+    let stdout = fs::read_to_string(running.control.join("events")).unwrap();
+
+    assert!(stdout.contains("rake: starting"));
+    assert!(stdout.contains("Session:"));
+    assert!(
+        fs::read_to_string(running.control.join("errors"))
+            .unwrap()
+            .contains("Compiling fixture")
+    );
+    running.stop(libc::SIGINT);
+}
+
+#[test]
+fn first_build_failure_does_not_claim_an_app_started_or_an_old_version_is_running() {
+    let fixture = Fixture::new();
+
+    let tool = fs::read_to_string(fixture.tools.join("rake-double"))
+        .unwrap()
+        .replace(
+            "if [ -f \"$FIXTURE/fail\" ]; then exit 7; fi",
+            "printf 'error[E0308]: mismatched types\\n' >&2; exit 7",
+        );
+
+    executable(&fixture.tools.join("rake-double"), &tool);
+    let mut running = fixture.start_output(&[], true, None, Output::Human);
+
+    running.phase("build_failed");
+    wait(|| {
+        fs::read_to_string(running.control.join("events"))
+            .ok()?
+            .contains("Fix the error and save.")
+            .then_some(())
+    });
+    let stdout = fs::read_to_string(running.control.join("events")).unwrap();
+
+    assert!(stdout.contains("Update failed"));
+    assert!(!stdout.contains("Desktop app started"));
+    assert!(!stdout.contains("Previous version"));
+    assert_eq!(
+        fs::read_to_string(running.control.join("errors"))
+            .unwrap()
+            .matches("error[E0308]")
+            .count(),
+        1
+    );
+    running.stop(libc::SIGINT);
 }
 
 #[test]
