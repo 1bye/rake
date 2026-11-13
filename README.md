@@ -31,7 +31,7 @@ Rake needs Rust 1.98.0 and native development tools. Install the CLI
 and create a desktop/browser app:
 
 ```sh
-cargo install rake-app-cli --version 0.1.0-alpha.4 --locked
+cargo install rake-app-cli --version 0.1.0-alpha.5 --locked
 rake new hello-rake
 cd hello-rake
 rake dev
@@ -68,7 +68,7 @@ fn app() -> App {
 }
 ```
 
-To add Rake to an existing crate, use `cargo add rake-app@0.1.0-alpha.4 --rename rake`
+To add Rake to an existing crate, use `cargo add rake-app@0.1.0-alpha.5 --rename rake`
 and then use the Hello entry above. `view!`, themes and style
 presets are included by default; Kit and DevTools remain optional.
 
