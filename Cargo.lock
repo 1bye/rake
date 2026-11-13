@@ -800,11 +800,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blaze-live"
-version = "0.1.0"
-source = "git+https://github.com/indexable-inc/blaze?rev=6560553cc09f00d8d96edc24d85a5e441352ab7c#6560553cc09f00d8d96edc24d85a5e441352ab7c"
-
-[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7142,12 +7137,11 @@ dependencies = [
 
 [[package]]
 name = "rake-app"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "async-io",
  "backtrace",
- "blaze-live",
  "block2 0.6.2",
  "blocking",
  "console_error_panic_hook",
@@ -7168,6 +7162,7 @@ dependencies = [
  "objc2-user-notifications",
  "pathfinder_simd",
  "rake-autostart",
+ "rake-blaze-live",
  "rake-client",
  "rake-diagnostics",
  "rake-http",
@@ -7199,7 +7194,7 @@ dependencies = [
 
 [[package]]
 name = "rake-app-cli"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-io",
  "base64 0.22.1",
@@ -7241,7 +7236,7 @@ dependencies = [
 
 [[package]]
 name = "rake-autostart"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "futures",
  "objc2 0.6.5",
@@ -7254,8 +7249,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-blaze-live"
+version = "0.1.0-alpha.4"
+
+[[package]]
 name = "rake-build"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "image",
  "rake-dist-core",
@@ -7268,7 +7267,7 @@ dependencies = [
 
 [[package]]
 name = "rake-client"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-io",
  "futures",
@@ -7292,7 +7291,7 @@ dependencies = [
 
 [[package]]
 name = "rake-diagnostics"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -7305,7 +7304,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64 0.23.1",
  "command-group",
@@ -7341,7 +7340,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-core"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "schemars 1.2.3",
  "semver",
@@ -7355,7 +7354,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-linux"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -7372,7 +7371,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-macos"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64 0.23.1",
  "object 0.37.3",
@@ -7385,7 +7384,7 @@ dependencies = [
 
 [[package]]
 name = "rake-dist-windows"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "dunce",
  "object 0.37.3",
@@ -7436,7 +7435,7 @@ dependencies = [
 
 [[package]]
 name = "rake-http"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-compat",
  "async-io",
@@ -7464,7 +7463,7 @@ dependencies = [
 
 [[package]]
 name = "rake-macros"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -7475,7 +7474,7 @@ dependencies = [
 
 [[package]]
 name = "rake-native"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "futures",
  "gpui-base",
@@ -7515,7 +7514,7 @@ dependencies = [
 
 [[package]]
 name = "rake-protocol"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "percent-encoding",
  "rake-diagnostics",
@@ -7528,7 +7527,7 @@ dependencies = [
 
 [[package]]
 name = "rake-resources"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "command-group",
  "fs2",
@@ -7548,7 +7547,7 @@ dependencies = [
 
 [[package]]
 name = "rake-tray"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "block2 0.6.2",
  "event-listener",
@@ -7574,7 +7573,7 @@ dependencies = [
 
 [[package]]
 name = "rake-ui"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "gpui-base",
  "gpui-fast",
@@ -7586,7 +7585,7 @@ dependencies = [
 
 [[package]]
 name = "rake-updates"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 dependencies = [
  "cc",
  "ed25519-dalek",
@@ -7619,7 +7618,7 @@ dependencies = [
 
 [[package]]
 name = "rake-view-syntax"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "proc-macro2",
  "quote",

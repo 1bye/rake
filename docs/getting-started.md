@@ -13,7 +13,7 @@ This takes you from nothing to a running app, then adds the CLI, the browser and
 Install the CLI, then scaffold an app:
 
 ```sh
-cargo install rake-app-cli --version 0.1.0-alpha.3 --locked
+cargo install rake-app-cli --version 0.1.0-alpha.4 --locked
 rake new my-app
 cd my-app
 rake dev
@@ -45,7 +45,9 @@ rake new my-app --rake-path /absolute/path/to/rake/crates/rake --git
 
 The path is stored absolutely, so moving the generated app doesn't silently
 change its dependency. Its README explains where to change the application ID.
-For an existing crate, run `cargo add rake-app@0.1.0-alpha.3 --rename rake` and follow the [README Hello example](../README.md#quick-start).
+For an existing crate, run `cargo add rake-app@0.1.0-alpha.4 --rename rake` and follow the [README Hello example](../README.md#quick-start).
+Keep directly used Rake helper crates, such as `rake-build`, on the same release
+when upgrading an existing app.
 
 On macOS, Ruby also provides `/usr/bin/rake`. Check that `which rake` shows the CLI
 you just installed, normally `~/.cargo/bin/rake`. If it shows Ruby's, put Cargo first:

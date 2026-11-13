@@ -1,6 +1,6 @@
 [package]
 name = "rake-app"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -21,7 +21,7 @@ launch-at-login = ["dep:rake-autostart"]
 tray = ["gpui", "dep:rake-tray"]
 gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
 gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
-live = ["dep:blaze-live", "dep:pathfinder_simd"]
+live = ["gpui", "dep:blaze-live", "dep:pathfinder_simd"]
 native-components = ["gpui", "dep:rake-native"]
 native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
 updates = ["native-lifecycle"]
@@ -37,15 +37,15 @@ view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support",
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
-rake-autostart = { version = "=0.1.0-alpha.3", path = "../rake-autostart", optional = true }
-rake-tray = { version = "=0.1.0-alpha.3", path = "../rake-tray", optional = true }
-rake-updates = { version = "=0.1.0-alpha.2", path = "../rake-updates", optional = true }
-rake-resources = { version = "=0.1.0-alpha.2", path = "../rake-resources" }
+rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
+rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", optional = true }
+rake-updates = { version = "=0.1.0-alpha.4", path = "../rake-updates", optional = true }
+rake-resources = { version = "=0.1.0-alpha.4", path = "../rake-resources" }
 rake-ui = { workspace = true, optional = true }
 rake-native = { workspace = true, optional = true }
 rake-http = { workspace = true, features = ["task-errors"] }
 rake-protocol.workspace = true
-rake-macros = { version = "=0.1.0-alpha.3", path = "../rake-macros" }
+rake-macros = { version = "=0.1.0-alpha.4", path = "../rake-macros" }
 rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -69,7 +69,7 @@ rake-client.workspace = true
 backtrace = { version = "0.3.76", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-blaze-live = { git = "https://github.com/indexable-inc/blaze", rev = "6560553cc09f00d8d96edc24d85a5e441352ab7c", optional = true }
+blaze-live = { package = "rake-blaze-live", version = "=0.1.0-alpha.4", path = "../../vendor/blaze-live", optional = true }
 anyhow = "1"
 libc = "0.2"
 async-io = "2.6"
@@ -101,7 +101,7 @@ windows = { version = "0.62", features = ["Win32_Graphics_DirectComposition"], o
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem"], optional = true }
 
 [dev-dependencies]
-rake-tray = { version = "=0.1.0-alpha.3", path = "../rake-tray", features = ["test-support"] }
+rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", features = ["test-support"] }
 futures.workspace = true
 tracing-subscriber.workspace = true
 trybuild = "1"

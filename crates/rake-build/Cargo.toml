@@ -1,6 +1,6 @@
 [package]
 name = "rake-build"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ description = "Build script helpers for Rake applications"
 workspace = true
 
 [dependencies]
-rake-dist-core = { version = "=0.1.0-alpha.2", path = "../rake-dist-core" }
+rake-dist-core = { version = "=0.1.0-alpha.4", path = "../rake-dist-core" }
 serde_json.workspace = true
 toml = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }

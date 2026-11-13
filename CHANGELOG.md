@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.4 — 2026-11-13
+
+- Added experimental `rake dev --live` for Apple Silicon Macs, with automatic
+  installation of the pinned Blaze rake.2 bundle, body patches and checkpointed
+  restarts. Unregistered state resets on restart; use `--require-state` to block it.
+- Kept generated apps and all Rake crates on the same registry release. The exact
+  supported Blaze runtime is packaged as `rake-blaze-live` with its upstream licenses.
+- Added the Rust development supervisor, Windows control endpoints, native menu and
+  window-state support, and clearer development output.
+
 
 - Added application-owned OS notifications through platform services, explicit
   authorization and denial handling, browser notifications, dismissal and click

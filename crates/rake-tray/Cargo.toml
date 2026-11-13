@@ -1,7 +1,7 @@
 [package]
 name = "rake-tray"
 description = "Native tray resources and portable tray contracts for Rake"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
