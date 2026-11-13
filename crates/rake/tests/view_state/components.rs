@@ -11,8 +11,9 @@ use rake::gpui::{self, prelude::*};
 
 use super::{Draft, draw, state_probe};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, rake::Props)]
 struct Tile {
+    #[prop(no_into)]
     id: gpui::ElementId,
     children: Vec<gpui::AnyElement>,
 }
@@ -34,14 +35,15 @@ struct ComponentHost {
 }
 
 impl Render for ComponentHost {
-    fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = (&window, &cx);
+        let observed = &self.observed;
+        let states_created = &self.states_created;
         rake::view! {
             <section>
                 for key in &self.keys {
                     <Tile id={("tile", *key).into()}>
-                        {
-                            state_probe(*key, self.observed.clone(), self.states_created.clone())
-                        }
+                        {state_probe(*key, observed.clone(), states_created.clone())}
                     </Tile>
                 }
                 <Tile id={"editor".into()}>

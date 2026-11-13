@@ -62,7 +62,7 @@ pub(super) struct Palette {
 #[rake::style("w-20 h-20 bg-surface text-surface hover:bg-hover hover:text-hover")]
 fn themed_control();
 
-#[derive(gpui::IntoElement)]
+#[derive(gpui::IntoElement, rake::Props)]
 struct DeepThemed {
     preset: bool,
     color: Rc<Cell<gpui::Hsla>>,

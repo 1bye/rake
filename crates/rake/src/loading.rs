@@ -76,6 +76,18 @@ impl<T, E> LoadState<T, E> {
         Self::default()
     }
 
+    #[doc = "Takes a ready value, leaving Idle without reusing any previous loading generation."]
+    pub fn take_ready(&mut self) -> Option<T> {
+        if !matches!(self.status, LoadStatus::Ready(_)) {
+            return None;
+        }
+
+        match std::mem::replace(&mut self.status, LoadStatus::Idle) {
+            LoadStatus::Ready(value) => Some(value),
+            _ => unreachable!(),
+        }
+    }
+
     /// Starts a new generation and returns its private completion token.
     ///
     /// # Panics
@@ -226,6 +238,10 @@ mod tests {
 
         assert_eq!(value.0, "loaded");
 
+        assert_eq!(state.take_ready().unwrap().0, "loaded");
+        assert!(matches!(state.state(), LoadStatus::Idle));
+        assert!(!state.complete(token, Ok(Value("stale".into()))));
+
         let retry = state.begin();
 
         assert!(state.complete(retry, Err(Failure("offline".into()))));
@@ -235,5 +251,7 @@ mod tests {
         };
 
         assert_eq!(error.0, "offline");
+        assert!(state.take_ready().is_none());
+        assert!(matches!(state.state(), LoadStatus::Failed(_)));
     }
 }

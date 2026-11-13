@@ -20,7 +20,7 @@ default = ["gpui"]
 launch-at-login = ["dep:rake-autostart"]
 tray = ["gpui", "dep:rake-tray"]
 gpu-surface = ["gpui-fast", "dep:metal", "dep:foreign-types", "dep:objc2", "dep:objc2-foundation", "dep:objc2-quartz-core", "objc2-app-kit?/objc2-quartz-core", "dep:windows"]
-gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast"]
+gpui-fast = ["gpui", "dep:gpui_fast", "dep:gpui_fast_platform", "rake-ui/gpui-fast", "rake-native?/gpui-fast"]
 live = ["dep:blaze-live", "dep:pathfinder_simd"]
 native-components = ["gpui", "dep:rake-native"]
 native-lifecycle = ["dep:rake-updates", "rake-updates/native-lifecycle"]
@@ -33,7 +33,8 @@ devtools-memory = ["devtools", "dep:backtrace"]
 kit = ["gpui", "rake-ui/kit"]
 # Deprecated compatibility alias; UI is provided by gpui (enabled by default).
 experimental-view = []
-view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support"]
+experimental-reactive = ["gpui", "rake-macros/reactive", "dep:slotmap"]
+view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support", "rake-ui/test-support", "gpui_platform/runtime_shaders", "gpui_fast_platform?/runtime_shaders"]
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
@@ -50,6 +51,7 @@ rake-diagnostics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = "1.2.3"
+slotmap = { version = "1.1", optional = true }
 tracing.workspace = true
 futures.workspace = true
 thiserror.workspace = true
@@ -114,10 +116,23 @@ required-features = ["view-test-support"]
 name = "control_queries"
 harness = false
 
+[[test]]
+name = "function_components"
+required-features = ["experimental-reactive", "view-test-support"]
+
+[[bench]]
+name = "function_components"
+harness = false
+required-features = ["experimental-reactive", "view-test-support"]
+
 [[example]]
 name = "startup-failure"
 path = "examples/startup_failure.rs"
 required-features = ["gpui"]
+
+[[example]]
+name = "components"
+required-features = ["experimental-reactive"]
 
 [[example]]
 name = "native"

@@ -2,7 +2,10 @@
 
 use rake::App;
 use rake::gpui::prelude::*;
-use rake::gpui::{self, Context, Entity, FocusHandle, KeyBinding, ScrollHandle, Window, div, rgb};
+
+use rake::gpui::{
+    self, Context, Entity, FocusHandle, KeyBinding, ScrollHandle, SharedString, Window, div, rgb,
+};
 
 use rake::overlay::{
     AnchorState, Dialog, OverlayAnchor, OverlayHost, OverlayHostState, OverlayState, Popover,
@@ -242,7 +245,9 @@ impl Counter {
 }
 
 impl Counter {
-    fn content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn content(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = &window;
+
         if self.show_inputs {
             return rake::view! {
                 <div
@@ -508,8 +513,8 @@ impl Counter {
 }
 
 impl Render for Counter {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = self.content(cx).into_any_element();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = self.content(window, cx).into_any_element();
 
         let footer = rake::view! {
             <div class="flex flex-row gap-2">
@@ -538,12 +543,14 @@ impl Render for Counter {
         }
         .into_any_element();
 
+        let view = &*self;
+
         rake::view! {
-            <OverlayHost state={self.overlays.clone()} body={body}>
-                <Popover state={self.actions_popup.clone()} anchor={self.actions_anchor.clone()}>
+            <OverlayHost state={view.overlays.clone()} body={body}>
+                <Popover state={view.actions_popup.clone()} anchor={view.actions_anchor.clone()}>
                     <p class="font-semibold">Document actions</p>
                     <button
-                        disabled={self.locked}
+                        disabled={view.locked}
                         class="px-3 py-2 rounded-md bg-accent focus-visible:bg-focus disabled:opacity-40"
                         on:click={
                             cx.listener(|this, _, window, cx| {
@@ -576,11 +583,11 @@ impl Render for Counter {
                     </button>
                 </Popover>
                 <Dialog
-                    state={self.documents_dialog.clone()}
-                    title={"Document browser".into()}
+                    state={view.documents_dialog.clone()}
+                    title={SharedString::from("Document browser")}
                     footer={Some(footer)}
                 >
-                    <view entity={&self.documents} />
+                    <view entity={&view.documents} />
                 </Dialog>
             </OverlayHost>
         }

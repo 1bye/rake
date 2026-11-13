@@ -16,10 +16,12 @@ workspace = true
 
 [features]
 view = ["dep:rake-view-syntax"]
+components = ["dep:rake-view-syntax"]
+reactive = ["components", "rake-view-syntax?/reactive"]
 
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["full", "visit"] }
 proc-macro-crate = "3.5"
 rake-view-syntax = { version = "=0.1.0-alpha.3", path = "../rake-view-syntax", optional = true }

@@ -1,0 +1,5 @@
+error: id is reserved for stateful component identity
+ --> tests/ui/component/reserved_id.rs:2:4
+  |
+2 | fn Invalid(id: String, cx: &mut rake::reactive::Setup) -> impl rake::gpui::IntoElement {
+  |    ^^^^^^^

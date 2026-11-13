@@ -1,0 +1,5 @@
+error: Setup must be the final component parameter
+ --> tests/ui/component/scope.rs:2:12
+  |
+2 | fn Invalid(cx: &mut rake::reactive::Setup, value: i32) -> impl rake::gpui::IntoElement {
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

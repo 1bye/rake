@@ -49,11 +49,17 @@ struct Host {
 }
 
 impl Render for Host {
-    fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let _ = &window;
+        let view = &*self;
         let body = rake::view! {
             <section
-                focus={&self.body}
-                scroll={&self.scroll}
+                focus={&view.body}
+                scroll={&view.scroll}
                 key-context="Background"
                 // rake-lint: allow(view-style-class) This fixture verifies explicit style-closure lowering and must retain the closure syntax.
                 style={|s| s.size_full().overflow_y_scroll()}
@@ -74,14 +80,14 @@ impl Render for Host {
                     style={
                         |s|
                             s.absolute()
-                                .left(gpui::px(self.anchor_x))
-                                .top(gpui::px(self.anchor_y))
+                                .left(gpui::px(view.anchor_x))
+                                .top(gpui::px(view.anchor_y))
                         }
                 >
-                    if self.show_anchor {
-                        <OverlayAnchor state={self.anchor.clone()}>
+                    if view.show_anchor {
+                        <OverlayAnchor state={view.anchor.clone()}>
                             <button
-                                focus={&self.trigger}
+                                focus={&view.trigger}
                                 style={|s| s.w(gpui::px(120.)).h(gpui::px(32.))}
                                 on:click={
                                     cx.listener(|this, _, window, cx| {
@@ -94,7 +100,7 @@ impl Render for Host {
                         </OverlayAnchor>
                     }
                 </div>
-                <button focus={&self.other} style={|s| s.w(gpui::px(100.)).h(gpui::px(32.))}>
+                <button focus={&view.other} style={|s| s.w(gpui::px(100.)).h(gpui::px(32.))}>
                     "Background"
                 </button>
                 <div style={|s| s.h(gpui::px(2000.)).flex_shrink_0()} />
@@ -104,7 +110,7 @@ impl Render for Host {
 
         let footer = rake::view! {
             <button
-                focus={&self.dialog_last}
+                focus={&view.dialog_last}
                 style={|s| s.h(gpui::px(32.))}
                 on:key-down={
                     cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
@@ -126,11 +132,11 @@ impl Render for Host {
         .into_any_element();
 
         rake::view! {
-            <OverlayHost state={self.overlays.clone()} body={body}>
-                if self.show_popup {
-                    <Popover state={self.popup.clone()} anchor={self.anchor.clone()}>
+            <OverlayHost state={view.overlays.clone()} body={body}>
+                if view.show_popup {
+                    <Popover state={view.popup.clone()} anchor={view.anchor.clone()}>
                         <button
-                            focus={&self.popup_first}
+                            focus={&view.popup_first}
                             style={|s| s.h(gpui::px(32.))}
                             on:click={
                                 cx.listener(|this, _, window, cx| {
@@ -141,7 +147,7 @@ impl Render for Host {
                             "Open dialog"
                         </button>
                         <button
-                            focus={&self.popup_last}
+                            focus={&view.popup_last}
                             style={|s| s.h(gpui::px(32.))}
                             on:click={
                                 cx.listener(|this, _, window, cx| {
@@ -153,21 +159,21 @@ impl Render for Host {
                         </button>
                     </Popover>
                 }
-                if self.show_dialog {
+                if view.show_dialog {
                     <Dialog
-                        state={self.dialog.clone()}
-                        title={"Dialog".into()}
+                        state={view.dialog.clone()}
+                        title={gpui::SharedString::from("Dialog")}
                         footer={
-                            if self.empty_dialog {
+                            if view.empty_dialog {
                                 None
                             } else {
                                 Some(footer)
                             }
                         }
                     >
-                        if !self.empty_dialog {
+                        if !view.empty_dialog {
                             <button
-                                focus={&self.dialog_first}
+                                focus={&view.dialog_first}
                                 style={|s| s.h(gpui::px(32.))}
                                 on:key-down={
                                     cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
@@ -182,7 +188,7 @@ impl Render for Host {
                             </button>
                             <button
                                 disabled={true}
-                                focus={&self.disabled}
+                                focus={&view.disabled}
                                 style={|s| s.h(gpui::px(32.))}
                             >
                                 "Disabled"

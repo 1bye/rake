@@ -378,6 +378,45 @@ impl Capture {
 #[derive(Default)]
 struct ActiveCapture(Option<Capture>);
 
+#[cfg(feature = "experimental-reactive")]
+pub(crate) fn component_signals(
+    cx: &mut App,
+    kind: &str,
+    signals: Vec<super::SignalMetadata>,
+    truncated: bool,
+) {
+    let Some(capture) = cx
+        .try_global::<ActiveCapture>()
+        .and_then(|active| active.0.as_ref())
+    else {
+        return;
+    };
+    let Some(parent) = capture.parents.last().and_then(Option::as_ref) else {
+        return;
+    };
+    let Some(index) = capture
+        .snapshot
+        .elements
+        .iter()
+        .rposition(|element| &element.id == parent && element.kind == kind)
+    else {
+        return;
+    };
+    let bytes = super::budget::size(&signals, 16 * 1024);
+    let capture = cx.global_mut::<ActiveCapture>().0.as_mut().unwrap();
+
+    if bytes > 16 * 1024 || capture.bytes + bytes > super::MAX_CAPTURE_BYTES {
+        capture.snapshot.elements[index].metadata_truncated = true;
+        return;
+    }
+
+    if let Some(view) = &mut capture.snapshot.elements[index].view {
+        view.signals = signals;
+        capture.bytes += bytes;
+        capture.snapshot.elements[index].metadata_truncated |= truncated;
+    }
+}
+
 impl gpui::Global for ActiveCapture {}
 
 #[derive(Default)]
@@ -428,6 +467,14 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if self.root.is_none()
+            && cx
+                .try_global::<LayoutHost>()
+                .is_none_or(|host| host.0.is_none())
+        {
+            let (layout, state) = self.inner.request_layout(id, inspector_id, window, cx);
+            return (layout, (state, None));
+        }
         // A window-wide Root plugin also captures presentation overlays. A
         // nested route/root using the same store contributes to that capture.
         if let Some((store, _, host)) = &self.root
@@ -602,6 +649,16 @@ impl<E: gpui::Element> gpui::Element for Inspected<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        if self.root.is_none()
+            && cx
+                .try_global::<ActiveCapture>()
+                .is_none_or(|capture| capture.0.is_none())
+        {
+            let state = self
+                .inner
+                .prepaint(id, inspector_id, bounds, &mut state.0, window, cx);
+            return (state, None, None, None);
+        }
         if cx.try_global::<ActiveCapture>().is_none() {
             cx.set_global(ActiveCapture::default());
         }

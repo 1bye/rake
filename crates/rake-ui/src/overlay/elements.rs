@@ -11,6 +11,8 @@ use gpui_base::FocusTrapElement as _;
 use super::state::{AnchorState, Kind, OverlayHostState, OverlayState};
 
 /// Window-root host for overlay controls, with background actions isolated in `body`.
+#[derive(rake_macros::Props)]
+#[props(runtime = crate)]
 pub struct OverlayHost {
     /// State created once in the window's owning entity.
     pub state: OverlayHostState,
@@ -69,6 +71,8 @@ impl RenderOnce for OverlayHost {
 }
 
 /// Tracks the current visible window bounds of its trigger content.
+#[derive(rake_macros::Props)]
+#[props(runtime = crate)]
 pub struct OverlayAnchor {
     /// A handle created through the same host as the corresponding popover.
     pub state: AnchorState,
@@ -103,6 +107,8 @@ impl RenderOnce for OverlayAnchor {
 
 /// An anchored, nonmodal group of controls with Escape and outside-click dismissal.
 /// Use a state created by [`OverlayHostState::popover`].
+#[derive(rake_macros::Props)]
+#[props(runtime = crate)]
 pub struct Popover {
     /// Retained interaction state.
     pub state: OverlayState,
@@ -159,6 +165,8 @@ impl RenderOnce for Popover {
 
 /// A modal dialog with initial focus, contained Tab navigation and focus restoration.
 /// Use a state created by [`OverlayHostState::dialog`].
+#[derive(rake_macros::Props)]
+#[props(runtime = crate)]
 pub struct Dialog {
     /// Retained interaction state.
     pub state: OverlayState,

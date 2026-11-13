@@ -12,6 +12,43 @@ fn expand(source: &str) -> syn::Result<proc_macro2::TokenStream> {
 }
 
 #[test]
+fn cache_inference_excludes_positioned_hidden_and_variant_roots() {
+    for classes in [
+        "absolute left-4 top-4 w-40 h-10",
+        "relative w-40 h-10",
+        "-left-4 w-40 h-10",
+        "inset-0 w-40 h-10",
+        "hidden w-40 h-10",
+        "hover:w-20 w-40 h-10",
+    ] {
+        let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+
+        assert!(view.validate_cache_root().is_err(), "{classes}");
+        assert!(
+            view.cache_style(&quote!(::renamed)).unwrap().is_none(),
+            "{classes}"
+        );
+    }
+
+    for classes in ["w-40 h-10", "w-full h-full", "size-10"] {
+        let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+
+        assert!(view.validate_cache_root().is_ok(), "{classes}");
+        assert!(
+            view.cache_style(&quote!(::renamed)).unwrap().is_some(),
+            "{classes}"
+        );
+    }
+
+    let view = syn::parse_str::<View>("<div/>").unwrap();
+
+    assert!(
+        view.validate_cache_root().is_ok(),
+        "an override may supply missing dimensions"
+    );
+}
+
+#[test]
 fn accepts_nested_markup_and_rust_control_flow() {
     let expanded = expand(
         r#"
@@ -208,7 +245,7 @@ fn keyboard_attributes_and_namespaced_actions_expand_to_typed_rust() {
 }
 
 #[test]
-fn component_paths_properties_and_children_expand_to_struct_literals() {
+fn component_paths_properties_and_children_expand_to_typed_rust() {
     for source in [
         "<Badge id={id} label={label} highlighted={true}/>",
         "<ui::Card id={id} header={header} footer={None}>\"Body\"</ui::Card>",
@@ -233,6 +270,11 @@ fn component_paths_properties_and_children_expand_to_struct_literals() {
         ),
         ("<Card label={a} label={b}/>", "duplicate attribute `label`"),
     ] {
+        if cfg!(feature = "reactive") && expected == "Rust field names" {
+            syn::parse2::<syn::Expr>(expand(source).expect(source)).expect("builder property");
+            continue;
+        }
+
         let error = expand(source).expect_err(source).to_string();
 
         assert!(error.contains(expected), "{source}: {error}");
@@ -323,7 +365,18 @@ fn expansion_snapshots() {
 
     for (name, source) in fixtures {
         let expanded = expand(&source).expect(name).to_string() + "\n";
-        let path = directory.join(format!("{name}.txt"));
+        let mut path = directory.join(format!("{name}.txt"));
+
+        if cfg!(feature = "reactive") {
+            let reactive = directory.join(format!("{name}.reactive.txt"));
+
+            if reactive.exists()
+                || (std::env::var_os("RAKE_UPDATE_SNAPSHOTS").is_some()
+                    && std::fs::read_to_string(&path).expect("base snapshot exists") != expanded)
+            {
+                path = reactive;
+            }
+        }
 
         if std::env::var_os("RAKE_UPDATE_SNAPSHOTS").is_some() {
             std::fs::write(&path, &expanded).expect("write snapshot");

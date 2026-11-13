@@ -20,6 +20,193 @@ pub struct View(Element);
 pub use layout::{Layout, LayoutKind};
 
 impl View {
+    /// Rejects known root classes that an explicit cache box cannot preserve.
+    ///
+    /// # Errors
+    /// Returns an error for positioning, visibility, or variant utilities on a literal root class.
+    pub fn validate_cache_root(&self) -> syn::Result<()> {
+        if let Some(attribute) = self
+            .0
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "class")
+            && let AttributeValue::Expression(expression) = &attribute.value
+            && let Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(classes),
+                ..
+            }) = &**expression
+            && classes
+                .value()
+                .split_whitespace()
+                .any(unsupported_cache_class)
+        {
+            return Err(syn::Error::new_spanned(
+                classes,
+                "explicit caching cannot preserve positioning, hidden, or variants on the root; use cached = false",
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[doc = "Extracts explicit root dimensions for the experimental component cache."]
+    pub fn cache_style(&self, rake: &TokenStream) -> syn::Result<Option<TokenStream>> {
+        if self.0.is_component()
+            || self
+                .0
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name == "style" || attribute.name.starts_with("class:"))
+        {
+            return Ok(None);
+        }
+
+        let Some(attribute) = self
+            .0
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "class")
+        else {
+            return Ok(None);
+        };
+
+        let AttributeValue::Expression(expression) = &attribute.value else {
+            return Ok(None);
+        };
+
+        let Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(value),
+            ..
+        }) = &**expression
+        else {
+            return Ok(None);
+        };
+
+        let classes: Vec<_> = value
+            .value()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+
+        if classes.iter().any(|class| unsupported_cache_class(class)) {
+            return Ok(None);
+        }
+
+        let definite =
+            |value: &str| value != "auto" && value != "min" && value != "max" && value != "fit";
+
+        let mut width = false;
+        let mut height = false;
+
+        for class in &classes {
+            if let Some(value) = class.strip_prefix("size-") {
+                width = definite(value);
+                height = width;
+            }
+
+            if let Some(value) = class.strip_prefix("w-") {
+                width = definite(value);
+            }
+
+            if let Some(value) = class.strip_prefix("h-") {
+                height = definite(value);
+            }
+        }
+
+        if !width || !height {
+            return Ok(None);
+        }
+
+        let layout = classes
+            .iter()
+            .filter(|class| {
+                [
+                    "w-", "h-", "size-", "min-w-", "min-h-", "max-w-", "max-h-", "grow", "shrink",
+                    "basis-", "flex-", "self-", "m-", "mx-", "my-", "mt-", "mb-", "ml-", "mr-",
+                ]
+                .iter()
+                .any(|prefix| class.starts_with(prefix))
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let literal = LitStr::new(&layout, value.span());
+        let expression = syn::parse_quote!(#literal);
+        let plan = class_methods(&expression, rake, None)?;
+        let methods = plan.emit_base(&format_ident!("__style"));
+
+        Ok(Some(quote!({
+            use #rake::gpui::Styled as _;
+            #rake::gpui::StyleRefinement::default() #methods
+        })))
+    }
+
+    #[doc = "Forwards declared rest attributes to an interactive root."]
+    pub fn forward_rest(&mut self, rest: &Ident) -> syn::Result<()> {
+        if matches!(self.0.resolved, Tag::Component | Tag::Svg | Tag::Image) {
+            return Err(syn::Error::new_spanned(
+                &self.0.tag,
+                "rest attributes require an interactive built-in root",
+            ));
+        }
+
+        let disabled = if self.0.resolved.supports_disabled() {
+            let existing = self
+                .0
+                .attribute("disabled")
+                .map(Attribute::expression)
+                .transpose()?
+                .cloned()
+                .unwrap_or_else(|| syn::parse_quote!(false));
+
+            self.0
+                .attributes
+                .retain(|attribute| attribute.name != "disabled");
+            self.0.attributes.push(Attribute {
+                name: "disabled".into(),
+                action: None,
+                span: rest.span(),
+                value: AttributeValue::Expression(Box::new(
+                    syn::parse_quote!(#existing || #rest.disabled),
+                )),
+            });
+
+            quote!(#existing || #rest.disabled)
+        } else {
+            quote!(false)
+        };
+
+        self.0.attributes.push(Attribute {
+            name: "style".into(),
+            action: None,
+            span: rest.span(),
+            value: AttributeValue::Expression(Box::new(
+                syn::parse_quote!(move |root| #rest.clone().apply(root, #disabled)),
+            )),
+        });
+
+        Ok(())
+    }
+
+    #[doc = "Lowers a utility literal to a style refinement for forwarded component classes."]
+    pub fn attribute_style(classes: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
+        let plan = class_methods(classes, rake, None)?;
+
+        if plan.interactive {
+            return Err(syn::Error::new_spanned(
+                classes,
+                "forwarded class utilities must be non-interactive; put interaction styles on the component root",
+            ));
+        }
+
+        let methods = plan.emit_base(&format_ident!("__style"));
+
+        Ok(
+            quote!({ use #rake::gpui::Styled as _; #rake::gpui::StyleRefinement::default() #methods }),
+        )
+    }
+
     /// Borrows the parsed root without applying compiler recovery or lowering.
     pub fn root(&self) -> &Element {
         &self.0
@@ -34,6 +221,16 @@ impl View {
 
         Ok(&self.0.layout)
     }
+}
+
+fn unsupported_cache_class(class: &str) -> bool {
+    let class = class.trim_start_matches('-');
+
+    matches!(class, "absolute" | "relative" | "hidden")
+        || class.contains(':')
+        || ["inset-", "top-", "right-", "bottom-", "left-"]
+            .iter()
+            .any(|prefix| class.starts_with(prefix))
 }
 
 #[derive(Clone)]
@@ -913,7 +1110,16 @@ impl Element {
                 .map(Attribute::expression)
                 .transpose()?;
 
-            let value = value.map_or_else(|| quote!(false), |value| quote!(#value));
+            let value = value.map_or_else(
+                || quote!(false),
+                |value| {
+                    if cfg!(feature = "reactive") {
+                        quote!(#rake::__private::Value::<bool>::resolve(#value, cx))
+                    } else {
+                        quote!(#value)
+                    }
+                },
+            );
 
             setup.extend(quote!(let #disabled: bool = #value;));
         }

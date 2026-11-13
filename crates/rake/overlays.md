@@ -98,12 +98,13 @@ A render method can compose these components:
 ```rust
 # use rake::gpui::{self, prelude::*};
 # use rake::overlay::{Dialog, OverlayAnchor, OverlayHost, OverlayHostState, AnchorState, OverlayState, Popover};
-# fn render(overlays: OverlayHostState, anchor: AnchorState, actions: OverlayState, documents: OverlayState) -> impl IntoElement {
+# fn render(overlays: OverlayHostState, anchor: AnchorState, actions: OverlayState, documents: OverlayState, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
 let open_actions = actions.clone();
+let actions_expanded = actions.is_open();
 let body = rake::view! {
     <section class="p-4">
         <OverlayAnchor state={anchor.clone()}>
-            <button aria-expanded={actions.is_open()}
+            <button aria-expanded={actions_expanded}
                 on:click={move |_, window, cx| { open_actions.open(window, cx); }}>
                 "More actions"
             </button>
@@ -119,7 +120,7 @@ rake::view! {
                 "Browse documents"
             </button>
         </Popover>
-        <Dialog state={documents} title={"Documents".into()} footer={None}>
+        <Dialog state={documents} title={gpui::SharedString::from("Documents")} footer={None}>
             <p>"Mount a retained entity here with a view tag."</p>
         </Dialog>
     </OverlayHost>

@@ -2,9 +2,11 @@
 
 use rake::gpui::{self, AnyElement, ElementId, SharedString, prelude::*};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, rake::Props)]
 pub(super) struct Badge {
+    #[prop(no_into)]
     pub id: ElementId,
+    #[prop(no_into)]
     pub label: SharedString,
     pub highlighted: bool,
 }
@@ -28,8 +30,9 @@ impl RenderOnce for Badge {
     }
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, rake::Props)]
 pub(super) struct Card {
+    #[prop(no_into)]
     pub id: ElementId,
     pub header: AnyElement,
     pub footer: Option<AnyElement>,
