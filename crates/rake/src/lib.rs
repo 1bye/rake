@@ -57,11 +57,13 @@ macro_rules! early_startup {
 }
 
 pub mod control;
+
 pub use rake_macros::Props;
 
 #[doc = "Experimental signals backed by typed GPUI entities."]
 #[cfg(feature = "experimental-reactive")]
 pub mod reactive;
+
 #[cfg(feature = "experimental-reactive")]
 pub use rake_macros::component;
 
@@ -158,6 +160,7 @@ pub mod prelude {
         ApplicationCommand, CommandContext, CommandDescriptor, CommandError, Commands,
         ControlConfig, ExecutionCapability, RuntimeClient,
     };
+
     #[cfg(feature = "experimental-reactive")]
     pub use crate::reactive::{
         Children, Memo, ReactiveApp, Resource, Setup, Signal, SignalContext,
@@ -206,6 +209,7 @@ pub mod __private {
     pub use crate::__rake_inspection as inspection;
     #[cfg(feature = "gpui")]
     pub use crate::application::{AppFactoryOutput, run_app_factory};
+
     #[cfg(feature = "gpui")]
     pub use rake_ui::__private::{
         EquivalentProp, PropComparison, PropMissing, PropSet, PropsBuilder, RequiredProp, Value,

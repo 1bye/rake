@@ -81,6 +81,7 @@ impl<T, E> LoadState<T, E> {
         if !matches!(self.status, LoadStatus::Ready(_)) {
             return None;
         }
+
         match std::mem::replace(&mut self.status, LoadStatus::Idle) {
             LoadStatus::Ready(value) => Some(value),
             _ => unreachable!(),

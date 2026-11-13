@@ -2,6 +2,7 @@
 
 use rake::App;
 use rake::gpui::prelude::*;
+
 use rake::gpui::{
     self, Context, Entity, FocusHandle, KeyBinding, ScrollHandle, SharedString, Window, div, rgb,
 };
@@ -246,6 +247,7 @@ impl Counter {
 impl Counter {
     fn content(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _ = &window;
+
         if self.show_inputs {
             return rake::view! {
                 <div
@@ -542,6 +544,7 @@ impl Render for Counter {
         .into_any_element();
 
         let view = &*self;
+
         rake::view! {
             <OverlayHost state={view.overlays.clone()} body={body}>
                 <Popover state={view.actions_popup.clone()} anchor={view.actions_anchor.clone()}>

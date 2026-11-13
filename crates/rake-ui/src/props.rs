@@ -1,5 +1,6 @@
 #[doc(hidden)]
 pub struct PropSet;
+
 #[doc(hidden)]
 pub struct PropMissing;
 
@@ -8,8 +9,11 @@ pub trait PropsBuilder: Sized {
     type Builder;
     type EmptyBuilder;
     type FilledBuilder;
+
     fn builder() -> Self::Builder;
+
     fn builder_empty() -> Self::EmptyBuilder;
+
     fn builder_from(props: Self) -> Self::FilledBuilder;
 }
 
@@ -19,6 +23,7 @@ pub trait PropsBuilder: Sized {
     label = "set the required property before calling build"
 )]
 pub trait RequiredProp<Name> {}
+
 impl<Name> RequiredProp<Name> for PropSet {}
 
 #[doc = "Resolves a plain or reactive attribute through the current application."]

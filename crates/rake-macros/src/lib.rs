@@ -28,6 +28,7 @@ pub fn props(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn component(args: TokenStream, input: TokenStream) -> TokenStream {
     let function = parse_macro_input!(input as ItemFn);
+
     component::expand(args.into(), function)
         .unwrap_or_else(|error| error.to_compile_error())
         .into()

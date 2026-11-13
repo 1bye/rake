@@ -22,14 +22,17 @@ fn cache_inference_excludes_positioned_hidden_and_variant_roots() {
         "hover:w-20 w-40 h-10",
     ] {
         let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+
         assert!(view.validate_cache_root().is_err(), "{classes}");
         assert!(
             view.cache_style(&quote!(::renamed)).unwrap().is_none(),
             "{classes}"
         );
     }
+
     for classes in ["w-40 h-10", "w-full h-full", "size-10"] {
         let view = syn::parse_str::<View>(&format!("<div class={classes:?} />")).unwrap();
+
         assert!(view.validate_cache_root().is_ok(), "{classes}");
         assert!(
             view.cache_style(&quote!(::renamed)).unwrap().is_some(),
@@ -38,6 +41,7 @@ fn cache_inference_excludes_positioned_hidden_and_variant_roots() {
     }
 
     let view = syn::parse_str::<View>("<div/>").unwrap();
+
     assert!(
         view.validate_cache_root().is_ok(),
         "an override may supply missing dimensions"
@@ -270,6 +274,7 @@ fn component_paths_properties_and_children_expand_to_typed_rust() {
             syn::parse2::<syn::Expr>(expand(source).expect(source)).expect("builder property");
             continue;
         }
+
         let error = expand(source).expect_err(source).to_string();
 
         assert!(error.contains(expected), "{source}: {error}");
@@ -361,8 +366,10 @@ fn expansion_snapshots() {
     for (name, source) in fixtures {
         let expanded = expand(&source).expect(name).to_string() + "\n";
         let mut path = directory.join(format!("{name}.txt"));
+
         if cfg!(feature = "reactive") {
             let reactive = directory.join(format!("{name}.reactive.txt"));
+
             if reactive.exists()
                 || (std::env::var_os("RAKE_UPDATE_SNAPSHOTS").is_some()
                     && std::fs::read_to_string(&path).expect("base snapshot exists") != expanded)

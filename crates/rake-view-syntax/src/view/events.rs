@@ -124,7 +124,9 @@ pub(super) fn handler(value: &syn::Expr) -> syn::Result<TokenStream> {
     let syn::Expr::Closure(closure) = value else {
         return Ok(quote!(#value));
     };
+
     let mut closure = closure.clone();
+
     match closure.inputs.len() {
         1 => {
             closure.inputs.insert(0, syn::parse_quote!(_));
@@ -139,7 +141,10 @@ pub(super) fn handler(value: &syn::Expr) -> syn::Result<TokenStream> {
             ));
         }
     }
+
     let body = &closure.body;
+
     closure.body = syn::parse_quote!({ #body; });
+
     Ok(quote!(#closure))
 }

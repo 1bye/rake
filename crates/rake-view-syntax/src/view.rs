@@ -60,6 +60,7 @@ impl View {
         {
             return Ok(None);
         }
+
         let Some(attribute) = self
             .0
             .attributes
@@ -68,9 +69,11 @@ impl View {
         else {
             return Ok(None);
         };
+
         let AttributeValue::Expression(expression) = &attribute.value else {
             return Ok(None);
         };
+
         let Expr::Lit(syn::ExprLit {
             lit: syn::Lit::Str(value),
             ..
@@ -78,33 +81,42 @@ impl View {
         else {
             return Ok(None);
         };
+
         let classes: Vec<_> = value
             .value()
             .split_whitespace()
             .map(str::to_owned)
             .collect();
+
         if classes.iter().any(|class| unsupported_cache_class(class)) {
             return Ok(None);
         }
+
         let definite =
             |value: &str| value != "auto" && value != "min" && value != "max" && value != "fit";
+
         let mut width = false;
         let mut height = false;
+
         for class in &classes {
             if let Some(value) = class.strip_prefix("size-") {
                 width = definite(value);
                 height = width;
             }
+
             if let Some(value) = class.strip_prefix("w-") {
                 width = definite(value);
             }
+
             if let Some(value) = class.strip_prefix("h-") {
                 height = definite(value);
             }
         }
+
         if !width || !height {
             return Ok(None);
         }
+
         let layout = classes
             .iter()
             .filter(|class| {
@@ -118,10 +130,12 @@ impl View {
             .cloned()
             .collect::<Vec<_>>()
             .join(" ");
+
         let literal = LitStr::new(&layout, value.span());
         let expression = syn::parse_quote!(#literal);
         let plan = class_methods(&expression, rake, None)?;
         let methods = plan.emit_base(&format_ident!("__style"));
+
         Ok(Some(quote!({
             use #rake::gpui::Styled as _;
             #rake::gpui::StyleRefinement::default() #methods
@@ -136,6 +150,7 @@ impl View {
                 "rest attributes require an interactive built-in root",
             ));
         }
+
         let disabled = if self.0.resolved.supports_disabled() {
             let existing = self
                 .0
@@ -144,6 +159,7 @@ impl View {
                 .transpose()?
                 .cloned()
                 .unwrap_or_else(|| syn::parse_quote!(false));
+
             self.0
                 .attributes
                 .retain(|attribute| attribute.name != "disabled");
@@ -155,10 +171,12 @@ impl View {
                     syn::parse_quote!(#existing || #rest.disabled),
                 )),
             });
+
             quote!(#existing || #rest.disabled)
         } else {
             quote!(false)
         };
+
         self.0.attributes.push(Attribute {
             name: "style".into(),
             action: None,
@@ -167,19 +185,23 @@ impl View {
                 syn::parse_quote!(move |root| #rest.clone().apply(root, #disabled)),
             )),
         });
+
         Ok(())
     }
 
     #[doc = "Lowers a utility literal to a style refinement for forwarded component classes."]
     pub fn attribute_style(classes: &Expr, rake: &TokenStream) -> syn::Result<TokenStream> {
         let plan = class_methods(classes, rake, None)?;
+
         if plan.interactive {
             return Err(syn::Error::new_spanned(
                 classes,
                 "forwarded class utilities must be non-interactive; put interaction styles on the component root",
             ));
         }
+
         let methods = plan.emit_base(&format_ident!("__style"));
+
         Ok(
             quote!({ use #rake::gpui::Styled as _; #rake::gpui::StyleRefinement::default() #methods }),
         )
