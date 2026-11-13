@@ -1041,7 +1041,10 @@ in `project_build::dev::tests` unless qualified.
 | Direct edit/error fallback | `project_dev::blaze_direct_edits_fall_back_for_structured_errors_and_keep_the_old_process` |
 | Atomic save/deletion | `blaze_stat_watcher_detects_atomic_saves_and_deletions` |
 | Room restart builds first | `blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_restart` |
-| Web rejection | `blaze_arguments_are_optional_and_reject_web_preview_and_other_commands` (also covers preview) |
+| Preview with pinned/explicit Blaze | `blaze_preview_accepts_pinned_and_explicit_compilers` |
+| Preview capture identity across patches/restarts | `body_patches_keep_preview_epoch_and_restarts_rebind_the_runtime` |
+| Preview through patch and checkpointed restart | `default_restart_hands_off_a_notice_and_preserves_available_checkpoints` |
+| Web rejection | `blaze_arguments_are_optional_and_reject_web_and_other_commands` |
 
 ### Differences and verification limits
 
@@ -1049,7 +1052,8 @@ Blaze rejects `--native-reloader`: mixing the two replacement owners would
 bypass the required checkpointed restart. Plain Cargo's backend behavior is
 unchanged. The stat watcher retains the prototype's mtime/size/inode limitation. Native
 desktop supervision has no Python dependency. The Python Blaze prototype was
-not applied to Web/preview, which intentionally cannot select this compiler.
+not applied to Web, which intentionally cannot select this compiler. Native preview
+uses the same server and capture lifecycle with either desktop compiler.
 Temporary Python `RAKE_LIVE_PROFILE` instrumentation was not ported: the normal
 JSON supervisor events, runtime apply timestamps and worker logs remain the
 recording interfaces. The socket deadline now includes sending and receiving,

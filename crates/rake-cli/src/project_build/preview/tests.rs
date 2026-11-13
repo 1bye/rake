@@ -366,6 +366,7 @@ fn invalid_annotation_targets_and_expired_references_never_reach_runtime() {
 
 struct StateInspector {
     window: Mutex<Value>,
+    runtime: Mutex<&'static str>,
 }
 
 impl super::Inspector for StateInspector {
@@ -373,7 +374,7 @@ impl super::Inspector for StateInspector {
         Ok(match action {
             "development" => json!({"runtime_pid":1,"app_running":true}),
             "inspect_instances" => {
-                json!([{"pid":1,"transport":"local","info":{"runtime_id":"runtime"}}])
+                json!([{"pid":1,"transport":"local","info":{"runtime_id":*self.runtime.lock().unwrap()}}])
             }
             _ => {
                 assert_eq!(body["request"]["message"]["value"]["type"], "preview");
@@ -388,6 +389,7 @@ impl super::Inspector for StateInspector {
 fn preview_state_bounds_references_and_changes_epoch_only_for_window_geometry() {
     let inspector = Arc::new(StateInspector {
         window: Mutex::new(window()),
+        runtime: Mutex::new("runtime"),
     });
 
     let preview = Preview::new(inspector.clone(), "/unused".into());
@@ -421,6 +423,35 @@ fn preview_state_bounds_references_and_changes_epoch_only_for_window_geometry() 
 }
 
 #[test]
+fn body_patches_keep_preview_epoch_and_restarts_rebind_the_runtime() {
+    let inspector = Arc::new(StateInspector {
+        window: Mutex::new(window()),
+        runtime: Mutex::new("runtime"),
+    });
+
+    let preview = Preview::new(inspector.clone(), "/unused".into());
+    let first = preview.handle("preview_state", &json!({})).unwrap();
+
+    inspector.window.lock().unwrap()["generation"] = json!("patched");
+    let patched = preview.handle("preview_state", &json!({})).unwrap();
+
+    assert_eq!(first["epoch"], patched["epoch"]);
+    assert!(preview.reference(&first).is_ok());
+
+    // Even a reused native window ID must not retain the old runtime's capture.
+    *inspector.runtime.lock().unwrap() = "restored-runtime";
+    let restored = preview.handle("preview_state", &json!({})).unwrap();
+
+    assert_ne!(patched["epoch"], restored["epoch"]);
+    assert_eq!(restored["runtime_id"], "restored-runtime");
+    assert!(preview.reference(&patched).is_err());
+    assert_eq!(
+        preview.reference(&restored).unwrap().runtime,
+        "restored-runtime"
+    );
+}
+
+#[test]
 fn disconnect_during_video_headers_releases_encoder() {
     use std::{
         io::Read,
@@ -430,6 +461,7 @@ fn disconnect_during_video_headers_releases_encoder() {
     let preview = Preview::new(
         Arc::new(StateInspector {
             window: Mutex::new(window()),
+            runtime: Mutex::new("runtime"),
         }),
         "/bin/sleep".into(),
     );

@@ -77,6 +77,9 @@ RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake ctl reload stat
 ```
 
 Desktop dev launches the native app; `--preview` opens its browser preview.
+Source builds also support `rake dev --live --preview` on Apple Silicon Macs:
+preview follows live patches and reconnects after checkpointed restarts. The published
+`0.1.0-alpha.4` CLI does not yet include this combination.
 Web dev opens the app directly. With `--cdp`, it opens the embedded
 [Chrome DevTools](devtools.md) toggle instead. Node 22+ is required for Web
 `--cdp`; frontend assets download when the panel opens. `--no-open` prints the
