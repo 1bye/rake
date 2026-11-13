@@ -224,12 +224,12 @@ rake doctor --json
 ```
 
 This is currently **Apple Silicon macOS only**. The pinned
-[`v0.20261030.1-rake.1` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.1)
+[`v0.20261030.1-rake.2` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.2)
 is published; ordinary live mode downloads it automatically. To use a copy of
 that exact published archive offline:
 
 ```sh
-BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
+BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.2-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
 ```
 
 `BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
