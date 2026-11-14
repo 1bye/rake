@@ -23,6 +23,9 @@ mod web;
 #[cfg(windows)]
 mod windows;
 
+#[cfg(windows)]
+pub(crate) use windows::shell_helper;
+
 use args::{Args, Compiler};
 use processes::{Capture, Processes};
 use serde_json::{Value, json};

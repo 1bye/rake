@@ -58,7 +58,10 @@ impl Render for Shell {
                         window.scale_factor()
                     );
                     println!("RAKE_DESKTOP_SMOKE_FRAME");
-                    drop(navigator.quit(QuitOptions::default()));
+
+                    if std::env::var_os("RAKE_DESKTOP_SMOKE_INSPECT").is_none() {
+                        drop(navigator.quit(QuitOptions::default()));
+                    }
                 });
             });
             _window.defer(cx, |window, _| window.refresh());

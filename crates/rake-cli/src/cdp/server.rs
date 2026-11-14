@@ -24,7 +24,10 @@ fn recoverable_accept_error(error: &std::io::Error) -> bool {
     );
 
     #[cfg(windows)]
-    let exhausted = matches!(error.raw_os_error(), Some(10024 | 10055));
+    let exhausted = matches!(
+        error.raw_os_error(),
+        Some(10004 | 10035 | 10053 | 10054 | 10024 | 10055)
+    );
 
     temporary || exhausted
 }

@@ -18,6 +18,19 @@ mod view_source;
 fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
 
+    #[cfg(windows)]
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "__shell-open")
+    {
+        if let Err(error) = source::windows::helper(&arguments[1..]) {
+            eprintln!("rake: {error}");
+            std::process::exit(1);
+        }
+
+        return;
+    }
+
     if arguments
         .first()
         .is_some_and(|argument| argument == "--version")

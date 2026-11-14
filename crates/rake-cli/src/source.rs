@@ -91,7 +91,11 @@ pub(crate) fn open(source: &SourceLocation) -> Result<serde_json::Value> {
     }
 
     #[cfg(windows)]
-    windows::open(path.to_str().ok_or("Source path is not valid UTF-8")?)?;
+    windows::open(
+        dunce::simplified(&path)
+            .to_str()
+            .ok_or("Source path is not valid UTF-8")?,
+    )?;
 
     Ok(serde_json::json!({"path":path,"line":source.line,"column":source.column}))
 }
