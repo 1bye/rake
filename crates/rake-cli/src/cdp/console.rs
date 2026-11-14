@@ -572,6 +572,7 @@ mod tests {
             .mode(0o600)
             .open(&path)
             .unwrap();
+
         #[cfg(windows)]
         let file = rake_client::private::create(&path).unwrap();
 
@@ -606,6 +607,7 @@ mod tests {
             .mode(0o600)
             .open(&path)
             .unwrap();
+
         #[cfg(windows)]
         let file = rake_client::private::create(&path).unwrap();
 

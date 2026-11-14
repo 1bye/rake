@@ -16,11 +16,13 @@ fn recoverable_accept_error(error: &std::io::Error) -> bool {
             | std::io::ErrorKind::ConnectionAborted
             | std::io::ErrorKind::ConnectionReset
     );
+
     #[cfg(unix)]
     let exhausted = matches!(
         error.raw_os_error(),
         Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
     );
+
     #[cfg(windows)]
     let exhausted = matches!(error.raw_os_error(), Some(10024 | 10055));
 
@@ -349,6 +351,7 @@ pub(super) fn serve(options: Options) -> Result<()> {
 
         #[cfg(unix)]
         let opened = matches!(result, Ok(status) if status.success());
+
         #[cfg(windows)]
         let opened = result.is_ok();
 
