@@ -1,5 +1,40 @@
 # Project toolchain port
 
+## Windows inspection, CDP and source opening (#57, phase 3)
+
+CLI `inspect`, `ctl` and CDP use the shared Windows named-pipe client. Protocol,
+status/JSON fields, session filenames and Unix transports retain their contracts.
+Trace exports create owner-only files and publish through the checked atomic
+replacement boundary. Source reads use the phase-1 root/reparse confinement;
+source associations simplify verbatim Windows paths only when identity is safe.
+
+Windows source associations execute through the existing desktop Explorer COM
+object. A private CLI worker runs in an owned Job, with the shorter of the
+calling operation's deadline and ten seconds. Closing that Job stops a stalled
+RPC worker; Explorer owns the editor it launches. Session shutdown preserves
+editors and browser openers. The existing Job limits remain in place. Unix source
+association launching is unchanged. Native Swift capture remains macOS-only,
+and Windows `--preview` fails before starting resources.
+
+The real CLI/CDP integration cases now run on Windows named pipes as well as
+Unix sockets, preserving discovery, authentication, wire, diagnostics, lost-ack
+and replacement assertions. The Windows desktop job also drives the D3D11 smoke
+app through `dev --cdp`, actual inspection, reload and Ctrl-Break shutdown. It
+holds process handles to check descendant exits and uses a disposable per-user
+protocol handler to prove that an Explorer editor survives helper/session Jobs.
+The registration and test editor are removed afterward. The smoke app keeps its
+normal frame/auto-exit behavior unless its inspection-test flag is enabled.
+
+Native desktop sessions expose CDP directly. Web sessions additionally own the
+Node DevTools companion. Windows Web publication tests exercise the real Node
+module, HTTP access guard and Job/port cleanup; publication and CDP discovery
+data in that component test are explicit fixtures. The GUI check uses the real
+native app and CLI. Existing bounds and assertions remain in force.
+
+Per-head validation and any missing local prerequisites are recorded in PR #76.
+The sections below preserve each earlier phase's implementation boundary.
+
+
 ## Windows desktop/Web supervisor (#57, phase 2)
 
 Windows development children use the existing suspended-enrollment, kill-on-close

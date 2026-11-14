@@ -56,7 +56,9 @@ def association(rake, root):
     protocol = "rake-editor-test-" + uuid.uuid4().hex
     key = "Software\\Classes\\" + protocol
     marker = root / "editor.pid"
-    editor_code = "import os,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)"
+    editor_code = ("import os,pathlib,sys,time; marker=pathlib.Path(sys.argv[1]); "
+                   "marker.write_text(str(os.getpid())); deadline=time.monotonic()+240; "
+                   "exec('while marker.exists() and time.monotonic()<deadline: time.sleep(0.1)')")
     command = subprocess.list2cmdline([sys.executable, "-c", editor_code, str(marker), "%1"])
     job = kernel.CreateJobObjectW(None, None)
     assert job, ctypes.get_last_error()
@@ -95,6 +97,7 @@ def association(rake, root):
                 assert kernel.TerminateProcess(editor, 0), ctypes.get_last_error()
             assert kernel.WaitForSingleObject(editor, 5000) == 0, "Test editor survived cleanup"
             kernel.CloseHandle(editor)
+        marker.unlink(missing_ok=True)
         if thread:
             _winapi.CloseHandle(thread)
         if process:

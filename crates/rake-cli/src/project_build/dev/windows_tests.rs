@@ -352,10 +352,12 @@ fn web_publication_reload_and_stop_release_the_origin() {
     let http =
         rake_http::HttpClient::new(rake_http::HttpConfig::new().timeout(Duration::from_secs(3)))
             .unwrap();
+
     let devtools = supervisor.status["devtools_url"]
         .as_str()
         .unwrap()
         .to_owned();
+
     let frontend = futures::executor::block_on(async {
         let response = http.get(&devtools).send().await.unwrap();
 
@@ -378,6 +380,7 @@ fn web_publication_reload_and_stop_release_the_origin() {
         assert!(!forbidden.bytes().await.unwrap().is_empty());
         frontend
     });
+
     supervisor.finish().unwrap();
     companion.stopped();
     assert!(
