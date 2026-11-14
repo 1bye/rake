@@ -39,7 +39,10 @@ fn embeds_templates_and_revision_without_invoking_tools() {
     let revision = env!("RAKE_BUILD_REV");
 
     let pin = if revision.is_empty() {
-        format!("version = \"={}\"", env!("CARGO_PKG_VERSION"))
+        let cli: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
+        let version = cli["dev-dependencies"]["rake"]["version"].as_str().unwrap();
+
+        format!("version = \"{version}\"")
     } else {
         format!("rev = \"{revision}\"")
     };
@@ -245,4 +248,29 @@ fn local_dependency_paths_preserve_quotes_and_template_like_text() {
     let manifest = fs::read_to_string(directory.path().join("app/Cargo.toml")).unwrap();
 
     assert!(manifest.contains(&serde_json::to_string(&rake.canonicalize().unwrap()).unwrap()));
+}
+
+#[test]
+fn generated_features_resolve_live_tools_and_the_alternate_gpui_backend() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = new(directory.path(), &["hello"]);
+
+    assert!(output.status.success(), "{output:?}");
+    let manifest: toml::Value =
+        toml::from_str(&fs::read_to_string(directory.path().join("hello/Cargo.toml")).unwrap())
+            .unwrap();
+
+    for feature in ["devtools", "live", "gpui-fast"] {
+        assert_eq!(
+            manifest
+                .get("features")
+                .and_then(|features| features.get(feature)),
+            Some(&toml::Value::Array(vec![toml::Value::String(format!(
+                "rake/{feature}"
+            ))])),
+            "generated apps must resolve {feature} without hand-editing their manifest",
+        );
+    }
+
+    assert!(manifest["features"].get("default").is_none());
 }

@@ -5,7 +5,10 @@
 //! call them in a user event, then await in owned work. Dropping a request stops
 //! observation, but cannot undo an OS dialog, clipboard write or browser download.
 
+mod notifications;
 mod preferences;
+
+pub use notifications::{Notification, NotificationOutcome};
 
 pub use preferences::Preferences;
 
@@ -99,6 +102,8 @@ pub struct Capabilities {
     pub preferences: Capability,
     /// Open an HTTP(S) or mail URL through the host.
     pub open_url: Capability,
+    /// Post OS notifications; permission and delivery remain separate.
+    pub notifications: Capability,
 }
 
 #[derive(Default)]
@@ -111,6 +116,8 @@ struct Activations {
 #[derive(Clone, Default)]
 pub struct Platform {
     activations: Rc<Activations>,
+    #[cfg(any(feature = "gpui", test))]
+    notifications: Rc<notifications::Notifications>,
 }
 
 impl std::fmt::Debug for Platform {
@@ -134,6 +141,7 @@ impl Platform {
             };
 
             Capabilities {
+                notifications: notifications::capability(),
                 file_import: ui,
                 file_export: ui,
                 clipboard_read: ui,
@@ -163,11 +171,7 @@ impl Platform {
     /// # Errors
     /// Rejects malformed or oversized URLs before queuing them.
     pub fn receive_open_url(&self, value: &str) -> Result<(), Error> {
-        if value.len() > 16 * 1024 {
-            return Err(Error::InvalidInput("activation URL exceeds 16 KiB".into()));
-        }
-
-        let url = url::Url::parse(value).map_err(|error| Error::InvalidInput(error.to_string()))?;
+        let url = activation_url(value)?;
         let mut urls = self.activations.urls.borrow_mut();
 
         if urls.len() == 32 {
@@ -257,6 +261,22 @@ impl Platform {
             Ok(())
         }
     }
+}
+
+fn activation_url(value: &str) -> Result<url::Url, Error> {
+    if value.len() > 16 * 1024 {
+        return Err(Error::InvalidInput("activation URL exceeds 16 KiB".into()));
+    }
+
+    let url = url::Url::parse(value).map_err(|error| Error::InvalidInput(error.to_string()))?;
+
+    if url.as_str().len() > 16 * 1024 {
+        return Err(Error::InvalidInput(
+            "encoded activation URL exceeds 16 KiB".into(),
+        ));
+    }
+
+    Ok(url)
 }
 
 #[cfg(any(feature = "gpui", test))]

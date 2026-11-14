@@ -53,6 +53,7 @@ impl Render for KeyboardHost {
                 focus={&self.root}
                 key-context={self.key_context}
                 tab-navigation={self.navigation}
+                // rake-lint: allow(view-style-class) This fixture verifies explicit style-closure lowering and must retain the closure syntax.
                 style={|s| s.size_full()}
                 on:Save={cx.listener(Self::save)}
                 on:Cancel={cx.listener(Self::cancel)}
@@ -75,6 +76,7 @@ impl Render for KeyboardHost {
                     })
                 }
             >
+                // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
                 <button
                     id="save"
                     focus={&self.save}

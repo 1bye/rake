@@ -40,3 +40,12 @@ payload from stdin and returns compact findings without blocking the edit.
 
 On Windows, use `rake build` and `rake bundle`; development supervision and
 native local inspection currently require Unix.
+
+On Apple Silicon macOS, `rake dev --live` installs the pinned experimental Blaze
+bundle and applies supported edits without restarting. Layout changes restart
+the app; only registered checkpoints are restored. Use `--require-state` to block
+restarts when a checkpoint is missing. Plain `rake dev` uses Cargo.
+
+The generated `live` and `devtools` features let Cargo lock the optional runtime
+and inspection dependencies. The `gpui-fast` alias keeps the alternative GPUI
+backend's version constraints in the lockfile; it is not enabled by `--live`.

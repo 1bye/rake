@@ -423,6 +423,7 @@ impl Render for Tip {
 #[rake::app]
 fn app() -> rake::App {
     rake::App::new("dev.rake.gpu-surface-spike")
+        .control(rake::control::ControlConfig::FromEnvironment)
         .window_options(gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::new(
                 gpui::point(px(60.), px(60.)),

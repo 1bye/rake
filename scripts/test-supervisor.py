@@ -44,6 +44,43 @@ def alive(pid):
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_blaze_scripts_share_the_native_client_without_python_supervision(self):
+        from native_test_client import exchange
+        with tempfile.TemporaryDirectory(prefix="rake-native-client-", dir="/tmp") as temporary:
+            path = str(Path(temporary) / "control.sock")
+            instance = {"endpoint": {"path": path}, "info": {"runtime_id": "fixture"}}
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.settimeout(5)
+                listener.bind(path)
+                listener.listen(3)
+                received = []
+                def server():
+                    for reply in [{"Ok": {"value": {"count": 2}}}, {"Ok": {}}, {"Err": "fixture failure"}]:
+                        connection, _ = listener.accept()
+                        with connection:
+                            connection.settimeout(5)
+                            request = bytearray()
+                            while b"\n" not in request:
+                                chunk = connection.recv(65536)
+                                if not chunk:
+                                    raise EOFError("test client disconnected")
+                                request.extend(chunk)
+                            received.append(json.loads(request))
+                            connection.sendall(json.dumps(reply).encode() + b"\n")
+                worker = threading.Thread(target=server)
+                worker.start()
+                try:
+                    self.assertEqual(exchange(instance, "query", {"type": "snapshot"}), {"count": 2})
+                    self.assertIsNone(exchange(instance, "command", {"type": "respond"}, key="retained-key"))
+                    with self.assertRaisesRegex(RuntimeError, "fixture failure"):
+                        exchange(instance, "query", {"type": "snapshot"})
+                finally:
+                    worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+                self.assertIsNone(received[0]["key"])
+                self.assertEqual(received[1]["key"], "retained-key")
+                self.assertEqual(received[1]["runtime_id"], "fixture")
+
     def test_web_cdp_starts_one_owned_toggle_companion_after_publication(self):
         rust_contract(self, ['web_publication_owns_server_and_single_companion_and_retains_old_build_on_failure'], 'test:project_dev')
 

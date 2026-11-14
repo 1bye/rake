@@ -1,6 +1,6 @@
 [package]
 name = "rake-macros"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,4 +22,4 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full"] }
 proc-macro-crate = "3.5"
-rake-view-syntax = { version = "=0.1.0-alpha.3", path = "../rake-view-syntax", optional = true }
+rake-view-syntax = { version = "=0.1.0-alpha.4", path = "../rake-view-syntax", optional = true }

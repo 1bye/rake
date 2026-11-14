@@ -62,6 +62,7 @@ pub(super) fn capabilities() -> Capabilities {
         requires_user_gesture: gesture,
     };
     Capabilities {
+        notifications: super::notifications::capability(),
         file_import: capability(1, true),
         file_export: capability(2, true),
         clipboard_read: capability(4, true),

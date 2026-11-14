@@ -84,3 +84,96 @@ adapter.open_url('https://example.com');
 assert.equal(opened.opener, null);
 assert.equal(opened.location.href, 'https://example.com');
 console.log('Platform adapter: eager requests, capabilities, denial, cancellation, file limits, quotas and URL opening passed');
+
+// OS notification adapter: permission UI is doubled, delivery/callback code is real.
+const notificationsSource = await readFile(new URL('../crates/rake/src/platform/notifications/browser.js', import.meta.url), 'utf8');
+const notifications = await import(`data:text/javascript;base64,${Buffer.from(notificationsSource).toString('base64')}`);
+let prompts = 0;
+let nextPermission = 'granted';
+const posted = [];
+class NotificationHost {
+  static permission = 'default';
+  static requestPermission() {
+    prompts++;
+    this.permission = nextPermission;
+    return Promise.resolve(this.permission);
+  }
+  constructor(title, options) {
+    this.title = title;
+    this.options = options;
+    this.closed = false;
+    posted.push(this);
+  }
+  close() { this.closed = true; }
+}
+globalThis.Notification = NotificationHost;
+globalThis.isSecureContext = true;
+navigator.userActivation.isActive = false;
+assert.equal(notifications.notification_permission(), 'default');
+assert.equal(prompts, 0, 'query must not prompt');
+await assert.rejects(notifications.request_notification_permission(), {name: 'NotAllowedError'});
+assert.equal(prompts, 0, 'a user event is required');
+navigator.userActivation.isActive = true;
+const authorization = notifications.request_notification_permission();
+assert.equal(prompts, 1, 'permission starts before awaiting');
+assert.equal(await authorization, 'granted');
+assert.equal(await notifications.request_notification_permission(), 'granted');
+assert.equal(prompts, 1, 'existing decisions are not prompted again');
+const activations = [];
+let focused = 0;
+window.focus = () => { focused++; };
+const notificationHost = notifications.create_host(tag => activations.push(tag));
+assert.equal(notifications.show_notification(notificationHost, 'export', 'Done 漢字', 'Open export'), true);
+const first = posted.at(-1);
+assert.equal(first.options.tag, 'export');
+assert.equal(first.title, 'Done 漢字');
+notifications.show_notification(notificationHost, 'export', 'New export', 'Open replacement');
+assert.equal(first.closed, true);
+assert.equal(first.onclick, null);
+const second = posted.at(-1);
+second.onclick();
+assert.equal(focused, 1);
+assert.deepEqual(activations, ['export']);
+assert.equal(second.closed, true);
+assert.equal(second.onclick, null);
+assert.equal(notificationHost.posted.size, 0);
+notifications.show_notification(notificationHost, 'other', 'Done', 'Dismiss me');
+const dismissed = posted.at(-1);
+notifications.dismiss_notification(notificationHost, 'other');
+notifications.dismiss_notification(notificationHost, 'missing');
+assert.equal(dismissed.closed, true);
+assert.equal(dismissed.onclick, null);
+assert.deepEqual(activations, ['export']);
+NotificationHost.permission = 'denied';
+const before = posted.length;
+assert.equal(await notifications.request_notification_permission(), 'denied');
+assert.equal(notifications.show_notification(notificationHost, 'denied', 'No', ''), false);
+assert.equal(posted.length, before);
+assert.equal(prompts, 1);
+NotificationHost.permission = 'default';
+nextPermission = 'denied';
+assert.equal(await notifications.request_notification_permission(), 'denied');
+assert.equal(prompts, 2);
+NotificationHost.permission = 'granted';
+notifications.show_notification(notificationHost, 'shutdown', 'Done', '');
+const shutdown = posted.at(-1);
+notifications.dispose_host(notificationHost);
+assert.equal(shutdown.onclick, null);
+assert.equal(shutdown.closed, true);
+assert.equal(notificationHost.activate, null);
+globalThis.isSecureContext = false;
+assert.throws(() => notifications.notification_permission(), {name: 'NotSupportedError'});
+await assert.rejects(notifications.request_notification_permission(), {name: 'NotSupportedError'});
+globalThis.isSecureContext = true;
+delete globalThis.Notification;
+assert.throws(() => notifications.notification_permission(), {name: 'NotSupportedError'});
+// Hosts without userActivation leave gesture enforcement to their own permission API.
+globalThis.Notification = NotificationHost;
+NotificationHost.permission = 'default';
+nextPermission = 'granted';
+const userActivation = navigator.userActivation;
+delete navigator.userActivation;
+assert.equal(await notifications.request_notification_permission(), 'granted');
+navigator.userActivation = userActivation;
+
+console.log('Notifications: eager authorization, denial, replacement, click focus/activation and disposal passed');

@@ -26,7 +26,7 @@ rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   inspect focus|scroll ELEMENT_ID [--generation CAPTURE] | inspect source ELEMENT_ID [--style INDEX|--handler INDEX]
   info | schema | snapshot | events [--follow]
   quit [--jobs wait|cancel] | quit status
-  reload status | reload checkpoint APPLICATION_ID
+  reload status | reload checkpoint APPLICATION_ID | reload partial-checkpoint APPLICATION_ID
   reload prepare ID [--mechanism native_restart|web_page_reload|native_code_replacement]
   reload apply|abort ID
   routes list
@@ -155,6 +155,11 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
         ("reload", "checkpoint") if args.len() == 1 => Message::Query(Query::Checkpoint {
             application_id: args.remove(0),
         }),
+        ("reload", "partial-checkpoint") if args.len() == 1 => {
+            Message::Query(Query::PartialCheckpoint {
+                application_id: args.remove(0),
+            })
+        }
         ("reload", "prepare") => {
             let mechanism = option(&mut args, "--mechanism")?.unwrap_or("native_restart".into());
 
@@ -943,6 +948,9 @@ mod tests {
             },
             Query::Reload {},
             Query::Checkpoint {
+                application_id: "test".into(),
+            },
+            Query::PartialCheckpoint {
                 application_id: "test".into(),
             },
             Query::Info {},

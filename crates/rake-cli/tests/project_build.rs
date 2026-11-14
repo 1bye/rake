@@ -122,6 +122,7 @@ printf 'export default async function init() {}' > "$4/fixture.js""#,
         Command::new(env!("CARGO_BIN_EXE_rake"))
             .current_dir(&self.root)
             .env("PATH", &self.tools)
+            .env("HOME", self._directory.path())
             .env("FIXTURE", &self.root)
             .args(args)
             .output()
@@ -179,9 +180,17 @@ fn doctor_matches_required_targets_and_optional_tools_without_python() {
         let result = success(&fixture.run(&args));
 
         assert_eq!(result["rust"], "rustc fixture");
+        assert_eq!(result["live"]["installed"], false);
+        assert_eq!(result["live"]["ready"], false);
         assert_eq!(
             result["installed_targets"],
             "host-target\nwasm32-unknown-unknown"
+        );
+        assert!(
+            result["blaze"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("optional")
         );
         assert!(result["node"]["error"].is_string());
         assert!(result.get("python").is_none());
@@ -476,7 +485,7 @@ fn parser_preserves_errors_flags_and_doctor_validation_order() {
         "--target=web",
         "--manifest-path=Cargo.toml",
         "--no-open",
-        "--restart-without-state",
+        "--require-state",
         "--instance=x",
         "--session=x",
         "--debug",
@@ -868,4 +877,43 @@ fn web_bundle_preserves_manifest_archive_offline_payload_and_rollback() {
 
     assert_eq!(manifest["deployment"]["base_path"], "/override/");
     assert_eq!(manifest["deployment"]["routing"], "hash");
+}
+
+#[test]
+fn native_dev_explains_why_a_library_only_package_cannot_run() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["dev", "--compiler", "blaze", "--json"]);
+
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr).unwrap();
+
+    assert!(
+        error.contains("package 'fixture' has no native binary target"),
+        "{error}"
+    );
+    assert!(
+        error.contains("a cdylib alone is not a native app"),
+        "{error}"
+    );
+    assert!(!fixture.root.join("build-args").exists());
+}
+
+#[test]
+fn native_dev_lists_available_binaries_for_a_misspelled_name() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("metadata.json");
+    let mut metadata: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+    metadata["packages"][0]["targets"] = json!([
+        {"name":"actual-app","kind":["bin"],"crate_types":["bin"]}
+    ]);
+    fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let output = fixture.run(&["dev", "--compiler", "blaze", "--bin", "missing", "--json"]);
+
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr).unwrap();
+
+    assert!(error.contains("no binary named 'missing'"), "{error}");
+    assert!(error.contains("available binaries: actual-app"), "{error}");
+    assert!(!fixture.root.join("build-args").exists());
 }

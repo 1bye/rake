@@ -55,6 +55,7 @@ impl Render for Host {
                 focus={&self.body}
                 scroll={&self.scroll}
                 key-context="Background"
+                // rake-lint: allow(view-style-class) This fixture verifies explicit style-closure lowering and must retain the closure syntax.
                 style={|s| s.size_full().overflow_y_scroll()}
                 on:BackgroundAction={
                     cx.listener(|this, _, _, cx| {

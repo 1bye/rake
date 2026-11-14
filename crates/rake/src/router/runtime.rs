@@ -1466,7 +1466,9 @@ impl<R: Route> Router<R> {
         {
             let closing = core.clone();
 
-            window.on_window_should_close(cx, move |_, _| {
+            window.on_window_should_close(cx, move |window, cx| {
+                crate::window_state::native::capture(window, cx);
+
                 let Some(core) = closing.upgrade() else {
                     return true;
                 };

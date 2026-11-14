@@ -146,6 +146,7 @@ fn project(root: &Path) -> Project {
     Project {
         package: json!({"name":"windows-fixture","features":{},"dependencies":[]}),
         root: root.into(),
+        target_directory: root.join("target"),
         target: "fixture".into(),
         watch_roots: vec![root.into()],
         web_dir: root.join("web"),
@@ -190,6 +191,7 @@ fn desktop_reload_and_stop_clean_jobs_but_never_kill_browser_openers() {
         project(fixture.root.path()),
         directory.path().into(),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
     supervisor.publish(1, &fixture.binary).unwrap();
@@ -242,6 +244,7 @@ fn cancelling_a_checkpoint_aborts_reload_and_leaves_no_processes() {
         project(fixture.root.path()),
         directory.path().into(),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
     supervisor.publish(1, &fixture.binary).unwrap();
@@ -304,6 +307,7 @@ fn web_publication_reload_and_stop_release_the_origin() {
         project(directory.path()),
         directory.path().into(),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
     supervisor.start_server().unwrap();

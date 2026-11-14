@@ -155,6 +155,23 @@ impl<R: Route> Router<R> {
         &self,
         application_id: &str,
     ) -> Result<WorkspaceCheckpoint, ReloadError> {
+        self.capture_checkpoint(application_id, true)
+    }
+
+    /// Preserves registered entry state, resetting unregistered entries for a restart.
+    /// Provider failures still abort capture; only a missing provider permits reset.
+    pub(crate) fn reload_partial_checkpoint(
+        &self,
+        application_id: &str,
+    ) -> Result<WorkspaceCheckpoint, ReloadError> {
+        self.capture_checkpoint(application_id, false)
+    }
+
+    fn capture_checkpoint(
+        &self,
+        application_id: &str,
+        require_state: bool,
+    ) -> Result<WorkspaceCheckpoint, ReloadError> {
         if self.reload_status().phase != ReloadPhase::Ready {
             return Err(ReloadError::NotReady);
         }
@@ -188,14 +205,15 @@ impl<R: Route> Router<R> {
                 let provider = entry.reload_capture.borrow().clone();
                 let state = provider.map(|capture| capture()).transpose()?;
 
-                if entry.dirty.get() && state.is_none() {
+                if require_state && entry.dirty.get() && state.is_none() {
                     return Err(ReloadError::MissingState(entry.id));
                 }
 
                 captured.push(EntryCheckpoint {
                     id: entry.id,
                     destination: entry.destination.encode(),
-                    dirty: entry.dirty.get(),
+                    // A reset entry has no unsaved state in the replacement.
+                    dirty: entry.dirty.get() && state.is_some(),
                     revision: entry.revision.get(),
                     state,
                 });
@@ -759,6 +777,97 @@ mod tests {
     impl ReloadState for Draft {
         const SCHEMA: &'static str = "draft";
         const VERSION: u32 = 1;
+    }
+
+    #[test]
+    fn partial_restart_restores_registered_entries_and_resets_only_missing_state() {
+        let source = Router::new(RouterConfig::default());
+        let mut pool = LocalPool::new();
+        let driver = source.clone();
+
+        pool.spawner()
+            .spawn_local(async move {
+                driver.run().await.unwrap();
+            })
+            .unwrap();
+        let mut entry_ids = Vec::new();
+
+        for id in 1..=2 {
+            let operation = source
+                .navigator()
+                .open_with(Destination::Page(id), OpenOptions::new_tab());
+
+            let Outcome::Committed(opened) = pool.run_until(operation.wait()).unwrap() else {
+                panic!("open failed")
+            };
+
+            let entry = source.entry(opened.entry_id).unwrap();
+
+            entry.set_dirty(true).unwrap();
+
+            if id == 1 {
+                entry
+                    .on_reload(|| Draft { edits: 42 }.checkpoint())
+                    .unwrap();
+            }
+
+            entry_ids.push(entry.id().unwrap());
+        }
+
+        source
+            .prepare_reload(ReloadRequest {
+                id: "partial".into(),
+                mechanism: crate::reload::ReloadMechanism::NativeRestart,
+            })
+            .unwrap();
+        pool.run_until_stalled();
+        assert_eq!(
+            source.reload_checkpoint("test").unwrap_err(),
+            ReloadError::MissingState(entry_ids[1])
+        );
+        let checkpoint = source.reload_partial_checkpoint("test").unwrap();
+
+        assert!(checkpoint.tabs[0].entries[0].dirty);
+        assert!(!checkpoint.tabs[1].entries[0].dirty);
+        assert!(checkpoint.tabs[1].entries[0].state.is_none());
+        assert!(
+            source.entry(entry_ids[1]).unwrap().is_dirty().unwrap(),
+            "capture must not mutate the old app"
+        );
+        let restored = Rc::new(RefCell::new(Vec::new()));
+        let observed = restored.clone();
+
+        let mount = Rc::new(
+            move |destination: Destination, entry: EntryHandle<Destination>, _| {
+                let draft = entry.reload_state::<Draft>();
+                let observed = observed.clone();
+
+                Box::pin(async move {
+                    let Destination::Page(id) = destination;
+
+                    observed
+                        .borrow_mut()
+                        .push((id, draft.unwrap().map_or(0, |draft| draft.edits)));
+
+                    Ok(Rc::new(()) as super::super::Resource)
+                }) as futures::future::LocalBoxFuture<'static, _>
+            },
+        );
+
+        let replacement = Router::with_mount(RouterConfig::default(), Collector::default(), mount);
+
+        block_on(replacement.restore_workspace(&checkpoint, "test")).unwrap();
+        assert_eq!(*restored.borrow(), vec![(1, 42), (2, 0)]);
+        assert_eq!(
+            replacement
+                .snapshot()
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.entries.iter())
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            entry_ids
+        );
     }
 
     #[test]

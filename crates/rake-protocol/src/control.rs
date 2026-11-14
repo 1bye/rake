@@ -330,6 +330,11 @@ pub enum Query {
         /// Expected application identity, retained in the checkpoint.
         application_id: String,
     },
+    /// Capture a restart checkpoint, resetting entries with no state provider.
+    PartialCheckpoint {
+        /// Expected application identity, retained in the checkpoint.
+        application_id: String,
+    },
     /// Version and actual capabilities.
     Info {},
     /// Protocol tags, envelope example and route parameter schemas.
@@ -398,6 +403,7 @@ impl Query {
             "inspect_element",
             "reload",
             "checkpoint",
+            "partial_checkpoint",
             "info",
             "schema",
             "routes",

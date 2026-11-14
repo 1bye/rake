@@ -46,6 +46,16 @@ pub(super) fn mount(
     cx: &mut gpui::App,
 ) -> Result<AnyView, crate::router::MountError> {
     let runtime = prepare(&services, &config, window, cx);
+
+    #[cfg(all(feature = "live", not(target_family = "wasm")))]
+    crate::reload::live::install(
+        services.diagnostics(),
+        cx,
+        Some(crate::reload::live::ReloadOwner::from_router(
+            runtime.router.clone(),
+        )),
+    );
+
     let context = runtime.context();
     let content = content(context, window, cx)?;
 
@@ -105,6 +115,10 @@ fn prepare(
     runtime.router.install_quit_action(cx);
     configure(&runtime, config);
 
+    if let Err(error) = crate::menus::install(runtime.router.client(), services, cx) {
+        tracing::error!(%error, "menu host could not start");
+    }
+
     if config.close_policy == ClosePolicy::KeepRunning {
         cx.set_quit_mode(gpui::QuitMode::Explicit);
     }
@@ -124,6 +138,11 @@ fn prepare_background(services: &Services, config: &ManagedConfig, cx: &mut gpui
 
     runtime.router.install_quit_action(cx);
     configure(&runtime, config);
+
+    if let Err(error) = crate::menus::install(runtime.router.client(), services, cx) {
+        tracing::error!(%error, "menu host could not start");
+    }
+
     cx.set_quit_mode(gpui::QuitMode::Explicit);
 
     runtime
@@ -274,6 +293,17 @@ impl Render for ManagedRoot {
                 .p_4()
                 .child("Preparing development reload…")
                 .inspect("rake.reload")
+                .root(inspection, snapshot.revision, crate::router::WindowId(1))
+                .into_any_element();
+        }
+
+        if let Some(notice) = crate::reload::host::status_notice(cx) {
+            return div()
+                .size_full()
+                .relative()
+                .child(crate::inspection::inspect(self.content.clone()).semantic_id("rake.root"))
+                .child(notice)
+                .inspect("rake.live.host")
                 .root(inspection, snapshot.revision, crate::router::WindowId(1))
                 .into_any_element();
         }

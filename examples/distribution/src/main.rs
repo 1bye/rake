@@ -21,6 +21,7 @@ impl Render for Desktop {
             self.rendered = true;
             println!("RAKE_NATIVE_RENDER");
             let resources = rake::resources!().expect("installed acceptance resources");
+            // rake-lint: allow(gpui-ui-blocking) Acceptance-only probe reads a tiny bundled fixture before verifying its first frame.
             let welcome = std::fs::read_to_string(resources.path("welcome.txt").unwrap()).unwrap();
 
             window.on_next_frame(move |_, cx| {
@@ -48,19 +49,21 @@ fn application() -> App {
         println!("RAKE_NATIVE_START:{}", env!("CARGO_PKG_VERSION"));
     }
 
-    App::new("dev.rake.desktop-example").root(|_, _, cx| {
-        if cfg!(feature = "native-acceptance") {
-            println!("RAKE_NATIVE_WINDOW");
-        }
+    App::new("dev.rake.desktop-example")
+        .control(rake::control::ControlConfig::FromEnvironment)
+        .root(|_, _, cx| {
+            if cfg!(feature = "native-acceptance") {
+                println!("RAKE_NATIVE_WINDOW");
+            }
 
-        rake::theme::install(
-            cx,
-            Colors {
-                surface: rgb(0x18232b),
-                ink: rgb(0xf0f4e8),
-            },
-        );
+            rake::theme::install(
+                cx,
+                Colors {
+                    surface: rgb(0x18232b),
+                    ink: rgb(0xf0f4e8),
+                },
+            );
 
-        cx.new(|_| Desktop { rendered: false }).into()
-    })
+            cx.new(|_| Desktop { rendered: false }).into()
+        })
 }

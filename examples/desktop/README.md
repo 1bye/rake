@@ -226,3 +226,10 @@ panic output, and saves `target/desktop-smoke.log`. Linux CI supplies Xvfb,
 Openbox, and Mesa lavapipe Vulkan; Windows CI uses the runner's D3D11 desktop.
 This proves window creation and a presented frame, not full interaction, tray
 integration, or updater installation.
+
+## Saved window placement
+
+The example enables `App::window_state` for the stable `main` window key, using
+its existing application preference namespace. Restarting restores its position,
+size, and window mode. See [Window placement](../../docs/window-placement.md)
+for reset, opt-out, display fallback, Web behavior, and native smoke verification.

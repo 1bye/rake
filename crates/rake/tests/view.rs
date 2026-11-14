@@ -442,14 +442,17 @@ fn arbitrary_utilities_set_real_lengths_colors_and_opacity() {
 #[test]
 fn disabled_classes_use_the_existing_predicate_and_keep_base_order() {
     let mut disabled = rake::view! {
+        // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
         <button disabled class="opacity-100 disabled:opacity-35" />
     };
 
     let mut enabled = rake::view! {
+        // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
         <button class="opacity-100 disabled:opacity-35" />
     };
 
     let mut overridden = rake::view! {
+        // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
         <button disabled class="disabled:opacity-35 opacity-100" />
     };
 
@@ -792,6 +795,7 @@ fn bare_boolean_attributes_and_builtin_shorthand_keep_their_types() {
     assert!(paragraph.style().text.text_overflow.is_some());
     let _ = rake::view! {
         <section tab-navigation>
+            // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
             <button disabled />
         </section>
     };
@@ -807,6 +811,7 @@ fn match_children_evaluate_only_the_selected_guarded_arm_and_keep_loop_ids() {
             for (index, value) in values.iter().enumerate() {
                 match value {
                     Some(n) if *n > 1 => {
+                        // rake-lint: allow(view-loop-index-id) This loop lowering fixture verifies positional ID evaluation; it is not a reorderable application list.
                         <span id={("value", index)}>
                             {
                                 {
@@ -817,9 +822,11 @@ fn match_children_evaluate_only_the_selected_guarded_arm_and_keep_loop_ids() {
                         </span>
                     },
                     Some(_) => {
+                        // rake-lint: allow(view-loop-index-id) This loop lowering fixture verifies positional ID evaluation; it is not a reorderable application list.
                         <span id={("other", index)}>{unreachable_text_for_match()}</span>
                     }
                     None => {
+                        // rake-lint: allow(view-loop-index-id) This loop lowering fixture verifies positional ID evaluation; it is not a reorderable application list.
                         <span id={("empty", index)}>
                             {
                                 {
@@ -908,6 +915,7 @@ fn every_supported_style_utility_compiles_inside_a_merged_hover_variant() {
     };
 
     let _ = rake::view! {
+        // rake-lint: allow(view-button-label) This lowering/event fixture intentionally omits accessible labels to exercise the default button behavior.
         <button disabled class="disabled:opacity-35" class:disabled:font-bold={true} />
     };
 }
@@ -1154,6 +1162,7 @@ fn lint_style_class_fix_preserves_real_gpui_style_and_attribute_evaluation_order
                     "Label"
                 }
             }
+            // rake-lint: allow(view-style-class) This fixture verifies explicit style-closure lowering and must retain the closure syntax.
             style={|s| s.flex().p_4().px_2().p_0().gap_4()}
             aria-description={
                 {

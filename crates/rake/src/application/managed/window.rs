@@ -97,6 +97,9 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
     let host = cx.global::<MainWindow>();
     let context = host.context.clone();
 
+    #[cfg(feature = "live")]
+    let diagnostics = context.services().diagnostics();
+
     let router = host
         .navigator
         .runtime()
@@ -110,7 +113,12 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
     let failure = Rc::new(RefCell::new(None));
     let failed = failure.clone();
 
-    let opened = cx.open_window(options(), move |window, cx| {
+    let mut options = options();
+
+    let placement =
+        crate::window_state::native::prepare(crate::router::WindowId(1), &mut options, cx);
+
+    let opened = cx.open_window(options, move |window, cx| {
         let content = match mount(context, window, cx) {
             Ok(content) => content,
             Err(error) => {
@@ -120,6 +128,17 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
                 return cx.new(|cx| rake_ui::Root::new(empty, window, cx));
             }
         };
+
+        crate::window_state::native::observe(placement, window, cx);
+
+        #[cfg(feature = "live")]
+        crate::reload::live::install(
+            diagnostics,
+            cx,
+            Some(crate::reload::live::ReloadOwner::from_router(
+                router.clone(),
+            )),
+        );
 
         match policy {
             super::ClosePolicy::Quit => router.observe_host(window, cx),

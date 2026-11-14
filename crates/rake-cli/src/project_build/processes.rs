@@ -34,11 +34,13 @@ pub(super) enum Capture {
 }
 
 type OutputSink<'a> = dyn Fn(&str, u32, &str) + Sync + 'a;
+type DiagnosticSink<'a> = dyn Fn(&str) -> std::io::Result<()> + Sync + 'a;
 
 pub(super) struct Processes<'a> {
     cancelled: &'a AtomicBool,
     stopping: Option<&'a AtomicBool>,
     output_sink: Option<&'a OutputSink<'a>>,
+    diagnostic_sink: Option<&'a DiagnosticSink<'a>>,
 }
 
 impl<'a> Processes<'a> {
@@ -47,6 +49,7 @@ impl<'a> Processes<'a> {
             cancelled,
             stopping: None,
             output_sink: None,
+            diagnostic_sink: None,
         }
     }
 
@@ -58,6 +61,12 @@ impl<'a> Processes<'a> {
 
     pub(super) fn with_output(mut self, sink: &'a OutputSink<'a>) -> Self {
         self.output_sink = Some(sink);
+
+        self
+    }
+
+    pub(super) fn with_diagnostics(mut self, sink: Option<&'a DiagnosticSink<'a>>) -> Self {
+        self.diagnostic_sink = sink;
 
         self
     }
@@ -77,11 +86,28 @@ impl<'a> Processes<'a> {
 
     pub(super) fn capture(&self, command: &mut Command, mode: Capture) -> Result<String> {
         let mut bytes = Vec::new();
+        let mut diagnostic = Vec::new();
 
         let status = self.execute(
             command,
             matches!(mode, Capture::Diagnostic),
-            |chunk, _pid| {
+            |chunk, pid, stderr| {
+                if stderr {
+                    diagnostic.extend_from_slice(chunk);
+
+                    while let Some(end) = diagnostic
+                        .iter()
+                        .position(|byte| *byte == b'\n')
+                        .map(|index| index + 1)
+                        .or((diagnostic.len() >= MAX_BYTES).then_some(MAX_BYTES))
+                    {
+                        self.diagnostic(&String::from_utf8_lossy(&diagnostic[..end]), pid)?;
+                        diagnostic.drain(..end);
+                    }
+
+                    return Ok(());
+                }
+
                 if bytes.len() + chunk.len() > METADATA_LIMIT {
                     return Err("tool metadata exceeds 32 MiB".into());
                 }
@@ -91,6 +117,10 @@ impl<'a> Processes<'a> {
                 Ok(())
             },
         )?;
+
+        if !diagnostic.is_empty() {
+            self.diagnostic(&String::from_utf8_lossy(&diagnostic), 0)?;
+        }
 
         if !status.success() {
             return Err(if !matches!(mode, Capture::Metadata) {
@@ -117,11 +147,32 @@ impl<'a> Processes<'a> {
         mut artifact: impl FnMut(serde_json::Value),
     ) -> Result<()> {
         let mut pending = Vec::new();
-        let mut tail = Vec::new();
+        let mut tail: Vec<String> = Vec::new();
+
+        let blaze = std::path::Path::new(command.get_program())
+            .file_name()
+            .is_some_and(|name| name == "blaze" || name == "blaze-engine");
+
+        let mut structured_error = None;
+        let mut diagnostic_tail = None;
 
         let mut line = |bytes: &[u8], pid| -> Result<()> {
             let text = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
             let message = serde_json::from_str::<serde_json::Value>(&text).ok();
+
+            if blaze {
+                if let Some(finished) = message
+                    .as_ref()
+                    .and_then(|message| message["event"].get("Finished"))
+                    && finished["ok"] == false
+                {
+                    structured_error = finished["summary"]["error"].as_str().map(str::to_owned);
+                }
+
+                if text.starts_with("blaze time:") && diagnostic_tail.is_none() {
+                    diagnostic_tail = Some(last_chars(&tail.concat(), 8000));
+                }
+            }
 
             let printed = match message {
                 Some(message) if message.is_object() => {
@@ -149,8 +200,7 @@ impl<'a> Processes<'a> {
                 }
 
                 if !text.is_empty() {
-                    std::io::stderr().write_all(text.as_bytes())?;
-                    std::io::stderr().flush()?;
+                    self.print_diagnostic(&text)?;
                     tail.push(last_chars(&text, 4000));
 
                     if tail.len() > 8 {
@@ -164,7 +214,7 @@ impl<'a> Processes<'a> {
 
         let mut output_pid = 0;
 
-        let status = self.execute(command, true, |chunk, pid| {
+        let status = self.execute(command, true, |chunk, pid, _| {
             output_pid = pid;
             pending.extend_from_slice(chunk);
 
@@ -191,12 +241,34 @@ impl<'a> Processes<'a> {
                 "{} exited {}\n{}",
                 command.get_program().to_string_lossy(),
                 exit_code(status),
-                last_chars(&tail.concat(), 8000)
+                structured_error
+                    .or(diagnostic_tail)
+                    .unwrap_or_else(|| last_chars(&tail.concat(), 8000))
             )
             .into());
         }
 
         Ok(())
+    }
+
+    fn diagnostic(&self, text: &str, pid: u32) -> std::io::Result<()> {
+        if let Some(sink) = self.output_sink {
+            sink(text, pid, "build");
+        }
+
+        self.print_diagnostic(text)
+    }
+
+    fn print_diagnostic(&self, text: &str) -> std::io::Result<()> {
+        if let Some(sink) = self.diagnostic_sink {
+            return sink(text);
+        }
+
+        let mut stderr = std::io::stderr().lock();
+
+        stderr.write_all(text.as_bytes())?;
+
+        stderr.flush()
     }
 
     pub(super) fn check_cancelled(&self) -> Result<()> {
@@ -215,13 +287,27 @@ impl<'a> Processes<'a> {
         &self,
         command: &mut Command,
         merge_stderr: bool,
-        mut consume: impl FnMut(&[u8], u32) -> Result<()>,
+        mut consume: impl FnMut(&[u8], u32, bool) -> Result<()>,
     ) -> Result<ExitStatus> {
         self.check_cancelled()?;
         let (mut reader, stdout, stderr) = output_pipe(merge_stderr)?;
 
+        let diagnostic_pipe = if !merge_stderr && self.diagnostic_sink.is_some() {
+            Some(output_pipe(false)?)
+        } else {
+            None
+        };
+
         command.stdout(stdout);
-        command.stderr(stderr.unwrap_or_else(Stdio::inherit));
+        let mut diagnostic_reader = None;
+
+        command.stderr(if let Some((reader, writer, _)) = diagnostic_pipe {
+            diagnostic_reader = Some(reader);
+
+            writer
+        } else {
+            stderr.unwrap_or_else(Stdio::inherit)
+        });
         let mut group = self.start(command).map_err(|error| {
             // Retain the missing-tool diagnostic used by doctor and build callers.
             if error
@@ -240,6 +326,30 @@ impl<'a> Processes<'a> {
         command.stdout(Stdio::null()).stderr(Stdio::inherit());
         let (sender, receiver) = mpsc::sync_channel(4);
 
+        let diagnostic_thread = diagnostic_reader.map(|mut reader| {
+            let sender = sender.clone();
+
+            std::thread::spawn(move || {
+                let mut buffer = [0; 8192];
+
+                loop {
+                    match reader.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(count) => {
+                            if sender.send(Ok((buffer[..count].to_vec(), true))).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(error));
+
+                            break;
+                        }
+                    }
+                }
+            })
+        });
+
         let thread = std::thread::spawn(move || {
             let mut buffer = [0; 8192];
 
@@ -247,7 +357,7 @@ impl<'a> Processes<'a> {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(count) => {
-                        if sender.send(Ok(buffer[..count].to_vec())).is_err() {
+                        if sender.send(Ok((buffer[..count].to_vec(), false))).is_err() {
                             break;
                         }
                     }
@@ -265,7 +375,11 @@ impl<'a> Processes<'a> {
                 self.check_cancelled()?;
 
                 match receiver.recv_timeout(Duration::from_millis(25)) {
-                    Ok(chunk) => consume(&chunk?, group.0.id())?,
+                    Ok(chunk) => {
+                        let (chunk, stderr) = chunk?;
+
+                        consume(&chunk, group.0.id(), stderr)?;
+                    }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
@@ -286,6 +400,12 @@ impl<'a> Processes<'a> {
         drop(group);
         drop(receiver);
         thread.join().map_err(|_| "tool output reader panicked")?;
+
+        if let Some(thread) = diagnostic_thread {
+            thread
+                .join()
+                .map_err(|_| "tool diagnostic reader panicked")?;
+        }
 
         result
     }
@@ -421,6 +541,27 @@ mod tests {
     //! Real: Unix process groups and tool output pipes. Doubles: shell commands.
     //! Requires: /bin/sh and /bin/dd.
     use super::*;
+
+    #[test]
+    fn captured_native_stderr_does_not_corrupt_metadata_or_lose_partial_lines() {
+        let cancelled = AtomicBool::new(false);
+        let diagnostics = std::sync::Mutex::new(String::new());
+
+        let sink = |text: &str| {
+            diagnostics.lock().unwrap().push_str(text);
+
+            Ok(())
+        };
+
+        let processes = Processes::new(&cancelled).with_diagnostics(Some(&sink));
+        let output = processes.capture(Command::new("/bin/sh").args(["-c", "printf '{\"artifact\":\"app\"}'; i=0; while [ $i -lt 2000 ]; do printf 'warning: keep this diagnostic\\n' >&2; i=$((i+1)); done; printf 'last 漢字' >&2"]), Capture::Metadata).unwrap();
+
+        assert_eq!(output, "{\"artifact\":\"app\"}");
+        let diagnostics = diagnostics.lock().unwrap();
+
+        assert_eq!(diagnostics.matches("warning: keep").count(), 2000);
+        assert!(diagnostics.ends_with("last 漢字"));
+    }
 
     #[test]
     fn metadata_is_bounded_before_parsing() {

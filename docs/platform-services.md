@@ -31,6 +31,7 @@ then finish the action and let the runtime own the handoff.
 | Clipboard text | GPUI system clipboard | Async Clipboard API; denial is visible; accept DOM paste separately |
 | `preferences(namespace)` | Atomic single-file UTF-8 replacements off-thread | Atomic localStorage replacements per key, subject to quota/eviction |
 | `open_url` | Delegates to the OS | Opens HTTP(S)/mailto from a user event; popup denial is visible |
+| OS notifications | Native delivery with explicit macOS authorization | Notification API with permission requested from a user event |
 | URL activation inbox | GPUI host callbacks and explicit `receive_open_url` | Explicit activation; ordinary app URLs stay with the router |
 
 `capabilities()` is a runtime snapshot. Availability, permission and the need for a user gesture are independent, and an available operation can still fail.
@@ -61,3 +62,5 @@ successful delegation is the documented boundary.
 Enable `tray` for application-owned multiple icons, native menus and rich popup
 windows. This GUI capability is separate from portable notifications and launch
 services. Browser/headless GUI calls are explicit errors. See [tray icons](tray.md).
+
+See [OS notifications](notifications.md) for permission results, URL payloads, packaging requirements and the portable Foundation example.

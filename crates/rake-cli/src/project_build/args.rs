@@ -1,7 +1,14 @@
-//! Argument compatibility with the embedded dev.py build/doctor entry points.
+//! Project build and development arguments, preserving existing command invocations.
 
 use super::{PathBuf, resolve};
 use std::collections::BTreeMap;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Compiler {
+    #[default]
+    Cargo,
+    Blaze,
+}
 
 #[derive(Clone, Default)]
 pub(super) struct Args {
@@ -9,10 +16,14 @@ pub(super) struct Args {
     pub(super) bundle: bool,
     pub(super) base_path: Option<String>,
     pub(super) routing: Option<String>,
+    pub(super) compiler: Compiler,
+    pub(super) live: bool,
+    pub(super) blaze_binary: Option<PathBuf>,
     pub(super) cdp: bool,
     pub(super) preview: bool,
     pub(super) no_open: bool,
     pub(super) port: u16,
+    pub(super) require_state: bool,
     pub(super) restart_without_state: bool,
     pub(super) status: bool,
     pub(super) session: Option<PathBuf>,
@@ -25,11 +36,14 @@ pub(super) struct Args {
     pub(super) web_dir: Option<PathBuf>,
     pub(super) output: Option<PathBuf>,
     pub(super) json: bool,
+    pub(super) verbose: bool,
     pub(super) native_reloader: Option<PathBuf>,
 }
 
 const OPTIONS: &[(&str, bool)] = &[
     ("--target", true),
+    ("--compiler", true),
+    ("--live", false),
     ("--manifest-path", true),
     ("--package", true),
     ("--bin", true),
@@ -39,6 +53,7 @@ const OPTIONS: &[(&str, bool)] = &[
     ("--web-dir", true),
     ("--output", true),
     ("--native-reloader", true),
+    ("--require-state", false),
     ("--restart-without-state", false),
     ("--port", true),
     ("--instance", true),
@@ -47,6 +62,7 @@ const OPTIONS: &[(&str, bool)] = &[
     ("--elements", false),
     ("--no-open", false),
     ("--json", false),
+    ("--verbose", false),
     ("--session", true),
     ("--base-path", true),
     ("--routing", true),
@@ -246,6 +262,42 @@ pub(super) fn parse(
     }
 
     let web = values.get("--target").is_some_and(|value| value == "web");
+    let live = values.contains_key("--live");
+
+    if values.contains_key("--verbose") && command != "dev" {
+        return Err("--verbose applies to dev".into());
+    }
+
+    if live && (command != "dev" || values.get("--compiler").is_some_and(|v| v != "blaze")) {
+        return Err("--live applies to dev and cannot be combined with --compiler cargo".into());
+    }
+
+    let compiler = match values.get("--compiler").map(String::as_str) {
+        None if live => Compiler::Blaze,
+        None | Some("cargo") => Compiler::Cargo,
+        Some("blaze") => Compiler::Blaze,
+        Some(value) => {
+            return Err(format!(
+                "argument --compiler: invalid choice: '{value}' (choose from cargo, blaze)"
+            ));
+        }
+    };
+
+    if values.contains_key("--compiler") && command != "dev" {
+        return Err("--compiler applies to dev".into());
+    }
+
+    if compiler == Compiler::Blaze && cfg!(windows) {
+        return Err("Blaze live editing is available only on Apple Silicon macOS".into());
+    }
+
+    if compiler == Compiler::Blaze && web {
+        return Err("--compiler blaze requires desktop".into());
+    }
+
+    if compiler == Compiler::Blaze && values.contains_key("--native-reloader") {
+        return Err("--compiler blaze cannot be combined with --native-reloader".into());
+    }
 
     for (flag, message) in [
         (
@@ -354,6 +406,9 @@ pub(super) fn parse(
         bundle: command == "bundle",
         base_path: values.remove("--base-path"),
         routing: values.remove("--routing"),
+        compiler,
+        live,
+        blaze_binary: None,
         cdp: values.contains_key("--cdp"),
         preview: values.contains_key("--preview"),
         no_open: values.contains_key("--no-open"),
@@ -362,6 +417,8 @@ pub(super) fn parse(
             .and_then(|port| port.trim().parse().ok())
             .unwrap_or(if command == "dev" && web { 8081 } else { 0 }),
         restart_without_state: values.contains_key("--restart-without-state"),
+        require_state: values.contains_key("--require-state")
+            || std::env::var("RAKE_REQUIRE_STATE").as_deref() == Ok("1"),
         status: positional.is_some(),
         session: values.get("--session").map(PathBuf::from),
         web,
@@ -378,6 +435,7 @@ pub(super) fn parse(
         web_dir: values.get("--web-dir").map(PathBuf::from),
         output,
         json: values.contains_key("--json"),
+        verbose: values.contains_key("--verbose"),
         native_reloader: values.get("--native-reloader").map(PathBuf::from),
     }))
 }

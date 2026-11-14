@@ -73,6 +73,8 @@ pub mod inspection;
 #[path = "inspection/disabled.rs"]
 pub mod inspection;
 pub mod loading;
+#[cfg(feature = "gpui")]
+pub mod menus;
 pub mod platform;
 pub mod quit;
 pub mod reload;
@@ -89,6 +91,7 @@ pub mod tasks;
 #[cfg(feature = "tray")]
 pub mod tray;
 pub mod web;
+pub mod window_state;
 
 #[cfg(all(feature = "gpui", feature = "updates"))]
 mod updates_binding;

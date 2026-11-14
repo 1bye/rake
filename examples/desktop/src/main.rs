@@ -20,7 +20,18 @@ struct AppInfo {
 
 #[rake::app]
 fn application() -> Result<App<pages::Destination>, rake::AppError> {
+    let preferences = rake::platform::Platform::default()
+        .preferences("dev.rake.starter")
+        .map_err(|error| rake::AppError::Window(error.to_string()))?;
+
+    #[cfg(all(feature = "native-smoke", not(target_family = "wasm")))]
+    let preferences = std::env::var_os("RAKE_DESKTOP_SMOKE_PREFERENCES")
+        .map(rake::platform::Preferences::at)
+        .unwrap_or(preferences);
+
     Ok(App::new("dev.rake.starter")
+        .window_state(rake::window_state::WindowState::new(preferences))
+        .window_options(window_options())
         .service(AppInfo {
             name: "Rake Starter",
             version: env!("CARGO_PKG_VERSION"),
@@ -42,4 +53,21 @@ fn application() -> Result<App<pages::Destination>, rake::AppError> {
         .initial(pages::Destination::Home)
         .workspace_chrome(false)
         .control(rake::control::ControlConfig::FromEnvironment))
+}
+
+fn window_options() -> rake::gpui::WindowOptions {
+    #[cfg(feature = "native-smoke")]
+    if std::env::var_os("RAKE_DESKTOP_SMOKE_ALTERNATE_BOUNDS").is_some() {
+        use rake::gpui::{Bounds, WindowBounds, point, px, size};
+
+        return rake::gpui::WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                point(px(200.), px(150.)),
+                size(px(720.), px(480.)),
+            ))),
+            ..Default::default()
+        };
+    }
+
+    rake::gpui::WindowOptions::default()
 }

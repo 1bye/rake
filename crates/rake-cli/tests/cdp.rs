@@ -270,6 +270,9 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     listener.set_nonblocking(true).unwrap();
     let collector = rake::diagnostics::Collector::new(32);
     let fixture_collector = collector.clone();
+    let pending = collector.snapshot();
+    let recorded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fixture_recorded = recorded.clone();
     let info = instance.info.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let fixture_stop = stop.clone();
@@ -300,7 +303,13 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
                 rake::control::Message::Query(rake::control::Query::Diagnostics {
                     after, ..
                 }) => {
-                    let mut snapshot = fixture_collector.snapshot();
+                    // Snapshot contention intentionally drops producer writes.
+                    let mut snapshot =
+                        if fixture_recorded.load(std::sync::atomic::Ordering::Acquire) {
+                            fixture_collector.snapshot()
+                        } else {
+                            pending.clone()
+                        };
 
                     snapshot.records.retain(|r| r.sequence > after);
 
@@ -367,13 +376,24 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     });
 
     futures::executor::block_on(async {
-        let http = rake::http::HttpClient::with_collector(rake::http::HttpConfig::new(), collector)
-            .unwrap();
+        let http = rake::http::HttpClient::with_collector(
+            rake::http::HttpConfig::new(),
+            collector.clone(),
+        )
+        .unwrap();
 
         let body = http.get(&url).send().await.unwrap().bytes().await.unwrap();
 
         assert_eq!(body.as_slice(), b"test");
     });
+
+    assert_eq!(
+        collector.snapshot().dropped,
+        0,
+        "retain the full HTTP lifecycle"
+    );
+
+    recorded.store(true, std::sync::atomic::Ordering::Release);
     responder.join().unwrap();
     let mut methods = Vec::new();
     let mut consumed = 0;

@@ -646,6 +646,15 @@ impl<R: Route> Workspace<R> {
             cx,
         );
 
+        #[cfg(all(feature = "live", not(target_family = "wasm")))]
+        crate::reload::live::install(
+            layout_services.diagnostics(),
+            cx,
+            Some(crate::reload::live::ReloadOwner::from_router(
+                router.clone(),
+            )),
+        );
+
         #[cfg(not(target_family = "wasm"))]
         let native = Rc::new(NativeWindows {
             app: cx.to_async(),
@@ -678,6 +687,8 @@ impl<R: Route> Workspace<R> {
         }
 
         router.client().set_commands(commands);
+        crate::menus::install(router.client(), &layout_services, cx)
+            .map_err(|error| MountError(error.to_string()))?;
         #[cfg(feature = "tray")]
         crate::tray::bind(router.navigator(), &layout_services);
 
@@ -1222,6 +1233,8 @@ impl<R: Route> Render for Workspace<R> {
                     .child(content)
                     .inspect("rake.content"),
             )
+            .relative()
+            .children(crate::reload::host::status_notice(cx))
             .inspect("rake.workspace")
             .root(
                 crate::__rake_inspection!(
@@ -1291,6 +1304,8 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
             options.focus = activation == Activation::Activate;
 
             let result = app.update(|cx| {
+                let placement = crate::window_state::native::prepare(id, &mut options, cx);
+
                 cx.open_window(options, move |window, cx| {
                     let view = (|window: &mut Window, cx: &mut gpui::App| {
                         if let Err(error) = router.attach_window(id, window, cx) {
@@ -1336,6 +1351,15 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                             }
                         };
 
+                        #[cfg(feature = "live")]
+                        crate::reload::live::install(
+                            services.diagnostics(),
+                            cx,
+                            Some(crate::reload::live::ReloadOwner::from_router(
+                                router.clone(),
+                            )),
+                        );
+
                         let view = cx.new(|_| Workspace {
                             chrome,
                             navigation_feedback,
@@ -1346,6 +1370,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                             window: id,
                         });
 
+                        crate::window_state::native::observe(placement, window, cx);
                         views.borrow_mut().insert(id, view.downgrade());
 
                         view
@@ -1372,7 +1397,10 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
         self.views.borrow_mut().remove(&id);
 
         if let Some(mut context) = context {
-            let _ = context.update(|window, _| window.remove_window());
+            let _ = context.update(|window, cx| {
+                crate::window_state::native::capture(window, cx);
+                window.remove_window();
+            });
         }
     }
 

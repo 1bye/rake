@@ -144,6 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .item(MenuItem::quit("quit", "Quit"));
 
     let app = App::new("dev.rake.tray-example")
+        .control(rake::control::ControlConfig::FromEnvironment)
         .tray(
             Tray::new("main")
                 .icon(base)

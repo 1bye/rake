@@ -9,8 +9,7 @@ Preserve this project's specific instructions and existing tooling.
 <!-- rake-lint:begin -->
 ## Rake agent rules
 
-After editing, run `rake format` then `rake lint`.
-Use `rake lint --fix` for machine-safe fixes.
+After editing, run `rake format` then `rake lint`; use `rake lint --fix` for machine-safe fixes.
 
 - Always prefer exact class utilities to equivalent pure style closures.
 - Never hard-code colors, typography sizes or radii in themed views; use theme values.
@@ -18,6 +17,7 @@ Use `rake lint --fix` for machine-safe fixes.
 - Always give icon-only or dynamic buttons an aria-label, preserving any visible words.
 - Always supply img alt text; use alt="" only for decorative images.
 - Never derive loop IDs from positions; use stable data keys.
+- Always retain or detach GPUI tasks, allocate entities before render, mutate borrowed state directly, and move blocking work off the UI thread (rake lint --deep).
 - Always explain suppressions; use allow-file only for a whole-file decision.
 
 Full guide: `.agents/skills/rake-gpui/SKILL.md` (`rake lint --guide`).
