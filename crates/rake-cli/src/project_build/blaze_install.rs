@@ -353,7 +353,7 @@ mod tests {
     fn fixture(root: &Path) -> (Pin, PathBuf) {
         let mut pin = Pin {
             repo: "fixture/blaze".into(),
-            version: "0.20261030.1-rake.2".into(),
+            version: "0.20261030.1-rake.3".into(),
             target: "aarch64-apple-darwin".into(),
             url: "https://invalid.test/archive".into(),
             sha256: String::new(),

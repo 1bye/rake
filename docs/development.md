@@ -230,13 +230,20 @@ rake doctor --json
 ```
 
 This is currently **Apple Silicon macOS only**. The pinned
-[`v0.20261030.1-rake.2` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.2)
-is published; ordinary live mode downloads it automatically. To use a copy of
-that exact published archive offline:
+[`v0.20261030.1-rake.3` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.3)
+is published; ordinary live mode downloads it automatically. This version loads
+manifests introduced by launch-only dependency features, including `rake/devtools`
+under `--cdp`. An app does not need a `devtools` forwarding feature or a manual
+`hdrhistogram` lockfile entry to work around the older planner bug. To use a copy
+of that exact published archive offline:
 
 ```sh
-BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.2-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
+BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.3-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
 ```
+
+The published `0.1.0-alpha.5` CLI embeds rake.2. This pin changes source builds;
+installed registry CLIs need a newer CLI release or a build of this revision to
+fetch rake.3. Updating an app's SDK alone does not change the compiler pin.
 
 `BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
 is an explicit developer override; it requires the patched
@@ -257,10 +264,9 @@ cargo metadata --format-version 1 > /dev/null
 rake dev --live --bin your-app
 ```
 
-Use your dependency alias in place of `rake` if it is renamed. This pins the
-optional `blaze-live` Git dependency that Blaze requires in `Cargo.lock`.
-Passing only an ad hoc `rake/live` flag did not persist that pin in the tested
-Cargo version. The repository's workspace examples already have it pinned.
+Use your dependency alias in place of `rake` if it is renamed. This includes the
+optional `rake-blaze-live` registry runtime in the app's normal lockfile. The
+repository's workspace examples already expose the live feature.
 
 Live mode enables the app's existing Rake `live` feature, which automatically
 enables `pathfinder_simd/pf-no-simd` on macOS. It sets the hybrid macro options
