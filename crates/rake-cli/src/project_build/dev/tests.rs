@@ -114,6 +114,8 @@ impl Runtime {
             while !stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((mut connection, _)) => {
+                        // macOS accept inherits the listener's nonblocking mode.
+                        connection.set_nonblocking(false).unwrap();
                         connection
                             .set_read_timeout(Some(Duration::from_secs(2)))
                             .unwrap();
