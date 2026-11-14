@@ -64,6 +64,19 @@ impl Supervisor<'_> {
     }
 
     pub(super) fn start_server(&mut self) -> Result<()> {
+        if self.args.preview || self.args.web || self.args.cdp {
+            self.presentation
+                .lock()
+                .expect("presentation lock poisoned")
+                .stage(if self.args.preview {
+                    "Preparing preview"
+                } else if self.args.web {
+                    "Starting development server"
+                } else {
+                    "Preparing DevTools"
+                })?;
+        }
+
         let cdp_url = self.start_cdp()?;
 
         if !self.args.web && !self.args.preview {
@@ -183,7 +196,7 @@ impl Supervisor<'_> {
         self.event(json!({"event":if self.args.preview {"preview_listening"} else if self.args.web {"web_listening"} else {"control_listening"}, "url":url, "session":self.session}),
             &format!("{}\nSession: {}", line.trim(), self.session.display()))?;
 
-        if !self.args.no_open && (self.args.preview || (self.args.web && !self.args.cdp)) {
+        if !self.args.no_open && self.args.web && !self.args.cdp {
             self.open_browser(&url);
         }
 
@@ -233,7 +246,7 @@ impl Supervisor<'_> {
         self.record("watching", json!({"devtools_url":url}))?;
         self.event(ready, &format!("Chrome DevTools toggle: {url}"))?;
 
-        if !self.args.no_open {
+        if !self.args.no_open && !self.args.preview {
             self.open_browser(&url);
         }
 

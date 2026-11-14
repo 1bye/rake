@@ -67,14 +67,34 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
 
     let mut args = args.clone();
     let presentation = presentation::Presentation::new(&args);
+    let _progress = presentation::Progress::start(&presentation)?;
 
     presentation
         .lock()
         .expect("presentation lock poisoned")
-        .begin(&[], false)?;
+        .stage(if args.live {
+            "Preparing live compiler"
+        } else {
+            "Reading project"
+        })?;
 
     if args.live {
-        args.blaze_binary = Some(super::blaze_install::ensure()?);
+        args.blaze_binary = Some(super::blaze_install::ensure(|message| {
+            if args.json || args.verbose {
+                eprintln!("{message}");
+            } else {
+                presentation
+                    .lock()
+                    .expect("presentation lock poisoned")
+                    .stage("Installing live compiler")?;
+            }
+
+            Ok(())
+        })?);
+        presentation
+            .lock()
+            .expect("presentation lock poisoned")
+            .stage("Reading project")?;
     }
 
     args.native_reloader = args.native_reloader.map(fs::canonicalize).transpose()?;
@@ -529,6 +549,15 @@ impl<'a> Supervisor<'a> {
 
             return self.start_embedded();
         }
+
+        self.presentation
+            .lock()
+            .expect("presentation lock poisoned")
+            .stage(if self.app.is_some() {
+                "Applying update"
+            } else {
+                "Starting app"
+            })?;
 
         if let Some(app) = &mut self.app
             && app.0.try_wait()?.is_none()

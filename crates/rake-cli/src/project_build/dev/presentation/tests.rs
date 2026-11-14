@@ -84,6 +84,70 @@ fn startup_matches_the_focused_layout_without_internal_events() {
 }
 
 #[test]
+fn progress_shows_elapsed_time_and_stops_after_the_result() {
+    let mut display = display(false, true);
+
+    display.interactive = true;
+    display.activity = Some("Building app");
+    display.build_started = display.started;
+    display
+        .paint_progress(display.started + Duration::from_secs(80), 80)
+        .unwrap();
+    let output = String::from_utf8(display.buffer.as_slice().to_vec()).unwrap();
+
+    assert!(output.contains("Building app... 80.0 s"), "{output}");
+    assert_eq!(UnicodeWidthStr::width(output.as_str()), display.progress);
+    display.buffer.clear();
+    display
+        .paint_progress(display.started + Duration::from_millis(80250), 80)
+        .unwrap();
+    let next = String::from_utf8(display.buffer.as_slice().to_vec()).unwrap();
+
+    assert!(next.contains("80.2 s"), "{next}");
+    assert_ne!(
+        output.chars().nth(2),
+        next.rsplit('\r').next().unwrap().chars().nth(2)
+    );
+    render(&mut display, json!({"event":"running"}), true, 81000);
+    assert!(display.activity.is_none());
+    display.buffer.clear();
+    display
+        .paint_progress(display.started + Duration::from_secs(82), 80)
+        .unwrap();
+    assert!(
+        display.buffer.is_empty(),
+        "idle sessions must not keep redrawing"
+    );
+}
+
+#[test]
+fn ascii_progress_fits_narrow_terminals_and_the_worker_is_joined_on_drop() {
+    let mut display = display(false, false);
+
+    display.interactive = true;
+    display.unicode = false;
+    display.activity = Some("Preparing preview");
+    display
+        .paint_progress(display.started + Duration::from_secs(80), 24)
+        .unwrap();
+    let output = std::str::from_utf8(display.buffer.as_slice()).unwrap();
+
+    assert!(output.is_ascii());
+    assert!(UnicodeWidthStr::width(output) < 24, "{output}");
+    display.activity = None;
+    display.progress = 0;
+    display.buffer.clear();
+    let shared = Arc::new(Mutex::new(display));
+    let worker = Progress::start(&shared).unwrap().unwrap();
+
+    drop(worker);
+    assert!(
+        Arc::try_unwrap(shared).is_ok(),
+        "the stopped worker must release its presentation"
+    );
+}
+
+#[test]
 fn compiled_live_edits_need_acknowledgment_and_report_only_once() {
     let mut display = display(false, true);
 
@@ -129,7 +193,10 @@ fn web_publishes_a_build_without_claiming_browser_confirmation() {
     let mut display = display(true, false);
     let listening = json!({"event":"web_listening", "url":"http://localhost:8081/#private"});
 
-    assert!(render(&mut display, listening, false, 0).is_empty());
+    let ready = render(&mut display, listening, false, 0);
+
+    assert!(ready.contains("Open http://localhost:8081/#private"));
+    assert!(!ready.contains("Web app serving"));
 
     let started = render(
         &mut display,
@@ -139,7 +206,10 @@ fn web_publishes_a_build_without_claiming_browser_confirmation() {
     );
 
     assert!(started.contains("Web app serving · 2.4 s"));
-    assert!(started.contains("Open http://localhost:8081/#private"));
+    assert!(
+        !started.contains("http://localhost"),
+        "the URL was already printed at readiness"
+    );
     assert!(!started.contains("Desktop"));
 
     display.pending = true;

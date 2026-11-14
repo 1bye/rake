@@ -326,6 +326,136 @@ fn alive(pid: u32) -> bool {
 }
 
 #[test]
+fn terminal_progress_is_flushed_and_keeps_ticking_before_metadata_completes() {
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let fixture = Fixture::new();
+    let control = fixture.directory.path().join("control");
+
+    fs::create_dir(&control).unwrap();
+    fixture.tool(
+        "cargo",
+        "printf '%s' \"$$\" > \"$CONTROL/metadata-pid\"; exec /bin/sleep 300",
+    );
+    let mut master = -1;
+    let mut slave = -1;
+
+    let mut size = libc::winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
+    assert_eq!(
+        // SAFETY: all output pointers are writable; size is initialized; no name or termios is requested.
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &raw mut size,
+            )
+        },
+        0
+    );
+    // SAFETY: openpty returned two new descriptors; each File takes ownership exactly once.
+    let (mut master, slave) =
+        unsafe { (fs::File::from_raw_fd(master), fs::File::from_raw_fd(slave)) };
+
+    for descriptor in [&master, &slave] {
+        assert_eq!(
+            // SAFETY: both descriptors are live; prevent unrelated children from inheriting them.
+            unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) },
+            0
+        );
+    }
+
+    assert_eq!(
+        // SAFETY: master is a live descriptor, and O_NONBLOCK only changes its I/O mode.
+        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) },
+        0
+    );
+    let started = SystemTime::now();
+
+    let child = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(&fixture.root)
+        .env("PATH", &fixture.tools)
+        .env("CONTROL", &control)
+        .env("TERM", "xterm-256color")
+        .env("NO_COLOR", "1")
+        .arg("dev")
+        .stdout(slave.try_clone().unwrap())
+        .stderr(slave)
+        .spawn()
+        .unwrap();
+
+    let mut running = Running {
+        started,
+        child,
+        session: PathBuf::new(),
+        control,
+    };
+
+    let mut bytes = Vec::new();
+
+    let output = wait(|| {
+        let mut chunk = [0; 4096];
+
+        loop {
+            match master.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(length) => bytes.extend_from_slice(&chunk[..length]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("terminal read failed: {error}"),
+            }
+        }
+
+        let output = String::from_utf8_lossy(&bytes);
+
+        let mut times = output
+            .split("Reading project... ")
+            .skip(1)
+            .filter_map(|frame| {
+                frame
+                    .split(" s")
+                    .next()
+                    .and_then(|elapsed| elapsed.parse::<f64>().ok())
+            });
+
+        let first = times.next()?;
+
+        times
+            .any(|elapsed| elapsed > first)
+            .then(|| output.into_owned())
+    });
+
+    let metadata_pid: u32 = wait(|| {
+        fs::read_to_string(running.control.join("metadata-pid"))
+            .ok()?
+            .parse()
+            .ok()
+    });
+
+    assert!(
+        alive(metadata_pid),
+        "progress must appear while metadata is still blocked: {output}"
+    );
+    assert!(!output.contains("Desktop app started"));
+    // SAFETY: this fixture owns the CLI child, and interruption exercises early worker cleanup.
+    unsafe {
+        libc::kill(running.child.id() as i32, libc::SIGINT);
+    }
+    wait(|| running.child.try_wait().unwrap());
+    assert!(
+        !alive(metadata_pid),
+        "metadata child must also stop on interruption"
+    );
+}
+
+#[test]
 fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected() {
     let fixture = Fixture::new();
 
@@ -1038,6 +1168,44 @@ fn browser_opening_honors_browser_and_cdp_opens_only_the_companion() {
         assert_eq!(args.lines().take(1).collect::<Vec<_>>(), ["--test"]);
         assert_eq!(args.lines().count(), 2, "open exactly one browser URL");
         assert_eq!(args.contains("embedded-devtools-fixture.html"), cdp);
+        running.stop(libc::SIGTERM);
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn preview_prints_its_link_during_the_build_without_opening_a_browser() {
+    for cdp in [false, true] {
+        let fixture = Fixture::new();
+
+        fixture.preview();
+        fs::write(fixture.root.join("hold"), "hold the initial build").unwrap();
+        let mut args = vec!["--preview", "--port=0"];
+
+        if cdp {
+            args.push("--cdp");
+        }
+
+        let mut running = fixture.start_output(&args, false, None, Output::Human);
+
+        wait(|| running.control.join("build-pid").exists().then_some(()));
+        let output = fs::read_to_string(running.control.join("events")).unwrap();
+
+        assert!(output.contains("Preview http://127.0.0.1:"), "{output}");
+        assert!(
+            output.contains("/__rake/preview#__rake_control="),
+            "{output}"
+        );
+        assert!(output.contains("Building app..."), "{output}");
+        assert!(!output.contains("Desktop app started"), "{output}");
+        assert!(!running.control.join("browser-args").exists());
+        assert!(!output.contains(['\x1b', '\r']));
+        fs::remove_file(fixture.root.join("hold")).unwrap();
+        running.phase("watching");
+        assert!(!running.control.join("browser-args").exists());
+        let output = fs::read_to_string(running.control.join("events")).unwrap();
+
+        assert_eq!(output.matches("Preview http://127.0.0.1:").count(), 1);
         running.stop(libc::SIGTERM);
     }
 }

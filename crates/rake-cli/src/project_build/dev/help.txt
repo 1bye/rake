@@ -39,8 +39,8 @@ options:
   --port PORT
   --instance INSTANCE   Runtime UUID or application ID for CDP selection
   --cdp                 Expose opted-in runtimes to stock Chrome DevTools
-  --preview             macOS 14+: stream the native window to a local browser
-                        with pointer input and element selection
+  --preview             macOS 14+: print the native window preview URL
+                        with pointer input and element selection; open it manually
   --no-open
   --json
   --verbose             Show supervisor events, session paths and full tool output

@@ -61,8 +61,11 @@ session directory. Styling is automatic for terminals, using the terminal's colo
 `NO_COLOR` disables color, and `TERM=dumb` disables terminal progress and Unicode
 markers. Redirected output has no color or cursor updates. Modern Windows terminals
 and native Windows console colors are supported; older consoles use ASCII markers.
-Progress uses the existing supervisor and writer synchronization, with no animation
-thread. At most 1 MiB of human build diagnostics is retained until the result;
+Interactive builds show the current activity and elapsed time, including project,
+live compiler and preview preparation. An owned progress thread sleeps between
+updates and parks while idle; app logs and progress share the same writer lock.
+Plain output prints each activity once. At most 1 MiB of human build diagnostics
+is retained until the result;
 an explicit notice reports additional output, available live with `--verbose`.
 
 `--verbose` prints the private `/tmp/rake-dev-*` session directory (the system's
@@ -76,7 +79,8 @@ RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake instances --jso
 RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake ctl reload status --json
 ```
 
-Desktop dev launches the native app; `--preview` opens its browser preview.
+Desktop dev launches the native app; `--preview` prints its browser preview URL
+as soon as the server is ready. Click or copy the link to open it when you choose.
 Starting with CLI `0.1.0-alpha.5`, `rake dev --live --preview` works on Apple Silicon
 Macs: preview follows live patches and reconnects after checkpointed restarts.
 Web dev opens the app directly. With `--cdp`, it opens the embedded
