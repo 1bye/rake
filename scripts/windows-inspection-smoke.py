@@ -162,6 +162,7 @@ def main():
                 session = Path(eventually(lambda: next((value["session"] for value in events()
                                                        if value.get("event") == "session"), None), 120))
                 control = session / "control"
+                env["RAKE_CONTROL_DIR"] = str(control)
 
                 def status():
                     result = subprocess.run([str(rake), "dev", "status", "--session", str(session), "--json"],
@@ -272,10 +273,12 @@ def main():
                 replacement.unlink(missing_ok=True)
                 if created_ignored and ignored.exists():
                     ignored.rmdir()
-                for handle in observed:
-                    kernel.CloseHandle(handle)
                 for log in [app_log, cdp_log]:
                     print(log.read_text(errors="replace"), flush=True)
+                for handle in observed:
+                    stopped = kernel.WaitForSingleObject(handle, 5000)
+                    kernel.CloseHandle(handle)
+                    assert stopped == 0, "An observed child survived failure cleanup"
                 if session is not None:
                     shutil.rmtree(session)
 
