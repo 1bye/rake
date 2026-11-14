@@ -6,7 +6,11 @@ use serde_json::Value;
 use std::{
     io::{self, IsTerminal, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -18,6 +22,70 @@ pub(super) type Shared = Arc<Mutex<Presentation>>;
 // Keep abnormal tools and misconfigured terminal widths from growing output unboundedly.
 const MAX_DIAGNOSTIC_BYTES: usize = 1024 * 1024;
 const MAX_COLUMNS: usize = 120;
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+
+// The session stops and joins this worker even when startup returns early.
+pub(super) struct Progress {
+    stopped: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Progress {
+    pub(super) fn start(shared: &Shared) -> io::Result<Option<Self>> {
+        let display = shared.lock().expect("presentation lock poisoned");
+
+        if !display.enabled || !display.interactive {
+            return Ok(None);
+        }
+
+        drop(display);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = stopped.clone();
+        let presentation = shared.clone();
+
+        let worker = thread::Builder::new()
+            .name("rake-dev-progress".into())
+            .spawn(move || {
+                while !stop.load(Ordering::Acquire) {
+                    let mut display = presentation.lock().expect("presentation lock poisoned");
+                    let active = display.activity.is_some();
+
+                    if active && display.tick(Instant::now()).is_err() {
+                        break;
+                    }
+
+                    drop(display);
+
+                    if active {
+                        thread::park_timeout(PROGRESS_INTERVAL);
+                    } else {
+                        thread::park();
+                    }
+                }
+            })?;
+
+        shared
+            .lock()
+            .expect("presentation lock poisoned")
+            .progress_thread = Some(worker.thread().clone());
+
+        Ok(Some(Self {
+            stopped,
+            worker: Some(worker),
+        }))
+    }
+}
+
+impl Drop for Progress {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+
+        if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
+            let _ = worker.join();
+        }
+    }
+}
 
 pub(super) struct Presentation {
     writer: BufferWriter,
@@ -26,6 +94,8 @@ pub(super) struct Presentation {
     interactive: bool,
     unicode: bool,
     progress: usize,
+    activity: Option<&'static str>,
+    progress_thread: Option<thread::Thread>,
     started: Instant,
     build_started: Instant,
     directory: PathBuf,
@@ -39,8 +109,6 @@ pub(super) struct Presentation {
     diagnostic: bool,
     restarting: bool,
     paths: String,
-    url: Option<String>,
-    devtools: Option<String>,
     reset_views: Vec<String>,
     diagnostics: String,
     diagnostics_truncated: bool,
@@ -73,6 +141,8 @@ impl Presentation {
             interactive: terminal && io::stderr().is_terminal() && !dumb,
             unicode,
             progress: 0,
+            activity: None,
+            progress_thread: None,
             started: now,
             build_started: now,
             directory: PathBuf::new(),
@@ -86,8 +156,6 @@ impl Presentation {
             diagnostic: false,
             restarting: false,
             paths: String::new(),
-            url: None,
-            devtools: None,
             reset_views: Vec::new(),
             diagnostics: String::new(),
             diagnostics_truncated: false,
@@ -145,10 +213,10 @@ impl Presentation {
             }
         }
 
-        self.progress(if self.header {
-            "Updating..."
+        self.stage(if self.header {
+            "Updating app"
         } else {
-            "Starting app..."
+            "Building app"
         })
     }
 
@@ -189,12 +257,6 @@ impl Presentation {
         if value["event"] == "build_failed" {
             self.buffer.clear();
 
-            if !self.header
-                && let Some(url) = self.url.clone()
-            {
-                self.link("Development page", &url)?;
-            }
-
             self.retained(available)?;
             self.note("Fix the error and save.")?;
 
@@ -209,7 +271,10 @@ impl Presentation {
             return Ok(());
         }
 
-        self.writer.print(&self.buffer)
+        self.writer.print(&self.buffer)?;
+
+        // Progress has no newline, so stdout's line buffer must be flushed explicitly.
+        io::stdout().flush()
     }
 
     fn flush_diagnostics(&mut self) -> io::Result<()> {
@@ -236,20 +301,25 @@ impl Presentation {
     fn render(&mut self, value: &Value, available: bool, now: Instant) -> io::Result<()> {
         match value["event"].as_str().unwrap_or_default() {
             "web_listening" | "preview_listening" => {
-                self.url = value["url"].as_str().map(str::to_owned);
+                if let Some(url) = value["url"].as_str() {
+                    self.clear_progress()?;
+                    self.link(if self.preview { "Preview" } else { "Open" }, url)?;
+                }
             }
             "cdp_listening" => {
-                self.devtools = value["url"].as_str().map(|url| format!("{url}/json/list"));
+                if let Some(url) = value["url"].as_str() {
+                    self.clear_progress()?;
+                    self.link("DevTools discovery", &format!("{url}/json/list"))?;
+                }
             }
             "embedded_devtools_listening" => {
-                self.url = value["url"].as_str().map(str::to_owned);
-
-                if self.header {
-                    self.link("Open", &self.url.clone().unwrap_or_default())?;
+                if let Some(url) = value["url"].as_str() {
+                    self.clear_progress()?;
+                    self.link("Open", url)?;
                 }
             }
             "running" => {
-                self.clear_progress()?;
+                self.finish_progress()?;
 
                 if !self.header {
                     self.startup(now)?;
@@ -260,7 +330,7 @@ impl Presentation {
                 self.pending = false;
             }
             "watching" if self.web => {
-                self.clear_progress()?;
+                self.finish_progress()?;
 
                 if !self.header {
                     self.startup(now)?;
@@ -380,11 +450,11 @@ impl Presentation {
                 self.pending = false;
             }
             "build_superseded" => {
-                self.clear_progress()?;
+                self.finish_progress()?;
                 self.diagnostics.clear();
             }
             "stopped" => {
-                self.clear_progress()?;
+                self.finish_progress()?;
             }
             "watching"
                 if self.pending
@@ -434,14 +504,6 @@ impl Presentation {
             }
         }
 
-        if let Some(url) = self.url.clone() {
-            self.link(if self.preview { "Preview" } else { "Open" }, &url)?;
-        }
-
-        if let Some(url) = self.devtools.clone() {
-            self.link("DevTools discovery", &url)?;
-        }
-
         self.buffer.set_color(ColorSpec::new().set_dimmed(true))?;
         writeln!(self.buffer, "\n        Ctrl+C to stop\n")?;
         self.buffer.reset()?;
@@ -460,7 +522,7 @@ impl Presentation {
     }
 
     fn result(&mut self, label: &str, color: Color, now: Instant) -> io::Result<()> {
-        self.clear_progress()?;
+        self.finish_progress()?;
         let symbol = match color {
             Color::Green if self.unicode => "✓",
             Color::Green => "ok",
@@ -537,17 +599,67 @@ impl Presentation {
         Ok(())
     }
 
-    fn progress(&mut self, label: &str) -> io::Result<()> {
-        if !self.enabled || !self.interactive || columns() < 24 {
+    pub(super) fn stage(&mut self, label: &'static str) -> io::Result<()> {
+        if !self.enabled || self.activity == Some(label) {
             return Ok(());
         }
 
+        self.activity = Some(label);
         self.buffer.clear();
-        self.clear_progress()?;
-        write!(self.buffer, "  {label}")?;
-        self.progress = label.len() + 2;
+
+        if self.interactive {
+            self.paint_progress(Instant::now(), columns())?;
+        } else {
+            writeln!(self.buffer, "  {label}...")?;
+        }
+
+        self.commit()?;
+
+        if let Some(worker) = &self.progress_thread {
+            worker.unpark();
+        }
+
+        Ok(())
+    }
+
+    fn tick(&mut self, now: Instant) -> io::Result<()> {
+        self.buffer.clear();
+        self.paint_progress(now, columns())?;
 
         self.commit()
+    }
+
+    fn paint_progress(&mut self, now: Instant, columns: usize) -> io::Result<()> {
+        let Some(label) = self.activity.filter(|_| self.interactive) else {
+            return Ok(());
+        };
+
+        self.clear_progress()?;
+        let elapsed = now.saturating_duration_since(self.build_started);
+
+        let frames: &[&str] = if self.unicode {
+            &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"]
+        } else {
+            &["|", "/", "-", "\\"]
+        };
+
+        let frame =
+            frames[(elapsed.as_millis() / PROGRESS_INTERVAL.as_millis()) as usize % frames.len()];
+
+        let text = truncate(
+            &format!("  {frame} {label}... {:.1} s", elapsed.as_secs_f64()),
+            columns.saturating_sub(1).min(MAX_COLUMNS),
+        );
+
+        self.progress = UnicodeWidthStr::width(text.as_str());
+
+        write!(self.buffer, "{text}")
+    }
+
+    fn finish_progress(&mut self) -> io::Result<()> {
+        self.activity = None;
+
+        self.clear_progress()
     }
 
     fn clear_progress(&mut self) -> io::Result<()> {
@@ -631,6 +743,10 @@ impl Presentation {
         let mut stderr = io::stderr().lock();
 
         write!(stderr, "  app  {text}")?;
+
+        if self.activity.is_some() && self.interactive && !text.ends_with('\n') {
+            writeln!(stderr)?;
+        }
 
         stderr.flush()
     }

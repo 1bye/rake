@@ -254,7 +254,7 @@ fn install_archive(pin: &Pin, archive: &Path, parent: &Path) -> Result<PathBuf> 
 }
 
 /// Selects an explicit override or the checksum-verified pinned compiler.
-pub(super) fn ensure() -> Result<PathBuf> {
+pub(super) fn ensure(announce: impl FnOnce(&str) -> Result<()>) -> Result<PathBuf> {
     if !supported() {
         return Err(
             "rake dev --live currently requires an Apple Silicon Mac (aarch64-apple-darwin)".into(),
@@ -291,10 +291,10 @@ pub(super) fn ensure() -> Result<PathBuf> {
         return install_archive(&pin, Path::new(&archive), &parent);
     }
 
-    eprintln!(
+    announce(&format!(
         "rake: installing pinned Blaze {} from {}",
         pin.version, pin.repo
-    );
+    ))?;
     let download = tempfile::NamedTempFile::new()?;
 
     let status = Command::new("/usr/bin/curl")
