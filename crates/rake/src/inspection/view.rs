@@ -1682,6 +1682,25 @@ mod tests {
         assert!(store.frames(0, &collector).frames.is_empty());
         assert!(store.record_frames(true, 5001).is_err());
         store.record_frames(true, 5000).unwrap();
+
+        // Concurrent test apps can fill the first page with draws that have no callbacks for this store.
+        cx.update(|window, _| {
+            let now = std::time::Instant::now();
+
+            for _ in 0..25 {
+                gpui::record_frame_event(gpui::FrameEvent::Draw(gpui::FrameTiming {
+                    window_id: window.window_handle().window_id(),
+                    dirty_at: None,
+                    invalidations: 1,
+                    draw_start: now,
+                    draw_end: now,
+                    refresh_interval: None,
+                    signal_at: None,
+                    phases: Default::default(),
+                }));
+            }
+        });
+
         draw(cx);
         draw(cx);
         let frames = store.frames(0, &collector);
@@ -1697,11 +1716,21 @@ mod tests {
                 <= u128::from(calibration.uncertainty_us + later.uncertainty_us + 2)
         );
         assert!(!frames.frames.is_empty());
-        let nodes: Vec<_> = frames
-            .frames
-            .iter()
-            .flat_map(|frame| &frame.nodes)
-            .collect();
+        assert!(frames.more, "the background draw backlog must span pages");
+        store.record_frames(false, 0).unwrap();
+        let mut page = store.frames(0, &collector);
+        let mut nodes = Vec::new();
+
+        loop {
+            nodes.extend(page.frames.into_iter().flat_map(|frame| frame.nodes));
+
+            if !page.more {
+                break;
+            }
+
+            page = store.frames(page.cursor, &collector);
+        }
+
         assert!(
             nodes.iter().any(|node| node.name == "item-1"
                 && node.phase == super::super::FramePhase::Layout
@@ -1713,15 +1742,7 @@ mod tests {
                 .iter()
                 .any(|node| node.phase == super::super::FramePhase::Paint && node.source.line > 0)
         );
-        store.record_frames(false, 0).unwrap();
-        let mut stopped = store.frames(0, &collector);
-
-        // The stopped buffer can span pages when concurrent test apps emit draws.
-        while stopped.more {
-            stopped = store.frames(stopped.cursor, &collector);
-        }
-
-        let cursor = stopped.cursor;
+        let cursor = page.cursor;
 
         draw(cx);
         assert!(!store.frames(cursor, &collector).recording);
