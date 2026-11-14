@@ -241,9 +241,9 @@ of that exact published archive offline:
 BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.3-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
 ```
 
-The published `0.1.0-alpha.5` CLI embeds rake.2. This pin changes source builds;
-installed registry CLIs need a newer CLI release or a build of this revision to
-fetch rake.3. Updating an app's SDK alone does not change the compiler pin.
+CLI `0.1.0-alpha.6` embeds rake.3; published CLI alpha.5 retains rake.2.
+Upgrade the installed CLI to receive the compiler fix. Updating an app's SDK
+alone does not change the compiler pin.
 
 `BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
 is an explicit developer override; it requires the patched

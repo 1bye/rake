@@ -1,5 +1,14 @@
 # Changelog
 
+## CLI 0.1.0-alpha.6 — 2026-11-14
+
+- Pins Blaze rake.3, fixing missing dependency manifests such as `hdrhistogram`
+  when `--live --cdp` enables launch-specific devtools features. No app-level
+  `devtools` forwarding feature or manual lockfile workaround is needed.
+- Generated registry apps use the tested SDK alpha.5 independently of the CLI
+  version. The SDK and supporting crates are unchanged.
+- Shows native build progress with named steps and elapsed times.
+
 ## 0.1.0-alpha.5 — 2026-11-13
 
 - CLI: enabled `rake dev --live --preview`; previews follow live patches and reconnect

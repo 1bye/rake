@@ -10,7 +10,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const HELP: &str = "rake new NAME [--rake-path PATH | --rake-rev REV] [--git] [--json]
 Creates a routed desktop/browser app in NAME, an absent or empty directory.
 PATH is the local crates/rake directory. REV must be a full Git commit hash.
-Without either option, use the matching crates.io release or the CLI checkout revision.";
+Without either option, use the tested SDK release or the CLI checkout revision.";
 
 const FILES: &[(&str, &str)] = &[
     ("AGENTS.md", include_str!("../templates/default/AGENTS.md")),
@@ -38,6 +38,21 @@ const FILES: &[(&str, &str)] = &[
     (".gitignore", include_str!("../templates/default/gitignore")),
     ("README.md", include_str!("../templates/default/README.md")),
 ];
+
+fn registry_dependency() -> Result<String> {
+    let manifest: toml::Value = toml::from_str(include_str!("../Cargo.toml"))?;
+
+    let version = manifest
+        .get("dev-dependencies")
+        .and_then(|dependencies| dependencies.get("rake"))
+        .and_then(|sdk| sdk.get("version"))
+        .and_then(toml::Value::as_str)
+        .ok_or("CLI manifest is missing its tested SDK version")?;
+
+    Ok(format!(
+        "{{ package = \"rake-app\", version = \"{version}\" }}"
+    ))
+}
 
 fn validate_name(name: &str) -> Result<()> {
     const RESERVED: &[&str] = &[
@@ -288,10 +303,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
             "{{ package = \"rake-app\", git = \"https://github.com/1bye/rake\", rev = \"{revision}\" }}"
         )
     } else {
-        format!(
-            "{{ package = \"rake-app\", version = \"={}\" }}",
-            env!("CARGO_PKG_VERSION")
-        )
+        registry_dependency()?
     };
 
     let crate_name = name.replace('-', "_");
@@ -380,10 +392,22 @@ pub(crate) fn run(arguments: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    //! Covers: portable names and rollback after a partial write.
+    //! Covers: registry SDK selection, portable names and rollback after a partial write.
     //! Real: name validation and filesystem. Doubles: conflicting template input.
     //! Requires: temporary directory access; no network or compiler.
     use super::*;
+
+    #[test]
+    fn registry_scaffold_uses_the_verified_sdk_release() {
+        let dependency: toml::Value =
+            toml::from_str(&format!("rake = {}", registry_dependency().unwrap())).unwrap();
+
+        assert_eq!(dependency["rake"]["package"].as_str(), Some("rake-app"));
+        assert_eq!(
+            dependency["rake"]["version"].as_str(),
+            Some("=0.1.0-alpha.5")
+        );
+    }
 
     #[test]
     fn validates_portable_cargo_names() {
