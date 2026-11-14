@@ -10,7 +10,7 @@ use windows::{
             Variant::VARIANT,
         },
         UI::Shell::{
-            IShellBrowser, IShellDispatch2, IShellFolderViewDual, IShellWindows,
+            CSIDL_DESKTOP, IShellBrowser, IShellDispatch2, IShellFolderViewDual, IShellWindows,
             SID_STopLevelBrowser, SVGIO_BACKGROUND, SWC_DESKTOP, SWFO_NEEDDISPATCH, ShellWindows,
         },
     },
@@ -22,8 +22,8 @@ pub(crate) fn open(target: &str) -> super::Result<()> {
         return Err("Source opener target contains NUL".into());
     }
 
-    let deadline = rake_client::current_deadline()
-        .unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(10));
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = rake_client::current_deadline().map_or(limit, |deadline| deadline.min(limit));
     let mut command = std::process::Command::new(std::env::current_exe()?);
 
     command
@@ -68,9 +68,10 @@ fn explorer(target: &str) -> windows::core::Result<()> {
     unsafe {
         let shell: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER)?;
         let empty = VARIANT::default();
+        let location = VARIANT::from(CSIDL_DESKTOP as i32);
         let mut hwnd = 0;
         let desktop =
-            shell.FindWindowSW(&empty, &empty, SWC_DESKTOP, &mut hwnd, SWFO_NEEDDISPATCH)?;
+            shell.FindWindowSW(&location, &empty, SWC_DESKTOP, &mut hwnd, SWFO_NEEDDISPATCH)?;
         let provider: IServiceProvider = desktop.cast()?;
         let browser: IShellBrowser = provider.QueryService(&SID_STopLevelBrowser)?;
         let view = browser.QueryActiveShellView()?;

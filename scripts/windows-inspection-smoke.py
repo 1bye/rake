@@ -223,7 +223,10 @@ def main():
                     assert kernel.WaitForSingleObject(old_handle, 5000) == 0, "Old GUI survived reload"
                     runtime = state["runtime_id"]
                     assert eventually(capture)["elements"]
-    
+                    cdp = json.loads((session / "cdp.json").read_text())
+                    with urllib.request.urlopen(cdp["url"] + "/json/list", timeout=10) as response:
+                        assert any(target["id"] == runtime for target in json.load(response))
+
                     listing = subprocess.run(
                         ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress"],
                         capture_output=True, text=True, timeout=20, check=True,
