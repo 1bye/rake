@@ -162,12 +162,13 @@ def main():
                 def published(generation):
                     state = status()
                     assert application.poll() is None, app_log.read_text(errors="replace")
-                    return state if state.get("published") == generation and state.get("runtime_id") and state.get("devtools_url") and (generation == 1 or state["runtime_id"] != runtime) else None
+                    return state if state.get("published") == generation and state.get("runtime_id") and (generation == 1 or state["runtime_id"] != runtime) else None
 
                 state = eventually(lambda: published(1), 150)
                 runtime = state["runtime_id"]
-                with urllib.request.urlopen(state["devtools_url"], timeout=10) as response:
-                    assert response.status == 200
+                native_cdp = json.loads((session / "cdp.json").read_text())
+                with urllib.request.urlopen(native_cdp["url"] + "/json/list", timeout=10) as response:
+                    assert any(target["id"] == runtime for target in json.load(response))
                 manifest = next(control.glob("*.json"))
                 old_pid = json.loads(manifest.read_text())["pid"]
                 old_handle = kernel.OpenProcess(0x100000, False, old_pid)
@@ -238,7 +239,7 @@ def main():
                         if children <= owned:
                             break
                         owned |= children
-                    assert len(owned) >= 4, "Expected supervisor, GUI, CDP and DevTools companion"
+                    assert len(owned) >= 3, "Expected supervisor, GUI and CDP adapter"
                     for pid in owned:
                         handle = kernel.OpenProcess(0x100000, False, pid)
                         if handle:
@@ -251,7 +252,7 @@ def main():
                         assert kernel.WaitForSingleObject(handle, 5000) == 0, "A supervised Windows process survived shutdown"
                     assert "RAKE_DESKTOP_SMOKE_FRAME" in app_log.read_text(errors="replace")
                     assert kernel.WaitForSingleObject(editor_handle, 100) == 258, "Stopping dev killed the source editor"
-                    print("Windows dev/CDP/DevTools, real GUI inspect, reload, shutdown and editor Job survival passed")
+                    print("Windows desktop dev/CDP, real GUI inspect, reload, shutdown and editor Job survival passed")
             finally:
                 for process in [adapter, application]:
                     if process is not None and process.poll() is None:
