@@ -133,6 +133,13 @@ def main():
         app_log, cdp_log = root / "app.log", root / "cdp.log"
         with app_log.open("w", encoding="utf-8") as app_output, cdp_log.open("w", encoding="utf-8") as cdp_output:
             try:
+                # Native dev bundles use an explicit target triple; warm that graph before readiness.
+                subprocess.run(
+                    [str(rake), "bundle", "--native", "--compat", "--json", "--manifest-path", "examples/desktop/Cargo.toml",
+                     "--package", "rake-desktop-example", "--bin", "rake-desktop-example", "--output", str(root / "warm"),
+                     "--debug", "--features", "native-smoke,devtools"],
+                    env=env, stdout=app_output, stderr=subprocess.STDOUT, timeout=420, check=True,
+                )
                 application = subprocess.Popen(
                     [str(rake), "dev", "--compiler", "cargo", "--manifest-path", "examples/desktop/Cargo.toml",
                      "--package", "rake-desktop-example", "--features", "native-smoke", "--cdp", "--no-open",
