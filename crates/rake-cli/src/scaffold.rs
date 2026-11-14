@@ -41,6 +41,7 @@ const FILES: &[(&str, &str)] = &[
 
 fn registry_dependency() -> Result<String> {
     let manifest: toml::Value = toml::from_str(include_str!("../Cargo.toml"))?;
+
     let version = manifest
         .get("dev-dependencies")
         .and_then(|dependencies| dependencies.get("rake"))
