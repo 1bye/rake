@@ -175,7 +175,7 @@ pub(super) fn export(options: &super::Options, path: &std::path::Path) -> super:
         #[cfg(unix)]
         std::fs::rename(&temporary, path)?;
         #[cfg(windows)]
-        rake_client::private::replace(file, path)?;
+        rake_client::private::replace(&file, path)?;
 
         Ok(())
     })();

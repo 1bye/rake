@@ -73,7 +73,8 @@ pub(crate) fn open(target: &str) -> super::Result<()> {
         }
     })
     .join()
-    .map_err(|_| "Windows desktop source opener failed")??;
+    .map_err(|_| "Windows desktop source opener failed")?
+    .map_err(|error| error.to_string())?;
 
     Ok(())
 }

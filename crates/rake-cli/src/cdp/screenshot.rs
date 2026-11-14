@@ -289,6 +289,7 @@ mod tests {
         assert!(packet(&bytes).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn subprocess_bounds_and_timeout_terminate_owned_work() {
         let mut large = Command::new("sh");
@@ -306,6 +307,20 @@ mod tests {
             output(blocked, Duration::from_millis(20), 1024)
                 .unwrap_err()
                 .contains("timed out")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_capture_is_explicitly_unavailable() {
+        let screenshots = Screenshots::prepare();
+
+        assert!(!screenshots.available());
+        assert!(screenshots.error().unwrap().contains("macOS"));
+        assert!(
+            output(Command::new("unused"), Duration::from_secs(1), 1024)
+                .unwrap_err()
+                .contains("macOS")
         );
     }
 }

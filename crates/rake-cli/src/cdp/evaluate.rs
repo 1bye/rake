@@ -328,12 +328,14 @@ mod tests {
 
     #[test]
     fn lost_submission_and_pending_observation_never_resend_commands() {
+        use super::super::test_transport::{Listener as UnixListener, Stream as UnixStream};
         use std::io::{BufRead, BufReader, Write};
-        use std::os::unix::net::{UnixListener, UnixStream};
 
         for submitted in [false, true] {
-            let path =
-                std::path::PathBuf::from(format!("/tmp/rake-eval-{}.sock", uuid::Uuid::new_v4()));
+            let path = super::super::test_transport::path(format!(
+                "/tmp/rake-eval-{}.sock",
+                uuid::Uuid::new_v4()
+            ));
 
             let listener = UnixListener::bind(&path).unwrap();
 
@@ -473,7 +475,7 @@ mod tests {
                 assert!(error.message.contains("not resent"));
             }
 
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 }

@@ -430,6 +430,24 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn temporary_winsock_accept_errors_recover_but_bad_listeners_fail() {
+        for code in [10004, 10035, 10053, 10054, 10024, 10055] {
+            assert!(
+                recoverable_accept_error(&std::io::Error::from_raw_os_error(code)),
+                "Winsock {code}"
+            );
+        }
+
+        for code in [10022, 10038] {
+            assert!(
+                !recoverable_accept_error(&std::io::Error::from_raw_os_error(code)),
+                "Winsock {code}"
+            );
+        }
+    }
+
     #[test]
     fn rejects_rebinding_and_web_origins() {
         assert!(allowed(Some("127.0.0.1:1234"), None, "127.0.0.1:1234"));

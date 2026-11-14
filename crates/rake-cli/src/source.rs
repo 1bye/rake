@@ -126,6 +126,24 @@ mod tests {
             assert!(resolve(&root, &source(file)).is_err(), "{file}");
         }
 
+        #[cfg(windows)]
+        {
+            let outside = directory.join("outside");
+
+            std::fs::create_dir(&outside).unwrap();
+            std::fs::write(outside.join("app.rs"), "fn main() {}\n").unwrap();
+            assert!(
+                std::process::Command::new("cmd")
+                    .args(["/d", "/c", "mklink", "/J"])
+                    .arg(root.join("escape-link"))
+                    .arg(&outside)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            assert!(resolve(&root, &source("escape-link/app.rs")).is_err());
+        }
+
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
