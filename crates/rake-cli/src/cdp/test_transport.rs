@@ -41,6 +41,7 @@ pub(crate) fn remove(path: impl AsRef<Path>) -> io::Result<()> {
 mod pipes {
     use super::*;
     use futures::io::{AsyncRead, AsyncWrite};
+
     use std::{
         future::Future,
         io::{Read, Write},
@@ -65,12 +66,15 @@ mod pipes {
             if let Poll::Ready(result) = poll(&mut context) {
                 return result;
             }
+
             if nonblocking {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
+
             if Instant::now() >= deadline {
                 return Err(io::ErrorKind::TimedOut.into());
             }
+
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -87,26 +91,33 @@ mod pipes {
                 nonblocking: Arc::new(AtomicBool::new(false)),
             })
         }
+
         pub(crate) fn try_clone(&self) -> io::Result<Self> {
             Ok(Self {
                 inner: self.inner.clone(),
                 nonblocking: self.nonblocking.clone(),
             })
         }
+
         pub(crate) fn set_nonblocking(&self, value: bool) -> io::Result<()> {
             self.mode().store(value, Ordering::Relaxed);
+
             Ok(())
         }
+
         pub(crate) fn accept(&self) -> io::Result<(Stream, ())> {
             let future = self.inner.accept();
             let mut future = std::pin::pin!(future);
+
             let stream = wait(
                 self.mode().load(Ordering::Relaxed),
                 Duration::from_secs(3),
                 |cx| future.as_mut().poll(cx),
             )?;
+
             Ok((Stream::new(stream), ()))
         }
+
         fn mode(&self) -> &AtomicBool {
             &self.nonblocking
         }
@@ -134,11 +145,14 @@ mod pipes {
                 written: Arc::new(AtomicBool::new(false)),
             }
         }
+
         pub(crate) fn connect(path: &Path) -> io::Result<Self> {
             let future = rake_client::pipe::Stream::connect(path);
             let mut future = std::pin::pin!(future);
+
             wait(false, Duration::from_secs(3), |cx| future.as_mut().poll(cx)).map(Self::new)
         }
+
         pub(crate) fn try_clone(&self) -> io::Result<Self> {
             Ok(Self {
                 inner: self.inner.clone(),
@@ -147,14 +161,19 @@ mod pipes {
                 written: self.written.clone(),
             })
         }
+
         pub(crate) fn set_nonblocking(&self, value: bool) -> io::Result<()> {
             self.nonblocking.store(value, Ordering::Relaxed);
+
             Ok(())
         }
+
         pub(crate) fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
             *self.timeout.lock().unwrap() = timeout.unwrap_or(Duration::from_secs(3));
+
             Ok(())
         }
+
         fn poll<T>(
             &self,
             mut operation: impl FnMut(
@@ -163,6 +182,7 @@ mod pipes {
             ) -> Poll<io::Result<T>>,
         ) -> io::Result<T> {
             let timeout = *self.timeout.lock().unwrap();
+
             wait(self.nonblocking.load(Ordering::Relaxed), timeout, |cx| {
                 operation(Pin::new(&mut *self.inner.lock().unwrap()), cx)
             })
@@ -174,16 +194,21 @@ mod pipes {
             self.poll(|stream, cx| stream.poll_read(cx, bytes))
         }
     }
+
     impl Write for Stream {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             let count = self.poll(|stream, cx| stream.poll_write(cx, bytes))?;
+
             self.written.store(true, Ordering::Relaxed);
+
             Ok(count)
         }
+
         fn flush(&mut self) -> io::Result<()> {
             self.poll(|stream, cx| stream.poll_flush(cx))
         }
     }
+
     impl Drop for Stream {
         fn drop(&mut self) {
             if Arc::strong_count(&self.inner) == 1 && self.written.load(Ordering::Relaxed) {
