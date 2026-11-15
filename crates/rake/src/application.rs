@@ -130,12 +130,14 @@ impl<R: Route> App<R> {
     /// Forwards subsequent launches to this user's running application.
     pub fn single_instance(mut self) -> Self {
         self.single_instance = true;
+
         self
     }
 
     /// Handles native reopen events, including macOS dock activation.
     pub fn on_reopen(mut self, callback: impl FnMut(&mut gpui::App) + 'static) -> Self {
         self.reopen = Some(Box::new(callback));
+
         self
     }
 }
@@ -819,6 +821,7 @@ impl<R: Route> App<R> {
                         )
                 })
                 .collect::<Vec<_>>();
+
             match rake_client::single::launch(&self.id, &arguments)
                 .map_err(|error| AppError::Window(format!("instance startup failed: {error}")))?
             {
@@ -1038,6 +1041,7 @@ impl<R: Route> App<R> {
             #[cfg(any(unix, windows))]
             if let Some(primary) = primary {
                 let activations = services.platform();
+
                 cx.spawn(async move |_cx| {
                     loop {
                         match primary.receive().await {
@@ -1045,8 +1049,10 @@ impl<R: Route> App<R> {
                                 for argument in arguments {
                                     let url = url::Url::parse(&argument).or_else(|_| {
                                         let path = std::path::PathBuf::from(&argument);
+
                                         url::Url::from_file_path(path)
                                     });
+
                                     if let Ok(url) = url {
                                         let _ = activations.receive_open_url(url.as_str());
                                     }

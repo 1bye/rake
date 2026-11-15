@@ -27,12 +27,15 @@ pub struct Primary {
 pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
     use std::hash::{Hash, Hasher};
     let root = crate::local::directory();
+
     crate::private::prepare_directory(&root)?;
     let mut hash = std::collections::hash_map::DefaultHasher::new();
+
     id.hash(&mut hash);
     root.hash(&mut hash);
     let key = format!("{:016x}", hash.finish());
     let lock_path = root.join(format!("instance-{key}.lock"));
+
     let lock = match crate::private::create(&lock_path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -43,6 +46,7 @@ pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
 
     #[cfg(unix)]
     let path = root.join(format!("instance-{key}.sock"));
+
     #[cfg(windows)]
     let path = crate::pipe::path(&format!("instance-{key}"));
 
@@ -58,6 +62,7 @@ pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
 
                 async_io::Async::new(std::os::unix::net::UnixListener::bind(&path)?)?
             };
+
             #[cfg(windows)]
             let listener = Listener::bind(&path)?;
 
@@ -68,6 +73,7 @@ pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
         }
         Err(std::fs::TryLockError::WouldBlock) => {
             let payload = serde_json::to_vec(arguments)?;
+
             if payload.len() > 65536 {
                 return Err(io::ErrorKind::InvalidInput.into());
             }
@@ -88,12 +94,15 @@ pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
                         Err(error) => return Err(error),
                     }
                 };
+
                 stream
                     .write_all(&(payload.len() as u32).to_le_bytes())
                     .await?;
                 stream.write_all(&payload).await?;
                 let mut ack = [0];
+
                 stream.read_exact(&mut ack).await?;
+
                 if ack != [1] {
                     return Err(io::ErrorKind::InvalidData.into());
                 }
@@ -112,6 +121,7 @@ async fn connect(path: &std::path::Path) -> io::Result<Stream> {
     {
         Stream::connect(path).await
     }
+
     #[cfg(windows)]
     {
         Stream::connect(path).await
@@ -120,6 +130,7 @@ async fn connect(path: &std::path::Path) -> io::Result<Stream> {
 
 async fn bounded<T>(operation: impl std::future::Future<Output = io::Result<T>>) -> io::Result<T> {
     use futures::{FutureExt, future::Either};
+
     match futures::future::select(
         operation.boxed_local(),
         async_io::Timer::after(Duration::from_secs(5)),
@@ -139,20 +150,25 @@ impl Primary {
     pub async fn receive(&self) -> io::Result<Vec<String>> {
         #[cfg(unix)]
         let (mut stream, _) = self.listener.accept().await?;
+
         #[cfg(windows)]
         let mut stream = self.listener.accept().await?;
 
         bounded(async {
             let mut length = [0; 4];
+
             stream.read_exact(&mut length).await?;
             let length = u32::from_le_bytes(length) as usize;
+
             if length > 65536 {
                 return Err(io::ErrorKind::InvalidData.into());
             }
 
             let mut bytes = vec![0; length];
+
             stream.read_exact(&mut bytes).await?;
             let arguments = serde_json::from_slice(&bytes)?;
+
             stream.write_all(&[1]).await?;
 
             Ok(arguments)
