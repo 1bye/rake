@@ -104,6 +104,13 @@ mod native {
                 }
             }
 
+            let file = private_options()
+                .append(true)
+                .create(true)
+                .open(file_path(&directory, 0))?;
+
+            check_file(&file)?;
+
             Ok(Self {
                 directory,
                 _lock: lock,
@@ -238,6 +245,7 @@ mod native {
 
             let directory = temporary.path().join("logs");
             let mut writer = LogWriter::open(directory.clone()).expect("writer");
+            fs::remove_file(directory.join("app.log")).expect("remove empty log");
             fs::create_dir(directory.join("app.log")).expect("obstruct log file");
             writer
                 .write_all(b"INFO event\n")
