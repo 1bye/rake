@@ -59,6 +59,12 @@ impl Shortcut {
         let accelerator =
             Accelerator::parse(value).map_err(|error| Error::InvalidInput(error.to_string()))?;
 
+        if accelerator.key.chars().count() != 1 {
+            return Err(Error::InvalidInput(
+                "key normalization produced multiple characters".into(),
+            ));
+        }
+
         if !(accelerator.control || accelerator.alt || accelerator.super_key) {
             return Err(Error::InvalidInput(
                 "use Ctrl, Alt or Super with a key".into(),
@@ -132,7 +138,15 @@ mod tests {
 
     #[test]
     fn invalid_shortcuts_never_register() {
-        for value in ["", "Ctrl+Ctrl+k", "Hyper+k", "Ctrl+Enter", "k", "Shift+k"] {
+        for value in [
+            "",
+            "Ctrl+Ctrl+k",
+            "Hyper+k",
+            "Ctrl+Enter",
+            "Ctrl+İ",
+            "k",
+            "Shift+k",
+        ] {
             assert!(matches!(
                 futures::executor::block_on(Shortcut::register(value)),
                 Err(Error::InvalidInput(_))
