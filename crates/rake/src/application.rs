@@ -82,6 +82,7 @@ thread_local! {
 /// Typed routers drive scoped tasks and entry activity on the host UI loop.
 pub struct App<R: Route = NoRoute> {
     id: String,
+    reopen: Option<Box<dyn FnMut(&mut gpui::App)>>,
     services: ServiceRegistry,
     window_options: WindowOptions,
     window_state: Option<crate::window_state::WindowState>,
@@ -122,6 +123,14 @@ pub struct App<R: Route = NoRoute> {
     distribution: Option<(&'static str, &'static str)>,
 }
 
+impl<R: Route> App<R> {
+    /// Handles native reopen events, including macOS dock activation.
+    pub fn on_reopen(mut self, callback: impl FnMut(&mut gpui::App) + 'static) -> Self {
+        self.reopen = Some(Box::new(callback));
+        self
+    }
+}
+
 impl App<NoRoute> {
     /// Creates an application with bounded local panic recording enabled.
     ///
@@ -131,6 +140,7 @@ impl App<NoRoute> {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            reopen: None,
             services: ServiceRegistry::new(),
             window_options: WindowOptions::default(),
             window_state: None,
@@ -201,6 +211,7 @@ impl App<NoRoute> {
 
         App {
             id: self.id,
+            reopen: self.reopen,
             services: self.services,
             window_options: self.window_options,
             window_state: self.window_state,
@@ -951,6 +962,10 @@ impl<R: Route> App<R> {
             follow: services.http(),
             manual: services.http().without_redirects()?,
         }));
+
+        if let Some(callback) = self.reopen.take() {
+            application.on_reopen(callback);
+        }
 
         let activations = services.platform();
 
