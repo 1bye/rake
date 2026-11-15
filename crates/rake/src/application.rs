@@ -1365,9 +1365,11 @@ mod theme_tests {
     fn forwarded_launch_reopens_without_arguments() {
         let calls = Rc::new(std::cell::Cell::new(0));
         let observed = calls.clone();
+
         let callback: RefCell<Option<Reopen>> = RefCell::new(Some(Box::new(move |_| {
             observed.set(observed.get() + 1);
         })));
+
         let cx = gpui::TestAppContext::single();
 
         cx.update(|cx| handle_reopen(&callback, cx));

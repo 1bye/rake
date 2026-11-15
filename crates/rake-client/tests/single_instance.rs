@@ -19,6 +19,7 @@ fn child() {
     } else {
         vec!["app://open/document".to_owned()]
     };
+
     let primary = rake_client::single::launch("single-test", &expected).unwrap();
 
     if let Some(primary) = primary {

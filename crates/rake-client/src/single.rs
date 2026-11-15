@@ -34,6 +34,7 @@ pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
 
         root.as_os_str().as_bytes().to_vec()
     };
+
     #[cfg(windows)]
     let root_bytes = {
         use std::os::windows::ffi::OsStrExt;
@@ -43,6 +44,7 @@ pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>()
     };
+
     let key = instance_key(id, &root_bytes);
     let lock_path = root.join(format!("instance-{key}.lock"));
 
