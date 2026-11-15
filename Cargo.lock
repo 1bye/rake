@@ -7230,6 +7230,7 @@ dependencies = [
  "unicode-width",
  "url",
  "uuid",
+ "windows 0.61.3",
  "windows-sys 0.61.2",
  "zip 9.1.3",
 ]

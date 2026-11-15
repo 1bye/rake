@@ -9,6 +9,7 @@ import {mkdtemp, mkdir, writeFile, readFile, rm, symlink} from 'node:fs/promises
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {test} from 'node:test';
+import {fileURLToPath} from 'node:url';
 import {FRONTEND_REVISION, startEmbeddedDevtools} from '../crates/rake-cli/scripts/embedded-devtools.mjs';
 
 test('embedded DevTools keeps the proxy private and forwards only the selected local runtime', {timeout:10000}, async () => {
@@ -80,10 +81,11 @@ test('embedded DevTools keeps the proxy private and forwards only the selected l
     assert.deepEqual(forwarded, [{url:`/private/${runtime}`, host:authority, origin:'devtools://devtools'}]);
     await assert.rejects(startEmbeddedDevtools({session, appUrl:'https://example.com/#__rake_control=x'}), /loopback/);
 
-    // macOS temporary helpers can be launched through /var while Node resolves /private/var.
+    // Canonicalize macOS /var aliases and Windows junctions/case before recognizing the entry point.
     const alias = join(session, 'helper-alias');
-    await symlink(new URL('../crates/rake-cli/scripts/', import.meta.url), alias, 'dir');
-    const child = spawn(process.execPath, [join(alias, 'embedded-devtools.mjs'), '--session', session,
+    await symlink(fileURLToPath(new URL('../crates/rake-cli/scripts/', import.meta.url)), alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const entry = join(process.platform === 'win32' ? alias.toUpperCase() : alias, 'embedded-devtools.mjs');
+    const child = spawn(process.execPath, [entry, '--session', session,
       '--app-url', 'http://localhost:8093/#__rake_control=test-only', '--json'], {stdio:['ignore', 'pipe', 'inherit']});
     try {
       const ready = await new Promise((resolve, reject) => {

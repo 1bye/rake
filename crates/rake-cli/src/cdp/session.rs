@@ -2936,7 +2936,7 @@ mod tests {
 
         assert_eq!(error.code, -32601);
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3048,7 +3048,7 @@ mod tests {
         session.handle(&call("Rake.stopMemory", json!({}))).unwrap();
         assert_eq!(session.memory_status()["recording"], false);
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3119,7 +3119,7 @@ mod tests {
                 .any(|(event, _)| event.method == "Runtime.executionContextsCleared")
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3161,16 +3161,21 @@ mod tests {
 
     #[test]
     fn evaluation_errors_are_visible_exceptions_and_crash_output_survives_dead_ipc() {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("output.json");
 
+        #[cfg(unix)]
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .unwrap();
+
+        #[cfg(windows)]
+        let file = rake_client::private::create(&path).unwrap();
 
         serde_json::to_writer(file, &json!({"records":[{"sequence":1,"elapsed_us":0,"stream":"stderr",
             "text":"thread 'main' panicked at app.rs:42:1: fixture panic\nstack backtrace:"}],"dropped":0})).unwrap();
@@ -3213,7 +3218,7 @@ mod tests {
                 .unwrap()
                 .contains("registered command")
         );
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3288,7 +3293,7 @@ mod tests {
             "rake://source/app.rs"
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3356,10 +3361,12 @@ mod tests {
         requests: usize,
     ) -> (Instance, std::thread::JoinHandle<()>, std::path::PathBuf) {
         use std::io::{BufRead, BufReader, Write};
-        let path =
-            std::path::PathBuf::from(format!("/tmp/rake-overlay-{}.sock", uuid::Uuid::new_v4()));
+        let path = super::super::test_transport::path(format!(
+            "/tmp/rake-overlay-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
 
-        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let listener = super::super::test_transport::Listener::bind(&path).unwrap();
 
         let router = rake::router::Router::<rake_protocol::router::NoRoute>::new(
             rake::router::RouterConfig::default(),
@@ -3461,7 +3468,7 @@ mod tests {
                     && event.params["frameId"] == format!("rake-source:{first}"))
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3505,7 +3512,7 @@ mod tests {
         assert_eq!(complete.method, "Tracing.tracingComplete");
         assert_eq!(complete.params["dataLossOccurred"], true);
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3568,7 +3575,7 @@ mod tests {
             }
 
             worker.join().unwrap();
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 
@@ -3648,7 +3655,7 @@ mod tests {
         );
         assert!(!session.frame_trace.active);
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3692,7 +3699,7 @@ mod tests {
 
             assert_eq!(error.code, -32010);
             worker.join().unwrap();
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 
@@ -3781,7 +3788,7 @@ mod tests {
             }
 
             worker.join().unwrap();
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 
@@ -3833,7 +3840,7 @@ mod tests {
 
             assert_eq!(error.message, expected);
             worker.join().unwrap();
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 
@@ -3844,8 +3851,8 @@ mod tests {
         let (instance, worker, path) = fixture(|_| unreachable!(), 0);
 
         worker.join().unwrap();
-        std::fs::remove_file(&path).unwrap();
-        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        super::super::test_transport::remove(&path).unwrap();
+        let listener = super::super::test_transport::Listener::bind(&path).unwrap();
         let server = listener.try_clone().unwrap();
         let mut snapshot = capture("lost-edit-ack");
 
@@ -3906,7 +3913,7 @@ mod tests {
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock
         );
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -3954,7 +3961,7 @@ mod tests {
             }
 
             worker.join().unwrap();
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 
@@ -4021,7 +4028,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.dom.edit_text(node).unwrap(), "");
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
         assert!(
             session
                 .handle(&request(
@@ -4088,7 +4095,7 @@ mod tests {
         }
 
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4163,7 +4170,7 @@ mod tests {
             ))
             .unwrap();
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4219,7 +4226,7 @@ mod tests {
         assert_eq!((style.line, style.column), (20, 4));
         assert_eq!((handler.line, handler.column), (21, 7));
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4272,7 +4279,7 @@ mod tests {
         session.load_details(node).unwrap();
         assert_eq!(session.dom.search("Div").unwrap()["resultCount"], 600);
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4333,7 +4340,7 @@ mod tests {
         session.refresh_dom().unwrap();
         assert!(session.dom.node_id("element-fresh-0").is_some());
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4357,7 +4364,7 @@ mod tests {
             assert!(session.dom.generation().is_none());
             assert!(session.outbound.is_empty());
             worker.join().unwrap();
-            std::fs::remove_file(path).unwrap();
+            super::super::test_transport::remove(path).unwrap();
         }
     }
 
@@ -4502,7 +4509,7 @@ mod tests {
                     wire.load(Ordering::Relaxed)
                 );
                 worker.join().unwrap();
-                std::fs::remove_file(path).unwrap();
+                super::super::test_transport::remove(path).unwrap();
             }
         }
     }
@@ -4588,7 +4595,7 @@ mod tests {
         );
         assert_eq!(after["inlineStyle"]["cssProperties"][0]["value"], "0.75");
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4680,7 +4687,7 @@ mod tests {
             "new sessions share the current metadata revision, not the previous focus state"
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4730,7 +4737,7 @@ mod tests {
             "delivery state must remain per connection"
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4784,7 +4791,7 @@ mod tests {
                 .any(|(event, _)| event.method == "CSS.computedStyleUpdated")
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4836,7 +4843,7 @@ mod tests {
                 }
             ]
         );
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     fn capture(generation: &str) -> rake_protocol::inspection::Snapshot {
@@ -4898,7 +4905,7 @@ mod tests {
             .unwrap();
         assert!(session.outbound.is_empty());
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -4975,7 +4982,7 @@ mod tests {
 
         assert!(text["text"].as_str().unwrap().contains("0.5"));
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -5035,7 +5042,7 @@ mod tests {
 
         assert_eq!(result["result"]["type"], "undefined");
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -5109,7 +5116,7 @@ mod tests {
         session.poll_overlay().unwrap();
         assert_eq!(session.highlight, Some(root));
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -5151,7 +5158,7 @@ mod tests {
             1
         );
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 
     #[test]
@@ -5197,6 +5204,6 @@ mod tests {
         );
         assert!(!session.picking);
         worker.join().unwrap();
-        std::fs::remove_file(path).unwrap();
+        super::super::test_transport::remove(path).unwrap();
     }
 }

@@ -5,11 +5,12 @@ use base64::Engine;
 use rake_client::local::Instance;
 use rake_protocol::inspection::preview::Window;
 use serde_json::{Value, json};
+#[cfg(unix)]
+use std::{io::Read, process::Stdio};
 
 use std::{
-    io::Read,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -185,6 +186,7 @@ fn packet(bytes: &[u8]) -> Result<(Value, &[u8]), Error> {
     Ok((metadata, image))
 }
 
+#[cfg(unix)]
 fn output(mut command: Command, timeout: Duration, limit: usize) -> Result<Vec<u8>, String> {
     use std::os::unix::process::CommandExt;
     command
@@ -262,6 +264,11 @@ fn output(mut command: Command, timeout: Duration, limit: usize) -> Result<Vec<u
     Ok(bytes)
 }
 
+#[cfg(windows)]
+fn output(_: Command, _: Duration, _: usize) -> Result<Vec<u8>, String> {
+    Err("Native screenshots require macOS 14 or later".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +289,7 @@ mod tests {
         assert!(packet(&bytes).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn subprocess_bounds_and_timeout_terminate_owned_work() {
         let mut large = Command::new("sh");
@@ -299,6 +307,20 @@ mod tests {
             output(blocked, Duration::from_millis(20), 1024)
                 .unwrap_err()
                 .contains("timed out")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_capture_is_explicitly_unavailable() {
+        let screenshots = Screenshots::prepare();
+
+        assert!(!screenshots.available());
+        assert!(screenshots.error().unwrap().contains("macOS"));
+        assert!(
+            output(Command::new("unused"), Duration::from_secs(1), 1024)
+                .unwrap_err()
+                .contains("macOS")
         );
     }
 }

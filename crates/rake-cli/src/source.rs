@@ -1,5 +1,8 @@
 //! Opens captured Rust construction sites with the system file association.
 
+#[cfg(windows)]
+pub(crate) mod windows;
+
 use rake_protocol::inspection::SourceLocation;
 use std::path::{Path, PathBuf};
 
@@ -69,20 +72,30 @@ pub(crate) fn open(source: &SourceLocation) -> Result<serde_json::Value> {
 
     let path = resolve(&root, source)?;
 
+    #[cfg(unix)]
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"
     };
 
+    #[cfg(unix)]
     let status = std::process::Command::new(opener)
         .arg(&path)
         .stdout(std::process::Stdio::null())
         .status()?;
 
+    #[cfg(unix)]
     if !status.success() {
         return Err(format!("System editor opener exited with {status}").into());
     }
+
+    #[cfg(windows)]
+    windows::open(
+        dunce::simplified(&path)
+            .to_str()
+            .ok_or("Source path is not valid UTF-8")?,
+    )?;
 
     Ok(serde_json::json!({"path":path,"line":source.line,"column":source.column}))
 }
@@ -100,6 +113,7 @@ mod tests {
         std::fs::write(root.join("app.rs"), "fn main() {}\n").unwrap();
         std::fs::write(directory.join("outside.rs"), "").unwrap();
         std::fs::write(root.join("notes.txt"), "").unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(directory.join("outside.rs"), root.join("escape.rs")).unwrap();
         let source = |file: &str| SourceLocation {
             file: file.into(),
@@ -114,6 +128,24 @@ mod tests {
 
         for file in ["../outside.rs", "escape.rs", "notes.txt", "missing.rs"] {
             assert!(resolve(&root, &source(file)).is_err(), "{file}");
+        }
+
+        #[cfg(windows)]
+        {
+            let outside = directory.join("outside");
+
+            std::fs::create_dir(&outside).unwrap();
+            std::fs::write(outside.join("app.rs"), "fn main() {}\n").unwrap();
+            assert!(
+                std::process::Command::new("cmd")
+                    .args(["/d", "/c", "mklink", "/J"])
+                    .arg(root.join("escape-link"))
+                    .arg(&outside)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            assert!(resolve(&root, &source("escape-link/app.rs")).is_err());
         }
 
         std::fs::remove_dir_all(directory).unwrap();

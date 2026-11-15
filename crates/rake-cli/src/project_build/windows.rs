@@ -64,3 +64,66 @@ pub(super) fn readable(pipe: &impl AsRawHandle) -> io::Result<bool> {
 
     Ok(bytes != 0)
 }
+
+/// Bound the shell RPC helper without owning the editor Explorer starts.
+pub(crate) fn shell_helper(
+    command: &mut std::process::Command,
+    deadline: std::time::Instant,
+) -> super::Result<()> {
+    use std::{
+        sync::atomic::AtomicBool,
+        time::{Duration, Instant},
+    };
+
+    if Instant::now() >= deadline {
+        return Err("Windows desktop opener deadline expired".into());
+    }
+
+    let cancelled = AtomicBool::new(false);
+    let mut process = super::Processes::new(&cancelled).start(command)?;
+
+    loop {
+        if let Some(status) = process.0.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("Windows desktop opener failed: {status}").into())
+            };
+        }
+
+        if Instant::now() >= deadline {
+            return Err("Windows desktop opener timed out".into());
+        }
+
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn shell_requests_expire_before_spawn_and_stop_inflight_helpers() {
+        let mut expired = Command::new("rake-deliberately-missing-shell-helper");
+        let error = shell_helper(&mut expired, Instant::now()).unwrap_err();
+
+        assert!(error.to_string().contains("deadline expired"), "{error}");
+        let mut blocked = Command::new("cmd");
+
+        blocked
+            .args(["/d", "/c", "ping -n 30 127.0.0.1 > nul"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let started = Instant::now();
+        let error = shell_helper(&mut blocked, started + Duration::from_millis(100)).unwrap_err();
+
+        assert!(error.to_string().contains("timed out"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+}

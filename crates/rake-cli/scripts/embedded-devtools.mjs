@@ -5,8 +5,8 @@ import {randomBytes} from 'node:crypto';
 import {createServer} from 'node:http';
 import {connect} from 'node:net';
 import {mkdir, readFile, writeFile, realpath} from 'node:fs/promises';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {join, relative} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 
 // Matches the Chrome frontend used for this experiment; never fetch credentials remotely.
@@ -138,7 +138,7 @@ export async function startEmbeddedDevtools({session, appUrl, port = 0}) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
+if (process.argv[1] && relative(await realpath(fileURLToPath(import.meta.url)), await realpath(process.argv[1])) === '') {
   const {values} = parseArgs({options:{session:{type:'string'}, 'app-url':{type:'string'}, port:{type:'string', default:'0'}, json:{type:'boolean'}}});
   if (!values.session || !values['app-url']) {
     console.error('Usage: node crates/rake-cli/scripts/embedded-devtools.mjs --session /tmp/rake-dev-EXAMPLE --app-url PRIVATE_LAUNCH_URL [--port 0]');

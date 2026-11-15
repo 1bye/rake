@@ -158,16 +158,24 @@ pub(super) fn export(options: &super::Options, path: &std::path::Path) -> super:
 
     let result = (|| -> super::Result<()> {
         use std::io::Write;
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
+        #[cfg(unix)]
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&temporary)?;
 
+        #[cfg(windows)]
+        let mut file = rake_client::private::create(&temporary)?;
+
         file.write_all(&bytes)?;
         file.sync_all()?;
+        #[cfg(unix)]
         std::fs::rename(&temporary, path)?;
+        #[cfg(windows)]
+        rake_client::private::replace(&file, path)?;
 
         Ok(())
     })();
