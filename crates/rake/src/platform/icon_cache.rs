@@ -83,7 +83,7 @@ impl Cache {
             self.bytes -= previous.bytes.len();
         }
 
-        while self.bytes + bytes.len() > self.budget {
+        while self.bytes + bytes.len() > self.budget || self.entries.len() >= 512 {
             let Some(oldest) = self
                 .entries
                 .iter()
@@ -165,6 +165,24 @@ mod tests {
         }
 
         assert_eq!(cache.entries.len(), 8);
+    }
+
+    #[test]
+    fn tiny_rasters_also_bound_entry_metadata() {
+        let mut cache = Cache::new(DEFAULT_BUDGET);
+
+        for pixels in 1..=1000 {
+            cache.insert(
+                Key {
+                    identity: Identity::Folder,
+                    pixels,
+                },
+                vec![0].into(),
+            );
+        }
+
+        assert_eq!(cache.stats().0, 512);
+        assert_eq!(cache.stats().1, 512);
     }
 
     #[test]

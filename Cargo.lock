@@ -7408,6 +7408,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rake-file-icons"
+version = "0.1.0"
+dependencies = [
+ "blocking",
+ "rake-app",
+]
+
+[[package]]
 name = "rake-files"
 version = "0.1.0"
 dependencies = [

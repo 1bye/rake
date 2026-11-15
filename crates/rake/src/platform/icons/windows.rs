@@ -4,10 +4,30 @@ use super::Identity;
 use std::{os::windows::ffi::OsStrExt, path::Path};
 use windows_sys::Win32::{
     Graphics::Gdi::*,
+    System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
     UI::{Shell::*, WindowsAndMessaging::*},
 };
 
+struct Apartment;
+
+impl Drop for Apartment {
+    fn drop(&mut self) {
+        // SAFETY: Created only after this thread successfully initialized COM.
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+
 pub(super) fn load(path: &Path, pixels: u32) -> Option<(Identity, Vec<u8>)> {
+    // SAFETY: This blocking worker initializes and balances its own COM apartment.
+    let initialized = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+    let _apartment = if initialized >= 0 {
+        Some(Apartment)
+    } else {
+        None
+    };
+
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
 
     if wide[..wide.len() - 1].contains(&0) {

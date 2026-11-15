@@ -4,6 +4,7 @@ use crate::gpui::{
     App, AppContext, Entity, Global, ImageCache, ImageCacheError, ImageSource, Pixels, RenderImage,
     Resource, Window,
 };
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -48,6 +49,7 @@ impl From<Icon> for ImageSource {
             let pixels = physical_pixels(f32::from(icon.size), window.scale_factor());
             // The private cache resource appends size without converting native path bytes.
             let resource = Resource::Path(icon.path.join(pixels.to_string()).into());
+
             icon.cache
                 .update(cx, |cache, cx| cache.load(&resource, window, cx))
         })
@@ -65,6 +67,8 @@ pub struct CacheStats {
     pub hits: u64,
     /// Requests needing background classification or rasterization.
     pub misses: u64,
+    /// Fraction of requests served from rendered storage, from zero to one.
+    pub hit_rate: f64,
     /// Number of background loads currently in flight.
     pub pending: usize,
 }
@@ -79,14 +83,17 @@ pub fn inspect(cx: &App) -> CacheStats {
         hits: cache.hits,
         misses: cache.misses,
         pending: cache.pending.len(),
+        hit_rate: cache.hits as f64 / (cache.hits + cache.misses).max(1) as f64,
     }
 }
 
 struct SharedIcons(Entity<Icons>);
+
 impl Global for SharedIcons {}
 
 pub(crate) fn init(cx: &mut App) {
     let icons = cx.new(|_| Icons::default());
+
     cx.set_global(SharedIcons(icons));
 }
 
@@ -135,8 +142,10 @@ impl ImageCache for Icons {
         let Resource::Path(request) = resource else {
             return None;
         };
+
         let pixels: u32 = request.file_name()?.to_str()?.parse().ok()?;
         let path = request.parent()?.to_path_buf();
+
         self.clock = self.clock.saturating_add(1);
 
         if let Some(identity) = self.paths.get(&path) {
@@ -144,6 +153,7 @@ impl ImageCache for Icons {
                 identity: identity.clone(),
                 pixels,
             };
+
             if let Some(raster) = self.images.get_mut(&key) {
                 raster.used = self.clock;
                 self.hits += 1;
@@ -160,9 +170,11 @@ impl ImageCache for Icons {
 
         let entity = cx.global::<SharedIcons>().0.downgrade();
         let request = request.to_path_buf();
+
         cx.spawn(async move |cx| {
             #[cfg(not(target_family = "wasm"))]
             let loaded = blocking::unblock(move || load(&path, pixels)).await;
+
             #[cfg(target_family = "wasm")]
             let loaded = load(&path, pixels);
 
@@ -170,6 +182,7 @@ impl ImageCache for Icons {
                 state.pending.remove(&request);
                 let path = request.parent().unwrap_or(Path::new("")).to_path_buf();
                 let (identity, rgba) = loaded;
+
                 let key = Key {
                     identity: identity.clone(),
                     pixels,
@@ -183,12 +196,14 @@ impl ImageCache for Icons {
 
                 if !state.images.contains_key(&key) {
                     let bytes = rgba.len();
-                    while state.bytes + bytes > DEFAULT_BUDGET {
+
+                    while state.bytes + bytes > DEFAULT_BUDGET || state.images.len() >= 512 {
                         let oldest = state
                             .images
                             .iter()
                             .min_by_key(|(_, image)| image.used)
                             .map(|(key, _)| key.clone());
+
                         let Some(oldest) = oldest else {
                             break;
                         };
@@ -201,6 +216,7 @@ impl ImageCache for Icons {
 
                     if let Some(buffer) = image::RgbaImage::from_raw(pixels, pixels, rgba) {
                         let image = Arc::new(RenderImage::new([image::Frame::new(buffer)]));
+
                         state.bytes += bytes;
                         state.images.insert(
                             key,
@@ -240,8 +256,10 @@ fn load(path: &Path, pixels: u32) -> (Identity, Vec<u8>) {
 
     #[cfg(not(target_family = "wasm"))]
     let folder = path.is_dir();
+
     #[cfg(target_family = "wasm")]
     let folder = path.to_string_lossy().ends_with('/');
+
     let identity = if folder {
         Identity::Folder
     } else {
@@ -262,6 +280,7 @@ fn fallback(pixels: u32, folder: bool) -> Vec<u8> {
     for y in pixels / 5..pixels * 4 / 5 {
         for x in pixels / 5..pixels * 4 / 5 {
             let offset = ((y * pixels + x) * 4) as usize;
+
             bytes[offset..offset + 4].copy_from_slice(if folder {
                 &[70, 175, 225, 255]
             } else {

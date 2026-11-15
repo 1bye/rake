@@ -99,7 +99,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Graphics_DirectComposition"], optional = true }
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_Graphics_Gdi"], optional = true }
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_Com"], optional = true }
 
 [dev-dependencies]
 rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", features = ["test-support"] }
@@ -132,9 +132,4 @@ required-features = ["devtools"]
 name = "web-crash"
 path = "examples/web_crash.rs"
 crate-type = ["cdylib"]
-required-features = ["gpui"]
-
-[[example]]
-name = "file-icons"
-path = "examples/file_icons.rs"
 required-features = ["gpui"]
