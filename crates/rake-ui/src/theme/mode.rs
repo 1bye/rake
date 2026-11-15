@@ -79,14 +79,21 @@ pub fn observe_window(window: &mut Window, cx: &mut App) {
 }
 
 fn update(window: &mut Window, cx: &mut App) {
+    update_appearance(window.appearance(), cx);
+}
+
+fn update_appearance(appearance: WindowAppearance, cx: &mut App) {
     if !cx.has_global::<Selection>() {
         return;
     }
 
     let selection = cx.global_mut::<Selection>();
-    selection.appearance = window.appearance();
+    selection.appearance = appearance;
 
     if selection.mode == ThemeMode::System {
         apply(cx);
     }
 }
+
+#[cfg(test)]
+mod tests;

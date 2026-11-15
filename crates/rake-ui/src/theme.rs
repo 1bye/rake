@@ -17,7 +17,6 @@ pub mod apply;
 mod mode;
 mod semantic;
 
-#[doc(hidden)]
 pub use mode::observe_window;
 pub use mode::{ThemeMode, mode, register, set_mode};
 
