@@ -118,7 +118,8 @@ jobs:
           - os: windows-latest
             updates: updates-velopack
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Optimized dependency builds across Windows feature graphs exceed one hour cold.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 120 || 60 }}
     env:
       RUST_BACKTRACE: "1"
     steps:
