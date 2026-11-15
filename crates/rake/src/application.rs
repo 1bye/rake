@@ -805,13 +805,16 @@ impl<R: Route> App<R> {
 
         #[cfg(any(unix, windows))]
         let primary = if self.single_instance {
-            let arguments = std::env::args()
+            let arguments = std::env::args_os()
                 .skip(1)
                 .map(|argument| {
                     std::fs::canonicalize(&argument)
                         .ok()
                         .and_then(|path| url::Url::from_file_path(path).ok())
-                        .map_or(argument, |url| url.to_string())
+                        .map_or_else(
+                            || argument.to_string_lossy().into_owned(),
+                            |url| url.to_string(),
+                        )
                 })
                 .collect::<Vec<_>>();
             match rake_client::single::launch(&self.id, &arguments)
