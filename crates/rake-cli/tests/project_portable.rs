@@ -16,6 +16,7 @@ fn doctor_has_no_python_dependency_or_diagnostic_field() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+
     let checks: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert!(checks["rust"].is_string());
@@ -391,6 +392,7 @@ fn doctor_reports_tools_with_a_broken_manifest() {
     let directory = tempfile::tempdir().unwrap();
 
     fs::write(directory.path().join("Cargo.toml"), "[broken").unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_rake"))
         .current_dir(directory.path())
         .args(["doctor", "--json"])
@@ -402,6 +404,7 @@ fn doctor_reports_tools_with_a_broken_manifest() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+
     let checks: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert!(checks["rust"].is_string());

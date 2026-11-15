@@ -13,6 +13,7 @@ pub(super) fn warn(args: &Args, processes: &Processes<'_>) {
         command
             .args(["metadata", "--format-version", "1", "--manifest-path"])
             .arg(&args.manifest);
+
         let metadata: Value =
             serde_json::from_str(&processes.capture(&mut command, Capture::Advice)?)?;
 
@@ -43,10 +44,13 @@ fn check_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
     let root = metadata["workspace_root"]
         .as_str()
         .ok_or("missing workspace root")?;
+
     let members = metadata["workspace_members"]
         .as_array()
         .ok_or("missing workspace members")?;
+
     let environment = std::env::var("CARGO_PROFILE_DEV_OPT_LEVEL").ok();
+
     let mut manifest: toml::Value =
         toml::from_str(&fs::read_to_string(Path::new(root).join("Cargo.toml"))?)?;
 
@@ -68,6 +72,7 @@ fn check_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
                 .args(["pkgid", "--manifest-path"])
                 .arg(Path::new(root).join("Cargo.toml"))
                 .args(["--package", &spec]);
+
             let Ok(id) = processes.capture(&mut command, Capture::Advice) else {
                 continue;
             };
@@ -87,6 +92,7 @@ fn check_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
         let Some(name @ ("gpui" | "gpui-pre" | "gpui-fast")) = package["name"].as_str() else {
             continue;
         };
+
         let version = package["version"]
             .as_str()
             .ok_or("missing package version")?;
