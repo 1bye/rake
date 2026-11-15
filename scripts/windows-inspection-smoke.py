@@ -274,6 +274,8 @@ def main():
                         assert any(target["id"] == runtime for target in json.load(response))
 
                     rows = process_rows()
+                    assert any(row["ProcessId"] == os.getpid() and row["ParentProcessId"] == os.getppid()
+                               for row in rows), "Kernel snapshot omitted the inspection process or its parent"
                     owned = {application.pid}
                     for _ in rows:
                         children = {row["ProcessId"] for row in rows if row["ParentProcessId"] in owned}

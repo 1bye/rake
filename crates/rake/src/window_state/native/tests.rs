@@ -167,6 +167,9 @@ fn fullscreen_keeps_normal_bounds_and_quit_flushes_before_debounce() {
             .expect("fullscreen test window")
     });
     app.simulate_window_resize(window, gpui::size(gpui::px(1920.), gpui::px(1080.)));
+    // Preferences use a real blocking pool; retain the wall-clock quit deadline
+    // without the test scheduler's randomized early poll cutoff.
+    app.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
     app.quit();
     let data = std::fs::read_to_string(directory.path().join(super::super::PREFERENCE_KEY))
         .expect("quit awaits final preference write");
