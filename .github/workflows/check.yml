@@ -119,7 +119,7 @@ jobs:
           - os: windows-latest
             updates: updates-velopack
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 90 || 60 }}
     env:
       RUST_BACKTRACE: "1"
     steps:
