@@ -49,3 +49,9 @@ libraries = [{ git = "https://github.com/1bye/workflow", rev = "f62c7d7dcdf3ffd9
 [patch.crates-io]
 gpui-base = { path = "vendor/gpui-base" }
 gpui-pre-web = { path = "vendor/gpui-pre-web" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

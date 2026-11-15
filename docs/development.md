@@ -389,3 +389,18 @@ planner can request inactive optional dependencies absent from a Cargo lockfile;
 this is an engine limitation, not a reason to enable every app feature at runtime.
 A restart restores only registered checkpoints; other fields reset with a notice.
 Use `rake dev --live --require-state` to block a restart that cannot restore state.
+
+## Optimized development builds
+
+Put these settings in the workspace root Cargo.toml (member profiles are ignored):
+
+```toml
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+```
+
+This keeps application rebuilds quick while optimizing GPUI and other dependencies.
+Performance numbers from an unoptimized debug build are not meaningful.
