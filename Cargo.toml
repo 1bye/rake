@@ -53,5 +53,8 @@ gpui-pre-web = { path = "vendor/gpui-pre-web" }
 [profile.dev]
 opt-level = 1
 
-[profile.dev.package."*"]
+[profile.dev.package."gpui-pre"]
+opt-level = 3
+
+[profile.dev.package."taffy"]
 opt-level = 3

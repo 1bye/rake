@@ -414,26 +414,61 @@ overrides also take priority over the base profile optimization environment
 variable. Other `CARGO_PROFILE_DEV_*` settings, such as `DEBUG`, do not change
 the optimization level.
 
-### Native scroll measurement
+### Contributor workspace profile and native scroll measurement
 
-Measured `examples/preview` on an Apple M1 Max running macOS 26.6.2, with
-`--features devtools`, using `scripts/benchmark-dev-profile.py`. Both builds used
-`CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0` and the same source.
-The optimized run was captured first, then the unoptimized comparison build.
+App templates and the standalone inspector keep the full dependency wildcard
+above. Rake's root workspace instead uses:
 
-| Development optimization | Retained draws | Median draw (ms) | p95 draw (ms) | Maximum draw (ms) |
-| --- | ---: | ---: | ---: | ---: |
-| Application 0, dependencies 0 | 19 | 7.411 | 9.166 | 9.166 |
-| Application 1, dependencies 3 | 15 | 4.150 | 5.312 | 5.312 |
+```toml
+[profile.dev]
+opt-level = 1
 
-These are native inspection `draw_us` wall durations, not display frame intervals
-or GPU presentation latency. The script launches the real native window, warms
-with eight one-pixel scroll inputs, enables the in-memory frame recorder, submits
-25 more inputs spaced by 20 ms, and summarizes the first retained frame page.
-It asserts at least 15 samples, positive durations, and actual content movement.
-The short sample and inspection overhead limit how broadly these numbers apply.
+[profile.dev.package.gpui-pre]
+opt-level = 3
 
-Reproduce from the repository root with the workspace profile above:
+[profile.dev.package.taffy]
+opt-level = 3
+```
+
+Other packages inherit level 1. The warning check is advisory: an unavailable
+manifest or metadata produces at most one short note, and unmatched override
+selectors are skipped. Neither case makes doctor or dev fail because of this check.
+
+Measured `examples/preview` on an Apple M1 Max running macOS 26.6.2, using
+`--features devtools` and `scripts/benchmark-dev-profile.py`. Every build used
+`CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0`.
+Each profile has three runs with 20 retained draws per run. The table reports the
+median of the three run medians, and the range of their p95 values:
+
+| Profile | Median draw (ms) | Run p95 range (ms) |
+| --- | ---: | ---: |
+| Base 0, GPUI 0, Taffy 0 | 7.317 | 7.802–8.625 |
+| Base 1, GPUI 3 | 1.411 | 1.469–3.195 |
+| Base 1, GPUI 3, macOS backend 3 | 1.351 | 1.516–3.807 |
+| Base 1, GPUI 3, Taffy 3 (selected) | 1.324 | 3.953–4.274 |
+
+Taffy reduced the median by about 6% relative to GPUI alone; the macOS backend's
+roughly 4% change did not meet the 5% median improvement threshold for retaining
+an additional override. The Taffy tail samples were variable, so the median
+result does not establish a tail-latency improvement over GPUI alone.
+
+Keep base opt-level 1: after warming both configurations with GPUI and Taffy at
+3, three text edits in `examples/preview/src/main.rs` and subsequent
+`cargo build -p rake-preview --features devtools` calls took 4.117, 3.494, 3.150 s
+at base 0 and 1.670, 1.243, 1.239 s at base 1. Timings cover the whole Cargo
+invocation, excluding warm-up; the original source was restored afterward.
+This representative edit showed no incremental rebuild slowdown at level 1.
+It is not a measurement of every workspace edit or of cold compilation.
+
+Draw timings are native inspection `draw_us` wall durations, not display frame
+intervals or GPU presentation latency. The script launches the real native
+window, warms with eight one-pixel scroll inputs, enables the in-memory frame
+recorder, submits 25 more inputs spaced by 20 ms, and summarizes the first
+retained frame page. It asserts at least 15 samples, positive durations, and
+actual content movement. The short sample and inspection overhead limit how
+broadly these numbers apply.
+
+Reproduce the selected profile and the unoptimized baseline from the root:
 
 ```sh
 export CARGO_TARGET_DIR=/tmp/rake-devprofile-68-target
@@ -441,7 +476,8 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
 cargo build -p rake-preview --features devtools
 python3 scripts/benchmark-dev-profile.py "$CARGO_TARGET_DIR/debug/rake-preview"
 CARGO_PROFILE_DEV_OPT_LEVEL=0 cargo build -p rake-preview --features devtools \
-  --config 'profile.dev.package."*".opt-level=0'
+  --config 'profile.dev.package.gpui-pre.opt-level=0' \
+  --config 'profile.dev.package.taffy.opt-level=0'
 python3 scripts/benchmark-dev-profile.py "$CARGO_TARGET_DIR/debug/rake-preview"
 ```
 

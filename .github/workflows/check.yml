@@ -118,8 +118,7 @@ jobs:
           - os: windows-latest
             updates: updates-velopack
     runs-on: ${{ matrix.os }}
-    # Optimized dependency builds across Windows feature graphs exceed one hour cold.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 120 || 60 }}
+    timeout-minutes: 60
     env:
       RUST_BACKTRACE: "1"
     steps:
@@ -131,7 +130,8 @@ jobs:
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rake-ci
+          # Start a cold desktop comparison for the targeted workspace profile.
+          prefix-key: v2-rake-ci-targeted-gpui
           cache-all-crates: false
           cache-workspace-crates: false
           shared-key: desktop-${{ matrix.os }}
