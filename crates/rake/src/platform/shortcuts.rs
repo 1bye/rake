@@ -51,7 +51,7 @@ impl GlobalShortcuts {
             {
                 supported.set(rake_shortcuts::available().await);
 
-                return Ok(supported.get());
+                Ok(supported.get())
             }
 
             #[cfg(not(feature = "global-shortcuts"))]
@@ -188,12 +188,10 @@ mod ui {
 
                 Box::pin(async move {
                     let _task = task;
-                    let result = receive.await.map_err(|_| Error::Unavailable {
+                    receive.await.map_err(|_| Error::Unavailable {
                         operation: "global shortcut",
                         message: "registration task stopped".into(),
-                    })?;
-
-                    result
+                    })?
                 })
             }
 
