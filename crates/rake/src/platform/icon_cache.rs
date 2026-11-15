@@ -1,7 +1,6 @@
 //! Byte-bounded, least-recently-used storage for native icon rasters.
 
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::sync::Arc;
 
 /// Default raster budget, excluding metadata and renderer-owned resources.
@@ -73,8 +72,12 @@ impl Cache {
         }
 
         while self.bytes + bytes.len() > self.budget {
-            let Some(oldest) = self.entries.iter().min_by_key(|(_, entry)| entry.used)
-                .map(|(key, _)| key.clone()) else {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+            else {
                 break;
             };
 
@@ -85,7 +88,13 @@ impl Cache {
 
         self.clock = self.clock.saturating_add(1);
         self.bytes += bytes.len();
-        self.entries.insert(key, Entry { bytes, used: self.clock });
+        self.entries.insert(
+            key,
+            Entry {
+                bytes,
+                used: self.clock,
+            },
+        );
     }
 }
 
@@ -97,7 +106,10 @@ mod tests {
     fn ten_thousand_plain_folders_share_one_bitmap() {
         let mut cache = Cache::new(DEFAULT_BUDGET);
         let bitmap: Arc<[u8]> = vec![0; 44 * 44 * 4].into();
-        let key = Key { identity: Identity::Folder, pixels: 44 };
+        let key = Key {
+            identity: Identity::Folder,
+            pixels: 44,
+        };
         cache.insert(key.clone(), bitmap.clone());
 
         for _ in 0..10_000 {
@@ -111,9 +123,40 @@ mod tests {
     }
 
     #[test]
+    fn identity_and_display_size_separate_rasters() {
+        let mut cache = Cache::new(DEFAULT_BUDGET);
+        let identities = [
+            Identity::Folder,
+            Identity::FileType("text/plain".into()),
+            Identity::Bundle("example.application".into()),
+            Identity::Custom("custom-folder".into()),
+        ];
+
+        for identity in identities {
+            for pixels in [22, 44] {
+                let key = Key {
+                    identity: identity.clone(),
+                    pixels,
+                };
+                assert!(cache.get(&key).is_none());
+                cache.insert(
+                    key.clone(),
+                    vec![0; pixels as usize * pixels as usize * 4].into(),
+                );
+                assert!(cache.get(&key).is_some());
+            }
+        }
+
+        assert_eq!(cache.entries.len(), 8);
+    }
+
+    #[test]
     fn eviction_keeps_recent_entries_and_bounds_bytes() {
         let mut cache = Cache::new(8);
-        let key = |pixels| Key { identity: Identity::Folder, pixels };
+        let key = |pixels| Key {
+            identity: Identity::Folder,
+            pixels,
+        };
         cache.insert(key(1), vec![0; 4].into());
         cache.insert(key(2), vec![0; 4].into());
         assert!(cache.get(&key(1)).is_some());
