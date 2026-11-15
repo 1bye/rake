@@ -317,3 +317,6 @@ mod tests {
         assert!(external_url("mailto:hello@example.com").is_ok());
     }
 }
+
+#[cfg(feature = "gpui")]
+pub mod icons;

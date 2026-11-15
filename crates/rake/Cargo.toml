@@ -37,6 +37,7 @@ view-test-support = ["gpui", "gpui_pre/test-support", "gpui_fast?/test-support",
 gpui = ["dep:rake-ui", "rake-macros/view", "dep:gpui_pre", "dep:gpui_platform", "dep:objc2-app-kit", "dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:objc2-user-notifications", "dep:raw-window-handle", "dep:windows-sys", "native-lifecycle"]
 
 [dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
 rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", optional = true }
 rake-updates = { version = "=0.1.0-alpha.4", path = "../rake-updates", optional = true }
@@ -94,11 +95,11 @@ objc2 = { version = "0.6.5", optional = true }
 objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSBundle", "NSError"], optional = true }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"], optional = true }
 pathfinder_simd = { version = "0.5.6", features = ["pf-no-simd"], optional = true }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"], optional = true }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "NSGraphics", "objc2-core-foundation"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Graphics_DirectComposition"], optional = true }
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem"], optional = true }
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_Com"], optional = true }
 
 [dev-dependencies]
 rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray", features = ["test-support"] }
