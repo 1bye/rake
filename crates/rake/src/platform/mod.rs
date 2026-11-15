@@ -7,9 +7,11 @@
 
 mod notifications;
 mod shortcuts;
+
 #[cfg(feature = "gpui")]
 pub use shortcuts::GlobalShortcut;
 pub use shortcuts::GlobalShortcuts;
+
 mod preferences;
 
 pub use notifications::{Notification, NotificationOutcome};

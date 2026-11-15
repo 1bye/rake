@@ -5,6 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     futures::executor::block_on(async {
         let key = "Ctrl+Alt+Shift+9";
         let mut first = Shortcut::register(key).await?;
+
         assert!(matches!(
             Shortcut::register(key).await,
             Err(Error::Conflict)
@@ -12,8 +13,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         first.unregister().await?;
         first.unregister().await?;
         let second = Shortcut::register(key).await?;
+
         drop(second);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+
         let mut third = loop {
             match Shortcut::register(key).await {
                 Ok(shortcut) => break shortcut,
@@ -23,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(error) => return Err(error),
             }
         };
+
         third.unregister().await?;
 
         Ok::<_, Error>(())

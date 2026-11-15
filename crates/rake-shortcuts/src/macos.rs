@@ -90,6 +90,7 @@ unsafe extern "C" fn activated(_: Ref, event: Ref, data: Ref) -> i32 {
         signature: 0,
         id: 0,
     };
+
     // SAFETY: Carbon supplies a live event and the handler's boxed Delivery. Both
     // remain valid until RemoveEventHandler on this same main thread.
     unsafe {
@@ -127,14 +128,17 @@ pub(super) async fn register(
     }
 
     let (key, implicit_shift) = keycode(&accelerator.key)?;
+
     let modifiers = (u32::from(accelerator.super_key) * (1 << 8))
         | (u32::from(accelerator.shift || implicit_shift) * (1 << 9))
         | (u32::from(accelerator.alt) * (1 << 11))
         | (u32::from(accelerator.control) * (1 << 12));
+
     static NEXT: AtomicU32 = AtomicU32::new(1);
     let id = NEXT
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .map_err(|_| Error::Native("shortcut IDs exhausted".into()))?;
+
     let mut delivery = Box::new(Delivery {
         id: HotKeyId {
             signature: u32::from_be_bytes(*b"RAKE"),
@@ -142,20 +146,25 @@ pub(super) async fn register(
         },
         sender,
     });
+
     let data = (&mut *delivery as *mut Delivery).cast();
+
     let mut registration = Registration {
         hotkey: std::ptr::null_mut(),
         handler: std::ptr::null_mut(),
         _delivery: delivery,
     };
+
     let event_type = EventType {
         class: u32::from_be_bytes(*b"keyb"),
         kind: 5,
     };
+
     // SAFETY: All pointers reference initialized storage. The boxed delivery has
     // a stable address and Registration removes the handler before freeing it.
     unsafe {
         let target = GetApplicationEventTarget();
+
         status(InstallEventHandler(
             target,
             activated,
@@ -244,6 +253,7 @@ fn keycode(key: &str) -> Result<(u32, bool), Error> {
                     let mut output = [0_u16; 4];
                     let mut length = 0;
                     let mut dead = 0;
+
                     let status = UCKeyTranslate(
                         layout,
                         code,
@@ -308,12 +318,15 @@ mod tests {
     #[test]
     fn carbon_event_routes_only_the_registered_id() {
         let (sender, mut events) = mpsc::channel(1);
+
         let id = HotKeyId {
             signature: u32::from_be_bytes(*b"RAKE"),
             id: 42,
         };
+
         let mut delivery = Delivery { id, sender };
         let mut event = std::ptr::null_mut();
+
         // SAFETY: Carbon creates a retained event, the parameter points to a
         // correctly sized HotKeyId, and Delivery stays live through both calls.
         unsafe {

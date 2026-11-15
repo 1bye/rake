@@ -116,12 +116,15 @@ mod ui {
                 let (settle, settled) = futures::channel::oneshot::channel::<()>();
                 let mut settled = Some(settled);
                 let closed = Rc::new(Cell::new(false));
+
                 let registration = Rc::new(RefCell::new(Registration {
                     shortcut: None,
                     task: None,
                 }));
+
                 let weak = Rc::downgrade(&registration);
                 let quitting = closed.clone();
+
                 let quit = cx.on_app_quit(move |_| {
                     quitting.set(true);
                     cancel.take();
@@ -140,8 +143,10 @@ mod ui {
                         }
                     }
                 });
+
                 let accelerator = accelerator.to_owned();
                 let (send, receive) = futures::channel::oneshot::channel();
+
                 let task = cx.spawn(async move |cx| {
                     let result = async {
                         let mut shortcut = {
@@ -149,7 +154,9 @@ mod ui {
 
                             let registration =
                                 rake_shortcuts::Shortcut::register(&accelerator).fuse();
+
                             let cancellation = cancellation.fuse();
+
                             futures::pin_mut!(registration, cancellation);
                             futures::select! {
                                 result = registration => result.map_err(error)?,
@@ -171,6 +178,7 @@ mod ui {
 
                         let events = shortcut.take_events();
                         let driver = cx.update(|cx| dispatch(events, callback, cx));
+
                         *registration.borrow_mut() = Registration {
                             shortcut: Some(shortcut),
                             task: Some(driver),
@@ -182,12 +190,14 @@ mod ui {
                         })
                     }
                     .await;
+
                     let _ = send.send(result);
                     let _ = settle.send(());
                 });
 
                 Box::pin(async move {
                     let _task = task;
+
                     receive.await.map_err(|_| Error::Unavailable {
                         operation: "global shortcut",
                         message: "registration task stopped".into(),
@@ -228,6 +238,7 @@ mod ui {
     #[cfg(feature = "global-shortcuts")]
     fn stop(inner: &std::cell::RefCell<Registration>) -> Request<()> {
         let mut registration = inner.borrow_mut();
+
         registration.task.take();
         let shortcut = registration.shortcut.take();
 
@@ -260,6 +271,7 @@ mod ui {
         //! Real: GPUI foreground scheduler and registration owner. Doubles: native events.
         //! Requires: no native shortcut registration or graphical session.
         use super::*;
+
         use std::{
             cell::{Cell, RefCell},
             rc::Rc,
@@ -271,6 +283,7 @@ mod ui {
             let calls = Rc::new(Cell::new(0));
             let count = calls.clone();
             let ui_thread = std::thread::current().id();
+
             let task = cx.update(|cx| {
                 dispatch(
                     events,
@@ -281,10 +294,12 @@ mod ui {
                     cx,
                 )
             });
+
             let registration = RefCell::new(Registration {
                 shortcut: None,
                 task: Some(task),
             });
+
             sender.try_send(()).unwrap();
             cx.run_until_parked();
             assert_eq!(calls.get(), 1);

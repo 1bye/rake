@@ -320,9 +320,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outcome = Rc::new(RefCell::new(None));
 
     let shortcut_model = model.clone();
+
     let app = app.background(move |runtime, cx| {
         let shortcuts = runtime.services().platform().global_shortcuts();
         let callback_model = shortcut_model.clone();
+
         let request = shortcuts.register(
             "Ctrl+Alt+k",
             move |cx| {
