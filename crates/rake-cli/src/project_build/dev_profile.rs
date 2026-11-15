@@ -30,11 +30,9 @@ pub(super) fn warn_metadata(metadata: &Value, processes: &Processes<'_>) -> Resu
         .ok_or("missing workspace members")?;
 
     for package in metadata["packages"].as_array().ok_or("missing packages")? {
-        let name = package["name"].as_str().ok_or("missing package name")?;
-
-        if !matches!(name, "gpui" | "gpui-pre" | "gpui-fast") {
+        let Some(name @ ("gpui" | "gpui-pre" | "gpui-fast")) = package["name"].as_str() else {
             continue;
-        }
+        };
 
         let mut manifest: toml::Value =
             toml::from_str(&fs::read_to_string(Path::new(root).join("Cargo.toml"))?)?;
@@ -131,6 +129,19 @@ fn unoptimized(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unrelated_packages_need_no_profile_metadata() {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let processes = Processes::new(&cancelled);
+        let metadata = serde_json::json!({
+            "workspace_root": "/unused",
+            "workspace_members": [],
+            "packages": [{"id": "local", "source": null}]
+        });
+
+        assert!(warn_metadata(&metadata, &processes).is_ok());
+    }
 
     #[test]
     fn effective_gpui_optimization() {
