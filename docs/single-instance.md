@@ -11,7 +11,11 @@ Keep one consumer and validate schemes and destinations before opening content.
 Non-URL arguments do not enter the URL inbox.
 
 Use `.on_reopen(|cx| { /* restore or open a window */ })` for native reopen
-events, including macOS dock activation. The callback receives the GPUI application.
+events, including macOS dock activation. Every forwarded launch also invokes this
+callback, even when it has no arguments. Without a callback, Rake activates the
+running app with `cx.activate(true)`. The callback receives the GPUI application.
+Single-letter URL schemes are treated as file paths, including missing Windows
+drive-letter paths; they never enter the inbox as application URLs.
 
 The primary holds a kernel lock on an owner-only file. The file remains after
 exit, but crashes release the lock automatically. Never delete lock files while

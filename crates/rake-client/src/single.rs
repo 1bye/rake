@@ -25,15 +25,25 @@ pub struct Primary {
 /// Returns private-directory, lock, transport or acknowledgement failures.
 /// A failed forward never starts a second instance.
 pub fn launch(id: &str, arguments: &[String]) -> io::Result<Option<Primary>> {
-    use std::hash::{Hash, Hasher};
     let root = crate::local::directory();
 
     crate::private::prepare_directory(&root)?;
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    #[cfg(unix)]
+    let root_bytes = {
+        use std::os::unix::ffi::OsStrExt;
 
-    id.hash(&mut hash);
-    root.hash(&mut hash);
-    let key = format!("{:016x}", hash.finish());
+        root.as_os_str().as_bytes().to_vec()
+    };
+    #[cfg(windows)]
+    let root_bytes = {
+        use std::os::windows::ffi::OsStrExt;
+
+        root.as_os_str()
+            .encode_wide()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>()
+    };
+    let key = instance_key(id, &root_bytes);
     let lock_path = root.join(format!("instance-{key}.lock"));
 
     let lock = match crate::private::create(&lock_path) {
@@ -174,5 +184,28 @@ impl Primary {
             Ok(arguments)
         })
         .await
+    }
+}
+
+fn instance_key(id: &str, root: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+
+    hash.update((id.len() as u64).to_le_bytes());
+    hash.update(id.as_bytes());
+    hash.update(root);
+
+    // 128 bits keep Unix socket paths short while retaining collision resistance.
+    format!("{:x}", hash.finalize())[..32].to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn instance_key_is_stable() {
+        assert_eq!(
+            super::instance_key("com.example.app", b"/tmp/rake-1000"),
+            "06fecfe32ee0b7f2495cc581528b971b"
+        );
     }
 }

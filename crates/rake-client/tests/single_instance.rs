@@ -14,8 +14,12 @@ fn child() {
         return;
     };
 
-    let primary =
-        rake_client::single::launch("single-test", &["app://open/document".into()]).unwrap();
+    let expected = if mode == "empty" {
+        Vec::new()
+    } else {
+        vec!["app://open/document".to_owned()]
+    };
+    let primary = rake_client::single::launch("single-test", &expected).unwrap();
 
     if let Some(primary) = primary {
         println!("primary");
@@ -28,7 +32,7 @@ fn child() {
 
         let arguments = futures::executor::block_on(primary.receive()).unwrap();
 
-        assert_eq!(arguments, ["app://open/document"]);
+        assert_eq!(arguments, expected);
     } else {
         println!("secondary");
     }
@@ -81,6 +85,19 @@ fn stale_lock_and_simultaneous_launches() {
 
     let first = spawn(&root, "serve");
     let second = spawn(&root, "serve");
+    let first = finish(first);
+    let second = finish(second);
+
+    assert_eq!(
+        usize::from(first.contains("primary")) + usize::from(second.contains("primary")),
+        1
+    );
+    assert_eq!(
+        usize::from(first.contains("secondary")) + usize::from(second.contains("secondary")),
+        1
+    );
+    let first = spawn(&root, "empty");
+    let second = spawn(&root, "empty");
     let first = finish(first);
     let second = finish(second);
 

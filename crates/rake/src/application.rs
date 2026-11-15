@@ -42,6 +42,22 @@ type Reopen = Box<dyn FnMut(&mut gpui::App)>;
 
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
 
+fn handle_reopen(callback: &RefCell<Option<Reopen>>, cx: &mut gpui::App) {
+    if let Some(callback) = callback.borrow_mut().as_mut() {
+        callback(cx);
+    } else {
+        cx.activate(true);
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn launch_url(argument: &str) -> Option<url::Url> {
+    url::Url::parse(argument)
+        .ok()
+        .filter(|url| url.scheme().len() != 1)
+        .or_else(|| url::Url::from_file_path(argument).ok())
+}
+
 /// What closing a standalone application's window requests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClosePolicy {
@@ -827,8 +843,8 @@ impl<R: Route> App<R> {
             {
                 Some(primary) => {
                     for argument in &arguments {
-                        if url::Url::parse(argument).is_ok() {
-                            let _ = services.platform().receive_open_url(argument);
+                        if let Some(url) = launch_url(argument) {
+                            let _ = services.platform().receive_open_url(url.as_str());
                         }
                     }
 
@@ -1009,9 +1025,10 @@ impl<R: Route> App<R> {
             manual: services.http().without_redirects()?,
         }));
 
-        if let Some(callback) = self.reopen.take() {
-            application.on_reopen(callback);
-        }
+        let reopen = Rc::new(RefCell::new(self.reopen.take()));
+        let native_reopen = reopen.clone();
+
+        application.on_reopen(move |cx| handle_reopen(&native_reopen, cx));
 
         let activations = services.platform();
 
@@ -1042,21 +1059,17 @@ impl<R: Route> App<R> {
             if let Some(primary) = primary {
                 let activations = services.platform();
 
-                cx.spawn(async move |_cx| {
+                cx.spawn(async move |cx| {
                     loop {
                         match primary.receive().await {
                             Ok(arguments) => {
                                 for argument in arguments {
-                                    let url = url::Url::parse(&argument).or_else(|_| {
-                                        let path = std::path::PathBuf::from(&argument);
-
-                                        url::Url::from_file_path(path)
-                                    });
-
-                                    if let Ok(url) = url {
+                                    if let Some(url) = launch_url(&argument) {
                                         let _ = activations.receive_open_url(url.as_str());
                                     }
                                 }
+
+                                cx.update(|cx| handle_reopen(&reopen, cx));
                             }
                             Err(error) => crate::warn!(%error, "instance activation rejected"),
                         }
@@ -1349,6 +1362,21 @@ mod theme_tests {
     use super::*;
 
     #[test]
+    fn forwarded_launch_reopens_without_arguments() {
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let observed = calls.clone();
+        let callback: RefCell<Option<Reopen>> = RefCell::new(Some(Box::new(move |_| {
+            observed.set(observed.get() + 1);
+        })));
+        let cx = gpui::TestAppContext::single();
+
+        cx.update(|cx| handle_reopen(&callback, cx));
+        cx.update(|cx| handle_reopen(&callback, cx));
+        assert_eq!(calls.get(), 2);
+        cx.update(|cx| handle_reopen(&RefCell::new(None), cx));
+    }
+
+    #[test]
     fn fallible_root_reports_service_initialization_failure() {
         struct MissingService;
         let mut app = App::new("example.fallible-root").try_root(|services, _, _| {
@@ -1598,5 +1626,22 @@ mod configuration_tests {
             .routes(pages());
 
         assert!(!custom.navigation_feedback);
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod launch_url_tests {
+    #[test]
+    fn drive_letter_is_not_an_application_url() {
+        let url = super::launch_url(r"C:\missing.txt");
+
+        #[cfg(windows)]
+        assert_eq!(url.unwrap().as_str(), "file:///C:/missing.txt");
+        #[cfg(unix)]
+        assert!(url.is_none());
+        assert_eq!(
+            super::launch_url("app://open/item").unwrap().scheme(),
+            "app"
+        );
     }
 }
