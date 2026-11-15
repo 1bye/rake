@@ -49,6 +49,7 @@ impl FileHandle {
         #[cfg(target_family = "wasm")]
         {
             let _ = paths;
+
             Err(Error::Unsupported("native path drop"))
         }
 

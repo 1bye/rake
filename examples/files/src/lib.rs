@@ -84,6 +84,7 @@ impl Toolkit {
         }
 
         let selection = self.runtime.services().platform().pick_file(cx);
+
         self.import_selection(selection, cx);
     }
 
@@ -510,6 +511,7 @@ pub fn application() -> Result<App, rake::AppError> {
                     let file_drop = {
                         let entity: gpui::WeakEntity<Toolkit> = cx.entity().downgrade();
                         let mut app = cx.to_async();
+
                         rake::platform::browser::on_canvas_file_drop(move |file| {
                             let _ = entity.update(&mut app, |this, cx| {
                                 this.import_selection(Box::pin(async move { file.map(Some) }), cx);
