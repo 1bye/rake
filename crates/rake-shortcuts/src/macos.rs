@@ -127,10 +127,10 @@ pub(super) async fn register(
     }
 
     let (key, implicit_shift) = keycode(&accelerator.key)?;
-    let modifiers = u32::from(accelerator.super_key) * (1 << 8)
-        | u32::from(accelerator.shift || implicit_shift) * (1 << 9)
-        | u32::from(accelerator.alt) * (1 << 11)
-        | u32::from(accelerator.control) * (1 << 12);
+    let modifiers = (u32::from(accelerator.super_key) * (1 << 8))
+        | (u32::from(accelerator.shift || implicit_shift) * (1 << 9))
+        | (u32::from(accelerator.alt) * (1 << 11))
+        | (u32::from(accelerator.control) * (1 << 12));
     static NEXT: AtomicU32 = AtomicU32::new(1);
     let id = NEXT
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
@@ -150,7 +150,7 @@ pub(super) async fn register(
     };
     let event_type = EventType {
         class: u32::from_be_bytes(*b"keyb"),
-        kind: 6,
+        kind: 5,
     };
     // SAFETY: All pointers reference initialized storage. The boxed delivery has
     // a stable address and Registration removes the handler before freeing it.
@@ -274,5 +274,91 @@ fn keycode(key: &str) -> Result<(u32, bool), Error> {
         found.ok_or_else(|| {
             Error::InvalidInput("key is absent from the current macOS keyboard layout".into())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Covers: Carbon hotkey event IDs and bounded activation delivery.
+    //! Real: Carbon event parameters. Doubles: constructed event, no registered keys.
+    //! Requires: macOS; no permission prompt or keyboard input.
+    use super::*;
+    use futures::{FutureExt, StreamExt};
+
+    #[link(name = "Carbon", kind = "framework")]
+    unsafe extern "C" {
+        fn CreateEvent(
+            allocator: Ref,
+            class: u32,
+            kind: u32,
+            time: f64,
+            flags: u32,
+            event: *mut Ref,
+        ) -> i32;
+        fn SetEventParameter(
+            event: Ref,
+            name: u32,
+            kind: u32,
+            size: u32,
+            data: *const c_void,
+        ) -> i32;
+        fn ReleaseEvent(event: Ref);
+    }
+
+    #[test]
+    fn carbon_event_routes_only_the_registered_id() {
+        let (sender, mut events) = mpsc::channel(1);
+        let id = HotKeyId {
+            signature: u32::from_be_bytes(*b"RAKE"),
+            id: 42,
+        };
+        let mut delivery = Delivery { id, sender };
+        let mut event = std::ptr::null_mut();
+        // SAFETY: Carbon creates a retained event, the parameter points to a
+        // correctly sized HotKeyId, and Delivery stays live through both calls.
+        unsafe {
+            assert_eq!(
+                CreateEvent(
+                    std::ptr::null_mut(),
+                    u32::from_be_bytes(*b"keyb"),
+                    5,
+                    0.0,
+                    0,
+                    &mut event
+                ),
+                0
+            );
+            assert_eq!(
+                SetEventParameter(
+                    event,
+                    u32::from_be_bytes(*b"----"),
+                    u32::from_be_bytes(*b"hkid"),
+                    std::mem::size_of::<HotKeyId>() as u32,
+                    (&id as *const HotKeyId).cast()
+                ),
+                0
+            );
+            assert_eq!(
+                activated(
+                    std::ptr::null_mut(),
+                    event,
+                    (&mut delivery as *mut Delivery).cast()
+                ),
+                0
+            );
+            delivery.id.id += 1;
+            assert_eq!(
+                activated(
+                    std::ptr::null_mut(),
+                    event,
+                    (&mut delivery as *mut Delivery).cast()
+                ),
+                -9874
+            );
+            ReleaseEvent(event);
+        }
+
+        assert_eq!(events.next().now_or_never(), Some(Some(())));
+        assert_eq!(events.next().now_or_never(), None);
     }
 }

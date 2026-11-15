@@ -232,7 +232,7 @@ async fn x11_worker(
             .map_err(x11_error)?;
         let (keycode, implicit_shift) = mapping
             .keysyms
-            .chunks(usize::from(mapping.keysyms_per_keycode))
+            .chunks(usize::from(mapping.keysyms_per_keycode).max(1))
             .enumerate()
             .find_map(|(index, symbols)| {
                 if symbols.first() == Some(&key) {
@@ -246,10 +246,10 @@ async fn x11_worker(
             .ok_or_else(|| {
                 Error::InvalidInput("key is absent from the current X11 layout".into())
             })?;
-        let modifiers = u16::from(accelerator.control) * u16::from(ModMask::CONTROL)
-            | u16::from(accelerator.alt) * u16::from(ModMask::M1)
-            | u16::from(accelerator.shift || implicit_shift) * u16::from(ModMask::SHIFT)
-            | u16::from(accelerator.super_key) * u16::from(ModMask::M4);
+        let modifiers = (u16::from(accelerator.control) * u16::from(ModMask::CONTROL))
+            | (u16::from(accelerator.alt) * u16::from(ModMask::M1))
+            | (u16::from(accelerator.shift || implicit_shift) * u16::from(ModMask::SHIFT))
+            | (u16::from(accelerator.super_key) * u16::from(ModMask::M4));
         let modifier_mapping = connection
             .get_modifier_mapping()
             .map_err(x11_error)?
@@ -257,12 +257,12 @@ async fn x11_worker(
             .map_err(x11_error)?;
         let num_lock_code = mapping
             .keysyms
-            .chunks(usize::from(mapping.keysyms_per_keycode))
+            .chunks(usize::from(mapping.keysyms_per_keycode).max(1))
             .position(|symbols| symbols.contains(&0xff7f))
             .map(|index| first + index as u8);
         let num_lock = modifier_mapping
             .keycodes
-            .chunks(usize::from(modifier_mapping.keycodes_per_modifier()))
+            .chunks(usize::from(modifier_mapping.keycodes_per_modifier()).max(1))
             .position(|keys| num_lock_code.is_some_and(|key| keys.contains(&key)))
             .map_or(0, |index| 1_u16 << index);
         let mut locks = vec![

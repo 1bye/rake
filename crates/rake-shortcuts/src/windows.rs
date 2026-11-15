@@ -190,3 +190,44 @@ impl Drop for Registration {
 fn last_error() -> Error {
     Error::Native(std::io::Error::last_os_error().to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    //! Covers: delivery through the real message-only window.
+    //! Real: RegisterHotKey and the Windows message queue. Doubles: posted WM_HOTKEY.
+    //! Requires: Windows; no simulated keyboard input.
+    use super::*;
+    use futures::{FutureExt, StreamExt};
+
+    #[test]
+    fn hotkey_window_delivers_an_activation() {
+        let (sender, mut events) = mpsc::channel(1);
+        let mut registration = futures::executor::block_on(register(
+            Accelerator::parse("Ctrl+Alt+Shift+8").unwrap(),
+            sender,
+        ))
+        .unwrap();
+        // SAFETY: The window belongs to this test thread. All message storage is
+        // initialized and dispatched before the registration is destroyed.
+        unsafe {
+            assert_ne!(PostMessageW(registration.window, WM_HOTKEY, 1, 0), 0);
+            let mut message = MSG::default();
+
+            assert_ne!(
+                PeekMessageW(
+                    &mut message,
+                    registration.window,
+                    WM_HOTKEY,
+                    WM_HOTKEY,
+                    PM_REMOVE
+                ),
+                0
+            );
+            DispatchMessageW(&message);
+        }
+
+        assert_eq!(events.next().now_or_never(), Some(Some(())));
+        futures::executor::block_on(registration.unregister()).unwrap();
+        assert_eq!(events.next().now_or_never(), None);
+    }
+}
