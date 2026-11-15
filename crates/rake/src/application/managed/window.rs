@@ -119,7 +119,7 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
         crate::window_state::native::prepare(crate::router::WindowId(1), &mut options, cx);
 
     let opened = cx.open_window(options, move |window, cx| {
-                crate::theme::observe_window(window, cx);
+        crate::theme::observe_window(window, cx);
         let content = match mount(context, window, cx) {
             Ok(content) => content,
             Err(error) => {

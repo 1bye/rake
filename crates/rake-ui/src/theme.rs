@@ -14,12 +14,12 @@ use gpui::{App, FontWeight, Global, Pixels};
 
 #[doc(hidden)]
 pub mod apply;
-mod semantic;
 mod mode;
+mod semantic;
 
-pub use mode::{ThemeMode, mode, register, set_mode};
 #[doc(hidden)]
 pub use mode::observe_window;
+pub use mode::{ThemeMode, mode, register, set_mode};
 
 pub(crate) use semantic::observe;
 

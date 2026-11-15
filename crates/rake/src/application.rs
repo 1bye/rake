@@ -437,8 +437,16 @@ impl<R: Route> App<R> {
 
     /// Registers light and dark palettes with a live system or forced appearance.
     #[must_use]
-    pub fn theme_mode<T: Clone + 'static>(mut self, mode: crate::theme::ThemeMode, light: T, dark: T) -> Self {
-        self.themes.push(Box::new(move |cx| crate::theme::register(cx, mode, light, dark)));
+    pub fn theme_mode<T: Clone + 'static>(
+        mut self,
+        mode: crate::theme::ThemeMode,
+        light: T,
+        dark: T,
+    ) -> Self {
+        self.themes.push(Box::new(move |cx| {
+            crate::theme::register(cx, mode, light, dark)
+        }));
+
         self
     }
 

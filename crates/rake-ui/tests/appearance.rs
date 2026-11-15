@@ -37,13 +37,17 @@ fn appearance_updates_and_forced_modes() {
     cx.update(|_| platform_window.simulate_appearance_change(gpui::WindowAppearance::Dark));
     cx.run_until_parked();
     assert_eq!(*theme::current::<Semantic>(), Semantic::light());
-    cx.update(|cx| { assert!(theme::set_mode(cx, ThemeMode::System)); });
+    cx.update(|cx| {
+        assert!(theme::set_mode(cx, ThemeMode::System));
+    });
     cx.run_until_parked();
     assert_eq!(*theme::current::<Semantic>(), Semantic::dark());
     cx.update(|cx| theme::register(cx, ThemeMode::Dark, 1_u32, 2_u32));
     cx.update(|_| platform_window.simulate_appearance_change(gpui::WindowAppearance::Light));
     cx.run_until_parked();
     assert_eq!(*theme::current::<u32>(), 2);
-    cx.update(|cx| { assert!(theme::set_mode(cx, ThemeMode::System)); });
+    cx.update(|cx| {
+        assert!(theme::set_mode(cx, ThemeMode::System));
+    });
     assert_eq!(*theme::current::<u32>(), 1);
 }

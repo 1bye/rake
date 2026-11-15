@@ -260,7 +260,7 @@ pub fn toggle_popup(id: &str, cx: &mut gpui::App) -> Result<PopupPlacement, Erro
         let popup_handle = handle.clone();
 
         let result = cx.open_window(options, move |window, cx| {
-                crate::theme::observe_window(window, cx);
+            crate::theme::observe_window(window, cx);
             let content = match content.map(Ok).unwrap_or_else(|| (popup.mount)(window, cx)) {
                 Ok(view) => view,
                 Err(error) => {

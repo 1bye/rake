@@ -31,7 +31,9 @@ pub fn register<T: Clone + 'static>(cx: &mut App, mode: ThemeMode, light: T, dar
     cx.set_global(Selection {
         mode,
         appearance,
-        apply: Rc::new(move |is_dark, cx| super::install(cx, if is_dark { dark.clone() } else { light.clone() })),
+        apply: Rc::new(move |is_dark, cx| {
+            super::install(cx, if is_dark { dark.clone() } else { light.clone() })
+        }),
     });
     apply(cx);
 }
@@ -47,16 +49,21 @@ pub fn set_mode(cx: &mut App, mode: ThemeMode) -> bool {
     if !cx.has_global::<Selection>() {
         return false;
     }
+
     let selection = cx.global_mut::<Selection>();
     selection.mode = mode;
     apply(cx);
+
     true
 }
 
 fn apply(cx: &mut App) {
     let selection = cx.global::<Selection>();
     let is_dark = match selection.mode {
-        ThemeMode::System => matches!(selection.appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark),
+        ThemeMode::System => matches!(
+            selection.appearance,
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        ),
         ThemeMode::Light => false,
         ThemeMode::Dark => true,
     };
@@ -75,8 +82,10 @@ fn update(window: &mut Window, cx: &mut App) {
     if !cx.has_global::<Selection>() {
         return;
     }
+
     let selection = cx.global_mut::<Selection>();
     selection.appearance = window.appearance();
+
     if selection.mode == ThemeMode::System {
         apply(cx);
     }
