@@ -808,10 +808,6 @@ impl<R: Route> App<R> {
             let arguments = std::env::args()
                 .skip(1)
                 .map(|argument| {
-                    if url::Url::parse(&argument).is_ok() {
-                        return argument;
-                    }
-
                     std::fs::canonicalize(&argument)
                         .ok()
                         .and_then(|path| url::Url::from_file_path(path).ok())
@@ -821,7 +817,15 @@ impl<R: Route> App<R> {
             match rake_client::single::launch(&self.id, &arguments)
                 .map_err(|error| AppError::Window(format!("instance startup failed: {error}")))?
             {
-                Some(primary) => Some(primary),
+                Some(primary) => {
+                    for argument in &arguments {
+                        if url::Url::parse(argument).is_ok() {
+                            let _ = services.platform().receive_open_url(argument);
+                        }
+                    }
+
+                    Some(primary)
+                }
                 None => return Ok(()),
             }
         } else {
