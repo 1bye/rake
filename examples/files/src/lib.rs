@@ -82,6 +82,18 @@ impl Toolkit {
         }
 
         let selection = self.runtime.services().platform().pick_file(cx);
+        self.import_selection(selection, cx);
+    }
+
+    fn import_selection(
+        &mut self,
+        selection: rake::platform::Request<Option<rake::platform::FileHandle>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.busy(cx) || self.workspace.dirty() {
+            return;
+        }
+
         let executor = cx.background_executor().clone();
         let workspace = self.workspace.clone();
         let expected = workspace.revision();
@@ -215,6 +227,11 @@ impl Render for Toolkit {
             <main
                 id="text-toolkit"
                 class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink"
+                aria-label="Drop one UTF-8 text file to import"
+                on:drop={cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                    let selection = rake::platform::FileHandle::from_drop(paths);
+                    this.import_selection(Box::pin(async move { selection.map(Some) }), cx);
+                })}
                 tab-navigation
             >
                 <h1>"Text Toolkit"</h1>
