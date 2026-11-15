@@ -230,17 +230,25 @@ async fn x11_worker(
             .map_err(x11_error)?
             .reply()
             .map_err(x11_error)?;
-        let keycode = mapping
+        let (keycode, implicit_shift) = mapping
             .keysyms
             .chunks(usize::from(mapping.keysyms_per_keycode))
-            .position(|symbols| symbols.first() == Some(&key))
-            .map(|index| first + index as u8)
+            .enumerate()
+            .find_map(|(index, symbols)| {
+                if symbols.first() == Some(&key) {
+                    Some((first + index as u8, false))
+                } else if symbols.get(1) == Some(&key) {
+                    Some((first + index as u8, true))
+                } else {
+                    None
+                }
+            })
             .ok_or_else(|| {
                 Error::InvalidInput("key is absent from the current X11 layout".into())
             })?;
         let modifiers = u16::from(accelerator.control) * u16::from(ModMask::CONTROL)
             | u16::from(accelerator.alt) * u16::from(ModMask::M1)
-            | u16::from(accelerator.shift) * u16::from(ModMask::SHIFT)
+            | u16::from(accelerator.shift || implicit_shift) * u16::from(ModMask::SHIFT)
             | u16::from(accelerator.super_key) * u16::from(ModMask::M4);
         let modifier_mapping = connection
             .get_modifier_mapping()

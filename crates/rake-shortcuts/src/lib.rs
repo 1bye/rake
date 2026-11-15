@@ -65,7 +65,7 @@ impl Shortcut {
             ));
         }
 
-        let (sender, events) = mpsc::channel(1);
+        let (sender, events) = mpsc::channel::<()>(1);
 
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {

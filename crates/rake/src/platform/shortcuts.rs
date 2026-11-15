@@ -111,6 +111,10 @@ mod ui {
                     rc::Rc,
                 };
 
+                let (cancel, cancellation) = futures::channel::oneshot::channel::<()>();
+                let mut cancel = Some(cancel);
+                let (settle, settled) = futures::channel::oneshot::channel::<()>();
+                let mut settled = Some(settled);
                 let closed = Rc::new(Cell::new(false));
                 let registration = Rc::new(RefCell::new(Registration {
                     shortcut: None,
@@ -120,10 +124,15 @@ mod ui {
                 let quitting = closed.clone();
                 let quit = cx.on_app_quit(move |_| {
                     quitting.set(true);
-
+                    cancel.take();
+                    let pending = settled.take();
                     let cleanup = weak.upgrade().map(|inner| stop(&inner));
 
                     async move {
+                        if let Some(pending) = pending {
+                            let _ = pending.await;
+                        }
+
                         if let Some(cleanup) = cleanup
                             && let Err(error) = cleanup.await
                         {
@@ -135,9 +144,21 @@ mod ui {
                 let (send, receive) = futures::channel::oneshot::channel();
                 let task = cx.spawn(async move |cx| {
                     let result = async {
-                        let mut shortcut = rake_shortcuts::Shortcut::register(&accelerator)
-                            .await
-                            .map_err(error)?;
+                        let mut shortcut = {
+                            use futures::FutureExt;
+
+                            let registration =
+                                rake_shortcuts::Shortcut::register(&accelerator).fuse();
+                            let cancellation = cancellation.fuse();
+                            futures::pin_mut!(registration, cancellation);
+                            futures::select! {
+                                result = registration => result.map_err(error)?,
+                                _ = cancellation => return Err(Error::Unavailable {
+                                    operation: "global shortcut",
+                                    message: "application has quit".into(),
+                                }),
+                            }
+                        };
 
                         if closed.get() {
                             shortcut.unregister().await.map_err(error)?;
@@ -148,17 +169,8 @@ mod ui {
                             });
                         }
 
-                        let mut events = shortcut.take_events();
-                        let mut callback = callback;
-                        let driver = cx.update(|cx| {
-                            cx.spawn(async move |cx| {
-                                use futures::StreamExt;
-
-                                while events.next().await.is_some() {
-                                    cx.update(&mut callback);
-                                }
-                            })
-                        });
+                        let events = shortcut.take_events();
+                        let driver = cx.update(|cx| dispatch(events, callback, cx));
                         *registration.borrow_mut() = Registration {
                             shortcut: Some(shortcut),
                             task: Some(driver),
@@ -171,6 +183,7 @@ mod ui {
                     }
                     .await;
                     let _ = send.send(result);
+                    let _ = settle.send(());
                 });
 
                 Box::pin(async move {
@@ -200,6 +213,21 @@ mod ui {
     }
 
     #[cfg(feature = "global-shortcuts")]
+    fn dispatch(
+        mut events: futures::channel::mpsc::Receiver<()>,
+        mut callback: impl FnMut(&mut gpui::App) + 'static,
+        cx: &mut gpui::App,
+    ) -> gpui::Task<()> {
+        cx.spawn(async move |cx| {
+            use futures::StreamExt;
+
+            while events.next().await.is_some() {
+                cx.update(&mut callback);
+            }
+        })
+    }
+
+    #[cfg(feature = "global-shortcuts")]
     fn stop(inner: &std::cell::RefCell<Registration>) -> Request<()> {
         let mut registration = inner.borrow_mut();
         registration.task.take();
@@ -225,6 +253,51 @@ mod ui {
                 operation: "global shortcut",
                 message,
             },
+        }
+    }
+
+    #[cfg(all(test, feature = "global-shortcuts", feature = "view-test-support"))]
+    mod tests {
+        //! Covers: UI-thread dispatch and cancellation of queued activations.
+        //! Real: GPUI foreground scheduler and registration owner. Doubles: native events.
+        //! Requires: no native shortcut registration or graphical session.
+        use super::*;
+        use std::{
+            cell::{Cell, RefCell},
+            rc::Rc,
+        };
+
+        #[gpui::test]
+        fn unregister_stops_queued_callbacks(cx: &mut gpui::TestAppContext) {
+            let (mut sender, events) = futures::channel::mpsc::channel(1);
+            let calls = Rc::new(Cell::new(0));
+            let count = calls.clone();
+            let ui_thread = std::thread::current().id();
+            let task = cx.update(|cx| {
+                dispatch(
+                    events,
+                    move |_| {
+                        assert_eq!(std::thread::current().id(), ui_thread);
+                        count.set(count.get() + 1);
+                    },
+                    cx,
+                )
+            });
+            let registration = RefCell::new(Registration {
+                shortcut: None,
+                task: Some(task),
+            });
+            sender.try_send(()).unwrap();
+            cx.run_until_parked();
+            assert_eq!(calls.get(), 1);
+
+            sender.try_send(()).unwrap();
+            futures::executor::block_on(stop(&registration)).unwrap();
+            cx.run_until_parked();
+
+            assert_eq!(calls.get(), 1);
+            assert!(sender.try_send(()).is_err());
+            futures::executor::block_on(stop(&registration)).unwrap();
         }
     }
 }
