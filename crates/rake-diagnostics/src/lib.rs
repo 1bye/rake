@@ -711,12 +711,18 @@ pub enum SubscriberMode {
     Host,
 }
 
+#[cfg(not(target_family = "wasm"))]
+type OutputFactory = Arc<dyn Fn() -> Box<dyn std::io::Write + Send> + Send + Sync>;
+
 /// Runner diagnostic configuration. No development control endpoint is installed.
 #[derive(Clone, Default)]
 #[must_use]
 pub struct DiagnosticsConfig {
     collector: Collector,
     mode: SubscriberMode,
+    level: Option<tracing_subscriber::filter::LevelFilter>,
+    #[cfg(not(target_family = "wasm"))]
+    output: Option<OutputFactory>,
 }
 
 impl DiagnosticsConfig {
@@ -745,6 +751,25 @@ impl DiagnosticsConfig {
         self
     }
 
+    /// Sets the default severity. `RAKE_LOG` overrides this value when valid.
+    pub fn log_level(mut self, level: tracing_subscriber::filter::LevelFilter) -> Self {
+        self.level = Some(level);
+
+        self
+    }
+
+    /// Replaces stderr with a writer created on the bounded output worker.
+    /// File output contains structural metadata only, just like crash diagnostics.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn log_writer(
+        mut self,
+        writer: impl Fn() -> Box<dyn std::io::Write + Send> + Send + Sync + 'static,
+    ) -> Self {
+        self.output = Some(Arc::new(writer));
+
+        self
+    }
+
     /// Installs diagnostics once. Automatic installation returns an error on conflict.
     ///
     /// # Errors
@@ -758,8 +783,14 @@ impl DiagnosticsConfig {
         tracing::subscriber::set_global_default(
             Registry::default()
                 .with(self.collector.layer())
-                .with(OutputLayer::new(self.collector.clone())?)
-                .with(tracing_subscriber::filter::LevelFilter::INFO),
+                .with(OutputLayer::new(self.collector.clone(), self)?)
+                .with(
+                    std::env::var("RAKE_LOG")
+                        .ok()
+                        .and_then(|level| level.parse().ok())
+                        .or(self.level)
+                        .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
+                ),
         )
         .map_err(|_| DiagnosticsError::SubscriberAlreadyInstalled)
     }
@@ -779,6 +810,8 @@ pub enum DiagnosticsError {
 }
 
 struct OutputLayer {
+    private: bool,
+    started: Instant,
     #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
     mirror_marker: bool,
     #[cfg(not(target_family = "wasm"))]
@@ -788,23 +821,32 @@ struct OutputLayer {
 }
 
 impl OutputLayer {
-    fn new(collector: Collector) -> Result<Self, DiagnosticsError> {
+    fn new(collector: Collector, config: &DiagnosticsConfig) -> Result<Self, DiagnosticsError> {
         #[cfg(not(target_family = "wasm"))]
         {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<String>(1024);
+
+            let output = config.output.clone();
+            let private = output.is_some();
 
             std::thread::Builder::new()
                 .name("rake-diagnostics".into())
                 .spawn(move || {
                     use std::io::Write;
 
+                    let mut writer: Box<dyn Write + Send> = output
+                        .map(|create| create())
+                        .unwrap_or_else(|| Box::new(std::io::stderr()));
+
                     for text in receiver {
-                        let _ = writeln!(std::io::stderr().lock(), "{text}");
+                        let _ = writeln!(writer, "{text}");
                     }
                 })
                 .map_err(DiagnosticsError::OutputWorker)?;
 
             Ok(Self {
+                private,
+                started: Instant::now(),
                 sender,
                 collector,
                 #[cfg(feature = "devtools")]
@@ -815,9 +857,12 @@ impl OutputLayer {
 
         #[cfg(target_family = "wasm")]
         {
-            let _ = collector;
+            let _ = (collector, config);
 
-            Ok(Self {})
+            Ok(Self {
+                private: false,
+                started: Instant::now(),
+            })
         }
     }
 }
@@ -826,13 +871,24 @@ impl<S: Subscriber> Layer<S> for OutputLayer {
     fn on_event(&self, event: &Event<'_>, _cx: Context<'_, S>) {
         let mut fields = Fields::default();
 
-        event.record(&mut fields);
-        let text = format!(
-            "{} {} {:?}",
-            event.metadata().level(),
-            event.metadata().target(),
-            fields.0
-        );
+        if !self.private {
+            event.record(&mut fields);
+        }
+
+        let text = if self.private {
+            format!(
+                "{}us {} event",
+                self.started.elapsed().as_micros(),
+                event.metadata().level()
+            )
+        } else {
+            format!(
+                "{} {} {:?}",
+                event.metadata().level(),
+                event.metadata().target(),
+                fields.0
+            )
+        };
 
         #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
         let text = if self.mirror_marker {

@@ -116,6 +116,7 @@ pub struct App<R: Route = NoRoute> {
     diagnostics: DiagnosticsConfig,
     crash_reports: crate::crash::startup::CrashReports,
     crash_version: Option<String>,
+    logging: Option<crate::logging::LogConfig>,
     root: Option<Root>,
     background: Option<Background>,
     main_window: Option<(WindowOptionsFactory, MainWindow)>,
@@ -183,6 +184,7 @@ impl App<NoRoute> {
             diagnostics: DiagnosticsConfig::new(),
             crash_reports: crate::crash::startup::CrashReports::default(),
             crash_version: None,
+            logging: Some(crate::logging::LogConfig::default()),
             root: None,
             background: None,
             main_window: None,
@@ -254,6 +256,7 @@ impl App<NoRoute> {
             configuration_error,
             diagnostics: self.diagnostics,
             crash_reports: self.crash_reports,
+            logging: self.logging,
             crash_version: self.crash_version,
             root: self.root,
             background: self.background,
@@ -607,6 +610,23 @@ impl<R: Route> App<R> {
     pub fn diagnostics(mut self, config: DiagnosticsConfig) -> Self {
         self.diagnostics = config;
         self.http_client = RefCell::new(None);
+
+        self
+    }
+
+    /// Configures automatic logging. `RAKE_LOG` overrides the level preference.
+    pub fn logging(mut self, config: crate::logging::LogConfig) -> Self {
+        self.logging = Some(config);
+
+        self
+    }
+
+    /// Leaves output and subscriber ownership to the embedding host.
+    pub fn without_logging(mut self) -> Self {
+        self.logging = None;
+        self.diagnostics = self
+            .diagnostics
+            .subscriber(crate::diagnostics::SubscriberMode::Host);
 
         self
     }
@@ -1005,6 +1025,31 @@ impl<R: Route> App<R> {
         } else {
             return Err(AppError::MissingRoot);
         };
+
+        if let Some(mut config) = self.logging.take() {
+            if config.level.is_none() {
+                if let Ok(preferences) = self.platform.preferences(&self.id) {
+                    #[cfg(not(target_family = "wasm"))]
+                    {
+                        config.level = futures::executor::block_on(preferences.get("log-level"))
+                            .ok()
+                            .flatten();
+                    }
+                    #[cfg(target_family = "wasm")]
+                    {
+                        use futures::FutureExt as _;
+                        config.level = preferences
+                            .get("log-level")
+                            .now_or_never()
+                            .and_then(Result::ok)
+                            .flatten();
+                    }
+                }
+            }
+
+            self.diagnostics =
+                crate::logging::configure(self.diagnostics.clone(), &self.id, config);
+        }
 
         self.diagnostics.install()?;
 

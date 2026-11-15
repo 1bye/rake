@@ -647,6 +647,7 @@ impl<R: Route> RuntimeClient<R> {
                 request_id,
                 response,
             } => Ok(Reply::Data(self.router.http_body(request_id, response))),
+            Query::Logs { after } => Ok(Reply::Logs(self.router.logs(after))),
             Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
                 self.router.diagnostics(after, kind.as_deref()),
             )),

@@ -1333,3 +1333,43 @@ fn mount_registration_and_failed_mounts_follow_committed_entry_lifetimes() {
     assert_eq!(export.origin.entry_id, Some(opened.entry_id));
     assert_eq!(export.origin.tab_id, Some(opened.tab_id));
 }
+
+#[test]
+fn log_queries_scrub_content_and_advance_the_cursor() {
+    use crate::control::{Message, PROTOCOL_VERSION, Query, Reply, Request};
+
+    let router = Router::<crate::router::NoRoute>::new(RouterConfig::default());
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert("token".into(), serde_json::json!("secret"));
+
+    router.0.collector.record(
+        "WARN",
+        "private-target",
+        "event",
+        vec!["private-span".into()],
+        fields,
+    );
+
+    let query = |after| {
+        router
+            .client()
+            .request(Request {
+                protocol: PROTOCOL_VERSION,
+                runtime_id: router.runtime_id(),
+                key: None,
+                message: Message::Query(Query::Logs { after }),
+            })
+            .expect("log query")
+    };
+
+    let Reply::Logs(records) = query(0) else {
+        panic!("expected log reply")
+    };
+
+    assert_eq!(records.len(), 1);
+    let json = serde_json::to_string(&records).expect("log JSON");
+
+    assert!(!json.contains("secret") && !json.contains("private") && !json.contains("token"));
+    assert_eq!(records[0].level, "WARN");
+    assert!(matches!(query(records[0].sequence), Reply::Logs(records) if records.is_empty()));
+}

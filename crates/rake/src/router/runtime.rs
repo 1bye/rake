@@ -1228,6 +1228,16 @@ impl<R: Route> Router<R> {
         }
     }
 
+    pub(crate) fn logs(&self, after: u64) -> Vec<crate::diagnostics::CrashDiagnostic> {
+        self.0
+            .collector
+            .try_crash_tail(128)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|record| record.sequence > after)
+            .collect()
+    }
+
     pub(crate) fn diagnostics(
         &self,
         after: u64,

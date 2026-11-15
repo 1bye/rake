@@ -255,6 +255,7 @@ impl CrashReporter {
         let location_truncated = location.as_ref().is_some_and(|text| text.len() > 256);
 
         CrashRecord {
+            log_path: crate::logging::path(),
             schema_version: 1,
             id: format!(
                 "{:032}-{:010}-{:020}",

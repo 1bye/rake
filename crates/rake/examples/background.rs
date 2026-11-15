@@ -3,6 +3,7 @@
 fn main() -> Result<(), rake::AppError> {
     rake::App::new("example.background")
         .background(|runtime, cx| {
+            rake::info!("background application started");
             // Retain the UI-loop task until it has observed this managed job and quit.
             let task = cx.spawn(async move |_| {
                 if let Ok(work) = runtime.tasks().spawn("background-work", async {
