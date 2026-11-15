@@ -68,7 +68,7 @@ pub(super) fn load(path: &Path, pixels: u32) -> Option<(Identity, Vec<u8>)> {
                 .to_vec();
 
         // GPUI's RenderImage expects BGRA channels.
-        for pixel in bytes.chunks_exact_mut(4) {
+        for pixel in bytes.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
 
@@ -123,14 +123,14 @@ fn identity(path: &Path) -> Identity {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path));
         let mut value = None;
         // SAFETY: The resource key is the Foundation type-identifier string key.
-        if unsafe { url.getResourceValue_forKey_error(&mut value, NSURLContentTypeKey) }.is_ok() {
-            if let Some(value) = value {
-                // SAFETY: NSURLContentTypeKey returns UTType, whose identifier is an NSString.
-                let identifier: objc2::rc::Retained<NSString> =
-                    unsafe { objc2::msg_send![&*value, identifier] };
+        if unsafe { url.getResourceValue_forKey_error(&mut value, NSURLContentTypeKey) }.is_ok()
+            && let Some(value) = value
+        {
+            // SAFETY: NSURLContentTypeKey returns UTType, whose identifier is an NSString.
+            let identifier: objc2::rc::Retained<NSString> =
+                unsafe { objc2::msg_send![&*value, identifier] };
 
-                return Identity::FileType(identifier.to_string());
-            }
+            return Identity::FileType(identifier.to_string());
         }
     }
 

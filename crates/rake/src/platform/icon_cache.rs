@@ -1,6 +1,8 @@
 //! Byte-bounded, least-recently-used storage for native icon rasters.
 
+#[cfg(any(target_os = "macos", test))]
 use std::collections::HashMap;
+#[cfg(any(target_os = "macos", test))]
 use std::sync::Arc;
 
 /// Default raster budget, excluding metadata and renderer-owned resources.
@@ -11,7 +13,9 @@ pub const DEFAULT_BUDGET: usize = 4 * 1024 * 1024;
 pub enum Identity {
     Folder,
     FileType(String),
+    #[cfg(any(target_os = "macos", test))]
     Bundle(String),
+    #[cfg(any(target_os = "macos", test))]
     Custom(std::path::PathBuf),
 }
 
@@ -21,11 +25,13 @@ pub struct Key {
     pub pixels: u32,
 }
 
+#[cfg(any(target_os = "macos", test))]
 struct Entry {
     bytes: Arc<[u8]>,
     used: u64,
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub struct Cache {
     entries: HashMap<Key, Entry>,
     budget: usize,
@@ -35,6 +41,7 @@ pub struct Cache {
     misses: u64,
 }
 
+#[cfg(any(target_os = "macos", test))]
 impl Cache {
     pub fn new(budget: usize) -> Self {
         Self {
