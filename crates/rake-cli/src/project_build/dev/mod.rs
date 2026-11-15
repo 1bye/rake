@@ -65,6 +65,10 @@ pub(super) fn run(args: &Args, cancelled: &AtomicBool) -> Result<()> {
         return Ok(());
     }
 
+    if !args.release {
+        super::dev_profile::warn(args, &Processes::new(cancelled))?;
+    }
+
     let mut args = args.clone();
     let presentation = presentation::Presentation::new(&args);
     let _progress = presentation::Progress::start(&presentation)?;

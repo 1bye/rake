@@ -9,6 +9,7 @@ mod browser;
 mod bundle;
 #[cfg(any(unix, windows))]
 mod dev;
+mod dev_profile;
 mod favicon;
 mod offline;
 mod permissions;
@@ -122,6 +123,10 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         blaze: Value,
         live: Value,
     }
+    if args.manifest.is_file() {
+        dev_profile::warn(args, processes)?;
+    }
+
     let probe = |program: &str, arguments: &[&str]| {
         let mut command = Command::new(program);
 
