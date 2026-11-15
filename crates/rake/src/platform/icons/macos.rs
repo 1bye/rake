@@ -15,17 +15,22 @@ use std::{
 };
 
 pub(super) fn load(path: &Path, pixels: u32) -> Option<(Identity, Vec<u8>)> {
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(Cache::new(DEFAULT_BUDGET)))
+        .lock()
+        .ok()?;
+
+    load_cached(path, pixels, &mut cache)
+}
+
+fn load_cached(path: &Path, pixels: u32, cache: &mut Cache) -> Option<(Identity, Vec<u8>)> {
     objc2::rc::autoreleasepool(|_| {
         let identity = identity(path);
         let key = Key {
             identity: identity.clone(),
             pixels,
         };
-        static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
-        let mut cache = CACHE
-            .get_or_init(|| Mutex::new(Cache::new(DEFAULT_BUDGET)))
-            .lock()
-            .ok()?;
 
         if let Some(bytes) = cache.get(&key) {
             return Some((identity, bytes.to_vec()));
@@ -140,4 +145,25 @@ fn identity(path: &Path) -> Identity {
             .to_string_lossy()
             .to_lowercase(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ten_thousand_real_folder_paths_share_one_native_raster() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cache = Cache::new(DEFAULT_BUDGET);
+
+        for index in 0..10_000 {
+            let path = root.path().join(format!("folder-{index}"));
+            std::fs::create_dir(&path).unwrap();
+            let (identity, bytes) = load_cached(&path, 44, &mut cache).unwrap();
+            assert_eq!(identity, Identity::Folder);
+            assert_eq!(bytes.len(), 44 * 44 * 4);
+        }
+
+        assert_eq!(cache.stats(), (1, 44 * 44 * 4, 9_999, 1));
+    }
 }

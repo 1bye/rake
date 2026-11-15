@@ -15,7 +15,7 @@ pub enum Identity {
     FileType(String),
     #[cfg(any(target_os = "macos", test))]
     Bundle(String),
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg(any(target_os = "macos", target_os = "windows", test))]
     Custom(std::path::PathBuf),
 }
 
@@ -52,6 +52,11 @@ impl Cache {
             hits: 0,
             misses: 0,
         }
+    }
+
+    #[cfg(test)]
+    pub fn stats(&self) -> (usize, usize, u64, u64) {
+        (self.entries.len(), self.bytes, self.hits, self.misses)
     }
 
     pub fn get(&mut self, key: &Key) -> Option<Arc<[u8]>> {
@@ -113,6 +118,7 @@ mod tests {
     fn ten_thousand_plain_folders_share_one_bitmap() {
         let mut cache = Cache::new(DEFAULT_BUDGET);
         let bitmap: Arc<[u8]> = vec![0; 44 * 44 * 4].into();
+
         let key = Key {
             identity: Identity::Folder,
             pixels: 44,
@@ -127,6 +133,7 @@ mod tests {
         assert_eq!(cache.entries.len(), 1);
         assert_eq!(cache.bytes, 44 * 44 * 4);
         assert_eq!(cache.hits, 10_000);
+        assert_eq!(cache.stats(), (1, 44 * 44 * 4, 10_000, 0));
         assert!(cache.bytes <= DEFAULT_BUDGET);
     }
 

@@ -12,8 +12,12 @@ use std::{
 
 #[path = "icon_cache.rs"]
 mod cache;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 use cache::{DEFAULT_BUDGET, Identity, Key};
 
@@ -27,8 +31,8 @@ pub struct Icon {
 
 /// Returns an icon sized in logical pixels. No filesystem or native API runs here.
 ///
-/// Rake initializes the shared cache before opening its windows. Images remain
-/// empty while loading; give the `img` an explicit size to reserve layout space.
+/// Rake initializes the shared cache before opening its windows. A generic file
+/// placeholder appears while loading; give the `img` an explicit layout size.
 /// Sizes are clamped to 1–256 physical pixels to bound individual allocations.
 pub fn for_path(path: impl AsRef<Path>, size: Pixels, _window: &Window, cx: &App) -> Icon {
     Icon {
@@ -50,6 +54,34 @@ impl From<Icon> for ImageSource {
     }
 }
 
+/// Current cache counters for inspection and memory diagnostics.
+#[derive(Clone, Copy, Debug)]
+pub struct CacheStats {
+    /// Number of distinct rendered identities and sizes.
+    pub entries: usize,
+    /// Retained rendered pixel bytes, excluding the 1 KiB placeholder and GPU storage.
+    pub bytes: usize,
+    /// Requests served from the rendered cache.
+    pub hits: u64,
+    /// Requests needing background classification or rasterization.
+    pub misses: u64,
+    /// Number of background loads currently in flight.
+    pub pending: usize,
+}
+
+/// Reads current counters without filesystem or native calls.
+pub fn inspect(cx: &App) -> CacheStats {
+    let cache = cx.global::<SharedIcons>().0.read(cx);
+
+    CacheStats {
+        entries: cache.images.len(),
+        bytes: cache.bytes,
+        hits: cache.hits,
+        misses: cache.misses,
+        pending: cache.pending.len(),
+    }
+}
+
 struct SharedIcons(Entity<Icons>);
 impl Global for SharedIcons {}
 
@@ -64,13 +96,33 @@ struct Raster {
     bytes: usize,
 }
 
-#[derive(Default)]
 struct Icons {
+    placeholder: Arc<RenderImage>,
+    hits: u64,
+    misses: u64,
     images: HashMap<Key, Raster>,
     paths: HashMap<PathBuf, Identity>,
     pending: std::collections::HashSet<PathBuf>,
     bytes: usize,
     clock: u64,
+}
+
+impl Default for Icons {
+    fn default() -> Self {
+        let buffer = image::RgbaImage::from_raw(16, 16, fallback(16, false))
+            .expect("placeholder dimensions match its bitmap");
+
+        Self {
+            placeholder: Arc::new(RenderImage::new([image::Frame::new(buffer)])),
+            hits: 0,
+            misses: 0,
+            images: HashMap::new(),
+            paths: HashMap::new(),
+            pending: std::collections::HashSet::new(),
+            bytes: 0,
+            clock: 0,
+        }
+    }
 }
 
 impl ImageCache for Icons {
@@ -94,13 +146,16 @@ impl ImageCache for Icons {
             };
             if let Some(raster) = self.images.get_mut(&key) {
                 raster.used = self.clock;
+                self.hits += 1;
 
                 return Some(Ok(raster.image.clone()));
             }
         }
 
+        self.misses += 1;
+
         if self.pending.len() >= 16 || !self.pending.insert(request.to_path_buf()) {
-            return None;
+            return Some(Ok(self.placeholder.clone()));
         }
 
         let entity = cx.global::<SharedIcons>().0.downgrade();
@@ -163,11 +218,21 @@ impl ImageCache for Icons {
         })
         .detach();
 
-        None
+        Some(Ok(self.placeholder.clone()))
     }
 }
 
 fn load(path: &Path, pixels: u32) -> (Identity, Vec<u8>) {
+    #[cfg(target_os = "windows")]
+    if let Some(raster) = windows::load(path, pixels) {
+        return raster;
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(raster) = linux::load(path, pixels) {
+        return raster;
+    }
+
     #[cfg(target_os = "macos")]
     if let Some(raster) = macos::load(path, pixels) {
         return raster;
