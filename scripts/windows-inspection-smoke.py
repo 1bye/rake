@@ -49,6 +49,40 @@ def windows_kernel():
     return kernel
 
 
+def process_rows():
+    """Read PID/parent pairs from a local kernel snapshot without starting WMI."""
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+
+    kernel = windows_kernel()
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for name in ["Process32FirstW", "Process32NextW"]:
+        function = getattr(kernel, name)
+        function.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        function.restype = wintypes.BOOL
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        rows = []
+        found = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while found:
+            rows.append({"ProcessId": entry.th32ProcessID, "ParentProcessId": entry.th32ParentProcessID})
+            found = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+        if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+            raise ctypes.WinError(ctypes.get_last_error())
+        return rows
+    finally:
+        kernel.CloseHandle(snapshot)
+
+
 @contextlib.contextmanager
 def association(rake, root):
     """Launch a uniquely registered test editor from a COM helper in our own Job."""
@@ -239,11 +273,7 @@ def main():
                     with urllib.request.urlopen(cdp["url"] + "/json/list", timeout=10) as response:
                         assert any(target["id"] == runtime for target in json.load(response))
 
-                    listing = subprocess.run(
-                        ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress"],
-                        capture_output=True, text=True, timeout=20, check=True,
-                    )
-                    rows = json.loads(listing.stdout)
+                    rows = process_rows()
                     owned = {application.pid}
                     for _ in rows:
                         children = {row["ProcessId"] for row in rows if row["ParentProcessId"] in owned}
