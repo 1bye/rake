@@ -1,8 +1,11 @@
 //! Bounded private application logs, written only by the diagnostics worker.
 
+#[cfg(any(not(target_family = "wasm"), feature = "gpui", test))]
 use std::path::PathBuf;
+#[cfg(any(not(target_family = "wasm"), feature = "gpui", test))]
 use std::sync::OnceLock;
 
+#[cfg(any(not(target_family = "wasm"), feature = "gpui", test))]
 static PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Configuration for automatic application logging.
@@ -14,6 +17,7 @@ pub struct LogConfig {
     pub level: Option<String>,
 }
 
+#[cfg(any(not(target_family = "wasm"), feature = "gpui", test))]
 pub(crate) fn path() -> Option<String> {
     PATH.get().map(|path| path.to_string_lossy().into_owned())
 }

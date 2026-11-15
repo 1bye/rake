@@ -106,6 +106,17 @@ pub struct Snapshot {
     pub output_dropped: u64,
 }
 
+/// A bounded structural log tail using the crash-record privacy policy.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogSnapshot {
+    /// At most 128 retained records, oldest first, after the requested sequence.
+    pub records: Vec<CrashDiagnostic>,
+    /// Collector records lost to eviction or contention since startup.
+    pub dropped: u64,
+    /// Output lines lost to the bounded worker queue since startup.
+    pub output_dropped: u64,
+}
+
 struct Buffer {
     records: VecDeque<Record>,
     sequence: u64,
@@ -204,6 +215,22 @@ impl Collector {
                 })
                 .collect(),
         )
+    }
+
+    /// Copies a structural log tail after an exclusive sequence cursor.
+    /// Contention returns an empty tail; retry with the same cursor.
+    #[must_use]
+    pub fn logs_after(&self, after: u64) -> LogSnapshot {
+        LogSnapshot {
+            records: self
+                .try_crash_tail(128)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|record| record.sequence > after)
+                .collect(),
+            dropped: self.0.dropped.load(Ordering::Relaxed),
+            output_dropped: self.0.output_dropped.load(Ordering::Relaxed),
+        }
     }
 
     /// Current collector clock, for development records spanning several observations.

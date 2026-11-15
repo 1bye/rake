@@ -554,7 +554,7 @@ pub enum Reply {
     /// Bounded diagnostic records, including loss counts.
     Diagnostics(rake_diagnostics::Snapshot),
     /// Structural application log tail, with arbitrary text and fields omitted.
-    Logs(Vec<rake_diagnostics::CrashDiagnostic>),
+    Logs(rake_diagnostics::LogSnapshot),
 }
 
 /// Structured protocol errors; transport failures are reported separately as I/O errors.

@@ -1027,23 +1027,23 @@ impl<R: Route> App<R> {
         };
 
         if let Some(mut config) = self.logging.take() {
-            if config.level.is_none() {
-                if let Ok(preferences) = self.platform.preferences(&self.id) {
-                    #[cfg(not(target_family = "wasm"))]
-                    {
-                        config.level = futures::executor::block_on(preferences.get("log-level"))
-                            .ok()
-                            .flatten();
-                    }
-                    #[cfg(target_family = "wasm")]
-                    {
-                        use futures::FutureExt as _;
-                        config.level = preferences
-                            .get("log-level")
-                            .now_or_never()
-                            .and_then(Result::ok)
-                            .flatten();
-                    }
+            if config.level.is_none()
+                && let Ok(preferences) = self.platform.preferences(&self.id)
+            {
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    config.level = futures::executor::block_on(preferences.get("log-level"))
+                        .ok()
+                        .flatten();
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    use futures::FutureExt as _;
+                    config.level = preferences
+                        .get("log-level")
+                        .now_or_never()
+                        .and_then(Result::ok)
+                        .flatten();
                 }
             }
 

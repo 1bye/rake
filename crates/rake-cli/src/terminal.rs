@@ -675,8 +675,8 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         loop {
             match (&mut next_query, &last_reply) {
                 (Query::Events { cursor }, Reply::Event(event)) => *cursor = Some(event.cursor),
-                (Query::Logs { after }, Reply::Logs(records)) => {
-                    if let Some(record) = records.last() {
+                (Query::Logs { after }, Reply::Logs(snapshot)) => {
+                    if let Some(record) = snapshot.records.last() {
                         *after = record.sequence;
                     }
                 }
@@ -708,7 +708,7 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
 
             let quiet = matches!(&last_reply, Reply::Event(event) if event.kind == rake_protocol::control::EventKind::Unchanged)
                 || matches!(&last_reply, Reply::Diagnostics(snapshot) if snapshot.records.is_empty())
-                || matches!(&last_reply, Reply::Logs(records) if records.is_empty());
+                || matches!(&last_reply, Reply::Logs(snapshot) if snapshot.records.is_empty());
 
             if !quiet && value != previous {
                 print(&last_reply, compact)?;

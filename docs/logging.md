@@ -70,7 +70,8 @@ rake ctl logs --follow
 ```
 
 These commands query the running app through ctl, without opening arbitrary paths.
-Replies are JSON structural records: sequence, elapsed microseconds, level and
+Replies are JSON snapshots with cumulative dropped/output-dropped counts and
+structural records: sequence, elapsed microseconds, level and
 kind. Follow advances the sequence cursor and suppresses empty replies, using the
 existing ctl timeout. The retained tail is at most 128 records, also limited by
 the configured collector capacity. Contention or evictions may leave gaps; this

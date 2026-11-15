@@ -1362,14 +1362,18 @@ fn log_queries_scrub_content_and_advance_the_cursor() {
             .expect("log query")
     };
 
-    let Reply::Logs(records) = query(0) else {
+    let Reply::Logs(snapshot) = query(0) else {
         panic!("expected log reply")
     };
 
-    assert_eq!(records.len(), 1);
+    assert_eq!(snapshot.records.len(), 1);
+    assert_eq!(snapshot.dropped, 0);
+    let records = snapshot.records;
     let json = serde_json::to_string(&records).expect("log JSON");
 
     assert!(!json.contains("secret") && !json.contains("private") && !json.contains("token"));
     assert_eq!(records[0].level, "WARN");
-    assert!(matches!(query(records[0].sequence), Reply::Logs(records) if records.is_empty()));
+    assert!(
+        matches!(query(records[0].sequence), Reply::Logs(snapshot) if snapshot.records.is_empty())
+    );
 }

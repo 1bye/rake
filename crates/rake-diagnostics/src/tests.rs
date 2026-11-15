@@ -161,3 +161,33 @@ fn full_output_queue_drops_without_waiting() {
 
     assert_eq!(collector.snapshot().output_dropped, 1);
 }
+
+#[test]
+fn log_tail_preserves_loss_counts_and_cursor_after_eviction() {
+    let collector = Collector::new(1);
+
+    for _ in 0..2 {
+        collector.record(
+            "INFO",
+            "private-target",
+            "event",
+            Vec::new(),
+            Default::default(),
+        );
+    }
+
+    let snapshot = collector.logs_after(0);
+
+    assert_eq!(snapshot.records.len(), 1);
+    assert_eq!(snapshot.dropped, 1);
+
+    let next = collector.logs_after(snapshot.records[0].sequence);
+
+    assert!(next.records.is_empty());
+    assert_eq!(next.dropped, 1);
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .expect("log JSON")
+            .contains("private")
+    );
+}
