@@ -57,6 +57,7 @@ fn native_endpoint_round_trip_bounds_and_discovery_lifetime() {
         assert!(matches!(reply, Reply::Info(_)));
         let reply = rake_client::query(&instance, Query::Logs { after: 0 }, Duration::from_secs(3))
             .unwrap();
+
         assert!(matches!(reply, Reply::Logs(_)));
 
         let rake_client::Endpoint::Local { path } = &instance.endpoint else {

@@ -1340,6 +1340,7 @@ fn log_queries_scrub_content_and_advance_the_cursor() {
 
     let router = Router::<crate::router::NoRoute>::new(RouterConfig::default());
     let mut fields = std::collections::BTreeMap::new();
+
     fields.insert("token".into(), serde_json::json!("secret"));
 
     router.0.collector.record(

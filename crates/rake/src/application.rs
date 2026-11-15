@@ -1040,6 +1040,7 @@ impl<R: Route> App<R> {
                         .ok()
                         .flatten();
                 }
+
                 #[cfg(target_family = "wasm")]
                 {
                     use futures::FutureExt as _;

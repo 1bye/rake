@@ -105,11 +105,15 @@ fn private_output_is_bounded_concurrent_and_omits_payloads() {
 
     let (sender, receiver) = mpsc::channel();
     let sender = Mutex::new(sender);
+
     let config = DiagnosticsConfig::new()
         .log_writer(move || Box::new(Lines(sender.lock().expect("test sender").clone())));
+
     let collector = config.shared_collector();
+
     let subscriber =
         Registry::default().with(OutputLayer::new(collector.clone(), &config).expect("worker"));
+
     let dispatch = tracing::Dispatch::new(subscriber);
 
     std::thread::scope(|scope| {
@@ -146,8 +150,10 @@ fn private_output_is_bounded_concurrent_and_omits_payloads() {
 #[test]
 fn full_output_queue_drops_without_waiting() {
     let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+
     sender.try_send("occupied".into()).expect("fill queue");
     let collector = Collector::default();
+
     let layer = OutputLayer {
         private: true,
         started: Instant::now(),
@@ -156,7 +162,9 @@ fn full_output_queue_drops_without_waiting() {
         #[cfg(feature = "devtools")]
         mirror_marker: false,
     };
+
     let subscriber = Registry::default().with(layer);
+
     tracing::subscriber::with_default(subscriber, || tracing::info!("dropped"));
 
     assert_eq!(collector.snapshot().output_dropped, 1);

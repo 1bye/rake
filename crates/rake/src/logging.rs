@@ -48,8 +48,10 @@ mod native {
 
         #[cfg(target_os = "macos")]
         let root = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Logs"));
+
         #[cfg(target_os = "windows")]
         let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let root = std::env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
@@ -96,6 +98,7 @@ mod native {
 
                 if path.try_exists()? {
                     let file = private_options().read(true).open(&path)?;
+
                     check_file(&file)?;
 
                     if file.metadata()?.len() > FILE_BYTES {
@@ -122,6 +125,7 @@ mod native {
             check_directory(&self.directory)?;
             let path = file_path(&self.directory, 0);
             let mut file = private_options().append(true).create(true).open(&path)?;
+
             check_file(&file)?;
 
             if file.metadata()?.len().saturating_add(bytes.len() as u64) > FILE_BYTES {
@@ -174,6 +178,7 @@ mod native {
                 if byte == b'\n' {
                     self.pending.push(byte);
                     let _ = self.line(&self.pending);
+
                     self.pending.clear();
                 } else if self.pending.len() < 255 {
                     self.pending.push(byte);
@@ -192,6 +197,7 @@ mod native {
         match LogWriter::open(directory) {
             Ok(writer) => {
                 let _ = PATH.set(writer.directory.join("app.log"));
+
                 Box::new(writer)
             }
             Err(_) => Box::new(io::sink()),
@@ -207,6 +213,7 @@ mod native {
             let temporary = tempfile::tempdir().expect("temporary logs");
             let directory = temporary.path().join("logs");
             let mut writer = LogWriter::open(directory.clone()).expect("private writer");
+
             assert!(LogWriter::open(directory.clone()).is_err());
 
             let line = vec![b'x'; 256];
@@ -245,6 +252,7 @@ mod native {
 
             let directory = temporary.path().join("logs");
             let mut writer = LogWriter::open(directory.clone()).expect("writer");
+
             fs::remove_file(directory.join("app.log")).expect("remove empty log");
             fs::create_dir(directory.join("app.log")).expect("obstruct log file");
             writer
