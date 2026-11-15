@@ -36,11 +36,19 @@ fn application() -> Result<App<pages::Destination>, rake::AppError> {
             name: "Rake Starter",
             version: env!("CARGO_PKG_VERSION"),
         })?
-        .theme(Colors {
-            surface: rake::gpui::rgb(0x18232b),
-            ink: rake::gpui::rgb(0xf0f4e8),
-            accent: rake::gpui::rgb(0x365849),
-        })
+        .theme_mode(
+            rake::theme::ThemeMode::System,
+            Colors {
+                surface: rake::gpui::rgb(0xf0f4e8),
+                ink: rake::gpui::rgb(0x18232b),
+                accent: rake::gpui::rgb(0x365849),
+            },
+            Colors {
+                surface: rake::gpui::rgb(0x18232b),
+                ink: rake::gpui::rgb(0xf0f4e8),
+                accent: rake::gpui::rgb(0x365849),
+            },
+        )
         .routes(rake::routes! {
             pages::Destination::Home => loaded(pages::Home),
             pages::Destination::Updates => pages::Updates,

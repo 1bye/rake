@@ -435,6 +435,21 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Registers light and dark palettes with a live system or forced appearance.
+    #[must_use]
+    pub fn theme_mode<T: Clone + 'static>(
+        mut self,
+        mode: crate::theme::ThemeMode,
+        light: T,
+        dark: T,
+    ) -> Self {
+        self.themes.push(Box::new(move |cx| {
+            crate::theme::register(cx, mode, light, dark)
+        }));
+
+        self
+    }
+
     /// Explicitly exposes registered typed stores to development transports.
     /// Available only with `devtools`; duplicate registries fail before startup.
     #[cfg(feature = "devtools")]
@@ -1159,6 +1174,7 @@ impl<R: Route> App<R> {
             );
 
             let opened = cx.open_window(self.window_options, move |window, cx| {
+                crate::theme::observe_window(window, cx);
                 let view = match root(services, window, cx) {
                     Ok(view) => view,
                     Err(error) => {
