@@ -110,6 +110,7 @@ mod tests {
             identity: Identity::Folder,
             pixels: 44,
         };
+
         cache.insert(key.clone(), bitmap.clone());
 
         for _ in 0..10_000 {
@@ -125,6 +126,7 @@ mod tests {
     #[test]
     fn identity_and_display_size_separate_rasters() {
         let mut cache = Cache::new(DEFAULT_BUDGET);
+
         let identities = [
             Identity::Folder,
             Identity::FileType("text/plain".into()),
@@ -138,6 +140,7 @@ mod tests {
                     identity: identity.clone(),
                     pixels,
                 };
+
                 assert!(cache.get(&key).is_none());
                 cache.insert(
                     key.clone(),
@@ -153,10 +156,12 @@ mod tests {
     #[test]
     fn eviction_keeps_recent_entries_and_bounds_bytes() {
         let mut cache = Cache::new(8);
+
         let key = |pixels| Key {
             identity: Identity::Folder,
             pixels,
         };
+
         cache.insert(key(1), vec![0; 4].into());
         cache.insert(key(2), vec![0; 4].into());
         assert!(cache.get(&key(1)).is_some());

@@ -978,6 +978,7 @@ impl<R: Route> App<R> {
             }
 
             rake_ui::init(cx);
+            crate::platform::icons::init(cx);
             install_themes(self.themes, cx);
             services.platform().install_notifications(&self.id, cx);
 

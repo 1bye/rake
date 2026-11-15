@@ -426,3 +426,6 @@ macro_rules! theme {
         pub(crate) type __RakeTheme = $theme;
     };
 }
+
+#[cfg(feature = "gpui")]
+pub use platform::icons::Icon;
