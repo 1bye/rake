@@ -21,6 +21,7 @@ struct Model {
     mounts: Cell<u32>,
     block_quit: Cell<bool>,
     events: RefCell<Vec<String>>,
+    shortcut: RefCell<Option<rake::platform::GlobalShortcut>>,
 }
 
 struct Panel {
@@ -38,6 +39,7 @@ impl Render for Panel {
 
         gpui::div().size_full().bg(gpui::rgb(0x14202b)).text_color(gpui::rgb(0xf1f5f9)).p_6().flex().flex_col().gap_3()
             .child("Rake tray workbench")
+            .child("Ctrl+Alt+K toggles the rich popup from any application")
             .child(format!("Backend: {capabilities} · Progress: {}%", self.model.progress.get()))
             .child(gpui::div().id("increment").cursor_pointer().child("Increment progress / update icon").on_click(cx.listener(|this, _, _, cx| {
                 let _ = this.runtime.client().and_then(|client| client.execute(Increment).map_err(|_| rake::router::OperationError::InvalidOptions));
@@ -316,6 +318,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
     let outcome = Rc::new(RefCell::new(None));
+
+    let shortcut_model = model.clone();
+    let app = app.background(move |runtime, cx| {
+        let shortcuts = runtime.services().platform().global_shortcuts();
+        let callback_model = shortcut_model.clone();
+        let request = shortcuts.register(
+            "Ctrl+Alt+k",
+            move |cx| {
+                if let Err(error) = toggle_popup("status", cx) {
+                    callback_model.events.borrow_mut().push(error.to_string());
+                    rake::error!(%error, "global shortcut popup toggle failed");
+                }
+            },
+            cx,
+        );
+
+        cx.spawn(async move |cx| match request.await {
+            Ok(shortcut) => *shortcut_model.shortcut.borrow_mut() = Some(shortcut),
+            Err(error) => {
+                shortcut_model.events.borrow_mut().push(error.to_string());
+                rake::error!(%error, "global shortcut registration failed");
+                cx.update(|cx| {
+                    if let Err(error) = rake::show_main_window(cx) {
+                        rake::error!(%error, "shortcut error window could not open");
+                    }
+                });
+            }
+        })
+        .detach();
+    });
 
     let app = if std::env::args().any(|arg| arg == "--probe") {
         let outcome = outcome.clone();

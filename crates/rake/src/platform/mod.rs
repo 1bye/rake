@@ -6,6 +6,10 @@
 //! observation, but cannot undo an OS dialog, clipboard write or browser download.
 
 mod notifications;
+mod shortcuts;
+#[cfg(feature = "gpui")]
+pub use shortcuts::GlobalShortcut;
+pub use shortcuts::GlobalShortcuts;
 mod preferences;
 
 pub use notifications::{Notification, NotificationOutcome};
@@ -36,6 +40,9 @@ pub enum Error {
     /// No implementation exists in the current host.
     #[error("{0} is unsupported by this host")]
     Unsupported(&'static str),
+    /// Another application or registration owns the requested shortcut.
+    #[error("global shortcut is already registered")]
+    ShortcutConflict,
     /// Host security policy or the user denied the operation.
     #[error("permission denied for {0}")]
     PermissionDenied(&'static str),
@@ -104,6 +111,8 @@ pub struct Capabilities {
     pub open_url: Capability,
     /// Post OS notifications; permission and delivery remain separate.
     pub notifications: Capability,
+    /// Register a system-wide shortcut; headless and Web are unsupported.
+    pub global_shortcuts: Capability,
 }
 
 #[derive(Default)]
@@ -116,6 +125,7 @@ struct Activations {
 #[derive(Clone, Default)]
 pub struct Platform {
     activations: Rc<Activations>,
+    shortcuts: GlobalShortcuts,
     #[cfg(any(feature = "gpui", test))]
     notifications: Rc<notifications::Notifications>,
 }
@@ -142,6 +152,7 @@ impl Platform {
 
             Capabilities {
                 notifications: notifications::capability(),
+                global_shortcuts: self.shortcuts.capability(),
                 file_import: ui,
                 file_export: ui,
                 clipboard_read: ui,

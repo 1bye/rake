@@ -144,7 +144,8 @@ command queue.
 single printable key. AppKit installs native menu equivalents. SNI exports the
 shortcut for the host to interpret. Windows rejects accelerators: the pinned GPUI
 message pump provides no supported TranslateAccelerator hook. A displayed label
-would not establish execution. These APIs never register global shortcuts.
+would not establish execution. Tray menu accelerators remain menu-scoped. For system-wide activation, use the
+separate [global shortcut service](platform-services.md#global-shortcuts).
 
 ## Reopen the main window
 

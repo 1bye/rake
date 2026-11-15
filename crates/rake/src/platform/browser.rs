@@ -63,6 +63,7 @@ pub(super) fn capabilities() -> Capabilities {
     };
     Capabilities {
         notifications: super::notifications::capability(),
+        global_shortcuts: super::GlobalShortcuts::default().capability(),
         file_import: capability(1, true),
         file_export: capability(2, true),
         clipboard_read: capability(4, true),
