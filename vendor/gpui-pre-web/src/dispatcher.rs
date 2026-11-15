@@ -118,7 +118,10 @@ impl MainThreadMailbox {
                 let result = match js_sys::Atomics::wait_async(&view, 0, 0) {
                     Ok(result) => result,
                     Err(error) => {
-                        log::error!("Atomics.waitAsync failed: {error:?}");
+                        log::error!(
+                            "Atomics.waitAsync failed: {}",
+                            std::any::type_name_of_val(&error)
+                        );
                         break;
                     }
                 };
@@ -245,7 +248,10 @@ impl PlatformDispatcher for WebDispatcher {
         };
 
         if let Err(error) = result {
-            log::error!("dispatch: failed to send to background queue: {error:?}");
+            log::error!(
+                "dispatch: failed to send to background queue: {}",
+                std::any::type_name_of_val(&error)
+            );
         }
     }
 
@@ -388,7 +394,10 @@ fn schedule_idle_runnable(
         None => window.request_idle_callback(callback.unchecked_ref()),
     };
     if let Err(error) = result {
-        log::error!("requestIdleCallback failed: {error:?}");
+        log::error!(
+            "requestIdleCallback failed: {}",
+            std::any::type_name_of_val(&error)
+        );
     }
 }
 

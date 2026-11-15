@@ -317,7 +317,7 @@ pub(crate) fn install<R: Route>(
         let item = MenuItem::command(action.id.clone(), action.arguments.clone());
 
         if let Err(error) = item.run(&client) {
-            tracing::error!(%error, command = %action.id, "menu command rejected");
+            tracing::error!(error_type = std::any::type_name_of_val(&error), command = %action.id, "menu command rejected");
         }
     });
     cx.on_action(|action: &Standard, cx| match action.role {
@@ -347,7 +347,10 @@ pub(crate) fn install<R: Route>(
             state_changed = commands.listen();
             cx.update(|cx| {
                 if let Err(error) = refresh(&menus, &commands, cx) {
-                    tracing::error!(%error, "menu refresh rejected");
+                    tracing::error!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "menu refresh rejected"
+                    );
                 }
             });
         }

@@ -167,15 +167,12 @@ async fn fetch(
                 (Some(name), Some(value)) => {
                     builder = builder.header(name, value);
                 }
-                (name, value) => {
-                    log::warn!(
-                        "skipping response header at index {index}: \
-                                     name={name:?}, value={value:?}"
-                    );
+                (_, _) => {
+                    log::warn!("skipping response header at index {index}: invalid header");
                 }
             },
-            Err(entry) => {
-                log::warn!("skipping non-array header entry at index {index}: {entry:?}");
+            Err(_) => {
+                log::warn!("skipping non-array header entry at index {index}");
             }
         }
     }
@@ -307,6 +304,9 @@ fn response_chunk(result: JsValue) -> io::Result<Option<Vec<u8>>> {
 
 async fn cancel_reader(reader: &web_sys::ReadableStreamDefaultReader) {
     if let Err(error) = wasm_bindgen_futures::JsFuture::from(reader.cancel()).await {
-        log::debug!("failed to cancel response body reader: {error:?}");
+        log::debug!(
+            "failed to cancel response body reader: {}",
+            std::any::type_name_of_val(&error)
+        );
     }
 }

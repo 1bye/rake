@@ -270,7 +270,10 @@ impl<R: Route> Router<R> {
                     // The runtime owns this handoff. Disposing a routed page must
                     // not cancel the final reload along with its observing view.
                     if let Err(error) = Router(core.clone()).reload_page() {
-                        tracing::error!(%error, "approved browser reload failed; reload manually");
+                        tracing::error!(
+                            error_type = std::any::type_name_of_val(&error),
+                            "approved browser reload failed; reload manually"
+                        );
                     }
                 }
             }
@@ -496,7 +499,10 @@ impl<R: Route> Router<R> {
         if self.0.native_quit.borrow().is_none() {
             match rake_updates::NativeQuitBridge::new() {
                 Ok(bridge) => *self.0.native_quit.borrow_mut() = Some(Rc::new(bridge)),
-                Err(error) => tracing::error!(%error,"native quit guard could not be installed"),
+                Err(error) => tracing::error!(
+                    error_type = std::any::type_name_of_val(&error),
+                    "native quit guard could not be installed"
+                ),
             }
         }
 

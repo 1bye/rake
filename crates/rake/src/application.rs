@@ -1100,7 +1100,10 @@ impl<R: Route> App<R> {
         application.on_open_urls(move |urls| {
             for url in urls {
                 if let Err(error) = activations.receive_open_url(&url) {
-                    crate::warn!(%error, "host URL activation rejected");
+                    crate::warn!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "host URL activation rejected"
+                    );
                 }
             }
         });
@@ -1136,7 +1139,10 @@ impl<R: Route> App<R> {
 
                                 cx.update(|cx| handle_reopen(&reopen, cx));
                             }
-                            Err(error) => crate::warn!(%error, "instance activation rejected"),
+                            Err(error) => crate::warn!(
+                                error_type = std::any::type_name_of_val(&error),
+                                "instance activation rejected"
+                            ),
                         }
                     }
                 })
@@ -1176,7 +1182,10 @@ impl<R: Route> App<R> {
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
                 #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
                 if let Err(error) = updates.initialize_sparkle_checks() {
-                    tracing::error!(%error, "native update checks could not start");
+                    tracing::error!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "native update checks could not start"
+                    );
                 }
 
                 let executor = cx.background_executor().clone();

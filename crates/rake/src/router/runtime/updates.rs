@@ -114,7 +114,10 @@ impl<R: Route> Router<R> {
                 && matches!(updates.state(), UpdateState::ReadyToRestart(_))
                 && let Err(error) = self.restart_for_update(QuitOptions::default())
             {
-                tracing::error!(%error, "native update restart was not admitted");
+                tracing::error!(
+                    error_type = std::any::type_name_of_val(&error),
+                    "native update restart was not admitted"
+                );
             }
 
             if self.0.update_exit.get() == rake_updates::RestartDisposition::ProviderHandlesExit
