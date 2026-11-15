@@ -27,8 +27,33 @@ pub(super) fn warn(args: &Args, processes: &Processes<'_>) -> Result<()> {
             continue;
         }
 
-        let manifest: toml::Value =
+        let mut manifest: toml::Value =
             fs::read_to_string(Path::new(root).join("Cargo.toml"))?.parse()?;
+        if let Some(overrides) = manifest
+            .get_mut("profile")
+            .and_then(|p| p.get_mut("dev"))
+            .and_then(|p| p.get_mut("package"))
+            .and_then(toml::Value::as_table_mut)
+        {
+            for (spec, settings) in overrides.clone() {
+                if spec == "*" {
+                    continue;
+                }
+
+                // Let Cargo resolve version abbreviations and source-qualified package IDs.
+                let mut command = Command::new("cargo");
+                command
+                    .args(["pkgid", "--manifest-path"])
+                    .arg(Path::new(root).join("Cargo.toml"))
+                    .args(["--package", &spec]);
+                let id = processes.capture(&mut command, Capture::Metadata)?;
+
+                if package["id"].as_str() == Some(id.trim()) {
+                    overrides.insert(name.to_owned(), settings);
+                }
+            }
+        }
+
         let version = package["version"]
             .as_str()
             .ok_or("missing package version")?;
