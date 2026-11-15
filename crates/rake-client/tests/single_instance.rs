@@ -61,7 +61,10 @@ fn finish(mut child: std::process::Child) -> String {
 
 #[test]
 fn stale_lock_and_simultaneous_launches() {
-    let root = std::env::temp_dir().join(format!("rake-instance-test-{}", std::process::id()));
+    #[cfg(unix)]
+    let root = std::path::PathBuf::from(format!("/tmp/rake-si-test-{}", std::process::id()));
+    #[cfg(windows)]
+    let root = std::env::temp_dir().join(format!("rake-si-test-{}", std::process::id()));
     let crashed = finish(spawn(&root, "crash"));
     assert!(crashed.contains("primary"));
 
