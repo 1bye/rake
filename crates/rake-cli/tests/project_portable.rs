@@ -406,4 +406,5 @@ fn doctor_reports_tools_with_a_broken_manifest() {
 
     assert!(checks["rust"].is_string());
     assert!(checks["cargo"].is_string());
+    assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
 }

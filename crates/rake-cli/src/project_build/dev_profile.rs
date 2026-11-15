@@ -14,7 +14,7 @@ pub(super) fn warn(args: &Args, processes: &Processes<'_>) {
             .args(["metadata", "--format-version", "1", "--manifest-path"])
             .arg(&args.manifest);
         let metadata: Value =
-            serde_json::from_str(&processes.capture(&mut command, Capture::Metadata)?)?;
+            serde_json::from_str(&processes.capture(&mut command, Capture::Advice)?)?;
 
         check_metadata(&metadata, processes)
     })();
@@ -68,7 +68,7 @@ fn check_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
                 .args(["pkgid", "--manifest-path"])
                 .arg(Path::new(root).join("Cargo.toml"))
                 .args(["--package", &spec]);
-            let Ok(id) = processes.capture(&mut command, Capture::Metadata) else {
+            let Ok(id) = processes.capture(&mut command, Capture::Advice) else {
                 continue;
             };
 
