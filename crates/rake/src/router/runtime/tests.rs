@@ -1339,17 +1339,12 @@ fn log_queries_scrub_content_and_advance_the_cursor() {
     use crate::control::{Message, PROTOCOL_VERSION, Query, Reply, Request};
 
     let router = Router::<crate::router::NoRoute>::new(RouterConfig::default());
-    let mut fields = std::collections::BTreeMap::new();
+    use tracing_subscriber::prelude::*;
+    let subscriber = tracing_subscriber::registry().with(router.0.collector.layer());
 
-    fields.insert("token".into(), serde_json::json!("secret"));
-
-    router.0.collector.record(
-        "WARN",
-        "private-target",
-        "event",
-        vec!["private-span".into()],
-        fields,
-    );
+    tracing::subscriber::with_default(subscriber, || {
+        crate::warn!(target: "example::worker", token = "secret", "application message");
+    });
 
     let query = |after| {
         router
@@ -1372,8 +1367,10 @@ fn log_queries_scrub_content_and_advance_the_cursor() {
     let records = snapshot.records;
     let json = serde_json::to_string(&records).expect("log JSON");
 
-    assert!(!json.contains("secret") && !json.contains("private") && !json.contains("token"));
-    assert_eq!(records[0].level, "WARN");
+    assert!(!json.contains("secret"));
+    assert!(records[0].line.contains("WARN example::worker"));
+    assert!(records[0].line.contains("application message"));
+    assert!(records[0].line.contains("token=[redacted]"));
     assert!(
         matches!(query(records[0].sequence), Reply::Logs(snapshot) if snapshot.records.is_empty())
     );

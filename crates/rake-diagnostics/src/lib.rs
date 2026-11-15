@@ -20,6 +20,8 @@
 
 #[cfg(feature = "devtools")]
 pub mod http;
+mod logging;
+pub use logging::MAX_LOG_RECORD_BYTES;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -106,18 +108,30 @@ pub struct Snapshot {
     pub output_dropped: u64,
 }
 
-/// A bounded structural log tail using the crash-record privacy policy.
+/// One redacted application log line, identical to the line sent to file output.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogRecord {
+    /// Monotonic sequence within the retained log stream.
+    pub sequence: u64,
+    /// RFC 3339 UTC timestamp, level, target, message and redacted fields, without a newline.
+    pub line: String,
+}
+
+/// A bounded redacted application log tail.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogSnapshot {
     /// At most 128 retained records, oldest first, after the requested sequence.
-    pub records: Vec<CrashDiagnostic>,
-    /// Collector records lost to eviction or contention since startup.
+    pub records: Vec<LogRecord>,
+    /// Log records lost to eviction or contention since startup.
     pub dropped: u64,
     /// Output lines lost to the bounded worker queue since startup.
     pub output_dropped: u64,
 }
 
 struct Buffer {
+    logs: VecDeque<LogRecord>,
+    log_sequence: u64,
+    log_bytes: usize,
     records: VecDeque<Record>,
     sequence: u64,
     #[cfg(feature = "devtools")]
@@ -131,6 +145,7 @@ struct Inner {
     capacity: usize,
     dropped: AtomicU64,
     output_dropped: AtomicU64,
+    logs_dropped: AtomicU64,
     started: Instant,
     next_span: AtomicU64,
     #[cfg(feature = "devtools")]
@@ -153,6 +168,9 @@ impl Collector {
     pub fn new(capacity: usize) -> Self {
         Self(Arc::new(Inner {
             buffer: Mutex::new(Buffer {
+                logs: VecDeque::new(),
+                log_sequence: 0,
+                log_bytes: 0,
                 records: VecDeque::new(),
                 sequence: 0,
                 #[cfg(feature = "devtools")]
@@ -163,6 +181,7 @@ impl Collector {
             capacity,
             dropped: AtomicU64::new(0),
             output_dropped: AtomicU64::new(0),
+            logs_dropped: AtomicU64::new(0),
             started: Instant::now(),
             next_span: AtomicU64::new(1),
             #[cfg(feature = "devtools")]
@@ -217,20 +236,66 @@ impl Collector {
         )
     }
 
-    /// Copies a structural log tail after an exclusive sequence cursor.
+    /// Copies a redacted log tail after an exclusive sequence cursor.
     /// Contention returns an empty tail; retry with the same cursor.
     #[must_use]
     pub fn logs_after(&self, after: u64) -> LogSnapshot {
         LogSnapshot {
             records: self
-                .try_crash_tail(128)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|record| record.sequence > after)
-                .collect(),
-            dropped: self.0.dropped.load(Ordering::Relaxed),
+                .0
+                .buffer
+                .try_lock()
+                .map(|buffer| {
+                    buffer
+                        .logs
+                        .iter()
+                        .filter(|record| record.sequence > after)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            dropped: self.0.logs_dropped.load(Ordering::Relaxed),
             output_dropped: self.0.output_dropped.load(Ordering::Relaxed),
         }
+    }
+
+    fn record_log(&self, line: String) {
+        let Ok(mut buffer) = self.0.buffer.try_lock() else {
+            self.0.logs_dropped.fetch_add(1, Ordering::Relaxed);
+
+            return;
+        };
+
+        if self.0.capacity == 0 {
+            self.0.logs_dropped.fetch_add(1, Ordering::Relaxed);
+
+            return;
+        }
+
+        buffer.log_sequence += 1;
+
+        let record = LogRecord {
+            sequence: buffer.log_sequence,
+            line,
+        };
+
+        let bytes = serde_json::to_vec(&record).map_or(0, |bytes| bytes.len());
+
+        // Keep escaped JSON comfortably below the ctl frame limit.
+        while buffer.logs.len() >= self.0.capacity.min(128) || buffer.log_bytes + bytes > 256 * 1024
+        {
+            if let Some(old) = buffer.logs.pop_front() {
+                buffer.log_bytes = buffer
+                    .log_bytes
+                    .saturating_sub(serde_json::to_vec(&old).map_or(0, |bytes| bytes.len()));
+                self.0.logs_dropped.fetch_add(1, Ordering::Relaxed);
+            } else {
+                break;
+            }
+        }
+
+        buffer.log_bytes += bytes;
+        buffer.logs.push_back(record);
     }
 
     /// Current collector clock, for development records spanning several observations.
@@ -340,7 +405,7 @@ impl Collector {
     /// Supplies a layer for a host-owned tracing subscriber.
     #[must_use]
     pub fn layer(&self) -> CollectorLayer {
-        CollectorLayer(self.clone())
+        CollectorLayer(self.clone(), None)
     }
 
     /// Records an owned event using this collector's current tracing context.
@@ -502,7 +567,7 @@ impl Visit for Fields {
 }
 
 /// A composable tracing layer backed by a [`Collector`].
-pub struct CollectorLayer(Collector);
+pub struct CollectorLayer(Collector, Option<OutputLayer>);
 
 /// Owned causal metadata captured before asynchronous work changes context.
 #[derive(Clone, Debug, Default)]
@@ -680,6 +745,20 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
             context
         };
 
+        let line = logging::format(
+            event.metadata().level().as_str(),
+            event.metadata().target(),
+            &fields.0,
+            &context.fields,
+            web_time::SystemTime::now(),
+        );
+
+        self.0.record_log(line.clone());
+
+        if let Some(output) = &self.1 {
+            output.emit(event, &fields, &line);
+        }
+
         self.0.record_context(
             context,
             event.metadata().level().as_str(),
@@ -786,7 +865,7 @@ impl DiagnosticsConfig {
     }
 
     /// Replaces stderr with a writer created on the bounded output worker.
-    /// File output contains structural metadata only, just like crash diagnostics.
+    /// File output uses bounded single-line records with secret-named fields redacted.
     #[cfg(not(target_family = "wasm"))]
     pub fn log_writer(
         mut self,
@@ -809,8 +888,10 @@ impl DiagnosticsConfig {
 
         tracing::subscriber::set_global_default(
             Registry::default()
-                .with(self.collector.layer())
-                .with(OutputLayer::new(self.collector.clone(), self)?)
+                .with(CollectorLayer(
+                    self.collector.clone(),
+                    Some(OutputLayer::new(self.collector.clone(), self)?),
+                ))
                 .with(
                     std::env::var("RAKE_LOG")
                         .ok()
@@ -837,8 +918,7 @@ pub enum DiagnosticsError {
 }
 
 struct OutputLayer {
-    private: bool,
-    started: Instant,
+    file: bool,
     #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
     mirror_marker: bool,
     #[cfg(not(target_family = "wasm"))]
@@ -854,7 +934,7 @@ impl OutputLayer {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<String>(1024);
 
             let output = config.output.clone();
-            let private = output.is_some();
+            let file = output.is_some();
 
             std::thread::Builder::new()
                 .name("rake-diagnostics".into())
@@ -872,8 +952,7 @@ impl OutputLayer {
                 .map_err(DiagnosticsError::OutputWorker)?;
 
             Ok(Self {
-                private,
-                started: Instant::now(),
+                file,
                 sender,
                 collector,
                 #[cfg(feature = "devtools")]
@@ -886,28 +965,13 @@ impl OutputLayer {
         {
             let _ = (collector, config);
 
-            Ok(Self {
-                private: false,
-                started: Instant::now(),
-            })
+            Ok(Self { file: false })
         }
     }
-}
 
-impl<S: Subscriber> Layer<S> for OutputLayer {
-    fn on_event(&self, event: &Event<'_>, _cx: Context<'_, S>) {
-        let mut fields = Fields::default();
-
-        if !self.private {
-            event.record(&mut fields);
-        }
-
-        let text = if self.private {
-            format!(
-                "{}us {} event",
-                self.started.elapsed().as_micros(),
-                event.metadata().level()
-            )
+    fn emit(&self, event: &Event<'_>, fields: &Fields, line: &str) {
+        let text = if self.file {
+            line.to_owned()
         } else {
             format!(
                 "{} {} {:?}",
@@ -918,7 +982,7 @@ impl<S: Subscriber> Layer<S> for OutputLayer {
         };
 
         #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
-        let text = if self.mirror_marker {
+        let text = if !self.file && self.mirror_marker {
             format!("\u{1e}RAKE_DIAGNOSTIC {text}")
         } else {
             text

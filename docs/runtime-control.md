@@ -210,8 +210,8 @@ Handlers don't hold a router scheduling lane, so a handler can await navigation 
 
 State is coalesced and intermediate mutations aren't replayed. A skipped revision, stale epoch or other runtime returns `Gap` plus a fresh snapshot, and an unchanged poll contains no snapshot. Consumers replace their state on Snapshot, Changed or Gap. Tracing loss never defines authoritative routing or operation state.
 
-`rake ctl logs` and `logs follow` expose a privacy-safe structural tail with
-collector sequences and cumulative dropped/output-dropped counts; see
+`rake ctl logs` and `logs follow` expose a redacted formatted log tail with
+log sequences and cumulative dropped/output-dropped counts; see
 [Application logging](logging.md). `requests list`, `traces export` and raw
 Diagnostics queries expose full development records and the same loss counters.
 These are best-effort diagnostics with separate retention from state events.

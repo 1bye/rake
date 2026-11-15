@@ -31,7 +31,7 @@ No unrelated files are deleted. Existing oversized or unsafe logs disable output
 for that launch rather than modifying untrusted files.
 
 All file creation, locking, rotation and writes run on the existing diagnostics
-worker. Producers use a queue of 1024 bounded metadata lines and never wait for
+worker. Producers use a queue of 1024 bounded formatted lines and never wait for
 a disk write. A full queue drops output; `Snapshot::output_dropped` counts queue
 loss. Missing roots, denied permissions, full disks and write failures discard
 file output and do not stop the application. This is best-effort troubleshooting,
@@ -71,22 +71,51 @@ rake ctl logs --follow
 
 These commands query the running app through ctl, without opening arbitrary paths.
 Replies are JSON snapshots with cumulative dropped/output-dropped counts and
-structural records: sequence, elapsed microseconds, level and
-kind. Follow advances the sequence cursor and suppresses empty replies, using the
+records with a log sequence and a `line` containing the same UTC timestamp,
+level, target, message and redacted fields sent to the file writer. Follow advances the sequence cursor and suppresses empty replies, using the
 existing ctl timeout. The retained tail is at most 128 records, also limited by
-the configured collector capacity. Contention or evictions may leave gaps; this
+the configured collector capacity and a 256 KiB encoded retention budget (so
+escaped JSON fits the ctl transport frame). Contention or evictions may leave gaps; this
 is not a replay of older rotated files. `logs list` uses the same privacy policy.
 Development `requests list` and `traces export` remain diagnostic tools and may
 contain application-supplied fields.
 
 ## Privacy and crash reports
 
-File logs and ctl logs use the crash-record privacy defaults: arbitrary messages,
-fields, targets, span names, source paths and user content are omitted. File lines
-contain elapsed microseconds, severity and the fixed kind `event`. Rake does not
-collect environment values, credentials, request bodies or document content for
-these logs. Development stderr and the browser console display tracing fields;
-applications must avoid logging sensitive values there.
+File logs and ctl logs retain what the application chooses to log. A line contains
+an RFC 3339 UTC wall-clock timestamp, severity, target, message, and event fields
+plus inherited span fields. For example:
+
+```text
+2026-11-15T12:30:00Z INFO example::worker "save complete" count=3 api_key=[redacted]
+```
+
+Field names are matched using case-insensitive substrings: `password`, `passwd`,
+`secret`, `token`, `authorization`, `cookie`, `api_key`, `apikey`, `credential`,
+`private_key`, and `session`. Matching values become `[redacted]`. Newlines and
+carriage returns in values are escaped, so one event always occupies one line.
+Each record is at most 4 KiB of UTF-8 including its newline. Oversized records end
+in `…[truncated]`; truncation preserves UTF-8.
+
+Rake's own call sites log fixed operation categories, static error types, bounded
+identifiers and structural status. They do not format error payloads, document or
+clipboard contents, notification bodies, URL query strings, or local file paths.
+The log directory and optional crash-record `log_path` necessarily identify a
+local filesystem path. No artifacts are uploaded automatically.
+
+Apps must avoid logging secrets in messages, targets, field names, or values under
+unrecognized keys. Key redaction is a heuristic, not content scanning: it cannot
+recognize credentials inside an arbitrary message, URL, nested debug object, or
+free-form error. Apps must sanitize home paths, URL queries, clipboard/text data,
+and notification bodies before logging them. Review logs before sharing them.
+Development stderr and browser console retain their existing format and fields;
+key redaction applies to file and ctl output. Host-owned subscribers, output
+writers and log bridges require their own privacy policy.
+
+Crash diagnostics remain structural only; they do not inherit the richer log
+content. The ctl ring and file queue are independently best-effort: contention,
+evictions, queue overflow, disk failures or process exit may leave different
+subsets retained or persisted, but a retained `line` is formatted identically.
 
 Native crash records optionally include `log_path` when the file worker opened
 successfully. That path can contain a local account name. Log contents are never

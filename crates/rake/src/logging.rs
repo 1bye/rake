@@ -68,6 +68,7 @@ mod native {
         directory: PathBuf,
         _lock: fs::File,
         pending: Vec<u8>,
+        truncated: bool,
     }
 
     impl LogWriter {
@@ -118,6 +119,7 @@ mod native {
                 directory,
                 _lock: lock,
                 pending: Vec::new(),
+                truncated: false,
             })
         }
 
@@ -176,12 +178,25 @@ mod native {
             for &byte in bytes {
                 // Reserve the last byte for framing even if a record is oversized.
                 if byte == b'\n' {
+                    if self.truncated {
+                        let marker = "…[truncated]".as_bytes();
+                        let end = crate::diagnostics::MAX_LOG_RECORD_BYTES - 1 - marker.len();
+                        let end = std::str::from_utf8(&self.pending[..end])
+                            .map_or_else(|error| error.valid_up_to(), |_| end);
+
+                        self.pending.truncate(end);
+                        self.pending.extend_from_slice(marker);
+                    }
+
                     self.pending.push(byte);
                     let _ = self.line(&self.pending);
 
                     self.pending.clear();
-                } else if self.pending.len() < 255 {
+                    self.truncated = false;
+                } else if self.pending.len() < crate::diagnostics::MAX_LOG_RECORD_BYTES - 1 {
                     self.pending.push(byte);
+                } else {
+                    self.truncated = true;
                 }
             }
 
@@ -207,6 +222,52 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn file_contains_same_redacted_message_and_target_as_ctl() {
+            use tracing_subscriber::prelude::*;
+
+            let collector = crate::diagnostics::Collector::default();
+
+            let subscriber = tracing_subscriber::registry().with(collector.layer());
+
+            tracing::subscriber::with_default(subscriber, || {
+                crate::info!(target: "example::worker", api_key = "sensitive-value", detail = "a\nb", "saved application document");
+            });
+
+            let snapshot = collector.logs_after(0);
+            let temporary = tempfile::tempdir().expect("temporary logs");
+            let directory = temporary.path().join("logs");
+            let mut writer = LogWriter::open(directory.clone()).expect("writer");
+
+            writeln!(writer, "{}", snapshot.records[0].line).expect("write");
+
+            let content = fs::read_to_string(file_path(&directory, 0)).expect("log file");
+
+            assert_eq!(content.trim_end(), snapshot.records[0].line);
+            assert!(
+                content.contains("example::worker")
+                    && content.contains("saved application document")
+            );
+            assert!(content.contains("api_key=[redacted]"));
+            assert!(!content.contains("sensitive-value"));
+            assert_eq!(content.lines().count(), 1);
+        }
+
+        #[test]
+        fn oversized_lines_are_utf8_safe_marked_and_bounded() {
+            let temporary = tempfile::tempdir().expect("temporary logs");
+            let directory = temporary.path().join("logs");
+            let mut writer = LogWriter::open(directory.clone()).expect("writer");
+
+            writeln!(writer, "{}", "🦀".repeat(4096)).expect("write");
+
+            let content = fs::read_to_string(file_path(&directory, 0)).expect("valid UTF-8 log");
+
+            assert!(content.len() <= crate::diagnostics::MAX_LOG_RECORD_BYTES);
+            assert!(content.ends_with("…[truncated]\n"));
+            assert_eq!(content.lines().count(), 1);
+        }
 
         #[test]
         fn rotation_bounds_and_exclusive_writer() {

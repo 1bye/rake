@@ -373,9 +373,9 @@ pub enum Query {
         /// Selects the response rather than the request body.
         response: bool,
     },
-    /// Privacy-safe application log metadata after a collector sequence.
+    /// Redacted formatted application logs after a log sequence.
     Logs {
-        /// Exclusive collector sequence.
+        /// Exclusive log sequence.
         after: u64,
     },
     /// Bounded records for logs, requests and traces with observable loss counts.
@@ -553,7 +553,7 @@ pub enum Reply {
     Event(RuntimeEvent),
     /// Bounded diagnostic records, including loss counts.
     Diagnostics(rake_diagnostics::Snapshot),
-    /// Structural application log tail, with arbitrary text and fields omitted.
+    /// Redacted application log lines, matching the file output.
     Logs(rake_diagnostics::LogSnapshot),
 }
 

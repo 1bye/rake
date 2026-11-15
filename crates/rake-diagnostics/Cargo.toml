@@ -21,6 +21,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
 web-time.workspace = true
+time = { version = "0.3", default-features = false, features = ["formatting"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-sys = { version = "0.3", features = ["console"] }

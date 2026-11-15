@@ -5,23 +5,23 @@
 
 use tracing_subscriber::prelude::*;
 
-use super::{Collector, DiagnosticsConfig, Instant, OutputLayer, Registry};
+use super::{Collector, CollectorLayer, DiagnosticsConfig, OutputLayer, Registry};
 
 #[test]
 fn a_full_output_queue_reports_loss_and_keeps_collecting() {
     let collector = Collector::new(10);
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
 
-    let subscriber = tracing_subscriber::registry()
-        .with(collector.layer())
-        .with(OutputLayer {
-            private: false,
-            started: Instant::now(),
+    let subscriber = tracing_subscriber::registry().with(CollectorLayer(
+        collector.clone(),
+        Some(OutputLayer {
+            file: false,
             #[cfg(feature = "devtools")]
             mirror_marker: false,
             sender,
             collector: collector.clone(),
-        });
+        }),
+    ));
 
     tracing::subscriber::with_default(subscriber, || {
         tracing::info!("first");
@@ -84,7 +84,7 @@ fn crash_tail_keeps_only_bounded_structural_metadata() {
 }
 
 #[test]
-fn private_output_is_bounded_concurrent_and_omits_payloads() {
+fn file_output_is_concurrent_redacted_and_matches_ctl() {
     use std::io::{self, Write};
     use std::sync::{Mutex, mpsc};
     use std::time::Duration;
@@ -111,8 +111,10 @@ fn private_output_is_bounded_concurrent_and_omits_payloads() {
 
     let collector = config.shared_collector();
 
-    let subscriber =
-        Registry::default().with(OutputLayer::new(collector.clone(), &config).expect("worker"));
+    let subscriber = Registry::default().with(CollectorLayer(
+        collector.clone(),
+        Some(OutputLayer::new(collector.clone(), &config).expect("worker")),
+    ));
 
     let dispatch = tracing::Dispatch::new(subscriber);
 
@@ -142,8 +144,26 @@ fn private_output_is_bounded_concurrent_and_omits_payloads() {
     let output = String::from_utf8(output).expect("UTF-8 output");
 
     assert_eq!(output.lines().count(), 80);
-    assert!(output.lines().all(|line| line.ends_with(" WARN event")));
-    assert!(!output.contains("secret") && !output.contains("private user content"));
+    assert!(
+        output
+            .lines()
+            .all(|line| line.contains(" WARN ") && line.contains("private user content"))
+    );
+    assert!(output.contains("token=[redacted]"));
+    assert!(!output.contains("secret-token"));
+    let retained: Vec<_> = collector
+        .logs_after(0)
+        .records
+        .into_iter()
+        .map(|record| record.line)
+        .collect();
+
+    assert!(!retained.is_empty());
+    assert!(
+        retained
+            .iter()
+            .all(|line| output.lines().any(|emitted| emitted == line))
+    );
     assert_eq!(collector.snapshot().output_dropped, 0);
 }
 
@@ -155,15 +175,14 @@ fn full_output_queue_drops_without_waiting() {
     let collector = Collector::default();
 
     let layer = OutputLayer {
-        private: true,
-        started: Instant::now(),
+        file: true,
         sender,
         collector: collector.clone(),
         #[cfg(feature = "devtools")]
         mirror_marker: false,
     };
 
-    let subscriber = Registry::default().with(layer);
+    let subscriber = Registry::default().with(CollectorLayer(collector.clone(), Some(layer)));
 
     tracing::subscriber::with_default(subscriber, || tracing::info!("dropped"));
 
@@ -174,15 +193,13 @@ fn full_output_queue_drops_without_waiting() {
 fn log_tail_preserves_loss_counts_and_cursor_after_eviction() {
     let collector = Collector::new(1);
 
-    for _ in 0..2 {
-        collector.record(
-            "INFO",
-            "private-target",
-            "event",
-            Vec::new(),
-            Default::default(),
-        );
-    }
+    let subscriber = Registry::default().with(collector.layer());
+
+    tracing::subscriber::with_default(subscriber, || {
+        for _ in 0..2 {
+            tracing::info!(target: "example::worker", "message");
+        }
+    });
 
     let snapshot = collector.logs_after(0);
 
@@ -197,5 +214,51 @@ fn log_tail_preserves_loss_counts_and_cursor_after_eviction() {
         !serde_json::to_string(&snapshot)
             .expect("log JSON")
             .contains("private")
+    );
+}
+
+#[test]
+fn escaped_log_tail_stays_below_the_transport_budget() {
+    let collector = Collector::new(1024);
+    let subscriber = Registry::default().with(collector.layer());
+
+    tracing::subscriber::with_default(subscriber, || {
+        for _ in 0..150 {
+            tracing::info!("{}", "\\".repeat(8192));
+        }
+    });
+    let snapshot = collector.logs_after(0);
+
+    assert!(snapshot.records.len() <= 128);
+    assert!(snapshot.dropped > 0);
+    assert!(serde_json::to_vec(&snapshot).expect("log snapshot").len() < 270 * 1024);
+    assert!(
+        snapshot
+            .records
+            .iter()
+            .all(|record| record.line.ends_with("…[truncated]"))
+    );
+}
+
+#[test]
+fn development_stderr_format_is_unchanged() {
+    let collector = Collector::default();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let output = OutputLayer {
+        file: false,
+        sender,
+        collector: collector.clone(),
+        #[cfg(feature = "devtools")]
+        mirror_marker: false,
+    };
+    let subscriber = Registry::default().with(CollectorLayer(collector, Some(output)));
+
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!(target: "app", count = 7, "hello");
+    });
+
+    assert_eq!(
+        receiver.try_recv().expect("stderr line"),
+        "INFO app {\"count\": Number(7), \"message\": String(\"hello\")}"
     );
 }
