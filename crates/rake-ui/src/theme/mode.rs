@@ -30,6 +30,7 @@ impl Global for Selection {}
 /// Later calls replace the pair; existing window observers use the new pair.
 pub fn register<T: Clone + 'static>(cx: &mut App, mode: ThemeMode, light: T, dark: T) {
     let appearance = cx.window_appearance();
+
     cx.set_global(Selection {
         mode,
         appearance,
@@ -53,6 +54,7 @@ pub fn set_mode(cx: &mut App, mode: ThemeMode) -> bool {
     }
 
     let selection = cx.global_mut::<Selection>();
+
     selection.mode = mode;
     apply(cx);
 
@@ -61,6 +63,7 @@ pub fn set_mode(cx: &mut App, mode: ThemeMode) -> bool {
 
 fn apply(cx: &mut App) {
     let selection = cx.global::<Selection>();
+
     let is_dark = match selection.mode {
         ThemeMode::System => matches!(
             selection.appearance,
@@ -69,7 +72,9 @@ fn apply(cx: &mut App) {
         ThemeMode::Light => false,
         ThemeMode::Dark => true,
     };
+
     let apply = selection.apply.clone();
+
     apply(is_dark, cx);
 }
 
@@ -90,6 +95,7 @@ fn update_appearance(appearance: WindowAppearance, cx: &mut App) {
     }
 
     let selection = cx.global_mut::<Selection>();
+
     selection.appearance = appearance;
 
     if selection.mode == ThemeMode::System {

@@ -12,6 +12,7 @@ use crate::theme::{self, Semantic, ThemeMode};
 #[test]
 fn appearance_updates_and_forced_modes() {
     let cx = &mut gpui::TestAppContext::single();
+
     cx.update(|cx| {
         crate::init(cx);
         assert_eq!(theme::mode(cx), None);
