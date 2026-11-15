@@ -125,7 +125,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
     }
 
     if args.manifest.is_file() {
-        dev_profile::warn(args, processes)?;
+        dev_profile::warn(args, processes);
     }
 
     let probe = |program: &str, arguments: &[&str]| {
@@ -221,7 +221,7 @@ impl Project {
         )?)?;
 
         if args.dev && !args.release {
-            dev_profile::warn_metadata(&metadata, processes)?;
+            dev_profile::warn_metadata(&metadata, processes);
         }
 
         let root = PathBuf::from(string(&metadata, "workspace_root")?);

@@ -307,7 +307,7 @@ fn doctor_and_dev_warn_from_workspace_profile() {
     fs::create_dir_all(root.join("gpui/src")).unwrap();
     fs::write(
         root.join("Cargo.toml"),
-        "[workspace]\nmembers=['app']\nexclude=['gpui']\nresolver='3'\n",
+        "[workspace]\nmembers=['app']\nexclude=['gpui']\nresolver='3'\n[profile.dev.package.some-crate]\nopt-level=3\n",
     )
     .unwrap();
     fs::write(root.join("app/Cargo.toml"), "[package]\nname='profile-app'\nversion='0.1.0'\nedition='2024'\n[dependencies]\ngpui={path='../gpui'}\n[profile.dev]\nopt-level=3\n").unwrap();
@@ -334,6 +334,12 @@ fn doctor_and_dev_warn_from_workspace_profile() {
             .unwrap();
 
         let diagnostic = String::from_utf8_lossy(&output.stderr);
+
+        if command == "doctor" {
+            assert!(output.status.success(), "{diagnostic}");
+        } else {
+            assert!(diagnostic.contains("missing-binary"), "{diagnostic}");
+        }
 
         assert!(
             diagnostic.contains("gpui builds at dev opt-level 0"),
@@ -378,4 +384,26 @@ fn doctor_and_dev_warn_from_workspace_profile() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("gpui builds at dev opt-level 0"));
+}
+
+#[test]
+fn doctor_reports_tools_with_a_broken_manifest() {
+    let directory = tempfile::tempdir().unwrap();
+
+    fs::write(directory.path().join("Cargo.toml"), "[broken").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(directory.path())
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let checks: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(checks["rust"].is_string());
+    assert!(checks["cargo"].is_string());
 }

@@ -6,63 +6,87 @@ use std::{fs, path::Path, process::Command};
 
 const SNIPPET: &str = "[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3";
 
-pub(super) fn warn(args: &Args, processes: &Processes<'_>) -> Result<()> {
-    let mut command = Command::new("cargo");
+pub(super) fn warn(args: &Args, processes: &Processes<'_>) {
+    let result = (|| -> Result<()> {
+        let mut command = Command::new("cargo");
 
-    command
-        .args(["metadata", "--format-version", "1", "--manifest-path"])
-        .arg(&args.manifest);
-    let metadata: Value =
-        serde_json::from_str(&processes.capture(&mut command, Capture::Metadata)?)?;
+        command
+            .args(["metadata", "--format-version", "1", "--manifest-path"])
+            .arg(&args.manifest);
+        let metadata: Value =
+            serde_json::from_str(&processes.capture(&mut command, Capture::Metadata)?)?;
 
-    warn_metadata(&metadata, processes)
+        check_metadata(&metadata, processes)
+    })();
+
+    if result.is_err() {
+        eprintln!("rake: note: could not check GPUI development optimization");
+    }
 }
 
-pub(super) fn warn_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
+pub(super) fn warn_metadata(metadata: &Value, processes: &Processes<'_>) {
+    if check_metadata(metadata, processes).is_err() {
+        eprintln!("rake: note: could not check GPUI development optimization");
+    }
+}
+
+fn check_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
+    let packages = metadata["packages"].as_array().ok_or("missing packages")?;
+
+    if !packages
+        .iter()
+        .any(|p| matches!(p["name"].as_str(), Some("gpui" | "gpui-pre" | "gpui-fast")))
+    {
+        return Ok(());
+    }
+
     let root = metadata["workspace_root"]
         .as_str()
         .ok_or("missing workspace root")?;
-
-    let environment = std::env::var("CARGO_PROFILE_DEV_OPT_LEVEL").ok();
-
     let members = metadata["workspace_members"]
         .as_array()
         .ok_or("missing workspace members")?;
+    let environment = std::env::var("CARGO_PROFILE_DEV_OPT_LEVEL").ok();
+    let mut manifest: toml::Value =
+        toml::from_str(&fs::read_to_string(Path::new(root).join("Cargo.toml"))?)?;
 
-    for package in metadata["packages"].as_array().ok_or("missing packages")? {
+    if let Some(overrides) = manifest
+        .get_mut("profile")
+        .and_then(|p| p.get_mut("dev"))
+        .and_then(|p| p.get_mut("package"))
+        .and_then(toml::Value::as_table_mut)
+    {
+        for (spec, settings) in overrides.clone() {
+            if spec == "*" {
+                continue;
+            }
+
+            // Cargo permits profile selectors for packages outside the current graph.
+            let mut command = Command::new("cargo");
+
+            command
+                .args(["pkgid", "--manifest-path"])
+                .arg(Path::new(root).join("Cargo.toml"))
+                .args(["--package", &spec]);
+            let Ok(id) = processes.capture(&mut command, Capture::Metadata) else {
+                continue;
+            };
+
+            if let Some(package) = packages
+                .iter()
+                .find(|p| p["id"].as_str() == Some(id.trim()))
+                && let (Some(name), Some(version)) =
+                    (package["name"].as_str(), package["version"].as_str())
+            {
+                overrides.insert(format!("{name}@{version}"), settings);
+            }
+        }
+    }
+
+    for package in packages {
         let Some(name @ ("gpui" | "gpui-pre" | "gpui-fast")) = package["name"].as_str() else {
             continue;
         };
-
-        let mut manifest: toml::Value =
-            toml::from_str(&fs::read_to_string(Path::new(root).join("Cargo.toml"))?)?;
-
-        if let Some(overrides) = manifest
-            .get_mut("profile")
-            .and_then(|p| p.get_mut("dev"))
-            .and_then(|p| p.get_mut("package"))
-            .and_then(toml::Value::as_table_mut)
-        {
-            for (spec, settings) in overrides.clone() {
-                if spec == "*" {
-                    continue;
-                }
-
-                // Let Cargo resolve version abbreviations and source-qualified package IDs.
-                let mut command = Command::new("cargo");
-
-                command
-                    .args(["pkgid", "--manifest-path"])
-                    .arg(Path::new(root).join("Cargo.toml"))
-                    .args(["--package", &spec]);
-                let id = processes.capture(&mut command, Capture::Metadata)?;
-
-                if package["id"].as_str() == Some(id.trim()) {
-                    overrides.insert(name.to_owned(), settings);
-                }
-            }
-        }
-
         let version = package["version"]
             .as_str()
             .ok_or("missing package version")?;
@@ -141,7 +165,7 @@ mod tests {
             "packages": [{"id": "local", "source": null}]
         });
 
-        assert!(warn_metadata(&metadata, &processes).is_ok());
+        assert!(check_metadata(&metadata, &processes).is_ok());
     }
 
     #[test]
