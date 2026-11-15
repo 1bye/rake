@@ -134,6 +134,7 @@ mod tests {
     fn unrelated_packages_need_no_profile_metadata() {
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let processes = Processes::new(&cancelled);
+
         let metadata = serde_json::json!({
             "workspace_root": "/unused",
             "workspace_members": [],
