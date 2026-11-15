@@ -836,3 +836,19 @@ and its Base projection. Changes made by Kit itself refresh Rake's ambient copy
 through the Base-global observer. Base `surface` means Kit `popover`, and Base
 `destructive` means Kit `danger`. See [Base and Kit](gpui-kit.md) for the shared
 Root, native-only Kit gate, and inspection boundaries.
+
+External file drops use the typed `on:drop` callback:
+
+```rust
+on:drop={cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+    let file = rake::platform::FileHandle::from_drop(paths);
+    // Await file?.read(max_bytes) in retained asynchronous work.
+})}
+```
+
+Give the target an `aria-label` and a keyboard-accessible import button. Use
+`style={|s| s.drag_over::<gpui::ExternalPaths>(|s, _, _, _| s.opacity(0.8))}`
+for drag-over feedback. Native external paths are delivered by the platform on
+macOS, Windows and Linux. Browser canvases use
+`rake::platform::browser::on_canvas_file_drop` instead; retain its returned
+subscription for the lifetime of the view. The files example shows both adapters.

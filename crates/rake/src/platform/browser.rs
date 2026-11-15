@@ -12,6 +12,9 @@ extern "C" {
     #[wasm_bindgen(js_name = capabilities)]
     fn detect() -> u32;
     #[cfg(feature = "gpui")]
+    #[wasm_bindgen(js_name = on_canvas_file_drop)]
+    fn listen_canvas_drop(callback: &js_sys::Function) -> js_sys::Function;
+    #[cfg(feature = "gpui")]
     #[wasm_bindgen(js_name = pick_file)]
     fn select_file() -> js_sys::Promise;
     #[cfg(feature = "gpui")]
@@ -171,4 +174,41 @@ pub(super) fn write_clipboard(text: &str) -> Request<()> {
 #[cfg(feature = "gpui")]
 pub(super) fn open_url(url: &str) -> Result<(), Error> {
     launch_url(url).map_err(|value| error("open URL", value))
+}
+
+/// Owns canvas drop listeners. Retain it while the target view is mounted.
+#[cfg(feature = "gpui")]
+pub struct CanvasFileDrop {
+    dispose: js_sys::Function,
+    _callback: Closure<dyn FnMut(JsValue)>,
+}
+
+#[cfg(feature = "gpui")]
+impl Drop for CanvasFileDrop {
+    fn drop(&mut self) {
+        let _ = self.dispose.call0(&JsValue::NULL);
+    }
+}
+
+/// Registers a canvas-wide single-file target without inventing filesystem paths.
+/// Empty and multi-file drops report invalid input. Reading remains caller bounded.
+#[cfg(feature = "gpui")]
+pub fn on_canvas_file_drop(
+    mut callback: impl FnMut(Result<super::FileHandle, Error>) + 'static,
+) -> CanvasFileDrop {
+    let closure = Closure::wrap(Box::new(move |file: JsValue| {
+        let name = js_sys::Reflect::get(&file, &JsValue::from_str("name"))
+            .ok()
+            .and_then(|name| name.as_string());
+        callback(match name {
+            Some(name) => Ok(super::FileHandle { name, file }),
+            None => Err(Error::InvalidInput("drop exactly one file".into())),
+        });
+    }) as Box<dyn FnMut(JsValue)>);
+    let dispose = listen_canvas_drop(closure.as_ref().unchecked_ref());
+
+    CanvasFileDrop {
+        dispose,
+        _callback: closure,
+    }
 }

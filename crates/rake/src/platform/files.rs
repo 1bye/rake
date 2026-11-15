@@ -45,13 +45,21 @@ impl FileHandle {
     ///
     /// # Errors
     /// Rejects empty and multi-file drops.
-    #[cfg(not(target_family = "wasm"))]
     pub fn from_drop(paths: &gpui::ExternalPaths) -> Result<Self, Error> {
-        if paths.paths().len() != 1 {
-            return Err(Error::InvalidInput("drop exactly one file".into()));
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = paths;
+            Err(Error::Unsupported("native path drop"))
         }
 
-        Ok(Self::from_path(paths.paths()[0].clone()))
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if paths.paths().len() != 1 {
+                return Err(Error::InvalidInput("drop exactly one file".into()));
+            }
+
+            Ok(Self::from_path(paths.paths()[0].clone()))
+        }
     }
 
     /// Native extension for applications that need filesystem integration.

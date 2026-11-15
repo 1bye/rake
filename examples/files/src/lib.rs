@@ -63,6 +63,8 @@ async fn prepare(
 }
 
 struct Toolkit {
+    #[cfg(target_family = "wasm")]
+    _file_drop: rake::platform::browser::CanvasFileDrop,
     runtime: RuntimeContext,
     workspace: Rc<Workspace>,
     preferences: Preferences,
@@ -228,10 +230,12 @@ impl Render for Toolkit {
                 id="text-toolkit"
                 class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink"
                 aria-label="Drop one UTF-8 text file to import"
-                on:drop={cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
-                    let selection = rake::platform::FileHandle::from_drop(paths);
-                    this.import_selection(Box::pin(async move { selection.map(Some) }), cx);
-                })}
+                on:drop={
+                    cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                        let selection = rake::platform::FileHandle::from_drop(paths);
+                        this.import_selection(Box::pin(async move { selection.map(Some) }), cx);
+                    })
+                }
                 tab-navigation
             >
                 <h1>"Text Toolkit"</h1>
@@ -502,7 +506,21 @@ pub fn application() -> Result<App, rake::AppError> {
                         })
                     });
 
+                    #[cfg(target_family = "wasm")]
+                    let file_drop = {
+                        let entity = cx.entity().downgrade();
+                        let mut app = cx.to_async();
+                        rake::platform::browser::on_canvas_file_drop(move |file| {
+                            let _ = entity.update(&mut app, |this, cx| {
+                                this.import_selection(Box::pin(async move { file.map(Some) }), cx);
+                                cx.notify();
+                            });
+                        })
+                    };
+
                     Toolkit {
+                        #[cfg(target_family = "wasm")]
+                        _file_drop: file_drop,
                         updates: runtime.bind_updates(cx),
                         runtime,
                         workspace: workspace.clone(),
