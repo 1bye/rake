@@ -38,7 +38,25 @@ type MainWindow = Rc<
 
 type WindowOptionsFactory = Rc<dyn Fn() -> WindowOptions>;
 
+type Reopen = Box<dyn FnMut(&mut gpui::App)>;
+
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
+
+fn handle_reopen(callback: &RefCell<Option<Reopen>>, cx: &mut gpui::App) {
+    if let Some(callback) = callback.borrow_mut().as_mut() {
+        callback(cx);
+    } else {
+        cx.activate(true);
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn launch_url(argument: &str) -> Option<url::Url> {
+    url::Url::parse(argument)
+        .ok()
+        .filter(|url| url.scheme().len() != 1)
+        .or_else(|| url::Url::from_file_path(argument).ok())
+}
 
 /// What closing a standalone application's window requests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,6 +100,8 @@ thread_local! {
 /// Typed routers drive scoped tasks and entry activity on the host UI loop.
 pub struct App<R: Route = NoRoute> {
     id: String,
+    single_instance: bool,
+    reopen: Option<Reopen>,
     services: ServiceRegistry,
     window_options: WindowOptions,
     window_state: Option<crate::window_state::WindowState>,
@@ -122,6 +142,22 @@ pub struct App<R: Route = NoRoute> {
     distribution: Option<(&'static str, &'static str)>,
 }
 
+impl<R: Route> App<R> {
+    /// Forwards subsequent launches to this user's running application.
+    pub fn single_instance(mut self) -> Self {
+        self.single_instance = true;
+
+        self
+    }
+
+    /// Handles native reopen events, including macOS dock activation.
+    pub fn on_reopen(mut self, callback: impl FnMut(&mut gpui::App) + 'static) -> Self {
+        self.reopen = Some(Box::new(callback));
+
+        self
+    }
+}
+
 impl App<NoRoute> {
     /// Creates an application with bounded local panic recording enabled.
     ///
@@ -131,6 +167,8 @@ impl App<NoRoute> {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            single_instance: false,
+            reopen: None,
             services: ServiceRegistry::new(),
             window_options: WindowOptions::default(),
             window_state: None,
@@ -201,6 +239,8 @@ impl App<NoRoute> {
 
         App {
             id: self.id,
+            single_instance: self.single_instance,
+            reopen: self.reopen,
             services: self.services,
             window_options: self.window_options,
             window_state: self.window_state,
@@ -783,6 +823,39 @@ impl<R: Route> App<R> {
 
         let services = self.services()?;
 
+        #[cfg(any(unix, windows))]
+        let primary = if self.single_instance {
+            let arguments = std::env::args_os()
+                .skip(1)
+                .map(|argument| {
+                    std::fs::canonicalize(&argument)
+                        .ok()
+                        .and_then(|path| url::Url::from_file_path(path).ok())
+                        .map_or_else(
+                            || argument.to_string_lossy().into_owned(),
+                            |url| url.to_string(),
+                        )
+                })
+                .collect::<Vec<_>>();
+
+            match rake_client::single::launch(&self.id, &arguments)
+                .map_err(|error| AppError::Window(format!("instance startup failed: {error}")))?
+            {
+                Some(primary) => {
+                    for argument in &arguments {
+                        if let Some(url) = launch_url(argument) {
+                            let _ = services.platform().receive_open_url(url.as_str());
+                        }
+                    }
+
+                    Some(primary)
+                }
+                None => return Ok(()),
+            }
+        } else {
+            None
+        };
+
         if let Ok(menus) = services.get::<crate::menus::Menus>() {
             menus.validate(&self.commands)?;
         }
@@ -952,6 +1025,11 @@ impl<R: Route> App<R> {
             manual: services.http().without_redirects()?,
         }));
 
+        let reopen = Rc::new(RefCell::new(self.reopen.take()));
+        let native_reopen = reopen.clone();
+
+        application.on_reopen(move |cx| handle_reopen(&native_reopen, cx));
+
         let activations = services.platform();
 
         application.on_open_urls(move |urls| {
@@ -975,6 +1053,29 @@ impl<R: Route> App<R> {
                 )));
 
                 return;
+            }
+
+            #[cfg(any(unix, windows))]
+            if let Some(primary) = primary {
+                let activations = services.platform();
+
+                cx.spawn(async move |cx| {
+                    loop {
+                        match primary.receive().await {
+                            Ok(arguments) => {
+                                for argument in arguments {
+                                    if let Some(url) = launch_url(&argument) {
+                                        let _ = activations.receive_open_url(url.as_str());
+                                    }
+                                }
+
+                                cx.update(|cx| handle_reopen(&reopen, cx));
+                            }
+                            Err(error) => crate::warn!(%error, "instance activation rejected"),
+                        }
+                    }
+                })
+                .detach();
             }
 
             rake_ui::init(cx);
@@ -1262,6 +1363,23 @@ mod theme_tests {
     use super::*;
 
     #[test]
+    fn forwarded_launch_reopens_without_arguments() {
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let observed = calls.clone();
+
+        let callback: RefCell<Option<Reopen>> = RefCell::new(Some(Box::new(move |_| {
+            observed.set(observed.get() + 1);
+        })));
+
+        let cx = gpui::TestAppContext::single();
+
+        cx.update(|cx| handle_reopen(&callback, cx));
+        cx.update(|cx| handle_reopen(&callback, cx));
+        assert_eq!(calls.get(), 2);
+        cx.update(|cx| handle_reopen(&RefCell::new(None), cx));
+    }
+
+    #[test]
     fn fallible_root_reports_service_initialization_failure() {
         struct MissingService;
         let mut app = App::new("example.fallible-root").try_root(|services, _, _| {
@@ -1511,5 +1629,22 @@ mod configuration_tests {
             .routes(pages());
 
         assert!(!custom.navigation_feedback);
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod launch_url_tests {
+    #[test]
+    fn drive_letter_is_not_an_application_url() {
+        let url = super::launch_url(r"C:\missing.txt");
+
+        #[cfg(windows)]
+        assert_eq!(url.unwrap().as_str(), "file:///C:/missing.txt");
+        #[cfg(unix)]
+        assert!(url.is_none());
+        assert_eq!(
+            super::launch_url("app://open/item").unwrap().scheme(),
+            "app"
+        );
     }
 }
