@@ -1339,6 +1339,7 @@ fn log_queries_scrub_content_and_advance_the_cursor() {
     use crate::control::{Message, PROTOCOL_VERSION, Query, Reply, Request};
 
     let router = Router::<crate::router::NoRoute>::new(RouterConfig::default());
+
     use tracing_subscriber::prelude::*;
     let subscriber = tracing_subscriber::registry().with(router.0.collector.layer());
 

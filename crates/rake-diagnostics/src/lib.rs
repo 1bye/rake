@@ -21,6 +21,7 @@
 #[cfg(feature = "devtools")]
 pub mod http;
 mod logging;
+
 pub use logging::MAX_LOG_RECORD_BYTES;
 
 use std::collections::{BTreeMap, VecDeque};

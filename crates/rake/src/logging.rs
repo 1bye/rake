@@ -181,6 +181,7 @@ mod native {
                     if self.truncated {
                         let marker = "…[truncated]".as_bytes();
                         let end = crate::diagnostics::MAX_LOG_RECORD_BYTES - 1 - marker.len();
+
                         let end = std::str::from_utf8(&self.pending[..end])
                             .map_or_else(|error| error.valid_up_to(), |_| end);
 

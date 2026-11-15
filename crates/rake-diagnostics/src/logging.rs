@@ -61,6 +61,7 @@ pub(super) fn format(
     now: SystemTime,
 ) -> String {
     let seconds = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+
     let timestamp = OffsetDateTime::from_unix_timestamp(seconds.min(i64::MAX as u64) as i64)
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
         .format(&Rfc3339)

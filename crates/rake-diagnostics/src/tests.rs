@@ -244,6 +244,7 @@ fn escaped_log_tail_stays_below_the_transport_budget() {
 fn development_stderr_format_is_unchanged() {
     let collector = Collector::default();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+
     let output = OutputLayer {
         file: false,
         sender,
@@ -251,6 +252,7 @@ fn development_stderr_format_is_unchanged() {
         #[cfg(feature = "devtools")]
         mirror_marker: false,
     };
+
     let subscriber = Registry::default().with(CollectorLayer(collector, Some(output)));
 
     tracing::subscriber::with_default(subscriber, || {
