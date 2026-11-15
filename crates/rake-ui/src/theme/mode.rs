@@ -16,10 +16,12 @@ pub enum ThemeMode {
     Dark,
 }
 
+type ApplyPalette = Rc<dyn Fn(bool, &mut App)>;
+
 struct Selection {
     mode: ThemeMode,
     appearance: WindowAppearance,
-    apply: Rc<dyn Fn(bool, &mut App)>,
+    apply: ApplyPalette,
 }
 
 impl Global for Selection {}
