@@ -20,8 +20,8 @@ For application ID `ID`, the current log is:
 | Linux | `$XDG_STATE_HOME/ID/logs/app.log`, default `~/.local/state/ID/logs/app.log` |
 
 Roots must be absolute. Files are private (0600) and the application log directory
-is private (0700) on Unix. Existing symlink files and nonprivate files/directories
-are rejected using the same checks as crash storage. Keep the parent directory
+is private (0700) on Unix. Unix also rejects existing symlink files and nonprivate
+files/directories using the same checks as crash storage. Keep the parent directory
 trusted. Windows uses the user's inherited profile ACLs.
 
 Each file is at most 1 MiB. Rotation retains `app.log.1` through `app.log.3`, for

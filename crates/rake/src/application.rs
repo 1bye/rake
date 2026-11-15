@@ -615,8 +615,12 @@ impl<R: Route> App<R> {
     }
 
     /// Configures automatic logging. `RAKE_LOG` overrides the level preference.
+    /// The last call to this method or `without_logging` selects subscriber ownership.
     pub fn logging(mut self, config: crate::logging::LogConfig) -> Self {
         self.logging = Some(config);
+        self.diagnostics = self
+            .diagnostics
+            .subscriber(crate::diagnostics::SubscriberMode::Automatic);
 
         self
     }
