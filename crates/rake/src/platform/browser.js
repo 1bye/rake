@@ -103,8 +103,9 @@ export function open_url(url) {
 // Canvas-wide listener; disposal removes every listener and releases the callback.
 export function on_canvas_file_drop(callback) {
   const canvasEvent = event => event.target?.tagName === 'CANVAS';
+  const fileEvent = event => canvasEvent(event) && Array.from(event.dataTransfer?.types ?? []).includes('Files');
   const over = event => {
-    if (!canvasEvent(event)) return;
+    if (!fileEvent(event)) return;
     event.preventDefault();
     event.target.style.outline = '2px solid currentColor';
   };
@@ -112,7 +113,7 @@ export function on_canvas_file_drop(callback) {
     if (canvasEvent(event)) event.target.style.outline = '';
   };
   const drop = event => {
-    if (!canvasEvent(event)) return;
+    if (!fileEvent(event)) return;
     event.preventDefault();
     leave(event);
     const files = event.dataTransfer?.files;

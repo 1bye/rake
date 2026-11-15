@@ -732,3 +732,17 @@ fn only_the_root_retains_layout_for_nested_elements_and_markup_properties() {
         }
     }
 }
+
+#[test]
+fn file_drag_over_classes_merge_with_the_external_paths_payload() {
+    let expanded =
+        expand(r#"<div class="drag-over:opacity-50" class:drag-over:border-2={selected}/>"#)
+            .expect("file drag classes")
+            .to_string()
+            .replace(' ', "");
+
+    assert_eq!(expanded.matches(".drag_over::<").count(), 1);
+    assert!(expanded.contains("renamed::gpui::ExternalPaths>"));
+    assert!(expanded.contains(".opacity(0.5"));
+    assert!(expanded.contains(".border_2()"));
+}

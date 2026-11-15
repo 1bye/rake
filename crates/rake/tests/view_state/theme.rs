@@ -205,3 +205,90 @@ fn deep_components_read_replaced_themes_and_rebuild_hover_refinements() {
         }
     }
 }
+
+struct FileDropHost {
+    color: Rc<Cell<gpui::Hsla>>,
+}
+
+impl gpui::Render for FileDropHost {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use gpui::prelude::*;
+
+        let color = self.color.clone();
+
+        rake::view! {
+            <div
+                class="w-20 h-20 text-surface drag-over:text-hover"
+                aria-label="Drop a file"
+                on:drop={|_: &gpui::ExternalPaths, _, _| {}}
+            >
+                {
+                    gpui::canvas(
+                        move |_, window, _| color.set(window.text_style().color),
+                        |_, _, _, _| {}
+                    )
+                    .size_full()
+                }
+            </div>
+        }
+    }
+}
+
+#[test]
+fn file_drag_over_classes_apply_theme_and_clear_on_exit_and_submit() {
+    let mut cx = gpui::TestAppContext::single();
+    let surface = gpui::rgb(0x18232b);
+    let hover = gpui::rgb(0x365849);
+    let color = Rc::new(Cell::new(gpui::Hsla::default()));
+
+    cx.update(|cx| theme::install(cx, Palette { surface, hover }));
+
+    let window = cx.add_window(|_, _| FileDropHost {
+        color: color.clone(),
+    });
+
+    super::draw(&mut cx, window);
+    assert_eq!(color.get(), gpui::Hsla::from(surface));
+
+    let dispatch = |cx: &mut gpui::TestAppContext, event: gpui::FileDropEvent| {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(event.to_platform_input(), cx);
+        })
+        .expect("dispatch file drag");
+        super::draw(cx, window);
+    };
+    let inside = gpui::point(gpui::px(10.), gpui::px(10.));
+    let outside = gpui::point(gpui::px(200.), gpui::px(200.));
+
+    for submit in [false, true] {
+        dispatch(
+            &mut cx,
+            gpui::FileDropEvent::Entered {
+                position: inside,
+                paths: gpui::ExternalPaths(
+                    [std::path::PathBuf::from("hello.txt")]
+                        .into_iter()
+                        .collect(),
+                ),
+            },
+        );
+        assert_eq!(color.get(), gpui::Hsla::from(hover), "entered target");
+        dispatch(&mut cx, gpui::FileDropEvent::Pending { position: outside });
+        assert_eq!(color.get(), gpui::Hsla::from(surface), "outside target");
+        dispatch(&mut cx, gpui::FileDropEvent::Pending { position: inside });
+        assert_eq!(color.get(), gpui::Hsla::from(hover), "pending over target");
+        dispatch(
+            &mut cx,
+            if submit {
+                gpui::FileDropEvent::Submit { position: inside }
+            } else {
+                gpui::FileDropEvent::Exited
+            },
+        );
+        assert_eq!(color.get(), gpui::Hsla::from(surface), "drag ended");
+    }
+}

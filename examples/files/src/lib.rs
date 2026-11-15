@@ -12,6 +12,7 @@ use std::rc::Rc;
 struct Colors {
     surface: gpui::Rgba,
     ink: gpui::Rgba,
+    drop_surface: gpui::Rgba,
 }
 
 rake::theme!(Colors);
@@ -229,7 +230,7 @@ impl Render for Toolkit {
         rake::view! {
             <main
                 id="text-toolkit"
-                class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink"
+                class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink drag-over:bg-drop-surface"
                 aria-label="Drop one UTF-8 text file to import"
                 on:drop={
                     cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
@@ -456,6 +457,7 @@ pub fn application() -> Result<App, rake::AppError> {
         .theme(Colors {
             surface: gpui::rgb(0x18232b),
             ink: gpui::rgb(0xf0f4e8),
+            drop_surface: gpui::rgb(0x365849),
         })
         .control(rake::control::ControlConfig::FromEnvironment)
         .quit_guard(move |_| {
