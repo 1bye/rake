@@ -302,6 +302,7 @@ fn main() {
 fn doctor_and_dev_warn_from_workspace_profile() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
+
     fs::create_dir_all(root.join("app/src")).unwrap();
     fs::create_dir_all(root.join("gpui/src")).unwrap();
     fs::write(
@@ -349,5 +350,28 @@ fn doctor_and_dev_warn_from_workspace_profile() {
         .args(["doctor", "--json"])
         .output()
         .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(!String::from_utf8_lossy(&output.stderr).contains("builds at dev opt-level 0"));
+
+    let mut manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    manifest.push_str("[profile.dev.package.'gpui@0.1']\nopt-level=0\n");
+    fs::write(root.join("Cargo.toml"), manifest).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(root.join("app"))
+        .env("CARGO_PROFILE_DEV_OPT_LEVEL", "3")
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("gpui builds at dev opt-level 0"));
 }

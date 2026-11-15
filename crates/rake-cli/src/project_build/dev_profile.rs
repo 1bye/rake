@@ -80,7 +80,7 @@ fn unoptimized(
     member: bool,
     environment: Option<&str>,
 ) -> bool {
-    let profile = &manifest.get("profile").and_then(|p| p.get("dev"));
+    let profile = manifest.get("profile").and_then(|p| p.get("dev"));
     let Some(profile) = profile else {
         return environment.unwrap_or("0") == "0";
     };
