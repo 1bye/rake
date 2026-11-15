@@ -332,7 +332,9 @@ fn doctor_and_dev_warn_from_workspace_profile() {
             })
             .output()
             .unwrap();
+
         let diagnostic = String::from_utf8_lossy(&output.stderr);
+
         assert!(
             diagnostic.contains("gpui builds at dev opt-level 0"),
             "{command}: {diagnostic}"
@@ -350,6 +352,7 @@ fn doctor_and_dev_warn_from_workspace_profile() {
         .args(["doctor", "--json"])
         .output()
         .unwrap();
+
     assert!(
         output.status.success(),
         "{}",
@@ -358,6 +361,7 @@ fn doctor_and_dev_warn_from_workspace_profile() {
     assert!(!String::from_utf8_lossy(&output.stderr).contains("builds at dev opt-level 0"));
 
     let mut manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
     manifest.push_str("[profile.dev.package.'gpui@0.1']\nopt-level=0\n");
     fs::write(root.join("Cargo.toml"), manifest).unwrap();
 

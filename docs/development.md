@@ -404,3 +404,12 @@ opt-level = 3
 
 This keeps application rebuilds quick while optimizing GPUI and other dependencies.
 Performance numbers from an unoptimized debug build are not meaningful.
+
+`rake doctor` and debug `rake dev` warn on stderr when GPUI resolves to dev
+`opt-level = 0`, including with JSON output. The check uses the workspace root,
+package overrides (including versioned package selectors), and
+`CARGO_PROFILE_DEV_OPT_LEVEL`. Named package overrides take priority over `"*"`;
+the wildcard applies only to dependencies outside the workspace. Package
+overrides also take priority over the base profile optimization environment
+variable. Other `CARGO_PROFILE_DEV_*` settings, such as `DEBUG`, do not change
+the optimization level.

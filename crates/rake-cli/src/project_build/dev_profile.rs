@@ -8,27 +8,33 @@ const SNIPPET: &str = "[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\
 
 pub(super) fn warn(args: &Args, processes: &Processes<'_>) -> Result<()> {
     let mut command = Command::new("cargo");
+
     command
         .args(["metadata", "--format-version", "1", "--manifest-path"])
         .arg(&args.manifest);
     let metadata: Value =
         serde_json::from_str(&processes.capture(&mut command, Capture::Metadata)?)?;
+
     let root = metadata["workspace_root"]
         .as_str()
         .ok_or("missing workspace root")?;
+
     let environment = std::env::var("CARGO_PROFILE_DEV_OPT_LEVEL").ok();
+
     let members = metadata["workspace_members"]
         .as_array()
         .ok_or("missing workspace members")?;
 
     for package in metadata["packages"].as_array().ok_or("missing packages")? {
         let name = package["name"].as_str().ok_or("missing package name")?;
+
         if !matches!(name, "gpui" | "gpui-pre" | "gpui-fast") {
             continue;
         }
 
         let mut manifest: toml::Value =
-            fs::read_to_string(Path::new(root).join("Cargo.toml"))?.parse()?;
+            toml::from_str(&fs::read_to_string(Path::new(root).join("Cargo.toml"))?)?;
+
         if let Some(overrides) = manifest
             .get_mut("profile")
             .and_then(|p| p.get_mut("dev"))
@@ -42,6 +48,7 @@ pub(super) fn warn(args: &Args, processes: &Processes<'_>) -> Result<()> {
 
                 // Let Cargo resolve version abbreviations and source-qualified package IDs.
                 let mut command = Command::new("cargo");
+
                 command
                     .args(["pkgid", "--manifest-path"])
                     .arg(Path::new(root).join("Cargo.toml"))
@@ -57,6 +64,7 @@ pub(super) fn warn(args: &Args, processes: &Processes<'_>) -> Result<()> {
         let version = package["version"]
             .as_str()
             .ok_or("missing package version")?;
+
         if unoptimized(
             &manifest,
             name,
@@ -81,19 +89,24 @@ fn unoptimized(
     environment: Option<&str>,
 ) -> bool {
     let profile = manifest.get("profile").and_then(|p| p.get("dev"));
+
     let Some(profile) = profile else {
         return environment.unwrap_or("0") == "0";
     };
+
     let overrides = profile.get("package").and_then(toml::Value::as_table);
+
     let named = overrides.and_then(|packages| {
         packages
             .get(format!("{name}:{version}").as_str())
             .or_else(|| packages.get(format!("{name}@{version}").as_str()))
             .or_else(|| packages.get(name))
     });
+
     let wildcard = overrides
         .and_then(|packages| packages.get("*"))
         .filter(|_| !member);
+
     let level = named
         .and_then(|p| p.get("opt-level"))
         .or_else(|| wildcard.and_then(|p| p.get("opt-level")));
@@ -142,7 +155,8 @@ mod tests {
             ),
             ("[profile.dev]\nopt-level='z'", false, None, false),
         ] {
-            let manifest = text.parse().unwrap();
+            let manifest = toml::from_str(text).unwrap();
+
             assert_eq!(
                 unoptimized(&manifest, "gpui-pre", "0.3.11", member, env),
                 expected,

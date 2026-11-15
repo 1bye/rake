@@ -123,6 +123,7 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         blaze: Value,
         live: Value,
     }
+
     if args.manifest.is_file() {
         dev_profile::warn(args, processes)?;
     }
