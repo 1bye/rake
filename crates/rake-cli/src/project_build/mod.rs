@@ -220,6 +220,10 @@ impl Project {
             Capture::Metadata,
         )?)?;
 
+        if args.dev && !args.release {
+            dev_profile::warn_metadata(&metadata, processes)?;
+        }
+
         let root = PathBuf::from(string(&metadata, "workspace_root")?);
 
         let members = metadata["workspace_members"]

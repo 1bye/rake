@@ -324,9 +324,9 @@ fn doctor_and_dev_warn_from_workspace_profile() {
             .current_dir(root.join("app"))
             .env("CARGO_PROFILE_DEV_OPT_LEVEL", "0")
             .args([command, "--json"])
-            // Dev terminates after the warning because a console fixture has no Rake runtime.
+            // Stop dev after metadata diagnostics, before starting a supervisor.
             .args(if command == "dev" {
-                vec!["--native-reloader", "missing-reloader"]
+                vec!["--bin", "missing-binary"]
             } else {
                 vec![]
             })

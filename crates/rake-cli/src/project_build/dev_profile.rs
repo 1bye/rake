@@ -15,6 +15,10 @@ pub(super) fn warn(args: &Args, processes: &Processes<'_>) -> Result<()> {
     let metadata: Value =
         serde_json::from_str(&processes.capture(&mut command, Capture::Metadata)?)?;
 
+    warn_metadata(&metadata, processes)
+}
+
+pub(super) fn warn_metadata(metadata: &Value, processes: &Processes<'_>) -> Result<()> {
     let root = metadata["workspace_root"]
         .as_str()
         .ok_or("missing workspace root")?;
