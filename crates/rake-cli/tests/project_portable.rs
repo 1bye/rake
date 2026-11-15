@@ -16,6 +16,7 @@ fn doctor_has_no_python_dependency_or_diagnostic_field() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+
     let checks: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert!(checks["rust"].is_string());
@@ -296,4 +297,117 @@ fn main() {
             "client resource must be removed after exit"
         );
     }
+}
+
+#[test]
+fn doctor_and_dev_warn_from_workspace_profile() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+
+    fs::create_dir_all(root.join("app/src")).unwrap();
+    fs::create_dir_all(root.join("gpui/src")).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers=['app']\nexclude=['gpui']\nresolver='3'\n[profile.dev.package.some-crate]\nopt-level=3\n",
+    )
+    .unwrap();
+    fs::write(root.join("app/Cargo.toml"), "[package]\nname='profile-app'\nversion='0.1.0'\nedition='2024'\n[dependencies]\ngpui={path='../gpui'}\n[profile.dev]\nopt-level=3\n").unwrap();
+    fs::write(root.join("app/src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(
+        root.join("gpui/Cargo.toml"),
+        "[package]\nname='gpui'\nversion='0.1.0'\nedition='2024'\n",
+    )
+    .unwrap();
+    fs::write(root.join("gpui/src/lib.rs"), "").unwrap();
+
+    for command in ["doctor", "dev"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+            .current_dir(root.join("app"))
+            .env("CARGO_PROFILE_DEV_OPT_LEVEL", "0")
+            .args([command, "--json"])
+            // Stop dev after metadata diagnostics, before starting a supervisor.
+            .args(if command == "dev" {
+                vec!["--bin", "missing-binary"]
+            } else {
+                vec![]
+            })
+            .output()
+            .unwrap();
+
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+
+        if command == "doctor" {
+            assert!(output.status.success(), "{diagnostic}");
+        } else {
+            assert!(diagnostic.contains("missing-binary"), "{diagnostic}");
+        }
+
+        assert!(
+            diagnostic.contains("gpui builds at dev opt-level 0"),
+            "{command}: {diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("[profile.dev.package.\"*\"]"),
+            "{diagnostic}"
+        );
+    }
+
+    fs::write(root.join("Cargo.toml"), "[workspace]\nmembers=['app']\nexclude=['gpui']\nresolver='3'\n[profile.dev.package.'*']\nopt-level=3\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(root.join("app"))
+        .env("CARGO_PROFILE_DEV_OPT_LEVEL", "0")
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("builds at dev opt-level 0"));
+
+    let mut manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+    manifest.push_str("[profile.dev.package.'gpui@0.1']\nopt-level=0\n");
+    fs::write(root.join("Cargo.toml"), manifest).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(root.join("app"))
+        .env("CARGO_PROFILE_DEV_OPT_LEVEL", "3")
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("gpui builds at dev opt-level 0"));
+}
+
+#[test]
+fn doctor_reports_tools_with_a_broken_manifest() {
+    let directory = tempfile::tempdir().unwrap();
+
+    fs::write(directory.path().join("Cargo.toml"), "[broken").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(directory.path())
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let checks: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(checks["rust"].is_string());
+    assert!(checks["cargo"].is_string());
+    assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
 }

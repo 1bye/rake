@@ -837,6 +837,27 @@ through the Base-global observer. Base `surface` means Kit `popover`, and Base
 `destructive` means Kit `danger`. See [Base and Kit](gpui-kit.md) for the shared
 Root, native-only Kit gate, and inspection boundaries.
 
+### Follow system appearance
+
+Register a light/dark pair with `.theme_mode(rake::theme::ThemeMode::System,
+light_palette, dark_palette)` on `App`. Palettes must implement `Clone`.
+Rake selects the window appearance before mounting views and observes live OS
+changes on desktop and `prefers-color-scheme` changes on Web.
+
+Use `ThemeMode::Light` or `ThemeMode::Dark` to force a palette.
+`rake::theme::mode(cx)` reads the current preference and
+`rake::theme::set_mode(cx, mode)` changes it at runtime. Save that enum's choice
+in your application's preferences and pass it back on startup. Registration is
+opt-in; existing `.theme(...)` installations keep their behavior.
+
+For custom GPUI windows, call `rake::theme::register(cx, mode, light, dark)` and
+`rake::theme::observe_window(window, cx)` before mounting content. Semantic
+palettes go through the same Base and optional Kit bridge as `theme::install`.
+The preference and active palette are application-wide; the latest observed
+window appearance supplies the system preference.
+
+## External file drops
+
 External file drops use the typed `on:drop` callback:
 
 ```rust

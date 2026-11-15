@@ -29,6 +29,7 @@ const METADATA_LIMIT: usize = 32 * MAX_BYTES;
 
 pub(super) enum Capture {
     Metadata,
+    Advice,
     Version,
     Diagnostic,
 }
@@ -91,8 +92,13 @@ impl<'a> Processes<'a> {
         let status = self.execute(
             command,
             matches!(mode, Capture::Diagnostic),
+            matches!(mode, Capture::Advice),
             |chunk, pid, stderr| {
                 if stderr {
+                    if matches!(mode, Capture::Advice) {
+                        return Ok(());
+                    }
+
                     diagnostic.extend_from_slice(chunk);
 
                     while let Some(end) = diagnostic
@@ -123,7 +129,7 @@ impl<'a> Processes<'a> {
         }
 
         if !status.success() {
-            return Err(if !matches!(mode, Capture::Metadata) {
+            return Err(if !matches!(mode, Capture::Metadata | Capture::Advice) {
                 format!(
                     "Command '{}' returned non-zero exit status {}.",
                     diagnostic_command(command),
@@ -214,7 +220,7 @@ impl<'a> Processes<'a> {
 
         let mut output_pid = 0;
 
-        let status = self.execute(command, true, |chunk, pid, _| {
+        let status = self.execute(command, true, false, |chunk, pid, _| {
             output_pid = pid;
             pending.extend_from_slice(chunk);
 
@@ -287,12 +293,14 @@ impl<'a> Processes<'a> {
         &self,
         command: &mut Command,
         merge_stderr: bool,
+        capture_stderr: bool,
         mut consume: impl FnMut(&[u8], u32, bool) -> Result<()>,
     ) -> Result<ExitStatus> {
         self.check_cancelled()?;
         let (mut reader, stdout, stderr) = output_pipe(merge_stderr)?;
 
-        let diagnostic_pipe = if !merge_stderr && self.diagnostic_sink.is_some() {
+        let diagnostic_pipe = if !merge_stderr && (capture_stderr || self.diagnostic_sink.is_some())
+        {
             Some(output_pipe(false)?)
         } else {
             None

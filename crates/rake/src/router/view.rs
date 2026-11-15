@@ -1307,6 +1307,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                 let placement = crate::window_state::native::prepare(id, &mut options, cx);
 
                 cx.open_window(options, move |window, cx| {
+                    crate::theme::observe_window(window, cx);
                     let view = (|window: &mut Window, cx: &mut gpui::App| {
                         if let Err(error) = router.attach_window(id, window, cx) {
                             *callback_error.borrow_mut() = Some(MountError(error.to_string()));
