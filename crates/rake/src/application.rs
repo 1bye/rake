@@ -82,6 +82,7 @@ thread_local! {
 /// Typed routers drive scoped tasks and entry activity on the host UI loop.
 pub struct App<R: Route = NoRoute> {
     id: String,
+    single_instance: bool,
     reopen: Option<Box<dyn FnMut(&mut gpui::App)>>,
     services: ServiceRegistry,
     window_options: WindowOptions,
@@ -124,6 +125,12 @@ pub struct App<R: Route = NoRoute> {
 }
 
 impl<R: Route> App<R> {
+    /// Forwards subsequent launches to this user's running application.
+    pub fn single_instance(mut self) -> Self {
+        self.single_instance = true;
+        self
+    }
+
     /// Handles native reopen events, including macOS dock activation.
     pub fn on_reopen(mut self, callback: impl FnMut(&mut gpui::App) + 'static) -> Self {
         self.reopen = Some(Box::new(callback));
@@ -140,6 +147,7 @@ impl App<NoRoute> {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            single_instance: false,
             reopen: None,
             services: ServiceRegistry::new(),
             window_options: WindowOptions::default(),
@@ -211,6 +219,7 @@ impl App<NoRoute> {
 
         App {
             id: self.id,
+            single_instance: self.single_instance,
             reopen: self.reopen,
             services: self.services,
             window_options: self.window_options,
@@ -794,6 +803,31 @@ impl<R: Route> App<R> {
 
         let services = self.services()?;
 
+        #[cfg(any(unix, windows))]
+        let primary = if self.single_instance {
+            let arguments = std::env::args()
+                .skip(1)
+                .map(|argument| {
+                    if url::Url::parse(&argument).is_ok() {
+                        return argument;
+                    }
+
+                    std::fs::canonicalize(&argument)
+                        .ok()
+                        .and_then(|path| url::Url::from_file_path(path).ok())
+                        .map_or(argument, |url| url.to_string())
+                })
+                .collect::<Vec<_>>();
+            match rake_client::single::launch(&self.id, &arguments)
+                .map_err(|error| AppError::Window(format!("instance startup failed: {error}")))?
+            {
+                Some(primary) => Some(primary),
+                None => return Ok(()),
+            }
+        } else {
+            None
+        };
+
         if let Ok(menus) = services.get::<crate::menus::Menus>() {
             menus.validate(&self.commands)?;
         }
@@ -990,6 +1024,30 @@ impl<R: Route> App<R> {
                 )));
 
                 return;
+            }
+
+            #[cfg(any(unix, windows))]
+            if let Some(primary) = primary {
+                let activations = services.platform();
+                cx.spawn(async move |_cx| {
+                    loop {
+                        match primary.receive().await {
+                            Ok(arguments) => {
+                                for argument in arguments {
+                                    let url = url::Url::parse(&argument).or_else(|_| {
+                                        let path = std::path::PathBuf::from(&argument);
+                                        url::Url::from_file_path(path)
+                                    });
+                                    if let Ok(url) = url {
+                                        let _ = activations.receive_open_url(url.as_str());
+                                    }
+                                }
+                            }
+                            Err(error) => crate::warn!(%error, "instance activation rejected"),
+                        }
+                    }
+                })
+                .detach();
             }
 
             rake_ui::init(cx);

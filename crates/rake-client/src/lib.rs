@@ -242,3 +242,6 @@ pub fn exchange(instance: &Instance, request: &Request, timeout: Duration) -> Re
 
     Ok(reply?)
 }
+
+#[cfg(any(unix, windows))]
+pub mod single;
