@@ -5,7 +5,7 @@ use windows::{
         System::{
             Com::{
                 CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-                CoUninitialize, IServiceProvider,
+                CoUninitialize, IDispatch, IServiceProvider,
             },
             Variant::VARIANT,
         },
@@ -75,7 +75,9 @@ fn explorer(target: &str) -> windows::core::Result<()> {
         let provider: IServiceProvider = desktop.cast()?;
         let browser: IShellBrowser = provider.QueryService(&SID_STopLevelBrowser)?;
         let view = browser.QueryActiveShellView()?;
-        let folder: IShellFolderViewDual = view.GetItemObject(SVGIO_BACKGROUND)?;
+        // GetItemObject accepts IID_IDispatch for the background ShellFolderView.
+        let background: IDispatch = view.GetItemObject(SVGIO_BACKGROUND)?;
+        let folder: IShellFolderViewDual = background.cast()?;
         let dispatch: IShellDispatch2 = folder.Application()?.cast()?;
 
         dispatch.ShellExecute(
