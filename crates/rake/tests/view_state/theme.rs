@@ -216,8 +216,6 @@ impl gpui::Render for FileDropHost {
         _: &mut gpui::Window,
         _: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        use gpui::prelude::*;
-
         let color = self.color.clone();
 
         rake::view! {
@@ -227,9 +225,10 @@ impl gpui::Render for FileDropHost {
                 on:drop={|_: &gpui::ExternalPaths, _, _| {}}
             >
                 {
+                    // Drag-over styling uses hitboxes, which are available during paint.
                     gpui::canvas(
-                        move |_, window, _| color.set(window.text_style().color),
-                        |_, _, _, _| {}
+                        |_, _, _| {},
+                        move |_, _, window, _| color.set(window.text_style().color)
                     )
                     .size_full()
                 }
