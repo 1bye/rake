@@ -508,7 +508,7 @@ pub fn application() -> Result<App, rake::AppError> {
 
                     #[cfg(target_family = "wasm")]
                     let file_drop = {
-                        let entity = cx.entity().downgrade();
+                        let entity: gpui::WeakEntity<Toolkit> = cx.entity().downgrade();
                         let mut app = cx.to_async();
                         rake::platform::browser::on_canvas_file_drop(move |file| {
                             let _ = entity.update(&mut app, |this, cx| {
