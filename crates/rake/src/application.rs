@@ -38,6 +38,8 @@ type MainWindow = Rc<
 
 type WindowOptionsFactory = Rc<dyn Fn() -> WindowOptions>;
 
+type Reopen = Box<dyn FnMut(&mut gpui::App)>;
+
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
 
 /// What closing a standalone application's window requests.
@@ -83,7 +85,7 @@ thread_local! {
 pub struct App<R: Route = NoRoute> {
     id: String,
     single_instance: bool,
-    reopen: Option<Box<dyn FnMut(&mut gpui::App)>>,
+    reopen: Option<Reopen>,
     services: ServiceRegistry,
     window_options: WindowOptions,
     window_state: Option<crate::window_state::WindowState>,
