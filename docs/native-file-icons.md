@@ -36,7 +36,7 @@ cache eviction; this service does not watch files or desktop theme settings.
 Windows uses SHGetFileInfo and draws its shell icon into a display-size DIB,
 releasing icon, DC and bitmap handles after copying the pixels. Linux queries
 MIME types with the installed `xdg-mime` utility, then searches PNG MIME/place
-icons under XDG icon directories in the configured GTK theme, Adwaita and hicolor.
+icons under XDG icon directories in the configured GTK/KDE/desktop icon theme, Adwaita and hicolor.
 Linux SVG-only themes, unavailable MIME tools and native lookup failures use
 built-in generic folder/file bitmaps. Full desktop-theme inheritance and custom
 Linux icon metadata are not supported. The browser uses generic folder/file

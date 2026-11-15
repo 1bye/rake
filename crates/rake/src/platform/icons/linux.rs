@@ -57,12 +57,8 @@ pub(super) fn load(path: &Path, pixels: u32) -> Option<(Identity, Vec<u8>)> {
         roots.push(PathBuf::from(root).join("icons"));
     }
 
-    let configured = std::env::var("GTK_THEME").unwrap_or_default();
-    let themes = [
-        configured.split(':').next().unwrap_or(""),
-        "Adwaita",
-        "hicolor",
-    ];
+    let configured = configured_theme();
+    let themes = [configured.as_deref().unwrap_or(""), "Adwaita", "hicolor"];
     let mut sizes = [16u32, 22, 24, 32, 48, 64, 96, 128, 256, 512];
     sizes.sort_by_key(|size| size.abs_diff(pixels));
 
@@ -104,4 +100,73 @@ pub(super) fn load(path: &Path, pixels: u32) -> Option<(Identity, Vec<u8>)> {
     }
 
     None
+}
+
+fn configured_theme() -> Option<String> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+
+    for (file, section, key) in [
+        ("gtk-3.0/settings.ini", "Settings", "gtk-icon-theme-name"),
+        ("gtk-4.0/settings.ini", "Settings", "gtk-icon-theme-name"),
+        ("kdeglobals", "Icons", "Theme"),
+    ] {
+        let Ok(text) = std::fs::read_to_string(config.join(file)) else {
+            continue;
+        };
+        if let Some(theme) = setting(&text, section, key) {
+            return Some(theme.to_owned());
+        }
+    }
+
+    let output = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "icon-theme"])
+        .env("LC_ALL", "C")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    let value = value.trim().trim_matches('\'');
+
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn setting<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
+    let mut current = "";
+
+    for line in text.lines().map(str::trim) {
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            current = name;
+        } else if current == section
+            && let Some((name, value)) = line.split_once('=')
+            && name.trim() == key
+            && !value.trim().is_empty()
+        {
+            return Some(value.trim());
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn icon_theme_setting_respects_section_and_ignores_empty_values() {
+        let text = "[Other]\nTheme=wrong\n[Icons]\nTheme=\n Theme = chosen \n";
+
+        assert_eq!(super::setting(text, "Icons", "Theme"), Some("chosen"));
+        assert_eq!(
+            super::setting(text, "Settings", "gtk-icon-theme-name"),
+            None
+        );
+    }
 }
