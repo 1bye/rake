@@ -310,7 +310,7 @@ async fn x11_worker(
     futures::pin_mut!(stopped);
 
     loop {
-        let tick = async_io::Timer::after(Duration::from_millis(10)).fuse();
+        let tick = FutureExt::fuse(async_io::Timer::after(Duration::from_millis(10)));
         futures::pin_mut!(tick);
         futures::select! { _ = stopped => break, _ = tick => {} }
 
