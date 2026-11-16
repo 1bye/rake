@@ -312,6 +312,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
         None
     };
 
+    let explicit_target = target;
     let target = target.or(host.as_deref());
 
     if compatibility && formats.is_empty() {
@@ -368,7 +369,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<bool, Box<dyn std::error::Erro
             manifest,
             package: package.map(str::to_owned),
             platform,
-            target: target.map(str::to_owned),
+            target: explicit_target.map(str::to_owned),
             formats,
             output,
             binary,
