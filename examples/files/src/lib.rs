@@ -12,6 +12,7 @@ use std::rc::Rc;
 struct Colors {
     surface: gpui::Rgba,
     ink: gpui::Rgba,
+    drop_surface: gpui::Rgba,
 }
 
 rake::theme!(Colors);
@@ -63,6 +64,8 @@ async fn prepare(
 }
 
 struct Toolkit {
+    #[cfg(target_family = "wasm")]
+    _file_drop: rake::platform::browser::CanvasFileDrop,
     runtime: RuntimeContext,
     workspace: Rc<Workspace>,
     preferences: Preferences,
@@ -82,6 +85,19 @@ impl Toolkit {
         }
 
         let selection = self.runtime.services().platform().pick_file(cx);
+
+        self.import_selection(selection, cx);
+    }
+
+    fn import_selection(
+        &mut self,
+        selection: rake::platform::Request<Option<rake::platform::FileHandle>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.busy(cx) || self.workspace.dirty() {
+            return;
+        }
+
         let executor = cx.background_executor().clone();
         let workspace = self.workspace.clone();
         let expected = workspace.revision();
@@ -214,7 +230,14 @@ impl Render for Toolkit {
         rake::view! {
             <main
                 id="text-toolkit"
-                class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink"
+                class="flex flex-col size-full p-6 gap-3 overflow-y-scroll bg-surface text-ink drag-over:bg-drop-surface"
+                aria-label="Drop one UTF-8 text file to import"
+                on:drop={
+                    cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                        let selection = rake::platform::FileHandle::from_drop(paths);
+                        this.import_selection(Box::pin(async move { selection.map(Some) }), cx);
+                    })
+                }
                 tab-navigation
             >
                 <h1>"Text Toolkit"</h1>
@@ -434,6 +457,7 @@ pub fn application() -> Result<App, rake::AppError> {
         .theme(Colors {
             surface: gpui::rgb(0x18232b),
             ink: gpui::rgb(0xf0f4e8),
+            drop_surface: gpui::rgb(0x365849),
         })
         .control(rake::control::ControlConfig::FromEnvironment)
         .quit_guard(move |_| {
@@ -485,7 +509,22 @@ pub fn application() -> Result<App, rake::AppError> {
                         })
                     });
 
+                    #[cfg(target_family = "wasm")]
+                    let file_drop = {
+                        let entity: gpui::WeakEntity<Toolkit> = cx.entity().downgrade();
+                        let mut app = cx.to_async();
+
+                        rake::platform::browser::on_canvas_file_drop(move |file| {
+                            let _ = entity.update(&mut app, |this, cx| {
+                                this.import_selection(Box::pin(async move { file.map(Some) }), cx);
+                                cx.notify();
+                            });
+                        })
+                    };
+
                     Toolkit {
+                        #[cfg(target_family = "wasm")]
+                        _file_drop: file_drop,
                         updates: runtime.bind_updates(cx),
                         runtime,
                         workspace: workspace.clone(),

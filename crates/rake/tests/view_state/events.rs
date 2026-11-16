@@ -145,3 +145,53 @@ fn canonical_pointer_events_dispatch_and_disabled_buttons_suppress_them() {
         })
         .unwrap();
 }
+
+struct DropHost {
+    names: Vec<String>,
+}
+
+impl Render for DropHost {
+    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        rake::view! {
+            <div
+                class="size-full"
+                aria-label="Drop one file"
+                on:drop={
+                    cx.listener(|this, paths: &gpui::ExternalPaths, _, _| {
+                        if let Ok(file) = rake::platform::FileHandle::from_drop(paths) {
+                            this.names.push(file.name().to_owned());
+                        }
+                    })
+                }
+            />
+        }
+    }
+}
+
+#[test]
+fn external_file_drop_dispatches_and_rejects_multiple_files() {
+    let mut cx = gpui::TestAppContext::single();
+    let window = cx.add_window(|_, _| DropHost { names: Vec::new() });
+
+    draw(&mut cx, window);
+    for names in [vec!["hello.txt"], vec!["a.txt", "b.txt"], vec![]] {
+        cx.update_window(window.into(), |_, window, cx| {
+            let position = gpui::point(gpui::px(20.), gpui::px(20.));
+            let paths = gpui::ExternalPaths(names.iter().map(std::path::PathBuf::from).collect());
+            window.dispatch_event(
+                gpui::FileDropEvent::Entered { position, paths }.to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                gpui::FileDropEvent::Submit { position }.to_platform_input(),
+                cx,
+            );
+        })
+        .expect("dispatch external drop");
+        cx.run_until_parked();
+    }
+
+    window
+        .read_with(&cx, |host, _| assert_eq!(host.names, ["hello.txt"]))
+        .expect("read drop target");
+}

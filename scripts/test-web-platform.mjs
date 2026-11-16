@@ -110,6 +110,26 @@ try {
   await call('DOM.setFileInputFiles', {files: [textFile], backendNodeId: chooser.params.backendNodeId}, old);
   await eventually(() => evaluate(old, '!!window.picked || !!window.pickError'));
   assert.deepEqual(await evaluate(old, 'window.picked'), {name: 'hello.txt', text: 'Unicode 漢字'});
+  assert.deepEqual(await evaluate(old, `(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('aria-label', 'Drop one text file');
+    document.body.append(canvas);
+    let received;
+    const dispose = platform.on_canvas_file_drop(file => { received = file; });
+    const file = new File(['dropped text'], 'drop.txt');
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    canvas.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+    const result = {same: received === file, name: received.name,
+      text: new TextDecoder().decode(await platform.read_file(received, 100))};
+    transfer.items.add(new File(['second'], 'second.txt'));
+    canvas.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+    result.multipleRejected = received === null;
+    dispose();
+    canvas.remove();
+    return result;
+  })()`), {same: true, name: 'drop.txt', text: 'dropped text', multipleRejected: true});
+
   await call('Browser.grantPermissions', {origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite']});
   // Keep existing clipboard content inside this page and restore it without logging it.
   await evaluate(old, 'navigator.clipboard.readText().then(value => { window.previousClipboard = value; })', true);

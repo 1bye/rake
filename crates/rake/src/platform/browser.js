@@ -99,3 +99,32 @@ export function open_url(url) {
   try { opened.opener = null; opened.location.href = url; }
   catch (error) { opened.close(); throw error; }
 }
+
+// Canvas-wide listener; disposal removes every listener and releases the callback.
+export function on_canvas_file_drop(callback) {
+  const canvasEvent = event => event.target?.tagName === 'CANVAS';
+  const fileEvent = event => canvasEvent(event) && Array.from(event.dataTransfer?.types ?? []).includes('Files');
+  const over = event => {
+    if (!fileEvent(event)) return;
+    event.preventDefault();
+    event.target.style.outline = '2px solid currentColor';
+  };
+  const leave = event => {
+    if (canvasEvent(event)) event.target.style.outline = '';
+  };
+  const drop = event => {
+    if (!fileEvent(event)) return;
+    event.preventDefault();
+    leave(event);
+    const files = event.dataTransfer?.files;
+    callback(files?.length === 1 ? files[0] : null);
+  };
+  document.addEventListener('dragover', over);
+  document.addEventListener('dragleave', leave);
+  document.addEventListener('drop', drop);
+  return () => {
+    document.removeEventListener('dragover', over);
+    document.removeEventListener('dragleave', leave);
+    document.removeEventListener('drop', drop);
+  };
+}

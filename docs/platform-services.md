@@ -65,6 +65,21 @@ services. Browser/headless GUI calls are explicit errors. See [tray icons](tray.
 
 See [OS notifications](notifications.md) for permission results, URL payloads, packaging requirements and the portable Foundation example.
 
+## File drops
+
+File drops reuse `FileHandle::read(max_bytes)` and its size and regular-file
+validation. `FileHandle::from_drop(&gpui::ExternalPaths)` accepts exactly one
+native path without reading on the UI thread. Empty and multi-file drops fail.
+The files example accepts one UTF-8 file up to 128 KiB and refuses replacement
+while busy or while a transformation is unsaved.
+
+On Web, `platform::browser::on_canvas_file_drop` registers a canvas-wide target
+and returns an owned subscription. Its callback receives a real browser File
+handle through `FileHandle`, with the same bounded read as `pick_file`; it never
+exposes a synthetic path. Empty or multi-file drops report `InvalidInput`.
+Dropping the subscription removes the DOM listeners. Drag-over outlines the
+canvas; retain an accessible target label and the import button for keyboard use.
+
 ## Global shortcuts
 
 Enable `global-shortcuts`, or `tray` which includes it. Call

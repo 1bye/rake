@@ -55,6 +55,7 @@ jobs:
           node scripts/test-web-runtime.mjs
           node scripts/test-offline.mjs
           node scripts/test-file-processing.mjs
+          node scripts/test-file-drop.mjs
 
   portable:
     if: github.event_name != 'schedule'
