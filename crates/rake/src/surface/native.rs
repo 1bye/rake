@@ -106,7 +106,10 @@ impl Host {
 
     pub(super) fn hide(&self) {
         if let Err(error) = self.set_visible(false) {
-            tracing::debug!(%error, "GPU surface could not be hidden");
+            tracing::debug!(
+                error_type = std::any::type_name_of_val(&error),
+                "GPU surface could not be hidden"
+            );
         }
     }
 

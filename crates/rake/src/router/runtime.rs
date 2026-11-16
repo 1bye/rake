@@ -1228,6 +1228,10 @@ impl<R: Route> Router<R> {
         }
     }
 
+    pub(crate) fn logs(&self, after: u64) -> crate::diagnostics::LogSnapshot {
+        self.0.collector.logs_after(after)
+    }
+
     pub(crate) fn diagnostics(
         &self,
         after: u64,

@@ -160,7 +160,10 @@ impl<R: Route> RenderOnce for NavigationBoundary<R> {
                         if let Ok(router) = action.runtime()
                             && let Err(error) = router.retry_navigation(&retry)
                         {
-                            crate::warn!(%error, "navigation retry was rejected");
+                            crate::warn!(
+                                error_type = std::any::type_name_of_val(&error),
+                                "navigation retry was rejected"
+                            );
                         }
                     }));
                 }

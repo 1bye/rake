@@ -340,7 +340,10 @@ impl Element for GpuSurfaceElement {
             closed: false,
         };
         if let Err(error) = inner.host.place(bounds, clip, state) {
-            tracing::error!(%error, "GPU surface placement failed");
+            tracing::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "GPU surface placement failed"
+            );
             inner.hide();
             return;
         }

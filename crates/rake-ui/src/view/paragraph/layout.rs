@@ -99,7 +99,10 @@ fn shape(
     {
         Ok(lines) => lines.into_vec(),
         Err(error) => {
-            tracing::warn!(%error, "paragraph text shaping failed");
+            tracing::warn!(
+                error_type = std::any::type_name_of_val(&error),
+                "paragraph text shaping failed"
+            );
 
             Vec::new()
         }
@@ -226,7 +229,10 @@ pub(super) fn paint(
                 )
             })
         {
-            tracing::warn!(%error, "paragraph text painting failed");
+            tracing::warn!(
+                error_type = std::any::type_name_of_val(&error),
+                "paragraph text painting failed"
+            );
         }
 
         origin.y += line.size(layout.line_height).height;

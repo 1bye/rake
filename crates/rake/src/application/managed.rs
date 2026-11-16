@@ -116,7 +116,10 @@ fn prepare(
     configure(&runtime, config);
 
     if let Err(error) = crate::menus::install(runtime.router.client(), services, cx) {
-        tracing::error!(%error, "menu host could not start");
+        tracing::error!(
+            error_type = std::any::type_name_of_val(&error),
+            "menu host could not start"
+        );
     }
 
     if config.close_policy == ClosePolicy::KeepRunning {
@@ -140,7 +143,10 @@ fn prepare_background(services: &Services, config: &ManagedConfig, cx: &mut gpui
     configure(&runtime, config);
 
     if let Err(error) = crate::menus::install(runtime.router.client(), services, cx) {
-        tracing::error!(%error, "menu host could not start");
+        tracing::error!(
+            error_type = std::any::type_name_of_val(&error),
+            "menu host could not start"
+        );
     }
 
     cx.set_quit_mode(gpui::QuitMode::Explicit);
@@ -159,7 +165,10 @@ fn configure(runtime: &Runtime, config: &ManagedConfig) {
 
     for guard in config.quit_guards.iter().cloned() {
         if let Err(error) = runtime.router.quit_guard(move |context| guard(context)) {
-            crate::error!(%error, "managed quit guard could not be registered");
+            crate::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "managed quit guard could not be registered"
+            );
         }
     }
 
@@ -170,7 +179,10 @@ fn configure(runtime: &Runtime, config: &ManagedConfig) {
 
     #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
     if let Err(error) = runtime.router.install_sparkle() {
-        tracing::error!(%error, "native updater could not start");
+        tracing::error!(
+            error_type = std::any::type_name_of_val(&error),
+            "native updater could not start"
+        );
     }
 }
 
@@ -418,7 +430,10 @@ async fn drive(
 
     let execute = async move {
         if let Err(error) = router.run().await {
-            crate::error!(%error, "managed application driver stopped");
+            crate::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "managed application driver stopped"
+            );
         }
     };
 
@@ -486,7 +501,10 @@ async fn drive(
                             observed.reply_native_quit(false);
                             observed.prepare_native_exit(true);
                         }
-                        crate::error!(%error, "managed update handoff failed; manual restart required");
+                        crate::error!(
+                            error_type = std::any::type_name_of_val(&error),
+                            "managed update handoff failed; manual restart required"
+                        );
                         notify(view.as_ref(), content_changed, cx).await;
                         break;
                     }

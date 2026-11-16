@@ -534,7 +534,10 @@ impl WebWindowInner {
             .browser_window
             .set_timeout_with_callback(callback.unchecked_ref())
         {
-            log::warn!("failed to defer web window activation: {error:?}");
+            log::warn!(
+                "failed to defer web window activation: {}",
+                std::any::type_name_of_val(&error)
+            );
         }
     }
 
@@ -863,7 +866,9 @@ impl WebWindowInner {
                     &old_units,
                     &new_units,
                     start as usize..end as usize,
-                    this.ime_mirror.selection_start().map(|caret| caret as usize),
+                    this.ime_mirror
+                        .selection_start()
+                        .map(|caret| caret as usize),
                 );
 
             let applied = this.with_input_handler(|handler| {
@@ -1074,7 +1079,7 @@ impl WebWindowInner {
                         Err(error) => {
                             log::error!(
                                 "failed to read pasted image: {}",
-                                crate::platform::js_error_message(&error)
+                                std::any::type_name_of_val(&error)
                             );
                         }
                     }

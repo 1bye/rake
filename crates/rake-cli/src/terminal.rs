@@ -40,7 +40,7 @@ rake ctl [--instance UUID|application-id] [--json] [--timeout SECONDS]
   tasks list [--owner application|tab-N|entry-N] | tasks cancel TASK
   operations list|get|watch|cancel OP
   decisions list | decisions respond DECISION --choice CHOICE
-  logs list|follow | requests list | traces export [--after SEQUENCE]
+  logs [list|follow|--follow] | requests list | traces export [--after SEQUENCE]
   request JSON_MESSAGE
 Quit reports submission; inspect decisions and quit status while the host is still running.
 Mutations: [--no-wait] [--request-key KEY]. Retry the same payload and key after an uncertain response.
@@ -262,8 +262,10 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
 
             Message::Query(Query::Tasks { owner })
         }
-        ("logs", "list" | "follow") | ("requests", "list") | ("traces", "export") => {
-            follow = action == "follow";
+        ("logs", "" | "list" | "follow" | "--follow")
+        | ("requests", "list")
+        | ("traces", "export") => {
+            follow = matches!(action.as_str(), "follow" | "--follow");
             let after = option(&mut args, "--after")?
                 .map(|value| value.parse())
                 .transpose()?
@@ -275,7 +277,11 @@ fn parse_message(mut args: Vec<String>) -> Result<(Message, bool)> {
                 _ => None,
             };
 
-            Message::Query(Query::Diagnostics { after, kind })
+            if topic == "logs" {
+                Message::Query(Query::Logs { after })
+            } else {
+                Message::Query(Query::Diagnostics { after, kind })
+            }
         }
         ("windows", "list") => Message::Query(Query::Windows {}),
         ("windows", "get" | "close") if args.len() == 1 => {
@@ -669,6 +675,11 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
         loop {
             match (&mut next_query, &last_reply) {
                 (Query::Events { cursor }, Reply::Event(event)) => *cursor = Some(event.cursor),
+                (Query::Logs { after }, Reply::Logs(snapshot)) => {
+                    if let Some(record) = snapshot.records.last() {
+                        *after = record.sequence;
+                    }
+                }
                 (Query::Diagnostics { after, .. }, Reply::Diagnostics(snapshot)) => {
                     if let Some(record) = snapshot.records.last() {
                         *after = record.sequence;
@@ -696,7 +707,8 @@ pub(super) fn run(mut args: Vec<String>) -> Result<()> {
             let value = serde_json::to_value(&last_reply)?;
 
             let quiet = matches!(&last_reply, Reply::Event(event) if event.kind == rake_protocol::control::EventKind::Unchanged)
-                || matches!(&last_reply, Reply::Diagnostics(snapshot) if snapshot.records.is_empty());
+                || matches!(&last_reply, Reply::Diagnostics(snapshot) if snapshot.records.is_empty())
+                || matches!(&last_reply, Reply::Logs(snapshot) if snapshot.records.is_empty());
 
             if !quiet && value != previous {
                 print(&last_reply, compact)?;
@@ -714,6 +726,35 @@ mod tests {
     //! Covers: terminal-to-protocol mapping and malformed/unsupported arguments.
     //! Real: argument parser and shared Serde schema. Doubles: none. Requires: none.
     use super::*;
+
+    #[test]
+    fn logs_use_private_transport_tail() {
+        for (arguments, expected_follow) in [
+            (vec!["logs"], false),
+            (vec!["logs", "list"], false),
+            (vec!["logs", "follow"], true),
+            (vec!["logs", "--follow"], true),
+        ] {
+            let (message, follow) =
+                parse_message(arguments.into_iter().map(String::from).collect()).unwrap();
+
+            assert!(matches!(message, Message::Query(Query::Logs { after: 0 })));
+            assert_eq!(follow, expected_follow);
+        }
+
+        let (message, _) =
+            parse_message(["logs", "list", "--after", "42"].map(String::from).to_vec()).unwrap();
+
+        assert!(matches!(message, Message::Query(Query::Logs { after: 42 })));
+        assert!(
+            parse_message(
+                ["logs", "list", "--after", "bad"]
+                    .map(String::from)
+                    .to_vec()
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn maps_owned_addresses_and_independent_open_options() {
@@ -968,6 +1009,7 @@ mod tests {
                 request_id: 1,
                 response: true,
             },
+            Query::Logs { after: 0 },
             Query::Diagnostics {
                 after: 0,
                 kind: None,

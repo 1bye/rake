@@ -373,6 +373,11 @@ pub enum Query {
         /// Selects the response rather than the request body.
         response: bool,
     },
+    /// Redacted formatted application logs after a log sequence.
+    Logs {
+        /// Exclusive log sequence.
+        after: u64,
+    },
     /// Bounded records for logs, requests and traces with observable loss counts.
     Diagnostics {
         /// Exclusive collector sequence.
@@ -415,6 +420,7 @@ impl Query {
             "decisions",
             "events",
             "diagnostics",
+            "logs",
             "http_body",
             "commands",
         ]
@@ -547,6 +553,8 @@ pub enum Reply {
     Event(RuntimeEvent),
     /// Bounded diagnostic records, including loss counts.
     Diagnostics(rake_diagnostics::Snapshot),
+    /// Redacted application log lines, matching the file output.
+    Logs(rake_diagnostics::LogSnapshot),
 }
 
 /// Structured protocol errors; transport failures are reported separately as I/O errors.

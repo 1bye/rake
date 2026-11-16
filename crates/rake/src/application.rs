@@ -116,6 +116,7 @@ pub struct App<R: Route = NoRoute> {
     diagnostics: DiagnosticsConfig,
     crash_reports: crate::crash::startup::CrashReports,
     crash_version: Option<String>,
+    logging: Option<crate::logging::LogConfig>,
     root: Option<Root>,
     background: Option<Background>,
     main_window: Option<(WindowOptionsFactory, MainWindow)>,
@@ -183,6 +184,7 @@ impl App<NoRoute> {
             diagnostics: DiagnosticsConfig::new(),
             crash_reports: crate::crash::startup::CrashReports::default(),
             crash_version: None,
+            logging: Some(crate::logging::LogConfig::default()),
             root: None,
             background: None,
             main_window: None,
@@ -254,6 +256,7 @@ impl App<NoRoute> {
             configuration_error,
             diagnostics: self.diagnostics,
             crash_reports: self.crash_reports,
+            logging: self.logging,
             crash_version: self.crash_version,
             root: self.root,
             background: self.background,
@@ -607,6 +610,27 @@ impl<R: Route> App<R> {
     pub fn diagnostics(mut self, config: DiagnosticsConfig) -> Self {
         self.diagnostics = config;
         self.http_client = RefCell::new(None);
+
+        self
+    }
+
+    /// Configures automatic logging. `RAKE_LOG` overrides the level preference.
+    /// The last call to this method or `without_logging` selects subscriber ownership.
+    pub fn logging(mut self, config: crate::logging::LogConfig) -> Self {
+        self.logging = Some(config);
+        self.diagnostics = self
+            .diagnostics
+            .subscriber(crate::diagnostics::SubscriberMode::Automatic);
+
+        self
+    }
+
+    /// Leaves output and subscriber ownership to the embedding host.
+    pub fn without_logging(mut self) -> Self {
+        self.logging = None;
+        self.diagnostics = self
+            .diagnostics
+            .subscriber(crate::diagnostics::SubscriberMode::Host);
 
         self
     }
@@ -1006,6 +1030,32 @@ impl<R: Route> App<R> {
             return Err(AppError::MissingRoot);
         };
 
+        if let Some(mut config) = self.logging.take() {
+            if config.level.is_none()
+                && let Ok(preferences) = self.platform.preferences(&self.id)
+            {
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    config.level = futures::executor::block_on(preferences.get("log-level"))
+                        .ok()
+                        .flatten();
+                }
+
+                #[cfg(target_family = "wasm")]
+                {
+                    use futures::FutureExt as _;
+                    config.level = preferences
+                        .get("log-level")
+                        .now_or_never()
+                        .and_then(Result::ok)
+                        .flatten();
+                }
+            }
+
+            self.diagnostics =
+                crate::logging::configure(self.diagnostics.clone(), &self.id, config);
+        }
+
         self.diagnostics.install()?;
 
         #[cfg(target_family = "wasm")]
@@ -1050,7 +1100,10 @@ impl<R: Route> App<R> {
         application.on_open_urls(move |urls| {
             for url in urls {
                 if let Err(error) = activations.receive_open_url(&url) {
-                    crate::warn!(%error, "host URL activation rejected");
+                    crate::warn!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "host URL activation rejected"
+                    );
                 }
             }
         });
@@ -1086,7 +1139,10 @@ impl<R: Route> App<R> {
 
                                 cx.update(|cx| handle_reopen(&reopen, cx));
                             }
-                            Err(error) => crate::warn!(%error, "instance activation rejected"),
+                            Err(error) => crate::warn!(
+                                error_type = std::any::type_name_of_val(&error),
+                                "instance activation rejected"
+                            ),
                         }
                     }
                 })
@@ -1126,7 +1182,10 @@ impl<R: Route> App<R> {
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
                 #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
                 if let Err(error) = updates.initialize_sparkle_checks() {
-                    tracing::error!(%error, "native update checks could not start");
+                    tracing::error!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "native update checks could not start"
+                    );
                 }
 
                 let executor = cx.background_executor().clone();

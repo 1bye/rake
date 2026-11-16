@@ -98,6 +98,8 @@ pub(super) fn encode(record: &mut CrashRecord, limit: usize) -> io::Result<Vec<u
             && !location.is_empty()
         {
             location.truncate(location.floor_char_boundary(location.len() / 2));
+        } else if record.log_path.is_some() {
+            record.log_path = None;
         } else if !record.app_version.is_empty() {
             record.app_version.truncate(
                 record
