@@ -167,13 +167,15 @@ def main():
         app_log, cdp_log = root / "app.log", root / "cdp.log"
         with app_log.open("w", encoding="utf-8") as app_output, cdp_log.open("w", encoding="utf-8") as cdp_output:
             try:
-                # Native dev bundles use an explicit target triple; warm that graph before readiness.
+                # Warm native dev packaging before readiness using the host-default build.
                 subprocess.run(
                     [str(rake), "bundle", "--native", "--compat", "--json", "--manifest-path", "examples/desktop/Cargo.toml",
                      "--package", "rake-desktop-example", "--bin", "rake-desktop-example", "--output", str(root / "warm"),
                      "--debug", "--features", "native-smoke,devtools"],
                     env=env, stdout=app_output, stderr=subprocess.STDOUT, timeout=420, check=True,
                 )
+                assert Path("target/debug/rake-desktop-example.exe").is_file()
+                assert not Path("target/x86_64-pc-windows-msvc/debug/rake-desktop-example.exe").exists(), "Native dev rebuilt the explicit-target graph"
                 application = subprocess.Popen(
                     [str(rake), "dev", "--compiler", "cargo", "--manifest-path", "examples/desktop/Cargo.toml",
                      "--package", "rake-desktop-example", "--features", "native-smoke", "--cdp", "--no-open",
@@ -293,6 +295,7 @@ def main():
                     assert not list(control.glob("*.json")), "GUI discovery survived shutdown"
                     for handle in observed:
                         assert kernel.WaitForSingleObject(handle, 5000) == 0, "A supervised Windows process survived shutdown"
+                    assert not Path("target/x86_64-pc-windows-msvc/debug/rake-desktop-example.exe").exists(), "Native dev rebuilt the explicit-target graph"
                     assert "RAKE_DESKTOP_SMOKE_FRAME" in app_log.read_text(errors="replace")
                     assert kernel.WaitForSingleObject(editor_handle, 100) == 258, "Stopping dev killed the source editor"
                     print("Windows desktop dev/CDP, real GUI inspect, reload, shutdown and editor Job survival passed")

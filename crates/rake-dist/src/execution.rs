@@ -287,6 +287,7 @@ struct JobInput {
 
 struct JobOptions {
     platform: Platform,
+    host_build: bool,
     output: PathBuf,
     release: bool,
     features: Vec<String>,
@@ -301,6 +302,7 @@ impl From<&BundleRequest> for JobOptions {
     fn from(r: &BundleRequest) -> Self {
         Self {
             platform: r.platform,
+            host_build: r.compatibility && r.target.is_none(),
             output: r.output.clone(),
             release: r.release,
             features: r.features.clone(),
@@ -481,6 +483,7 @@ pub fn execute_source_worker(
 
     let options = JobOptions {
         platform: request.platform,
+        host_build: false,
         output: resolved.output,
         release: request.release,
         features,
@@ -687,7 +690,11 @@ fn execute_job(
             build(
                 selected,
                 binary,
-                target,
+                if request.host_build && target == host_target()? {
+                    None
+                } else {
+                    Some(target)
+                },
                 request.release,
                 item,
                 selected
@@ -1512,7 +1519,7 @@ pub(crate) fn native_platform() -> Result<Platform, Error> {
 fn build(
     selected: &crate::Package,
     binary: &str,
-    target: &str,
+    target: Option<&str>,
     release: bool,
     package_plan: &rake_dist_core::PackagePlan,
     facade: Option<&str>,
@@ -1536,7 +1543,12 @@ fn build(
             "--manifest-path",
         ])
         .arg(manifest)
-        .args(["--package", package, "--bin", binary, "--target", target]);
+        .args(["--package", package, "--bin", binary]);
+
+    // Native dev compatibility builds share Cargo's host-default dependency graph.
+    if let Some(target) = target {
+        command.args(["--target", target]);
+    }
 
     if !context.features.is_empty() {
         command.arg("--features").arg(context.features.join(","));
