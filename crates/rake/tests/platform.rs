@@ -172,3 +172,12 @@ fn headless_notifications_report_unsupported_without_prompting() {
         Err(Error::Unsupported(_))
     ));
 }
+
+#[cfg(not(feature = "global-shortcuts"))]
+#[test]
+fn global_shortcuts_are_explicitly_unavailable_without_the_feature() {
+    let platform = Platform::default();
+
+    assert!(!platform.capabilities().global_shortcuts.supported);
+    assert!(!block_on(platform.global_shortcuts().available()).unwrap());
+}

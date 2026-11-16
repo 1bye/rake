@@ -81,6 +81,7 @@ impl Drop for Host {
 pub(super) fn install(platform: &Platform) -> Host {
     let activations = std::rc::Rc::downgrade(&platform.activations);
     let notifications = std::rc::Rc::downgrade(&platform.notifications);
+    let shortcuts = platform.shortcuts.clone();
     let activate = Closure::new(move |tag: String| {
         if let (Some(activations), Some(notifications)) =
             (activations.upgrade(), notifications.upgrade())
@@ -91,6 +92,7 @@ pub(super) fn install(platform: &Platform) -> Host {
                 let platform = Platform {
                     activations,
                     notifications,
+                    shortcuts: shortcuts.clone(),
                 };
                 let _ = platform.receive_open_url(payload.as_str());
             }

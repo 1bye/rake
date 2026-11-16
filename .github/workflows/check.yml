@@ -172,6 +172,9 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cargo test -p rake-app-cli --bin rake project_build:: --locked
+      - name: Global shortcut lifecycle (X11)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 cargo run -p rake-shortcuts --example shortcut-probe --locked
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
@@ -315,6 +318,9 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cargo test -p rake-app-cli --bin rake project_build:: --locked
+      - name: Global shortcut lifecycle (Windows)
+        if: runner.os == 'Windows'
+        run: cargo run -p rake-shortcuts --example shortcut-probe --locked
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
@@ -495,6 +501,7 @@ jobs:
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
       - run: cargo test -p rake-native --doc --locked
       - run: cargo test -p rake-native --features native-tests --test appkit --locked
+      - run: cargo run -p rake-shortcuts --example shortcut-probe --locked
       - run: cargo test -p rake-tray --locked
       - run: cargo test --workspace --locked --no-fail-fast
       - run: cargo test -p rake-files --lib --locked
@@ -503,6 +510,7 @@ jobs:
       - run: cargo test -p rake-app --features tray,view-test-support --lib --locked
       - run: cargo check -p rake-app --features tray,gpui-fast --all-targets --locked
       - run: cargo check -p renamed-facade --features tray --locked
+      - run: cargo check -p rake-tray-example --locked
       - run: cargo test -p rake-app --features view-test-support --lib --test view_state --test actions --test inspection_compiled_out --locked
       - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo test -p rake-app --features view-test-support,devtools --lib --test view_state --test element_inspection --locked

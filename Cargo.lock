@@ -7171,6 +7171,7 @@ dependencies = [
  "rake-native",
  "rake-protocol",
  "rake-resources",
+ "rake-shortcuts",
  "rake-tray",
  "rake-ui",
  "rake-updates",
@@ -7555,6 +7556,21 @@ version = "0.1.0"
 dependencies = [
  "rake-app",
  "tracing",
+]
+
+[[package]]
+name = "rake-shortcuts"
+version = "0.1.0-alpha.4"
+dependencies = [
+ "ashpd",
+ "async-io",
+ "blocking",
+ "futures",
+ "objc2 0.6.5",
+ "rake-tray",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
+ "x11rb",
 ]
 
 [[package]]
