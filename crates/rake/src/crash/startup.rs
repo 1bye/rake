@@ -63,7 +63,7 @@ impl CrashReports {
                     if let Err(error) = reporter.deliver(sink).await {
                         // Web errors carry only fixed, privacy-safe category messages.
                         tracing::warn!(
-                            error_type = std::any::type_name_of_val(&error),
+                            %error,
                             "crash delivery failed; waiting record retained"
                         );
                     }
