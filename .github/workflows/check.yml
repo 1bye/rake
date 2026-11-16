@@ -55,6 +55,7 @@ jobs:
           node scripts/test-web-runtime.mjs
           node scripts/test-offline.mjs
           node scripts/test-file-processing.mjs
+          node scripts/test-file-drop.mjs
 
   portable:
     if: github.event_name != 'schedule'
@@ -118,7 +119,7 @@ jobs:
           - os: windows-latest
             updates: updates-velopack
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 90 || 60 }}
     env:
       RUST_BACKTRACE: "1"
     steps:

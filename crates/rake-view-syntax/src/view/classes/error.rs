@@ -58,6 +58,7 @@ pub fn unknown_variant(name: &str) -> String {
         &name,
         [
             "hover:",
+            "drag-over:",
             "active:",
             "focus:",
             "focus-visible:",

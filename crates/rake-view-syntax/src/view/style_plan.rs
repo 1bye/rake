@@ -8,6 +8,7 @@ use quote::{format_ident, quote};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Variant {
     Hover,
+    DragOver,
     Active,
     Focus,
     FocusVisible,
@@ -20,6 +21,7 @@ impl Variant {
     pub fn parse(name: &str, span: Span) -> syn::Result<Self> {
         Ok(match name {
             "hover" => Self::Hover,
+            "drag-over" => Self::DragOver,
             "active" => Self::Active,
             "focus" => Self::Focus,
             "focus-visible" => Self::FocusVisible,
@@ -48,6 +50,7 @@ impl Variant {
     pub fn method(&self) -> &'static str {
         match self {
             Self::Hover => "hover",
+            Self::DragOver => "drag_over",
             Self::Active => "active",
             Self::Focus => "focus",
             Self::FocusVisible => "focus_visible",
@@ -59,6 +62,7 @@ impl Variant {
 
     pub fn name(&self) -> &'static str {
         match self {
+            Self::DragOver => "drag-over",
             Self::FocusVisible => "focus-visible",
             Self::InFocus => "in-focus",
             Self::GroupHover(_) => "group-hover",
@@ -185,7 +189,7 @@ impl StylePlan {
         emit_segments(&self.base, mapped)
     }
 
-    pub fn emit_variants(&self, mapped: &Ident) -> TokenStream {
+    pub fn emit_variants(&self, mapped: &Ident, rake: &TokenStream) -> TokenStream {
         let mut methods = TokenStream::new();
 
         for (variant, segments) in &self.variants {
@@ -198,7 +202,15 @@ impl StylePlan {
 
             let body = emit_segments(segments, mapped);
 
-            methods.extend(quote!(.#method(#group |#mapped| { #body #mapped })));
+            if matches!(variant, Variant::DragOver) {
+                methods.extend(quote!(.drag_over::<#rake::gpui::ExternalPaths>({
+                    let #mapped = #rake::gpui::StyleRefinement::default();
+                    #body
+                    move |_, _, _, _| #mapped.clone()
+                })));
+            } else {
+                methods.extend(quote!(.#method(#group |#mapped| { #body #mapped })));
+            }
         }
 
         methods
