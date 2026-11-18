@@ -63,7 +63,10 @@ pub(in crate::application) fn install_main_window(
 
     if !start_hidden && let Err(error) = show_main_window(cx) {
         // Runtime stays alive so a tray action can retry a failed mount.
-        crate::error!(%error, "main window could not open");
+        crate::error!(
+            error_type = std::any::type_name_of_val(&error),
+            "main window could not open"
+        );
     }
 }
 
@@ -119,6 +122,7 @@ pub(in crate::application) fn show_main_window(cx: &mut gpui::App) -> Result<(),
         crate::window_state::native::prepare(crate::router::WindowId(1), &mut options, cx);
 
     let opened = cx.open_window(options, move |window, cx| {
+        crate::theme::observe_window(window, cx);
         let content = match mount(context, window, cx) {
             Ok(content) => content,
             Err(error) => {

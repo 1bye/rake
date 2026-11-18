@@ -909,13 +909,16 @@ fn parse_paragraph(
                     text = inline_text;
                 } else {
                     if cfg!(debug_assertions) {
-                        tracing::warn!("unsupported inline html tag: {:#?}", val.value);
+                        tracing::warn!("unsupported inline html tag");
                     }
                 }
             }
             Err(err) => {
                 if cfg!(debug_assertions) {
-                    tracing::warn!("failed parsing html: {:#?}", err);
+                    tracing::warn!(
+                        error_type = std::any::type_name_of_val(&err),
+                        "failed parsing html"
+                    );
                 }
 
                 text.push_str(&val.value);
@@ -951,7 +954,7 @@ fn parse_paragraph(
         }
         _ => {
             if cfg!(debug_assertions) {
-                tracing::warn!("unsupported inline node: {:#?}", node);
+                tracing::warn!("unsupported inline node");
             }
         }
     }
@@ -1103,7 +1106,10 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
             },
             Err(err) => {
                 if cfg!(debug_assertions) {
-                    tracing::warn!("error parsing html: {:#?}", err);
+                    tracing::warn!(
+                        error_type = std::any::type_name_of_val(&err),
+                        "error parsing html"
+                    );
                 }
 
                 BlockNode::Paragraph(Paragraph::new(val.value))
@@ -1182,7 +1188,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
         },
         _ => {
             if cfg!(debug_assertions) {
-                tracing::warn!("unsupported node: {:#?}", value);
+                tracing::warn!("unsupported node");
             }
             BlockNode::Unknown
         }

@@ -9,6 +9,7 @@ mod browser;
 mod bundle;
 #[cfg(any(unix, windows))]
 mod dev;
+mod dev_profile;
 mod favicon;
 mod offline;
 mod permissions;
@@ -22,6 +23,9 @@ mod serve;
 mod web;
 #[cfg(windows)]
 mod windows;
+
+#[cfg(windows)]
+pub(crate) use windows::shell_helper;
 
 use args::{Args, Compiler};
 use processes::{Capture, Processes};
@@ -63,7 +67,7 @@ pub(crate) fn run_client(command: &mut Command) -> Result<i32> {
 }
 
 pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
-    let mut args = match args::parse(command, arguments) {
+    let args = match args::parse(command, arguments) {
         Ok(Some(args)) => args,
         Ok(None) => return 0,
         Err(error) => {
@@ -79,10 +83,6 @@ pub(crate) fn run(command: &str, arguments: &[String]) -> i32 {
     let result = ctrlc::set_handler(move || flag.store(true, Ordering::Release))
         .map_err(Into::into)
         .and_then(|()| {
-            if args.live {
-                args.blaze_binary = Some(blaze_install::ensure()?);
-            }
-
             let processes = Processes::new(&cancelled);
 
             if command == "doctor" {
@@ -123,6 +123,11 @@ fn doctor(args: &Args, processes: &Processes<'_>) -> Result<i32> {
         blaze: Value,
         live: Value,
     }
+
+    if args.manifest.is_file() {
+        dev_profile::warn(args, processes);
+    }
+
     let probe = |program: &str, arguments: &[&str]| {
         let mut command = Command::new(program);
 
@@ -197,6 +202,10 @@ impl Project {
 
             command.arg("--manifest-path").arg(&args.manifest);
 
+            if args.dev && !args.json && !args.verbose {
+                command.env("CARGO_TERM_COLOR", "never");
+            }
+
             command
         };
 
@@ -210,6 +219,10 @@ impl Project {
             &mut metadata_command(false, root.join("Cargo.lock").is_file()),
             Capture::Metadata,
         )?)?;
+
+        if args.dev && !args.release {
+            dev_profile::warn_metadata(&metadata, processes);
+        }
 
         let root = PathBuf::from(string(&metadata, "workspace_root")?);
 
@@ -452,6 +465,10 @@ impl Project {
         };
 
         let mut command = Command::new(executable);
+
+        if args.dev && !args.json && !args.verbose {
+            command.env("CARGO_TERM_COLOR", "never");
+        }
 
         command
             .args([

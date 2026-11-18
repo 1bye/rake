@@ -45,7 +45,31 @@ Build commands write to `dist/PACKAGE/TARGET`, or `--output PATH`. Later builds 
 - The previous app stays usable while compiling, and a compile or binding failure keeps it.
 - The watcher stays alive after an app crash. Editing a source restarts the build and launch cycle.
 
-Each launch prints a private `/tmp/rake-dev-*` session directory. Its mode-0700
+Development output shows the Rake CLI version, the app's bundle display name (or
+package name), startup time and editing behavior. Ordinary native saves report
+`Restarted`; live edits report `Updated` only after the running app acknowledges
+a patch. A compiled edit without an acknowledgment reports `Update ready`.
+Web publication also reports
+`Update ready`, since publishing a build does not confirm that a browser reloaded.
+Source paths and timings accompany completed edits. Compiler warnings and errors
+remain visible, with routine tool progress hidden. Application output is prefixed
+with `app`; it is not synthesized by the supervisor. Known view resets are reported
+before restart, without claiming that every unregistered field can be detected.
+
+Use `--verbose` for full tool output, internal supervisor events and the private
+session directory. Styling is automatic for terminals, using the terminal's colors;
+`NO_COLOR` disables color, and `TERM=dumb` disables terminal progress and Unicode
+markers. Redirected output has no color or cursor updates. Modern Windows terminals
+and native Windows console colors are supported; older consoles use ASCII markers.
+Interactive builds show the current activity and elapsed time, including project,
+live compiler and preview preparation. An owned progress thread sleeps between
+updates and parks while idle; app logs and progress share the same writer lock.
+Plain output prints each activity once. At most 1 MiB of human build diagnostics
+is retained until the result;
+an explicit notice reports additional output, available live with `--verbose`.
+
+`--verbose` prints the private `/tmp/rake-dev-*` session directory (the system's
+private temporary directory on Windows). Its mode-0700
 control directory isolates native instances and browser advertisements; checkpoints
 and supervisor status use mode 0600. Inspect it with:
 
@@ -55,7 +79,10 @@ RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake instances --jso
 RAKE_CONTROL_DIR=/tmp/rake-dev-EXAMPLE/control target/debug/rake ctl reload status --json
 ```
 
-Desktop dev launches the native app; `--preview` opens its browser preview.
+Desktop dev launches the native app; `--preview` prints its browser preview URL
+as soon as the server is ready. Click or copy the link to open it when you choose.
+Starting with CLI `0.1.0-alpha.5`, `rake dev --live --preview` works on Apple Silicon
+Macs: preview follows live patches and reconnects after checkpointed restarts.
 Web dev opens the app directly. With `--cdp`, it opens the embedded
 [Chrome DevTools](devtools.md) toggle instead. Node 22+ is required for Web
 `--cdp`; frontend assets download when the panel opens. `--no-open` prints the
@@ -67,7 +94,7 @@ Use `rake dev --cdp` to start the Chrome DevTools adapter with the app, or
 session. `--instance UUID` selects a runtime. The legacy HTML and GPUI inspectors
 are disabled and are not bundled.
 
-`--json` emits supervisor events as JSON lines, and compiler and app diagnostics go to stderr. `status.json` stays readable when the app is stopped or crashed.
+`--json` emits the existing supervisor events as JSON lines, and compiler and app diagnostics go to stderr. `status.json` stays readable when the app is stopped or crashed.
 
 Ctrl-C or SIGTERM stops owned app, build, compiler, server and backend process groups and removes their discovery files. Temporary session artifacts and a failed checkpoint remain for recovery. Remove the session directory when you're done, because it may contain unsaved development data and large build artifacts.
 
@@ -203,13 +230,20 @@ rake doctor --json
 ```
 
 This is currently **Apple Silicon macOS only**. The pinned
-[`v0.20261030.1-rake.1` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.1)
-is published; ordinary live mode downloads it automatically. To use a copy of
-that exact published archive offline:
+[`v0.20261030.1-rake.3` release](https://github.com/1bye/blaze/releases/tag/v0.20261030.1-rake.3)
+is published; ordinary live mode downloads it automatically. This version loads
+manifests introduced by launch-only dependency features, including `rake/devtools`
+under `--cdp`. An app does not need a `devtools` forwarding feature or a manual
+`hdrhistogram` lockfile entry to work around the older planner bug. To use a copy
+of that exact published archive offline:
 
 ```sh
-BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.1-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
+BLAZE_ARCHIVE=/absolute/path/to/blaze-v0.20261030.1-rake.3-aarch64-apple-darwin.tar.gz rake dev --live --bin rake-view
 ```
+
+CLI `0.1.0-alpha.6` embeds rake.3; published CLI alpha.5 retains rake.2.
+Upgrade the installed CLI to receive the compiler fix. Updating an app's SDK
+alone does not change the compiler pin.
 
 `BLAZE_ARCHIVE` supplies bytes, not a checksum bypass. `RAKE_BLAZE=/absolute/path/to/blaze`
 is an explicit developer override; it requires the patched
@@ -230,10 +264,9 @@ cargo metadata --format-version 1 > /dev/null
 rake dev --live --bin your-app
 ```
 
-Use your dependency alias in place of `rake` if it is renamed. This pins the
-optional `blaze-live` Git dependency that Blaze requires in `Cargo.lock`.
-Passing only an ad hoc `rake/live` flag did not persist that pin in the tested
-Cargo version. The repository's workspace examples already have it pinned.
+Use your dependency alias in place of `rake` if it is renamed. This includes the
+optional `rake-blaze-live` registry runtime in the app's normal lockfile. The
+repository's workspace examples already expose the live feature.
 
 Live mode enables the app's existing Rake `live` feature, which automatically
 enables `pathfinder_simd/pf-no-simd` on macOS. It sets the hybrid macro options
@@ -356,3 +389,98 @@ planner can request inactive optional dependencies absent from a Cargo lockfile;
 this is an engine limitation, not a reason to enable every app feature at runtime.
 A restart restores only registered checkpoints; other fields reset with a notice.
 Use `rake dev --live --require-state` to block a restart that cannot restore state.
+
+## Optimized development builds
+
+Put these settings in the workspace root Cargo.toml (member profiles are ignored):
+
+```toml
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+```
+
+This keeps application rebuilds quick while optimizing GPUI and other dependencies.
+Performance numbers from an unoptimized debug build are not meaningful.
+
+`rake doctor` and debug `rake dev` warn on stderr when GPUI resolves to dev
+`opt-level = 0`, including with JSON output. The check uses the workspace root,
+package overrides (including versioned package selectors), and
+`CARGO_PROFILE_DEV_OPT_LEVEL`. Named package overrides take priority over `"*"`;
+the wildcard applies only to dependencies outside the workspace. Package
+overrides also take priority over the base profile optimization environment
+variable. Other `CARGO_PROFILE_DEV_*` settings, such as `DEBUG`, do not change
+the optimization level.
+
+### Contributor workspace profile and native scroll measurement
+
+App templates and the standalone inspector keep the full dependency wildcard
+above. Rake's root workspace instead uses:
+
+```toml
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package.gpui-pre]
+opt-level = 3
+
+[profile.dev.package.taffy]
+opt-level = 3
+```
+
+Other packages inherit level 1. The warning check is advisory: an unavailable
+manifest or metadata produces at most one short note, and unmatched override
+selectors are skipped. Neither case makes doctor or dev fail because of this check.
+
+Measured `examples/preview` on an Apple M1 Max running macOS 26.6.2, using
+`--features devtools` and `scripts/benchmark-dev-profile.py`. Every build used
+`CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0`.
+Each profile has three runs with 20 retained draws per run. The table reports the
+median of the three run medians, and the range of their p95 values:
+
+| Profile | Median draw (ms) | Run p95 range (ms) |
+| --- | ---: | ---: |
+| Base 0, GPUI 0, Taffy 0 | 7.317 | 7.802–8.625 |
+| Base 1, GPUI 3 | 1.411 | 1.469–3.195 |
+| Base 1, GPUI 3, macOS backend 3 | 1.351 | 1.516–3.807 |
+| Base 1, GPUI 3, Taffy 3 (selected) | 1.324 | 3.953–4.274 |
+
+Taffy reduced the median by about 6% relative to GPUI alone; the macOS backend's
+roughly 4% change did not meet the 5% median improvement threshold for retaining
+an additional override. The Taffy tail samples were variable, so the median
+result does not establish a tail-latency improvement over GPUI alone.
+
+Keep base opt-level 1: after warming both configurations with GPUI and Taffy at
+3, three text edits in `examples/preview/src/main.rs` and subsequent
+`cargo build -p rake-preview --features devtools` calls took 4.117, 3.494, 3.150 s
+at base 0 and 1.670, 1.243, 1.239 s at base 1. Timings cover the whole Cargo
+invocation, excluding warm-up; the original source was restored afterward.
+This representative edit showed no incremental rebuild slowdown at level 1.
+It is not a measurement of every workspace edit or of cold compilation.
+
+Draw timings are native inspection `draw_us` wall durations, not display frame
+intervals or GPU presentation latency. The script launches the real native
+window, warms with eight one-pixel scroll inputs, enables the in-memory frame
+recorder, submits 25 more inputs spaced by 20 ms, and summarizes the first
+retained frame page. It asserts at least 15 samples, positive durations, and
+actual content movement. The short sample and inspection overhead limit how
+broadly these numbers apply.
+
+Reproduce the selected profile and the unoptimized baseline from the root:
+
+```sh
+export CARGO_TARGET_DIR=/tmp/rake-devprofile-68-target
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+cargo build -p rake-preview --features devtools
+python3 scripts/benchmark-dev-profile.py "$CARGO_TARGET_DIR/debug/rake-preview"
+CARGO_PROFILE_DEV_OPT_LEVEL=0 cargo build -p rake-preview --features devtools \
+  --config 'profile.dev.package.gpui-pre.opt-level=0' \
+  --config 'profile.dev.package.taffy.opt-level=0'
+python3 scripts/benchmark-dev-profile.py "$CARGO_TARGET_DIR/debug/rake-preview"
+```
+
+The broader `test-preview-native.py --benchmark` regression stopped at its second
+synthetic click on this host, before recording scroll samples. That test remains
+unchanged; the focused benchmark exercises scrolling without the click sequence.

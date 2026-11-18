@@ -1,6 +1,6 @@
 [package]
 name = "rake-resources"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ description = "Installed resource and helper discovery for Rake applications"
 workspace = true
 
 [dependencies]
-rake-dist-core = { version = "=0.1.0-alpha.2", path = "../rake-dist-core" }
+rake-dist-core = { version = "=0.1.0-alpha.4", path = "../rake-dist-core" }
 serde_json.workspace = true
 thiserror.workspace = true
 

@@ -1,6 +1,6 @@
 [package]
 name = "rake-updates"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,8 +20,8 @@ velopack = ["dep:rake-autostart", "dep:winreg", "dep:windows-sys", "dep:velopack
 
 [dependencies]
 serde.workspace = true
-rake-resources = { version = "=0.1.0-alpha.2", path = "../rake-resources" }
-rake-dist-core = { version = "=0.1.0-alpha.2", path = "../rake-dist-core" }
+rake-resources = { version = "=0.1.0-alpha.4", path = "../rake-resources" }
+rake-dist-core = { version = "=0.1.0-alpha.4", path = "../rake-dist-core" }
 thiserror.workspace = true
 serde_json.workspace = true
 event-listener = "5.4"
@@ -48,7 +48,7 @@ name = "native-quit"
 required-features = ["native-tests"]
 
 [target.'cfg(windows)'.dependencies]
-rake-autostart = { version = "=0.1.0-alpha.3", path = "../rake-autostart", optional = true }
+rake-autostart = { version = "=0.1.0-alpha.4", path = "../rake-autostart", optional = true }
 winreg = { version = "0.56", optional = true }
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell"], optional = true }
 

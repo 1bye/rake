@@ -41,7 +41,10 @@ impl CrashReports {
                     });
 
                 if let Err(error) = result {
-                    tracing::warn!(%error, "default crash recording unavailable; startup continues");
+                    tracing::warn!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "default crash recording unavailable; startup continues"
+                    );
                 }
             }
             Self::Disabled => {}
@@ -59,7 +62,10 @@ impl CrashReports {
                 wasm_bindgen_futures::spawn_local(async move {
                     if let Err(error) = reporter.deliver(sink).await {
                         // Web errors carry only fixed, privacy-safe category messages.
-                        tracing::warn!(%error, "crash delivery failed; waiting record retained");
+                        tracing::warn!(
+                            %error,
+                            "crash delivery failed; waiting record retained"
+                        );
                     }
                 });
             }

@@ -91,6 +91,7 @@ impl CrashReporter {
             let (message, truncated) =
                 panic_message(info.payload(), reporter.config.include_panic_message);
             let mut record = CrashRecord {
+                log_path: crate::logging::path(),
                 schema_version: 1,
                 id,
                 timestamp_ms,

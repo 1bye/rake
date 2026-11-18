@@ -4461,7 +4461,7 @@ impl BlockNode {
             BlockNode::Unknown { .. } | BlockNode::Definition { .. } => div().into_any_element(),
             _ => {
                 if cfg!(debug_assertions) {
-                    tracing::warn!("unknown implementation: {:?}", self);
+                    tracing::warn!("unknown text node implementation");
                 }
 
                 div().into_any_element()

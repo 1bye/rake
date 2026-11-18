@@ -40,6 +40,29 @@ impl FileHandle {
         Self { name, path }
     }
 
+    /// Accepts exactly one external file without reading it. Directories and read
+    /// limits are checked by [`Self::read`], off the UI thread.
+    ///
+    /// # Errors
+    /// Rejects empty and multi-file drops.
+    pub fn from_drop(paths: &gpui::ExternalPaths) -> Result<Self, Error> {
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = paths;
+
+            Err(Error::Unsupported("native path drop"))
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if paths.paths().len() != 1 {
+                return Err(Error::InvalidInput("drop exactly one file".into()));
+            }
+
+            Ok(Self::from_path(paths.paths()[0].clone()))
+        }
+    }
+
     /// Native extension for applications that need filesystem integration.
     #[cfg(not(target_family = "wasm"))]
     pub fn native_path(&self) -> &std::path::Path {

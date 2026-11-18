@@ -240,7 +240,10 @@ impl WebBridge {
             };
 
             if let Err(error) = session.await {
-                crate::warn!(%error, "Development bridge disconnected; reconnecting");
+                crate::warn!(
+                    error_type = std::any::type_name_of_val(&error),
+                    "Development bridge disconnected; reconnecting"
+                );
             }
 
             crate::http::sleep(Duration::from_secs(1)).await;

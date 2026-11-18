@@ -38,7 +38,25 @@ type MainWindow = Rc<
 
 type WindowOptionsFactory = Rc<dyn Fn() -> WindowOptions>;
 
+type Reopen = Box<dyn FnMut(&mut gpui::App)>;
+
 type Background = Box<dyn FnOnce(crate::runtime::RuntimeContext, &mut gpui::App)>;
+
+fn handle_reopen(callback: &RefCell<Option<Reopen>>, cx: &mut gpui::App) {
+    if let Some(callback) = callback.borrow_mut().as_mut() {
+        callback(cx);
+    } else {
+        cx.activate(true);
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn launch_url(argument: &str) -> Option<url::Url> {
+    url::Url::parse(argument)
+        .ok()
+        .filter(|url| url.scheme().len() != 1)
+        .or_else(|| url::Url::from_file_path(argument).ok())
+}
 
 /// What closing a standalone application's window requests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,6 +100,8 @@ thread_local! {
 /// Typed routers drive scoped tasks and entry activity on the host UI loop.
 pub struct App<R: Route = NoRoute> {
     id: String,
+    single_instance: bool,
+    reopen: Option<Reopen>,
     services: ServiceRegistry,
     window_options: WindowOptions,
     window_state: Option<crate::window_state::WindowState>,
@@ -96,6 +116,7 @@ pub struct App<R: Route = NoRoute> {
     diagnostics: DiagnosticsConfig,
     crash_reports: crate::crash::startup::CrashReports,
     crash_version: Option<String>,
+    logging: Option<crate::logging::LogConfig>,
     root: Option<Root>,
     background: Option<Background>,
     main_window: Option<(WindowOptionsFactory, MainWindow)>,
@@ -122,6 +143,22 @@ pub struct App<R: Route = NoRoute> {
     distribution: Option<(&'static str, &'static str)>,
 }
 
+impl<R: Route> App<R> {
+    /// Forwards subsequent launches to this user's running application.
+    pub fn single_instance(mut self) -> Self {
+        self.single_instance = true;
+
+        self
+    }
+
+    /// Handles native reopen events, including macOS dock activation.
+    pub fn on_reopen(mut self, callback: impl FnMut(&mut gpui::App) + 'static) -> Self {
+        self.reopen = Some(Box::new(callback));
+
+        self
+    }
+}
+
 impl App<NoRoute> {
     /// Creates an application with bounded local panic recording enabled.
     ///
@@ -131,6 +168,8 @@ impl App<NoRoute> {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            single_instance: false,
+            reopen: None,
             services: ServiceRegistry::new(),
             window_options: WindowOptions::default(),
             window_state: None,
@@ -145,6 +184,7 @@ impl App<NoRoute> {
             diagnostics: DiagnosticsConfig::new(),
             crash_reports: crate::crash::startup::CrashReports::default(),
             crash_version: None,
+            logging: Some(crate::logging::LogConfig::default()),
             root: None,
             background: None,
             main_window: None,
@@ -201,6 +241,8 @@ impl App<NoRoute> {
 
         App {
             id: self.id,
+            single_instance: self.single_instance,
+            reopen: self.reopen,
             services: self.services,
             window_options: self.window_options,
             window_state: self.window_state,
@@ -214,6 +256,7 @@ impl App<NoRoute> {
             configuration_error,
             diagnostics: self.diagnostics,
             crash_reports: self.crash_reports,
+            logging: self.logging,
             crash_version: self.crash_version,
             root: self.root,
             background: self.background,
@@ -395,6 +438,21 @@ impl<R: Route> App<R> {
         self
     }
 
+    /// Registers light and dark palettes with a live system or forced appearance.
+    #[must_use]
+    pub fn theme_mode<T: Clone + 'static>(
+        mut self,
+        mode: crate::theme::ThemeMode,
+        light: T,
+        dark: T,
+    ) -> Self {
+        self.themes.push(Box::new(move |cx| {
+            crate::theme::register(cx, mode, light, dark)
+        }));
+
+        self
+    }
+
     /// Explicitly exposes registered typed stores to development transports.
     /// Available only with `devtools`; duplicate registries fail before startup.
     #[cfg(feature = "devtools")]
@@ -552,6 +610,27 @@ impl<R: Route> App<R> {
     pub fn diagnostics(mut self, config: DiagnosticsConfig) -> Self {
         self.diagnostics = config;
         self.http_client = RefCell::new(None);
+
+        self
+    }
+
+    /// Configures automatic logging. `RAKE_LOG` overrides the level preference.
+    /// The last call to this method or `without_logging` selects subscriber ownership.
+    pub fn logging(mut self, config: crate::logging::LogConfig) -> Self {
+        self.logging = Some(config);
+        self.diagnostics = self
+            .diagnostics
+            .subscriber(crate::diagnostics::SubscriberMode::Automatic);
+
+        self
+    }
+
+    /// Leaves output and subscriber ownership to the embedding host.
+    pub fn without_logging(mut self) -> Self {
+        self.logging = None;
+        self.diagnostics = self
+            .diagnostics
+            .subscriber(crate::diagnostics::SubscriberMode::Host);
 
         self
     }
@@ -783,6 +862,39 @@ impl<R: Route> App<R> {
 
         let services = self.services()?;
 
+        #[cfg(any(unix, windows))]
+        let primary = if self.single_instance {
+            let arguments = std::env::args_os()
+                .skip(1)
+                .map(|argument| {
+                    std::fs::canonicalize(&argument)
+                        .ok()
+                        .and_then(|path| url::Url::from_file_path(path).ok())
+                        .map_or_else(
+                            || argument.to_string_lossy().into_owned(),
+                            |url| url.to_string(),
+                        )
+                })
+                .collect::<Vec<_>>();
+
+            match rake_client::single::launch(&self.id, &arguments)
+                .map_err(|error| AppError::Window(format!("instance startup failed: {error}")))?
+            {
+                Some(primary) => {
+                    for argument in &arguments {
+                        if let Some(url) = launch_url(argument) {
+                            let _ = services.platform().receive_open_url(url.as_str());
+                        }
+                    }
+
+                    Some(primary)
+                }
+                None => return Ok(()),
+            }
+        } else {
+            None
+        };
+
         if let Ok(menus) = services.get::<crate::menus::Menus>() {
             menus.validate(&self.commands)?;
         }
@@ -918,6 +1030,32 @@ impl<R: Route> App<R> {
             return Err(AppError::MissingRoot);
         };
 
+        if let Some(mut config) = self.logging.take() {
+            if config.level.is_none()
+                && let Ok(preferences) = self.platform.preferences(&self.id)
+            {
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    config.level = futures::executor::block_on(preferences.get("log-level"))
+                        .ok()
+                        .flatten();
+                }
+
+                #[cfg(target_family = "wasm")]
+                {
+                    use futures::FutureExt as _;
+                    config.level = preferences
+                        .get("log-level")
+                        .now_or_never()
+                        .and_then(Result::ok)
+                        .flatten();
+                }
+            }
+
+            self.diagnostics =
+                crate::logging::configure(self.diagnostics.clone(), &self.id, config);
+        }
+
         self.diagnostics.install()?;
 
         #[cfg(target_family = "wasm")]
@@ -952,12 +1090,20 @@ impl<R: Route> App<R> {
             manual: services.http().without_redirects()?,
         }));
 
+        let reopen = Rc::new(RefCell::new(self.reopen.take()));
+        let native_reopen = reopen.clone();
+
+        application.on_reopen(move |cx| handle_reopen(&native_reopen, cx));
+
         let activations = services.platform();
 
         application.on_open_urls(move |urls| {
             for url in urls {
                 if let Err(error) = activations.receive_open_url(&url) {
-                    crate::warn!(%error, "host URL activation rejected");
+                    crate::warn!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "host URL activation rejected"
+                    );
                 }
             }
         });
@@ -977,7 +1123,34 @@ impl<R: Route> App<R> {
                 return;
             }
 
+            #[cfg(any(unix, windows))]
+            if let Some(primary) = primary {
+                let activations = services.platform();
+
+                cx.spawn(async move |cx| {
+                    loop {
+                        match primary.receive().await {
+                            Ok(arguments) => {
+                                for argument in arguments {
+                                    if let Some(url) = launch_url(&argument) {
+                                        let _ = activations.receive_open_url(url.as_str());
+                                    }
+                                }
+
+                                cx.update(|cx| handle_reopen(&reopen, cx));
+                            }
+                            Err(error) => crate::warn!(
+                                error_type = std::any::type_name_of_val(&error),
+                                "instance activation rejected"
+                            ),
+                        }
+                    }
+                })
+                .detach();
+            }
+
             rake_ui::init(cx);
+            crate::platform::icons::init(cx);
             install_themes(self.themes, cx);
             services.platform().install_notifications(&self.id, cx);
 
@@ -1009,7 +1182,10 @@ impl<R: Route> App<R> {
             if let Ok(updates) = services.get::<rake_updates::UpdateController>() {
                 #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
                 if let Err(error) = updates.initialize_sparkle_checks() {
-                    tracing::error!(%error, "native update checks could not start");
+                    tracing::error!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "native update checks could not start"
+                    );
                 }
 
                 let executor = cx.background_executor().clone();
@@ -1057,6 +1233,7 @@ impl<R: Route> App<R> {
             );
 
             let opened = cx.open_window(self.window_options, move |window, cx| {
+                crate::theme::observe_window(window, cx);
                 let view = match root(services, window, cx) {
                     Ok(view) => view,
                     Err(error) => {
@@ -1259,6 +1436,23 @@ mod theme_tests {
     //! Covers: deferred app themes, routing composition and owned non-Clone values.
     //! Real: application configuration and theme globals. Doubles: GPUI TestPlatform.
     use super::*;
+
+    #[test]
+    fn forwarded_launch_reopens_without_arguments() {
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let observed = calls.clone();
+
+        let callback: RefCell<Option<Reopen>> = RefCell::new(Some(Box::new(move |_| {
+            observed.set(observed.get() + 1);
+        })));
+
+        let cx = gpui::TestAppContext::single();
+
+        cx.update(|cx| handle_reopen(&callback, cx));
+        cx.update(|cx| handle_reopen(&callback, cx));
+        assert_eq!(calls.get(), 2);
+        cx.update(|cx| handle_reopen(&RefCell::new(None), cx));
+    }
 
     #[test]
     fn fallible_root_reports_service_initialization_failure() {
@@ -1510,5 +1704,22 @@ mod configuration_tests {
             .routes(pages());
 
         assert!(!custom.navigation_feedback);
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod launch_url_tests {
+    #[test]
+    fn drive_letter_is_not_an_application_url() {
+        let url = super::launch_url(r"C:\missing.txt");
+
+        #[cfg(windows)]
+        assert_eq!(url.unwrap().as_str(), "file:///C:/missing.txt");
+        #[cfg(unix)]
+        assert!(url.is_none());
+        assert_eq!(
+            super::launch_url("app://open/item").unwrap().scheme(),
+            "app"
+        );
     }
 }

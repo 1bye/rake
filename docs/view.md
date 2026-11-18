@@ -190,7 +190,7 @@ named-value and reusable-function APIs.
 
 Existing scale values keep their GPUI convenience methods, and utilities map to the pinned GPUI builder methods. `truncate` and `whitespace-nowrap` are raw GPUI text styling. Composed paragraphs and headings also provide explicit `wrap`, `ellipsis` and `max-lines` controls.
 
-Interaction variants use `hover:`, `active:`, `focus:`, `focus-visible:` and `in-focus:`. Named groups use `group/card`, `group-hover/card:` and `group-active/card:`.
+Interaction variants use `drag-over:` (external file paths), `hover:`, `active:`, `focus:`, `focus-visible:` and `in-focus:`. Named groups use `group/card`, `group-hover/card:` and `group-active/card:`.
 
 - Each interaction kind merges into one GPUI style call, including from conditional class attributes.
 - A named group must use the same name across all literal class branches, even if the leaves are mutually exclusive.
@@ -836,3 +836,40 @@ and its Base projection. Changes made by Kit itself refresh Rake's ambient copy
 through the Base-global observer. Base `surface` means Kit `popover`, and Base
 `destructive` means Kit `danger`. See [Base and Kit](gpui-kit.md) for the shared
 Root, native-only Kit gate, and inspection boundaries.
+
+### Follow system appearance
+
+Register a light/dark pair with `.theme_mode(rake::theme::ThemeMode::System,
+light_palette, dark_palette)` on `App`. Palettes must implement `Clone`.
+Rake selects the window appearance before mounting views and observes live OS
+changes on desktop and `prefers-color-scheme` changes on Web.
+
+Use `ThemeMode::Light` or `ThemeMode::Dark` to force a palette.
+`rake::theme::mode(cx)` reads the current preference and
+`rake::theme::set_mode(cx, mode)` changes it at runtime. Save that enum's choice
+in your application's preferences and pass it back on startup. Registration is
+opt-in; existing `.theme(...)` installations keep their behavior.
+
+For custom GPUI windows, call `rake::theme::register(cx, mode, light, dark)` and
+`rake::theme::observe_window(window, cx)` before mounting content. Semantic
+palettes go through the same Base and optional Kit bridge as `theme::install`.
+The preference and active palette are application-wide; the latest observed
+window appearance supplies the system preference.
+
+## External file drops
+
+External file drops use the typed `on:drop` callback:
+
+```rust
+on:drop={cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+    let file = rake::platform::FileHandle::from_drop(paths);
+    // Await file?.read(max_bytes) in retained asynchronous work.
+})}
+```
+
+Give the target an `aria-label` and a keyboard-accessible import button. Use
+`class="bg-surface drag-over:bg-hover"` (using your theme’s `surface` and `hover` colors)
+for drag-over feedback. Native external paths are delivered by the platform on
+macOS, Windows and Linux. Browser canvases use
+`rake::platform::browser::on_canvas_file_drop` instead; retain its returned
+subscription for the lifetime of the view. The files example shows both adapters.

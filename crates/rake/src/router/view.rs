@@ -683,7 +683,10 @@ impl<R: Route> Workspace<R> {
 
         #[cfg(all(feature = "updates-sparkle", target_os = "macos"))]
         if let Err(error) = router.install_sparkle() {
-            tracing::error!(%error,"native updater could not start");
+            tracing::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "native updater could not start"
+            );
         }
 
         router.client().set_commands(commands);
@@ -761,7 +764,10 @@ impl<R: Route> Workspace<R> {
                         }
 
                         if let Err(error) = driven.run().await {
-                            crate::error!(%error, "Router driver stopped");
+                            crate::error!(
+                                error_type = std::any::type_name_of_val(&error),
+                                "Router driver stopped"
+                            );
                         }
                     };
 
@@ -769,56 +775,73 @@ impl<R: Route> Workspace<R> {
                         let mut revision = u64::MAX;
 
                         loop {
-                            #[cfg(all(feature="updates",not(target_family="wasm")))]
-                            let changed=Box::pin(observed.changed_with_updates(revision));
+                            #[cfg(all(feature = "updates", not(target_family = "wasm")))]
+                            let changed = Box::pin(observed.changed_with_updates(revision));
 
                             #[cfg(all(
-                                not(feature="updates"),
-                                feature="native-lifecycle",
-                                target_os="macos"
+                                not(feature = "updates"),
+                                feature = "native-lifecycle",
+                                target_os = "macos"
                             ))]
-                            let changed=Box::pin(observed.changed_with_native_quit(revision));
+                            let changed = Box::pin(observed.changed_with_native_quit(revision));
 
                             #[cfg(not(any(
-                                all(feature="updates",not(target_family="wasm")),
+                                all(feature = "updates", not(target_family = "wasm")),
                                 all(
-                                    not(feature="updates"),
-                                    feature="native-lifecycle",
-                                    target_os="macos"
+                                    not(feature = "updates"),
+                                    feature = "native-lifecycle",
+                                    target_os = "macos"
                                 )
                             )))]
-                            let changed=Box::pin(observed.changed(revision));
+                            let changed = Box::pin(observed.changed(revision));
 
-                            #[cfg(feature="devtools")]
+                            #[cfg(feature = "devtools")]
                             {
-                                let inspection=observed.client().inspection().listen();
+                                let inspection = observed.client().inspection().listen();
 
-                                if let futures::future::Either::Left((next,_))=futures::future::select(changed,Box::pin(inspection)).await {revision=next;}
+                                if let futures::future::Either::Left((next, _)) =
+                                    futures::future::select(changed, Box::pin(inspection)).await
+                                {
+                                    revision = next;
+                                }
                             }
-                            #[cfg(not(feature="devtools"))]
-                            {revision=changed.await;}
+                            #[cfg(not(feature = "devtools"))]
+                            {
+                                revision = changed.await;
+                            }
 
                             #[cfg(not(target_family = "wasm"))]
                             if observed.quit_status().phase == crate::quit::QuitPhase::Ready {
                                 closing.responses_idle().await;
-                                #[cfg(all(feature="native-lifecycle",target_os="macos"))]
+                                #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
                                 observed.prepare_native_exit(true);
 
-                                #[cfg(feature="updates")]
+                                #[cfg(feature = "updates")]
                                 match observed.complete_update_restart() {
-                                    Ok(rake_updates::RestartDisposition::ProviderHandlesExit)=>continue,
-                                    Ok(rake_updates::RestartDisposition::ExitHost)=>{},
-                                    Err(error)=>{
-                                        #[cfg(all(feature="native-lifecycle",target_os="macos"))]
-                                        {observed.reply_native_quit(false);observed.prepare_native_exit(true);}
-                                        tracing::error!(%error,"update handoff failed; manual restart required");
-                                        let _=_view.update(cx,|_,cx|cx.notify());
+                                    Ok(rake_updates::RestartDisposition::ProviderHandlesExit) => {
+                                        continue;
+                                    }
+                                    Ok(rake_updates::RestartDisposition::ExitHost) => {}
+                                    Err(error) => {
+                                        #[cfg(all(
+                                            feature = "native-lifecycle",
+                                            target_os = "macos"
+                                        ))]
+                                        {
+                                            observed.reply_native_quit(false);
+                                            observed.prepare_native_exit(true);
+                                        }
+                                        tracing::error!(
+                                            error_type = std::any::type_name_of_val(&error),
+                                            "update handoff failed; manual restart required"
+                                        );
+                                        let _ = _view.update(cx, |_, cx| cx.notify());
 
                                         break;
                                     }
                                 }
 
-                                #[cfg(all(feature="native-lifecycle",target_os="macos"))]
+                                #[cfg(all(feature = "native-lifecycle", target_os = "macos"))]
                                 observed.reply_native_quit(true);
                                 cx.update(|cx| cx.quit());
 
@@ -1182,7 +1205,10 @@ impl<R: Route> Render for Workspace<R> {
                             };
 
                             if let Err(error) = result {
-                                tracing::error!(%error, "update action failed");
+                                tracing::error!(
+                                    error_type = std::any::type_name_of_val(&error),
+                                    "update action failed"
+                                );
                             }
                         })
                     },
@@ -1307,6 +1333,7 @@ impl<R: Route> WindowHost for Rc<NativeWindows<R>> {
                 let placement = crate::window_state::native::prepare(id, &mut options, cx);
 
                 cx.open_window(options, move |window, cx| {
+                    crate::theme::observe_window(window, cx);
                     let view = (|window: &mut Window, cx: &mut gpui::App| {
                         if let Err(error) = router.attach_window(id, window, cx) {
                             *callback_error.borrow_mut() = Some(MountError(error.to_string()));

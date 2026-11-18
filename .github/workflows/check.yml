@@ -55,6 +55,7 @@ jobs:
           node scripts/test-web-runtime.mjs
           node scripts/test-offline.mjs
           node scripts/test-file-processing.mjs
+          node scripts/test-file-drop.mjs
 
   portable:
     if: github.event_name != 'schedule'
@@ -115,8 +116,6 @@ jobs:
         include:
           - os: ubuntu-24.04
             updates: updates-appimage
-          - os: windows-latest
-            updates: updates-velopack
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -130,7 +129,8 @@ jobs:
         if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rake-ci
+          # Start a cold desktop comparison for the targeted workspace profile.
+          prefix-key: v2-rake-ci-targeted-gpui
           cache-all-crates: false
           cache-workspace-crates: false
           shared-key: desktop-${{ matrix.os }}
@@ -168,10 +168,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test -p rake-app --no-default-features --test local_control --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Windows supervisor integration
+      - name: Windows supervisor and terminal output
         if: runner.os == 'Windows'
         run: |
-          cargo test -p rake-app-cli --bin rake project_build::dev:: --locked
+          cargo test -p rake-app-cli --bin rake project_build:: --locked
+      - name: Global shortcut lifecycle (X11)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 cargo run -p rake-shortcuts --example shortcut-probe --locked
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
@@ -206,6 +209,19 @@ jobs:
         if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
         timeout-minutes: 2
         run: python scripts/desktop-smoke.py target/debug/rake-desktop-example.exe
+      - name: Build Windows inspection fixtures
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        run: |
+          cargo build -p rake-app-cli -p rake-desktop-example --features rake-desktop-example/native-smoke,rake-desktop-example/devtools --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p rake-desktop-example --bin rake-desktop-example --features native-smoke,devtools --target x86_64-pc-windows-msvc --locked
+      - name: Inspect a real Windows GUI and open source outside owned Jobs
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        timeout-minutes: 12
+        run: |
+          node --test scripts/test-embedded-devtools.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/windows-inspection-smoke.py target/debug/rake.exe
       - uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
@@ -229,7 +245,7 @@ jobs:
           cargo test -p rake-app --features view-test-support,devtools
           --lib --test view_state --test element_inspection --locked --no-fail-fast
       - name: Desktop feature lints
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
           -p rake-kit-example -p rake-ui -p rake-view -p rake-files
@@ -237,14 +253,14 @@ jobs:
           --features rake-desktop-example/native-smoke,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-kit-example/kit,rake-kit-example/devtools,rake-notes/view-test-support,rake-view/view-test-support
           -- -D warnings
       - name: Desktop feature tests (devtools, kit, tray, updates)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: >-
           cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
           -p rake-foundation -p rake-routing -p rake-files -p rake-tray -p rake-autostart -p rake-updates
           -p rake-client -p rake-http -p rake-protocol --locked --no-fail-fast
           --features rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/${{ matrix.updates }},rake-notes/view-test-support,rake-view/view-test-support
       - name: GPUI fast desktop lints
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
           -p rake-kit-example -p rake-ui -p rake-view -p rake-files
@@ -255,6 +271,206 @@ jobs:
       - name: Estimate dependency cache size
         if: ${{ always() }}
         run: python scripts/cache-budget.py ${{ runner.os == 'Windows' && '--targets' || '' }}
+
+  windows-smoke:
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-rake-ci-windows-split
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: desktop-windows-smoke
+          cache-targets: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # tauri-bundler 2.10.4: dirs::cache_dir()/tauri (no local_tools_directory).
+      - name: Cache Windows bundler tools
+        if: runner.os == 'Windows'
+        id: bundler-tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/tauri/WixTools314
+            ~/AppData/Local/tauri/NSIS
+          key: windows-tauri-bundler-2.10.4-v1
+      - name: Prepare Windows bundler tools
+        if: runner.os == 'Windows' && steps.bundler-tools.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: .github/workflows/prepare-bundler-tools.ps1
+      - name: Windows private files and native endpoints
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p rake-client --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p rake-app --no-default-features --test local_control --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Windows supervisor and terminal output
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p rake-app-cli --bin rake project_build:: --locked
+      - name: Global shortcut lifecycle (Windows)
+        if: runner.os == 'Windows'
+        run: cargo run -p rake-shortcuts --example shortcut-probe --locked
+      - name: Default desktop lints
+        run: >-
+          cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
+          -p rake-kit-example -p rake-ui -p rake-view -p rake-files
+          -p rake-tray -p rake-autostart --all-targets --locked -- -D warnings
+      # Surface graphics failures before the longer workspace/trybuild suites.
+      - name: Build real desktop smoke app
+        id: smoke-build
+        if: ${{ !cancelled() }}
+        run: cargo build -p rake-desktop-example --features native-smoke --locked
+      - name: Render a GPUI frame on Windows (D3D11)
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        timeout-minutes: 2
+        run: python scripts/desktop-smoke.py target/debug/rake-desktop-example.exe
+      - name: Build Windows inspection fixtures
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        run: |
+          cargo build -p rake-app-cli -p rake-desktop-example --features rake-desktop-example/native-smoke,rake-desktop-example/devtools --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Inspect a real Windows GUI and open source outside owned Jobs
+        if: ${{ !cancelled() && steps.smoke-build.outcome == 'success' && runner.os == 'Windows' }}
+        timeout-minutes: 12
+        run: |
+          node --test scripts/test-embedded-devtools.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/windows-inspection-smoke.py target/debug/rake.exe
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: desktop-smoke-windows-latest
+          path: target/desktop-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python scripts/cache-budget.py ${{ runner.os == 'Windows' && '--targets' || '' }}
+
+  windows-tests:
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v3-rake-ci-windows-split
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: desktop-windows-tests
+          cache-targets: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # tauri-bundler 2.10.4: dirs::cache_dir()/tauri (no local_tools_directory).
+      - name: Cache Windows bundler tools
+        if: runner.os == 'Windows'
+        id: bundler-tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/tauri/WixTools314
+            ~/AppData/Local/tauri/NSIS
+          key: windows-tauri-bundler-2.10.4-v1
+      - name: Prepare Windows bundler tools
+        if: runner.os == 'Windows' && steps.bundler-tools.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: .github/workflows/prepare-bundler-tools.ps1
+      - name: Workspace tests (default native GPUI)
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --locked --no-fail-fast
+      - name: View tests without devtools or kit
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
+          --features rake-app/view-test-support,rake-view/view-test-support,rake-notes/view-test-support
+          --locked --no-fail-fast
+      - name: Devtools view tests without kit
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app --features view-test-support,devtools
+          --lib --test view_state --test element_inspection --locked --no-fail-fast
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python scripts/cache-budget.py ${{ runner.os == 'Windows' && '--targets' || '' }}
+
+  windows-desktop:
+    # Preserve the existing required-check name across both parallel Windows jobs.
+    name: desktop (windows-latest)
+    if: ${{ always() }}
+    needs: [windows-smoke, windows-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Require both Windows desktop jobs
+        env:
+          SMOKE_RESULT: ${{ needs.windows-smoke.result }}
+          TESTS_RESULT: ${{ needs.windows-tests.result }}
+        run: test "$SMOKE_RESULT" = success && test "$TESTS_RESULT" = success
+
+  windows-features:
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-rake-ci-targeted-gpui
+          cache-all-crates: false
+          cache-workspace-crates: false
+          shared-key: desktop-windows-features
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Desktop feature lints
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
+          -p rake-kit-example -p rake-ui -p rake-view -p rake-files
+          -p rake-tray -p rake-autostart --all-targets --locked
+          --features rake-desktop-example/native-smoke,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/updates-velopack,rake-kit-example/kit,rake-kit-example/devtools,rake-notes/view-test-support,rake-view/view-test-support
+          -- -D warnings
+      - name: Desktop feature tests (devtools, kit, tray, updates)
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo test -p rake-app -p rake-ui -p rake-view -p rake-notes
+          -p rake-foundation -p rake-routing -p rake-files -p rake-tray -p rake-autostart -p rake-updates
+          -p rake-client -p rake-http -p rake-protocol --locked --no-fail-fast
+          --features rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/launch-at-login,rake-app/updates-velopack,rake-notes/view-test-support,rake-view/view-test-support
+      - name: GPUI fast desktop lints
+        if: ${{ !cancelled() }}
+        run: >-
+          cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
+          -p rake-kit-example -p rake-ui -p rake-view -p rake-files
+          -p rake-tray -p rake-autostart --all-targets --locked
+          --features rake-app/gpui-fast,rake-app/view-test-support,rake-app/devtools,rake-app/kit,rake-app/tray,rake-app/updates-velopack,rake-kit-example/kit,rake-kit-example/devtools
+          -- -D warnings
+
+      - name: Estimate dependency cache size
+        if: ${{ always() }}
+        run: python scripts/cache-budget.py --targets
 
   native:
     if: github.event_name != 'schedule'
@@ -285,6 +501,7 @@ jobs:
       - run: cargo clippy -p rake-native --features native-tests --all-targets --locked -- -D warnings
       - run: cargo test -p rake-native --doc --locked
       - run: cargo test -p rake-native --features native-tests --test appkit --locked
+      - run: cargo run -p rake-shortcuts --example shortcut-probe --locked
       - run: cargo test -p rake-tray --locked
       - run: cargo test --workspace --locked --no-fail-fast
       - run: cargo test -p rake-files --lib --locked
@@ -293,6 +510,7 @@ jobs:
       - run: cargo test -p rake-app --features tray,view-test-support --lib --locked
       - run: cargo check -p rake-app --features tray,gpui-fast --all-targets --locked
       - run: cargo check -p renamed-facade --features tray --locked
+      - run: cargo check -p rake-tray-example --locked
       - run: cargo test -p rake-app --features view-test-support --lib --test view_state --test actions --test inspection_compiled_out --locked
       - run: cargo test -p rake-view --features view-test-support --lib --locked
       - run: cargo test -p rake-app --features view-test-support,devtools --lib --test view_state --test element_inspection --locked
@@ -354,7 +572,7 @@ jobs:
           key: wasm-bindgen-${{ runner.os }}-${{ runner.arch }}-${{ steps.wasm-bindgen.outputs.version }}-v1
       - name: Install matching Wasm bindings CLI
         if: steps.wasm-cli.outputs.cache-hit != 'true'
-        run: cargo install --locked wasm-bindgen-cli --version '${{ steps.wasm-bindgen.outputs.version }}'
+        run: cargo install --locked --force wasm-bindgen-cli --version '${{ steps.wasm-bindgen.outputs.version }}'
       - run: cargo build -p rake-app-cli --locked
       - name: Bundle E2E
         run: python3 scripts/test-bundle.py

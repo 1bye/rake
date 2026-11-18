@@ -1,8 +1,14 @@
 //! Covers: CDP discovery, access checks, wire replies and runtime detachment.
-//! Real: CLI process, TCP/WebSocket, private Unix IPC, headless router.
-//! Doubles: no GUI. Requires: Unix sockets and loopback listeners.
+//! Real: CLI process, TCP/WebSocket, private local IPC, headless router.
+//! Doubles: no GUI. Requires: local endpoints and loopback listeners.
 
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
+
+// Shared fixture methods are exercised by different unit/integration consumers.
+#[cfg(windows)]
+#[allow(dead_code, unused_imports)]
+#[path = "../src/cdp/test_transport.rs"]
+mod test_transport;
 
 use futures::channel::oneshot;
 use futures::future::select;
@@ -13,6 +19,16 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+
+fn directory() -> std::path::PathBuf {
+    #[cfg(unix)]
+    let base = std::path::PathBuf::from("/tmp");
+
+    #[cfg(windows)]
+    let base = std::env::temp_dir();
+
+    base.join(format!("rake-cdp-{}", uuid::Uuid::new_v4()))
+}
 
 #[rake::data(schema)]
 #[derive(rake::Command)]
@@ -73,7 +89,7 @@ fn http(authority: &str, path: &str, host: &str, origin: Option<&str>) -> String
 
 #[test]
 fn discovery_access_wire_and_detach() {
-    let directory = std::path::PathBuf::from(format!("/tmp/rake-cdp-{}", uuid::Uuid::new_v4()));
+    let directory = directory();
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let client = router.client();
     let executions = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -92,6 +108,24 @@ fn discovery_access_wire_and_detach() {
     let worker_directory = directory.clone();
 
     let worker = std::thread::spawn(move || {
+        for args in [
+            vec!["ctl", "info", "--json"],
+            vec!["ctl", "inspect", "tree", "--json"],
+        ] {
+            let reply = Command::new(env!("CARGO_BIN_EXE_rake"))
+                .env("RAKE_CONTROL_DIR", &worker_directory)
+                .args(args)
+                .output()
+                .unwrap();
+
+            assert!(
+                reply.status.success(),
+                "{}",
+                String::from_utf8_lossy(&reply.stderr)
+            );
+            assert!(serde_json::from_slice::<Value>(&reply.stdout).is_ok());
+        }
+
         let mut adapter = Adapter(
             Command::new(env!("CARGO_BIN_EXE_rake"))
                 .env("RAKE_CONTROL_DIR", &worker_directory)
@@ -249,9 +283,13 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     // A diagnostics-only protocol fixture shares the real HTTP collector. The other
     // integration test covers live router discovery and identity handling.
     use rake::control::{Reply, Request};
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::os::unix::net::UnixListener;
-    let directory = std::path::PathBuf::from(format!("/tmp/rake-cdp-{}", uuid::Uuid::new_v4()));
+    #[cfg(windows)]
+    use test_transport::Listener as UnixListener;
+    let directory = directory();
     let router = Router::<NoRoute>::new(RouterConfig::default());
     let server = LocalServer::bind(&router.client(), "test.http", &directory).unwrap();
 
@@ -263,13 +301,28 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
         panic!()
     };
 
+    #[cfg(unix)]
     std::fs::remove_file(path).unwrap();
+
+    #[cfg(windows)]
+    {
+        drop(server);
+        rake_client::private::write_atomic(
+            &directory.join(format!("{}.json", instance.info.runtime_id)),
+            &serde_json::to_vec(&instance).unwrap(),
+        )
+        .unwrap();
+    }
     let listener = UnixListener::bind(path).unwrap();
 
+    #[cfg(unix)]
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
     listener.set_nonblocking(true).unwrap();
     let collector = rake::diagnostics::Collector::new(32);
     let fixture_collector = collector.clone();
+    let pending = collector.snapshot();
+    let recorded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fixture_recorded = recorded.clone();
     let info = instance.info.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let fixture_stop = stop.clone();
@@ -300,7 +353,13 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
                 rake::control::Message::Query(rake::control::Query::Diagnostics {
                     after, ..
                 }) => {
-                    let mut snapshot = fixture_collector.snapshot();
+                    // Snapshot contention intentionally drops producer writes.
+                    let mut snapshot =
+                        if fixture_recorded.load(std::sync::atomic::Ordering::Acquire) {
+                            fixture_collector.snapshot()
+                        } else {
+                            pending.clone()
+                        };
 
                     snapshot.records.retain(|r| r.sequence > after);
 
@@ -367,13 +426,24 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     });
 
     futures::executor::block_on(async {
-        let http = rake::http::HttpClient::with_collector(rake::http::HttpConfig::new(), collector)
-            .unwrap();
+        let http = rake::http::HttpClient::with_collector(
+            rake::http::HttpConfig::new(),
+            collector.clone(),
+        )
+        .unwrap();
 
         let body = http.get(&url).send().await.unwrap().bytes().await.unwrap();
 
         assert_eq!(body.as_slice(), b"test");
     });
+
+    assert_eq!(
+        collector.snapshot().dropped,
+        0,
+        "retain the full HTTP lifecycle"
+    );
+
+    recorded.store(true, std::sync::atomic::Ordering::Release);
     responder.join().unwrap();
     let mut methods = Vec::new();
     let mut consumed = 0;
@@ -408,6 +478,7 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
     drop(adapter);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     fixture.join().unwrap();
+    #[cfg(unix)]
     drop(server);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -415,7 +486,7 @@ fn real_http_lifecycle_crosses_protocol_and_websocket() {
 #[test]
 fn follows_only_a_checkpointed_successor() {
     use futures::task::LocalSpawnExt;
-    let directory = std::path::PathBuf::from(format!("/tmp/rake-cdp-{}", uuid::Uuid::new_v4()));
+    let directory = directory();
     let old = Router::<NoRoute>::new(RouterConfig::default());
     let mut pool = futures::executor::LocalPool::new();
     let driver = old.clone();

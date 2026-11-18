@@ -22,6 +22,11 @@ struct Fixture {
     tools: PathBuf,
 }
 
+enum Output {
+    Json,
+    Human,
+}
+
 impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
@@ -104,6 +109,16 @@ fi
         no_open: bool,
         require_state: Option<&str>,
     ) -> Running {
+        self.start_output(extra, no_open, require_state, Output::Json)
+    }
+
+    fn start_output(
+        &self,
+        extra: &[&str],
+        no_open: bool,
+        require_state: Option<&str>,
+        output: Output,
+    ) -> Running {
         let control = self.directory.path().join("control");
 
         fs::create_dir_all(&control).unwrap();
@@ -124,7 +139,12 @@ fi
             .env("CONTROL", &control)
             .env("RAKE_CLI", self.tools.join("rake-double"))
             .env("BLAZE_HOME", self.directory.path())
-            .args(["dev", "--json"]);
+            .arg("dev");
+
+        if matches!(output, Output::Json) {
+            command.arg("--json");
+        }
+
         command.env_remove("RAKE_REQUIRE_STATE");
 
         if let Some(value) = require_state {
@@ -163,7 +183,7 @@ fi
                 }
             }
 
-            fs::read_to_string(running.control.join("events"))
+            let session = fs::read_to_string(running.control.join("events"))
                 .ok()?
                 .lines()
                 .find_map(|line| {
@@ -172,7 +192,25 @@ fi
                     value["session"]
                         .is_string()
                         .then(|| PathBuf::from(value["session"].as_str().unwrap()))
-                })
+                });
+
+            session.or_else(|| {
+                let args = fs::read_to_string(running.control.join("build-args")).ok()?;
+                let mut args = args.lines();
+
+                while let Some(argument) = args.next() {
+                    if argument == "--output" {
+                        return Some(
+                            PathBuf::from(args.next()?)
+                                .parent()?
+                                .parent()?
+                                .to_path_buf(),
+                        );
+                    }
+                }
+
+                None
+            })
         });
 
         running
@@ -285,6 +323,256 @@ fn wait<T>(mut probe: impl FnMut() -> Option<T>) -> T {
 fn alive(pid: u32) -> bool {
     // SAFETY: signal zero tests existence without mutating the process.
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[test]
+fn terminal_progress_is_flushed_and_keeps_ticking_before_metadata_completes() {
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let fixture = Fixture::new();
+    let control = fixture.directory.path().join("control");
+
+    fs::create_dir(&control).unwrap();
+    fixture.tool(
+        "cargo",
+        "printf '%s' \"$$\" > \"$CONTROL/metadata-pid\"; exec /bin/sleep 300",
+    );
+    let mut master = -1;
+    let mut slave = -1;
+
+    let mut size = libc::winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
+    assert_eq!(
+        // SAFETY: all output pointers are writable; size is initialized; no name or termios is requested.
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &raw mut size,
+            )
+        },
+        0
+    );
+    // SAFETY: openpty returned two new descriptors; each File takes ownership exactly once.
+    let (mut master, slave) =
+        unsafe { (fs::File::from_raw_fd(master), fs::File::from_raw_fd(slave)) };
+
+    for descriptor in [&master, &slave] {
+        assert_eq!(
+            // SAFETY: both descriptors are live; prevent unrelated children from inheriting them.
+            unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) },
+            0
+        );
+    }
+
+    assert_eq!(
+        // SAFETY: master is a live descriptor, and O_NONBLOCK only changes its I/O mode.
+        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) },
+        0
+    );
+    let started = SystemTime::now();
+
+    let child = Command::new(env!("CARGO_BIN_EXE_rake"))
+        .current_dir(&fixture.root)
+        .env("PATH", &fixture.tools)
+        .env("CONTROL", &control)
+        .env("TERM", "xterm-256color")
+        .env("NO_COLOR", "1")
+        .arg("dev")
+        .stdout(slave.try_clone().unwrap())
+        .stderr(slave)
+        .spawn()
+        .unwrap();
+
+    let mut running = Running {
+        started,
+        child,
+        session: PathBuf::new(),
+        control,
+    };
+
+    let mut bytes = Vec::new();
+
+    let output = wait(|| {
+        let mut chunk = [0; 4096];
+
+        loop {
+            match master.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(length) => bytes.extend_from_slice(&chunk[..length]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("terminal read failed: {error}"),
+            }
+        }
+
+        let output = String::from_utf8_lossy(&bytes);
+
+        let mut times = output
+            .split("Reading project... ")
+            .skip(1)
+            .filter_map(|frame| {
+                frame
+                    .split(" s")
+                    .next()
+                    .and_then(|elapsed| elapsed.parse::<f64>().ok())
+            });
+
+        let first = times.next()?;
+
+        times
+            .any(|elapsed| elapsed > first)
+            .then(|| output.into_owned())
+    });
+
+    let metadata_pid: u32 = wait(|| {
+        fs::read_to_string(running.control.join("metadata-pid"))
+            .ok()?
+            .parse()
+            .ok()
+    });
+
+    assert!(
+        alive(metadata_pid),
+        "progress must appear while metadata is still blocked: {output}"
+    );
+    assert!(!output.contains("Desktop app started"));
+    // SAFETY: this fixture owns the CLI child, and interruption exercises early worker cleanup.
+    unsafe {
+        libc::kill(running.child.id() as i32, libc::SIGINT);
+    }
+    wait(|| running.child.try_wait().unwrap());
+    assert!(
+        !alive(metadata_pid),
+        "metadata child must also stop on interruption"
+    );
+}
+
+#[test]
+fn human_output_is_focused_keeps_errors_once_and_remains_plain_when_redirected() {
+    let fixture = Fixture::new();
+
+    let mut metadata: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("metadata.json")).unwrap()).unwrap();
+
+    metadata["packages"][0]["metadata"] = json!({"rake":{"bundle":{"name":"Fieldnotes"}}});
+    fs::write(fixture.root.join("metadata.json"), metadata.to_string()).unwrap();
+    let tool = fs::read_to_string(fixture.tools.join("rake-double")).unwrap().replace(
+        "if [ -f \"$FIXTURE/fail\" ]; then exit 7; fi",
+        "printf '   Compiling fixture v1.0.0\\n' >&2\nif [ -f \"$CONTROL/fail\" ]; then printf 'error[E0308]: mismatched types\\n  --> src/main.rs:1:1\\n' >&2; exit 7; fi\nprintf '    Finished dev profile\\n' >&2",
+    );
+
+    executable(&fixture.tools.join("rake-double"), &tool);
+    let mut running = fixture.start_output(&["--restart-without-state"], true, None, Output::Human);
+
+    running.phase("watching");
+    let stdout = || fs::read_to_string(running.control.join("events")).unwrap();
+
+    wait(|| stdout().contains("Desktop app started").then_some(()));
+    assert!(stdout().contains(&format!("rake v{}  Fieldnotes", env!("CARGO_PKG_VERSION"))));
+    assert!(!stdout().contains("Session:"));
+    assert!(!stdout().contains("native_restart"));
+    assert!(!stdout().contains("rake: watching"));
+    wait(|| {
+        fs::read_to_string(running.control.join("errors"))
+            .ok()?
+            .contains("app  hello app")
+            .then_some(())
+    });
+
+    fs::write(fixture.root.join("src/main.rs"), "second").unwrap();
+    wait(|| stdout().contains("Restarted  src/main.rs").then_some(()));
+    fs::write(running.control.join("fail"), "fail").unwrap();
+    fs::write(fixture.root.join("src/main.rs"), "invalid").unwrap();
+    running.phase("build_failed");
+    wait(|| {
+        stdout()
+            .contains("Previous version is still running.")
+            .then_some(())
+    });
+    assert_eq!(stdout().matches("Update failed").count(), 1);
+    let errors = fs::read_to_string(running.control.join("errors")).unwrap();
+
+    assert_eq!(errors.matches("error[E0308]").count(), 1, "{errors}");
+    assert!(errors.contains("src/main.rs:1:1"));
+    assert!(
+        errors.contains("app  hello app"),
+        "stderr={errors:?}; output={}",
+        fs::read_to_string(running.session.join("output.json")).unwrap()
+    );
+    assert!(!errors.contains("Compiling"));
+    assert!(!errors.contains("Finished dev profile"));
+    assert!(!errors.contains("RAKE_DIAGNOSTIC"));
+    assert!(!stdout().contains(['\x1b', '\r']));
+    assert!(!errors.contains(['\x1b', '\r']));
+    running.stop(libc::SIGINT);
+}
+
+#[test]
+fn verbose_retains_session_discovery_and_full_tool_output() {
+    let fixture = Fixture::new();
+    let tool = fs::read_to_string(fixture.tools.join("rake-double")).unwrap();
+
+    executable(
+        &fixture.tools.join("rake-double"),
+        &format!("printf '   Compiling fixture v1.0.0\\n' >&2\n{tool}"),
+    );
+    let mut running = fixture.start_output(&["--verbose"], true, None, Output::Human);
+
+    running.phase("watching");
+    let stdout = fs::read_to_string(running.control.join("events")).unwrap();
+
+    assert!(stdout.contains("rake: starting"));
+    assert!(stdout.contains("Session:"));
+    assert!(
+        fs::read_to_string(running.control.join("errors"))
+            .unwrap()
+            .contains("Compiling fixture")
+    );
+    running.stop(libc::SIGINT);
+}
+
+#[test]
+fn first_build_failure_does_not_claim_an_app_started_or_an_old_version_is_running() {
+    let fixture = Fixture::new();
+
+    let tool = fs::read_to_string(fixture.tools.join("rake-double"))
+        .unwrap()
+        .replace(
+            "if [ -f \"$FIXTURE/fail\" ]; then exit 7; fi",
+            "printf 'error[E0308]: mismatched types\\n' >&2; exit 7",
+        );
+
+    executable(&fixture.tools.join("rake-double"), &tool);
+    let mut running = fixture.start_output(&[], true, None, Output::Human);
+
+    running.phase("build_failed");
+    wait(|| {
+        fs::read_to_string(running.control.join("events"))
+            .ok()?
+            .contains("Fix the error and save.")
+            .then_some(())
+    });
+    let stdout = fs::read_to_string(running.control.join("events")).unwrap();
+
+    assert!(stdout.contains("Update failed"));
+    assert!(!stdout.contains("Desktop app started"));
+    assert!(!stdout.contains("Previous version"));
+    assert_eq!(
+        fs::read_to_string(running.control.join("errors"))
+            .unwrap()
+            .matches("error[E0308]")
+            .count(),
+        1
+    );
+    running.stop(libc::SIGINT);
 }
 
 #[test]
@@ -880,6 +1168,44 @@ fn browser_opening_honors_browser_and_cdp_opens_only_the_companion() {
         assert_eq!(args.lines().take(1).collect::<Vec<_>>(), ["--test"]);
         assert_eq!(args.lines().count(), 2, "open exactly one browser URL");
         assert_eq!(args.contains("embedded-devtools-fixture.html"), cdp);
+        running.stop(libc::SIGTERM);
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn preview_prints_its_link_during_the_build_without_opening_a_browser() {
+    for cdp in [false, true] {
+        let fixture = Fixture::new();
+
+        fixture.preview();
+        fs::write(fixture.root.join("hold"), "hold the initial build").unwrap();
+        let mut args = vec!["--preview", "--port=0"];
+
+        if cdp {
+            args.push("--cdp");
+        }
+
+        let mut running = fixture.start_output(&args, false, None, Output::Human);
+
+        wait(|| running.control.join("build-pid").exists().then_some(()));
+        let output = fs::read_to_string(running.control.join("events")).unwrap();
+
+        assert!(output.contains("Preview http://127.0.0.1:"), "{output}");
+        assert!(
+            output.contains("/__rake/preview#__rake_control="),
+            "{output}"
+        );
+        assert!(output.contains("Building app..."), "{output}");
+        assert!(!output.contains("Desktop app started"), "{output}");
+        assert!(!running.control.join("browser-args").exists());
+        assert!(!output.contains(['\x1b', '\r']));
+        fs::remove_file(fixture.root.join("hold")).unwrap();
+        running.phase("watching");
+        assert!(!running.control.join("browser-args").exists());
+        let output = fs::read_to_string(running.control.join("events")).unwrap();
+
+        assert_eq!(output.matches("Preview http://127.0.0.1:").count(), 1);
         running.stop(libc::SIGTERM);
     }
 }

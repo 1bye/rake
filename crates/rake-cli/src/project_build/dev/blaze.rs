@@ -425,6 +425,10 @@ fn compiler_command(args: &Args) -> Result<Command> {
 pub(super) fn build(project: &Project, args: &Args, processes: &Processes<'_>) -> Result<PathBuf> {
     let mut command = compiler_command(args)?;
 
+    if !args.json && !args.verbose {
+        command.env("CARGO_TERM_COLOR", "never");
+    }
+
     command
         .args(["build", "--locked", "--events=json", "--manifest-path"])
         .arg(string(&project.package, "manifest_path")?)

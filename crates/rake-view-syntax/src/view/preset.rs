@@ -65,7 +65,7 @@ pub fn expand(
     let theme = theme::expression_use(&value).map(|span| theme::binding(span, rake));
     let builder = format_ident!("__rake_style", span = Span::mixed_site());
     let body = plan.emit_refinement(&builder);
-    let variants = plan.emit_variants(&builder);
+    let variants = plan.emit_variants(&builder, rake);
     let name = &signature.ident;
     let visibility = &item.vis;
     let attributes = &item.attrs;

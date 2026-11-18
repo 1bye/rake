@@ -82,7 +82,10 @@ pub(crate) fn command_handler<C: crate::control::ApplicationCommand>(
             .and_then(|dispatch| dispatch(command_id.clone(), arguments.clone()));
 
         if let Err(error) = result {
-            crate::error!(%error, "tray command rejected");
+            crate::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "tray command rejected"
+            );
         }
     }))
 }
@@ -123,7 +126,10 @@ impl gpui::Global for Owner {}
 pub(crate) fn stop(cx: &mut gpui::App) {
     #[cfg(target_os = "macos")]
     if let Err(error) = rake_updates::stop_application_run_loop() {
-        crate::error!(%error, "native tray startup could not stop the host loop");
+        crate::error!(
+            error_type = std::any::type_name_of_val(&error),
+            "native tray startup could not stop the host loop"
+        );
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -174,7 +180,10 @@ fn report_unregistered_failure(
     handlers: &mut [Handler],
     cx: &mut gpui::App,
 ) {
-    crate::error!(tray = %id, %error, "optional tray could not register");
+    crate::error!(
+        error_type = std::any::type_name_of_val(&error),
+        "optional tray could not register"
+    );
     let event = Event {
         id,
         generation: 0,
@@ -277,7 +286,10 @@ fn install_with(
 
     let operations = cx.spawn(async move |_| {
         if let Err(error) = work.await {
-            crate::error!(%error, "tray operation driver stopped");
+            crate::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "tray operation driver stopped"
+            );
         }
     });
 
@@ -322,7 +334,10 @@ fn install_with(
                 });
 
                 if let Err(error) = shutdown.await {
-                    crate::error!(%error, "tray startup rollback failed");
+                    crate::error!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "tray startup rollback failed"
+                    );
                 }
 
                 cx.update(stop_host);
@@ -340,7 +355,10 @@ fn install_with(
 
         async move {
             if let Err(error) = shutdown.await {
-                crate::error!(%error, "native tray shutdown failed");
+                crate::error!(
+                    error_type = std::any::type_name_of_val(&error),
+                    "native tray shutdown failed"
+                );
             }
         }
     });
@@ -358,7 +376,9 @@ fn install_with(
                     popup::removed(&event.id, event.generation, cx);
                     cx.global_mut::<Owner>().animations.remove(&event.id);
 
-                    if matches!(event.kind, EventKind::Removed) { cx.global_mut::<Owner>().removal_quits.remove(&event.id); }
+                    if matches!(event.kind, EventKind::Removed) {
+                        cx.global_mut::<Owner>().removal_quits.remove(&event.id);
+                    }
                 }
 
                 if let Ok(handle) = collection.get(&event.id)
@@ -379,18 +399,26 @@ fn install_with(
 
                         let task = cx.spawn(async move |_| {
                             if let Err(error) = quit_from_removal(quit, move || item.show()).await {
-                                crate::error!(%error, "removed tray item could not be restored after declined quit");
+                                crate::error!(
+                                    error_type = std::any::type_name_of_val(&error),
+                                    "removed tray item could not be restored after declined quit"
+                                );
                             }
                         });
 
-                        cx.global_mut::<Owner>().removal_quits.insert(event.id.clone(), task);
+                        cx.global_mut::<Owner>()
+                            .removal_quits
+                            .insert(event.id.clone(), task);
                     }
 
                     if matches!(event.kind, EventKind::Activate)
                         && spec.primary_interaction() == Interaction::Popup
                         && let Err(error) = toggle_popup(&event.id, cx)
                     {
-                        crate::error!(%error, "tray popup could not open");
+                        crate::error!(
+                            error_type = std::any::type_name_of_val(&error),
+                            "tray popup could not open"
+                        );
                     }
 
                     let menu_gesture = matches!(event.kind, EventKind::ContextMenu)
@@ -403,20 +431,23 @@ fn install_with(
                             == Support::Supported
                         && let Err(error) = handle.show_menu()
                     {
-                        crate::error!(%error, "tray menu could not open");
+                        crate::error!(
+                            error_type = std::any::type_name_of_val(&error),
+                            "tray menu could not open"
+                        );
                     }
                 }
 
                 if matches!(event.kind, EventKind::HostChanged(false)) {
-                    crate::warn!(tray = %event.id, "tray host unavailable; registration is waiting");
+                    crate::warn!("tray host unavailable; registration is waiting");
                 }
 
-                if let EventKind::Diagnostic(message) = &event.kind {
-                    crate::warn!(tray = %event.id, %message, "native tray diagnostic");
+                if let EventKind::Diagnostic(_) = &event.kind {
+                    crate::warn!("native tray diagnostic");
                 }
 
-                if let EventKind::OperationFailed(message) = &event.kind {
-                    crate::error!(tray = %event.id, %message, "native tray operation failed");
+                if let EventKind::OperationFailed(_) = &event.kind {
+                    crate::error!("native tray operation failed");
                 }
 
                 if matches!(event.kind, EventKind::Overflow) {
@@ -508,7 +539,10 @@ pub fn animate(id: &str, animation: Animation, cx: &mut gpui::App) -> Result<(),
             match handle.set_icon(frames[frame].clone()).await {
                 Ok(applied) => revision = applied.revision,
                 Err(error) => {
-                    crate::error!(%error, "tray animation stopped");
+                    crate::error!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "tray animation stopped"
+                    );
                     break;
                 }
             }

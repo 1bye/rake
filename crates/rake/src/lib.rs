@@ -68,6 +68,7 @@ pub mod reactive;
 pub use rake_macros::component;
 
 pub mod crash;
+pub mod logging;
 
 #[cfg(all(feature = "devtools-memory", unix))]
 pub mod memory;
@@ -273,3 +274,6 @@ macro_rules! theme {
         pub(crate) type __RakeTheme = $theme;
     };
 }
+
+#[cfg(feature = "gpui")]
+pub use platform::icons::Icon;

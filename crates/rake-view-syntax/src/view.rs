@@ -1442,7 +1442,7 @@ impl Element {
             }
         }
 
-        builder.extend(variants.emit_variants(mapped));
+        builder.extend(variants.emit_variants(mapped, rake));
 
         Ok(builder)
     }

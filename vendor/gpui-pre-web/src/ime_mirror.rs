@@ -192,7 +192,10 @@ impl ImeMirror {
         let options = web_sys::FocusOptions::new();
         options.set_prevent_scroll(true);
         if let Err(error) = element.focus_with_options(&options) {
-            log::warn!("Failed to focus IME mirror: {error:?}");
+            log::warn!(
+                "Failed to focus IME mirror: {}",
+                std::any::type_name_of_val(&error)
+            );
         }
     }
 
@@ -221,7 +224,10 @@ impl ImeMirror {
             .element
             .set_attribute("inputmode", if enabled { "text" } else { "none" })
         {
-            log::warn!("Failed to configure input mode: {error:?}");
+            log::warn!(
+                "Failed to configure input mode: {}",
+                std::any::type_name_of_val(&error)
+            );
         }
     }
 

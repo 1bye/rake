@@ -1333,3 +1333,46 @@ fn mount_registration_and_failed_mounts_follow_committed_entry_lifetimes() {
     assert_eq!(export.origin.entry_id, Some(opened.entry_id));
     assert_eq!(export.origin.tab_id, Some(opened.tab_id));
 }
+
+#[test]
+fn log_queries_scrub_content_and_advance_the_cursor() {
+    use crate::control::{Message, PROTOCOL_VERSION, Query, Reply, Request};
+
+    let router = Router::<crate::router::NoRoute>::new(RouterConfig::default());
+
+    use tracing_subscriber::prelude::*;
+    let subscriber = tracing_subscriber::registry().with(router.0.collector.layer());
+
+    tracing::subscriber::with_default(subscriber, || {
+        crate::warn!(target: "example::worker", token = "secret", "application message");
+    });
+
+    let query = |after| {
+        router
+            .client()
+            .request(Request {
+                protocol: PROTOCOL_VERSION,
+                runtime_id: router.runtime_id(),
+                key: None,
+                message: Message::Query(Query::Logs { after }),
+            })
+            .expect("log query")
+    };
+
+    let Reply::Logs(snapshot) = query(0) else {
+        panic!("expected log reply")
+    };
+
+    assert_eq!(snapshot.records.len(), 1);
+    assert_eq!(snapshot.dropped, 0);
+    let records = snapshot.records;
+    let json = serde_json::to_string(&records).expect("log JSON");
+
+    assert!(!json.contains("secret"));
+    assert!(records[0].line.contains("WARN example::worker"));
+    assert!(records[0].line.contains("application message"));
+    assert!(records[0].line.contains("token=[redacted]"));
+    assert!(
+        matches!(query(records[0].sequence), Reply::Logs(snapshot) if snapshot.records.is_empty())
+    );
+}

@@ -20,6 +20,9 @@
 
 #[cfg(feature = "devtools")]
 pub mod http;
+mod logging;
+
+pub use logging::MAX_LOG_RECORD_BYTES;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -106,7 +109,30 @@ pub struct Snapshot {
     pub output_dropped: u64,
 }
 
+/// One redacted application log line, identical to the line sent to file output.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogRecord {
+    /// Monotonic sequence within the retained log stream.
+    pub sequence: u64,
+    /// RFC 3339 UTC timestamp, level, target, message and redacted fields, without a newline.
+    pub line: String,
+}
+
+/// A bounded redacted application log tail.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogSnapshot {
+    /// At most 128 retained records, oldest first, after the requested sequence.
+    pub records: Vec<LogRecord>,
+    /// Log records lost to eviction or contention since startup.
+    pub dropped: u64,
+    /// Output lines lost to the bounded worker queue since startup.
+    pub output_dropped: u64,
+}
+
 struct Buffer {
+    logs: VecDeque<LogRecord>,
+    log_sequence: u64,
+    log_bytes: usize,
     records: VecDeque<Record>,
     sequence: u64,
     #[cfg(feature = "devtools")]
@@ -120,6 +146,7 @@ struct Inner {
     capacity: usize,
     dropped: AtomicU64,
     output_dropped: AtomicU64,
+    logs_dropped: AtomicU64,
     started: Instant,
     next_span: AtomicU64,
     #[cfg(feature = "devtools")]
@@ -142,6 +169,9 @@ impl Collector {
     pub fn new(capacity: usize) -> Self {
         Self(Arc::new(Inner {
             buffer: Mutex::new(Buffer {
+                logs: VecDeque::new(),
+                log_sequence: 0,
+                log_bytes: 0,
                 records: VecDeque::new(),
                 sequence: 0,
                 #[cfg(feature = "devtools")]
@@ -152,6 +182,7 @@ impl Collector {
             capacity,
             dropped: AtomicU64::new(0),
             output_dropped: AtomicU64::new(0),
+            logs_dropped: AtomicU64::new(0),
             started: Instant::now(),
             next_span: AtomicU64::new(1),
             #[cfg(feature = "devtools")]
@@ -204,6 +235,68 @@ impl Collector {
                 })
                 .collect(),
         )
+    }
+
+    /// Copies a redacted log tail after an exclusive sequence cursor.
+    /// Contention returns an empty tail; retry with the same cursor.
+    #[must_use]
+    pub fn logs_after(&self, after: u64) -> LogSnapshot {
+        LogSnapshot {
+            records: self
+                .0
+                .buffer
+                .try_lock()
+                .map(|buffer| {
+                    buffer
+                        .logs
+                        .iter()
+                        .filter(|record| record.sequence > after)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            dropped: self.0.logs_dropped.load(Ordering::Relaxed),
+            output_dropped: self.0.output_dropped.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_log(&self, line: String) {
+        let Ok(mut buffer) = self.0.buffer.try_lock() else {
+            self.0.logs_dropped.fetch_add(1, Ordering::Relaxed);
+
+            return;
+        };
+
+        if self.0.capacity == 0 {
+            self.0.logs_dropped.fetch_add(1, Ordering::Relaxed);
+
+            return;
+        }
+
+        buffer.log_sequence += 1;
+
+        let record = LogRecord {
+            sequence: buffer.log_sequence,
+            line,
+        };
+
+        let bytes = serde_json::to_vec(&record).map_or(0, |bytes| bytes.len());
+
+        // Keep escaped JSON comfortably below the ctl frame limit.
+        while buffer.logs.len() >= self.0.capacity.min(128) || buffer.log_bytes + bytes > 256 * 1024
+        {
+            if let Some(old) = buffer.logs.pop_front() {
+                buffer.log_bytes = buffer
+                    .log_bytes
+                    .saturating_sub(serde_json::to_vec(&old).map_or(0, |bytes| bytes.len()));
+                self.0.logs_dropped.fetch_add(1, Ordering::Relaxed);
+            } else {
+                break;
+            }
+        }
+
+        buffer.log_bytes += bytes;
+        buffer.logs.push_back(record);
     }
 
     /// Current collector clock, for development records spanning several observations.
@@ -313,7 +406,7 @@ impl Collector {
     /// Supplies a layer for a host-owned tracing subscriber.
     #[must_use]
     pub fn layer(&self) -> CollectorLayer {
-        CollectorLayer(self.clone())
+        CollectorLayer(self.clone(), None)
     }
 
     /// Records an owned event using this collector's current tracing context.
@@ -475,7 +568,7 @@ impl Visit for Fields {
 }
 
 /// A composable tracing layer backed by a [`Collector`].
-pub struct CollectorLayer(Collector);
+pub struct CollectorLayer(Collector, Option<OutputLayer>);
 
 /// Owned causal metadata captured before asynchronous work changes context.
 #[derive(Clone, Debug, Default)]
@@ -653,6 +746,20 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for CollectorLay
             context
         };
 
+        let line = logging::format(
+            event.metadata().level().as_str(),
+            event.metadata().target(),
+            &fields.0,
+            &context.fields,
+            web_time::SystemTime::now(),
+        );
+
+        self.0.record_log(line.clone());
+
+        if let Some(output) = &self.1 {
+            output.emit(event, &fields, &line);
+        }
+
         self.0.record_context(
             context,
             event.metadata().level().as_str(),
@@ -711,12 +818,18 @@ pub enum SubscriberMode {
     Host,
 }
 
+#[cfg(not(target_family = "wasm"))]
+type OutputFactory = Arc<dyn Fn() -> Box<dyn std::io::Write + Send> + Send + Sync>;
+
 /// Runner diagnostic configuration. No development control endpoint is installed.
 #[derive(Clone, Default)]
 #[must_use]
 pub struct DiagnosticsConfig {
     collector: Collector,
     mode: SubscriberMode,
+    level: Option<tracing_subscriber::filter::LevelFilter>,
+    #[cfg(not(target_family = "wasm"))]
+    output: Option<OutputFactory>,
 }
 
 impl DiagnosticsConfig {
@@ -745,6 +858,25 @@ impl DiagnosticsConfig {
         self
     }
 
+    /// Sets the default severity. `RAKE_LOG` overrides this value when valid.
+    pub fn log_level(mut self, level: tracing_subscriber::filter::LevelFilter) -> Self {
+        self.level = Some(level);
+
+        self
+    }
+
+    /// Replaces stderr with a writer created on the bounded output worker.
+    /// File output uses bounded single-line records with secret-named fields redacted.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn log_writer(
+        mut self,
+        writer: impl Fn() -> Box<dyn std::io::Write + Send> + Send + Sync + 'static,
+    ) -> Self {
+        self.output = Some(Arc::new(writer));
+
+        self
+    }
+
     /// Installs diagnostics once. Automatic installation returns an error on conflict.
     ///
     /// # Errors
@@ -757,9 +889,17 @@ impl DiagnosticsConfig {
 
         tracing::subscriber::set_global_default(
             Registry::default()
-                .with(self.collector.layer())
-                .with(OutputLayer::new(self.collector.clone())?)
-                .with(tracing_subscriber::filter::LevelFilter::INFO),
+                .with(CollectorLayer(
+                    self.collector.clone(),
+                    Some(OutputLayer::new(self.collector.clone(), self)?),
+                ))
+                .with(
+                    std::env::var("RAKE_LOG")
+                        .ok()
+                        .and_then(|level| level.parse().ok())
+                        .or(self.level)
+                        .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
+                ),
         )
         .map_err(|_| DiagnosticsError::SubscriberAlreadyInstalled)
     }
@@ -779,6 +919,7 @@ pub enum DiagnosticsError {
 }
 
 struct OutputLayer {
+    file: bool,
     #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
     mirror_marker: bool,
     #[cfg(not(target_family = "wasm"))]
@@ -788,23 +929,31 @@ struct OutputLayer {
 }
 
 impl OutputLayer {
-    fn new(collector: Collector) -> Result<Self, DiagnosticsError> {
+    fn new(collector: Collector, config: &DiagnosticsConfig) -> Result<Self, DiagnosticsError> {
         #[cfg(not(target_family = "wasm"))]
         {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<String>(1024);
+
+            let output = config.output.clone();
+            let file = output.is_some();
 
             std::thread::Builder::new()
                 .name("rake-diagnostics".into())
                 .spawn(move || {
                     use std::io::Write;
 
+                    let mut writer: Box<dyn Write + Send> = output
+                        .map(|create| create())
+                        .unwrap_or_else(|| Box::new(std::io::stderr()));
+
                     for text in receiver {
-                        let _ = writeln!(std::io::stderr().lock(), "{text}");
+                        let _ = writeln!(writer, "{text}");
                     }
                 })
                 .map_err(DiagnosticsError::OutputWorker)?;
 
             Ok(Self {
+                file,
                 sender,
                 collector,
                 #[cfg(feature = "devtools")]
@@ -815,27 +964,26 @@ impl OutputLayer {
 
         #[cfg(target_family = "wasm")]
         {
-            let _ = collector;
+            let _ = (collector, config);
 
-            Ok(Self {})
+            Ok(Self { file: false })
         }
     }
-}
 
-impl<S: Subscriber> Layer<S> for OutputLayer {
-    fn on_event(&self, event: &Event<'_>, _cx: Context<'_, S>) {
-        let mut fields = Fields::default();
-
-        event.record(&mut fields);
-        let text = format!(
-            "{} {} {:?}",
-            event.metadata().level(),
-            event.metadata().target(),
-            fields.0
-        );
+    fn emit(&self, event: &Event<'_>, fields: &Fields, line: &str) {
+        let text = if self.file {
+            line.to_owned()
+        } else {
+            format!(
+                "{} {} {:?}",
+                event.metadata().level(),
+                event.metadata().target(),
+                fields.0
+            )
+        };
 
         #[cfg(all(feature = "devtools", not(target_family = "wasm")))]
-        let text = if self.mirror_marker {
+        let text = if !self.file && self.mirror_marker {
             format!("\u{1e}RAKE_DIAGNOSTIC {text}")
         } else {
             text

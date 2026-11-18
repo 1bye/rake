@@ -1,0 +1,31 @@
+[package]
+name = "rake-shortcuts"
+version = "0.1.0-alpha.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Owned native global shortcut registrations for Rake"
+
+[lints]
+workspace = true
+
+[dependencies]
+rake-tray = { version = "=0.1.0-alpha.4", path = "../rake-tray" }
+futures.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
+x11rb = "0.13.2"
+async-io = "2.6"
+blocking = "1.7"
+
+[[example]]
+name = "shortcut-probe"

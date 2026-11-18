@@ -3254,7 +3254,10 @@ impl<M: InputModeKind> InputBaseState<M> {
                 .ok();
             }
             Ok(None) => {}
-            Err(error) => tracing::warn!("failed to read the clipboard for paste: {error}"),
+            Err(error) => tracing::warn!(
+                error_type = std::any::type_name_of_val(&error),
+                "failed to read the clipboard for paste"
+            ),
         })
         .detach();
     }

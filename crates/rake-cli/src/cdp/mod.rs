@@ -1,5 +1,8 @@
 //! Loopback CDP adapter; runtime access always goes through the shared protocol.
 
+#[cfg(test)]
+mod test_transport;
+
 mod accessibility;
 #[cfg(test)]
 mod benchmark;

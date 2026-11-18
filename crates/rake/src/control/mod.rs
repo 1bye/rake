@@ -647,6 +647,7 @@ impl<R: Route> RuntimeClient<R> {
                 request_id,
                 response,
             } => Ok(Reply::Data(self.router.http_body(request_id, response))),
+            Query::Logs { after } => Ok(Reply::Logs(self.router.logs(after))),
             Query::Diagnostics { after, kind } => Ok(Reply::Diagnostics(
                 self.router.diagnostics(after, kind.as_deref()),
             )),
@@ -791,10 +792,16 @@ pub(crate) async fn run_host_client(
             match local::LocalServer::bind_host(&client, &application_id, &local::directory()) {
                 Ok(server) => {
                     if let Err(error) = server.run_host(client).await {
-                        crate::error!(%error, "Development control stopped");
+                        crate::error!(
+                            error_type = std::any::type_name_of_val(&error),
+                            "Development control stopped"
+                        );
                     }
                 }
-                Err(error) => crate::error!(%error, "Development control could not start"),
+                Err(error) => crate::error!(
+                    error_type = std::any::type_name_of_val(&error),
+                    "Development control could not start"
+                ),
             }
         }
 
@@ -802,10 +809,16 @@ pub(crate) async fn run_host_client(
         match WebBridgeConfig::from_document() {
             Ok(Some(config)) => match WebBridge::new(config) {
                 Ok(bridge) => bridge.run_host(client, &application_id).await,
-                Err(error) => crate::error!(%error, "Development bridge could not start"),
+                Err(error) => crate::error!(
+                    error_type = std::any::type_name_of_val(&error),
+                    "Development bridge could not start"
+                ),
             },
             Ok(None) => {}
-            Err(error) => crate::error!(%error, "Invalid development bridge configuration"),
+            Err(error) => crate::error!(
+                error_type = std::any::type_name_of_val(&error),
+                "Invalid development bridge configuration"
+            ),
         }
     }
 

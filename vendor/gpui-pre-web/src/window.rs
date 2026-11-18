@@ -259,7 +259,10 @@ impl WebWindow {
                     Some(observer)
                 }
                 Err(error) => {
-                    log::warn!("Failed to observe safe area: {error:?}");
+                    log::warn!(
+                        "Failed to observe safe area: {}",
+                        std::any::type_name_of_val(&error)
+                    );
                     None
                 }
             };
@@ -406,7 +409,10 @@ impl WebWindowInner {
         {
             Ok(changed) => changed,
             Err(error) => {
-                log::warn!("Failed to update browser viewport: {error:#}");
+                log::warn!(
+                    "Failed to update browser viewport: {}",
+                    std::any::type_name_of_val(&error)
+                );
                 false
             }
         }
@@ -817,7 +823,10 @@ impl PlatformWindow for WebWindow {
             .browser_window
             .set_timeout_with_callback(callback.unchecked_ref())
         {
-            log::warn!("failed to restore keyboard event receiver: {error:?}");
+            log::warn!(
+                "failed to restore keyboard event receiver: {}",
+                std::any::type_name_of_val(&error)
+            );
         }
     }
 

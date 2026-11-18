@@ -15,7 +15,11 @@ command = ["cargo", "dylint", "--all", "--no-deps"]
 if args.fix:
     command.append("--fix")
 
-command += ["--", "--workspace", "--all-targets", "--locked", "--message-format=json"]
+# Keep vendored upstream runtime source unchanged; its consumers are still checked.
+command += [
+    "--", "--workspace", "--exclude", "rake-blaze-live", "--all-targets",
+    "--locked", "--message-format=json",
+]
 
 if args.fix:
     command += ["--allow-dirty", "--allow-staged", "--allow-no-vcs"]

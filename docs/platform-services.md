@@ -64,3 +64,60 @@ windows. This GUI capability is separate from portable notifications and launch
 services. Browser/headless GUI calls are explicit errors. See [tray icons](tray.md).
 
 See [OS notifications](notifications.md) for permission results, URL payloads, packaging requirements and the portable Foundation example.
+
+## File drops
+
+File drops reuse `FileHandle::read(max_bytes)` and its size and regular-file
+validation. `FileHandle::from_drop(&gpui::ExternalPaths)` accepts exactly one
+native path without reading on the UI thread. Empty and multi-file drops fail.
+The files example accepts one UTF-8 file up to 128 KiB and refuses replacement
+while busy or while a transformation is unsaved.
+
+On Web, `platform::browser::on_canvas_file_drop` registers a canvas-wide target
+and returns an owned subscription. Its callback receives a real browser File
+handle through `FileHandle`, with the same bounded read as `pick_file`; it never
+exposes a synthetic path. Empty or multi-file drops report `InvalidInput`.
+Dropping the subscription removes the DOM listeners. Drag-over outlines the
+canvas; retain an accessible target label and the import button for keyboard use.
+
+## Global shortcuts
+
+Enable `global-shortcuts`, or `tray` which includes it. Call
+`platform().global_shortcuts().register("Ctrl+Alt+k", callback, cx)` from the UI
+thread and await its request in application-owned work. The callback receives
+`&mut gpui::App` on the UI thread and can dispatch an application command or call
+`rake::tray::toggle_popup`. The tray example toggles its rich popup this way.
+Keep the returned `GlobalShortcut` alive. Drop stops callbacks and unregisters;
+`unregister()` returns an awaitable cleanup receipt and can be called repeatedly.
+App quit releases registrations even if their handles remain alive. Cancellation
+of a pending registration releases any acquired resources.
+
+Accelerators reuse `rake-tray::Accelerator`: one printable key with unique
+`Ctrl`, `Alt`/`Option`, `Shift`, `Super`/`Cmd` modifiers. A global shortcut must
+include Ctrl, Alt or Super. Invalid keys, native failures, permission denial and
+`platform::Error::ShortcutConflict` are observable errors; no alternative key is
+silently registered. Repeated presses may be coalesced while the UI is busy.
+
+- macOS uses Carbon event hotkeys without Accessibility or Input Monitoring
+  permission. Printable keys use the current keyboard layout, including implicit
+  Shift for symbols. Keys absent from the layout and named keys such as Enter are
+  rejected. Layout changes require re-registration. System-reserved shortcuts can fail.
+- Windows uses `RegisterHotKey` on a message-only window in the UI message pump.
+  ASCII keys are mapped through the current keyboard layout. Held-key repeat is
+  disabled. OS-reserved combinations and shortcuts owned by other apps can fail.
+- Linux X11 uses passive key grabs on a private connection. ASCII keys use the
+  current layout; Alt and Super mean Mod1 and Mod4. Caps Lock and Num Lock are
+  handled. Layout/modifier-map changes require unregistering and registering again.
+- Wayland uses the GlobalShortcuts desktop portal, never an XWayland grab. The
+  compositor may prompt, deny access, or let the user change the preferred binding;
+  the portal owns conflict resolution and user-approved bindings. Closing the
+  private D-Bus connection ends the session on unregister/drop, including pending
+  authorization. A missing portal returns Unsupported. Rake never bypasses it.
+- Web, headless builds and hosts without the feature return explicit Unsupported.
+  `capabilities().global_shortcuts` reports support. On Linux it starts false;
+  await `global_shortcuts().available()` to refresh that shared capability snapshot
+  without prompting. Availability is no guarantee that a requested key is free.
+
+Native registration, conflict and cleanup probes run in macOS/Windows CI and
+under an isolated X11 display in Linux CI. They do not establish real key presses,
+Wayland compositor authorization, or cross-application focus behavior.

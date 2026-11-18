@@ -43,7 +43,10 @@ fn fingerprint_hashes_contents_in_python_order_ignores_outputs_links_and_dedupli
     symlink(root.join("src"), root.join("alias")).unwrap();
     let project = project(root);
     let output = root.join("output");
-    let first = fingerprint(&project, Some(&output)).unwrap();
+    let (first, stamps) = fingerprint::scan(&project, Some(&output)).unwrap();
+
+    assert_eq!(stamps.len(), 2);
+    assert!(stamps.contains_key(&root.join("src/main.rs")));
     let mut expected = Sha256::new();
 
     for (name, contents) in [("Cargo.toml", "manifest"), ("src/main.rs", "first")] {
@@ -111,6 +114,8 @@ impl Runtime {
             while !stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((mut connection, _)) => {
+                        // macOS accept inherits the listener's nonblocking mode.
+                        connection.set_nonblocking(false).unwrap();
                         connection
                             .set_read_timeout(Some(Duration::from_secs(2)))
                             .unwrap();
@@ -214,7 +219,14 @@ fn native_backend_failure_aborts_and_success_applies_without_stopping_old_host()
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -301,7 +313,14 @@ fn stateful_restart_prepares_checkpoint_and_busy_operations_delay_publication() 
     let session = root.join("session");
 
     fs::create_dir(&session).unwrap();
-    let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.app = Some(
         Processes::new(&cancelled)
@@ -360,7 +379,14 @@ fn cancellation_during_preparation_aborts_and_preserves_the_old_app() {
     let session = root.join("session");
 
     fs::create_dir(&session).unwrap();
-    let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.app = Some(
         Processes::new(&cancelled)
@@ -417,7 +443,14 @@ fn restore_failure_is_reported_and_clears_after_runtime_recovery() {
     let session = root.join("session");
 
     fs::create_dir(&session).unwrap();
-    let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.app = Some(
         Processes::new(&cancelled)
@@ -547,7 +580,7 @@ fn checkpoint_files_preserve_utf8_byte_bounds() {
 }
 
 #[test]
-fn blaze_arguments_are_optional_and_reject_web_preview_and_other_commands() {
+fn blaze_arguments_are_optional_and_reject_web_and_other_commands() {
     use super::super::args::{self, Compiler};
     let parse = |args: &[&str]| {
         args::parse(
@@ -564,13 +597,13 @@ fn blaze_arguments_are_optional_and_reject_web_preview_and_other_commands() {
 
     for arguments in [
         vec!["--compiler=blaze", "--target=web"],
-        vec!["--preview", "--compiler=blaze"],
+        vec!["--compiler=blaze", "--preview", "--target=web"],
     ] {
         let arguments: Vec<_> = arguments.iter().map(|s| s.to_string()).collect();
 
         assert_eq!(
             args::parse("dev", &arguments).err().unwrap(),
-            "--compiler blaze requires desktop without --preview"
+            "--compiler blaze requires desktop"
         );
     }
 
@@ -771,6 +804,7 @@ fn blaze_full_boundary_prepares_then_aborts_on_failure_even_during_cancellation(
         project(root.path()),
         root.path().join("builds-root"),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
 
@@ -827,7 +861,15 @@ fn blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_re
 
     let cancelled = AtomicBool::new(false);
     let runtime = Runtime::new(replies);
-    let mut supervisor = Supervisor::new(&args, project(root.path()), session, &cancelled).unwrap();
+
+    let mut supervisor = Supervisor::new(
+        &args,
+        project(root.path()),
+        session,
+        &cancelled,
+        presentation::Presentation::new(&args),
+    )
+    .unwrap();
 
     supervisor.launch(&artifact).unwrap();
     let pid = supervisor.app.as_ref().unwrap().0.id();
@@ -874,6 +916,24 @@ fn blaze_metadata_signature_changes_for_manifests_not_body_edits() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn blaze_preview_accepts_pinned_and_explicit_compilers() {
+    use super::super::args::{self, Compiler};
+
+    for arguments in [
+        vec!["--live", "--preview"],
+        vec!["--compiler=blaze", "--preview"],
+    ] {
+        let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let parsed = args::parse("dev", &arguments).unwrap().unwrap();
+
+        assert_eq!(parsed.compiler, Compiler::Blaze);
+        assert!(parsed.preview);
+        assert!(!parsed.web);
+    }
+}
+
+#[test]
 fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
     use super::super::args::{self, Compiler};
     let plain = args::parse("dev", &[]).unwrap().unwrap();
@@ -888,7 +948,6 @@ fn pinned_live_mode_is_opt_in_and_configures_its_own_compiler() {
 
     for args in [
         vec!["--live", "--target=web"],
-        vec!["--live", "--preview"],
         vec!["--live", "--compiler=cargo"],
     ] {
         assert!(
@@ -959,7 +1018,14 @@ fn permanent_live_restart_failure_waits_for_another_edit_but_busy_retries() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -1037,7 +1103,15 @@ fn strict_blaze_blocks_uncheckpointed_root_restart_but_default_restarts() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
+
         let result = supervisor.prepare(&runtime.instance, &root.join("artifact"));
 
         if blocked {
@@ -1088,12 +1162,21 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         let root = runtime.directory.path();
         let artifact = root.join("artifact");
 
-        fs::write(&artifact, "#!/bin/sh\nprintf '%s' \"$RAKE_LIVE_RESTART_NOTICE\" > notice.txt\nexec /bin/sleep 300\n").unwrap();
+        fs::write(
+            &artifact,
+            r#"#!/bin/sh
+printf '%s' "$RAKE_LIVE_RESTART_NOTICE" > notice.txt
+printf '%s' "$RAKE_DEV_PREVIEW" > "preview-$$.txt"
+exec /bin/sleep 300
+"#,
+        )
+        .unwrap();
         fs::set_permissions(&artifact, fs::Permissions::from_mode(0o755)).unwrap();
         let args = Args {
             dev: true,
             json: true,
             compiler: Compiler::Blaze,
+            preview: true,
             ..Args::default()
         };
 
@@ -1101,18 +1184,44 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
-        supervisor.app = Some(
-            Processes::new(&cancelled)
-                .start(Command::new("/bin/sleep").arg("300"))
-                .unwrap(),
-        );
+        let preview_ready = |pid| {
+            let path = root.join(format!("preview-{pid}.txt"));
+            let deadline = Instant::now() + Duration::from_secs(2);
+
+            while !fs::read_to_string(&path).is_ok_and(|value| value == "1") {
+                assert!(
+                    Instant::now() < deadline,
+                    "preview environment missing for {pid} in {case}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        supervisor.launch(&artifact).unwrap();
         let old_pid = supervisor.app.as_ref().unwrap().0.id();
+
+        preview_ready(old_pid);
+
         let mut instance = runtime.instance.clone();
 
         instance["pid"] = json!(old_pid);
         write_marker(&supervisor.control.join("runtime.json"), &instance).unwrap();
+        supervisor.live.as_mut().unwrap().sequence = 1;
+        supervisor.publish(1, &artifact).unwrap();
+
+        assert_eq!(supervisor.app.as_ref().unwrap().0.id(), old_pid);
+        assert_eq!(supervisor.status["outcome"], "applied");
+        assert_eq!(supervisor.live.as_ref().unwrap().published, 1);
+
         supervisor.live.as_mut().unwrap().restart = Some(
             "the edit changes the definition of `struct Toolkit`, which has old values".into(),
         );
@@ -1120,6 +1229,7 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
         let pid = supervisor.app.as_ref().unwrap().0.id();
 
         assert_ne!(pid, old_pid);
+        preview_ready(pid);
         assert_eq!(read_json(&supervisor.checkpoint).unwrap(), checkpoint);
         let message: String = if case == "full" {
             "".into()
@@ -1137,8 +1247,15 @@ fn default_restart_hands_off_a_notice_and_preserves_available_checkpoints() {
 
         let deadline = Instant::now() + Duration::from_secs(2);
 
-        while !root.join("notice.txt").exists() {
-            assert!(Instant::now() < deadline);
+        // The shell creates the file before printf finishes writing it.
+        while !fs::read_to_string(root.join("notice.txt")).is_ok_and(|notice| notice == message) {
+            assert!(
+                Instant::now() < deadline,
+                "notice timeout in {case}: file={:?}, app={:?}, output={:?}",
+                fs::read_to_string(root.join("notice.txt")),
+                supervisor.app.as_mut().unwrap().0.try_wait(),
+                supervisor.output.lock().unwrap().snapshot()
+            );
             thread::sleep(Duration::from_millis(5));
         }
 
@@ -1179,7 +1296,14 @@ fn strict_state_check_precedes_daemon_relink_and_aborts_its_probe() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         supervisor.app = Some(
             Processes::new(&cancelled)
@@ -1258,7 +1382,14 @@ fn cargo_keeps_strict_checkpoint_capture_with_or_without_stateless_opt_in() {
         let session = root.join("session");
 
         fs::create_dir(&session).unwrap();
-        let mut supervisor = Supervisor::new(&args, project(root), session, &cancelled).unwrap();
+        let mut supervisor = Supervisor::new(
+            &args,
+            project(root),
+            session,
+            &cancelled,
+            presentation::Presentation::new(&args),
+        )
+        .unwrap();
 
         let error = supervisor
             .prepare(&runtime.instance, &root.join("artifact"))

@@ -191,6 +191,7 @@ fn desktop_reload_and_stop_clean_jobs_but_never_kill_browser_openers() {
         project(fixture.root.path()),
         directory.path().into(),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
     supervisor.publish(1, &fixture.binary).unwrap();
@@ -243,6 +244,7 @@ fn cancelling_a_checkpoint_aborts_reload_and_leaves_no_processes() {
         project(fixture.root.path()),
         directory.path().into(),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
     supervisor.publish(1, &fixture.binary).unwrap();
@@ -299,12 +301,17 @@ fn web_publication_reload_and_stop_release_the_origin() {
         port: 0,
         ..Args::default()
     };
+    let cdp_args = Args {
+        cdp: true,
+        ..args.clone()
+    };
     let cancelled = AtomicBool::new(false);
     let mut supervisor = Supervisor::new(
         &args,
         project(directory.path()),
         directory.path().into(),
         &cancelled,
+        presentation::Presentation::new(&args),
     )
     .unwrap();
     supervisor.start_server().unwrap();
@@ -333,7 +340,53 @@ fn web_publication_reload_and_stop_release_the_origin() {
             "{response}"
         );
     }
+    // Publication and CDP discovery data are fixtures; Node and its owned Job are real.
+    super::super::write_marker(
+        &supervisor.session.join("cdp.json"),
+        &json!({"url":"http://127.0.0.1:1"}),
+    )
+    .unwrap();
+    supervisor.args = &cdp_args;
+    supervisor.start_embedded().unwrap();
+    let companion = Process::observe(supervisor.embedded.as_ref().unwrap().0.id());
+    let http =
+        rake_http::HttpClient::new(rake_http::HttpConfig::new().timeout(Duration::from_secs(3)))
+            .unwrap();
+
+    let devtools = supervisor.status["devtools_url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let frontend = futures::executor::block_on(async {
+        let response = http.get(&devtools).send().await.unwrap();
+
+        assert_eq!(response.status(), 200);
+        let html = String::from_utf8(response.bytes().await.unwrap()).unwrap();
+        let config = html
+            .split_once("const config = ")
+            .unwrap()
+            .1
+            .lines()
+            .next()
+            .unwrap();
+        let config: Value = serde_json::from_str(config.trim().trim_end_matches(';')).unwrap();
+        let mut frontend = url::Url::parse(config["frontend"].as_str().unwrap()).unwrap();
+
+        frontend.set_path("/");
+        let forbidden = http.get(frontend.as_str()).send().await.unwrap();
+
+        assert_eq!(forbidden.status(), 403);
+        assert!(!forbidden.bytes().await.unwrap().is_empty());
+        frontend
+    });
+
     supervisor.finish().unwrap();
+    companion.stopped();
+    assert!(
+        std::net::TcpStream::connect(("127.0.0.1", frontend.port().unwrap()),).is_err(),
+        "DevTools companion remained listening after stop"
+    );
     assert!(
         std::net::TcpStream::connect(&address).is_err(),
         "origin remained listening after stop"

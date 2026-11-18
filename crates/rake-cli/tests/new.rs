@@ -39,7 +39,10 @@ fn embeds_templates_and_revision_without_invoking_tools() {
     let revision = env!("RAKE_BUILD_REV");
 
     let pin = if revision.is_empty() {
-        format!("version = \"={}\"", env!("CARGO_PKG_VERSION"))
+        let cli: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
+        let version = cli["dev-dependencies"]["rake"]["version"].as_str().unwrap();
+
+        format!("version = \"{version}\"")
     } else {
         format!("rev = \"{revision}\"")
     };

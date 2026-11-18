@@ -233,7 +233,10 @@ impl WebTextSystem {
             })();
             match replacement {
                 Ok(replacement) => replacements.push(replacement),
-                Err(error) => log::warn!("Canvas font fallback failed: {error:#}"),
+                Err(error) => log::warn!(
+                    "Canvas font fallback failed: {}",
+                    std::any::type_name_of_val(&error)
+                ),
             }
         }
         if replacements.is_empty() {
@@ -333,7 +336,10 @@ impl PlatformTextSystem for WebTextSystem {
         match self.register_glyph(font_id, text, color) {
             Ok(glyph_id) => Some(glyph_id),
             Err(error) => {
-                log::warn!("registering Canvas glyph failed: {error:#}");
+                log::warn!(
+                    "registering Canvas glyph failed: {}",
+                    std::any::type_name_of_val(&error)
+                );
                 None
             }
         }

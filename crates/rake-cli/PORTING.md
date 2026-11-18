@@ -1,5 +1,40 @@
 # Project toolchain port
 
+## Windows inspection, CDP and source opening (#57, phase 3)
+
+CLI `inspect`, `ctl` and CDP use the shared Windows named-pipe client. Protocol,
+status/JSON fields, session filenames and Unix transports retain their contracts.
+Trace exports create owner-only files and publish through the checked atomic
+replacement boundary. Source reads use the phase-1 root/reparse confinement;
+source associations simplify verbatim Windows paths only when identity is safe.
+
+Windows source associations execute through the existing desktop Explorer COM
+object. A private CLI worker runs in an owned Job, with the shorter of the
+calling operation's deadline and ten seconds. Closing that Job stops a stalled
+RPC worker; Explorer owns the editor it launches. Session shutdown preserves
+editors and browser openers. The existing Job limits remain in place. Unix source
+association launching is unchanged. Native Swift capture remains macOS-only,
+and Windows `--preview` fails before starting resources.
+
+The real CLI/CDP integration cases now run on Windows named pipes as well as
+Unix sockets, preserving discovery, authentication, wire, diagnostics, lost-ack
+and replacement assertions. The Windows desktop job also drives the D3D11 smoke
+app through `dev --cdp`, actual inspection, reload and Ctrl-Break shutdown. It
+holds process handles to check descendant exits and uses a disposable per-user
+protocol handler to prove that an Explorer editor survives helper/session Jobs.
+The registration and test editor are removed afterward. The smoke app keeps its
+normal frame/auto-exit behavior unless its inspection-test flag is enabled.
+
+Native desktop sessions expose CDP directly. Web sessions additionally own the
+Node DevTools companion. Windows Web publication tests exercise the real Node
+module, HTTP access guard and Job/port cleanup; publication and CDP discovery
+data in that component test are explicit fixtures. The GUI check uses the real
+native app and CLI. Existing bounds and assertions remain in force.
+
+Per-head validation and any missing local prerequisites are recorded in PR #76.
+The sections below preserve each earlier phase's implementation boundary.
+
+
 ## Windows desktop/Web supervisor (#57, phase 2)
 
 Windows development children use the existing suspended-enrollment, kill-on-close
@@ -1041,7 +1076,10 @@ in `project_build::dev::tests` unless qualified.
 | Direct edit/error fallback | `project_dev::blaze_direct_edits_fall_back_for_structured_errors_and_keep_the_old_process` |
 | Atomic save/deletion | `blaze_stat_watcher_detects_atomic_saves_and_deletions` |
 | Room restart builds first | `blaze_patch_area_restart_requires_full_build_before_same_uuid_checkpointed_restart` |
-| Web rejection | `blaze_arguments_are_optional_and_reject_web_preview_and_other_commands` (also covers preview) |
+| Preview with pinned/explicit Blaze | `blaze_preview_accepts_pinned_and_explicit_compilers` |
+| Preview capture identity across patches/restarts | `body_patches_keep_preview_epoch_and_restarts_rebind_the_runtime` |
+| Preview through patch and checkpointed restart | `default_restart_hands_off_a_notice_and_preserves_available_checkpoints` |
+| Web rejection | `blaze_arguments_are_optional_and_reject_web_and_other_commands` |
 
 ### Differences and verification limits
 
@@ -1049,7 +1087,8 @@ Blaze rejects `--native-reloader`: mixing the two replacement owners would
 bypass the required checkpointed restart. Plain Cargo's backend behavior is
 unchanged. The stat watcher retains the prototype's mtime/size/inode limitation. Native
 desktop supervision has no Python dependency. The Python Blaze prototype was
-not applied to Web/preview, which intentionally cannot select this compiler.
+not applied to Web, which intentionally cannot select this compiler. Native preview
+uses the same server and capture lifecycle with either desktop compiler.
 Temporary Python `RAKE_LIVE_PROFILE` instrumentation was not ported: the normal
 JSON supervisor events, runtime apply timestamps and worker logs remain the
 recording interfaces. The socket deadline now includes sending and receiving,

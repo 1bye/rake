@@ -150,7 +150,10 @@ impl WindowState {
 
             self.load_locked().await
         }) {
-            crate::warn!(%error, "window placement could not be loaded; using defaults");
+            crate::warn!(
+                error_type = std::any::type_name_of_val(&error),
+                "window placement could not be loaded; using defaults"
+            );
         }
     }
 
@@ -159,7 +162,10 @@ impl WindowState {
         let _write = self.inner.writes.lock().await;
 
         if let Err(error) = self.save_locked().await {
-            crate::warn!(%error, "window placement could not be saved");
+            crate::warn!(
+                error_type = std::any::type_name_of_val(&error),
+                "window placement could not be saved"
+            );
         }
     }
 }

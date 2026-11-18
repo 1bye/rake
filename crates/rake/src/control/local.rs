@@ -148,7 +148,10 @@ impl LocalServer {
             match self.listener.accept().await {
                 Ok((stream, _)) => return Ok(stream),
                 Err(error) if recoverable_accept_error(&error) => {
-                    tracing::warn!(%error, "local control accept failed; retrying");
+                    tracing::warn!(
+                        error_type = std::any::type_name_of_val(&error),
+                        "local control accept failed; retrying"
+                    );
                     crate::http::sleep(Duration::from_millis(100)).await;
                 }
                 Err(error) => return Err(error),

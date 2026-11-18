@@ -253,7 +253,8 @@ async fn initialize_graphics(
                     let canvas: &web_sys::Element = webgpu_canvas.as_ref();
                     canvas.remove();
                     log::warn!(
-                        "WebGPU initialization failed; falling back to WebGL2: {webgpu_error:#}"
+                        "WebGPU initialization failed; falling back to WebGL2 ({})",
+                        std::any::type_name_of_val(&webgpu_error)
                     );
 
                     let webgl_canvas =
@@ -344,7 +345,10 @@ impl Platform for WebPlatform {
                 }
                 Err(error) => {
                     window_lifecycle.set(WebWindowLifecycle::Unavailable);
-                    log::error!("Failed to initialize browser graphics: {error:#}");
+                    log::error!(
+                        "Failed to initialize browser graphics: {}",
+                        std::any::type_name_of_val(&error)
+                    );
                     show_graphics_unavailable_message(&browser_window, &error);
                 }
             }
@@ -463,7 +467,10 @@ impl Platform for WebPlatform {
 
     fn open_url(&self, url: &str) {
         if let Err(error) = self.browser_window.open_with_url(url) {
-            log::warn!("Failed to open URL '{url}': {error:?}");
+            log::warn!(
+                "Failed to open URL ({})",
+                std::any::type_name_of_val(&error)
+            );
         }
     }
 
@@ -777,11 +784,8 @@ pub(crate) fn js_error_message(error: &JsValue) -> String {
         .unwrap_or_else(|| "unknown browser error".to_string())
 }
 
-fn log_clipboard_entry_error(mime_type: &str, error: &JsValue) {
-    log::warn!(
-        "failed to read clipboard entry with type {mime_type}: {}",
-        js_error_message(error)
-    );
+fn log_clipboard_entry_error(_mime_type: &str, _error: &JsValue) {
+    log::warn!("failed to read clipboard entry");
 }
 
 fn cursor_restore_listeners(
@@ -841,6 +845,9 @@ fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
         && let Some(body) = document.body()
         && let Err(error) = body.style().set_property("cursor", css_cursor)
     {
-        log::warn!("Failed to set cursor style: {error:?}");
+        log::warn!(
+            "Failed to set cursor style: {}",
+            std::any::type_name_of_val(&error)
+        );
     }
 }

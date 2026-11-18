@@ -164,6 +164,9 @@ impl CrashConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct CrashRecord {
+    /// Native application log path, when automatic file output is configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<String>,
     /// JSON schema version; currently 1.
     pub schema_version: u32,
     /// Stable opaque identity; sinks can use it to deduplicate retries.
