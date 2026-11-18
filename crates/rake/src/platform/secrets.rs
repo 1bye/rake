@@ -27,9 +27,17 @@ impl std::fmt::Debug for Secret {
 }
 
 /// A credential namespace. Use the same application id across restarts.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Secrets {
     app_id: String,
+}
+
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Secrets")
+            .field("app_id", &self.app_id)
+            .finish()
+    }
 }
 
 impl Platform {
@@ -235,6 +243,9 @@ mod tests {
         let output = serde_json::to_string(&collector.snapshot_after(0, None)).unwrap();
         assert!(!output.contains("DO-NOT-EXPOSE"));
         assert!(output.contains("REDACTED"));
+        let logs = serde_json::to_string(&collector.logs_after(0)).unwrap();
+        assert!(!logs.contains("DO-NOT-EXPOSE"));
+        assert!(logs.contains("REDACTED"));
         assert_eq!(format!("{value:?}"), "Secret([REDACTED])");
         let inspection = crate::inspection::Store::default();
         let snapshot = serde_json::to_string(&inspection.snapshot()).unwrap();

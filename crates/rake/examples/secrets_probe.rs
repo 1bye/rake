@@ -1,10 +1,14 @@
 //! Opt-in real-keychain probe. Run write, read in a new process, then delete.
 //! Uses only dev.rake.secrets-17-test; always run delete after testing.
+#[cfg(feature = "gpui-fast")]
+use gpui_fast_platform as host;
+#[cfg(not(feature = "gpui-fast"))]
+use gpui_platform as host;
 use rake::platform::{Platform, Secret};
 
 fn main() {
     let operation = std::env::args().nth(1).expect("write, read or delete");
-    gpui_platform::application().run(move |cx| {
+    host::application().run(move |cx| {
         let secrets = Platform::default()
             .secrets("dev.rake.secrets-17-test")
             .unwrap();
