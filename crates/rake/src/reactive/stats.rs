@@ -29,6 +29,7 @@ pub(super) enum Kind {
 
 #[derive(Default)]
 struct Counters(Rc<Cell<RuntimeStats>>);
+
 impl Global for Counters {}
 
 pub(super) struct Lifetime {
@@ -40,8 +41,10 @@ impl Lifetime {
     pub fn new(cx: &mut App, kind: Kind) -> Self {
         let counts = cx.default_global::<Counters>().0.clone();
         let mut stats = counts.get();
+
         *field(&mut stats, kind) += 1;
         counts.set(stats);
+
         Self { counts, kind }
     }
 }
@@ -49,6 +52,7 @@ impl Lifetime {
 impl Drop for Lifetime {
     fn drop(&mut self) {
         let mut stats = self.counts.get();
+
         *field(&mut stats, self.kind) -= 1;
         self.counts.set(stats);
     }

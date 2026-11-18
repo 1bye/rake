@@ -27,17 +27,20 @@ impl<'ast> Visit<'ast> for Reads {
                 call,
                 "reading a signal in setup is not reactive; move it into view! or cx.memo",
             );
+
             if let Some(previous) = &mut self.error {
                 previous.combine(error);
             } else {
                 self.error = Some(error);
             }
         }
+
         visit::visit_expr_method_call(self, call);
     }
 
     fn visit_local(&mut self, local: &'ast syn::Local) {
         visit::visit_local(self, local);
+
         if let Pat::Ident(name) = &local.pat
             && let Some(init) = &local.init
             && let Expr::MethodCall(call) = &*init.expr
@@ -56,8 +59,10 @@ pub(super) fn validate(statements: &[Stmt], tracked: &[&Ident]) -> syn::Result<(
         signals: tracked.iter().map(ToString::to_string).collect(),
         error: None,
     };
+
     for statement in statements {
         reads.visit_stmt(statement);
     }
+
     reads.error.map_or(Ok(()), Err)
 }

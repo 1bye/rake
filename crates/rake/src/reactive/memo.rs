@@ -10,6 +10,7 @@ use super::{Setup, Signal, tracking};
 pub struct Memo<T: 'static>(pub(super) Signal<T>);
 
 impl<T> Copy for Memo<T> {}
+
 impl<T> Clone for Memo<T> {
     fn clone(&self) -> Self {
         *self
@@ -79,33 +80,41 @@ impl<V: 'static> Setup<'_, '_, V> {
     ) -> Memo<T> {
         let (value, dependencies) = tracking::collect(self, |cx| compute(cx));
         let output = self.signal(value);
+
         let observer = tracking::Observer::new(
             self,
             move |cx| output.set_if_changed(cx, compute(cx)),
             dependencies,
         );
+
         self.retain(observer);
+
         Memo(output)
     }
 }
 
 impl<T: Display + 'static> IntoElement for Memo<T> {
     type Element = ViewElement<Self>;
+
     fn into_element(self) -> Self::Element {
         ViewElement::new(self)
     }
 }
+
 impl<T: Display + 'static> RenderOnce for Memo<T> {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         self.read(cx).to_string()
     }
 }
+
 impl<T: Display + 'static> IntoElement for Signal<T> {
     type Element = ViewElement<Self>;
+
     fn into_element(self) -> Self::Element {
         ViewElement::new(self)
     }
 }
+
 impl<T: Display + 'static> RenderOnce for Signal<T> {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         self.read(cx).to_string()

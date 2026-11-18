@@ -20,7 +20,9 @@ struct Probe {
 #[rake::component]
 fn Counter(label: SharedString, start: i32, probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
     let count = cx.signal(start);
+
     probe.setter.set(Some(count));
+
     {
         probe.renders.set(probe.renders.get() + 1);
         probe.value.set(count.get(cx));
@@ -99,14 +101,17 @@ fn fixture() -> (
     Vec<Rc<Probe>>,
 ) {
     let mut cx = gpui::TestAppContext::single();
+
     cx.update(rake_ui::init);
     let probes: Vec<_> = (0..3).map(|_| Rc::new(Probe::default())).collect();
+
     let window = cx.add_window(|_, _| Host {
         keys: vec![0, 1],
         probes: probes.clone(),
         renders: Rc::new(Cell::new(0)),
         start: 0,
     });
+
     draw(&mut cx, window);
 
     (cx, window, probes)
@@ -116,6 +121,7 @@ fn fixture() -> (
 fn siblings_keep_independent_state_across_parent_renders_and_keyed_changes() {
     let (mut cx, window, probes) = fixture();
     let first = probes[0].setter.get().unwrap();
+
     cx.update(|cx| first.set(cx, 7));
     draw(&mut cx, window);
     assert_eq!(probes[0].value.get(), 7);
@@ -137,6 +143,7 @@ fn button_clicks_update_current_state_through_generated_listeners() {
     for expected in 1..=2 {
         let mut visual = gpui::VisualTestContext::from_window(window.into(), &cx);
         let position = gpui::point(gpui::px(20.), gpui::px(20.));
+
         visual.simulate_mouse_move(position, None, Default::default());
         visual.simulate_click(position, Default::default());
         draw(&mut cx, window);
@@ -149,6 +156,7 @@ fn button_clicks_update_current_state_through_generated_listeners() {
 fn stale_setters_do_not_keep_components_alive_or_reach_replacements() {
     let (mut cx, window, probes) = fixture();
     let old = probes[0].setter.get().unwrap();
+
     change(&mut cx, window, |host| host.keys = vec![1]);
     draw(&mut cx, window);
     assert!(
@@ -169,6 +177,7 @@ fn setters_are_copy_and_work_from_async_contexts() {
     let (mut cx, window, probes) = fixture();
     let setter = probes[0].setter.get().unwrap();
     let copy = setter;
+
     cx.update(|cx| {
         cx.spawn(async move |cx| {
             setter.set(cx, 3);
@@ -185,6 +194,7 @@ fn handles_reject_another_application() {
     let (_original, _, probes) = fixture();
     let setter = probes[0].setter.get().unwrap();
     let (other, _, _) = fixture();
+
     assert!(
         other
             .update(|cx| setter.update(cx, |value| *value = 10))
@@ -201,7 +211,9 @@ struct RawCounter {
 impl gpui::RenderOnce for RawCounter {
     fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let state = window.use_state(cx, |_, _| 0_i32);
+
         self.handles.borrow_mut().push(state);
+
         gpui::div().id(self.id)
     }
 }
@@ -227,8 +239,10 @@ fn raw_source_location_state_collides_before_render_once_root_ids_are_in_scope()
     let mut cx = gpui::TestAppContext::single();
     let handles = Rc::new(RefCell::new(Vec::new()));
     let window = cx.add_window(|_, _| RawHost(handles.clone()));
+
     draw(&mut cx, window);
     let handles = handles.borrow();
+
     assert_eq!(handles[0].entity_id(), handles[1].entity_id());
 }
 
@@ -240,15 +254,18 @@ fn macro_reports_invalid_component_signatures() {
 #[test]
 fn props_defaults_keep_the_existing_struct_update_syntax() {
     let probe = Rc::new(Probe::default());
+
     let defaults = Counter {
         id: "defaults".into(),
         label: "Default".into(),
         start: 4,
         probe,
     };
+
     let component = rake::view! {
         <Counter id="override" {..defaults} />
     };
+
     let _ = component.into_element();
 }
 
@@ -258,6 +275,7 @@ fn repeated_mounts_release_component_values_and_effect_cleanups() {
 
     for _ in 0..100 {
         let stale = probes[0].setter.get().unwrap();
+
         change(&mut cx, window, |host| host.keys.clear());
         draw(&mut cx, window);
         assert!(
@@ -283,6 +301,7 @@ impl Render for Tabs {
 fn retained_tab_entities_reset_function_state_when_their_subtree_unmounts() {
     let mut cx = gpui::TestAppContext::single();
     let probes: Vec<_> = (0..2).map(|_| Rc::new(Probe::default())).collect();
+
     let window = cx.add_window(|_, cx| Tabs {
         pages: probes
             .iter()
@@ -297,8 +316,10 @@ fn retained_tab_entities_reset_function_state_when_their_subtree_unmounts() {
             .collect(),
         selected: 0,
     });
+
     draw(&mut cx, window);
     let old = probes[0].setter.get().unwrap();
+
     cx.update(|cx| old.set(cx, 7));
     draw(&mut cx, window);
     assert_eq!(probes[0].value.get(), 7);
@@ -334,8 +355,10 @@ impl Render for Parents {
 fn identical_ids_in_different_parents_have_independent_state() {
     let mut cx = gpui::TestAppContext::single();
     let probes: Vec<_> = (0..2).map(|_| Rc::new(Probe::default())).collect();
+
     let window =
         cx.add_window(|_, _| Parents(vec![(8, probes[0].clone()), (19, probes[1].clone())]));
+
     draw(&mut cx, window);
     cx.update(|cx| probes[0].setter.get().unwrap().set(cx, 4));
     draw(&mut cx, window);

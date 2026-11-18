@@ -44,16 +44,19 @@ pub struct Signal<T: 'static> {
 }
 
 impl<T> Copy for Signal<T> {}
+
 impl<T> Clone for Signal<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
+
 impl<T> PartialEq for Signal<T> {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key
     }
 }
+
 impl<T> Eq for Signal<T> {}
 
 impl<T: Clone + 'static> super::Value<T> for Signal<T> {
@@ -90,6 +93,7 @@ impl<T: 'static> Signal<T> {
     #[doc = "Creates application-owned state. Setup::signal ties its lifetime to a component instead."]
     pub fn new(cx: &mut App, value: T) -> Self {
         let entity = cx.new(|_| value);
+
         Self::from_entity(cx, entity)
     }
 
@@ -100,7 +104,9 @@ impl<T: 'static> Signal<T> {
             #[cfg(feature = "view-test-support")]
             _lifetime: super::stats::Lifetime::new(cx, super::stats::Kind::Signal),
         };
+
         let store = cx.default_global::<Store<T>>();
+
         Self::from_key(Key {
             registry: store.identity,
             slot: store.values.insert(entry),
@@ -117,6 +123,7 @@ impl<T: 'static> Signal<T> {
 
     pub(super) fn resolve(self, cx: &App) -> Option<&Entity<T>> {
         let store = cx.try_global::<Store<T>>()?;
+
         (store.identity == self.key.registry)
             .then(|| store.values.get(self.key.slot).map(|entry| &entry.entity))
             .flatten()
@@ -125,6 +132,7 @@ impl<T: 'static> Signal<T> {
     #[doc = "Borrows the current value and records the read through GPUI. Panics after disposal."]
     pub fn read(self, cx: &App) -> &T {
         super::tracking::record(self, cx);
+
         self.resolve(cx)
             .expect("signal has been disposed or belongs to another application")
             .read(cx)
@@ -161,6 +169,7 @@ impl<T: 'static> Signal<T> {
         T: PartialEq,
     {
         let entity = cx.signal_entity(self);
+
         if let Some(entity) = entity {
             entity.update(cx, |current, cx| {
                 if *current != value {
@@ -179,13 +188,17 @@ impl<T: 'static> Signal<T> {
         let Some(entity) = self.resolve(cx).cloned() else {
             return;
         };
+
         let changed = entity.update(cx, |current, _| {
             if *current == value {
                 return false;
             }
+
             *current = value;
+
             true
         });
+
         if changed {
             cx.defer(move |cx| cx.notify(entity.entity_id()));
         }
@@ -198,9 +211,12 @@ impl<T: 'static> Signal<T> {
         update: impl FnOnce(&mut T) -> R,
     ) -> Option<R> {
         let entity = cx.signal_entity(self)?;
+
         Some(entity.update(cx, |value, cx| {
             let result = update(value);
+
             cx.notify();
+
             result
         }))
     }

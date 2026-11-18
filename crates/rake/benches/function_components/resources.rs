@@ -25,13 +25,16 @@ struct Requests {
 impl Requests {
     fn load(&self, input: i32) -> impl Future<Output = Result<i32, std::io::Error>> + use<> {
         let (send, receive) = oneshot::channel();
+
         self.replies.borrow_mut().push((input, send));
+
         async move { receive.await.map_err(std::io::Error::other)? }
     }
 
     fn update(&self, input: i32, retry: bool, cx: &mut App) {
         if let Some(signal) = self.signal.get() {
             signal.set(cx, input);
+
             if retry {
                 self.resource.get().unwrap().retry(cx);
             }
@@ -42,9 +45,11 @@ impl Requests {
                 .unwrap()
                 .update(cx, |view, cx| {
                     view.input = input;
+
                     if retry {
                         view.loaded = None;
                     }
+
                     cx.notify();
                 })
                 .unwrap();
@@ -53,10 +58,13 @@ impl Requests {
 
     fn complete(&self, expected: i32) {
         let (input, latest) = self.replies.borrow_mut().pop().unwrap();
+
         assert_eq!(input, expected);
+
         for (_, cancelled) in self.replies.borrow_mut().drain(..) {
             assert!(cancelled.send(Ok(-1)).is_err());
         }
+
         assert!(latest.send(Ok(expected)).is_ok());
     }
 }
@@ -66,10 +74,13 @@ fn ReactiveRequest(requests: Rc<Requests>, cx: &mut Setup) -> impl IntoElement {
     let input = cx.signal(0);
     let pending = requests.clone();
     let resource = cx.resource(move |cx| pending.load(input.get(cx)));
+
     requests.signal.set(Some(input));
     requests.resource.set(Some(resource));
+
     {
         requests.value.set(resource.latest(cx).copied());
+
         gpui::div().child(format!("{:?}", requests.value.get()))
     }
 }
@@ -86,6 +97,7 @@ struct Plain {
 impl Plain {
     fn new(requests: Rc<Requests>, cx: &mut Context<Self>) -> Self {
         *requests.plain.borrow_mut() = Some(cx.weak_entity());
+
         Self {
             input: 0,
             loaded: None,
@@ -101,13 +113,17 @@ impl Render for Plain {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.loaded != Some(self.input) {
             self.task.take();
+
             if let Some(value) = self.load.take_ready() {
                 self.latest = Some(value);
             }
+
             let token = self.load.begin();
             let future = self.requests.load(self.input);
+
             self.task = Some(cx.spawn(async move |view, cx| {
                 let result = future.await;
+
                 let _ = view.update(cx, |view, cx| {
                     if view.load.complete(token, result) {
                         cx.notify();
@@ -116,11 +132,14 @@ impl Render for Plain {
             }));
             self.loaded = Some(self.input);
         }
+
         let value = match self.load.state() {
             LoadStatus::Ready(value) => Some(*value),
             _ => self.latest,
         };
+
         self.requests.value.set(value);
+
         gpui::div().child(format!("{value:?}"))
     }
 }
@@ -145,8 +164,10 @@ impl Render for Host {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.visible {
             self.plain.take();
+
             return gpui::div();
         }
+
         let child = match self.variant {
             Variant::Plain => self
                 .plain
@@ -161,6 +182,7 @@ impl Render for Host {
             Variant::Raw => RawRequest(self.requests.clone()).into_any_element(),
             _ => unreachable!("resource cases use uncached variants"),
         };
+
         gpui::div().child(child)
     }
 }
@@ -168,24 +190,29 @@ impl Render for Host {
 fn measure(variant: Variant, writes: usize, retry: bool, samples: usize) {
     let mut cx = gpui::TestAppContext::single();
     let requests = Rc::new(Requests::default());
+
     let window = cx.add_window(|_, _| Host {
         variant,
         requests: requests.clone(),
         plain: None,
         visible: true,
     });
+
     draw(&mut cx, window);
     cx.run_until_parked();
     let mut times = Vec::with_capacity(samples);
     let mut allocations = 0;
+
     for iteration in 0..samples + 5 {
         if retry {
             cx.update(|cx| requests.update((iteration + 1) as i32, false, cx));
             draw(&mut cx, window);
             cx.run_until_parked();
         }
+
         let before = ALLOCATIONS.load(Ordering::Relaxed);
         let started = Instant::now();
+
         cx.update(|cx| {
             for value in 1..=writes {
                 requests.update((iteration * writes + value) as i32, retry, cx);
@@ -194,16 +221,20 @@ fn measure(variant: Variant, writes: usize, retry: bool, samples: usize) {
         draw(&mut cx, window);
         cx.run_until_parked();
         let elapsed = started.elapsed().as_secs_f64() * 1e6;
+
         if iteration >= 5 {
             times.push(elapsed);
             allocations += ALLOCATIONS.load(Ordering::Relaxed) - before;
         }
+
         let expected = ((iteration + 1) * writes) as i32;
+
         requests.complete(expected);
         cx.run_until_parked();
         draw(&mut cx, window);
         assert_eq!(requests.value.get(), Some(expected));
     }
+
     cx.update(|cx| requests.update(-1, true, cx));
     draw(&mut cx, window);
     cx.run_until_parked();
@@ -216,12 +247,16 @@ fn measure(variant: Variant, writes: usize, retry: bool, samples: usize) {
     draw(&mut cx, window);
     draw(&mut cx, window);
     cx.run_until_parked();
+
     for (_, cancelled) in requests.replies.borrow_mut().drain(..) {
         assert!(cancelled.send(Ok(-1)).is_err());
     }
+
     let stats = cx.update(|cx| rake::reactive::runtime_stats(cx));
+
     assert_eq!(stats, rake::reactive::RuntimeStats::default());
     let (p50, p95) = percentiles(&mut times);
+
     println!(
         "{}",
         json!({
@@ -238,6 +273,7 @@ pub(super) fn run(samples: usize) {
         for writes in [1, 10, 100] {
             measure(variant, writes, false, samples);
         }
+
         measure(variant, 1, true, samples);
     }
 }

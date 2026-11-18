@@ -249,6 +249,7 @@ fn automatic_boundaries_capture_styles_sources_and_rendered_text() {
     );
     assert!(sources[0].expression.contains("self.selected"));
     let fixture = include_str!("tests.rs");
+
     assert_eq!(
         fixture
             .lines()
@@ -268,6 +269,7 @@ fn automatic_boundaries_capture_styles_sources_and_rendered_text() {
     assert!(sources[1].source.line > sources[0].source.line);
     assert_eq!(sources[1].source.file, file!());
     let paragraph = named(&snapshot, "paragraph");
+
     assert!(
         paragraph
             .view
@@ -442,10 +444,12 @@ fn views_without_an_inspection_host_do_not_sample_styles() {
 #[test]
 fn component_properties_do_not_require_clone_debug_or_gpui_key_conversion() {
     struct CustomId(usize);
+
     #[derive(IntoElement, crate::Props)]
     struct CustomComponent {
         id: CustomId,
     }
+
     impl gpui::RenderOnce for CustomComponent {
         fn render(self, _: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
             gpui::div()
@@ -473,6 +477,7 @@ impl Render for AccessibleFixture {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let clicks = self.clicks.clone();
         let _ = &cx;
+
         crate::view! {
             <section
                 id="accessibility-root"
@@ -1009,11 +1014,14 @@ fn signal_metadata_preserves_binding_names_and_bounds_value_previews() {
     fn Counter(cx: &mut Setup) -> impl IntoElement {
         let count = cx.signal(7_i32);
         let title = cx.signal("é".repeat(300));
+
         crate::view! {
             <div>{count}{title}</div>
         }
     }
+
     struct Host(Store);
+
     impl Render for Host {
         fn render(
             &mut self,
@@ -1030,14 +1038,17 @@ fn signal_metadata_preserves_binding_names_and_bounds_value_previews() {
     }
     let mut app = gpui::TestAppContext::single();
     let store = Store::default();
+
     store.attach();
     let (_, cx) = app.add_window_view(|_, _| Host(store.clone()));
+
     cx.update(|window, cx| {
         window.draw(cx).clear(cx);
     });
     let snapshot = store.snapshot();
     let counter = named(&snapshot, "counter");
     let signals = &counter.view.as_ref().unwrap().signals;
+
     assert_eq!(signals.len(), 2);
     assert_eq!(signals[0].name, "count");
     assert_eq!(signals[0].value, Some(serde_json::json!(7)));

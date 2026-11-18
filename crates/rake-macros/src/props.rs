@@ -234,10 +234,12 @@ pub(super) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let rest_methods = fields.named.iter().find(|field| field.attrs.iter().any(|attr| attr.path().is_ident("rest"))).map(|field| {
         let rest = field.ident.as_ref().unwrap();
         let declared = |name: &str| names.iter().any(|field| *field == name);
+
         let declared_event = |name: &str| fields.named.iter().any(|field| {
             field.ident.as_ref().is_some_and(|field| field == name)
                 && field.attrs.iter().any(|attr| attr.path().is_ident("event"))
         });
+
         let mut methods = TokenStream::new();
 
         for (method, ty, property, converted) in [
@@ -291,15 +293,20 @@ pub(super) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             ("action", "action", "Payload", None),
         ] {
             let name = format!("on_{event}");
+
             if declared_event(event) || declared(&name) { continue; }
 
             let method = format_ident!("{name}");
             let gpui_method = format_ident!("on_{gpui_name}");
+
             let button = button.map(|button| {
                 let button = format_ident!("{button}");
+
                 quote!(#rake::gpui::MouseButton::#button,)
             });
+
             let ty = format_ident!("{ty}");
+
             let (generics, ty) = match event {
                 "drop" => (quote!(<Payload: 'static>), quote!(Payload)),
                 "action" => (quote!(<Payload: #rake::gpui::Action>), quote!(Payload)),

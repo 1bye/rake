@@ -13,9 +13,11 @@ pub(super) struct Dependency {
 
 #[derive(Clone, Default)]
 struct Tracking(Rc<RefCell<Vec<Vec<Dependency>>>>);
+
 impl Global for Tracking {}
 
 struct Scope(Tracking);
+
 impl Drop for Scope {
     fn drop(&mut self) {
         self.0.0.borrow_mut().pop();
@@ -25,6 +27,7 @@ impl Drop for Scope {
 pub(super) fn collect<R>(cx: &mut App, read: impl FnOnce(&mut App) -> R) -> (R, Vec<Dependency>) {
     let mut dependencies = Vec::new();
     let value = collect_into(cx, &mut dependencies, read);
+
     (value, dependencies)
 }
 
@@ -34,10 +37,13 @@ pub(super) fn collect_into<R>(
     read: impl FnOnce(&mut App) -> R,
 ) -> R {
     let tracking = cx.default_global::<Tracking>().clone();
+
     tracking.0.borrow_mut().push(std::mem::take(dependencies));
     let scope = Scope(tracking);
     let value = read(cx);
+
     *dependencies = std::mem::take(scope.0.0.borrow_mut().last_mut().unwrap());
+
     value
 }
 
@@ -45,15 +51,19 @@ pub(super) fn record<T: 'static>(signal: Signal<T>, cx: &App) {
     let Some(tracking) = cx.try_global::<Tracking>() else {
         return;
     };
+
     let mut stack = tracking.0.borrow_mut();
+
     let Some(dependencies) = stack.last_mut() else {
         return;
     };
+
     dependencies.push(Dependency {
         key: signal.key,
         subscribe: |key, target, cx| {
             let signal = Signal::<T>::from_key(key);
             let entity = signal.resolve(cx)?.clone();
+
             Some(cx.observe(&entity, move |_, cx| {
                 if let Some(target) = target.upgrade() {
                     cx.notify(target.entity_id());
@@ -81,7 +91,9 @@ impl Subscriptions {
         if self.entries.is_empty() && dependencies.is_empty() {
             return;
         }
+
         self.revision = self.revision.wrapping_add(1);
+
         for dependency in dependencies {
             match self.entries.entry(dependency.key) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -104,6 +116,7 @@ impl Subscriptions {
                 }
             }
         }
+
         self.entries
             .retain(|_, entry| entry.revision == self.revision);
     }
@@ -148,13 +161,16 @@ impl<F: FnMut(&mut App) + 'static> Observer<F> {
             cx.observe_self(|this: &mut Self, cx| this.refresh(cx))
                 .detach();
             let mut subscriptions = Subscriptions::default();
+
             subscriptions.replace(&dependencies, &cx.weak_entity().into(), cx);
+
             Self { run, subscriptions }
         })
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let (_, dependencies) = collect(cx, |cx| (self.run)(cx));
+
         self.subscriptions
             .replace(&dependencies, &cx.weak_entity().into(), cx);
     }

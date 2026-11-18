@@ -19,6 +19,7 @@ fn automatic_cache_preserves_positioned_roots_and_sibling_flow() {
     #[rake::component]
     fn Positioned(probe: Rc<BoundsProbe>, cx: &mut Setup) -> impl IntoElement {
         let _state = cx.signal(0);
+
         rake::view! {
             <div class="absolute left-4 top-4 w-40 h-10">
                 {
@@ -33,9 +34,11 @@ fn automatic_cache_preserves_positioned_roots_and_sibling_flow() {
     }
 
     struct Parent(Rc<BoundsProbe>);
+
     impl Render for Parent {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let probe = self.0.clone();
+
             gpui::div()
                 .relative()
                 .flex()
@@ -61,6 +64,7 @@ fn automatic_cache_preserves_positioned_roots_and_sibling_flow() {
     let mut cx = gpui::TestAppContext::single();
     let probe = Rc::new(BoundsProbe::default());
     let window = cx.add_window(|_, _| Parent(probe.clone()));
+
     for _ in 0..3 {
         change(&mut cx, window, |_| {});
         assert_eq!(
@@ -83,14 +87,19 @@ fn cached_siblings_skip_render_when_one_signal_changes() {
     #[rake::component(cached = "w-40 h-10")]
     fn Leaf(probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
         let value = cx.signal(0);
+
         probe.setter.set(Some(value));
+
         {
             probe.value.set(value.get(cx));
             probe.renders.set(probe.renders.get() + 1);
+
             gpui::div().w(gpui::px(160.)).h(gpui::px(40.)).child(value)
         }
     }
+
     struct Parent([Rc<Probe>; 2]);
+
     impl Render for Parent {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             gpui::div().children(
@@ -104,8 +113,10 @@ fn cached_siblings_skip_render_when_one_signal_changes() {
     let mut cx = gpui::TestAppContext::single();
     let probes = [Rc::new(Probe::default()), Rc::new(Probe::default())];
     let window = cx.add_window(|_, _| Parent(probes.clone()));
+
     draw(&mut cx, window);
     let before = [probes[0].renders.get(), probes[1].renders.get()];
+
     for value in 1..5 {
         cx.update(|cx| probes[0].setter.get().unwrap().set(cx, value));
         draw(&mut cx, window);
@@ -129,18 +140,25 @@ fn state_changes_reflow_siblings_and_run_effects_after_paint() {
     #[rake::component]
     fn Resizable(probe: Rc<LayoutProbe>, cx: &mut Setup) -> impl IntoElement {
         let width = cx.signal(100);
+
         probe.state.setter.set(Some(width));
         let effect_probe = probe.clone();
+
         cx.effect(move |_, cx| {
             let width = width.get(cx);
+
             assert!(effect_probe.painted.get());
             effect_probe.events.borrow_mut().push(width);
             let cleanup = effect_probe.clone();
+
             cx.on_cleanup(move |_| cleanup.cleanups.set(cleanup.cleanups.get() + 1));
         });
+
         {
             let width = width.get(cx);
+
             probe.painted.set(false);
+
             gpui::canvas(|_, _, _| (), move |_, _, _, _| probe.painted.set(true))
                 .w(gpui::px(width as f32))
                 .h(gpui::px(40.))
@@ -149,9 +167,11 @@ fn state_changes_reflow_siblings_and_run_effects_after_paint() {
     }
 
     struct Parent(Rc<LayoutProbe>);
+
     impl Render for Parent {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let probe = self.0.clone();
+
             gpui::div()
                 .flex()
                 .child(Resizable {
@@ -173,6 +193,7 @@ fn state_changes_reflow_siblings_and_run_effects_after_paint() {
     let mut cx = gpui::TestAppContext::single();
     let probe = Rc::new(LayoutProbe::default());
     let window = cx.add_window(|_, _| Parent(probe.clone()));
+
     draw(&mut cx, window);
     assert_eq!(probe.sibling_x.get(), 100.);
     cx.update(|cx| probe.state.setter.get().unwrap().set(cx, 200));
@@ -187,9 +208,12 @@ fn virtualized_function_rows_release_state_when_scrolled_out() {
     #[rake::component]
     fn Row(probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
         let value = cx.signal(0);
+
         probe.setter.set(Some(value));
+
         {
             probe.value.set(value.get(cx));
+
             gpui::div().h(gpui::px(32.)).child(value)
         }
     }
@@ -198,6 +222,7 @@ fn virtualized_function_rows_release_state_when_scrolled_out() {
         scroll: gpui::UniformListScrollHandle,
         probes: Rc<RefCell<std::collections::BTreeMap<usize, Rc<Probe>>>>,
     }
+
     impl Render for List {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             gpui::uniform_list(
@@ -220,13 +245,16 @@ fn virtualized_function_rows_release_state_when_scrolled_out() {
 
     let mut cx = gpui::TestAppContext::single();
     let probes = Rc::new(RefCell::new(std::collections::BTreeMap::new()));
+
     let window = cx.add_window(|_, _| List {
         scroll: gpui::UniformListScrollHandle::new(),
         probes: probes.clone(),
     });
+
     draw(&mut cx, window);
     let first = probes.borrow()[&1].clone();
     let stale = first.setter.get().unwrap();
+
     cx.update(|cx| stale.set(cx, 9));
     draw(&mut cx, window);
     assert_eq!(first.value.get(), 9);
@@ -255,6 +283,7 @@ fn direct_reactive_text_and_attributes_follow_signal_updates() {
     impl Display for Label {
         fn fmt(&self, output: &mut Formatter<'_>) -> fmt::Result {
             self.0.set(self.1);
+
             write!(output, "{}", self.1)
         }
     }
@@ -266,10 +295,12 @@ fn direct_reactive_text_and_attributes_follow_signal_updates() {
         app: &mut Setup,
     ) -> impl IntoElement {
         let selected = app.signal(0);
+
         probe.setter.set(Some(selected));
         let label = app.memo(move |cx| selected.get(cx).to_string());
         let heading = app.signal(Label(rendered.clone(), 7));
         let active = app.memo(move |cx| selected.get(cx) > 0);
+
         {
             rake::view! {
                 <section>
@@ -312,6 +343,7 @@ fn direct_reactive_text_and_attributes_follow_signal_updates() {
     let rendered = Rc::new(Cell::new(0));
     let leading = cx.update(|cx| Signal::new(cx, "Plain view"));
     let window = cx.add_window(|_, _| Parent(probe.clone(), rendered.clone(), leading));
+
     draw(&mut cx, window);
     assert_eq!(rendered.replace(0), 7);
 
@@ -388,6 +420,7 @@ fn forwarded_events_respect_reactive_button_disabled_state() {
         cx.update(|cx| blocked.set(cx, value));
         draw(&mut cx, window);
         let mut visual = gpui::VisualTestContext::from_window(window.into(), &cx);
+
         visual.simulate_mouse_move(position, None, Default::default());
         visual.simulate_click(position, Default::default());
         assert_eq!(clicks.get(), expected);
@@ -406,6 +439,7 @@ fn flex_cache_replays_only_when_the_parent_supplies_a_definite_box() {
     #[rake::component]
     fn Stretch(probe: Rc<Layout>, cx: &mut Setup) -> impl IntoElement {
         let _state = cx.signal(0);
+
         probe.mounts.set(probe.mounts.get() + 1);
 
         rake::view! {
@@ -451,14 +485,17 @@ fn flex_cache_replays_only_when_the_parent_supplies_a_definite_box() {
 
     let mut cx = gpui::TestAppContext::single();
     let probe = Rc::new(Layout::default());
+
     let window = cx.add_window(|_, _| Parent {
         constrained: true,
         probe: probe.clone(),
     });
+
     draw(&mut cx, window);
     assert_eq!(probe.size.get(), gpui::size(gpui::px(320.), gpui::px(160.)));
 
     let renders = probe.renders.get();
+
     change(&mut cx, window, |_| {});
     assert_eq!(probe.renders.get(), renders);
 

@@ -20,6 +20,7 @@ pub(super) struct Rendered<V> {
 
 impl<V: ReactiveView> IntoElement for Rendered<V> {
     type Element = Self;
+
     fn into_element(self) -> Self {
         self
     }
@@ -32,6 +33,7 @@ impl<V: ReactiveView> Element for Rendered<V> {
     fn id(&self) -> Option<ElementId> {
         None
     }
+
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
         None
     }
@@ -46,6 +48,7 @@ impl<V: ReactiveView> Element for Rendered<V> {
         let layout = tracking::collect_into(cx, &mut self.dependencies, |cx| {
             self.child.request_layout(window, cx)
         });
+
         (layout, ())
     }
 
@@ -60,6 +63,7 @@ impl<V: ReactiveView> Element for Rendered<V> {
     ) {
         #[cfg(feature = "devtools")]
         let _ = self.owner.update(cx, |view, cx| view.inspect(cx));
+
         tracking::collect_into(cx, &mut self.dependencies, |cx| {
             self.child.prepaint(window, cx);
         });

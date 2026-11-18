@@ -160,10 +160,13 @@ impl View {
         {
             return false;
         }
+
         let Some(classes) = self.0.literal_classes() else {
             return false;
         };
+
         let classes: BTreeSet<_> = classes.split_whitespace().collect();
+
         if !["flex-1", "min-w-0", "min-h-0"]
             .iter()
             .all(|class| classes.contains(class))
@@ -176,7 +179,9 @@ impl View {
         {
             return false;
         }
+
         self.0.stretch = Some(stretched.clone());
+
         true
     }
 
@@ -386,6 +391,7 @@ impl Parse for View {
         } else {
             None
         };
+
         let mut root = Element::parse(input)?;
 
         if let Some(context) = context {
@@ -1123,6 +1129,7 @@ impl Element {
         else {
             return None;
         };
+
         Some(classes.value())
     }
 
@@ -1137,11 +1144,14 @@ impl Element {
         {
             return false;
         }
+
         let Some(classes) = self.literal_classes() else {
             return false;
         };
+
         let mut width = false;
         let mut height = false;
+
         for class in classes.split_whitespace() {
             let length = |prefix: &str| {
                 class.strip_prefix(prefix).is_some_and(|value| {
@@ -1150,6 +1160,7 @@ impl Element {
                         .is_ok_and(|value| value.is_finite() && value > 0.)
                 })
             };
+
             match class {
                 "flex" | "flex-col" | "flex-row" | "items-stretch" => (),
                 _ if length("size-") => {
@@ -1161,6 +1172,7 @@ impl Element {
                 _ => return false,
             }
         }
+
         width && height
     }
 
@@ -1251,6 +1263,7 @@ impl Element {
             );
 
             let forwarded = self.rest.as_ref().map(|rest| quote!(|| #rest.disabled));
+
             setup.extend(quote!(let #disabled: bool = #value #forwarded;));
         }
 
@@ -1298,8 +1311,10 @@ impl Element {
             } else {
                 quote!(false)
             };
+
             let hover = self.attribute("on:hover").is_none();
             let drag = self.attribute("on:drag").is_none();
+
             builder.extend(quote!(.map(|root| #rest.apply(root, #disabled, #hover, #drag))));
         }
 
@@ -1321,6 +1336,7 @@ impl Element {
             && self.has_stretch_box()
         {
             let component = child.expand_component(rake, next)?;
+
             quote!({
                 use #rake::reactive::ConstrainComponent as _;
                 let mut component = #rake::reactive::ComponentChild(Some(#component));
@@ -1657,6 +1673,7 @@ impl Element {
             .transpose()?;
 
         let tabindex = tabindex.map(|value| self.resolve_value(quote!(isize), value, rake));
+
         let optional_index = tabindex
             .as_ref()
             .map_or_else(|| quote!(None), |value| quote!(Some(#value)));

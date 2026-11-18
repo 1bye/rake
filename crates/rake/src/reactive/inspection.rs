@@ -20,6 +20,7 @@ impl Entry {
             key: signal.key,
             preview: |key, cx, truncated| {
                 let signal = Signal::<T>::from_key(key);
+
                 preview(signal.resolve(cx)?.read(cx), truncated)
             },
         }
@@ -28,6 +29,7 @@ impl Entry {
 
 pub(super) fn capture(entries: &[Entry], cx: &App) -> (Vec<SignalMetadata>, bool) {
     let mut truncated = entries.len() > 64;
+
     let metadata = entries
         .iter()
         .take(64)
@@ -38,6 +40,7 @@ pub(super) fn capture(entries: &[Entry], cx: &App) -> (Vec<SignalMetadata>, bool
             value: (entry.preview)(entry.key, cx, &mut truncated),
         })
         .collect();
+
     (metadata, truncated)
 }
 

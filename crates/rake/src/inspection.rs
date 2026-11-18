@@ -21,6 +21,7 @@ use snapshot::Captured;
 mod text_editing;
 #[cfg(feature = "gpui")]
 mod view;
+
 #[cfg(feature = "gpui")]
 pub(crate) use view::authored;
 #[cfg(all(feature = "gpui", feature = "experimental-reactive"))]

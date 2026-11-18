@@ -7,10 +7,12 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
     let mut force_view = false;
     let mut cache = None;
     let mut cache_disabled = false;
+
     let options = syn::parse::Parser::parse2(
         syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
         args,
     )?;
+
     for option in options {
         match option {
             syn::Meta::Path(path) if path.is_ident("view") => force_view = true,
@@ -33,6 +35,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             other => return Err(syn::Error::new_spanned(other, "expected view or cached")),
         }
     }
+
     if function.sig.asyncness.is_some()
         || function.sig.constness.is_some()
         || function.sig.unsafety.is_some()
@@ -43,12 +46,14 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             "components must be ordinary synchronous functions",
         ));
     }
+
     if matches!(function.sig.output, ReturnType::Default) {
         return Err(syn::Error::new_spanned(
             &function.sig,
             "components must return an element",
         ));
     }
+
     let output = &function.sig.output;
     let rake = crate::facade()?;
     let name = &function.sig.ident;
@@ -63,6 +68,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
     let mut tracked_types = Vec::new();
     let mut context = None;
     let mut context_type = None;
+
     for argument in &function.sig.inputs {
         let FnArg::Typed(argument) = argument else {
             return Err(syn::Error::new_spanned(
@@ -70,35 +76,43 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                 "component methods are not supported",
             ));
         };
+
         let Pat::Ident(pattern) = &*argument.pat else {
             return Err(syn::Error::new_spanned(
                 &argument.pat,
                 "use a named component property",
             ));
         };
+
         let ident = &pattern.ident;
         let ty = &argument.ty;
+
         if is_setup(ty) {
             if let Type::Reference(reference) = &**ty
                 && let Type::Path(path) = &*reference.elem
             {
                 context_type = Some(path.path.clone());
             }
+
             if context.replace(ident.clone()).is_some() {
                 return Err(syn::Error::new_spanned(
                     argument,
                     "a component accepts one Setup parameter",
                 ));
             }
+
             continue;
         }
+
         let attrs = &argument.attrs;
+
         if attrs.iter().any(|attr| attr.path().is_ident("rest")) && rest.replace(ident).is_some() {
             return Err(syn::Error::new_spanned(
                 argument,
                 "a component accepts one rest property",
             ));
         }
+
         if attrs.iter().any(|attr| {
             attr.path().is_ident("prop")
                 && attr.meta.require_list().is_ok_and(|meta| {
@@ -111,17 +125,21 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             tracked.push(ident);
             tracked_types.push(ty);
         }
+
         let ty = if attrs.iter().any(|attr| attr.path().is_ident("event")) {
             quote!(#rake::reactive::Event<#ty>)
         } else {
             quote!(#ty)
         };
+
         fields.push(quote!(#(#attrs)* #[doc = "Component input."] pub #ident: #ty));
         names.push(ident);
         types.push(ty);
     }
+
     let named_props = names.len() == 1 && names[0] == "props";
     let stateful = force_view || context.is_some();
+
     if context.is_some()
         && !function.sig.inputs.last().is_some_and(
             |argument| matches!(argument, FnArg::Typed(argument) if is_setup(&argument.ty)),
@@ -132,19 +150,23 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             "Setup must be the final component parameter",
         ));
     }
+
     if !stateful && !tracked.is_empty() {
         return Err(syn::Error::new_spanned(
             tracked[0],
             "tracked props require a Setup parameter",
         ));
     }
+
     if stateful && names.iter().any(|name| *name == "id") {
         return Err(syn::Error::new_spanned(
             name,
             "id is reserved for stateful component identity",
         ));
     }
+
     let mut implementation = generics.clone();
+
     if stateful {
         for ty in &tracked_types {
             implementation
@@ -152,6 +174,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                 .predicates
                 .push(parse_quote!(#ty: PartialEq));
         }
+
         for ty in &types {
             implementation
                 .make_where_clause()
@@ -159,12 +182,14 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                 .push(parse_quote!(#ty: Clone + 'static));
         }
     }
+
     let (impl_generics, _, where_clause) = implementation.split_for_impl();
     let (_, type_generics, _) = generics.split_for_impl();
     let identity = stateful.then(|| quote!(#[doc = "Stable component identity within its parent."] pub id: #rake::gpui::ElementId,));
     let clone = stateful.then(|| quote!(#[derive(Clone)] #[props(stateful)]));
     let stretched = format_ident!("__rake_stretched", span = proc_macro2::Span::mixed_site());
     let mut stretch = false;
+
     let body = if stateful {
         let mut tail = match function.block.stmts.pop() {
             Some(Stmt::Expr(tail, None)) => tail,
@@ -181,6 +206,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                 ));
             }
         };
+
         let style = if cache_disabled || (rest.is_some() && cache.is_none()) {
             None
         } else if let Some(classes) = cache {
@@ -197,6 +223,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             }
 
             let markup: rake_view_syntax::View = syn::parse2(quote!(<div class=#classes/>))?;
+
             Some(markup.cache_style(&rake)?.ok_or_else(|| {
                 syn::Error::new_spanned(
                     classes,
@@ -219,6 +246,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         } else {
             None
         };
+
         if !cache_disabled
             && rest.is_none()
             && style.is_none()
@@ -231,11 +259,13 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                 .is_some_and(|segment| segment.ident == "view")
         {
             let mut view: rake_view_syntax::View = syn::parse2(expression.mac.tokens.clone())?;
+
             if view.stretch_root(&stretched) {
                 stretch = true;
                 let context = context
                     .clone()
                     .unwrap_or_else(|| syn::Ident::new("cx", name.span()));
+
                 view.use_reactive_context(&context);
                 tail = syn::parse2(view.expand_resilient(&rake)?)?;
             }
@@ -253,19 +283,24 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         } else {
             style.map_or_else(|| quote!(#rake::gpui::IntoElement::into_any_element(__view)), |style| quote!(if __changed { #rake::gpui::IntoElement::into_any_element(__view) } else { #rake::gpui::IntoElement::into_any_element(__view.cached(#style)) }))
         };
+
         let setup = &function.block.stmts;
+
         crate::setup_reads::validate(setup, &tracked)?;
         let tracked_storage: Vec<_> = tracked
             .iter()
             .map(|name| format_ident!("__rake_tracked_{name}"))
             .collect();
+
         let context_type = context_type
             .map(|mut path| {
                 path.segments.last_mut().unwrap().arguments =
                     syn::PathArguments::AngleBracketed(parse_quote!(<'_, '_, _>));
+
                 quote!(#path)
             })
             .unwrap_or_else(|| quote!(#rake::reactive::Setup<'_, '_, _>));
+
         let context = context.unwrap_or_else(|| syn::Ident::new("cx", name.span()));
 
         if let Some(rest) = rest {
@@ -276,6 +311,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
 
         let instrumented = setup.iter().map(|statement| {
             let mut tokens = quote!(#statement);
+
             if let Stmt::Local(local) = statement
                 && let Pat::Ident(binding) = &local.pat
                 && let Some(init) = &local.init
@@ -287,17 +323,22 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             {
                 let method = format_ident!("inspect_{}", call.method);
                 let binding = &binding.ident;
+
                 tokens.extend(quote!(#context.#method(stringify!(#binding), #binding);));
             }
+
             tokens
         });
+
         let setup_hash = quote!(#(#tracked)* #(#setup)*)
             .to_string()
             .bytes()
             .fold(0xcbf29ce484222325_u64, |hash, byte| {
                 (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
             });
+
         let default_stretch = (!stretch).then(|| quote!(let #stretched = false;));
+
         quote! {
             #default_stretch
             let __id = self.id.clone();
@@ -334,12 +375,14 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         }
     } else {
         let context = syn::Ident::new("cx", name.span());
+
         if let Some(rest) = rest {
             let last = function
                 .block
                 .stmts
                 .last_mut()
                 .ok_or_else(|| syn::Error::new_spanned(name, "rest requires a view! root"))?;
+
             let expression = match last {
                 Stmt::Expr(expression, None) => expression.clone(),
                 Stmt::Macro(statement) if statement.semi_token.is_none() => {
@@ -355,22 +398,28 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                     ));
                 }
             };
+
             *last = Stmt::Expr(forward_rest(expression, rest, &context, &rake)?, None);
         }
+
         RenderContext(&context).visit_block_mut(&mut function.block);
         let statements = &function.block.stmts;
+
         quote! {
             let Self { #(#names,)* } = self;
             #(#statements)*
         }
     };
+
     let derive_props = if named_props {
         None
     } else {
         Some(quote!(#[derive(#rake::Props)]))
     };
+
     let delegate = if named_props && !stateful {
         let ty = &types[0];
+
         quote! {
             impl #impl_generics From<#ty> for #name #type_generics #where_clause {
                 fn from(props: #ty) -> Self { Self { props } }
@@ -392,11 +441,13 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
     } else {
         quote!()
     };
+
     let derive_props = if stateful {
         Some(quote!(#[derive(#rake::Props)]))
     } else {
         derive_props
     };
+
     let (body, render_type, render_value, stretch_impl) = if stateful {
         (
             quote!(#rake::reactive::StretchComponent::render_stretched(self, window, cx, false)),
@@ -414,6 +465,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
     } else {
         (body, quote!(Self), quote!(self), TokenStream::new())
     };
+
     Ok(quote! {
         #(#attrs)*
         #derive_props
@@ -458,6 +510,7 @@ impl VisitMut for RenderContext<'_> {
         {
             let context = self.0;
             let markup = &invocation.tokens;
+
             invocation.tokens = quote!(#context => #markup);
         }
     }
@@ -479,8 +532,11 @@ fn forward_rest(
             "rest requires a final view! expression",
         ));
     };
+
     let mut view: rake_view_syntax::View = syn::parse2(expression.mac.tokens)?;
+
     view.use_reactive_context(context);
     view.forward_rest(rest)?;
+
     syn::parse2(view.expand_resilient(rake)?)
 }

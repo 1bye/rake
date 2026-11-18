@@ -9,9 +9,11 @@ pub(super) type Cleanup = Box<dyn FnOnce(&mut App)>;
 
 #[derive(Clone, Default)]
 struct Cleanups(Rc<RefCell<Vec<Vec<Cleanup>>>>);
+
 impl Global for Cleanups {}
 
 struct CleanupScope(Cleanups);
+
 impl Drop for CleanupScope {
     fn drop(&mut self) {
         self.0.0.borrow_mut().pop();
@@ -22,6 +24,7 @@ impl Drop for CleanupScope {
 pub trait ReactiveApp {
     #[doc = "Reads a signal installed with provide_global. Panics when it is missing."]
     fn global_signal<T: 'static>(&self) -> super::Signal<T>;
+
     #[doc = "Registers cleanup for the running effect, before its next execution or disposal."]
     fn on_cleanup(&mut self, cleanup: impl FnOnce(&mut App) + 'static);
 }
@@ -54,9 +57,11 @@ impl<F: FnMut(&mut Window, &mut App) + 'static> Effect<F> {
         if self.queued {
             return;
         }
+
         self.queued = true;
         let owner = cx.weak_entity();
         let window = self.window;
+
         cx.defer(move |cx| {
             let _ = cx.update_window(window, |_, window, _| {
                 window.on_next_frame(move |window, cx| {
@@ -68,13 +73,17 @@ impl<F: FnMut(&mut Window, &mut App) + 'static> Effect<F> {
 
     fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.queued = false;
+
         for cleanup in self.cleanups.drain(..).rev() {
             cleanup(cx);
         }
+
         let cleanups = cx.default_global::<Cleanups>().clone();
+
         cleanups.0.borrow_mut().push(Vec::new());
         let scope = CleanupScope(cleanups);
         let (_, dependencies) = tracking::collect(cx, |cx| (self.callback)(window, cx));
+
         self.cleanups = std::mem::take(scope.0.0.borrow_mut().last_mut().unwrap());
         self.subscriptions
             .replace(&dependencies, &cx.weak_entity().into(), cx);
@@ -85,6 +94,7 @@ impl<V: 'static> Setup<'_, '_, V> {
     #[doc = "Runs after the next frame and again after a tracked signal changes."]
     pub fn effect(&mut self, callback: impl FnMut(&mut Window, &mut App) + 'static) {
         let window = self.window().window_handle();
+
         let effect = App::new(self, |cx| {
             cx.observe_self(|this: &mut Effect<_>, cx| this.schedule(cx))
                 .detach();
@@ -94,6 +104,7 @@ impl<V: 'static> Setup<'_, '_, V> {
                 }
             })
             .detach();
+
             Effect {
                 callback,
                 window,
@@ -102,11 +113,14 @@ impl<V: 'static> Setup<'_, '_, V> {
                 subscriptions: tracking::Subscriptions::default(),
             }
         });
+
         let weak = effect.downgrade();
+
         self.window().on_next_frame(move |window, cx| {
             let _ = weak.update(cx, |effect, cx| effect.run(window, cx));
         });
         let cleanup_owner = effect.downgrade();
+
         self.on_cleanup(move |cx| {
             let _ = cleanup_owner.update(cx, |effect, cx| {
                 for cleanup in effect.cleanups.drain(..).rev() {

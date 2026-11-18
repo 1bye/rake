@@ -22,11 +22,13 @@ mod resources;
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static LIVE_BYTES: AtomicIsize = AtomicIsize::new(0);
+
 const RENDERER: &str = if cfg!(feature = "gpui-fast") {
     "gpui-fast 0.1.13"
 } else {
     "gpui-pre 0.3.11"
 };
+
 const SCENARIOS: [&str; 6] = ["mount", "parent", "leaf", "all", "reorder", "cycle"];
 
 struct CountingAllocator;
@@ -120,6 +122,7 @@ impl PartialEq for Probe {
 
 fn row(probe: &Probe, value: i32) -> impl IntoElement + use<> {
     probe.rendered.set(value);
+
     gpui::div()
         .w(gpui::px(48.))
         .h(gpui::px(16.))
@@ -134,6 +137,7 @@ struct Plain {
 impl Render for Plain {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.probe.writer.replace(Writer::Plain(cx.weak_entity()));
+
         row(&self.probe, self.values.iter().sum())
     }
 }
@@ -141,12 +145,14 @@ impl Render for Plain {
 #[rake::component(cached = false)]
 fn SignalRow(signals: usize, probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
     let values = create_signals(cx, signals, &probe);
+
     row(&probe, values.iter().map(|value| value.get(cx)).sum())
 }
 
 #[rake::component(cached = "w-12 h-4")]
 fn CachedRow(signals: usize, probe: Rc<Probe>, cx: &mut Setup) -> impl IntoElement {
     let values = create_signals(cx, signals, &probe);
+
     row(&probe, values.iter().map(|value| value.get(cx)).sum())
 }
 
@@ -156,7 +162,9 @@ fn create_signals<V: 'static>(
     probe: &Probe,
 ) -> Vec<Signal<i32>> {
     let values: Vec<_> = (0..count).map(|_| cx.signal(0)).collect();
+
     probe.writer.replace(Writer::Signals(values[0]));
+
     values
 }
 
@@ -170,9 +178,11 @@ struct RawRow {
 impl gpui::RenderOnce for RawRow {
     fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let mut sum = 0;
+
         window.with_id(("row", self.id), |window| {
             for index in 0..self.signals {
                 let state = window.use_keyed_state(("hook", index), cx, |_, _| 0_i32);
+
                 sum += *state.read(cx);
 
                 if index == 0 {
@@ -180,6 +190,7 @@ impl gpui::RenderOnce for RawRow {
                 }
             }
         });
+
         row(&self.probe, sum)
     }
 }
@@ -220,6 +231,7 @@ impl Host {
         match scenario {
             "mount" | "cycle" => {
                 self.rows.clear();
+
                 for _ in 0..count {
                     self.append();
                 }
@@ -243,9 +255,11 @@ fn change_values(scenario: &str, probes: &[Rc<Probe>], cx: &mut gpui::App) -> bo
         "all" => probes.len(),
         _ => return false,
     };
+
     for probe in &probes[..count] {
         assert!(probe.writer.borrow().increment(cx));
     }
+
     true
 }
 
@@ -262,8 +276,10 @@ impl Render for Host {
                             probe: item.probe.clone(),
                         })
                     });
+
                     if matches!(self.variant, Variant::PlainCached) {
                         view.read(cx);
+
                         parent.child(
                             view.clone().cached(
                                 gpui::StyleRefinement::default()
@@ -307,40 +323,48 @@ fn draw<V: Render>(cx: &mut gpui::TestAppContext, window: gpui::WindowHandle<V>)
 
 fn percentiles(times: &mut [f64]) -> (f64, f64) {
     times.sort_by(f64::total_cmp);
+
     (times[times.len() / 2], times[times.len() * 95 / 100])
 }
 
 fn measure(variant: Variant, count: usize, signals: usize, scenario: &str, samples: usize) {
     let mut cx = gpui::TestAppContext::single();
     let window = cx.add_window(|_, _| Host::new(variant, signals));
+
     cx.run_until_parked();
     draw(&mut cx, window);
     let baseline = LIVE_BYTES.load(Ordering::Relaxed);
+
     window
         .update(&mut cx, |host, _, cx| host.change("mount", count, cx))
         .unwrap();
     cx.run_until_parked();
     draw(&mut cx, window);
     let after_mount = LIVE_BYTES.load(Ordering::Relaxed) - baseline;
+
     let probes: Vec<_> = window
         .read_with(&cx, |host, _| {
             host.rows.iter().map(|row| row.probe.clone()).collect()
         })
         .unwrap();
+
     let mut times = Vec::with_capacity(samples);
     let mut allocations = 0;
 
     for iteration in 0..samples + 5 {
         let before = ALLOCATIONS.load(Ordering::Relaxed);
         let start = Instant::now();
+
         if !cx.update(|cx| change_values(scenario, &probes, cx)) {
             window
                 .update(&mut cx, |host, _, cx| host.change(scenario, count, cx))
                 .unwrap();
         }
+
         draw(&mut cx, window);
         let elapsed = start.elapsed().as_secs_f64() * 1e6;
         let allocated = ALLOCATIONS.load(Ordering::Relaxed) - before;
+
         if matches!(scenario, "leaf" | "all") {
             assert_eq!(
                 probes[0].rendered.get(),
@@ -348,6 +372,7 @@ fn measure(variant: Variant, count: usize, signals: usize, scenario: &str, sampl
                 "updated row must render its current value"
             );
         }
+
         cx.run_until_parked();
 
         if iteration >= 5 {
@@ -370,11 +395,14 @@ fn measure(variant: Variant, count: usize, signals: usize, scenario: &str, sampl
             .iter()
             .all(|probe| !probe.writer.borrow().increment(cx))
     });
+
     drop(probes);
     let retained = LIVE_BYTES.load(Ordering::Relaxed) - baseline;
     let runtime_stats = cx.update(|cx| rake::reactive::runtime_stats(cx));
+
     assert_eq!(runtime_stats, rake::reactive::RuntimeStats::default());
     let (p50, p95) = percentiles(&mut times);
+
     println!(
         "{}",
         json!({
@@ -406,6 +434,7 @@ impl Render for Native {
         let signals = host.signals;
         let probes: Vec<_> = host.rows.iter().map(|row| row.probe.clone()).collect();
         let started = Instant::now();
+
         let measurement = gpui::canvas(
             |_, _, _| (),
             move |_, _, window, cx| {
@@ -420,6 +449,7 @@ impl Render for Native {
                 if samples.borrow().len() >= 65 {
                     let mut times = samples.borrow()[5..].to_vec();
                     let (p50, p95) = percentiles(&mut times);
+
                     println!(
                         "{}",
                         json!({
@@ -466,24 +496,30 @@ fn main() {
             Some("raw") => Variant::Raw,
             _ => panic!("a benchmark case requires plain, plain-cached, signals, cached, or raw"),
         };
+
         let requested = args.get(index + 2).map(String::as_str).unwrap_or("all");
+
         let scenario = SCENARIOS
             .into_iter()
             .chain(["signals"])
             .find(|scenario| *scenario == requested)
             .expect("unknown benchmark scenario");
+
         let instances = args
             .get(index + 3)
             .map(|value| value.parse().unwrap())
             .unwrap_or(100);
+
         let signals = args
             .get(index + 4)
             .map(|value| value.parse().unwrap())
             .unwrap_or(1);
+
         assert!(instances > 0 && signals > 0);
 
         if args[index] == "--headless" {
             measure(variant, instances, signals, scenario, 31);
+
             return;
         }
 
@@ -492,11 +528,14 @@ fn main() {
                 cx.new(|cx| {
                     let host = cx.new(|_| {
                         let mut host = Host::new(variant, signals);
+
                         for _ in 0..instances {
                             host.append();
                         }
+
                         host
                     });
+
                     Native {
                         host,
                         samples: Rc::default(),
@@ -507,15 +546,18 @@ fn main() {
             .unwrap();
             cx.activate(true);
         });
+
         return;
     }
 
     let quick = args.iter().any(|arg| arg == "--quick");
+
     let sizes: &[usize] = if quick {
         &[1, 100]
     } else {
         &[1, 100, 1_000, 10_000]
     };
+
     let samples = if quick { 7 } else { 31 };
 
     for variant in [
@@ -540,6 +582,7 @@ fn main() {
             async_work::measure(variant, true, samples);
         }
     }
+
     dependencies::run(samples);
     resources::run(samples);
 }

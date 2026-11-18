@@ -39,6 +39,7 @@ impl Render for ComponentHost {
         let _ = (&window, &cx);
         let observed = &self.observed;
         let states_created = &self.states_created;
+
         rake::view! {
             <section>
                 for key in &self.keys {

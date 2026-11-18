@@ -46,6 +46,7 @@ impl Definition {
             style_sources: Vec::new(),
             signals: Vec::new(),
         };
+
         const MAX_SOURCE_BYTES: usize = 4096;
         let mut bytes = super::super::budget::size(&metadata, MAX_SOURCE_BYTES);
 
@@ -120,6 +121,7 @@ impl<C: IntoElement> IntoElement for Component<C> {
 
     fn into_element(self) -> Self::Element {
         let key = (self.key)(&self.inner);
+
         inspect_component(self.inner, self.definition, key)
     }
 }
@@ -130,10 +132,12 @@ fn inspect_component<C: IntoElement>(
     key: Option<ElementId>,
 ) -> Inspected<C::Element> {
     let mut element = inspect(inner);
+
     element.semantic_id = key.as_ref().map(ToString::to_string);
     element.view_key = key;
     element.source = definition.source;
     element.definition = Some(definition);
+
     element
 }
 
@@ -144,6 +148,7 @@ impl<C: crate::reactive::StretchComponent> crate::reactive::ConstrainComponent
     fn constrain(&mut self) -> gpui::AnyElement {
         let component = self.0.take().unwrap();
         let key = (component.key)(&component.inner);
+
         inspect_component(
             gpui::ViewElement::new(crate::reactive::Stretched(component.inner, true)),
             component.definition,

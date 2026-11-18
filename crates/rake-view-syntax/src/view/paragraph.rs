@@ -53,6 +53,7 @@ impl Element {
         let label =
             if matches!(self.resolved, Tag::Heading(_)) && self.attribute("aria-label").is_none() {
                 let fallback = quote!(#node = #node.aria_label(#heading_text.full_text()););
+
                 self.rest.as_ref().map_or_else(
                     || fallback.clone(),
                     |rest| quote!(if #rest.aria_label.is_none() { #fallback }),
@@ -233,6 +234,7 @@ pub(super) fn inline_element(
 
     *next += 1;
     let local = format_ident!("__rake_inline_style_{index}", span = Span::mixed_site());
+
     let children = inline_children(
         &element.children,
         content,

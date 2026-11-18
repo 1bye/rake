@@ -40,28 +40,35 @@ impl Attrs {
         drag: bool,
     ) -> E {
         element.style().refine(&self.style);
+
         if let Some(label) = self.aria_label.clone() {
             element = element.aria_label(label);
         }
+
         if let Some(description) = self.aria_description.clone() {
             element = element.aria_description(description);
         }
+
         if let Some(expanded) = self.aria_expanded {
             element = element.aria_expanded(expanded);
         }
+
         if let Some(keyshortcuts) = self.aria_keyshortcuts.clone() {
             element = element.aria_keyshortcuts(keyshortcuts);
         }
+
         if !disabled {
             if let Some(click) = self.click.clone() {
                 element = element.on_click(move |event, window, cx| click.call(event, window, cx));
             }
+
             for (name, listener) in &self.listeners {
                 if (*name != "on_hover" || hover) && (*name != "on_drag" || drag) {
                     listener(element.interactivity());
                 }
             }
         }
+
         element
     }
 
@@ -74,6 +81,7 @@ impl Attrs {
         if matches!(name, "on_hover" | "on_drag") {
             self.listeners.retain(|(previous, _)| *previous != name);
         }
+
         self.listeners.push((name, Rc::new(listener)));
     }
 

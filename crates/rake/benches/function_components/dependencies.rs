@@ -27,13 +27,16 @@ fn ReactiveReader(
     cx: &mut Setup,
 ) -> impl IntoElement {
     let mut derived: Option<Memo<i64>> = None;
+
     for _ in 0..depth {
         let previous = derived;
+
         derived =
             Some(cx.memo(move |cx| {
                 previous.map_or_else(|| source.get(cx), |value| value.get(cx)) + 1
             }));
     }
+
     content(
         derived.map_or_else(|| source.get(cx), |value| value.get(cx)),
         children,
@@ -53,6 +56,7 @@ impl Render for PlainReader {
         } else {
             gpui::Empty.into_any_element()
         };
+
         content(*self.source.read(cx) + self.depth as i64, child)
     }
 }
@@ -90,7 +94,9 @@ impl Render for Host {
         if self.count == 0 {
             self.plain.clear();
         }
+
         let mut parent = gpui::div().flex().flex_wrap().w(gpui::px(960.));
+
         for id in 0..self.count {
             parent = match self.variant {
                 Variant::Plain => {
@@ -101,6 +107,7 @@ impl Render for Host {
                             children: self.children,
                         }));
                     }
+
                     parent.child(self.plain[id].clone())
                 }
                 Variant::Signals => {
@@ -109,6 +116,7 @@ impl Render for Host {
                     } else {
                         Children::default()
                     };
+
                     parent.child(
                         ReactiveReader::builder()
                             .id(("reader", id))
@@ -127,19 +135,24 @@ impl Render for Host {
                 _ => unreachable!("dependency cases use uncached variants"),
             };
         }
+
         parent
     }
 }
 
 fn measure(variant: Variant, count: usize, depth: usize, children: bool, samples: usize) {
     let mut cx = gpui::TestAppContext::single();
+
     let (source, signal) = cx.update(|cx| {
         let source = cx.new(|_| 0_i64);
         let signal = Signal::from_entity(cx, source.clone());
+
         (source, signal)
     });
+
     let baseline = cx.update(|cx| rake::reactive::runtime_stats(cx));
     let bytes = LIVE_BYTES.load(Ordering::Relaxed);
+
     let window = cx.add_window(|_, _| Host {
         variant,
         source: source.clone(),
@@ -149,13 +162,16 @@ fn measure(variant: Variant, count: usize, depth: usize, children: bool, samples
         children,
         plain: Vec::new(),
     });
+
     draw(&mut cx, window);
     let after_mount = LIVE_BYTES.load(Ordering::Relaxed) - bytes;
     let mut times = Vec::with_capacity(samples);
     let mut allocations = 0;
+
     for iteration in 0..samples + 5 {
         let before = ALLOCATIONS.load(Ordering::Relaxed);
         let started = Instant::now();
+
         cx.update(|cx| {
             if matches!(variant, Variant::Signals) {
                 signal.set(cx, iteration as i64);
@@ -168,12 +184,15 @@ fn measure(variant: Variant, count: usize, depth: usize, children: bool, samples
         });
         draw(&mut cx, window);
         let elapsed = started.elapsed().as_secs_f64() * 1e6;
+
         if iteration >= 5 {
             times.push(elapsed);
             allocations += ALLOCATIONS.load(Ordering::Relaxed) - before;
         }
+
         cx.run_until_parked();
     }
+
     window
         .update(&mut cx, |host, _, cx| {
             host.count = 0;
@@ -184,9 +203,11 @@ fn measure(variant: Variant, count: usize, depth: usize, children: bool, samples
     draw(&mut cx, window);
     cx.run_until_parked();
     let after = cx.update(|cx| rake::reactive::runtime_stats(cx));
+
     assert_eq!(after, baseline);
     cx.update(|cx| signal.dispose(cx));
     let (p50, p95) = percentiles(&mut times);
+
     println!(
         "{}",
         json!({
@@ -204,9 +225,11 @@ pub(super) fn run(samples: usize) {
         for count in [1, 100, 1_000] {
             measure(variant, count, 0, false, samples);
         }
+
         for depth in [1, 10, 50] {
             measure(variant, 1, depth, false, samples);
         }
+
         measure(variant, 1, 0, true, samples);
     }
 }

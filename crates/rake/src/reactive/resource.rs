@@ -19,6 +19,7 @@ pub struct Resource<T: 'static, E: Error + 'static> {
 }
 
 impl<T, E: Error> Copy for Resource<T, E> {}
+
 impl<T, E: Error> Clone for Resource<T, E> {
     fn clone(&self) -> Self {
         *self
@@ -34,6 +35,7 @@ impl<T: 'static, E: Error + 'static> Resource<T, E> {
     #[doc = "Returns the last successful value, including while a replacement request is loading."]
     pub fn latest(self, cx: &App) -> Option<&T> {
         let state = self.state.read(cx);
+
         match state.load.state() {
             LoadStatus::Ready(value) => Some(value),
             _ => state.latest.as_ref(),
@@ -55,19 +57,26 @@ impl<T: 'static, E: Error + 'static> Resource<T, E> {
         let Some(entity) = self.state.resolve(cx).cloned() else {
             return;
         };
+
         entity.update(cx, |state, cx| {
             state.task.take();
+
             if let Some(value) = state.load.take_ready() {
                 state.latest = Some(value);
             }
+
             let token = state.load.begin();
             let weak = cx.weak_entity();
+
             #[cfg(feature = "view-test-support")]
             let lifetime = super::stats::Lifetime::new(cx, super::stats::Kind::Task);
+
             state.task = Some(cx.spawn(async move |_, cx| {
                 #[cfg(feature = "view-test-support")]
                 let _lifetime = lifetime;
+
                 let result = future.await;
+
                 let _ = weak.update(cx, |state, cx| {
                     if state.load.complete(token, result) {
                         cx.notify();
@@ -95,21 +104,27 @@ impl<V: 'static> Setup<'_, '_, V> {
             }),
             retry: self.signal(0),
         };
+
         let (future, dependencies) = tracking::collect(self, |cx| {
             resource.retry.get(cx);
+
             factory(cx)
         });
+
         resource.start(self, future);
         let observer = tracking::Observer::new(
             self,
             move |cx| {
                 resource.retry.get(cx);
                 let future = factory(cx);
+
                 resource.start(cx, future);
             },
             dependencies,
         );
+
         self.retain(observer);
+
         resource
     }
 }

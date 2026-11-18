@@ -56,6 +56,7 @@ impl Render for Host {
     ) -> impl IntoElement {
         let _ = &window;
         let view = &*self;
+
         let body = rake::view! {
             <section
                 focus={&view.body}

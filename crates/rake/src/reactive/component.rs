@@ -34,10 +34,13 @@ pub(super) struct Owner {
 impl Owner {
     fn dispose(&mut self, cx: &mut App) {
         self.tasks.clear();
+
         for cleanup in self.cleanups.drain(..).rev() {
             cleanup(cx);
         }
+
         self.retained.clear();
+
         for signal in self.signals.drain(..) {
             (signal.dispose)(signal.key, cx);
         }
@@ -51,6 +54,7 @@ struct Provider {
 
 #[derive(Default)]
 struct Providers(HashMap<EntityId, Provider>);
+
 impl Global for Providers {}
 
 #[doc = "Mount-time access to the component's real GPUI context and owned work."]
@@ -66,6 +70,7 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
     pub fn new(window: &'a mut Window, cx: &'a mut Context<'cx, V>) -> Self {
         let id = cx.entity_id();
         let parent = window.current_view();
+
         cx.default_global::<Providers>().0.insert(
             id,
             Provider {
@@ -73,6 +78,7 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
                 values: HashMap::new(),
             },
         );
+
         Self {
             cx,
             window,
@@ -84,10 +90,12 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
     #[doc = "Creates a signal that is disposed when this component unmounts."]
     pub fn signal<T: 'static>(&mut self, value: T) -> Signal<T> {
         let signal = Signal::new(self.cx, value);
+
         self.owner.signals.push(Registration {
             key: signal.key,
             dispose: |key, cx| Signal::<T>::from_key(key).dispose(cx),
         });
+
         signal
     }
 
@@ -128,9 +136,11 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
     pub fn spawn<R: 'static>(&mut self, task: impl AsyncFnOnce(&mut AsyncApp) -> R + 'static) {
         #[cfg(feature = "view-test-support")]
         let lifetime = super::stats::Lifetime::new(self.cx, super::stats::Kind::Task);
+
         self.owner.tasks.push(App::spawn(self.cx, async move |cx| {
             #[cfg(feature = "view-test-support")]
             let _lifetime = lifetime;
+
             task(cx).await;
         }));
     }
@@ -143,6 +153,7 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
     #[doc = "Provides a value to descendant function components. Provide a signal for reactive updates."]
     pub fn provide<T: Clone + 'static>(&mut self, value: T) {
         let id = self.cx.entity_id();
+
         self.cx
             .global_mut::<Providers>()
             .0
@@ -156,15 +167,19 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
     pub fn context<T: Clone + 'static>(&self) -> Option<T> {
         let providers = self.cx.global::<Providers>();
         let mut id = self.cx.entity_id();
+
         while let Some(provider) = providers.0.get(&id) {
             if let Some(value) = provider.values.get(&TypeId::of::<T>()) {
                 return value.downcast_ref::<T>().cloned();
             }
+
             if id == provider.parent {
                 break;
             }
+
             id = provider.parent;
         }
+
         None
     }
 
@@ -197,6 +212,7 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
             false,
         )
     }
+
     #[doc(hidden)]
     pub fn finish_with<P: 'static, F, U>(
         mut self,
@@ -210,6 +226,7 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
         U: Fn(&P, &mut App) + 'static,
     {
         self.finished = true;
+
         ComponentView {
             props,
             render,
@@ -230,6 +247,7 @@ impl<V: 'static> Drop for Setup<'_, '_, V> {
         if !self.finished {
             self.owner.dispose(self.cx);
             let id = self.cx.entity_id();
+
             self.cx.global_mut::<Providers>().0.remove(&id);
         }
     }
@@ -237,6 +255,7 @@ impl<V: 'static> Drop for Setup<'_, '_, V> {
 
 impl<'cx, V: 'static> Deref for Setup<'_, 'cx, V> {
     type Target = Context<'cx, V>;
+
     fn deref(&self) -> &Self::Target {
         self.cx
     }
@@ -264,6 +283,7 @@ impl<P: 'static, F: 'static, U: Fn(&P, &mut App) + 'static> ComponentView<P, F, 
     #[doc(hidden)]
     pub fn observe_release(cx: &Context<Self>) {
         let id = cx.entity_id();
+
         cx.on_release(move |this, cx| {
             this.owner.dispose(cx);
             cx.global_mut::<Providers>().0.remove(&id);
@@ -294,9 +314,11 @@ where
         cx: &mut Context<Self>,
     ) -> impl crate::gpui::IntoElement {
         let mut dependencies = self.subscriptions.take_buffer();
+
         let child = super::tracking::collect_into(cx, &mut dependencies, |cx| {
             (self.render)(&self.props, window, cx, self.stretched)
         });
+
         super::element::Rendered {
             #[cfg(feature = "devtools")]
             owner: cx.weak_entity(),
@@ -318,6 +340,7 @@ impl<P: crate::gpui::RenderOnce, F: 'static, U: 'static> ReactiveView for Compon
     #[cfg(feature = "devtools")]
     fn inspect(&self, cx: &mut App) {
         let (signals, truncated) = super::inspection::capture(&self.owner.inspection, cx);
+
         crate::inspection::component_signals(
             cx,
             std::any::type_name::<crate::gpui::ViewElement<P>>(),
