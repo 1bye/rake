@@ -174,7 +174,8 @@ jobs:
           cargo test -p rake-app-cli --bin rake project_build:: --locked
       - name: Global shortcut lifecycle (X11)
         if: runner.os == 'Linux'
-        run: xvfb-run -a env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 cargo run -p rake-shortcuts --example shortcut-probe --locked
+        # Keep Xvfb from resetting between cleanup and re-registration.
+        run: xvfb-run -a -s '-screen 0 1280x800x24 -noreset' env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 cargo run -p rake-shortcuts --example shortcut-probe --locked
       - name: Default desktop lints
         run: >-
           cargo clippy -p rake-app -p rake-desktop-example -p rake-notes
