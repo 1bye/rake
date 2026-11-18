@@ -56,6 +56,7 @@ mod props;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::props::{
-        EquivalentProp, PropComparison, PropMissing, PropSet, PropsBuilder, RequiredProp, Value,
+        EquivalentProp, IntoAttribute, ParagraphTextValue, PropComparison, PropMissing, PropSet,
+        PropsBuilder, RequiredProp, Value,
     };
 }

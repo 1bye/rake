@@ -213,7 +213,8 @@ pub mod __private {
 
     #[cfg(feature = "gpui")]
     pub use rake_ui::__private::{
-        EquivalentProp, PropComparison, PropMissing, PropSet, PropsBuilder, RequiredProp, Value,
+        EquivalentProp, IntoAttribute, ParagraphTextValue, PropComparison, PropMissing, PropSet,
+        PropsBuilder, RequiredProp, Value,
     };
 
     #[cfg(all(feature = "gpui", feature = "devtools"))]

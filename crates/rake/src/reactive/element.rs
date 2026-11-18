@@ -1,15 +1,21 @@
+use std::rc::Rc;
+
 use crate::gpui::{
     AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-    LayoutId, Pixels, WeakEntity, Window,
+    LayoutId, Pixels, Window,
 };
 
 use super::component::ReactiveView;
-use super::tracking::{self, Dependency};
+use super::tracking::{self, Dependency, RenderSubscriptions};
 
 pub(super) struct Rendered<V> {
-    pub owner: WeakEntity<V>,
+    #[cfg(feature = "devtools")]
+    pub owner: crate::gpui::WeakEntity<V>,
+    #[cfg(not(feature = "devtools"))]
+    pub _view: std::marker::PhantomData<V>,
     pub child: AnyElement,
     pub dependencies: Vec<Dependency>,
+    pub subscriptions: Rc<RenderSubscriptions>,
 }
 
 impl<V: ReactiveView> IntoElement for Rendered<V> {
@@ -37,9 +43,9 @@ impl<V: ReactiveView> Element for Rendered<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
-        let (layout, dependencies) =
-            tracking::collect(cx, |cx| self.child.request_layout(window, cx));
-        self.dependencies.extend(dependencies);
+        let layout = tracking::collect_into(cx, &mut self.dependencies, |cx| {
+            self.child.request_layout(window, cx)
+        });
         (layout, ())
     }
 
@@ -54,8 +60,9 @@ impl<V: ReactiveView> Element for Rendered<V> {
     ) {
         #[cfg(feature = "devtools")]
         let _ = self.owner.update(cx, |view, cx| view.inspect(cx));
-        let (_, dependencies) = tracking::collect(cx, |cx| self.child.prepaint(window, cx));
-        self.dependencies.extend(dependencies);
+        tracking::collect_into(cx, &mut self.dependencies, |cx| {
+            self.child.prepaint(window, cx);
+        });
     }
 
     fn paint(
@@ -68,11 +75,10 @@ impl<V: ReactiveView> Element for Rendered<V> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (_, dependencies) = tracking::collect(cx, |cx| self.child.paint(window, cx));
-        self.dependencies.extend(dependencies);
-        let dependencies = std::mem::take(&mut self.dependencies);
-        let _ = self.owner.update(cx, |view, cx| {
-            view.update_dependencies(dependencies, cx.entity().into_any().downgrade(), cx);
+        tracking::collect_into(cx, &mut self.dependencies, |cx| {
+            self.child.paint(window, cx);
         });
+        self.subscriptions
+            .finish(std::mem::take(&mut self.dependencies), cx);
     }
 }

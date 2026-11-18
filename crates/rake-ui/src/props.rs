@@ -57,3 +57,34 @@ impl<T> EquivalentProp for &PropComparison<'_, T> {
         false
     }
 }
+
+/// Resolves an attribute with a GPUI conversion.
+#[doc(hidden)]
+pub trait IntoAttribute<T> {
+    /// Reads and converts the current value.
+    fn resolve_into(self, cx: &crate::gpui::App) -> T;
+}
+
+impl<T, U: Into<T>> IntoAttribute<T> for U {
+    fn resolve_into(self, _: &crate::gpui::App) -> T {
+        self.into()
+    }
+}
+
+/// Resolves a paragraph run while preserving ordinary borrowed strings.
+#[doc(hidden)]
+pub trait ParagraphTextValue {
+    /// The resolved text representation.
+    type Text: AsRef<str>;
+
+    /// Reads the current text run.
+    fn resolve_text(self, cx: &crate::gpui::App) -> Self::Text;
+}
+
+impl<T: AsRef<str>> ParagraphTextValue for T {
+    type Text = T;
+
+    fn resolve_text(self, _: &crate::gpui::App) -> Self::Text {
+        self
+    }
+}

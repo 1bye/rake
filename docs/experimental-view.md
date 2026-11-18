@@ -124,16 +124,27 @@ Untracked props never reset state merely because their input changes.
 `#[event] click: ClickEvent` creates an optional `Event<ClickEvent>` prop.
 Invoke it with `click.call(event, window, cx)`. `on:click` accepts
 `move |cx| ...`, `move |event, cx| ...`, or the full GPUI handler.
-`#[rest] rest: Attrs` forwards root utility styling, accessible label/description,
-expanded state, disabled state, and clicks. Other event kinds must be declared
-as explicit event props. Forwarded styles cannot contain interactive variants.
-Disabled buttons retain the built-in keyboard and interaction suppression.
+`#[rest] rest: Attrs` forwards root utility styling, accessibility attributes,
+`disabled`, built-in events, and typed actions. Declared event props take precedence.
+Forwarded drag payloads must be cloneable. When the root already has a hover or
+drag handler, its own handler takes precedence over the forwarded one. Forwarded
+styles cannot contain interactive variants. Disabled buttons suppress forwarded
+interaction.
 
 Stateful `Children` and markup slots are rerunnable factories receiving the real
 window and app. Capture owned values, and clone non-`Copy` values inside a factory
 when each render consumes them. Stateless children can remain one-shot elements.
-Keep render parameters named `window` and `cx` when nested markup uses these
-factories or reactive attributes.
+Keep the window parameter named `window` when nested markup uses these factories.
+
+Function component markup can use signals and memos directly in paragraphs,
+headings, and inline runs, as well as in scalar attributes such as
+`aria-expanded`, `wrap`, `max-lines`, and `class:*`. Reactive markup also supports
+image sources, SVG paths, and accessibility text. In a handwritten GPUI view,
+name the context explicitly for these positions.
+
+```rust
+rake::view! { cx => <p wrap={wraps}><strong>{title}</strong> {count}</p> }
+```
 
 ## Effects, async work, and resources
 
@@ -179,8 +190,10 @@ and height, including percentages, supplies GPUI's cached layout box. Use
 `#[rake::component(cached = false)]` to disable it or
 `#[rake::component(cached = "w-40 h-10")]` to provide a definite box. Dynamic styles,
 rest attributes, positioned roots (`absolute`, `relative`, or offsets), `hidden`,
-class variants, and inferred flex stretching do not automatically qualify.
-These roots render normally so caching cannot change their layout or visibility.
+and class variants render normally. Rake can also cache a root with
+`flex-1 min-w-0 min-h-0` when its component is the only child of a
+stretched markup container with literal fixed width and height. Other flex
+layouts render normally.
 An explicit cache style must also omit positioning, `hidden`, and variants;
 supplying dimensions alone does not make a positioned root safe to cache.
 For a literal `view!` root, explicitly requesting caching with those unsupported

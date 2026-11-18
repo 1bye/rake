@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use rake_ui::__private::{IntoAttribute, ParagraphTextValue};
+
 use crate::gpui::{App, IntoElement, RenderOnce, ViewElement, Window};
 
 use super::{Setup, Signal, tracking};
@@ -17,6 +19,30 @@ impl<T> Clone for Memo<T> {
 impl<T: Clone + 'static> super::Value<T> for Memo<T> {
     fn resolve(self, cx: &App) -> T {
         self.get(cx)
+    }
+}
+
+impl<T: Clone + Into<crate::gpui::SharedString> + 'static> IntoAttribute<crate::gpui::SharedString>
+    for Memo<T>
+{
+    fn resolve_into(self, cx: &App) -> crate::gpui::SharedString {
+        self.get(cx).into()
+    }
+}
+
+impl<T: Clone + Into<crate::gpui::ImageSource> + 'static> IntoAttribute<crate::gpui::ImageSource>
+    for Memo<T>
+{
+    fn resolve_into(self, cx: &App) -> crate::gpui::ImageSource {
+        self.get(cx).into()
+    }
+}
+
+impl<T: std::fmt::Display + 'static> ParagraphTextValue for Memo<T> {
+    type Text = String;
+
+    fn resolve_text(self, cx: &App) -> Self::Text {
+        self.read(cx).to_string()
     }
 }
 

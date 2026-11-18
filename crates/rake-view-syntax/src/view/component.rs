@@ -118,6 +118,8 @@ impl Element {
 
         let path = &self.tag;
         let mut setters = TokenStream::new();
+        let implicit_context = format_ident!("cx", span = Span::call_site());
+        let context = self.reactive_context.as_ref().unwrap_or(&implicit_context);
 
         for attribute in &self.attributes {
             if !self.self_closing && attribute.name == "children" {
@@ -125,6 +127,13 @@ impl Element {
                     attribute.span,
                     "use either children or nested markup, not both",
                 ));
+            }
+
+            if let Some(action) = &attribute.action {
+                let value = super::events::handler(attribute.expression()?)?;
+
+                setters.extend(quote_spanned!(attribute.span=> .on_action::<#action>(#value)));
+                continue;
             }
 
             let name = attribute
@@ -161,7 +170,7 @@ impl Element {
 
                     let element = element.expand(rake, next)?;
 
-                    setters.extend(quote_spanned!(attribute.span=> .#method(window, cx, move |window, cx| { let _ = (&window, &cx); #theme #rake::gpui::IntoElement::into_any_element(#element) })));
+                    setters.extend(quote_spanned!(attribute.span=> .#method(window, #context, move |window, #context| { let _ = (&window, &#context); #theme #rake::gpui::IntoElement::into_any_element(#element) })));
                 }
             }
         }
@@ -182,14 +191,16 @@ impl Element {
             let theme = super::theme::nodes_use(&self.children)
                 .map(|span| super::theme::binding(span, rake));
 
-            setters.extend(quote!(.children_with(window, cx, move |window, cx| {
-                let _ = (&window, &cx);
-                #theme
-                let mut #children = #rake::__private::ViewComponentChildren::default();
-                let mut #siblings = #rake::__private::ViewChildren::default();
-                #body
-                #children.into_vec()
-            })));
+            setters.extend(
+                quote!(.children_with(window, #context, move |window, #context| {
+                    let _ = (&window, &#context);
+                    #theme
+                    let mut #children = #rake::__private::ViewComponentChildren::default();
+                    let mut #siblings = #rake::__private::ViewChildren::default();
+                    #body
+                    #children.into_vec()
+                })),
+            );
         }
 
         let (builder, finish) = self.defaults.as_ref().map_or_else(

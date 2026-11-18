@@ -4,7 +4,8 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use crate::gpui::{
-    AnyElement, AnyEntity, App, AsyncApp, Context, EntityId, Global, Render, Task, Window,
+    AnyElement, AnyEntity, App, AsyncApp, Context, EntityId, Global, IntoElement, Render,
+    RenderOnce, Task, ViewElement, Window,
 };
 
 use super::signal::{Key, Signal};
@@ -181,11 +182,20 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
     }
 
     #[doc(hidden)]
-    pub fn finish<P: 'static, F>(self, props: P, render: F) -> ComponentView<P, F>
+    pub fn finish<P: 'static, F>(
+        self,
+        props: P,
+        mut render: F,
+    ) -> ComponentView<P, impl FnMut(&P, &mut Window, &mut App, bool) -> AnyElement>
     where
         F: FnMut(&P, &mut Window, &mut App) -> AnyElement + 'static,
     {
-        self.finish_with(props, render, |_, _| {})
+        self.finish_with(
+            props,
+            move |props, window, cx, _| render(props, window, cx),
+            |_, _| {},
+            false,
+        )
     }
     #[doc(hidden)]
     pub fn finish_with<P: 'static, F, U>(
@@ -193,18 +203,22 @@ impl<'a, 'cx, V: 'static> Setup<'a, 'cx, V> {
         props: P,
         render: F,
         update: U,
+        stretched: bool,
     ) -> ComponentView<P, F, U>
     where
-        F: FnMut(&P, &mut Window, &mut App) -> AnyElement + 'static,
+        F: FnMut(&P, &mut Window, &mut App, bool) -> AnyElement + 'static,
         U: Fn(&P, &mut App) + 'static,
     {
         self.finished = true;
         ComponentView {
             props,
             render,
+            stretched,
             update,
             owner: std::mem::take(&mut self.owner),
-            subscriptions: super::tracking::Subscriptions::default(),
+            subscriptions: Rc::new(super::tracking::RenderSubscriptions::new(
+                self.cx.weak_entity().into(),
+            )),
             #[cfg(feature = "view-test-support")]
             _lifetime: super::stats::Lifetime::new(self.cx, super::stats::Kind::Component),
         }
@@ -238,9 +252,10 @@ impl<V: 'static> DerefMut for Setup<'_, '_, V> {
 pub struct ComponentView<P, F, U = fn(&P, &mut App)> {
     props: P,
     render: F,
+    stretched: bool,
     update: U,
     owner: Owner,
-    subscriptions: super::tracking::Subscriptions,
+    subscriptions: Rc<super::tracking::RenderSubscriptions>,
     #[cfg(feature = "view-test-support")]
     _lifetime: super::stats::Lifetime,
 }
@@ -257,36 +272,39 @@ impl<P: 'static, F: 'static, U: Fn(&P, &mut App) + 'static> ComponentView<P, F, 
     }
 
     #[doc(hidden)]
-    pub fn swap_props(
-        &mut self,
-        props: P,
-        cx: &mut Context<Self>,
-        equivalent: impl FnOnce(&P, &P) -> bool,
-    ) -> bool {
-        if equivalent(&self.props, &props) {
-            return false;
-        }
+    pub fn props(&self) -> (&P, bool) {
+        (&self.props, self.stretched)
+    }
+
+    #[doc(hidden)]
+    pub fn set_props(&mut self, props: P, stretched: bool, cx: &mut Context<Self>) {
         (self.update)(&props, cx);
         self.props = props;
-        true
+        self.stretched = stretched;
     }
 }
 
 impl<P: crate::gpui::RenderOnce, F, U: 'static> Render for ComponentView<P, F, U>
 where
-    F: FnMut(&P, &mut Window, &mut App) -> AnyElement + 'static,
+    F: FnMut(&P, &mut Window, &mut App, bool) -> AnyElement + 'static,
 {
     fn render(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl crate::gpui::IntoElement {
-        let (child, dependencies) =
-            super::tracking::collect(cx, |cx| (self.render)(&self.props, window, cx));
+        let mut dependencies = self.subscriptions.take_buffer();
+        let child = super::tracking::collect_into(cx, &mut dependencies, |cx| {
+            (self.render)(&self.props, window, cx, self.stretched)
+        });
         super::element::Rendered {
+            #[cfg(feature = "devtools")]
             owner: cx.weak_entity(),
+            #[cfg(not(feature = "devtools"))]
+            _view: std::marker::PhantomData::<Self>,
             child,
             dependencies,
+            subscriptions: Rc::clone(&self.subscriptions),
         }
     }
 }
@@ -294,12 +312,6 @@ where
 pub(super) trait ReactiveView: 'static {
     #[cfg(feature = "devtools")]
     fn inspect(&self, cx: &mut App);
-    fn update_dependencies(
-        &mut self,
-        dependencies: Vec<super::tracking::Dependency>,
-        target: crate::gpui::AnyWeakEntity,
-        cx: &mut App,
-    );
 }
 
 impl<P: crate::gpui::RenderOnce, F: 'static, U: 'static> ReactiveView for ComponentView<P, F, U> {
@@ -313,12 +325,38 @@ impl<P: crate::gpui::RenderOnce, F: 'static, U: 'static> ReactiveView for Compon
             truncated,
         );
     }
-    fn update_dependencies(
-        &mut self,
-        dependencies: Vec<super::tracking::Dependency>,
-        target: crate::gpui::AnyWeakEntity,
-        cx: &mut App,
-    ) {
-        self.subscriptions.replace(dependencies, target, cx);
+}
+
+#[doc(hidden)]
+pub struct ComponentChild<T>(pub Option<T>);
+
+#[doc(hidden)]
+pub trait ConstrainComponent {
+    fn constrain(&mut self) -> AnyElement;
+}
+
+impl<T: IntoElement> ConstrainComponent for &mut ComponentChild<T> {
+    fn constrain(&mut self) -> AnyElement {
+        self.0.take().unwrap().into_any_element()
+    }
+}
+
+impl<T: StretchComponent> ConstrainComponent for ComponentChild<T> {
+    fn constrain(&mut self) -> AnyElement {
+        ViewElement::new(Stretched(self.0.take().unwrap(), true)).into_any_element()
+    }
+}
+
+#[doc(hidden)]
+pub trait StretchComponent: 'static {
+    fn render_stretched(self, window: &mut Window, cx: &mut App, stretched: bool) -> AnyElement;
+}
+
+#[doc(hidden)]
+pub struct Stretched<T>(pub T, pub bool);
+
+impl<T: StretchComponent> RenderOnce for Stretched<T> {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.0.render_stretched(window, cx, self.1)
     }
 }

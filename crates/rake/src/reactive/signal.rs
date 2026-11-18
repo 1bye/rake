@@ -4,6 +4,8 @@ use std::rc::Rc;
 use slotmap::{DefaultKey, SlotMap};
 use uuid::Uuid;
 
+use rake_ui::__private::{IntoAttribute, ParagraphTextValue};
+
 use crate::gpui::{App, AppContext, Entity, Global};
 
 pub(super) struct Store<T: 'static> {
@@ -57,6 +59,30 @@ impl<T> Eq for Signal<T> {}
 impl<T: Clone + 'static> super::Value<T> for Signal<T> {
     fn resolve(self, cx: &App) -> T {
         self.get(cx)
+    }
+}
+
+impl<T: Clone + Into<crate::gpui::SharedString> + 'static> IntoAttribute<crate::gpui::SharedString>
+    for Signal<T>
+{
+    fn resolve_into(self, cx: &App) -> crate::gpui::SharedString {
+        self.get(cx).into()
+    }
+}
+
+impl<T: Clone + Into<crate::gpui::ImageSource> + 'static> IntoAttribute<crate::gpui::ImageSource>
+    for Signal<T>
+{
+    fn resolve_into(self, cx: &App) -> crate::gpui::ImageSource {
+        self.get(cx).into()
+    }
+}
+
+impl<T: std::fmt::Display + 'static> ParagraphTextValue for Signal<T> {
+    type Text = String;
+
+    fn resolve_text(self, cx: &App) -> Self::Text {
+        self.read(cx).to_string()
     }
 }
 

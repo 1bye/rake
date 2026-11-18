@@ -120,12 +120,36 @@ impl<C: IntoElement> IntoElement for Component<C> {
 
     fn into_element(self) -> Self::Element {
         let key = (self.key)(&self.inner);
-        let mut element = inspect(self.inner);
-        element.semantic_id = key.as_ref().map(ToString::to_string);
-        element.view_key = key;
-        element.source = self.definition.source;
-        element.definition = Some(self.definition);
-        element
+        inspect_component(self.inner, self.definition, key)
+    }
+}
+
+fn inspect_component<C: IntoElement>(
+    inner: C,
+    definition: &'static Definition,
+    key: Option<ElementId>,
+) -> Inspected<C::Element> {
+    let mut element = inspect(inner);
+    element.semantic_id = key.as_ref().map(ToString::to_string);
+    element.view_key = key;
+    element.source = definition.source;
+    element.definition = Some(definition);
+    element
+}
+
+#[cfg(feature = "experimental-reactive")]
+impl<C: crate::reactive::StretchComponent> crate::reactive::ConstrainComponent
+    for crate::reactive::ComponentChild<Component<C>>
+{
+    fn constrain(&mut self) -> gpui::AnyElement {
+        let component = self.0.take().unwrap();
+        let key = (component.key)(&component.inner);
+        inspect_component(
+            gpui::ViewElement::new(crate::reactive::Stretched(component.inner, true)),
+            component.definition,
+            key,
+        )
+        .into_any_element()
     }
 }
 

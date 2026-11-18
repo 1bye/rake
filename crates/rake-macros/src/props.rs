@@ -234,12 +234,17 @@ pub(super) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let rest_methods = fields.named.iter().find(|field| field.attrs.iter().any(|attr| attr.path().is_ident("rest"))).map(|field| {
         let rest = field.ident.as_ref().unwrap();
         let declared = |name: &str| names.iter().any(|field| *field == name);
+        let declared_event = |name: &str| fields.named.iter().any(|field| {
+            field.ident.as_ref().is_some_and(|field| field == name)
+                && field.attrs.iter().any(|attr| attr.path().is_ident("event"))
+        });
         let mut methods = TokenStream::new();
 
         for (method, ty, property, converted) in [
             ("class", quote!(#rake::gpui::StyleRefinement), "style", quote!(value)),
             ("aria_label", quote!(impl Into<#rake::gpui::SharedString>), "aria_label", quote!(Some(value.into()))),
             ("aria_description", quote!(impl Into<#rake::gpui::SharedString>), "aria_description", quote!(Some(value.into()))),
+            ("aria_keyshortcuts", quote!(impl Into<#rake::gpui::SharedString>), "aria_keyshortcuts", quote!(Some(value.into()))),
             ("aria_expanded", quote!(bool), "aria_expanded", quote!(Some(value))),
             ("disabled", quote!(bool), "disabled", quote!(value)),
         ] {
@@ -257,11 +262,80 @@ pub(super) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             });
         }
 
-        if !declared("click") {
+        if !declared_event("click") && !declared("on_click") {
             methods.extend(quote! {
                 #[doc = "Forwards a click handler to the component root."]
                 pub fn on_click(mut self, callback: impl Fn(&#rake::gpui::ClickEvent, &mut #rake::gpui::Window, &mut #rake::gpui::App) + 'static) -> Self {
                     self.#rest.get_or_insert_with(Default::default).on_click(callback);
+                    self
+                }
+            });
+        }
+
+        for (event, gpui_name, ty, button) in [
+            ("key_down", "key_down", "KeyDownEvent", None),
+            ("key_up", "key_up", "KeyUpEvent", None),
+            ("mouse_move", "mouse_move", "MouseMoveEvent", None),
+            ("mouse_down", "mouse_down", "MouseDownEvent", Some("Left")),
+            ("mouse_up", "mouse_up", "MouseUpEvent", Some("Left")),
+            ("right_mouse_down", "mouse_down", "MouseDownEvent", Some("Right")),
+            ("right_mouse_up", "mouse_up", "MouseUpEvent", Some("Right")),
+            ("middle_mouse_down", "mouse_down", "MouseDownEvent", Some("Middle")),
+            ("middle_mouse_up", "mouse_up", "MouseUpEvent", Some("Middle")),
+            ("any_mouse_down", "any_mouse_down", "MouseDownEvent", None),
+            ("mouse_down_out", "mouse_down_out", "MouseDownEvent", None),
+            ("mouse_up_out", "mouse_up_out", "MouseUpEvent", Some("Left")),
+            ("hover", "hover", "bool", None),
+            ("scroll_wheel", "scroll", "ScrollEvent", None),
+            ("drop", "drop", "Payload", None),
+            ("action", "action", "Payload", None),
+        ] {
+            let name = format!("on_{event}");
+            if declared_event(event) || declared(&name) { continue; }
+
+            let method = format_ident!("{name}");
+            let gpui_method = format_ident!("on_{gpui_name}");
+            let button = button.map(|button| {
+                let button = format_ident!("{button}");
+                quote!(#rake::gpui::MouseButton::#button,)
+            });
+            let ty = format_ident!("{ty}");
+            let (generics, ty) = match event {
+                "drop" => (quote!(<Payload: 'static>), quote!(Payload)),
+                "action" => (quote!(<Payload: #rake::gpui::Action>), quote!(Payload)),
+                "hover" => (quote!(), quote!(bool)),
+                _ => (quote!(), quote!(#rake::gpui::#ty)),
+            };
+
+            methods.extend(quote! {
+                #[doc = "Forwards an event handler to the component root."]
+                pub fn #method #generics(mut self, callback: impl Fn(&#ty, &mut #rake::gpui::Window, &mut #rake::gpui::App) + 'static) -> Self {
+                    let callback = #rake::reactive::Event::new(callback);
+                    self.#rest.get_or_insert_with(Default::default).push_listener(#name, move |root| {
+                        let callback = callback.clone();
+                        root.#gpui_method(#button move |event, window, cx| callback.call(event, window, cx));
+                    });
+                    self
+                }
+            });
+        }
+
+        if !declared_event("drag") && !declared("on_drag") {
+            methods.extend(quote! {
+                #[doc = "Forwards a drag payload and preview constructor to the component root."]
+                pub fn on_drag<Payload, Preview>(
+                    mut self,
+                    (payload, constructor): (Payload, impl Fn(&Payload, #rake::gpui::Point<#rake::gpui::Pixels>, &mut #rake::gpui::Window, &mut #rake::gpui::App) -> #rake::gpui::Entity<Preview> + 'static),
+                ) -> Self
+                where
+                    Payload: Clone + 'static,
+                    Preview: #rake::gpui::Render + 'static,
+                {
+                    let constructor = ::std::rc::Rc::new(constructor);
+                    self.#rest.get_or_insert_with(Default::default).push_listener("on_drag", move |root| {
+                        let constructor = constructor.clone();
+                        root.on_drag(payload.clone(), move |data, offset, window, cx| constructor(data, offset, window, cx));
+                    });
                     self
                 }
             });

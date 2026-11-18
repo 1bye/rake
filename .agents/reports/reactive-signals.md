@@ -393,3 +393,32 @@ cargo test -p rake-app --locked --features experimental-reactive,view-test-suppo
 ```
 
 Raw output remains in temporary storage. No JSONL report artifacts are committed.
+
+## Follow-up measurements (2026-11-18)
+
+This Rake revision reuses dependency buffers across render phases and frames,
+registers render subscriptions without a second entity update during paint,
+and compares props before updating the component entity. It uses the same
+pinned GPUI 0.3.11.
+
+A preliminary headless release pass measured 10,000 rows with one signal per
+row on an Apple M1 Max running macOS 26.6.2 and Rust 1.98.0. Each case sampled
+31 frames after five warmups. Timing varied substantially under concurrent
+machine load. Percentages compare each Rake case with its matching GPUI case
+in the same pass.
+
+| Scenario | Rake variant | p50 overhead | p95 overhead | Extra allocations/frame |
+| --- | --- | ---: | ---: | ---: |
+| parent | Signals | +14.7% | +15.6% | 40,000 |
+| parent | Cached | +40.3% | +18.8% | 40,000 |
+| leaf | Signals | +9.2% | +43.6% | 40,000 |
+| leaf | Cached | +8.9% | +21.3% | 40,001 |
+| all | Signals | -24.2% | +22.4% | 40,000 |
+| all | Cached | +72.3% | +318.0% | 50,000 |
+
+Every case passed the value and teardown assertions. The parent rerender
+had four extra allocations per row in both Rake variants, including the
+cached case that skips rereading the unchanged signals. A separate CPU sample
+showed the keyed-state lookup in layout and both the component wrapper and
+cached entity in paint. A second cached parent run measured 33.6% p50 overhead
+with the same allocation count. Performance acceptance remains open.

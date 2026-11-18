@@ -77,7 +77,7 @@ impl<F: FnMut(&mut Window, &mut App) + 'static> Effect<F> {
         let (_, dependencies) = tracking::collect(cx, |cx| (self.callback)(window, cx));
         self.cleanups = std::mem::take(scope.0.0.borrow_mut().last_mut().unwrap());
         self.subscriptions
-            .replace(dependencies, cx.entity().into_any().downgrade(), cx);
+            .replace(&dependencies, &cx.weak_entity().into(), cx);
     }
 }
 

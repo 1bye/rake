@@ -23,12 +23,22 @@ impl Drop for Scope {
 }
 
 pub(super) fn collect<R>(cx: &mut App, read: impl FnOnce(&mut App) -> R) -> (R, Vec<Dependency>) {
+    let mut dependencies = Vec::new();
+    let value = collect_into(cx, &mut dependencies, read);
+    (value, dependencies)
+}
+
+pub(super) fn collect_into<R>(
+    cx: &mut App,
+    dependencies: &mut Vec<Dependency>,
+    read: impl FnOnce(&mut App) -> R,
+) -> R {
     let tracking = cx.default_global::<Tracking>().clone();
-    tracking.0.borrow_mut().push(Vec::new());
+    tracking.0.borrow_mut().push(std::mem::take(dependencies));
     let scope = Scope(tracking);
     let value = read(cx);
-    let dependencies = std::mem::take(scope.0.0.borrow_mut().last_mut().unwrap());
-    (value, dependencies)
+    *dependencies = std::mem::take(scope.0.0.borrow_mut().last_mut().unwrap());
+    value
 }
 
 pub(super) fn record<T: 'static>(signal: Signal<T>, cx: &App) {
@@ -67,7 +77,10 @@ struct SubscriptionEntry {
 }
 
 impl Subscriptions {
-    pub fn replace(&mut self, dependencies: Vec<Dependency>, target: AnyWeakEntity, cx: &mut App) {
+    pub fn replace(&mut self, dependencies: &[Dependency], target: &AnyWeakEntity, cx: &mut App) {
+        if self.entries.is_empty() && dependencies.is_empty() {
+            return;
+        }
         self.revision = self.revision.wrapping_add(1);
         for dependency in dependencies {
             match self.entries.entry(dependency.key) {
@@ -96,6 +109,34 @@ impl Subscriptions {
     }
 }
 
+pub(super) struct RenderSubscriptions {
+    target: AnyWeakEntity,
+    subscriptions: RefCell<Subscriptions>,
+    buffer: RefCell<Vec<Dependency>>,
+}
+
+impl RenderSubscriptions {
+    pub fn new(target: AnyWeakEntity) -> Self {
+        Self {
+            target,
+            subscriptions: RefCell::default(),
+            buffer: RefCell::default(),
+        }
+    }
+
+    pub fn take_buffer(&self) -> Vec<Dependency> {
+        std::mem::take(&mut *self.buffer.borrow_mut())
+    }
+
+    pub fn finish(&self, mut dependencies: Vec<Dependency>, cx: &mut App) {
+        self.subscriptions
+            .borrow_mut()
+            .replace(&dependencies, &self.target, cx);
+        dependencies.clear();
+        *self.buffer.borrow_mut() = dependencies;
+    }
+}
+
 pub(super) struct Observer<F> {
     run: F,
     subscriptions: Subscriptions,
@@ -107,7 +148,7 @@ impl<F: FnMut(&mut App) + 'static> Observer<F> {
             cx.observe_self(|this: &mut Self, cx| this.refresh(cx))
                 .detach();
             let mut subscriptions = Subscriptions::default();
-            subscriptions.replace(dependencies, cx.entity().into_any().downgrade(), cx);
+            subscriptions.replace(&dependencies, &cx.weak_entity().into(), cx);
             Self { run, subscriptions }
         })
     }
@@ -115,6 +156,6 @@ impl<F: FnMut(&mut App) + 'static> Observer<F> {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let (_, dependencies) = collect(cx, |cx| (self.run)(cx));
         self.subscriptions
-            .replace(dependencies, cx.entity().into_any().downgrade(), cx);
+            .replace(&dependencies, &cx.weak_entity().into(), cx);
     }
 }

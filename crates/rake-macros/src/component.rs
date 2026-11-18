@@ -1,5 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use syn::visit_mut::VisitMut;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Stmt, Type, parse_quote};
 
 pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<TokenStream> {
@@ -162,6 +163,8 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
     let (_, type_generics, _) = generics.split_for_impl();
     let identity = stateful.then(|| quote!(#[doc = "Stable component identity within its parent."] pub id: #rake::gpui::ElementId,));
     let clone = stateful.then(|| quote!(#[derive(Clone)] #[props(stateful)]));
+    let stretched = format_ident!("__rake_stretched", span = proc_macro2::Span::mixed_site());
+    let mut stretch = false;
     let body = if stateful {
         let mut tail = match function.block.stmts.pop() {
             Some(Stmt::Expr(tail, None)) => tail,
@@ -216,10 +219,40 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
         } else {
             None
         };
-        if let Some(rest) = rest {
-            tail = forward_rest(tail, rest, &rake)?;
+        if !cache_disabled
+            && rest.is_none()
+            && style.is_none()
+            && let syn::Expr::Macro(expression) = &tail
+            && expression
+                .mac
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "view")
+        {
+            let mut view: rake_view_syntax::View = syn::parse2(expression.mac.tokens.clone())?;
+            if view.stretch_root(&stretched) {
+                stretch = true;
+                let context = context
+                    .clone()
+                    .unwrap_or_else(|| syn::Ident::new("cx", name.span()));
+                view.use_reactive_context(&context);
+                tail = syn::parse2(view.expand_resilient(&rake)?)?;
+            }
         }
-        let mounted = style.map_or_else(|| quote!(#rake::gpui::IntoElement::into_any_element(__view)), |style| quote!(if __changed { #rake::gpui::IntoElement::into_any_element(__view) } else { #rake::gpui::IntoElement::into_any_element(__view.cached(#style)) }));
+
+        let mounted = if stretch {
+            quote!(if #stretched && !__changed {
+                use #rake::gpui::Styled as _;
+                #rake::gpui::IntoElement::into_any_element(__view.cached(
+                    #rake::gpui::StyleRefinement::default().flex_1().min_w_0().min_h_0().size_full()
+                ))
+            } else {
+                #rake::gpui::IntoElement::into_any_element(__view)
+            })
+        } else {
+            style.map_or_else(|| quote!(#rake::gpui::IntoElement::into_any_element(__view)), |style| quote!(if __changed { #rake::gpui::IntoElement::into_any_element(__view) } else { #rake::gpui::IntoElement::into_any_element(__view.cached(#style)) }))
+        };
         let setup = &function.block.stmts;
         crate::setup_reads::validate(setup, &tracked)?;
         let tracked_storage: Vec<_> = tracked
@@ -234,6 +267,13 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             })
             .unwrap_or_else(|| quote!(#rake::reactive::Setup<'_, '_, _>));
         let context = context.unwrap_or_else(|| syn::Ident::new("cx", name.span()));
+
+        if let Some(rest) = rest {
+            tail = forward_rest(tail, rest, &context, &rake)?;
+        } else {
+            RenderContext(&context).visit_expr_mut(&mut tail);
+        }
+
         let instrumented = setup.iter().map(|statement| {
             let mut tokens = quote!(#statement);
             if let Stmt::Local(local) = statement
@@ -257,7 +297,9 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             .fold(0xcbf29ce484222325_u64, |hash, byte| {
                 (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
             });
+        let default_stretch = (!stretch).then(|| quote!(let #stretched = false;));
         quote! {
+            #default_stretch
             let __id = self.id.clone();
             let mut __props = Some(self);
             let __view = window.with_id(#setup_hash, |window| {
@@ -270,22 +312,28 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                     #(let #tracked_storage = #context.signal(#tracked.clone());
                       let #tracked = #rake::reactive::Memo::from_signal(#tracked_storage);)*
                     #(#instrumented)*
-                    let __render = move |__props: &Self, window: &mut #rake::gpui::Window, #context: &mut #rake::gpui::App| {
+                    let __render = move |__props: &Self, window: &mut #rake::gpui::Window, #context: &mut #rake::gpui::App, #stretched: bool| {
                         #(let #names = __props.#names.clone();)*
                         #rake::gpui::IntoElement::into_any_element(#tail)
                     };
                     __setup.finish_with(__props, __render, move |__props, cx| {
                         #(#tracked_storage.set_prop(cx, __props.#tracked.clone());)*
-                    })
+                    }, #stretched)
                 })
             });
-            let __changed = __props.is_some_and(|props| __view.update(cx, |view, cx| view.swap_props(props, cx, |previous, next| {
+            let __changed = __props.is_some_and(|props| {
                 use #rake::__private::EquivalentProp as _;
-                true #(&& (&#rake::__private::PropComparison(&previous.#names, &next.#names)).equivalent())*
-            })));
+                let (previous, previous_stretch) = __view.read(cx).props();
+                if previous_stretch == #stretched #(&& (&#rake::__private::PropComparison(&previous.#names, &props.#names)).equivalent())* {
+                    return false;
+                }
+                __view.update(cx, |view, cx| view.set_props(props, #stretched, cx));
+                true
+            });
             #mounted
         }
     } else {
+        let context = syn::Ident::new("cx", name.span());
         if let Some(rest) = rest {
             let last = function
                 .block
@@ -307,8 +355,9 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
                     ));
                 }
             };
-            *last = Stmt::Expr(forward_rest(expression, rest, &rake)?, None);
+            *last = Stmt::Expr(forward_rest(expression, rest, &context, &rake)?, None);
         }
+        RenderContext(&context).visit_block_mut(&mut function.block);
         let statements = &function.block.stmts;
         quote! {
             let Self { #(#names,)* } = self;
@@ -348,6 +397,23 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
     } else {
         derive_props
     };
+    let (body, render_type, render_value, stretch_impl) = if stateful {
+        (
+            quote!(#rake::reactive::StretchComponent::render_stretched(self, window, cx, false)),
+            quote!(#rake::reactive::Stretched<Self>),
+            quote!(#rake::reactive::Stretched(self, false)),
+            quote!(
+                impl #impl_generics #rake::reactive::StretchComponent for #name #type_generics #where_clause {
+                    #[allow(unused_variables, reason = "Generated render arguments can be unused by the authored markup.")]
+                    fn render_stretched(self, window: &mut #rake::gpui::Window, cx: &mut #rake::gpui::App, #stretched: bool) -> #rake::gpui::AnyElement {
+                        #body
+                    }
+                }
+            ),
+        )
+    } else {
+        (body, quote!(Self), quote!(self), TokenStream::new())
+    };
     Ok(quote! {
         #(#attrs)*
         #derive_props
@@ -358,6 +424,7 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             #(#fields,)*
         }
         #delegate
+        #stretch_impl
         impl #impl_generics #rake::gpui::RenderOnce for #name #type_generics #where_clause {
             #[allow(unused_variables, reason = "Setup and render may use different props and GPUI context arguments.")]
             fn render(self, window: &mut #rake::gpui::Window, cx: &mut #rake::gpui::App) #output {
@@ -365,9 +432,9 @@ pub(super) fn expand(args: TokenStream, mut function: ItemFn) -> syn::Result<Tok
             }
         }
         impl #impl_generics #rake::gpui::IntoElement for #name #type_generics #where_clause {
-            type Element = #rake::gpui::ViewElement<Self>;
+            type Element = #rake::gpui::ViewElement<#render_type>;
             fn into_element(self) -> Self::Element {
-                #rake::gpui::ViewElement::new(self)
+                #rake::gpui::ViewElement::new(#render_value)
             }
         }
     })
@@ -377,9 +444,33 @@ fn is_setup(ty: &Type) -> bool {
     matches!(ty, Type::Reference(reference) if reference.mutability.is_some() && matches!(&*reference.elem, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "Setup")))
 }
 
+struct RenderContext<'a>(&'a syn::Ident);
+
+impl VisitMut for RenderContext<'_> {
+    fn visit_macro_mut(&mut self, invocation: &mut syn::Macro) {
+        if invocation
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "view")
+            && matches!(invocation.tokens.clone().into_iter().next(),
+                Some(proc_macro2::TokenTree::Punct(token)) if token.as_char() == '<')
+        {
+            let context = self.0;
+            let markup = &invocation.tokens;
+            invocation.tokens = quote!(#context => #markup);
+        }
+    }
+
+    fn visit_expr_closure_mut(&mut self, _: &mut syn::ExprClosure) {}
+
+    fn visit_item_mut(&mut self, _: &mut syn::Item) {}
+}
+
 fn forward_rest(
     expression: syn::Expr,
     rest: &syn::Ident,
+    context: &syn::Ident,
     rake: &TokenStream,
 ) -> syn::Result<syn::Expr> {
     let syn::Expr::Macro(expression) = expression else {
@@ -389,6 +480,7 @@ fn forward_rest(
         ));
     };
     let mut view: rake_view_syntax::View = syn::parse2(expression.mac.tokens)?;
+    view.use_reactive_context(context);
     view.forward_rest(rest)?;
     syn::parse2(view.expand_resilient(rake)?)
 }
